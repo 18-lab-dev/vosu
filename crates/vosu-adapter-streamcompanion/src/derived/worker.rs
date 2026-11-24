@@ -53,6 +53,8 @@ pub struct ChartWorker {
     pending: Option<watch::Sender<Option<(u64, Job)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     notices: watch::Sender<u64>,
+    #[cfg(any(test, feature = "test-harness"))]
+    fixture_engine: Option<Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>>,
     #[cfg(test)]
     completion_hook: Option<CompletionHook>,
 }
@@ -66,9 +68,20 @@ impl ChartWorker {
             pending: None,
             thread: None,
             notices,
+            #[cfg(any(test, feature = "test-harness"))]
+            fixture_engine: None,
             #[cfg(test)]
             completion_hook: None,
         }
+    }
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn with_fixture_engine(
+        requester: Arc<dyn ResourceRequester>,
+        engine: Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>,
+    ) -> Self {
+        let mut worker = Self::new(requester);
+        worker.fixture_engine = Some(engine);
+        worker
     }
     #[cfg(test)]
     pub(super) fn before_completion(&mut self, hook: CompletionHook) {
@@ -142,13 +155,17 @@ impl ChartWorker {
         let state = self.state.clone();
         let counts = self.counts.clone();
         let notices = self.notices.clone();
+        #[cfg(any(test, feature = "test-harness"))]
+        let engine = FixtureEngine(self.fixture_engine.clone());
+        #[cfg(not(any(test, feature = "test-harness")))]
+        let engine = LiveBeatmapEngine;
         #[cfg(test)]
         let completion_hook = self.completion_hook.clone();
         let thread = std::thread::Builder::new().name("sc-chart".into()).spawn(move || {
             let joined = counts.clone();
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("chart runtime");
             runtime.block_on(async move {
-                let mut cache = BeatmapCache::new(LiveBeatmapEngine);
+                let mut cache = BeatmapCache::new(engine);
                 loop {
                     if jobs.changed().await.is_err() { break; }
                     let Some((generation, job)) = jobs.borrow_and_update().clone() else { cache.invalidate(); continue; };
@@ -221,6 +238,23 @@ impl Drop for ChartWorker {
         self.cancel();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
+        }
+    }
+}
+
+// Production retains its concrete engine and allocates no engine wrapper.
+// Only explicitly declared source-oracle inputs inject a fixture calculation.
+#[cfg(any(test, feature = "test-harness"))]
+struct FixtureEngine(Option<Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>>);
+#[cfg(any(test, feature = "test-harness"))]
+impl vosu_osu_calc::beatmap::BeatmapEngine for FixtureEngine {
+    fn calculate(
+        &self,
+        request: vosu_osu_calc::beatmap::EngineRequest<'_>,
+    ) -> Result<vosu_osu_calc::beatmap::EngineOutput, vosu_osu_calc::beatmap::BeatmapError> {
+        match &self.0 {
+            Some(engine) => engine.calculate(request),
+            None => vosu_osu_calc::beatmap::BeatmapEngine::calculate(&LiveBeatmapEngine, request),
         }
     }
 }

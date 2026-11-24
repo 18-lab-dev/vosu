@@ -151,3 +151,26 @@ fn committed_source_oracles_match_bus_adapters_byte_for_byte() {
         }
     }
 }
+
+#[test]
+fn real_sc_calculation_retains_one_object_combo_and_zero_padded_strains() {
+    let input: Input =
+        serde_json::from_slice(&fs::read(fixture_root().join("sc-equal-bpm/input.json")).unwrap())
+            .unwrap();
+    // Same resource bytes as the pinned ZeroEngine case, deliberately with the
+    // unmodified production engine. Never make real output fit the stub oracle.
+    let replay = replay_with_engine(&input, None);
+    let bytes = encode("sc", &replay);
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(wire["maxCombo"], 1);
+    let strains = wire["mapStrains"].as_object().unwrap();
+    assert_eq!(
+        strains.keys().cloned().collect::<Vec<_>>(),
+        (0..=10_000)
+            .step_by(400)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(strains.values().all(|value| value.as_f64() == Some(0.0)));
+    assert_eq!(replay.fixture.chart.counts().parses, 1);
+}

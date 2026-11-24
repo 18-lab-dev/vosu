@@ -25,3 +25,6 @@ vosu-surface = { path = "../vosu-surface" }
 ciborium = "=0.2.2"
 tempfile = "3.26.0"
 vosu-core = { path = "../vosu-core", features = ["bench-harness"] }
+
+[features]
+test-harness = []

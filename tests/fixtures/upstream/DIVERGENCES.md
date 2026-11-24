@@ -37,3 +37,15 @@ licensing change, not an exemption declaring the present implementation
 complete. Its actual functional differences and implementation evidence must
 be recorded by that work's owner. Likewise this freeze does not claim that
 the security contract rows added above have completed R1/X0 native evidence.
+
+## Fixture-input fact: explicit zero calculation
+
+The 1.x source-oracle inputs `sc-equal-bpm` and `sc-range-bpm` were
+calculated with the replay's named `ZeroEngine`. Their expected SC bytes
+therefore contain maxCombo 0 and an empty strain object despite a one-object
+chart. Replay preserves that declared calculation input through a constructor
+available only under tests/`test-harness`; no other case opts into it and the
+production default remains the concrete live engine. This is not a production
+divergence and authorizes no expected-byte normalization. A separate real-engine
+resource/worker test requires maxCombo 1 and all 26 zero-padded bins 0..10000
+for the same bytes, so the fixture cannot conceal a production regression.

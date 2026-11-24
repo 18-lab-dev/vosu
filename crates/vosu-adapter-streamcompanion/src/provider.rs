@@ -44,9 +44,19 @@ impl State {
 }
 impl Provider {
     pub fn new(requester: Arc<dyn BundledRequester>) -> Self {
+        Self::with_worker(ChartWorker::new(requester))
+    }
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn with_fixture_engine(
+        requester: Arc<dyn BundledRequester>,
+        engine: Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>,
+    ) -> Self {
+        Self::with_worker(ChartWorker::with_fixture_engine(requester, engine))
+    }
+    fn with_worker(worker: ChartWorker) -> Self {
         Self {
             state: Arc::new(Mutex::new(State {
-                worker: Some(ChartWorker::new(requester)),
+                worker: Some(worker),
                 dependents: 0,
                 last: None,
                 key: None,

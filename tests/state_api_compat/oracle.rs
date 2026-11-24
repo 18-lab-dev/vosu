@@ -158,6 +158,8 @@ pub fn hit_errors(value: &Value) -> HitErrorArray {
 }
 
 #[derive(Clone, Copy)]
+// The 1.x sc-equal-bpm/sc-range-bpm source fixtures used this calculation
+// input, not the real engine. Other cases never opt into the adapter seam.
 struct ZeroEngine;
 
 impl BeatmapEngine for ZeroEngine {
@@ -493,13 +495,21 @@ pub struct Replay {
     pub instances: Vec<SourceInstance>,
 }
 pub fn replay(input: &Input) -> Replay {
+    let fixture_engine = matches!(input.id.as_str(), "sc-equal-bpm" | "sc-range-bpm")
+        .then(|| Arc::new(ZeroEngine) as Arc<dyn BeatmapEngine + Send + Sync>);
+    replay_with_engine(input, fixture_engine)
+}
+pub fn replay_with_engine(
+    input: &Input,
+    fixture_engine: Option<Arc<dyn BeatmapEngine + Send + Sync>>,
+) -> Replay {
     let source = input.source.as_deref().unwrap_or("stable");
     let client = if source == "lazer" {
         ClientType::Lazer
     } else {
         ClientType::Stable
     };
-    let fixture = Fixture::with_chart(client, chart_content(input).as_deref());
+    let fixture = Fixture::with_chart(client, chart_content(input).as_deref(), fixture_engine);
     if input.source.is_none() {
         return Replay {
             fixture,

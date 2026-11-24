@@ -129,9 +129,13 @@ pub struct Fixture {
 }
 impl Fixture {
     pub fn new(source: ClientType) -> Self {
-        Self::with_chart(source, None)
+        Self::with_chart(source, None, None)
     }
-    pub fn with_chart(source: ClientType, content: Option<&str>) -> Self {
+    pub fn with_chart(
+        source: ClientType,
+        content: Option<&str>,
+        engine: Option<Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>>,
+    ) -> Self {
         let serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         let mut h = host::Harness::new();
         let has_chart = content.is_some();
@@ -186,9 +190,13 @@ impl Fixture {
         let upstream = h.host.surface_requester(PluginInstanceId::new(2)).unwrap();
         let gosu = h.host.surface_requester(PluginInstanceId::new(3)).unwrap();
         let sc = h.host.surface_requester(PluginInstanceId::new(4)).unwrap();
-        let chart = Arc::new(vosu_adapter_streamcompanion::provider::Provider::new(
-            sc.clone(),
-        ));
+        let chart = Arc::new(match engine {
+            Some(engine) => vosu_adapter_streamcompanion::provider::Provider::with_fixture_engine(
+                sc.clone(),
+                engine,
+            ),
+            None => vosu_adapter_streamcompanion::provider::Provider::new(sc.clone()),
+        });
         let providers = [
             Arc::new(BusStateProvider::new(
                 Schema::V1,
