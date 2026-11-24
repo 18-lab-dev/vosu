@@ -377,6 +377,9 @@ fn duplicate_discovery_and_removal_close_memory_once() {
         harness.host.process_exited(pid);
     }
     eventually(|| drops.load(Ordering::SeqCst) == 1);
+    // Cache eviction precedes asynchronous terminal delivery. Observe both
+    // before destroying the instance, which may retire its queued deliveries.
+    eventually(|| DECLINES.lock().unwrap().as_slice() == [DetachReason::Exited]);
     harness.host.destroy_all(WAIT);
     assert_eq!(ATTACHES.lock().unwrap().get(&pid), Some(&1));
     assert_eq!(DECLINES.lock().unwrap().len(), 1);
