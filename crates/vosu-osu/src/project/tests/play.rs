@@ -343,7 +343,8 @@ fn graph_published_once_per_change() {
     let mut projector = super::super::Projector::default();
     let mut writer = PublishBatchWriter::new();
     writer.begin(4);
-    projector.project_into(&s, &facts(), &mut writer, &[project]);
+    let mut caches = super::super::Caches::default();
+    projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
     assert_eq!(writer.len(), 19);
     let doc = collect(&s);
     for n in 90..=100 {
@@ -354,13 +355,13 @@ fn graph_published_once_per_change() {
     }
     assert_eq!(doc["/performance/graph"], json!({"series":[],"xaxis":[]}));
     writer.begin(4);
-    projector.project_into(&s, &facts(), &mut writer, &[project]);
+    projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
     assert!(writer.is_empty());
     Arc::make_mut(&mut Arc::make_mut(&mut s.regular).beatmap.graph)
         .x_axis
         .push(1.5);
     writer.begin(4);
-    projector.project_into(&s, &facts(), &mut writer, &[project]);
+    projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
     assert_eq!(writer.len(), 1);
     let mut encoded = Vec::new();
     writer.finish_into(&mut encoded).unwrap();
@@ -384,17 +385,18 @@ fn projection_steady_state_allocates_nothing() {
     let mut writer = PublishBatchWriter::new();
     let f = facts();
     writer.begin(4);
-    projector.project_into(&s, &f, &mut writer, &[project]);
+    let mut caches = super::super::Caches::default();
+    projector.project_into(&s, &f, &mut writer, &[project], &mut caches);
     Arc::make_mut(&mut s.regular).gameplay.player_name = "changed".into();
     Arc::make_mut(&mut Arc::make_mut(&mut s.precise).hit_errors).all[0] = 4.0;
     // Warm larger string capacities, then change same-size values to exercise diff/encode.
     writer.begin(4);
-    projector.project_into(&s, &f, &mut writer, &[project]);
+    projector.project_into(&s, &f, &mut writer, &[project], &mut caches);
     Arc::make_mut(&mut s.regular).gameplay.player_name = "another".into();
     Arc::make_mut(&mut Arc::make_mut(&mut s.precise).hit_errors).all[0] = 5.0;
     writer.begin(4);
     let (_, allocations) = crate::test_alloc::allocations_during(|| {
-        projector.project_into(&s, &f, &mut writer, &[project])
+        projector.project_into(&s, &f, &mut writer, &[project], &mut caches)
     });
     assert_eq!(allocations, 0);
     assert_eq!(
