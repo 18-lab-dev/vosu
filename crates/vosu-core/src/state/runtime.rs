@@ -1,10 +1,11 @@
 //! Shared state-bus services owned by one plugin host.
-use super::{SchemaRegistry, StateStore};
-use std::sync::{Arc, RwLock};
+use super::{SchemaRegistry, StateStore, SubscriptionRegistry};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub struct StateRuntime {
     pub store: StateStore,
     pub registry: Arc<RwLock<SchemaRegistry>>,
+    pub subscriptions: Mutex<SubscriptionRegistry>,
 }
 impl StateRuntime {
     pub fn new() -> Self {
@@ -14,6 +15,7 @@ impl StateRuntime {
         Self {
             store: StateStore::new(registry.clone()),
             registry,
+            subscriptions: Mutex::new(SubscriptionRegistry::default()),
         }
     }
 }

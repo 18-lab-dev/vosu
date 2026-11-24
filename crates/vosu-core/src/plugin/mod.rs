@@ -47,10 +47,9 @@
 //! platform `ProcessSource` and starting `discovery::ForegroundPoller`
 //! (Windows only) under the same gate.
 //!
-//! Out of scope for this phase (later milestones): non-owning
-//! `STATE_SUBSCRIBE` delivery of session/focus events (§6.2's
-//! "Non-owning plugins" rule, §6.12) and resource/tree/stream operations
-//! and action calls.
+//! State subscriptions deliver latest-only updates and non-owning session/focus
+//! events (§6.2, §6.12). Resource/tree/stream operations and action calls remain
+//! out of scope until their respective milestones.
 
 mod discovery;
 mod dispatch;

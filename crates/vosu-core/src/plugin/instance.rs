@@ -149,6 +149,7 @@ impl PluginInstance {
             vtable: self.vtable,
             ctx: self.ctx,
             message,
+            task: None,
             reply: Some(reply_tx),
             in_flight,
         };
@@ -157,6 +158,32 @@ impl PluginInstance {
             Dispatch::Concurrent(pool) => pool.submit(job)?,
         }
         Ok(reply_rx)
+    }
+
+    pub(crate) fn dispatch_task(
+        &self,
+        task: super::dispatch::DispatchTask,
+    ) -> Result<(), HostError> {
+        let job = Job {
+            vtable: self.vtable,
+            ctx: self.ctx,
+            message: OwnedMessage {
+                opcode: 0,
+                flags: 0,
+                correlation_id: 0,
+                payload: Vec::new(),
+            },
+            task: Some(task),
+            reply: None,
+            in_flight: match &self.dispatch {
+                Dispatch::Concurrent(_) => Some(self.in_flight.enter()),
+                Dispatch::Serial(_) => None,
+            },
+        };
+        match &self.dispatch {
+            Dispatch::Serial(worker) => worker.submit(job),
+            Dispatch::Concurrent(pool) => pool.submit(job),
+        }
     }
 
     /// This instance's raw vtable/ctx pair, for a direct, non-queued call

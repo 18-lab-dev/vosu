@@ -173,6 +173,10 @@ pub struct PluginHost {
     timers: TimerRegistry,
     settings: Arc<PluginSettingsService>,
     state: Arc<StateRuntime>,
+    state_delivery: Mutex<state_delivery::DeliveryState>,
+    state_runtime: Handle,
+    state_serial: Mutex<()>,
+    state_demand_serial: Mutex<()>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
@@ -303,6 +307,10 @@ impl PluginHost {
             timers: TimerRegistry::new(runtime.clone()),
             settings,
             state: Arc::new(StateRuntime::new()),
+            state_delivery: Mutex::new(state_delivery::DeliveryState::default()),
+            state_runtime: runtime.clone(),
+            state_serial: Mutex::new(()),
+            state_demand_serial: Mutex::new(()),
             instances: Mutex::new(HashMap::new()),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
@@ -393,9 +401,16 @@ impl PluginHost {
     fn deliver_focus_events(&self, events: Vec<FocusEvent>) {
         for event in events {
             let handle = SessionHandle(event.handle.0);
-            self.state
-                .store
-                .set_focused(crate::state::SessionKey(handle.0), event.focused);
+            {
+                let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(outcome) = self
+                    .state
+                    .store
+                    .set_focused(crate::state::SessionKey(handle.0), event.focused)
+                {
+                    self.state_committed(&outcome);
+                }
+            }
             let owner = {
                 let sessions = self
                     .sessions
@@ -406,6 +421,11 @@ impl PluginHost {
                     .map(|(owner, _)| owner.clone())
             };
             if let Some(owner) = owner {
+                self.state_focus_changed(FocusChanged {
+                    handle: handle.0,
+                    focused: event.focused,
+                    foreground: event.foreground,
+                });
                 self.dispatch_to(
                     &owner,
                     &Message::FocusChanged(FocusChanged {
@@ -459,6 +479,7 @@ impl PluginHost {
             self.foreground.as_ref(),
         );
         self.open_bus_session(handle, focus.focused() == Some(FocusKey(handle.0)));
+        self.state_session_identified(handle);
         self.deliver_focus_events(events);
         drop(focus);
     }
@@ -522,6 +543,7 @@ impl PluginHostHandler for PluginHost {
         correlation_id: u64,
     ) -> vosu_status {
         match message {
+            Message::StateSubscribe(request) => self.handle_state_subscribe(instance, request),
             Message::LogRecord(record) => {
                 let plugin_id = self
                     .instances
@@ -766,6 +788,7 @@ mod lifecycle;
 pub(super) mod read_plans;
 mod scans;
 mod state;
+mod state_delivery;
 
 #[cfg(test)]
 mod tests;

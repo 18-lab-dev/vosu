@@ -36,6 +36,7 @@ impl PluginHost {
         raw: u64,
         entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
     ) -> vosu_status {
+        let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
         let publisher = {
             let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
             let Some(InstanceSlot::Live(entry)) = instances.get(&instance) else {
@@ -63,16 +64,14 @@ impl PluginHost {
         drop(sessions);
         // StateStore serializes close against commit using the session slot's
         // closed marker. A detached slot cannot be resurrected by this call.
-        self.state
-            .store
-            .commit(&publisher.grant, SessionKey(raw), entries)
-            .map_or_else(
-                |error| match error {
-                    crate::state::CommitError::UnknownSession => vosu_status::VOSU_ERR_TARGET_GONE,
-                    other => other.into(),
-                },
-                |_| vosu_status::VOSU_OK,
-            )
+        match self.state.store.commit(&publisher.grant, SessionKey(raw), entries) {
+            Ok(outcome) => {
+                self.state_committed(&outcome);
+                vosu_status::VOSU_OK
+            }
+            Err(crate::state::CommitError::UnknownSession) => vosu_status::VOSU_ERR_TARGET_GONE,
+            Err(error) => error.into(),
+        }
     }
 
     pub(super) fn open_bus_session(&self, handle: SessionHandle, focused: bool) {
@@ -113,11 +112,21 @@ impl PluginHost {
     }
 
     pub(super) fn close_bus_sessions_for(&self, plugin_id: &str) {
-        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
-        for (handle, owner, _) in sessions.identified_sessions() {
-            if owner == plugin_id {
-                self.close_bus_session(handle);
-            }
+        let detached = {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+            let handles = sessions
+                .identified_sessions()
+                .filter(|(_, owner, _)| owner.as_str() == plugin_id)
+                .map(|(handle, _, _)| handle)
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .filter_map(|handle| sessions.detach(handle, vosu_plugin_api::DetachReason::Lost))
+                .collect::<Vec<_>>()
+        };
+        for event in detached {
+            self.state_session_detaching(&event);
+            self.close_bus_session(SessionHandle(event.handle));
         }
     }
 }
@@ -126,6 +135,8 @@ impl PluginHost {
 pub(super) struct Publisher {
     pub(super) grant: crate::state::PublisherGrant,
     pub(super) version: String,
+    pub(super) read_grant: crate::state::InternalGrant,
+    pub(super) bundled: bool,
     pub(super) _registration: SchemaRegistration,
 }
 

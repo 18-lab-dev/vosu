@@ -177,6 +177,7 @@ pub(crate) struct Job {
     pub vtable: vosu_plugin_vtable,
     pub ctx: PluginCtx,
     pub message: OwnedMessage,
+    pub task: Option<DispatchTask>,
     pub reply: Option<SyncSender<vosu_status>>,
     /// Held for this job's whole lifetime (queued and running); `None`
     /// for a serial job, whose queue `SerialWorker::shutdown_within`
@@ -188,13 +189,21 @@ pub(crate) struct Job {
     pub in_flight: Option<InFlightGuard>,
 }
 
+/// Runs on the instance's existing worker, retaining its in-flight lifetime.
+pub(crate) type DispatchTask = Box<dyn FnOnce(&vosu_plugin_vtable, PluginCtx) + Send + 'static>;
+
 fn run_job(job: Job) {
     // §4/D5: every call this host makes into a plugin's own `dispatch`
     // runs under this scope, so a `VOSU_READ_PLAN_SYNC` submission the
     // plugin makes reentrant from inside it (on this same thread) is
     // refused instead of deadlocking or running out of serialized order.
     let _dispatch_thread = DispatchThreadScope::enter();
-    let status = job.message.call(&job.vtable, job.ctx);
+    let status = if let Some(task) = job.task {
+        task(&job.vtable, job.ctx);
+        vosu_status::VOSU_OK
+    } else {
+        job.message.call(&job.vtable, job.ctx)
+    };
     if let Some(reply) = job.reply {
         let _ = reply.send(status);
     }

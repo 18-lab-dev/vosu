@@ -218,6 +218,8 @@ impl PluginHost {
                 publisher: Arc::new(super::state::Publisher {
                     grant: publisher,
                     version: plugin.manifest().version.clone(),
+                    read_grant: crate::state::InternalGrant::from_manifest(plugin.manifest()),
+                    bundled: plugin.library_handle().is_none(),
                     _registration: registration,
                 }),
             }),

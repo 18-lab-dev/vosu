@@ -120,6 +120,14 @@ pub struct PendingUpdate {
 }
 
 impl PendingUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     /// Transactional on error: an invalid merge never loses older data.
     pub fn merge(&mut self, mut entries: Vec<StateEntry>) -> Result<(), UpdateError> {
         if entries.len() > MAX_SELECTORS {

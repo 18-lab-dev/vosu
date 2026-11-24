@@ -138,6 +138,7 @@ impl PluginHost {
                 }
             };
             let (id, instance) = next;
+            self.state_subscriber_removed(id);
             if let Some(plugin_id) = self.plugin_id_of(id) {
                 self.close_bus_sessions_for(&plugin_id);
             }
@@ -221,6 +222,7 @@ impl PluginHost {
         owner: Option<super::super::matcher::PluginId>,
         detached: vosu_plugin_api::SessionDetached,
     ) {
+        self.state_session_detaching(&detached);
         if let Some(owner) = owner {
             self.cancel_read_plans_for_session(&owner, handle);
             self.cancel_scans_for_session(&owner, handle);

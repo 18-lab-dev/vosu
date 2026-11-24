@@ -126,6 +126,7 @@ struct IdentifiedSession {
     owner: PluginId,
     generation: Generation,
     pid: u32,
+    bitness: Bitness,
     identify: SessionIdentify,
     public_id: String,
 }
@@ -368,6 +369,7 @@ impl SessionRegistry {
                 owner: record.owner,
                 generation: record.generation,
                 pid: record.process.pid,
+                bitness: record.process.bitness,
                 identify: request,
                 public_id: record.public_id,
             },
@@ -464,6 +466,22 @@ impl SessionRegistry {
     #[must_use]
     pub fn identify_of(&self, handle: SessionHandle) -> Option<&SessionIdentify> {
         self.identified.get(&handle).map(|record| &record.identify)
+    }
+
+    /// Identified-session replay for non-owners, deliberately without process facts.
+    pub(crate) fn public_attachment(&self, handle: SessionHandle) -> Option<SessionAttached> {
+        let record = self.identified.get(&handle)?;
+        Some(SessionAttached {
+            session: record.public_id.clone(),
+            handle: handle.0,
+            generation: record.generation.0,
+            pid: record.pid,
+            bitness: record.bitness,
+            name: None,
+            path: None,
+            command_line: None,
+            argv: None,
+        })
     }
 
     pub fn public_id_of(&self, handle: SessionHandle) -> Option<&str> {
