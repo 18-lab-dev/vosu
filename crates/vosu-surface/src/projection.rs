@@ -49,6 +49,11 @@ pub trait Projection<F, B>: Send + Sync + 'static {
     fn changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
         None
     }
+    /// Retained derived work for the currently selected inputs is still in
+    /// flight. A one-shot reader may wait a bounded time on `changes` for it.
+    fn pending(&self) -> bool {
+        false
+    }
     /// Optional owned work retained only by a live consumer of these fields.
     fn retain(&self, _filters: &[F]) -> Option<Box<dyn Send + Sync>> {
         None

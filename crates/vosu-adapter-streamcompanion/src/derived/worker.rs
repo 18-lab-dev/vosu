@@ -43,7 +43,11 @@ struct State {
 type CompletionHook = Arc<dyn Fn(&ChartKey) + Send + Sync>;
 
 /// One lazy owned worker, one running job, one replaceable pending job, one cache.
-/// Call `select` only for a real dependent consumer; passing false releases it.
+/// Call `select` only for a real dependent consumer. Releasing the last consumer
+/// does not touch the worker: the selected key's in-flight job still completes
+/// and its result stays (at most one derived chart), so one-shot readers that
+/// release before completion cannot starve it. Selecting a different key,
+/// `invalidate`, or `shutdown` cancels and clears.
 /// Async owners must call `shutdown` before dropping, so joining cannot block an
 /// async executor. The synchronous Drop fallback still joins, never detaches.
 pub struct ChartWorker {
@@ -116,12 +120,38 @@ impl ChartWorker {
     pub fn error(&self) -> Option<Error> {
         self.state.lock().unwrap().error.clone()
     }
-    pub fn select(&mut self, view: &View, dependent: bool) -> Result<Option<ChartKey>, Error> {
-        let candidate = if dependent {
-            Job::from_view(view)
-        } else {
-            Ok(None)
+    /// The selected key, whether its work is in flight, completed or failed.
+    pub fn key(&self) -> Option<ChartKey> {
+        self.state.lock().unwrap().key.clone()
+    }
+    /// Work for exactly `key` is in flight: selected, not completed, not failed.
+    pub fn pending_for(&self, key: &ChartKey) -> bool {
+        let state = self.state.lock().unwrap();
+        state.key.as_ref() == Some(key) && state.current.is_none() && state.error.is_none()
+    }
+    /// Explicit invalidation: cancels any job and clears the completed chart,
+    /// starting no work.
+    pub fn invalidate(&mut self) {
+        let generation = {
+            let mut state = self.state.lock().unwrap();
+            if state.key.is_none() && state.current.is_none() && state.error.is_none() {
+                return;
+            }
+            state.generation = state.generation.wrapping_add(1);
+            state.key = None;
+            state.current = None;
+            state.error = None;
+            state.generation
         };
+        if let Some(pending) = &self.pending {
+            pending.send_replace(None);
+        }
+        self.notices.send_replace(generation);
+    }
+    /// A dependent consumer's selection. The same key keeps its in-flight job or
+    /// completed chart; a different (or unselectable) key cancels and clears.
+    pub fn select(&mut self, view: &View) -> Result<Option<ChartKey>, Error> {
+        let candidate = Job::from_view(view);
         // Bad/missing selections clear old output too; never show the prior map.
         let job = candidate.as_ref().ok().and_then(|job| job.clone());
         let key = job.as_ref().map(|j| j.key.clone());

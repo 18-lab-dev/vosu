@@ -219,16 +219,10 @@ impl Mounted {
         let roots = TempDir::new().unwrap();
         std::fs::create_dir_all(roots.path().join("static/counter")).unwrap();
         std::fs::write(roots.path().join("static/counter/index.html"), "overlay").unwrap();
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let origin = format!("http://127.0.0.1:{port}");
         let host = fixture.h.host.clone();
         let schemas = Arc::new(Schemas(fixture.providers.clone()));
         let files = fixture.files.clone();
-        let (hubs, leases, api, processor, relays, counters, delegate, providers, listener) =
+        let (hubs, leases, api, processor, relays, counters, delegate, (port, providers, listener)) =
             fixture.h.runtime.block_on(async {
                 let hubs = WebSocketHubs::start(schemas.clone());
                 let leases = mount(&host, &schemas, &hubs, &files);
@@ -269,32 +263,52 @@ impl Mounted {
                         .with_surface(SurfaceRouter::new(host.clone(), upstream))
                         .with_api_v1(ApiV1Router::new(source, api.clone())),
                 );
-                let providers = RouteProviders {
-                    authorization: Arc::new(OriginAuthorizer {
-                        inner: Arc::new(AuthorizationPolicy::new(
-                            "127.0.0.1,localhost",
-                            "127.0.0.1",
-                        )),
-                        origins: Arc::new(
-                            Origins::new(origin.clone(), "http://127.0.0.1:24051".into()).unwrap(),
-                        ),
-                        dashboard: false,
-                    }),
-                    state: schemas.clone(),
-                    calculation: Arc::new(DeclaredCalculateProvider(files.clone())),
-                    delegate: delegate.clone(),
-                };
-                let listener = ListenerOwner::start(
-                    providers.clone(),
-                    vosu::server::runtime::ListenTarget {
+                // A probed free port can be taken by a parallel test process
+                // before the listener binds; retry with a fresh one.
+                let mut bound = None;
+                for _ in 0..16 {
+                    let port = std::net::TcpListener::bind("127.0.0.1:0")
+                        .unwrap()
+                        .local_addr()
+                        .unwrap()
+                        .port();
+                    let providers = RouteProviders {
+                        authorization: Arc::new(OriginAuthorizer {
+                            inner: Arc::new(AuthorizationPolicy::new(
+                                "127.0.0.1,localhost",
+                                "127.0.0.1",
+                            )),
+                            origins: Arc::new(
+                                Origins::new(
+                                    format!("http://127.0.0.1:{port}"),
+                                    "http://127.0.0.1:24051".into(),
+                                )
+                                .unwrap(),
+                            ),
+                            dashboard: false,
+                        }),
+                        state: schemas.clone(),
+                        calculation: Arc::new(DeclaredCalculateProvider(files.clone())),
+                        delegate: delegate.clone(),
+                    };
+                    let target = vosu::server::runtime::ListenTarget {
                         host: "127.0.0.1".into(),
                         port,
-                    },
-                )
-                .await
-                .unwrap();
+                    };
+                    if let Ok(listener) = ListenerOwner::start(providers.clone(), target).await {
+                        bound = Some((port, providers, listener));
+                        break;
+                    }
+                }
                 (
-                    hubs, leases, api, processor, relays, counters, delegate, providers, listener,
+                    hubs,
+                    leases,
+                    api,
+                    processor,
+                    relays,
+                    counters,
+                    delegate,
+                    bound.expect("a free loopback port"),
                 )
             });
         Self {
@@ -302,8 +316,8 @@ impl Mounted {
             fixture,
             input: sourced,
             port,
-            base: origin.clone(),
-            origin,
+            base: format!("http://127.0.0.1:{port}"),
+            origin: format!("http://127.0.0.1:{port}"),
             providers,
             delegate,
             hubs: Some(hubs),
@@ -357,6 +371,15 @@ impl Mounted {
             }
             Err(error) => panic!("{path}: {error}"),
         }
+    }
+    /// The focused session's committed bus revision.
+    pub(super) fn revision(&self) -> u64 {
+        let host = &self.fixture.h.host;
+        let handle = host.diagnostic_sessions()[0].handle;
+        host.state()
+            .store
+            .current(vosu_core::state::SessionKey(handle))
+            .map_or(0, |state| state.revision)
     }
     /// The focused session's union of sampling demand across every subscriber.
     pub(super) fn demand(&self) -> Vec<String> {

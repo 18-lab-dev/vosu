@@ -202,9 +202,14 @@ Budgets are hard ownership bounds, not timers:
 
 - Per SC adapter instance: one owned cancellable chart worker, one running job,
   **one latest pending** job, and **one current successful parsed/derived chart**
-  cache. No parse/cache/worker activity without a real dependent consumer.
-  Resource bytes never exceed 64 MiB. Replaced cache images retained by an
-  in-flight view are released with that view, not stored in a history.
+  cache. No parse/cache/worker activity starts without a real dependent consumer.
+  Releasing the last consumer does not cancel the selected key's job or drop
+  its completed chart (at most one), so one-shot HTTP readers cannot starve it;
+  a different key, an invalid selection or shutdown cancels and clears. An HTTP
+  read waits at most 80 ms (`DERIVED_HTTP_WAIT`) for an in-flight job of its
+  exact key, then serves the pinned chart-less bytes. Resource bytes never
+  exceed 64 MiB. Replaced cache images retained by an in-flight view are
+  released with that view, not stored in a history.
 - The derived key includes captured owner/session generation, resource content
   identity, effective ruleset, complete mods/settings/rate/scoring and audio
   length inputs actually used. Cache only successful opens. Same filename or

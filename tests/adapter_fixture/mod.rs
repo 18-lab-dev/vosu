@@ -291,14 +291,17 @@ impl Fixture {
                 .flatten();
             let mut changes = self.chart.changes().expect("live fixture chart worker");
             let first = self.providers[index].cached_json(route).await;
-            if index == 1 && self.has_chart && self.chart.revision() == 0 {
+            if index == 1 && self.has_chart {
+                // A loaded host can exceed the HTTP wait bound: settle the
+                // retained chart job itself, then read its completed view.
                 tokio::time::timeout(Duration::from_secs(5), async {
-                    while self.chart.revision() == 0 {
+                    while self.chart.pending() || self.chart.revision() == 0 {
                         changes.changed().await.unwrap();
                     }
                 })
                 .await
                 .expect("source-oracle chart publication deadline");
+                drop(first);
                 self.providers[index].cached_json(route).await
             } else {
                 first

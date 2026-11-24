@@ -12,6 +12,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
   it attests the 2.0 package version, reports any reappearing 1.x extension
   member instead of exempting it, and no longer writes the retired
   `ENABLE_KEY_OVERLAY`/`V2_SUBSCRIPTION_DEBOUNCE` keys into its vosu config.
+- Fix `/json/sc` HTTP reads with no streamCompanion WebSocket client always
+  serving chart-less values (bpm 0, empty `mapStrains`) and cancelling their own
+  chart work, as 1.x always served chart facts. The selected chart's job now
+  completes after its reader leaves and its one result is reused; an HTTP read
+  waits at most 80 ms for an in-flight job of its exact map. A new map still
+  cancels old work, and nothing is parsed while no client reads.
+- Announce a session to `vosu.sessions` watchers only once its bus state is
+  open, so their immediate subscription is never refused.
 
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
