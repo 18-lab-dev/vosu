@@ -98,6 +98,20 @@ pub struct PlayFacts {
     pub precise_unstable_rate: Selected<f64>,
 }
 
+/// Independent graph histories; primary is not an alias for any named series.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct PerformanceGraph {
+    #[serde(default)]
+    pub primary: Selected<Arc<[f64]>>,
+    pub series: Arc<[GraphSeries]>,
+    pub xaxis: Arc<[f64]>,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GraphSeries {
+    pub name: Arc<str>,
+    pub data: Arc<[f64]>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

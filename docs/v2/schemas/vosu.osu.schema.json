@@ -564,6 +564,7 @@
           "required": ["series","xaxis"],
           "additionalProperties": false,
           "properties": {
+            "primary": {"type":"array","items":{"type":"number"},"description":"1.3.0: independently captured primary strain history; not inferred from series."},
             "series": {
               "type": "array",
               "items": {
@@ -966,7 +967,7 @@
               ]
             },
             "current": {
-              "description": "1.2.0, additive (R8, M4a-blocking): the current chart's folder/file names only, never a joined path (ADR 0021); `null` entirely when no chart is selected; `background`/`audio` are independently `null` when the chart has none. Home for the 1.x `folders.beatmap`/`files.*` sources M4a's upstream adapter must echo byte-identically.",
+              "description": "Independent captured chart folder/file, background and audio names, never root authority (ADR 0021). Null entirely only when all four sources are absent; a missing chart folder/file never discards a present background/audio name. Each leaf retains null versus an empty string.",
               "oneOf": [
                 {
                   "type": "object",

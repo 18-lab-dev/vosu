@@ -344,6 +344,7 @@ fn graph_published_once_per_change() {
         r.beatmap.pp_acc.insert(n, f64::from(n) + 0.12345);
     }
     let graph = Arc::make_mut(&mut r.beatmap.graph);
+    graph.primary = vec![9.5, 8.25];
     graph.series.push(vosu_osu_calc::beatmap::GraphSeries {
         name: "Aim".into(),
         data: vec![1.25, 2.5],
@@ -377,7 +378,7 @@ fn graph_published_once_per_change() {
     }
     assert_eq!(
         doc["/performance/graph"],
-        json!({"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[]})
+        json!({"primary":[9.5,8.25],"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[]})
     );
     writer.begin(4);
     projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
@@ -397,7 +398,17 @@ fn graph_published_once_per_change() {
     );
     assert_eq!(
         collect(&s)["/performance/graph"],
-        json!({"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[1.5]})
+        json!({"primary":[9.5,8.25],"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[1.5]})
+    );
+    Arc::make_mut(&mut Arc::make_mut(&mut s.regular).beatmap.graph)
+        .primary
+        .push(7.125);
+    writer.begin(4);
+    projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
+    assert_eq!(writer.len(), 1);
+    assert_eq!(
+        collect(&s)["/performance/graph"]["primary"],
+        json!([9.5, 8.25, 7.125])
     );
 }
 
@@ -529,3 +540,6 @@ fn embedded_schema_requires_the_good_statistics_count() {
 
 #[path = "fidelity.rs"]
 mod fidelity;
+
+#[path = "p1b.rs"]
+mod p1b;

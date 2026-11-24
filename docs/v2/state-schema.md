@@ -286,7 +286,7 @@ carry the same values while subscribed, at different cadences.
 | `keys.all` | `vosu.osu.keys.all` | |
 | `hitErrors`, `pressHitErrors`, `releaseHitErrors` (precise, tourney-nested) | `vosu.osu.tourney.clients[].play.hitErrors` | T0 publishes stable spectator all/press/release facts at their actual lanes; adapters remove extension siblings, retaining legitimate upstream all-hit histories. Stable aggregate is mandatory for the completed M4a exit. |
 | `leaderboard[]` | `vosu.osu.leaderboard[]` | Each entry's `statistics.katu` feeds the new `statistics.good` (1.2.0, R5). |
-| `performance.accuracy`, `.graph` | `vosu.osu.performance.accuracy`/`.graph` | |
+| `performance.accuracy`, `.graph` | `vosu.osu.performance.accuracy`/`.graph` | Schema 1.3.0 adds independent `graph.primary` for the captured primary history; it is not inferred from `graph.series`. |
 | `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. `hits.katu` feeds the new `statistics.good` (1.2.0, R5). There is deliberately no common cross-game result summary until a second game plugin needs one; adding it then takes its own ADR. |
 | `folders.*`, `files.*`, `directPath.*` | removed from the API-facing surface; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. The plugin-only `vosu.osu.internal.paths.current`/`.skinFolder` (D8, R8, below) carries the same underlying names for M4a's upstream adapter to echo; API v1 itself never serves them. Unchanged in the upstream adapter. |
 | `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin`'s asset-identity fields are replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`, and its toggle fields (`useDefaultSkinInEditor`, `ignoreBeatmapSkins`, `tintSliderBall`, `useTaikoSkin`) move to the new `vosu.osu.settings.skin` (1.2.0, R7). |
@@ -451,10 +451,10 @@ versa. `internal.paths.current` (1.2.0, additive) holds the current chart's
 folder/file **names** only, never the joined full path 1.x's
 `directPath.beatmap_file` etc. compute (ADR 0021 forbids a joined path the
 same way it forbids every other raw path outside this carve-out); the
-whole object is `null` when no chart is selected, which is why
-`beatmapFolder`/`beatmapFile` carry no separate per-leaf null note above —
-only `background`/`audio` can independently be `null` while the chart
-itself is selected (a chart with no background or no audio file).
+whole object is `null` only when all four captured names are absent.
+Each leaf is independently nullable and preserves an actual empty string.
+In particular, a captured background/audio name survives an absent chart
+folder/file; these are data echoes, not authority to open a file.
 `internal.paths.skinFolder` (1.2.0, additive) sits outside `current` for
 exactly this reason: 1.x emits `folders.skin`/`directPath.skinFolder`
 whenever a session exists, not only while a chart is selected, so gating
