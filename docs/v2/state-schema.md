@@ -483,6 +483,32 @@ HTTP identity, membership and cache rules.
 
 ## Sampling lanes
 
+M6a Q1–Q3 (approved 2026-11-24) freeze the extraction profile:
+schema size is at most 262,144 bytes inclusive, structural depth at most
+32 throughout the document, and extraction/reference work at most 50,000
+visited nodes. Exhaustion fails atomically. All references and visibility
+annotations are checked, including unused definitions and branches.
+References are RFC 6901 same-document fragments or
+`common-defs.schema.json#/$defs/…` against fixed trusted embedded input;
+`$id` never redirects resolution. Decode `~0`/`~1`, reject malformed,
+unresolved and cyclic references, and traverse supported `$ref` siblings.
+Supported structural traversal includes properties, schema items,
+schema additionalProperties and allOf/anyOf/oneOf branches. Unsupported
+lane-bearing constructs fail instead of silently discarding demand; the
+separate action-value keyword allowlist does not apply.
+
+Extracted mirror pointers use `*` only as metadata for array items/map
+values, not as a public JSON Pointer operator. Literal schema property
+names must not equal `*`, which would collide with this selector
+representation; other tokens use RFC 6901 escaping.
+Preserve distinct `(pointer,lane,activity)`
+triples, sort lexicographically by those fields and deduplicate only exact
+triples. Mixed activity and lane contributions must not become one lossy
+`both` record. Trusted bundled/official schema provenance is explicit;
+declaring `title = "vosu.osu"` does not confer the internal visibility
+carve-out. Required-top-level and visibility metadata remain available
+to core, whose registry alone owns grants and registration lifetimes.
+
 ADR 0020's Publication section ties sampling rate to subscription demand: a
 plugin samples a high-frequency value at its faster rate only while a client
 is subscribed to it (and, for gameplay-only values, only while the session is

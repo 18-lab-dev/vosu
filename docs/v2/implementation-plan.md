@@ -1387,6 +1387,16 @@ schemas it walks; this milestone is where both become the full catalog
 rule set, the semver-requirement resolution corpus, and the catalog's own
 schema mirror (R14, R15).
 
+M6a's Q1–Q7 contract completion was approved on 2026-11-24:
+the [shared validation contract](catalog-v2.md#m6a-validation-contract-approved-2026-11-24)
+records strict collection/shape policy, resolution `1..=16384`, game/matcher
+equivalence and authoritative field revisions. [Sampling lanes](state-schema.md#sampling-lanes)
+freezes wildcard/ref-sibling/full-document/provenance/work-bound semantics;
+[process matching](plugin-abi.md#61-process-matching) freezes portable hint
+validation. These are normative inputs, not an M6a-complete claim.
+M6b consumes the SDK's pure requirement/candidate-conjunction predicates;
+it must not add a parallel capability/version parser.
+
 Exit: `cargo test --locked -p vosu-plugin-api manifest` and a corpus test
 `tests/catalog_v2_compat.rs` with valid and invalid manifests for every rule
 in catalog-v2.md, including reserved names, id prefix rules,

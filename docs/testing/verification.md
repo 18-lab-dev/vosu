@@ -413,3 +413,38 @@ that create real directories can use `&`, rather than Windows-invalid `<`/`>`.
 
 When a change crosses [runtime boundaries](../architecture/overview.md), run the narrowest affected contract first and then the platform/live gate appropriate to the observable behavior. Do not substitute a compile-only check for behavior verification.
 
+
+## M6a rule matrix and cutover inventory
+
+Approved 2026-11-24: Q1–Q7 are frozen in the
+[package contract](../v2/catalog-v2.md#m6a-validation-contract-approved-2026-11-24),
+[lane profile](../v2/state-schema.md#sampling-lanes) and
+[matcher contract](../v2/plugin-abi.md#61-process-matching).
+Each corpus row records a stable rule id, document pointer, valid control
+and one-mutation rejection. Inventory categories:
+
+| Rule family | Required discriminators |
+| --- | --- |
+| `manifest.shape`, `manifest.shared` | Three kinds, required/default fields, forbidden/unknown fields, semver, confined assets, HTTP(S) homepage, positive bounded resolution |
+| `manifest.context` | Official identity, both collision directions, segment boundary, same identity deduplication, longest namespace, source/kind-local replaces |
+| `manifest.capability` | Grammar, duplicates/intersection, per-kind permissions, internal subtree, own/authoritative field revisions, literal game star |
+| `manifest.resource`, `manifest.action` | Reserved/core coverage vs own provides, kind/provide pairing, MIME families/tree shape, action bijection and swapped versions |
+| `manifest.matcher` | 0/1/15/16 UTF-8 bytes, NUL, regex syntax, matcher iff game; unchanged runtime overlap/prefilter |
+| `manifest.requirement` | Exact/caret/tilde/wildcard/intersections/prereleases/build metadata, coverage, single-candidate conjunction |
+| `manifest.schema` | Whole-document byte/depth/ref/visibility/work limits, siblings, wildcard/map/array and independent expected lanes |
+| `catalog.shape`, `catalog.mirror` | Packages/art/targets, null/defaults, source-local uniqueness, unsupported vs malformed, ordered fields and asset-backed equality |
+| `consumer.legacy`, `consumer.cutover` | Manifest precedence/no fallback, unchanged legacy/settings bytes, real production loader parity and rollback |
+
+Before exported API moves, use LSP references for `PluginManifest`,
+`Capability`, `MatchTable`, actions and capability helpers. The cutover
+inventory includes core registry/host state/matcher, runtime dev plugins,
+root tool v2/capabilities, overlay discovery, and bundled/test fixtures.
+The existing plugin-specific API remains a typed package view, not a
+second validation authority. V2 supplies pure extraction below core;
+V3 consumes it for comparison; V4 removes old production business rules.
+
+Committed Draft 2020-12 schemas describe the manifest's TOML-to-JSON data
+model and catalog structure, offline only. They cannot prove semver
+requirements, officialness, registration collisions or package/schema
+equivalence; the SDK remains authoritative. Native Windows evidence is
+separate from cross-Clippy. This inventory is a contract, not test evidence.

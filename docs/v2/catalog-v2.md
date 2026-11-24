@@ -263,6 +263,52 @@ replaces = []                     # optional, default []; grammar matches `id`'s
   `kind = "tool"` or `kind = "overlay"` is invalid (see "Capability fields"
   above).
 
+#### M6a validation contract (approved 2026-11-24)
+
+The M6a Q1–Q7 clarifications are adopted, not pending recommendations:
+
+- Declaration lists reject duplicate capability ids within `provides`,
+  `requires` and `optional`, and duplicate action names, resource-kind names,
+  root slots and `covers` strings. Unknown fields and cross-kind fields are
+  errors; a future extension requires an explicit format-contract change.
+- V2 overlay resolution is exactly two integers, each in `1..=16384`.
+  This restriction does not change legacy metadata parsing.
+- A plugin is a game plugin iff its `provides` contains a `game:` capability.
+  `[match]` is required iff it is a game plugin.
+- Own-namespace leaf provides require an own whole-namespace declaration
+  with its schema asset; all own field versions equal that declaration.
+  Foreign leaf provides require the authoritative namespace revision in
+  supplied built-in/official context and must equal it. Missing authoritative
+  revision is an error. Foreign whole-namespace provides remain forbidden.
+- Context supplies exact official identities and every enabled-source,
+  bundled and installed registration. Prefix collisions are symmetric and
+  segment-delimited; seeing the same identity installed and catalogued is
+  not a collision. Source-local replaces checks remain per kind.
+
+Validation separates intrinsic document validity, contextual validity, host
+support and asset-backed mirror verification. A well-formed host mismatch
+is unsupported, not malformed. The application version is injected, never
+the SDK package version. M6b reuses SDK capability coverage and semver
+candidate-conjunction predicates; graph traversal, source selection, trust,
+network acquisition and installation remain M6b/M7-owned.
+
+The SDK cutover interface is `manifest::PackageManifest` with typed
+`PluginManifest`, `ToolManifest` and `OverlayManifest` views.
+`parse`/`validate` check intrinsic rules; `validate_context` consumes an
+explicit `ValidationContext` and returns host support separately.
+`ValidationError` carries a stable rule id and document pointer.
+Ordered declaration vectors remain ordered for mirror comparison.
+
+V2's namespace compiler accepts caller-supplied bytes, expected namespace
+and provide version, trusted common-definition bytes and explicit schema
+provenance. Its output contains namespace/version, canonical
+`(pointer,lane,activity)` contributions, required top-level fields and
+visibility metadata. V3's comparison accepts a validated package, catalog
+entry and loaded schema metadata, and fails if schema bytes/metadata are
+absent; catalog-only checks never attest package equivalence. It compares
+all genuinely mirrored metadata, including requirement order, but not
+package-local art paths against remote URLs or an invented catalog UI.
+
 ### `kind = "plugin"`
 
 Runtime fields — `abi_version`, `runtime`, `concurrent_dispatch`,
