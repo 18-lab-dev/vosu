@@ -879,6 +879,8 @@ impl SettingsSchemaSource for PluginHost {
     }
 }
 
+mod diagnostics;
+pub use diagnostics::DiagnosticSession;
 mod action_delivery;
 mod actions;
 mod api;

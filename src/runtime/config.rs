@@ -349,85 +349,52 @@ pub(super) fn apply_config_values(
     string!("ALLOWED_IPS", allowed_ips);
 }
 
-pub(super) type DashboardLifecycle =
-    Arc<arc_swap::ArcSwapOption<watch::Receiver<Arc<super::bridge_b1::B1Lifecycle>>>>;
-
 #[derive(Clone)]
 pub(super) struct RuntimeReportInput {
     pub(super) config: Arc<ConfigStore>,
-    pub(super) snapshots: Arc<SnapshotManager>,
+    pub(super) plugins: Arc<PluginHost>,
+    pub(super) files: vosu_adapter_upstream::files::Provider,
     pub(super) counters: Arc<ReloadableCounterService>,
     pub(super) logs: PathBuf,
-    pub(super) lifecycle: DashboardLifecycle,
 }
 
 impl ReportInputProvider for RuntimeReportInput {
     fn dashboard_status(&self) -> serde_json::Value {
-        let combined = self.snapshots.load();
         let config = self.config.current();
-        let lifecycle = self
-            .lifecycle
-            .load()
-            .as_ref()
-            .map(|receiver| receiver.borrow().clone());
-        let render = |pid, client, entry: Option<&crate::api::ManagerInstanceSnapshot>, state| {
-            serde_json::json!({
-                "pid": pid,
-                "client": format!("{client:?}").to_ascii_lowercase(),
-                "version": entry.map(|entry| report_instance_version(&entry.state().regular.settings.values)).unwrap_or_default(),
-                "state": state,
-                "pollIntervalMs": config.poll_rate,
-                "precisePollIntervalMs": config.precise_data_poll_rate
-            })
-        };
-        let instances = if let Some(lifecycle) = lifecycle {
-            lifecycle
-                .sessions
-                .iter()
-                .map(|detected| {
-                    let entry = combined
-                        .manager()
-                        .instances()
-                        .get(&detected.pid)
-                        .filter(|entry| entry.state().generation == detected.generation);
-                    let state = if entry.is_some() {
-                        "reading"
-                    } else {
-                        match detected.phase {
-                            vosu_osu::bridge_b1::B1Phase::ResolvingOffsets => "resolving offsets",
-                            vosu_osu::bridge_b1::B1Phase::StartingReader => "starting reader",
-                            vosu_osu::bridge_b1::B1Phase::Reading => "reading",
-                        }
-                    };
-                    render(detected.pid, detected.client, entry, state)
+        let instances: Vec<_> = self
+            .plugins
+            .diagnostic_sessions()
+            .into_iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "pid": entry.pid,
+                    "client": entry.client.to_ascii_lowercase(),
+                    "version": self.files.client_version(&entry.session).unwrap_or(entry.version),
+                    "state": entry.state,
+                    "pollIntervalMs": config.poll_rate,
+                    "precisePollIntervalMs": config.precise_data_poll_rate,
                 })
-                .collect::<Vec<_>>()
-        } else {
-            combined
-                .manager()
-                .instances()
-                .values()
-                .map(|entry| render(entry.pid(), entry.client(), Some(entry), "reading"))
-                .collect()
-        };
+            })
+            .collect();
         serde_json::json!({ "instances": instances, "available": true })
     }
     fn capture(&self) -> Result<ReportInput, String> {
-        let combined = self.snapshots.load();
-        let manager = combined.manager();
-        let instances = manager
-            .instances()
-            .iter()
-            .map(|(pid, entry)| ReportInstance {
-                pid: *pid,
-                client_type: format!("{:?}", entry.client()),
-                bitness: if entry.client() == ClientType::Stable {
-                    "x86"
-                } else {
-                    "x64"
+        let instances = self
+            .plugins
+            .diagnostic_sessions()
+            .into_iter()
+            .map(|entry| ReportInstance {
+                pid: entry.pid,
+                client_type: entry.client,
+                bitness: match entry.bitness {
+                    vosu_plugin_api::Bitness::X86 => "x86",
+                    vosu_plugin_api::Bitness::X64 => "x64",
                 }
                 .into(),
-                version: report_instance_version(&entry.state().regular.settings.values),
+                version: self
+                    .files
+                    .client_version(&entry.session)
+                    .unwrap_or(entry.version),
             })
             .collect();
         let counters = self
@@ -448,16 +415,6 @@ impl ReportInputProvider for RuntimeReportInput {
         input.logs_dir = Some(self.logs.clone());
         Ok(input)
     }
-}
-
-pub(super) fn report_instance_version(values: &vosu_osu_model::states::SettingsObject) -> String {
-    values
-        .get("client")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|client| client.get("version"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
 }
 
 pub(super) struct RuntimeUpdater {

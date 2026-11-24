@@ -7,7 +7,6 @@ use std::{
     hint::black_box,
     sync::{Arc, Mutex, RwLock, atomic::AtomicBool},
 };
-use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu_core::state::{
     ClientFacts, InternalGrant, Pointer, PublisherGrant, SchemaRegistry, SessionKey, StateStore,
     SubscriberId, SubscriptionRegistry,
@@ -55,15 +54,6 @@ fn snapshot(n: i64) -> Arc<StateBundleSnapshot> {
         regular: Arc::new(regular),
         precise: Arc::new(precise),
     })
-}
-fn legacy(state: Arc<StateBundleSnapshot>) -> CombinedSnapshot {
-    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        1,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [ManagerInstanceSnapshot::new(7, settings(), false, state)],
-    )))
 }
 struct Bus {
     schemas: Arc<RwLock<SchemaRegistry>>,
@@ -275,16 +265,6 @@ fn bench(c: &mut Criterion) {
                 .unwrap();
             bus.commit(&bytes.lock().unwrap(), true);
         })
-    });
-    end.bench_function("legacy", |bencher| {
-        bencher.iter_batched(
-            || legacy(a.clone()),
-            |snap| {
-                black_box(vosu::api::v2::encode(&snap).unwrap());
-                black_box(vosu::api::precise::encode(&snap).unwrap());
-            },
-            BatchSize::SmallInput,
-        )
     });
     end.finish();
     api_e2e::bench(c, "end_to_end", "api_frame");

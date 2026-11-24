@@ -1,4 +1,4 @@
-//! Real osu! ConcurrentPlugin over the host, B1 and injected process memory.
+//! Real osu! ConcurrentPlugin over the ABI host, bus and injected process memory.
 #![cfg(feature = "test-harness")]
 #[path = "osu_plugin/support.rs"]
 mod support;
@@ -9,7 +9,6 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use support::*;
-use vosu_osu::bridge_b1::B1Phase;
 
 #[test]
 fn real_manifest_registers_its_namespace_schema() {
@@ -17,48 +16,26 @@ fn real_manifest_registers_its_namespace_schema() {
     harness
         .host
         .process_appeared(Harness::record(harness.pids[0], &[]));
-    harness
-        .sink
-        .until(WAIT, |events| !events.published.is_empty());
+    let handle = session_handle(&harness);
+    eventually(|| namespace(&harness, handle, "vosu.osu").is_some());
     assert_dispatches_ok();
 }
 
 #[test]
-fn stable_session_b1_settings_and_exit() {
-    let harness = Harness::new("test.osu.p6.stable", 0x6a00_0000, 1);
+fn stable_session_settings_and_exit() {
+    let harness = Harness::new("vosu.osu", 0x6a00_0000, 1);
     let pid = harness.pids[0];
     harness.host.process_appeared(Harness::record(pid, &[]));
-    harness.sink.until(WAIT, |events| {
-        !events.published.is_empty()
-            && events
-                .phases
-                .values()
-                .any(|phases| phases.contains(&B1Phase::Reading))
-    });
-    let key = *harness
-        .sink
-        .events
-        .lock()
-        .unwrap()
-        .published
-        .keys()
-        .next()
-        .unwrap();
-    {
-        let events = harness.sink.events.lock().unwrap();
-        assert!(events.attached.contains(&key));
-        let phases = &events.phases[&key];
-        assert_eq!(phases.first(), Some(&B1Phase::ResolvingOffsets));
-        assert!(phases.contains(&B1Phase::Reading));
-        let order = &events.order[&key];
-        assert!(order.attached.unwrap() < order.resolving.unwrap());
-        assert!(order.resolving.unwrap() < order.first_publish.unwrap());
-        assert!(order.first_publish.unwrap() < order.reading.unwrap());
-        assert!(
-            order.starting.is_none(),
-            "stable has no StartingReader phase"
-        );
-    }
+    let handle = session_handle(&harness);
+    eventually(|| namespace(&harness, handle, "vosu.osu").is_some());
+    assert!(
+        harness
+            .host
+            .state()
+            .store
+            .current(vosu_core::state::SessionKey(handle))
+            .is_some()
+    );
     assert!(harness.memory.reads.load(Ordering::Relaxed) > 0);
     harness.dispatch(&harness.apply(273.0));
     eventually(|| {
@@ -66,20 +43,22 @@ fn stable_session_b1_settings_and_exit() {
             .is_some_and(|settings| settings.poll_rate == 273.0)
     });
     harness.host.process_exited(pid);
-    harness
-        .sink
-        .until(WAIT, |events| events.detached.contains(&key));
+    eventually(|| {
+        harness
+            .host
+            .state()
+            .store
+            .current(vosu_core::state::SessionKey(handle))
+            .is_none()
+    });
     eventually(|| vosu_osu::test_support::live_sessions() == 0);
     harness.host.destroy_all(WAIT);
-    let events = harness.sink.events.lock().unwrap();
-    assert!(events.attached.is_empty());
-    assert!(!events.late_publish);
     assert_dispatches_ok();
 }
 
 #[test]
-fn debug_clients_decline_without_b1() {
-    let harness = Harness::new("test.osu.p6.decline", 0x6a00_0100, 2);
+fn debug_clients_decline_without_publication() {
+    let harness = Harness::new("vosu.osu", 0x6a00_0100, 2);
     harness
         .host
         .process_appeared(Harness::record(harness.pids[0], &["--debug-client-id=2"]));
@@ -94,26 +73,27 @@ fn debug_clients_decline_without_b1() {
             .iter()
             .all(|reason| *reason == vosu_plugin_api::DetachReason::Declined)
     );
+    assert!(
+        harness
+            .host
+            .api_state_source()
+            .sessions()
+            .unwrap()
+            .is_empty()
+    );
     harness.host.destroy_all(WAIT);
-    let events = harness.sink.events.lock().unwrap();
-    assert!(events.attached.is_empty());
-    assert!(events.phases.is_empty());
-    assert!(events.published.is_empty());
-    assert!(events.detached.is_empty());
     assert_eq!(vosu_osu::test_support::live_sessions(), 0);
     assert_dispatches_ok();
 }
 
 #[test]
 fn concurrent_plugin_stress_four_workers_eight_threads() {
-    let harness = Arc::new(Harness::new("test.osu.p6.stress", 0x6a00_0200, 32));
+    let harness = Arc::new(Harness::new("vosu.osu", 0x6a00_0200, 32));
     let started = Instant::now();
     for &pid in &harness.pids {
         harness.host.process_appeared(Harness::record(pid, &[]));
     }
-    harness
-        .sink
-        .until(WAIT, |events| events.published.len() == 32);
+    eventually(|| HANDLES.lock().unwrap().len() == 32);
     eventually(|| {
         harness
             .memories
@@ -198,14 +178,18 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
     for &pid in &harness.pids {
         harness.host.process_exited(pid);
     }
-    harness
-        .sink
-        .until(WAIT, |events| events.attached.is_empty());
     eventually(|| vosu_osu::test_support::live_sessions() == 0);
     let destroy = Instant::now();
+    assert!(
+        harness
+            .host
+            .api_state_source()
+            .sessions()
+            .unwrap()
+            .is_empty()
+    );
     harness.host.destroy_all(WAIT);
     assert!(destroy.elapsed() < WAIT, "destroy exceeded ABI grace");
-    assert!(!harness.sink.events.lock().unwrap().late_publish);
     assert_dispatches_ok();
     assert!(
         PEAK.load(Ordering::Relaxed) > 1,
@@ -268,21 +252,19 @@ fn stable_fixture_session_publishes_every_namespace_within_5s() {
 }
 
 #[test]
-fn no_b1_sink_still_publishes_to_bus() {
-    let mut harness = Harness::new("vosu.osu", 0x6a00_0a00, 1);
-    harness.remove_b1();
+fn capture_publishes_without_root_control_inputs() {
+    let harness = Harness::new("vosu.osu", 0x6a00_0a00, 1);
     harness
         .host
         .process_appeared(Harness::record(harness.pids[0], &[]));
     let handle = session_handle(&harness);
     eventually(|| namespace(&harness, handle, "vosu.osu").is_some());
-    assert!(harness.sink.events.lock().unwrap().published.is_empty());
     assert!(harness.memory.reads.load(Ordering::Relaxed) > 0);
     assert_dispatches_ok();
 }
 
 #[test]
-fn bus_demand_unions_with_hub_demand() {
+fn precise_abi_demand_tracks_gameplay_and_releases_on_unsubscribe() {
     use vosu_plugin_api::Selector;
     use vosu_plugin_testkit::subscriber::{SubscribeCommand, SubscriberEvent};
     let harness = Harness::new("vosu.osu", 0x6a00_0b00, 1);
@@ -340,15 +322,17 @@ fn bus_demand_unions_with_hub_demand() {
         !demand().unwrap().precise,
         "gameplay lane stays dormant in menu"
     );
-    harness
-        .sink
-        .inputs
-        .send_modify(|inputs| inputs.demand.regular = true);
-    eventually(|| demand().is_some_and(|demand| demand.regular));
     harness.memory.set_status(2);
     eventually(|| demand().is_some_and(|demand| demand.precise && demand.regular));
     harness.memory.set_status(0);
     eventually(|| demand().is_some_and(|demand| !demand.precise && demand.regular));
+    commands
+        .try_send(SubscribeCommand {
+            session: Some(handle),
+            selectors: vec![],
+        })
+        .unwrap();
+    eventually(|| demand().is_some_and(|demand| !demand.precise && !demand.regular));
     assert_dispatches_ok();
 }
 
@@ -376,10 +360,7 @@ fn focus_foreground_sets_session_focused() {
 }
 
 #[test]
-fn bus_error_selection_controls_collection_but_not_legacy_encoder_flags() {
-    use vosu::api::{
-        self, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
-    };
+fn bus_error_selection_controls_collection_without_extension_flags() {
     use vosu_plugin_api::Selector;
     use vosu_plugin_testkit::subscriber::{SubscribeCommand, SubscriberEvent};
     let harness = Harness::new("vosu.osu", 0x6a00_0d00, 1);
@@ -423,46 +404,13 @@ fn bus_error_selection_controls_collection_but_not_legacy_encoder_flags() {
     select("vosu.osu", "/play/hitOffsets");
     eventually(|| collecting() == Some(true));
     harness.memory.set_status(2);
-    harness.sink.until(WAIT, |events| {
-        events
-            .latest
-            .values()
-            .any(|state| state.precise.status == 2)
+    eventually(|| {
+        namespace(&harness, handle, "vosu.osu")
+            .is_some_and(|value| value["session"]["state"]["number"] == 2)
     });
-    let (key, state, settings) = {
-        let events = harness.sink.events.lock().unwrap();
-        let (&key, state) = events.latest.iter().next().unwrap();
-        (key, state.clone(), events.identified[&key].1.clone())
-    };
-    // Encode an actual B1 publication while bus collection is enabled. The
-    // positive legacy-enabled cases prevent empty fixture data making this
-    // omission check vacuous; neither encoder may infer flags from collection.
-    for enabled in [false, true, false] {
-        let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-            1,
-            Some(pid),
-            true,
-            ApiRuntimeSettings {
-                enable_hit_offsets: enabled,
-                enable_mania_key_hit_errors: enabled,
-                ..Default::default()
-            },
-            [ManagerInstanceSnapshot::new(
-                key.pid,
-                settings.clone(),
-                false,
-                state.clone(),
-            )],
-        )));
-        let precise: serde_json::Value =
-            serde_json::from_slice(&api::precise::encode(&snapshot).unwrap()).unwrap();
-        let v2: serde_json::Value =
-            serde_json::from_slice(&api::v2::encode(&snapshot).unwrap()).unwrap();
-        for field in ["hitOffsets", "keyHitErrors"] {
-            assert_eq!(precise.get(field).is_some(), enabled, "precise {field}");
-            assert_eq!(v2["play"].get(field).is_some(), enabled, "v2 {field}");
-        }
-    }
+    // The real producer retains accurate histories while the permanent adapter
+    // views, not a root snapshot or flag, decide the frozen wire contract.
+    assert_eq!(collecting(), Some(true));
     for pointer in ["/play", ""] {
         select("vosu.status", "/status");
         eventually(|| collecting() == Some(false));

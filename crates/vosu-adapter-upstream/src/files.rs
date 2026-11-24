@@ -8,6 +8,9 @@ use vosu_surface::{
     state::{IdentifiedSession, SessionTarget},
 };
 
+mod tool_context;
+pub use tool_context::ToolContext;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
     Background,
@@ -57,6 +60,19 @@ pub struct Selection {
     pub(crate) chart: Option<String>,
 }
 impl Provider {
+    /// Report metadata for one identified occurrence, never a new focus read.
+    pub fn client_version(&self, session: &str) -> Result<String, FileError> {
+        let requester = self.requester.as_ref().ok_or(FileError::NotReady)?;
+        let capture = requester
+            .capture(
+                SessionTarget::Id(session.into()),
+                &crate::view::selectors(&["/settings/client/version"]),
+            )
+            .map_err(|_| FileError::NotReady)?;
+        crate::view::decode::<Option<String>>(&capture, "/settings/client/version")
+            .map(|value| value.unwrap_or_default())
+            .map_err(|_| FileError::NotReady)
+    }
     pub fn new(requester: Arc<dyn BundledRequester>) -> Self {
         Self {
             requester: Some(requester),

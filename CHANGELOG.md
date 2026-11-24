@@ -4,6 +4,15 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+
+- Delete both interim typed-snapshot bridge directions and root adapter models.
+  Capture, settings, resource/action ownership and precise ABI demand stay
+  game-plugin-owned; selector demand is composed without a forwarding task.
+- Preserve tool context with adapter-selected facts and host-only confined
+  display metadata. Dashboard/report metadata now comes from host sessions;
+  the obsolete "resolving offsets" side-channel label is replaced by the
+  host lifecycle states "starting reader" and "reading".
+
 - Mount gosuMemory, streamCompanion and upstream v2/precise HTTP/WebSocket
   projections through their explicit bundled plugin registrations and permanent
   surface API. Share latest-only encodings and independent selector demand;

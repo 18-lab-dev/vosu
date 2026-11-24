@@ -80,18 +80,18 @@ pub fn seeded(original: &oracle::Input) -> oracle::Input {
     input
 }
 
-pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value) {
+pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value, bus: &Value) {
+    let source = &bus["vosu.osu"];
     assert_ne!(v2["folders"]["game"], v2["folders"]["songs"]);
     for group in ["folders", "files", "directPath"] {
-        assert!(
-            v2[group]
-                .as_object()
-                .unwrap()
-                .values()
-                .all(|v| v.as_str().is_some_and(|s| !s.is_empty() && s != ".")),
-            "{}: empty path source {group}",
-            input.id
-        );
+        for (key, value) in v2[group].as_object().unwrap() {
+            if input.source.as_deref() == Some("lazer") && matches!((group, key.as_str()), ("folders", "skin") | ("directPath", "skinFolder")) {
+                assert_eq!(value, "", "pinned lazer skin echo remains empty");
+                assert!(!input.services.global["skinFolder"].as_str().unwrap().is_empty(), "the rejected synthetic skin source must exist");
+            } else {
+                assert!(value.as_str().is_some_and(|s| !s.is_empty() && s != "."), "{}: empty path source {group}/{key}", input.id);
+            }
+        }
     }
     assert!(v2["beatmap"]["time"]["lastObject"].as_f64().unwrap() > 2500.0);
     assert!(!v2["rankedPlay"].is_null());
@@ -105,20 +105,20 @@ pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value) {
     }
     if input.id == "lazer-play-mania-cl" {
         assert!(
-            !precise["keyHitErrors"]["press"]
+            !source["play"]["keyHitErrors"]["press"]
                 .as_array()
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            precise["keyHitErrors"]["press"]
+            source["play"]["keyHitErrors"]["press"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .all(|column| !column.as_array().unwrap().is_empty()),
             "§7 row 251 must exercise populated mania key errors"
         );
-        assert_eq!(precise["keys"]["all"].as_array().unwrap().len(), 4);
+        assert_eq!(source["keys"]["all"].as_array().unwrap().len(), 4);
         let counts: std::collections::BTreeSet<_> = ["geki", "300", "katu", "100", "50", "0"]
             .map(|key| v2["play"]["hits"][key].as_u64().unwrap())
             .into();
@@ -130,8 +130,8 @@ pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value) {
             !v2["leaderboard"].as_array().unwrap().is_empty(),
             "§7 row 261 requires a populated leaderboard"
         );
-        assert!(!precise["hitOffsets"].as_array().unwrap().is_empty());
-        assert_ne!(precise["hitOffsets"], precise["hitErrors"]);
+        assert!(!source["play"]["hitOffsets"].as_array().unwrap().is_empty());
+        assert_ne!(source["play"]["hitOffsets"], precise["hitErrors"]);
     }
     if matches!(
         input.id.as_str(),
@@ -144,6 +144,6 @@ pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value) {
         );
     }
     if input.mode == 2 {
-        assert!(!precise["catcher"].is_null());
+        assert!(!source["play"]["catcher"].is_null());
     }
 }

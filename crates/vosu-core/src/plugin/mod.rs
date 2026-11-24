@@ -95,7 +95,7 @@ pub use host::resource_requests::{
     ResourceRequestError, ResourceRequests,
 };
 pub use host::resources::RootCapability;
-pub use host::{PluginHost, ProcessRecord};
+pub use host::{DiagnosticSession, PluginHost, ProcessRecord};
 pub use host_services::PluginHostHandler;
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{

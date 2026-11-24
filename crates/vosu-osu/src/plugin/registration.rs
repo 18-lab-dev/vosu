@@ -2,7 +2,7 @@
 use super::*;
 /// Prepare the action target before making it public through SESSION_IDENTIFY.
 /// B2 settings/control delivery remains serialized by PluginState; no host call
-/// runs under that lock. Capture/B1 and lazer resolution start only after the
+/// runs under that lock. Capture and lazer resolution start only after the
 /// host accepts identification. Rejection rolls back the prepared session.
 #[expect(
     clippy::too_many_arguments,
@@ -95,7 +95,7 @@ where
             let _ = session.import_context.set((attached, context));
         }
     }
-    session.configure_publication(Arc::clone(host), runtime_handle);
+    session.configure_publication(Arc::clone(host));
     let stream_ids = state
         .lock()
         .expect("plugin state mutex poisoned")
@@ -196,7 +196,6 @@ where
         });
     }
     if registered {
-        let sink = vosu_surface::current::<B1Event, B1Inputs>();
         let warn = log_warn(host);
         let error = log_error(host);
         let session = {
@@ -205,7 +204,7 @@ where
         };
         if let Some(session) = session {
             runtime_handle.spawn(async move {
-                session.start_capture(sink, warn, error).await;
+                session.start_capture(warn, error).await;
             });
         }
     }

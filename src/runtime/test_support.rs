@@ -87,19 +87,7 @@ pub async fn start_test_production_composition(
         options.settings_root,
         options.cache_root.clone(),
     ));
-    let snapshots = Arc::new(SnapshotProviders::new(
-        Arc::new(ManagerSnapshot::not_ready(
-            0,
-            ApiRuntimeSettings {
-                enable_key_overlay: true,
-                enable_mania_key_hit_errors: false,
-                enable_hit_offsets: false,
-            },
-        )),
-        Arc::new(ProductionSnapshotEncoder),
-    ));
     let beatmap = Arc::new(RuntimeBeatmap {
-        snapshots: snapshots.snapshot_manager(),
         counters: Arc::clone(&counters),
     });
     let counter_facade = Arc::new(RuntimeCounterFacade {
@@ -164,9 +152,9 @@ pub async fn start_test_production_composition(
         Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
         Arc::new(RuntimeReportInput {
             config: Arc::clone(&options.config),
-            snapshots: snapshots.snapshot_manager(),
+            plugins: Arc::clone(&plugins),
+            files: adapters.files.clone(),
             counters: Arc::clone(&counters),
-            lifecycle: Arc::default(),
             logs: options.logs_root,
         }),
         options.updater,

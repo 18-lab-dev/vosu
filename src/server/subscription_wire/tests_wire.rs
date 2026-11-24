@@ -111,7 +111,7 @@ proptest! {
         let mut arena = FrameArena::default();
         let bytes = arena.update(revision, &current, &changed).unwrap();
         let present: Vec<_> = changed.iter().filter_map(|&id| current[id].as_ref().map(|v| (id, v))).collect();
-        let expected = crate::api::v2::encode_dto(&(1_u8, revision, present, [1_usize])).unwrap();
+        let expected = Bytes::from(vosu_adapter_support::json::encode(&(1_u8, revision, present, [1_usize]), 0).unwrap());
         prop_assert_eq!(bytes, expected);
         prop_assert!(changed.contains(&(count - 1)));
     }

@@ -70,8 +70,8 @@ including independent key slots when its schema emits them. Filtered feeds
 need not request omitted histories. HTTP is a read, never a subscription.
 Notifications identify relevant revisions; they do not transport a legacy
 snapshot. A typed adapter-owned view decodes only changed selected components,
-reuses immutable histories/strings, and never rehydrates RegularState,
-StateBundleSnapshot or CombinedSnapshot across this interface.
+reuses immutable histories/strings, and never rehydrates typed game-state
+snapshots across this interface.
 
 Roster foreground is independent of the Focus rule. Windows compatibility
 `game.focused` is OR over **all identified, owned osu! sessions**, including

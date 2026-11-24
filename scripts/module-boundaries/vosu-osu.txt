@@ -2,11 +2,7 @@ plugin -> classify
 plugin -> memory
 plugin -> scan
 plugin -> session
-bridge_b1 -> capture
-bridge_b1 -> settings
-plugin -> bridge_b1
 plugin -> settings
-session -> bridge_b1
 session -> capture
 session -> settings
 session -> scan
@@ -14,7 +10,6 @@ publish -> project
 session -> demand
 session -> project
 session -> publish
-publish -> bridge_b1
 plugin -> resources
 publish -> resources
 plugin -> actions
@@ -22,3 +17,7 @@ actions -> session
 plugin -> publish
 plugin -> demand
 publish -> demand
+fixtures -> demand
+fixtures -> project
+fixtures -> publish
+fixtures -> resources

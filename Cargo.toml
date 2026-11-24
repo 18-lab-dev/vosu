@@ -143,6 +143,7 @@ serde-value = "=0.7.0"
 vosu-proptest = { path = "crates/vosu-proptest" }
 vosu-core = { path = "crates/vosu-core", features = ["bench-harness"] }
 vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", features = ["bench-harness"] }
+vosu-osu = { path = "crates/vosu-osu", features = ["bench-harness"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [[bench]]

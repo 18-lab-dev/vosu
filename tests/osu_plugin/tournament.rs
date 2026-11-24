@@ -111,8 +111,7 @@ fn stable_manager_priority_aggregate_all_sessions_and_generation_replacement() {
 fn real_tourney_subscription_drives_and_releases_only_spectator_sampling() {
     use vosu_plugin_api::Selector;
     use vosu_plugin_testkit::subscriber::SubscribeCommand;
-    let mut harness = Harness::new("vosu.osu", 0x6a00_1200, 3);
-    harness.remove_b1();
+    let harness = Harness::new("vosu.osu", 0x6a00_1200, 3);
     let [manager, spectator, ordinary] = harness.pids[..].try_into().unwrap();
     for (pid, args) in [
         (manager, vec!["--tournament"]),

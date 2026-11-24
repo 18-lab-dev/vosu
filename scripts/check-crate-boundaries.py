@@ -96,6 +96,22 @@ def check(metadata, rules_path=RULES):
     names, edges = build_graph(metadata)
     allowed_crates, allowed_edges = load_rules(rules_path)
     errors = []
+    # M4a is a hard architectural boundary, not an allowlist that --update can
+    # accidentally bless. Test-only producer/host fixtures are permitted.
+    forbidden = {"vosu-core", "vosu-osu", "vosu-osu-state", "vosu-osu-reader", "vosu-sys"}
+    for source, package in workspace_packages(metadata).items():
+        for dependency in package["dependencies"]:
+            target = dependency["name"]
+            if "path" not in dependency or target not in names:
+                continue
+            if source == "vosu-osu" and target == "vosu-surface":
+                errors.append("M4a: vosu-osu -> vosu-surface revives the removed snapshot bridge")
+            if dependency.get("kind") == "dev":
+                continue
+            if source == "vosu-adapter-support" and target != "vosu-osu-model":
+                errors.append(f"M4a: wire support cannot depend on {target}")
+            elif source.startswith("vosu-adapter-") and target in forbidden:
+                errors.append(f"M4a: production adapter edge {source} -> {target} is forbidden")
     for name in sorted(names - allowed_crates):
         errors.append(
             f"{rules_path.name}: workspace crate {name!r} is not listed; add it (with its "

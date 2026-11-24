@@ -1,5 +1,5 @@
-//! Session-local union of legacy, direct bus and tournament aggregate demand.
-use tokio::{runtime::Handle, sync::watch};
+//! Session-local direct bus and tournament aggregate demand; no forwarding task.
+use tokio::sync::watch;
 use vosu_osu_state::SubscriptionDemand;
 
 /// Aggregate precision is demanded only by selectors covering precise client
@@ -33,21 +33,38 @@ pub(crate) fn tournament_lanes(
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct BusDemand {
-    pub lanes: SubscriptionDemand,
     pub collect_errors: bool,
 }
 /// One instance-owned roster input/output pair. The roster resets its output on
 /// unsubscribe, manager loss and detach; SessionDemand also resets on shutdown.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct TournamentDemand {
     requested: std::sync::Arc<std::sync::atomic::AtomicU8>,
-    effective: watch::Sender<SubscriptionDemand>,
+    effective: std::sync::Arc<std::sync::Mutex<EffectiveDemand>>,
 }
-impl Default for TournamentDemand {
-    fn default() -> Self {
-        Self {
-            requested: Default::default(),
-            effective: watch::channel(SubscriptionDemand::default()).0,
+#[derive(Default)]
+struct EffectiveDemand {
+    direct: SubscriptionDemand,
+    tournament: SubscriptionDemand,
+    cancelled: bool,
+    out: Option<watch::Sender<SubscriptionDemand>>,
+}
+impl EffectiveDemand {
+    fn publish(&self) {
+        if let Some(out) = &self.out {
+            let value = if self.cancelled {
+                SubscriptionDemand::default()
+            } else {
+                self.direct.union(self.tournament)
+            };
+            out.send_if_modified(|current| {
+                if *current == value {
+                    false
+                } else {
+                    *current = value;
+                    true
+                }
+            });
         }
     }
 }
@@ -67,64 +84,31 @@ impl TournamentDemand {
         }
     }
     pub(crate) fn set_effective(&self, demand: SubscriptionDemand) {
-        self.effective.send_if_modified(|current| {
-            if *current == demand {
-                false
-            } else {
-                *current = demand;
-                true
-            }
-        });
+        let mut effective = self.effective.lock().unwrap();
+        effective.tournament = demand;
+        effective.publish();
     }
 }
 pub struct SessionDemand {
     bus: watch::Sender<BusDemand>,
     out: watch::Receiver<SubscriptionDemand>,
-    total: watch::Sender<SubscriptionDemand>,
     pub(crate) tournament: TournamentDemand,
-    task: tokio::task::JoinHandle<()>,
-    alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl Default for SessionDemand {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl SessionDemand {
-    pub fn new(mut hub: watch::Receiver<SubscriptionDemand>, rt: &Handle) -> Self {
-        let (bus, mut bus_rx) = watch::channel(BusDemand::default());
-        let (out, receiver) = watch::channel(*hub.borrow_and_update());
-        let total = out.clone();
+    pub fn new() -> Self {
+        let (bus, _) = watch::channel(BusDemand::default());
+        let (out, receiver) = watch::channel(SubscriptionDemand::default());
         let tournament = TournamentDemand::default();
-        let mut aggregate = tournament.effective.subscribe();
-        let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let task_alive = alive.clone();
-        let task = rt.spawn(async move {
-            let mut hub_open = true;
-            loop {
-                tokio::select! {
-                    changed = hub.changed(), if hub_open => { hub_open = changed.is_ok(); }
-                    changed = bus_rx.changed() => { if changed.is_err() { break; } }
-                    changed = aggregate.changed() => { if changed.is_err() { break; } }
-                }
-                let value = (*hub.borrow_and_update())
-                    .union(bus_rx.borrow_and_update().lanes)
-                    .union(*aggregate.borrow_and_update());
-                out.send_if_modified(|current| {
-                    if !task_alive.load(std::sync::atomic::Ordering::Acquire) {
-                        return false;
-                    }
-                    if *current == value {
-                        false
-                    } else {
-                        *current = value;
-                        true
-                    }
-                });
-            }
-        });
+        tournament.effective.lock().unwrap().out = Some(out);
         Self {
             bus,
             out: receiver,
-            total,
             tournament,
-            task,
-            alive,
         }
     }
     pub fn set_bus(&self, regular: bool, precise: bool) {
@@ -134,25 +118,23 @@ impl SessionDemand {
         self.out.clone()
     }
     pub(crate) fn set_bus_collection(&self, regular: bool, precise: bool, collect_errors: bool) {
-        self.bus.send_replace(BusDemand {
-            lanes: SubscriptionDemand {
-                regular,
-                precise,
-                ..SubscriptionDemand::default()
-            },
-            collect_errors,
-        });
+        self.bus.send_replace(BusDemand { collect_errors });
+        let mut effective = self.tournament.effective.lock().unwrap();
+        effective.direct = SubscriptionDemand {
+            regular,
+            precise,
+            ..SubscriptionDemand::default()
+        };
+        effective.publish();
     }
     pub(crate) fn bus_receiver(&self) -> watch::Receiver<BusDemand> {
         self.bus.subscribe()
     }
     pub(crate) fn cancel(&self) {
-        self.alive
-            .store(false, std::sync::atomic::Ordering::Release);
         self.tournament.request(false, false);
-        self.tournament.set_effective(SubscriptionDemand::default());
-        self.total.send_replace(SubscriptionDemand::default());
-        self.task.abort();
+        let mut effective = self.tournament.effective.lock().unwrap();
+        effective.cancelled = true;
+        effective.publish();
     }
 }
 impl Drop for SessionDemand {
@@ -181,35 +163,28 @@ mod tests {
         .unwrap();
     }
     #[tokio::test]
-    async fn union_preserves_all_hub_bits_and_removes_bus_only_bits() {
-        let hub_value = SubscriptionDemand {
-            regular: true,
-            gameplay_precise: true,
-            ..SubscriptionDemand::default()
-        };
-        let (hub, receiver) = watch::channel(hub_value);
-        let demand = SessionDemand::new(receiver, &Handle::current());
+    async fn precise_bus_and_tournament_demand_release_independently_and_cancel_synchronously() {
+        let demand = SessionDemand::new();
         let mut out = demand.receiver();
-        assert_eq!(*out.borrow_and_update(), hub_value);
         demand.set_bus(false, true);
         next(
             &mut out,
             SubscriptionDemand {
                 precise: true,
-                ..hub_value
+                ..Default::default()
             },
         )
         .await;
-        hub.send_replace(SubscriptionDemand {
-            gameplay_regular: true,
-            ..SubscriptionDemand::default()
+        demand.tournament.set_effective(SubscriptionDemand {
+            regular: true,
+            ..Default::default()
         });
         next(
             &mut out,
             SubscriptionDemand {
+                regular: true,
                 precise: true,
-                gameplay_regular: true,
-                ..SubscriptionDemand::default()
+                ..Default::default()
             },
         )
         .await;
@@ -217,13 +192,20 @@ mod tests {
         next(
             &mut out,
             SubscriptionDemand {
-                gameplay_regular: true,
-                ..SubscriptionDemand::default()
+                regular: true,
+                ..Default::default()
             },
         )
         .await;
-        drop(demand);
+        demand.cancel();
         assert_eq!(*out.borrow_and_update(), SubscriptionDemand::default());
+        demand.set_bus(true, true);
+        demand.tournament.set_effective(SubscriptionDemand {
+            precise: true,
+            ..Default::default()
+        });
+        assert_eq!(*out.borrow_and_update(), SubscriptionDemand::default());
+        drop(demand);
         tokio::time::timeout(Duration::from_secs(5), out.changed())
             .await
             .unwrap()

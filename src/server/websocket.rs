@@ -1,8 +1,6 @@
 //! Transport-independent WebSocket routing, publication, and connection lifecycle.
 
 use std::{
-    any::Any,
-    cell::RefCell,
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     sync::{
@@ -134,59 +132,6 @@ impl SharedProjections {
         }
         payload
     }
-}
-
-thread_local! {
-    /// Slots of the broadcast pass running on this thread, if any.
-    static PASS_LOCAL: RefCell<Option<Vec<Box<dyn Any>>>> = const { RefCell::new(None) };
-}
-
-/// Opens pass-local storage for one synchronous broadcast pass. Dropping it
-/// drops everything stored during the pass, so nothing derived from the
-/// captured snapshot outlives the pass, even when an encoder panics.
-pub(crate) struct BroadcastPass {
-    previous: Option<Vec<Box<dyn Any>>>,
-}
-
-impl BroadcastPass {
-    pub(crate) fn begin() -> Self {
-        Self {
-            previous: PASS_LOCAL.with(|slots| slots.replace(Some(Vec::new()))),
-        }
-    }
-}
-
-impl Drop for BroadcastPass {
-    fn drop(&mut self) {
-        let ended = PASS_LOCAL.with(|slots| slots.replace(self.previous.take()));
-        // Released after the borrow ends: a stored value's destructor may
-        // itself touch pass-local storage.
-        drop(ended);
-    }
-}
-
-/// Runs `f` with the current broadcast pass's slot of type `T`, which starts
-/// as `None`. Every projection in a pass is encoded from the same captured
-/// snapshot, so a `StateSnapshot` may keep work derived from that snapshot
-/// here for the next client; it must still check that a stored value belongs
-/// to the snapshot it is encoding. Returns `None` outside a pass, where no
-/// such scope exists, and on reentrant use, which must not alias the slot.
-pub(crate) fn with_pass_local<T: 'static, R>(f: impl FnOnce(&mut Option<T>) -> R) -> Option<R> {
-    PASS_LOCAL.with(|slots| {
-        let mut slots = slots.try_borrow_mut().ok()?;
-        let slots = slots.as_mut()?;
-        let position = match slots.iter().position(|slot| slot.is::<Option<T>>()) {
-            Some(position) => position,
-            None => {
-                slots.push(Box::new(None::<T>));
-                slots.len() - 1
-            }
-        };
-        let slot = slots[position]
-            .downcast_mut::<Option<T>>()
-            .expect("slot type was checked");
-        Some(f(slot))
-    })
 }
 
 /// One immutable state generation. Every projection in one broadcast pass is
@@ -756,7 +701,6 @@ impl WebSocketHub {
                         .map(|bytes| (generation, bytes));
                 }
                 let mut projections = SharedProjections::default();
-                let _pass = BroadcastPass::begin();
                 for client in clients.values() {
                     if !client.publishes_state
                         || client.state.load(Ordering::Acquire) != CLIENT_OPEN

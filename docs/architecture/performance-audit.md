@@ -7,6 +7,9 @@ tags: [architecture, performance, memory, profiling]
 
 # Performance and memory audit
 
+This is a historical audit of the pre-M4a snapshot architecture. Its old source
+identifiers and measurements are not current ownership or post-cutover evidence.
+
 
 ## Audit implementation status — 2026-09-05
 
@@ -104,7 +107,7 @@ Important limitations:
 
 **Current mechanism.** [`StatePublicationQueue`](../../src/runtime/worker.rs) retains at most one pending immutable snapshot per PID. A publication from the same generation replaces the pending value, while a late lower generation cannot replace a newer one. [`run_state_supervisor`](../../src/runtime/worker.rs) drains pending PIDs in deterministic order, rechecks each PID/generation against the desired lifecycle state, and emits one atomic manager snapshot for the batch. Focused regressions cover same-generation replacement, independent PIDs, deterministic ordering, and higher-generation precedence.
 
-The supervisor still reconstructs `ready` and `desired` maps on each loop; `publish_manager_snapshot` creates another ready vector, semantic map, and instance values; [`ManagerSnapshot::new`](../../src/api/snapshot.rs) collects another ordered map. The latest-only handoff removes queue-age and unbounded-retention latency, but this reconstruction may still allocate more than necessary under high publication rates.
+The supervisor still reconstructs `ready` and `desired` maps on each loop; `publish_manager_snapshot` creates another ready vector, semantic map, and instance values; `ManagerSnapshot::new` (historical implementation) collects another ordered map. The latest-only handoff removes queue-age and unbounded-retention latency, but this reconstruction may still allocate more than necessary under high publication rates.
 
 **Safe direction.** Retain lifecycle-derived ordered metadata between lifecycle/config changes and update only state `Arc`/revision fields where measurements show that reconstruction matters.
 
@@ -186,7 +189,7 @@ Lower-priority, cold/control-plane candidates should stay behind the roadmap abo
 
 ## Reviewed designs that should not be changed without evidence
 
-- **Immutable atomic snapshots and encoding caches.** [`SnapshotManager`](../../src/api/snapshot.rs) publishes coherent `Arc` snapshots, and unfiltered HTTP/WebSocket consumers share cached `Bytes`. A `Bytes` clone is refcount work, not a payload copy. Do not replace this with mutable independently loaded schema pieces.
+- **Immutable atomic snapshots and encoding caches.** `SnapshotManager` (historical implementation) publishes coherent `Arc` snapshots, and unfiltered HTTP/WebSocket consumers share cached `Bytes`. A `Bytes` clone is refcount work, not a payload copy. Do not replace this with mutable independently loaded schema pieces.
 - **Bounded worker and client flow.** [`spawn_state_worker_with_clock`](../../crates/vosu-osu-state/src/worker.rs) uses one-slot regular backpressure and a latest-only precise slot; [`WebSocketHub`](../../src/server/websocket.rs) uses a one-frame state slot, a bounded control channel, and generation acknowledgements. Keep these bounds even if adjacent unbounded queues are corrected.
 - **Calculator separation and cache identity.** [`LiveStateCalculationBackend`](../../crates/vosu-osu-state/src/state_backend.rs) is already offloaded and serialized; parsed maps/graphs are shared with `Arc`, and [`BeatmapCache`](../../crates/vosu-osu-calc/src/beatmap/cache.rs) validates source identity, checksum, mode, mods, scoring, and rate. Do not merge it with the legacy endpoint or weaken invalidation to obtain a cache hit.
 - **Native read and platform boundaries.** [`ProcessMemory`](../../crates/vosu-sys/src/process.rs) requires complete-or-error reads; Linux and Windows backends intentionally differ. Keep pointer/length checks, generation validation, and decoding above native syscalls.

@@ -127,7 +127,7 @@ fn arena_frames_match_api_encoding_across_chunk_turnover_and_oversized_frames() 
         let (frame, expected) = if revision.is_multiple_of(2) || previous.len() != len {
             (
                 arena.initial(revision, &current).unwrap(),
-                crate::api::v2::encode_dto(&(0_u8, revision, pairs(&current))).unwrap(),
+                Bytes::from(vosu_adapter_support::json::encode(&(0_u8, revision, pairs(&current)), 0).unwrap()),
             )
         } else {
             let changed: Vec<(u16, Value)> = pairs(&current)
@@ -146,7 +146,7 @@ fn arena_frames_match_api_encoding_across_chunk_turnover_and_oversized_frames() 
                         ids
                     })
                     .unwrap(),
-                crate::api::v2::encode_dto(&(1_u8, revision, changed, removed)).unwrap(),
+                Bytes::from(vosu_adapter_support::json::encode(&(1_u8, revision, changed, removed), 0).unwrap()),
             )
         };
         frames.push((frame, expected));

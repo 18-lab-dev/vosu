@@ -20,7 +20,7 @@ Important constraints visible in the code are:
 - Linux and Windows have different process, memory, path, focus, and update implementations; platform selection is compile-time (`src/process/{linux,windows}.rs`, `src/platform/{linux,windows}.rs`, `crates/vosu-core/src/updater/platform.rs`).
 - Remote reads are fallible and may race the target process. Decoding distinguishes ready, pending/unchanged, unsupported, corrupt, and failed data instead of treating every failure as an empty value (`src/process.rs::ReadStatus`, `src/memory.rs::MemoryReader`).
 - Regular and precise sampling have independent configured cadences, but all state transitions are serialized before publication (`src/state/worker.rs::spawn_state_worker_with_clock`).
-- Public payloads must represent one atomic state point; wire schemas never assemble independently loaded pieces (`src/api.rs`, `src/api/snapshot.rs::SnapshotManager`).
+- Public wire views decode one coherent selected bus image with a resolved session/roster; adapters never load independent root snapshots (`crates/vosu-surface/src/state.rs`, `src/server/bus_provider.rs`).
 - Calculation compatibility has two contracts: state-driven live calculation uses the dedicated calculator crate, while the calculation endpoint follows the legacy rosu-pp-js-compatible builder (`src/calculation/engine.rs`).
 
 ## System context
@@ -49,20 +49,21 @@ flowchart TB
     Discovery --> Plugin[crates/vosu-osu<br/>classification and session lifecycle]
     Plugin --> Process[vosu-plugin-api PlanMemory<br/>core executor over vosu-sys]
     Process --> Readers[crates/vosu-osu-reader<br/>stable and lazer readers]
-    Runtime --> Supervisor[src/runtime/worker.rs and bridge_b1.rs<br/>ProductionStateSupervisor and interim B1]
+    Runtime --> Adapters[Bundled upstream, gosuMemory and streamCompanion adapters]
     Readers --> Workers[crates/vosu-osu-state/src/worker.rs<br/>regular and precise capture]
     Workers --> Reducer[crates/vosu-osu-state/src/bundle<br/>StateBundle]
-    Reducer --> Supervisor
-    Supervisor --> Snapshot[src/api/snapshot.rs<br/>SnapshotManager]
-    Snapshot --> Schemas[src/api/{v1,v2,precise,sc}.rs]
-    Schemas --> Server[src/server/*<br/>Axum HTTP and WebSocket]
+    Reducer --> Publisher[vosu-osu ABI publisher]
+    Publisher --> Bus[vosu-core state bus]
+    Bus --> Surface[vosu-surface coherent capture]
+    Surface --> Adapters
+    Adapters --> Server[src/server HTTP and WebSocket transport]
     Reducer --> Calc[src/calculation/* and<br/>crates/vosu-pp]
     Config --> Runtime
     Runtime --> Update[crates/vosu-core/src/updater/*]
     Runtime --> Desktop[crates/vosu-core/src/desktop/*<br/>tray and login service]
 ```
 
-`src/main.rs` constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `ProductionRuntime` composes configuration, logging, authorization, listeners, hubs, counters, core discovery, required bundled `vosu.osu`, and the interim B1 supervisor. Missing/failed production plugin load/create or absent discovery fails composition; there is no 1.x fallback. Shutdown stops accepts and WebSockets, then stops discovery/foreground polling, destroys plugins (joining their session work), and joins B1 before configuration and logging.
+`src/main.rs` delegates to `ProductionRuntime`, which composes required game/adapter plugins, configuration, listeners and operational services. Missing required registration or discovery fails startup. Shutdown stops discovery/foreground delivery and network consumers, joins adapter chart workers, destroys game sessions, then closes configuration and logging. No typed root snapshot or control fallback remains.
 
 `crates/vosu-core/src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
@@ -103,15 +104,15 @@ checksum-verified payload and game installation remain untouched.
 | Concern | Primary ownership | Main entry points |
 |---|---|---|
 | Startup and process-wide lifecycle | `crates/vosu-core/src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
-| Client discovery, generations, focus | `crates/vosu-core/src/plugin/discovery.rs`, `crates/vosu-osu/src/plugin.rs`, `src/runtime/bridge_b1.rs` | `DiscoveryService`, plugin classification/identification, interim B1 selection/focus |
+| Client discovery, generations, focus | `crates/vosu-core/src/plugin/{discovery,session,focus}.rs`, `crates/vosu-osu/src/plugin.rs` | host-owned lifecycle and Focus rule |
 | Native process access | `src/process.rs`, `src/process/linux.rs`, `src/process/windows.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
 | Signature/offset scanning | `src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
 | Raw client decoding | `src/memory/stable/*`, `src/memory/lazer/*`, `src/memory/snapshot/*` | `MemoryReader`, `StableMemory`, `LazerMemory`, raw snapshots |
 | Capture scheduling and state transitions | `src/state/worker.rs`, `src/state/readers.rs`, `src/state/bundle/*` | `spawn_state_worker`, `StateBundle`, `SnapshotTransition` |
-| Multi-instance publication and focus selection | `src/runtime/worker.rs`, `src/api/snapshot.rs` | `ProductionStateSupervisor`, `publish_manager_snapshot`, `SnapshotManager` |
-| Public schema construction | `src/api/v1.rs`, `src/api/v2.rs`, `src/api/precise.rs`, `src/api/sc.rs` | schema `build`/`encode` functions, `ProductionSnapshotEncoder` |
+| Coherent state publication and selection | `crates/vosu-osu/src/publish.rs`, `crates/vosu-core/src/state/`, `crates/vosu-surface/src/state.rs` | ABI commits and captured selected images |
+| Legacy wire construction | `crates/vosu-adapter-{upstream,gosumemory,streamcompanion}/` | adapter-owned typed views, DTO/direct/filter encoders |
 | HTTP routing and authorization | `src/server/routes.rs`, `src/server/auth.rs`, `src/server/service/*` | `Endpoint`, `RouteProviders`, `ProductionRouteDelegate` |
-| WebSocket publication, subscriptions, and commands | `src/server/websocket.rs`, `src/server/v2_subscription.rs`, `src/server/commands.rs`, `src/runtime/worker.rs` | `WebSocketHub`, `V2SubscriptionHub`, `CommandProcessor`, `WebSocketHubs` |
+| WebSocket publication, subscriptions, and commands | `src/server/{websocket,bus_provider,commands}.rs`, `src/server/api_v1/subscriptions.rs`, `src/runtime/worker.rs` | latest-only hubs, granted connection plans, API-v1 subscriptions and commands |
 | Listener bind/reload/drain | `src/server/runtime.rs` | `ListenerRuntime`, `AxumListenerFactory`, `ListenerOwner` |
 | Live and endpoint calculation | `src/calculation/*`, `crates/vosu-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
 | Filesystem and platform paths | `src/platform.rs`, `src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
@@ -129,7 +130,8 @@ sequenceDiagram
     participant M as Memory readers
     participant W as State worker
     participant R as StateBundle reducer
-    participant P as SnapshotManager
+    participant P as ABI publisher and state bus
+    participant S as Authorized surface capture
     participant A as HTTP and WebSocket APIs
 
     D->>W: identified session generation, offsets ready
@@ -142,8 +144,10 @@ sequenceDiagram
     end
     W->>R: apply accepted regular or precise sample
     R-->>W: immutable StateBundleSnapshot and next context
-    W->>P: PID and generation publication
-    P-->>A: one atomic CombinedSnapshot
+    W->>P: owning session ABI batch
+    A->>S: coherent selected image
+    P-->>S: immutable selected bus values
+    S-->>A: one resolved session, roster and revision vector
     A-->>A: encode v1, stream companion, v2, or precise
 ```
 
@@ -172,19 +176,19 @@ sink. There is no per-publication task or reducer polling timer. Heavy
 PP/progressive calculation runs through the blocking pool, while capture and
 shutdown retain their existing generation checks and bounded lifecycle.
 
-`V2SubscriptionHub::demand` reports the union of established plans' producing lanes, not connection presence. Plans classify decoded pointer subtrees once at compilation. Slow identity/settings/metadata leaves request no acceleration; precise gameplay fields request only precise sampling, regular gameplay fields only regular sampling. Gameplay demand is dormant unless the current read context's status is play (including replay/spectate). The live beatmap clock and precise status can request precise sampling outside play; bass density/session clock/room state can request regular sampling outside play. Only demanded active lanes sleep `min(V2_SUBSCRIPTION_DEBOUNCE, own interval)` (`PollIntervals::{regular_delay,precise_delay}`); other lanes keep their configured interval. Broad parents inherit descendant demand, and disconnect releases that client's demand. The regular reader tags a capture `RegularCaptureContext::api_cadence` only when at least `POLL_RATE` has passed since the previous tagged capture; the reducer applies the same rule to precise publications against `PRECISE_DATA_POLL_RATE`. Each publication carries a `Delivery` (`All`, `Precise`, or `Live`). The stable stall-pause heuristic compares against the last API-cadence play time, so faster sampling cannot report a pause that did not happen; untagged samples may resume but never assert a pause.
+Authorized ABI and bundled-surface subscriptions drive sampling lanes. The game plugin synchronously combines direct and tournament-source demand. Gameplay-only lanes stay dormant outside play; root configuration no longer supplies legacy input flags.
 
-The subscription hub maintains one reference count per producing lane when a selection is established or released. Pending/debounced frames retain their selection's demand; closing or rejecting a second subscribe releases it exactly once. Publications do not rescan or lock client selections to calculate demand. Overlapping pointers count once per plan, while multiple clients retain a lane until its last selection is released.
+Each connection owns a selector plan and schema-local RAII lease. Replacement updates that subscription atomically; disconnect and shutdown release only that lease. API v1 retains independent demand.
 
-Selected-field publication prunes the borrowed V2 response to the union of established plans before materializing JSON or normalizing JavaScript numbers. Unrequested histories and graphs are not serialized. The source cache tracks weak plan identities as well as the publication revision: a newly established plan refreshes the union even without a state change, and a plan added during projection waits for that refresh rather than receiving an incomplete initial frame. Weak identities do not retain closed subscriptions. Full-document pointers still request every field.
+Filtered encoders assemble immutable adapter-owned views from one coherent selected image, preserve legacy filter order and share successful subtrees/bytes within bounded caches. No selected-field v2 subscription transport remains.
 
-The reducer in `src/state/bundle/reducer.rs` applies raw values, retention rules, status transitions, beatmap/gameplay calculation updates, and derives the next read context/capture plan. It emits an immutable `StateBundleSnapshot`. `StatePublicationSink` derives two states per publication: the live state and the API state, which keeps the regular component of the last API-cadence capture (`api_state`). A generation or reset-epoch change goes to API readers at once, so a regular transition and the precise reset it causes stay atomic. `ProductionStateSupervisor` accepts worker publications through a per-PID latest-only slot that carries both states, rejects any PID generation that is no longer desired, and keeps one `ManagerView` per target. It publishes API managers through `SnapshotProviders::publish_api` and live managers through `SnapshotProviders::publish_live`; each target has its own semantic revisions.
+The game-plugin reducer emits immutable source snapshots internally. The ABI publisher projects changed namespace fields atomically and coalesces concurrent source updates. Source snapshots never cross the bundled surface or reach an adapter.
 
 Settings values are an immutable shared graph (`Arc<SettingsObject>`), with one lazily initialized default graph. Captures copy it on write only when a known setting changes; unchanged publications and snapshots share it. Change detection preserves JSON object insertion order and floating-point representation so sharing does not change serialized output.
 
 Hit-error reads and appends require an authoritative precise `Play` status rather than a stale regular-context fallback. The first-object/150-ms timing guards do not suppress hit errors or reset their history. A native list rewind updates the acknowledged cursor without erasing accumulated `all`, `press`, or `release` events or their totals. Pause/results retain history; map exit and a genuine retry reset the attempt through the regular lifecycle/epoch boundary.
 
-Regular and precise notifications remain independent. `src/runtime/projection.rs::SnapshotProviders::publish_api` wakes precise consumers for every atomic replacement but does not wake regular consumers for a precise-only replacement. Four compatibility hubs—v1, stream companion, v2, and v2 precise—use their configured poll cadence. The dedicated selected-field v2 hub consumes the separate live snapshot and its notifications, then applies its per-client debounce (`src/runtime/worker.rs::WebSocketHubs`). HTTP always loads the latest API snapshot on request.
+Schema providers use the configured regular/precise cadence and cache by relevant semantic revisions plus session/focus identity. Irrelevant precise-only changes retain regular encodings. HTTP performs demand-free coherent current reads; WebSocket consumers own authorized subscriptions.
 
 ### State bus (M2)
 
@@ -289,7 +293,7 @@ Candidate/rollback readiness uses a one-use secret delivered only through the ex
 1. **Compatibility drift.** Four schemas, two calculator contracts, and stable/lazer sentinel behavior are intentionally distinct. Changes should start at the owning builder/reader, then be checked with targeted compatibility tests rather than normalized in a shared convenience layer. `tools/live-parity` is an optional diagnostic for suspected upstream divergence.
 2. **Target-process races.** Addresses can become stale between discovery and reads. Keep native reads all-or-error, validate lengths/addresses, preserve generation and context checks, and never move decoding into platform syscall code.
 3. **High-frequency work.** Precise polling can be much faster than regular polling. Avoid allocations, blocking Tokio tasks, or unbounded fan-out on `MemoryReader`, reducer, projection, and WebSocket hot paths. Use the measured evidence in [benchmarks](../testing/benchmarks.md), not assumed throughput.
-4. **Atomicity regressions.** Loading focus, regular state, precise state, or configuration independently in a wire builder can expose impossible combinations. Extend `ManagerSnapshot`/`CombinedSnapshot` and publish once instead.
+4. **Atomicity regressions.** Capture one resolved session/roster and immutable cross-namespace selection, then decode an adapter-owned view; never loop independent focused reads.
 5. **Calculator revision coupling.** `vosu-pp` records exact `rosu-pp`, `rosu-map`, and osu! framework revisions in workspace metadata and provenance inputs. Upgrading those sources or sharing the legacy endpoint engine with live calculation changes observable results and requires an explicit decision record.
 6. **Filesystem and updater safety.** Path containment, canonicalization, atomic replacement, durable install phases, and startup recovery are security/reliability boundaries. Do not bypass them from route handlers or ad-hoc update code.
 7. **Platform asymmetry.** Focus, module enumeration, process opening, secure file opening, paths, and executable replacement differ by OS. A change verified on one backend is not evidence for the other.

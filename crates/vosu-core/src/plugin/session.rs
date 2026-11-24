@@ -546,6 +546,8 @@ impl SessionRegistry {
     }
 }
 
+mod diagnostics;
+
 impl From<SessionError> for vosu_status {
     fn from(error: SessionError) -> Self {
         match error {

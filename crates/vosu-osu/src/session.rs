@@ -39,7 +39,6 @@ use std::sync::atomic::AtomicBool;
 pub(crate) struct SessionPublication {
     pub bus: Arc<crate::publish::BusPublisher<crate::publish::SessionHost>>,
     pub demand: crate::demand::SessionDemand,
-    pub hub: tokio::sync::watch::Sender<vosu_osu_state::SubscriptionDemand>,
 }
 mod capture;
 #[cfg(any(test, feature = "test-harness"))]
@@ -153,9 +152,7 @@ impl OsuSession {
     >(
         &self,
         host: Arc<H>,
-        runtime: &tokio::runtime::Handle,
     ) {
-        let (hub, receiver) = tokio::sync::watch::channel(Default::default());
         let bus = Arc::new(crate::publish::BusPublisher::new(
             crate::publish::SessionHost(host),
             self.handle,
@@ -171,8 +168,7 @@ impl OsuSession {
             self.publication
                 .set(SessionPublication {
                     bus,
-                    demand: crate::demand::SessionDemand::new(receiver, runtime),
-                    hub,
+                    demand: crate::demand::SessionDemand::new(),
                 })
                 .is_ok(),
             "publication is installed once before session registration"

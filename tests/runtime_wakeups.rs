@@ -1,5 +1,4 @@
-//! Real stable decoding/reduction/B1 publication without process or socket noise.
-#![cfg(feature = "test-harness")]
+//! Real stable decoding/reduction/ABI-bus publication without live process noise.
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -7,7 +6,8 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
-use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Publisher, B1SessionKey};
+#[path = "adapter_fixture/mod.rs"]
+mod adapter_fixture;
 use vosu_osu::capture::{CaptureTarget, finish_state_worker};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_reader::{
@@ -55,20 +55,8 @@ impl ProcessMemory for Memory {
         }])
     }
 }
-struct Sink {
-    inputs: watch::Sender<B1Inputs>,
-    latest: Mutex<Option<B1Event>>,
-}
-impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
-    fn send(&self, event: B1Event) {
-        *self.latest.lock().unwrap() = Some(event);
-    }
-    fn inputs(&self) -> watch::Receiver<B1Inputs> {
-        self.inputs.subscribe()
-    }
-}
 struct Publisher {
-    bridge: B1Publisher,
+    bus: Arc<vosu_osu::fixtures::Publisher>,
     publications: AtomicUsize,
     samples: mpsc::SyncSender<(usize, usize, Instant)>,
     wakes: Arc<AtomicUsize>,
@@ -80,7 +68,7 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for Publisher {
         snapshot: Arc<StateBundleSnapshot>,
         delivery: Delivery,
     ) -> Result<(), StateWorkerError> {
-        self.bridge.publish(snapshot, delivery)?;
+        self.bus.publish(snapshot, delivery)?;
         let count = self.publications.fetch_add(1, Ordering::Relaxed) + 1;
         if count == 20 || count == self.end {
             self.samples
@@ -95,6 +83,7 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for Publisher {
 fn stable_capture_has_no_periodic_runtime_wakes() {
     for workers in [2, 1] {
         for precise_ms in [10, 100] {
+            let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
             let wakes = Arc::new(AtomicUsize::new(0));
             let unpark_wakes = Arc::clone(&wakes);
             let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -166,16 +155,7 @@ fn stable_capture_has_no_periodic_runtime_wakes() {
             });
             let (samples, receiver) = mpsc::sync_channel(2);
             let publisher = Arc::new(Publisher {
-                bridge: B1Publisher::new(
-                    B1SessionKey {
-                        pid: target.pid,
-                        generation: 1,
-                    },
-                    Arc::new(Sink {
-                        inputs: watch::channel(B1Inputs::default()).0,
-                        latest: Mutex::new(None),
-                    }),
-                ),
+                bus: fixture.attach(target.settings.clone(), false, true),
                 publications: AtomicUsize::new(0),
                 samples,
                 wakes,
@@ -197,10 +177,12 @@ fn stable_capture_has_no_periodic_runtime_wakes() {
             let (first_count, first_wakes, first_time) = receiver
                 .recv_timeout(Duration::from_secs(10))
                 .expect("warmup publication deadline");
+            #[cfg(feature = "test-harness")]
             let first_polls = worker.reducer_poll_count();
             let (last_count, last_wakes, last_time) = receiver
                 .recv_timeout(Duration::from_secs(10))
                 .expect("sample publication deadline");
+            #[cfg(feature = "test-harness")]
             let last_polls = worker.reducer_poll_count();
             runtime
                 .block_on(async {
@@ -210,9 +192,10 @@ fn stable_capture_has_no_periodic_runtime_wakes() {
                 .unwrap();
             let captures = last_count - first_count;
             let wakeups = last_wakes - first_wakes;
-            let polls = last_polls - first_polls;
+            #[cfg(feature = "test-harness")]
+            eprintln!("reducer_polls={}", last_polls - first_polls);
             eprintln!(
-                "workers={workers} precise={precise_ms}ms captures={captures} runtime_wakes={wakeups} reducer_polls={polls} seconds={:.3} wakes/capture={:.3}",
+                "workers={workers} precise={precise_ms}ms captures={captures} runtime_wakes={wakeups} seconds={:.3} wakes/capture={:.3}",
                 last_time.duration_since(first_time).as_secs_f64(),
                 wakeups as f64 / captures as f64
             );
@@ -227,7 +210,7 @@ fn stable_capture_has_no_periodic_runtime_wakes() {
 }
 
 struct TimedPublisher {
-    bridge: B1Publisher,
+    bus: Arc<vosu_osu::fixtures::Publisher>,
     last_read: Arc<Mutex<Option<Instant>>>,
     latencies: Mutex<Vec<Duration>>,
     completed: mpsc::SyncSender<()>,
@@ -238,7 +221,7 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for TimedPublisher {
         snapshot: Arc<StateBundleSnapshot>,
         delivery: Delivery,
     ) -> Result<(), StateWorkerError> {
-        self.bridge.publish(snapshot, delivery)?;
+        self.bus.publish(snapshot, delivery)?;
         if delivery == Delivery::Precise {
             let start = self.last_read.lock().unwrap().expect("precise memory read");
             let mut latencies = self.latencies.lock().unwrap();
@@ -260,6 +243,7 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for TimedPublisher {
 fn tournament_eight_session_publication_latency() {
     let mut results = Vec::new();
     for workers in [2, 1] {
+        let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(workers)
             .enable_all()
@@ -304,16 +288,7 @@ fn tournament_eight_session_publication_latency() {
                 }),
             });
             let publisher = Arc::new(TimedPublisher {
-                bridge: B1Publisher::new(
-                    B1SessionKey {
-                        pid: target.pid,
-                        generation: 1,
-                    },
-                    Arc::new(Sink {
-                        inputs: watch::channel(B1Inputs::default()).0,
-                        latest: Mutex::new(None),
-                    }),
-                ),
+                bus: fixture.attach(target.settings.clone(), false, index == 0),
                 last_read,
                 latencies: Mutex::new(Vec::with_capacity(120)),
                 completed: completed.clone(),
@@ -369,15 +344,13 @@ fn tournament_eight_session_publication_latency() {
     }
 }
 
-#[path = "../benches/support/api_v1.rs"]
-mod api_v1_idle;
-
 #[test]
 fn api_v1_idle_hub_creates_no_runtime_task() {
     use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
     use vosu_core::api::SessionTarget;
     let id = "test.x1.wakeups";
-    let fixture = api_v1_idle::Telemetry::new(id, 992002);
+    let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
+    let (handle, _) = fixture.h.publisher(id, 992002);
     let source = fixture.h.host.api_state_source();
     let before = fixture.h.runtime.metrics().num_alive_tasks();
     let hub = ApiV1SubscriptionHub::new(source.clone(), Duration::from_millis(16));
@@ -387,11 +360,18 @@ fn api_v1_idle_hub_creates_no_runtime_task() {
         "an idle API hub must not spawn a periodic producer"
     );
     for n in 0..128 {
-        fixture.publish(id, 1700 + n);
+        adapter_fixture::host::publish(
+            id,
+            handle,
+            &[("/score", vosu_plugin_api::PublishValueRef::I64(1700 + n))],
+        );
     }
     assert_eq!(
         source
-            .read(&SessionTarget::Active, &api_v1_idle::Telemetry::plan(id))
+            .read(
+                &SessionTarget::Active,
+                &vosu_core::api::ApiPlan::new(&[format!("/{id}/score")]).unwrap()
+            )
             .unwrap()
             .revision,
         0

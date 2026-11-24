@@ -110,13 +110,9 @@
                 },
             ),
         ));
-        let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(
-            1,
-            ApiRuntimeSettings::default(),
-        ))));
         let providers = super::super::routes::RouteProviders {
             authorization: Arc::new(AllowAll),
-            state: Arc::new(SnapshotStateProvider::new(snapshots)),
+            state: Arc::new(NoState { events: tokio::sync::watch::channel(0).1 }),
             calculation: Arc::new(DeclaredCalculateProvider::default()),
             delegate,
         };

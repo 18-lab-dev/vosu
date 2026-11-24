@@ -5,7 +5,6 @@ use std::{
     fs,
     sync::{Arc, RwLock},
 };
-use vosu::api::ApiRuntimeSettings;
 use vosu_core::state::{
     Audience, ClientFacts, InternalGrant, Pointer, PublisherGrant, SchemaRegistry, SessionKey,
     StateStore, StateValue, project_document, project_namespace, project_select,
@@ -341,8 +340,6 @@ fn parity(
         "isBreak",
         "isConvert",
         "time/live",
-        "time/rate",
-        "time/running",
         "time/firstObject",
         "time/lastObject",
         "time/mp3Length",
@@ -428,12 +425,11 @@ fn parity(
         equal(
             id,
             "mania key count",
-            &json!(precise["keys"]["all"].as_array().unwrap().len()),
+            &json!(snapshot.precise.keypresses.len()),
             &key_count,
         );
     }
     for key in [
-        "source",
         "failed",
         "playerName",
         "mode",
@@ -442,16 +438,8 @@ fn parity(
         "rank",
         "pp",
         "unstableRate",
-        "pressHitErrors",
-        "releaseHitErrors",
-        "hitOffsets",
-        "keyHitErrors",
     ] {
-        let to = match key {
-            "pressHitErrors" => "hitErrors/press",
-            "releaseHitErrors" => "hitErrors/release",
-            other => other,
-        };
+        let to = key;
         row(
             id,
             v2,
@@ -482,22 +470,13 @@ fn parity(
         doc,
         "/vosu.osu/play/hitErrors/all",
     );
-    for (old, new) in [
-        ("hitErrors", "hitErrors/all"),
-        ("pressHitErrors", "hitErrors/press"),
-        ("releaseHitErrors", "hitErrors/release"),
-        ("hitOffsets", "hitOffsets"),
-        ("keyHitErrors", "keyHitErrors"),
-        ("catcher", "catcher"),
-    ] {
-        row(
-            id,
-            precise,
-            &format!("/{old}"),
-            doc,
-            &format!("/vosu.osu/play/{new}"),
-        );
-    }
+    row(
+        id,
+        precise,
+        "/hitErrors",
+        doc,
+        "/vosu.osu/play/hitErrors/all",
+    );
     assert_eq!(
         doc["vosu.osu"]["keys"]
             .as_object()
@@ -506,7 +485,6 @@ fn parity(
             .collect::<Vec<_>>(),
         ["overlay", "all"]
     );
-    row(id, precise, "/keys/all", doc, "/vosu.osu/keys/all");
     let playing = matches!(status.as_str(), Some("play" | "pause"));
     for (from, to) in [
         ("score", "score"),
@@ -515,13 +493,8 @@ fn parity(
         ("accuracy", "accuracy"),
         ("healthBar/normal", "health"),
         ("mode/number", "accuracyKind"),
-        ("../rate", "rate"),
     ] {
-        let mut expected = if from == "../rate" {
-            v2["beatmap"]["time"]["rate"].clone()
-        } else {
-            at(v2, &format!("/play/{from}")).clone()
-        };
+        let mut expected = at(v2, &format!("/play/{from}")).clone();
         if !playing {
             expected = Value::Null;
         } else if matches!(to, "accuracy" | "health") {
@@ -677,8 +650,11 @@ fn tourney(
                 .insert("keysOverlay".into(), Value::Null);
             let play = client["play"].as_object_mut().unwrap();
             let errors = play.remove("hitErrorArray").unwrap();
-            let press = play.remove("pressHitErrors").unwrap();
-            let release = play.remove("releaseHitErrors").unwrap();
+            // The wire intentionally omits these source-only facts. Lazer
+            // spectator history has no sampled entries in the source contract.
+            let press = json!([]);
+            let release = json!([]);
+            play.insert("source".into(), json!("spectator"));
             play.insert(
                 "hitErrors".into(),
                 json!({"all": errors, "press": press, "release": release}),
@@ -845,23 +821,16 @@ fn oracle_cases_validate_and_match_the_state_bus() {
                 &json!({"game":"osu", "variant":input.source, "name":"osu!", "version":"", "pid":10, "session":"oracle-10", "focused":true, "plugin":{"id":"vosu.osu", "version":PluginManifest::parse(vosu_osu::MANIFEST).unwrap().version}}),
                 &doc["vosu.client"],
             );
-            let manager = oracle::manager_with(
-                &input,
-                ApiRuntimeSettings {
-                    enable_key_overlay: true,
-                    enable_mania_key_hit_errors: true,
-                    enable_hit_offsets: true,
-                },
-            );
-            let v2: Value = serde_json::from_slice(&oracle::encode("v2", &manager)).unwrap();
+            let replay = oracle::replay(&input);
+            let v2: Value = serde_json::from_slice(&oracle::encode("v2", &replay)).unwrap();
             let precise: Value =
-                serde_json::from_slice(&oracle::encode("v2-precise", &manager)).unwrap();
+                serde_json::from_slice(&oracle::encode("v2-precise", &replay)).unwrap();
             if seeded {
-                seeds::coverage(&input, &v2, &precise);
+                seeds::coverage(&input, &v2, &precise, &doc);
             }
             parity(&input, &snapshot, &v2, &precise, &doc, &private, &entries);
             fidelity::check(&snapshot, &doc, &v2, &precise);
-            let v1: Value = serde_json::from_slice(&oracle::encode("v1", &manager)).unwrap();
+            let v1: Value = serde_json::from_slice(&oracle::encode("v1", &replay)).unwrap();
             fidelity::independent_sources(&snapshot, &doc, &private, &v1);
             privacy(&bus, &v2, &doc);
             let revision = bus.store.current(bus.key).unwrap().revision;
@@ -885,15 +854,19 @@ fn oracle_cases_validate_and_match_the_state_bus() {
             assert!(doc["vosu.osu"]["session"]["ipcId"].is_null());
             if input.tournament.as_deref() == Some("stable") {
                 for (pid, ipc) in [(30, 1.0), (40, 2.0)] {
-                    let instance = manager.manager().instances().get(&pid).unwrap();
-                    assert!(instance.settings().tournament_spectator);
-                    assert_eq!(instance.settings().tournament_ipc_id, Some(ipc));
+                    let instance = replay
+                        .instances
+                        .iter()
+                        .find(|instance| instance.pid == pid)
+                        .unwrap();
+                    assert!(instance.settings.tournament_spectator);
+                    assert_eq!(instance.settings.tournament_ipc_id, Some(ipc));
                     let mut spectator = Bus::new();
-                    spectator.key = SessionKey(u64::from(instance.pid()));
-                    spectator.open(&input, instance.pid());
-                    let settings = instance.settings().clone();
+                    spectator.key = SessionKey(u64::from(instance.pid));
+                    spectator.open(&input, instance.pid);
+                    let settings = instance.settings.clone();
                     spectator.publish(
-                        instance.state(),
+                        &instance.state,
                         &SessionFacts {
                             settings: settings.clone(),
                             ..self::facts(&input)
@@ -927,23 +900,17 @@ fn missing_tourney_score_uses_only_the_recorded_contract_exemption() {
     bus.open(&input, 10);
     bus.publish(&snapshot, &facts(&input));
     assert!(bus.document(Audience::Api)["vosu.osu"]["tourney"].is_null());
-    let manager =
-        vosu::api::CombinedSnapshot::from_manager(Arc::new(vosu::api::ManagerSnapshot::new(
-            1,
-            Some(10),
-            true,
-            ApiRuntimeSettings::default(),
-            [vosu::api::ManagerInstanceSnapshot::new(
-                10,
-                facts(&input).settings,
-                false,
-                Arc::new(snapshot),
-            )],
-        )));
-    assert!(matches!(
-        vosu::api::v2::encode(&manager),
-        Err(vosu::api::ApiError::Serialization(_))
-    ));
+    let mut replay = oracle::replay(&input);
+    let publisher = replay.fixture.attach(facts(&input).settings, false, true);
+    publisher
+        .publish(Arc::new(snapshot), vosu_osu_state::Delivery::All)
+        .unwrap();
+    use vosu::server::websocket::{Schema, StateProvider};
+    let state = replay.fixture.providers[2].capture(Schema::V2).unwrap();
+    assert!(
+        state.encode_unfiltered().is_err(),
+        "only adapter wire fails for missing spectator score"
+    );
 }
 #[test]
 fn comparison_and_exemption_guards_reject_unlisted_differences() {

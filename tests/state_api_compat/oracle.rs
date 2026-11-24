@@ -2,9 +2,9 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use serde::Deserialize;
 use serde_json::Value;
-use vosu::api::{
-    self, ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
-};
+#[path = "../adapter_fixture/mod.rs"]
+mod adapter_fixture;
+use adapter_fixture::Fixture;
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapInput, EngineOutput, EngineRequest, ModSet, Ruleset,
     ScoringMode,
@@ -157,48 +157,6 @@ pub fn hit_errors(value: &Value) -> HitErrorArray {
     }
 }
 
-pub fn strip_vosu_extensions(value: &mut Value) {
-    match value {
-        Value::Object(object) => {
-            object.shift_remove("pressHitErrors");
-            object.shift_remove("keyHitErrors");
-            object.shift_remove("releaseHitErrors");
-            object.shift_remove("catcher");
-            // Additive renderer-state fields are vosu-owned, not source-oracle
-            // material. Keep the pinned upstream fixtures unchanged.
-            if object.contains_key("playerName") && object.contains_key("mods") {
-                object.shift_remove("source");
-            }
-            if object.contains_key("firstObject") && object.contains_key("live") {
-                object.shift_remove("rate");
-                object.shift_remove("running");
-            }
-            if object.contains_key("interfaceVisible") {
-                object.shift_remove("visual");
-            }
-            if object.contains_key("scrollSpeed") {
-                for field in [
-                    "scrollSpeedValue",
-                    "scrollTime",
-                    "timingBasedNoteColouring",
-                    "perBeatmapScrollSpeed",
-                ] {
-                    object.shift_remove(field);
-                }
-            }
-            for value in object.values_mut() {
-                strip_vosu_extensions(value);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                strip_vosu_extensions(value);
-            }
-        }
-        _ => {}
-    }
-}
-
 #[derive(Clone, Copy)]
 struct ZeroEngine;
 
@@ -211,7 +169,7 @@ impl BeatmapEngine for ZeroEngine {
     }
 }
 
-pub fn parsed_beatmap(input: &Input) -> Option<Arc<vosu_osu_calc::beatmap::ParsedBeatmap>> {
+pub fn chart_content(input: &Input) -> Option<String> {
     let bpm = input.services.beatmap_pp.get("commonBPM")?.as_f64()?;
     if bpm == 0.0 {
         return None;
@@ -231,6 +189,11 @@ pub fn parsed_beatmap(input: &Input) -> Option<Arc<vosu_osu_calc::beatmap::Parse
     let content = format!(
         "osu file format v14\n\n[General]\nMode:0\n\n[Metadata]\nTitle:\nArtist:\nCreator:\nVersion:\n\n[Difficulty]\nHPDrainRate:0\nCircleSize:0\nOverallDifficulty:0\nApproachRate:0\nSliderMultiplier:1\nSliderTickRate:1\n\n[TimingPoints]\n{timing}\n\n[HitObjects]\n256,192,10000,1,0,0:0:0:0:"
     );
+    Some(content)
+}
+
+pub fn parsed_beatmap(input: &Input) -> Option<Arc<vosu_osu_calc::beatmap::ParsedBeatmap>> {
+    let content = chart_content(input)?;
     let mut cache = BeatmapCache::new(ZeroEngine);
     cache
         .load(
@@ -519,25 +482,40 @@ pub fn state(input: &Input) -> Arc<StateBundleSnapshot> {
     })
 }
 
-pub fn manager(input: &Input) -> CombinedSnapshot {
-    manager_with(input, ApiRuntimeSettings::default())
+pub struct SourceInstance {
+    pub pid: u32,
+    pub settings: InstanceSettings,
+    pub manager: bool,
+    pub state: Arc<StateBundleSnapshot>,
 }
-
-pub fn manager_with(input: &Input, settings: ApiRuntimeSettings) -> CombinedSnapshot {
-    let Some(source) = input.source.as_deref() else {
-        return CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(1, settings)));
+pub struct Replay {
+    pub fixture: Fixture,
+    pub instances: Vec<SourceInstance>,
+}
+pub fn replay(input: &Input) -> Replay {
+    let source = input.source.as_deref().unwrap_or("stable");
+    let client = if source == "lazer" {
+        ClientType::Lazer
+    } else {
+        ClientType::Stable
     };
-    let focused = ManagerInstanceSnapshot::new(
-        10,
-        InstanceSettings {
+    let fixture = Fixture::with_chart(client, chart_content(input).as_deref());
+    if input.source.is_none() {
+        return Replay {
+            fixture,
+            instances: vec![],
+        };
+    }
+    let mut instances = vec![SourceInstance {
+        pid: 10,
+        settings: InstanceSettings {
             tournament_spectator: false,
             tournament_ipc_id: None,
             devserver_endpoint: None,
         },
-        false,
-        state(input),
-    );
-    let mut instances = vec![focused];
+        manager: false,
+        state: state(input),
+    }];
     if input.tournament.as_deref() == Some("stable") {
         let mut manager_state = state(input).as_ref().clone();
         let mut manager_regular = manager_state.regular.as_ref().clone();
@@ -563,16 +541,16 @@ pub fn manager_with(input: &Input, settings: ApiRuntimeSettings) -> CombinedSnap
             user: None,
         };
         manager_state.regular = Arc::new(manager_regular);
-        instances.push(ManagerInstanceSnapshot::new(
-            20,
-            InstanceSettings {
+        instances.push(SourceInstance {
+            pid: 20,
+            settings: InstanceSettings {
                 tournament_spectator: false,
                 tournament_ipc_id: None,
                 devserver_endpoint: None,
             },
-            true,
-            Arc::new(manager_state),
-        ));
+            manager: true,
+            state: Arc::new(manager_state),
+        });
         for (pid, ipc, name, country, id) in [(40, 2.0, "Red", "US", 1), (30, 1.0, "Blue", "JP", 2)]
         {
             let mut client_state = state(input).as_ref().clone();
@@ -588,44 +566,33 @@ pub fn manager_with(input: &Input, settings: ApiRuntimeSettings) -> CombinedSnap
                 id,
             });
             client_state.regular = Arc::new(client_regular);
-            instances.push(ManagerInstanceSnapshot::new(
+            instances.push(SourceInstance {
                 pid,
-                InstanceSettings {
+                settings: InstanceSettings {
                     tournament_spectator: true,
                     tournament_ipc_id: Some(ipc),
                     devserver_endpoint: None,
                 },
-                false,
-                Arc::new(client_state),
-            ));
+                manager: false,
+                state: Arc::new(client_state),
+            });
         }
     }
-    let client = if source == "lazer" {
-        ClientType::Lazer
-    } else {
-        ClientType::Stable
-    };
-    assert_eq!(instances[0].client(), client);
-    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        1,
-        Some(10),
-        true,
-        settings,
-        instances,
-    )))
+    let mut fixture = fixture;
+    for instance in &instances {
+        assert_eq!(instance.state.source, client);
+        let publisher = fixture.attach(
+            instance.settings.clone(),
+            instance.manager,
+            instance.pid == 10,
+        );
+        publisher
+            .publish(instance.state.clone(), vosu_osu_state::Delivery::All)
+            .unwrap();
+    }
+    Replay { fixture, instances }
 }
 
-pub fn encode(schema: &str, snapshot: &CombinedSnapshot) -> Vec<u8> {
-    let result = match schema {
-        "v1" => api::v1::encode(snapshot),
-        "v2" => api::v2::encode(snapshot),
-        "v2-precise" => api::precise::encode(snapshot),
-        "sc" => api::sc::encode(snapshot),
-        other => panic!("unknown schema {other}"),
-    };
-    match result {
-        Ok(bytes) => bytes.to_vec(),
-        Err(ApiError::NotReady) => br#"{"error":"not_ready"}"#.to_vec(),
-        Err(error) => panic!("schema encoding failed: {error}"),
-    }
+pub fn encode(schema: &str, replay: &Replay) -> Vec<u8> {
+    replay.fixture.encode(schema)
 }

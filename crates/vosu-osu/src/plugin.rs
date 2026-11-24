@@ -7,7 +7,7 @@
 //! a `ProcessHandle` backed by P3's `PlanProcessMemory`/`PlanScanBackend`,
 //! and a lazer session's offset resolver is started on that runtime, never
 //! inline on a dispatch thread. P5 adds session-owned capture workers and
-//! the interim B1 publication/control bridge.
+//! state-bus publication and selector-driven sampling.
 //!
 //! Generic over `H: HostServices` (default [`VtableHostServices`]) and `G:
 //! OffsetGenerator` (default [`EmbeddedOffsetGenerator`]), exactly like
@@ -51,7 +51,6 @@ use vosu_plugin_api::{
     SessionAttached, SessionDecline, SessionDetached, TimerFired, VtableHostServices, vosu_status,
 };
 
-use crate::bridge_b1::{B1Event, B1Inputs};
 use crate::classify::{
     self, AttachDecision, AttachFacts, Identified, PendingIdentify, Platform, RootResolver,
     to_process_bitness,

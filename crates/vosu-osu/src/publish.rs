@@ -317,26 +317,6 @@ impl<H: HostServices + Send + Sync + 'static> SnapshotPublisher<Arc<StateBundleS
         Ok(())
     }
 }
-/// The legacy sink always receives its publication first. Bus refusals are
-/// handled by BusPublisher and never turn a successful B1 write into failure.
-pub(crate) struct FanoutPublisher {
-    pub b1: Option<crate::bridge_b1::B1Publisher>,
-    pub bus: Arc<crate::publish::BusPublisher<crate::publish::SessionHost>>,
-}
-impl SnapshotPublisher<Arc<StateBundleSnapshot>> for FanoutPublisher {
-    fn publish(
-        &self,
-        snapshot: Arc<StateBundleSnapshot>,
-        delivery: Delivery,
-    ) -> Result<(), StateWorkerError> {
-        let result = self
-            .b1
-            .as_ref()
-            .map_or(Ok(()), |b1| b1.publish(Arc::clone(&snapshot), delivery));
-        let _ = self.bus.publish(snapshot, delivery);
-        result
-    }
-}
 
 impl<H: HostServices + Send + Sync + 'static> crate::resources::publication::RefreshPublication
     for BusPublisher<H>

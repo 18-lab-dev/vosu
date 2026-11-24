@@ -1,23 +1,9 @@
 //! Tick-thread CPU excludes scheduling delays; subscriber observation uses wall time.
 use super::*;
 use std::{sync::atomic::AtomicBool, time::Duration};
-use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Publisher, B1SessionKey};
 use vosu_osu::{project::SessionFacts, publish::BusPublisher};
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_state::{Delivery, SnapshotPublisher};
-
-struct Latest {
-    event: Mutex<Option<B1Event>>,
-    inputs: tokio::sync::watch::Sender<B1Inputs>,
-}
-impl vosu_surface::LegacySink<B1Event, B1Inputs> for Latest {
-    fn send(&self, event: B1Event) {
-        *self.event.lock().unwrap() = Some(event);
-    }
-    fn inputs(&self) -> tokio::sync::watch::Receiver<B1Inputs> {
-        self.inputs.subscribe()
-    }
-}
 
 #[cfg(target_os = "linux")]
 fn thread_cpu_ns() -> Result<u128> {
@@ -93,19 +79,9 @@ pub(super) fn measure_ticks<R: SynchronizedMemoryReader + 'static>(
     subscriber.updates.borrow_and_update();
     let mut sequence = 4;
     let mut modes = Vec::new();
-    // Both modes include the same capture/reducer/legacy publication work.
+    // Compare capture/reduction alone against capture/reduction plus ABI publication.
     for precise_lane in [false, true] {
         for bus in [false, true] {
-            let legacy = B1Publisher::new(
-                B1SessionKey {
-                    pid: args.pid,
-                    generation: 1,
-                },
-                Arc::new(Latest {
-                    event: Mutex::new(None),
-                    inputs: tokio::sync::watch::channel(B1Inputs::default()).0,
-                }),
-            );
             let mut cpu = Vec::with_capacity(9);
             let mut latencies = Vec::with_capacity(9 * args.cycles);
             let mut unchanged = 0;
@@ -156,7 +132,6 @@ pub(super) fn measure_ticks<R: SynchronizedMemoryReader + 'static>(
                     } else {
                         Delivery::All
                     };
-                    legacy.publish(snapshot.clone(), delivery)?;
                     if bus {
                         publisher.publish(snapshot, delivery)?;
                     }
@@ -188,11 +163,11 @@ pub(super) fn measure_ticks<R: SynchronizedMemoryReader + 'static>(
             }
             cpu.sort_by(f64::total_cmp);
             latencies.sort_by(f64::total_cmp);
-            modes.push(serde_json::json!({"lane":if precise_lane {"precise"} else {"regular"},"mode":if bus {"b1_plus_bus"} else {"b1_only"}, "thread_cpu_ns_per_tick": {"median":cpu[4], "min":cpu[0], "max":cpu[8]}, "read_to_surface_ns": if latencies.is_empty() { serde_json::Value::Null } else {serde_json::json!({"median":latencies[latencies.len()/2], "min":latencies[0], "max":latencies[latencies.len()-1], "observations":latencies.len()})}, "unchanged_ticks":unchanged,"errors":errors}));
+            modes.push(serde_json::json!({"lane":if precise_lane {"precise"} else {"regular"},"mode":if bus {"capture_plus_bus"} else {"capture_only"}, "thread_cpu_ns_per_tick": {"median":cpu[4], "min":cpu[0], "max":cpu[8]}, "read_to_surface_ns": if latencies.is_empty() { serde_json::Value::Null } else {serde_json::json!({"median":latencies[latencies.len()/2], "min":latencies[0], "max":latencies[latencies.len()-1], "observations":latencies.len()})}, "unchanged_ticks":unchanged,"errors":errors}));
         }
     }
     Ok(
-        serde_json::json!({"modes":modes,"samples":9,"cycles_per_sample":args.cycles,"clock":"tick thread CPU; read-to-surface wall time","scope":"capture + reducer + production B1Publisher/latest-only sink + bus; excludes B1 manager background work, other daemon threads, timers and network"}),
+        serde_json::json!({"modes":modes,"samples":9,"cycles_per_sample":args.cycles,"clock":"tick thread CPU; read-to-surface wall time","scope":"capture + reducer + optional ABI bus publication; excludes other daemon threads, timers and network"}),
     )
 }
 

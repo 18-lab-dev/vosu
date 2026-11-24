@@ -3694,7 +3694,6 @@ dependencies = [
  "vosu-osu-state",
  "vosu-plugin-api",
  "vosu-proptest",
- "vosu-surface",
  "vosu-sys",
  "zip",
 ]

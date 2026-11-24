@@ -185,7 +185,6 @@ fn source_precision_and_raw_fidelity_survive_aggregate_projection() {
 #[tokio::test]
 async fn aggregate_demand_unions_and_releases_on_every_lifecycle_exit() {
     use crate::demand::SessionDemand;
-    use vosu_osu_state::SubscriptionDemand;
     async fn expect(demand: &SessionDemand, regular: bool, precise: bool) {
         let mut receiver = demand.receiver();
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -201,10 +200,7 @@ async fn aggregate_demand_unions_and_releases_on_every_lifecycle_exit() {
         .expect("aggregate demand deadline");
     }
     let roster = Tournament::default();
-    let make = || {
-        let (_hub, receiver) = tokio::sync::watch::channel(SubscriptionDemand::default());
-        SessionDemand::new(receiver, &tokio::runtime::Handle::current())
-    };
+    let make = || SessionDemand::new();
     let manager = make();
     let spectator = make();
     let successor = make();

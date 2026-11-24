@@ -16,17 +16,13 @@ use axum::{
     response::Response,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
-use vosu::{
-    api::{self, ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot, SnapshotManager},
-    server::{
-        auth::AuthorizationPolicy,
-        routes::{
-            CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
-            RouteDelegate, RouteProviders, dispatch,
-        },
-        runtime::{AxumListenerFactory, ListenTarget, TcpListenerFactory},
-        service::SnapshotStateProvider,
+use vosu::server::{
+    auth::AuthorizationPolicy,
+    routes::{
+        CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture, RouteDelegate,
+        RouteProviders, dispatch,
     },
+    runtime::{AxumListenerFactory, ListenTarget, TcpListenerFactory},
 };
 use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_osu_model::launch::InstanceSettings;
@@ -36,7 +32,9 @@ use vosu_osu_model::{
 };
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 
-fn snapshot() -> Arc<ManagerSnapshot> {
+#[path = "../tests/adapter_fixture/mod.rs"]
+mod adapter_fixture;
+fn source_snapshot() -> Arc<StateBundleSnapshot> {
     let regular = RegularState {
         global: Default::default(),
         settings: Default::default(),
@@ -73,29 +71,13 @@ fn snapshot() -> Arc<ManagerSnapshot> {
         committed_hit_error_index: 0,
         unstable_rate: 0.0,
     };
-    let instance = ManagerInstanceSnapshot::new(
-        7,
-        InstanceSettings {
-            tournament_spectator: false,
-            tournament_ipc_id: None,
-            devserver_endpoint: None,
-        },
-        false,
-        Arc::new(StateBundleSnapshot {
-            source: ClientType::Stable,
-            generation: 1,
-            reset_epoch: 0,
-            regular: Arc::new(regular),
-            precise: Arc::new(precise),
-        }),
-    );
-    Arc::new(ManagerSnapshot::new(
-        1,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [instance],
-    ))
+    Arc::new(StateBundleSnapshot {
+        source: ClientType::Stable,
+        generation: 1,
+        reset_epoch: 0,
+        regular: Arc::new(regular),
+        precise: Arc::new(precise),
+    })
 }
 
 // These routes are not exercised: fail loudly instead of substituting implementations
@@ -197,15 +179,23 @@ fn bench(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
-    let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(
-        0,
-        ApiRuntimeSettings::default(),
-    ))));
-    let published = snapshots.publish(snapshot());
-    let expected = api::v2::encode(&published).expect("ready v2 fixture");
+    let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
+    fixture
+        .attach(
+            InstanceSettings {
+                tournament_spectator: false,
+                tournament_ipc_id: None,
+                devserver_endpoint: None,
+            },
+            false,
+            true,
+        )
+        .publish(source_snapshot(), vosu_osu_state::Delivery::All)
+        .unwrap();
+    let expected = fixture.encode("v2");
     let providers = RouteProviders {
         authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
-        state: Arc::new(SnapshotStateProvider::new(snapshots)),
+        state: fixture.providers[2].clone(),
         calculation: Arc::new(UnusedRoutes),
         delegate: Arc::new(UnusedRoutes),
     };

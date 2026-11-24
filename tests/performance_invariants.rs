@@ -9,9 +9,6 @@ use vosu_proptest::bounded;
 
 use bytes::Bytes;
 use tokio::sync::watch;
-use vosu::api::{
-    ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerSnapshot, SnapshotManager,
-};
 use vosu::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
@@ -706,34 +703,6 @@ fn unchanged_map_key_reuses_parse_and_calculation() {
     assert!(Arc::ptr_eq(&first, &second));
     assert_eq!(cache.parse_count(), 1);
     assert_eq!(calculations.load(Ordering::Relaxed), 1);
-}
-#[test]
-fn combined_snapshot_caches_encoding_and_publishes_latest_only() {
-    let settings = ApiRuntimeSettings::default();
-    let snapshot =
-        CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(1, settings)));
-    let encodes = AtomicUsize::new(0);
-    let first = snapshot
-        .encode_unfiltered(ApiSchema::V2, |_| {
-            encodes.fetch_add(1, Ordering::Relaxed);
-            Ok(Bytes::from_static(b"{\"generation\":1}"))
-        })
-        .unwrap();
-    let second = snapshot
-        .encode_unfiltered(ApiSchema::V2, |_| {
-            encodes.fetch_add(1, Ordering::Relaxed);
-            Ok(Bytes::from_static(b"must-not-run"))
-        })
-        .unwrap();
-    assert_eq!(encodes.load(Ordering::Relaxed), 1);
-    assert_eq!(first.as_ptr(), second.as_ptr());
-    assert_eq!(snapshot.cached(ApiSchema::V2).unwrap().unwrap(), first);
-
-    let manager = SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(0, settings)));
-    for revision in 1..=1_000 {
-        manager.publish(Arc::new(ManagerSnapshot::not_ready(revision, settings)));
-    }
-    assert_eq!(manager.load().manager().revision(), 1_000);
 }
 
 struct TestSnapshot {

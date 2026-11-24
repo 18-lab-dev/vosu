@@ -333,10 +333,11 @@ encoding path, not a second implementation of the osu! projector:
 | `end_to_end/bus`, `bus_precise` | Both-lane or precise-only snapshots → projector → flat batch → commit → `api_json` → changed selection and one `STATE_UPDATE` encoding for a ten-selector subscriber |
 | `end_to_end/legacy` | The same gameplay snapshot → uncached v2 and precise serializers |
 
-The fixture changes score and play time; it is not an oracle for every client
-state or a long hit-error-history stress test. Setup and snapshot allocation
-are outside both end-to-end measurements. Each legacy iteration gets a fresh
-`CombinedSnapshot`, so it cannot time a cached `Bytes` clone.
+The M2 measurements below are historical pre-M4a evidence. Their legacy path
+used a fresh root snapshot per iteration. That production architecture has
+been removed; current benchmark fixtures use actual producer → ABI bus →
+authorized surface → adapter encoding. Changed workloads need new matched-case
+measurements before comparing against these historical values.
 
 ```sh
 cargo bench --locked --package vosu --bench state_bus_bench

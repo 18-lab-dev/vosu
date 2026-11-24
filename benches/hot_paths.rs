@@ -5,9 +5,8 @@ use std::time::Duration;
 use vosu_adapter_support::filtered::Filter;
 
 use bytes::Bytes;
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::sync::watch;
-use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_core::plugin::{ModuleResolver, execute_into};
 use vosu_osu_calc::beatmap::{
@@ -147,11 +146,9 @@ fn precise_state() -> PreciseState {
     }
 }
 
-fn api_snapshot() -> CombinedSnapshot {
-    api_snapshot_with_history(0)
-}
-
-fn api_snapshot_with_history(history: usize) -> CombinedSnapshot {
+#[path = "../tests/adapter_fixture/mod.rs"]
+mod adapter_fixture;
+fn source_snapshot_with_history(history: usize) -> Arc<StateBundleSnapshot> {
     let mut precise = precise_state();
     let errors: Vec<_> = (0..history)
         .map(|index| (index % 41) as f64 - 20.0)
@@ -163,30 +160,13 @@ fn api_snapshot_with_history(history: usize) -> CombinedSnapshot {
         all: errors,
         ..Default::default()
     });
-    let state = Arc::new(StateBundleSnapshot {
+    Arc::new(StateBundleSnapshot {
         source: ClientType::Stable,
         generation: 1,
         reset_epoch: 0,
         regular: Arc::new(regular_state()),
         precise: Arc::new(precise),
-    });
-    let instance = ManagerInstanceSnapshot::new(
-        7,
-        InstanceSettings {
-            tournament_spectator: false,
-            tournament_ipc_id: None,
-            devserver_endpoint: None,
-        },
-        false,
-        state,
-    );
-    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        1,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [instance],
-    )))
+    })
 }
 
 #[path = "hot_paths/read_plan_executor.rs"]
@@ -315,55 +295,69 @@ fn bench_map_calculation(c: &mut Criterion) {
 }
 
 fn bench_serializers(c: &mut Criterion) {
+    use vosu_surface::{projection::Projection, state::SessionTarget};
+    let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
+    fixture
+        .attach(
+            InstanceSettings {
+                tournament_spectator: false,
+                tournament_ipc_id: None,
+                devserver_endpoint: None,
+            },
+            false,
+            true,
+        )
+        .publish(
+            source_snapshot_with_history(0),
+            vosu_osu_state::Delivery::All,
+        )
+        .unwrap();
+    let projections: [Arc<dyn Projection<Filter, Bytes>>; 4] = [
+        Arc::new(vosu_adapter_gosumemory::provider::Provider),
+        Arc::new(vosu_adapter_upstream::provider::Regular),
+        Arc::new(vosu_adapter_upstream::provider::Precise),
+        fixture.chart.clone(),
+    ];
+    let names = ["v1", "v2", "v2_precise", "stream_companion"];
+    let requesters = [3, 2, 2, 4].map(|id| {
+        fixture
+            .h
+            .host
+            .surface_requester(vosu_core::plugin::PluginInstanceId::new(id))
+            .unwrap()
+    });
+    let captures: Vec<_> = projections
+        .iter()
+        .zip(&requesters)
+        .map(|(projection, requester)| {
+            requester
+                .capture(SessionTarget::Focused, &projection.selectors())
+                .unwrap()
+        })
+        .collect();
     let mut cold = c.benchmark_group("serializers_cold");
-    cold.bench_function("v1", |b| {
-        b.iter_batched(
-            api_snapshot,
-            |snapshot| black_box(vosu::api::v1::encode(&snapshot).unwrap()),
-            BatchSize::SmallInput,
-        )
-    });
-    cold.bench_function("v2", |b| {
-        b.iter_batched(
-            api_snapshot,
-            |snapshot| black_box(vosu::api::v2::encode(&snapshot).unwrap()),
-            BatchSize::SmallInput,
-        )
-    });
-    cold.bench_function("v2_precise", |b| {
-        b.iter_batched(
-            api_snapshot,
-            |snapshot| black_box(vosu::api::precise::encode(&snapshot).unwrap()),
-            BatchSize::SmallInput,
-        )
-    });
-    cold.bench_function("stream_companion", |b| {
-        b.iter_batched(
-            api_snapshot,
-            |snapshot| black_box(vosu::api::sc::encode(&snapshot).unwrap()),
-            BatchSize::SmallInput,
-        )
-    });
+    for ((name, projection), capture) in names.iter().zip(&projections).zip(&captures) {
+        cold.bench_function(*name, |b| {
+            b.iter(|| {
+                black_box(
+                    projection
+                        .decode(capture.clone())
+                        .unwrap()
+                        .encode(&[])
+                        .unwrap(),
+                )
+            })
+        });
+    }
     cold.finish();
-
-    let cached = api_snapshot();
-    let _ = vosu::api::v1::encode(&cached).unwrap();
-    let _ = vosu::api::v2::encode(&cached).unwrap();
-    let _ = vosu::api::precise::encode(&cached).unwrap();
-    let _ = vosu::api::sc::encode(&cached).unwrap();
     let mut cache = c.benchmark_group("serialization_cache");
-    cache.bench_function("v1_bytes_clone", |b| {
-        b.iter(|| black_box(vosu::api::v1::encode(&cached).unwrap()))
-    });
-    cache.bench_function("v2_bytes_clone", |b| {
-        b.iter(|| black_box(vosu::api::v2::encode(&cached).unwrap()))
-    });
-    cache.bench_function("v2_precise_bytes_clone", |b| {
-        b.iter(|| black_box(vosu::api::precise::encode(&cached).unwrap()))
-    });
-    cache.bench_function("stream_companion_bytes_clone", |b| {
-        b.iter(|| black_box(vosu::api::sc::encode(&cached).unwrap()))
-    });
+    for ((name, projection), capture) in names.iter().zip(&projections).zip(captures) {
+        let view = projection.decode(capture).unwrap();
+        let _ = view.encode(&[]).unwrap();
+        cache.bench_function(format!("{name}_bytes_clone"), |b| {
+            b.iter(|| black_box(view.encode(&[]).unwrap()))
+        });
+    }
     cache.finish();
 }
 

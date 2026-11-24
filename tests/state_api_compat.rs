@@ -44,7 +44,7 @@ const REQUIRED_COVERAGE: &[&str] = &[
 ];
 
 #[test]
-fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
+fn committed_source_oracles_match_bus_adapters_byte_for_byte() {
     let root = fixture_root();
     let inventory: Inventory = serde_json::from_slice(
         &fs::read(root.join("inventory.json")).expect("inventory must exist"),
@@ -113,7 +113,17 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
         )
         .expect("input fixture must be valid");
         assert_eq!(input.id, case.id);
-        let snapshot = manager(&input);
+        let replay = replay(&input);
+        assert_eq!(
+            replay.instances.len(),
+            if input.source.is_none() {
+                0
+            } else if input.tournament.as_deref() == Some("stable") {
+                4
+            } else {
+                1
+            }
+        );
         for schema in ["v1", "v2", "v2-precise", "sc"] {
             let expected_path = case
                 .expected
@@ -131,30 +141,7 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
             } else {
                 expected
             };
-            let mut actual: Value = serde_json::from_slice(&encode(schema, &snapshot))
-                .expect("actual output must be valid");
-            strip_vosu_extensions(&mut actual);
-            if matches!(schema, "v2" | "v2-precise") {
-                let object = actual.as_object_mut().expect("v2 output must be an object");
-                if schema == "v2-precise" {
-                    if let Some(keys) = object.get_mut("keys").and_then(Value::as_object_mut) {
-                        keys.shift_remove("all");
-                    }
-                    if let Some(tourney) = object.get_mut("tourney").and_then(Value::as_array_mut) {
-                        for entry in tourney {
-                            entry
-                                .get_mut("keys")
-                                .and_then(Value::as_object_mut)
-                                .expect("v2 precise tournament keys must be an object")
-                                .shift_remove("all");
-                        }
-                    }
-                } else {
-                    // Mode-agnostic keys are a vosu extension to the source schema.
-                    object.shift_remove("keys");
-                }
-            }
-            let actual = serde_json::to_vec(&actual).expect("normalized output must encode");
+            let actual = encode(schema, &replay);
             assert_eq!(
                 String::from_utf8_lossy(&actual),
                 String::from_utf8_lossy(&expected),

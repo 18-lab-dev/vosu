@@ -97,7 +97,7 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`, `vosu-net` (the moved offset-generator's hardened ZIP extraction, `vosu_net::extract_zip_atomic`, DD); interim `vosu-sys` until M5 (DC, re-dated from the original "until M1": the 1.x readers keep reading `ProcessMemory`/`MemoryError`/`ReadStatus`/`ReadRequest`/scanner `Pattern` and publishing offsets through `vosu_sys::platform::atomic_replace` unchanged for all of M1, plan:440; M5's brokered-reads boundary — a plugin may run out of process from M5 on, so direct `vosu-sys` access cannot survive it — is where the reader must move onto `PlanMemory` instead and this edge is removed) |
 | `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`; interim `vosu-sys` until M5, same reason and same re-dating as the `vosu-osu-reader` row above (the reducer reads `MemoryRead`/`ReadStatus`/`MemoryError` directly; DC) |
-| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; interim `vosu-surface` for bridge B1, M1→M4a |
+| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; no `vosu-surface` dependency after M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
 | `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
 | `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model` |
@@ -893,7 +893,7 @@ Scope:
   by its `settings_schema` (D19). **Interim bridge B2** (deleted in M8):
   core serves the plugin's settings from the existing `vosu.toml` values
   until the M8 migration moves them into plugin settings storage.
-- **Interim bridge B1** (deleted in M4a): byte-identical 1.x surfaces need
+- **Historical M1 bridge B1** (removed by M4a): byte-identical 1.x surfaces needed
   more than `StateBundleSnapshot`
   (DE). Plugin → root: `StateBundleSnapshot`; per-session lifecycle phase
   (dashboard status "resolving offsets"/"starting reader"/"reading",
@@ -989,22 +989,24 @@ D17 pass.
 The following parity map is the replacement evidence cited by C4's
 `Assertions-Removed` trailer. Old names are from `src/instance/tests.rs`
 (M1 remainder plan §7); replacement names are present at this cutover.
-Paths are relative to the repository root.
+Paths are relative to the repository root. M4a replacements below supersede
+the deleted bridge-specific entries; the M1 bridge description above is
+historical, not an allowed fallback.
 
 | Deleted 1.x test | Replacement tests at cutover |
 |---|---|
-| `windows_names_and_bitness_classify_and_btree_orders` | `tests/discovery_parity.rs`: `manifest_matches_both_platform_name_tables`, `windows_names_and_bitness`; B1 lifecycle ordering below |
+| `windows_names_and_bitness_classify_and_btree_orders` | `tests/discovery_parity.rs`: `manifest_matches_both_platform_name_tables`, `windows_names_and_bitness`; host diagnostics remain PID-ordered |
 | `targeted_discovery_inserts_only_the_requested_pid` | Core discovery `tests/cadence.rs`: `targeted_discovery_inserts_only_the_requested_pid` |
 | `targeted_discovery_replaces_a_dead_same_pid_generation` | Core discovery `tests/mod.rs`: `reused_pid_with_a_new_start_time_is_reported_as_exit_then_a_fresh_appearance`; `tests/discovery_parity.rs`: `explicit_exit_then_appearance_advances_plugin_generation` |
 | `linux_named_first_pass_is_stable_and_fallback_is_lazer` | `tests/discovery_parity.rs`: `linux_named_sibling_and_lone_fallback_variants` |
-| `command_filters_follow_presence_and_truthiness` | `tests/discovery_parity.rs`: `command_filters_decline_and_suppress_reoffers`; `tests/osu_plugin.rs`: `tournament_and_debug_clients_decline_without_b1` |
-| `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_b1`; `tests/osu_plugin.rs`: `stable_session_b1_settings_and_exit` |
+| `command_filters_follow_presence_and_truthiness` | `tests/discovery_parity.rs`: `command_filters_decline_and_suppress_reoffers`; `tests/osu_plugin.rs`: `debug_clients_decline_without_publication` |
+| `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_bus`; `tests/osu_plugin.rs`: `stable_session_settings_and_exit` |
 | `duplicate_discovery_and_removal_are_idempotent_and_close_once` | `tests/discovery_parity.rs`: `duplicate_discovery_and_removal_close_memory_once` |
-| `tournament_precedence_matching_and_fallback_selection` | `src/runtime/tests/bridge_b1.rs`: `b1_tournament_precedence_lowest_pid_and_absent_client` |
-| `foreground_exact_match_and_unavailable_focus_fallback` | `src/runtime/tests/bridge_b1.rs`: `b1_foreground_exact_and_unavailable_focus_fallback` |
-| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `src/runtime/tests/bridge_b1.rs`: `b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown` |
+| `tournament_precedence_matching_and_fallback_selection` | `tests/osu_plugin/tournament.rs`: `stable_manager_priority_aggregate_all_sessions_and_generation_replacement` |
+| `foreground_exact_match_and_unavailable_focus_fallback` | `src/server/bus_provider/tests.rs`: `production_focus_generation_prevents_numeric_revision_collision`; permanent core Focus tests |
+| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `tests/discovery_parity.rs`: duplicate attach/removal and fresh bus-generation assertions; `src/runtime/tests/context.rs`: host lifecycle/dashboard shape |
 | `lazer_discovery_starts_one_resolver_and_shutdown_joins_it` | `crates/vosu-osu/src/plugin/tests.rs`: `lazer_identify_starts_one_resolver_and_detach_joins_it`, `destroy_joins_every_live_sessions_resolver_within_the_grace_period` |
-| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | B1 lifecycle test above; `src/runtime/tests/lifecycle_owner.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
+| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | Host lifecycle/bus tests above; `src/runtime/tests/lifecycle_owner.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
 | `failed_full_scan_retries_early_and_counts_only_success` | Core discovery `tests/cadence.rs`: `failed_full_scan_retries_early_and_counts_only_success` |
 | `failed_targeted_inspection_is_not_counted` | Core discovery `tests/cadence.rs`: `failed_targeted_inspection_is_not_counted` |
 | `full_reconcile_replaces_a_dead_same_pid_in_one_pass` | Core discovery `tests/cadence.rs`: `full_reconcile_replaces_a_dead_same_pid_in_one_pass` |

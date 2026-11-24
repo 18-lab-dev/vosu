@@ -26,11 +26,8 @@ use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
 use vosu_adapter_upstream::calculate::PpQuery;
 
-use crate::{
-    api::{self, ApiError, SnapshotManager},
-    counters::{
-        CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
-    },
+use crate::counters::{
+    CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
 };
 use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
 
@@ -60,7 +57,6 @@ include!("service/declared_calculate.rs");
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
     use vosu_proptest::bounded;
 
     #[derive(Default)]
@@ -90,6 +86,11 @@ mod tests {
         }
     }
 
+    impl StateJsonProvider for NoState {
+        fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
+            Box::pin(async { CachedJson::NotReady })
+        }
+    }
     struct CommandProviders;
 
     impl super::super::commands::SettingsProvider for CommandProviders {
