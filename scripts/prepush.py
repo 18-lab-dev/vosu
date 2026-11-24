@@ -13,6 +13,12 @@ import time
 
 import windows_sensitivity
 
+_ci_container_spec = importlib.util.spec_from_file_location(
+    "ci_container_run_tests", Path(__file__).resolve().parent / "ci-container" / "run_tests.py"
+)
+ci_container = importlib.util.module_from_spec(_ci_container_spec)
+_ci_container_spec.loader.exec_module(ci_container)
+
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE_DIR = ROOT / "target" / "prepush"
 # Own, non-incremental target dir outside the checkout filesystem: a shared
@@ -24,6 +30,7 @@ CARGO_ENV = {
     "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", "/tmp/vosu-target-prepush"),
 }
 LINUX_ENV = {**CARGO_ENV, "C_INCLUDE_PATH": "/usr/include/x86_64-linux-gnu"}
+DOC_LINUX_ENV = {**LINUX_ENV, "RUSTDOCFLAGS": "-D rustdoc::broken_intra_doc_links"}
 
 # Native commands this file does not run directly; scripts/native-ci.ps1 runs
 # them inside the VM. Keep this in sync with that script's own comment header
@@ -180,8 +187,14 @@ def run_actionlint(log_dir, applicable):
 LINUX_STEPS = [
     ("fmt", ["cargo", "fmt", "--all", "--", "--check"], CARGO_ENV, ()),
     ("clippy-linux", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], LINUX_ENV, ()),
+    # Handled specially in main(): run_test_linux() runs this exact command
+    # (ci_container.NEXTEST_CMD) inside the ubuntu-latest-parity container
+    # when podman is available, replacing the plain host run below; the
+    # tuple stays here only so COMMAND_MANIFEST keeps ci.yml's literal text
+    # for scripts/test_gate_tooling.py's drift check.
     ("test-linux", ["cargo", "nextest", "run", "--workspace", "--lib", "--bins", "--tests", "--examples", "--all-features", "--locked"], LINUX_ENV, ()),
     ("test-linux-doc", ["cargo", "test", "--workspace", "--doc", "--all-features", "--locked"], LINUX_ENV, ()),
+    ("doc-linux", ["cargo", "doc", "--workspace", "--no-deps", "--all-features", "--locked"], DOC_LINUX_ENV, ()),
     ("doc-links", [sys.executable, "scripts/check-doc-links.py"], None, ()),
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
     ("brand", [sys.executable, "scripts/check-brand.py"], None, ()),
@@ -210,6 +223,37 @@ COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --bin
 COMMAND_MANIFEST["dashboard-browser"] = "python tests/dashboard_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST.update(NATIVE_COMMANDS)
 COMMAND_MANIFEST["standalone-crates"] = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
+
+
+def run_test_linux(log_dir):
+    """ci.yml's "Test workspace..." step. Runs inside the ubuntu-latest-parity
+    container (scripts/ci-container/) via a nextest archive when podman is on
+    PATH, which is what catches a failure specific to that distribution's
+    packages (e.g. the uutils-coreutils `sleep` class of failure, run
+    45295358591) instead of only hosted CI. Falls back to a plain host run,
+    noted in the evidence, when podman is unavailable."""
+    name = "test-linux"
+    cmd = next(cmd for step_name, cmd, _, _ in LINUX_STEPS if step_name == name)
+    command = " ".join(cmd)
+    log_path = log_dir / f"{name}.log"
+    if ci_container.podman_path() is None:
+        result = run_linux_step(name, cmd, log_dir, LINUX_ENV)
+        note = "podman not found on PATH; ran on the host, not the ubuntu-latest-parity container.\n\n"
+        log_path.write_text(note + log_path.read_text(encoding="utf-8"), encoding="utf-8")
+        result.log_tail = (note + result.log_tail)[-4000:]
+        return result
+    try:
+        outcome = ci_container.run(root=ROOT, cargo_target_dir=CARGO_ENV["CARGO_TARGET_DIR"])
+    except RuntimeError as error:
+        log_path.write_text(f"$ {command}\n\ncontainer orchestration failed: {error}\n", encoding="utf-8")
+        return StepResult(name, True, "failed", command=command, log_tail=f"container orchestration failed: {error}")
+    note = (
+        f"ran in the ubuntu-latest-parity container (image build {outcome['image_build_seconds']:.1f}s, "
+        f"archive {outcome['archive_seconds']:.1f}s, container run {outcome['container_seconds']:.1f}s)\n\n"
+    )
+    log_path.write_text(f"$ {command}\n\n{note}--- stdout ---\n{outcome['stdout']}\n--- stderr ---\n{outcome['stderr']}\n", encoding="utf-8")
+    status = "passed" if outcome["exit_code"] == 0 else "failed"
+    return StepResult(name, True, status, outcome["exit_code"], round(outcome["wall_seconds"], 3), command, note + outcome["stdout"] + outcome["stderr"])
 
 
 def run_standalone_crates(log_dir, applicable):
@@ -362,7 +406,7 @@ def main():
         "--skip",
         default="",
         help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, "
-        "doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
+        "doc-linux, doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
         "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, standalone-crates, "
         "dashboard, native). "
         "land.py refuses evidence that skipped a required step.",
@@ -412,7 +456,10 @@ def main():
             results.append(skipped)
             continue
         print(f"running {name} ...")
-        results.append(run_linux_step(name, cmd, log_dir, env_overrides, unset))
+        if name == "test-linux":
+            results.append(run_test_linux(log_dir))
+        else:
+            results.append(run_linux_step(name, cmd, log_dir, env_overrides, unset))
 
     deleted_assertions_cmd = [sys.executable, "scripts/check-deleted-assertions.py", "--base", args.base]
     skipped = maybe_skip("deleted-assertions", True, " ".join(deleted_assertions_cmd))
