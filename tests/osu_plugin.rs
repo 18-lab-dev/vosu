@@ -34,8 +34,16 @@ fn stable_session_b1_settings_and_exit() {
         let events = harness.sink.events.lock().unwrap();
         assert!(events.attached.contains(&key));
         let phases = &events.phases[&key];
-        assert_eq!(phases.first(), Some(&B1Phase::StartingReader));
+        assert_eq!(phases.first(), Some(&B1Phase::ResolvingOffsets));
         assert!(phases.contains(&B1Phase::Reading));
+        let order = &events.order[&key];
+        assert!(order.attached.unwrap() < order.resolving.unwrap());
+        assert!(order.resolving.unwrap() < order.first_publish.unwrap());
+        assert!(order.first_publish.unwrap() < order.reading.unwrap());
+        assert!(
+            order.starting.is_none(),
+            "stable has no StartingReader phase"
+        );
     }
     assert!(harness.memory.reads.load(Ordering::Relaxed) > 0);
     harness.dispatch(&harness.apply(273.0));
@@ -92,50 +100,37 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
     harness
         .sink
         .until(WAIT, |events| events.published.len() == 32);
-    let reads_before: Vec<_> = harness
-        .memories
-        .iter()
-        .map(|memory| memory.plans.load(Ordering::Relaxed))
-        .collect();
     eventually(|| {
         harness
             .memories
             .iter()
             .all(|memory| memory.plans.load(Ordering::Relaxed) > 0)
     });
+    let reads_before: Vec<_> = harness
+        .memories
+        .iter()
+        .map(|memory| memory.plans.load(Ordering::Relaxed))
+        .collect();
     let (finished, completions) = mpsc::sync_channel(8);
     for worker in 0..8 {
         let harness = harness.clone();
         let finished = finished.clone();
         std::thread::spawn(move || {
             for iteration in 0..500 {
-                let pid = harness.pids[worker * 4 + iteration % 4];
+                // Half the pids stay live as read/focus anchors. Every producer
+                // races the same other half, including immediate start-up exits.
+                let pid = harness.pids[16 + (iteration * 13 + worker * 7) % 16];
                 harness.host.process_appeared(Harness::record(pid, &[]));
+                if iteration % 3 == 0 {
+                    harness.host.process_exited(pid);
+                }
+                harness
+                    .foreground
+                    .set(Some(harness.pids[(iteration + worker) % 16]));
                 harness.host.foreground_changed();
                 harness.dispatch(&harness.apply(100.0 + (iteration % 4) as f64));
-                // Churn a reader only after it is actually initialized. Other
-                // pids remain live and issue sync plans throughout each cycle.
-                if iteration % 50 == 49 {
-                    let key = *harness
-                        .sink
-                        .events
-                        .lock()
-                        .unwrap()
-                        .attached
-                        .iter()
-                        .find(|key| key.pid == pid)
-                        .unwrap();
+                if iteration % 3 != 0 {
                     harness.host.process_exited(pid);
-                    harness
-                        .sink
-                        .until(WAIT, |events| events.detached.contains(&key));
-                    harness.host.process_appeared(Harness::record(pid, &[]));
-                    harness.sink.until(WAIT, |events| {
-                        events
-                            .published
-                            .keys()
-                            .any(|next| next.pid == pid && next.generation > key.generation)
-                    });
                 }
             }
             finished.send(()).unwrap();
@@ -148,6 +143,16 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .expect("stress worker completion");
     }
+    for &pid in &harness.pids[16..] {
+        harness.host.process_appeared(Harness::record(pid, &[]));
+    }
+    eventually(|| {
+        harness
+            .memories
+            .iter()
+            .zip(&reads_before)
+            .all(|(memory, before)| memory.plans.load(Ordering::Relaxed) > *before)
+    });
     assert!(
         harness
             .memories
@@ -167,5 +172,13 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
     assert!(destroy.elapsed() < WAIT, "destroy exceeded ABI grace");
     assert!(!harness.sink.events.lock().unwrap().late_publish);
     assert_dispatches_ok();
+    assert!(
+        PEAK.load(Ordering::Relaxed) > 1,
+        "dispatches never overlapped"
+    );
+    assert!(
+        FOCUS_EVENTS.load(Ordering::Relaxed) > 32,
+        "foreground rotations delivered no focus changes"
+    );
     assert!(started.elapsed() < Duration::from_secs(45));
 }

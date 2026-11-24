@@ -245,6 +245,22 @@ impl PluginHost {
             super::session::IDENTIFICATION_TIMEOUT,
         )
     }
+    /// Development-only constructor for deterministic foreground changes.
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn new_with_foreground(
+        logger: Logger,
+        settings: Arc<PluginSettingsService>,
+        runtime: Handle,
+        foreground: Arc<super::focus::SyntheticForegroundSource>,
+    ) -> Arc<Self> {
+        Self::new_inner(
+            logger,
+            settings,
+            runtime,
+            foreground,
+            super::session::IDENTIFICATION_TIMEOUT,
+        )
+    }
 
     /// Test-only entry point: lets a test inject a
     /// `focus::SyntheticForegroundSource` and a short identification

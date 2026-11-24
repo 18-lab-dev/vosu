@@ -13,6 +13,66 @@ pub const WAIT: Duration = Duration::from_secs(5);
 pub static DISPATCHES: AtomicUsize = AtomicUsize::new(0);
 pub static FAILURES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub static DECLINES: Mutex<Vec<vosu_plugin_api::DetachReason>> = Mutex::new(Vec::new());
+pub static PANICS: AtomicUsize = AtomicUsize::new(0);
+pub static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+pub static PEAK: AtomicUsize = AtomicUsize::new(0);
+pub static FOCUS_EVENTS: AtomicUsize = AtomicUsize::new(0);
+pub static ATTACHES: Mutex<BTreeMap<u32, usize>> = Mutex::new(BTreeMap::new());
+static TEST_BUSY: Mutex<bool> = Mutex::new(false);
+static TEST_AVAILABLE: Condvar = Condvar::new();
+static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+
+// A Send + Sync ownership token, not a thread-affine MutexGuard: Harness is
+// shared with producers, but the process-wide B1 slot stays exclusive until
+// all its fields (including runtime tasks) have been dropped.
+struct TestLease;
+impl TestLease {
+    fn acquire() -> Self {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut busy = TEST_BUSY.lock().unwrap();
+        while *busy {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "harness lease deadline");
+            busy = TEST_AVAILABLE.wait_timeout(busy, remaining).unwrap().0;
+        }
+        *busy = true;
+        PANIC_HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                PANICS.fetch_add(1, Ordering::Relaxed);
+                previous(info);
+            }));
+        });
+        for counter in [&PANICS, &DISPATCHES, &IN_FLIGHT, &PEAK, &FOCUS_EVENTS] {
+            counter.store(0, Ordering::Relaxed);
+        }
+        FAILURES.lock().unwrap().clear();
+        DECLINES.lock().unwrap().clear();
+        ATTACHES.lock().unwrap().clear();
+        Self
+    }
+}
+impl Drop for TestLease {
+    fn drop(&mut self) {
+        let panics = PANICS.load(Ordering::Relaxed);
+        *TEST_BUSY.lock().unwrap() = false;
+        TEST_AVAILABLE.notify_one();
+        if !std::thread::panicking() {
+            assert_eq!(panics, 0, "panic on a dispatch, reader or runtime thread");
+        }
+    }
+}
+
+struct DispatchGuard;
+impl Drop for DispatchGuard {
+    fn drop(&mut self) {
+        DISPATCHES.fetch_add(1, Ordering::Relaxed);
+        IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+        if std::thread::panicking() {
+            FAILURES.lock().unwrap().push("dispatch panicked".into());
+        }
+    }
+}
 
 // Instrument the real entry point, not an imitation: all dispatches, including
 // host-internal deliveries without a public status receiver, are checked.
@@ -22,11 +82,19 @@ impl ConcurrentPlugin for ObservedPlugin {
         <vosu_osu::plugin::OsuPlugin as ConcurrentPlugin>::create(host, init).map(Self)
     }
     fn on_message(&self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
+        let active = IN_FLIGHT.fetch_add(1, Ordering::Relaxed) + 1;
+        PEAK.fetch_max(active, Ordering::Relaxed);
+        let _guard = DispatchGuard;
+        if matches!(&message, Message::FocusChanged(_)) {
+            FOCUS_EVENTS.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Message::SessionAttached(attached) = &message {
+            *ATTACHES.lock().unwrap().entry(attached.pid).or_default() += 1;
+        }
         if let Message::SessionDetached(detached) = &message {
             DECLINES.lock().unwrap().push(detached.reason);
         }
         let result = self.0.on_message(message, correlation_id);
-        DISPATCHES.fetch_add(1, Ordering::Relaxed);
         if let Err(error) = &result {
             FAILURES.lock().unwrap().push(format!("{error:?}"));
         }
@@ -35,6 +103,14 @@ impl ConcurrentPlugin for ObservedPlugin {
 }
 vosu_plugin_api::export_plugin!(bundled concurrent ObservedPlugin);
 
+#[derive(Default)]
+pub struct EventOrder {
+    pub attached: Option<usize>,
+    pub starting: Option<usize>,
+    pub resolving: Option<usize>,
+    pub reading: Option<usize>,
+    pub first_publish: Option<usize>,
+}
 #[derive(Default)]
 pub struct Events {
     pub attached: BTreeSet<B1SessionKey>,
@@ -49,6 +125,8 @@ pub struct Events {
     pub published: BTreeMap<B1SessionKey, usize>,
     pub detached: BTreeSet<B1SessionKey>,
     pub late_publish: bool,
+    sequence: usize,
+    pub order: BTreeMap<B1SessionKey, EventOrder>,
 }
 pub struct Sink {
     pub events: Mutex<Events>,
@@ -76,6 +154,8 @@ impl Sink {
 impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
     fn send(&self, event: B1Event) {
         let mut events = self.events.lock().unwrap();
+        let sequence = events.sequence;
+        events.sequence += 1;
         match event {
             B1Event::Attached {
                 key,
@@ -83,13 +163,27 @@ impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
                 settings,
                 ..
             } => {
+                events.order.entry(key).or_default().attached = Some(sequence);
                 assert!(events.identified.insert(key, (client, settings)).is_none());
                 assert!(events.attached.insert(key));
             }
             B1Event::Phase { key, phase } => {
+                let order = events.order.entry(key).or_default();
+                match phase {
+                    B1Phase::ResolvingOffsets => &mut order.resolving,
+                    B1Phase::StartingReader => &mut order.starting,
+                    B1Phase::Reading => &mut order.reading,
+                }
+                .get_or_insert(sequence);
                 events.phases.entry(key).or_default().push(phase);
             }
             B1Event::Publish { key, .. } => {
+                events
+                    .order
+                    .entry(key)
+                    .or_default()
+                    .first_publish
+                    .get_or_insert(sequence);
                 events.late_publish |= events.detached.contains(&key);
                 *events.published.entry(key).or_default() += 1;
             }
@@ -188,27 +282,34 @@ pub struct Harness {
     pub memory: Arc<Memory>,
     pub memories: Vec<Arc<Memory>>,
     pub pids: Vec<u32>,
+    pub foreground: Arc<plugin::SyntheticForegroundSource>,
     _installed: vosu_surface::Installed,
     _dirs: Vec<tempfile::TempDir>,
     _runtime: tokio::runtime::Runtime,
+    _lease: TestLease,
 }
 struct Console;
 // The production B2 bridge intentionally serves only vosu.osu. Preserve its
 // real persistence semantics while each integration instance has a unique id.
-struct Storage(plugin::settings::ConfigSettingsBridgeB2);
+struct Storage {
+    bridge: plugin::settings::ConfigSettingsBridgeB2,
+    expected_id: String,
+}
 impl plugin::settings::SettingsStorage for Storage {
     fn load(
         &self,
-        _: &str,
+        id: &str,
     ) -> Result<serde_json::Map<String, serde_json::Value>, plugin::settings::SettingsError> {
-        plugin::settings::SettingsStorage::load(&self.0, "vosu.osu")
+        assert_eq!(id, self.expected_id);
+        plugin::settings::SettingsStorage::load(&self.bridge, "vosu.osu")
     }
     fn store(
         &self,
-        _: &str,
+        id: &str,
         values: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), plugin::settings::SettingsError> {
-        plugin::settings::SettingsStorage::store(&self.0, "vosu.osu", values)
+        assert_eq!(id, self.expected_id);
+        plugin::settings::SettingsStorage::store(&self.bridge, "vosu.osu", values)
     }
 }
 impl vosu_core::logging::ConsoleSink for Console {
@@ -227,6 +328,7 @@ impl vosu_core::logging::ConsoleSink for Console {
 }
 impl Harness {
     pub fn new(id: &str, first_pid: u32, count: u32) -> Self {
+        let lease = TestLease::acquire();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -249,11 +351,18 @@ impl Harness {
                 &dirs[1].path().join("vosu.toml"),
             ))
             .unwrap();
-        let storage = Arc::new(Storage(plugin::settings::ConfigSettingsBridgeB2::new(
-            Arc::new(config),
-        )));
+        let storage = Arc::new(Storage {
+            bridge: plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+            expected_id: id.into(),
+        });
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(storage));
-        let host = PluginHost::new(logger, settings.clone(), runtime.handle().clone());
+        let foreground = Arc::new(plugin::SyntheticForegroundSource::new(None));
+        let host = PluginHost::new_with_foreground(
+            logger,
+            settings.clone(),
+            runtime.handle().clone(),
+            foreground.clone(),
+        );
         let manifest = vosu_osu::MANIFEST.replace("id = \"vosu.osu\"", &format!("id = \"{id}\""));
         let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
             manifest: &manifest,
@@ -291,9 +400,11 @@ impl Harness {
             memory,
             memories,
             pids,
+            foreground,
             _installed: installed,
             _dirs: dirs,
             _runtime: runtime,
+            _lease: lease,
         }
     }
     pub fn record(pid: u32, args: &[&str]) -> ProcessRecord {
@@ -353,6 +464,7 @@ pub fn eventually(predicate: impl Fn() -> bool) {
 
 pub fn assert_dispatches_ok() {
     assert!(DISPATCHES.load(Ordering::Relaxed) > 0);
+    assert_eq!(PANICS.load(Ordering::Relaxed), 0, "background panic");
     assert!(
         FAILURES.lock().unwrap().is_empty(),
         "dispatch failures: {:?}",

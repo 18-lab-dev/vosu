@@ -193,6 +193,9 @@ fn command_filters_decline_and_suppress_reoffers() {
             .process_appeared(Harness::record(pid, &[argument]));
     }
     harness.host.destroy_all(WAIT);
+    let attaches = support::ATTACHES.lock().unwrap();
+    assert_eq!(attaches.values().sum::<usize>(), 6);
+    assert!(harness.pids.iter().all(|pid| attaches.get(pid) == Some(&1)));
     let reasons = DECLINES.lock().unwrap();
     assert_eq!(
         reasons
@@ -242,7 +245,7 @@ fn spectator_devserver_settings_reach_b1() {
 /// Row 3: core discovery's already-unit-tested replacement is exit followed
 /// by appearance. The real plugin must retire the old lifecycle generation.
 #[test]
-fn same_pid_replacement_cancels_old_plugin_generation() {
+fn explicit_exit_then_appearance_advances_plugin_generation() {
     let harness = Harness::new("test.osu.p7.generation", 0x7a00_0500, 1);
     let pid = harness.pids[0];
     harness.host.process_appeared(Harness::record(pid, &[]));
@@ -261,9 +264,7 @@ fn same_pid_replacement_cancels_old_plugin_generation() {
     harness
         .sink
         .until(WAIT, |events| events.detached.contains(&old));
-    let mut replacement = Harness::record(pid, &[]);
-    replacement.start_time += 1;
-    harness.host.process_appeared(replacement);
+    harness.host.process_appeared(Harness::record(pid, &[]));
     harness.sink.until(WAIT, |events| {
         events.identified.len() == 2 && events.published.len() == 2
     });
