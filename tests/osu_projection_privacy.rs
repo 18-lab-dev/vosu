@@ -5,7 +5,7 @@ use vosu_core::state::{
     Audience, InternalGrant, Pointer, SessionKey, SessionState, StateObject, StateValue,
     project_document, project_namespace, project_select, schema::SchemaRegistry,
 };
-use vosu_osu::project::{OsuPointer, ProjectionSink, Projector, SessionFacts};
+use vosu_osu::project::{Caches, OsuPointer, ProjectionSink, Projector, SessionFacts};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings, states::HitErrorArray};
 use vosu_osu_state::*;
 use vosu_plugin_api::{PluginManifest, PublishValueRef};
@@ -135,7 +135,7 @@ fn actual_osu_paths_are_visible_only_to_explicit_internal_grant() {
             foreground: None,
         };
         let mut paths = Paths::default();
-        Projector::default().project(&snapshot(), &facts, &mut paths);
+        Projector::default().project(&snapshot(), &facts, &mut Caches::default(), &mut paths);
         assert!(
             paths.1 > 0,
             "privacy check must inspect public projected pointers"

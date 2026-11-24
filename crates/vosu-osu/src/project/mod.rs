@@ -36,7 +36,8 @@ pub type Projection = fn(&StateBundleSnapshot, &SessionFacts, &mut dyn Projectio
 // Each projection unit extends this list without changing publication mechanics.
 const PROJECTIONS: &[Projection] = &[common::project, play::project, settings::project_all];
 #[derive(Default)]
-pub(crate) struct Caches {
+/// Session-owned caches for stateful projections, retained across samples.
+pub struct Caches {
     skin: skin::SkinCache,
     tourney: tourney::AvailabilityCache,
 }
@@ -68,11 +69,13 @@ impl Projector {
         &mut self,
         snap: &StateBundleSnapshot,
         facts: &SessionFacts,
+        caches: &mut Caches,
         sink: &mut dyn ProjectionSink,
     ) {
         for project in PROJECTIONS {
             project(snap, facts, sink);
         }
+        project_stateful(caches, facts, snap, sink);
     }
     pub(crate) fn project_into(
         &mut self,
