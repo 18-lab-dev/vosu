@@ -1,4 +1,6 @@
 //! Fixed non-overlapping publication partition; arrays and stable groups are whole values.
+//! `Source` is the sampling lane, not an exclusive input dependency: status
+//! gates regular values and progress reads a regular beatmap. See `dirty.rs`.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Source {

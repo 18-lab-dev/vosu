@@ -253,6 +253,25 @@ fn bench(c: &mut Criterion) {
             bus.commit(&bytes.lock().unwrap(), true);
         })
     });
+    let mut precise_next = (*a).clone();
+    precise_next.precise = b.precise.clone();
+    let precise_next = Arc::new(precise_next);
+    end.bench_function("bus_precise", |bencher| {
+        bencher.iter(|| {
+            toggle = !toggle;
+            publisher
+                .publish(
+                    if toggle {
+                        a.clone()
+                    } else {
+                        precise_next.clone()
+                    },
+                    Delivery::Precise,
+                )
+                .unwrap();
+            bus.commit(&bytes.lock().unwrap(), true);
+        })
+    });
     end.bench_function("legacy", |bencher| {
         bencher.iter_batched(
             || legacy(a.clone()),

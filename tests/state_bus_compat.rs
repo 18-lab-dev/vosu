@@ -22,6 +22,8 @@ use vosu_plugin_api::{PluginManifest, PublishBatchWriter, decode_publish_batch_r
 mod oracle;
 #[path = "state_bus_compat/seeds.rs"]
 mod seeds;
+#[path = "state_bus_compat/skipping.rs"]
+mod skipping;
 
 const NAMESPACES: [&str; 6] = [
     "vosu.chart",

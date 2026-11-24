@@ -1,9 +1,10 @@
 //! osu! publication infrastructure. Pointer names are namespace prefix plus
 //! PascalCase schema path: `OsuBeatmapTimeLive` is `vosu.osu/beatmap/time/live`;
 //! core namespaces omit `Osu`. Arrays and infrequently changing groups are whole
-//! values. O3–O5 add their modules and one function each to `PROJECTIONS`.
+//! values. `dirty` tracks source dependencies before the diff sink encodes them.
 mod beatmap;
 mod common;
+mod dirty;
 mod internal;
 mod keys;
 mod leaderboard;
@@ -55,14 +56,20 @@ pub(crate) fn project_stateful(
     snapshot: &StateBundleSnapshot,
     sink: &mut dyn ProjectionSink,
 ) {
-    caches.skin.project(facts, snapshot, sink);
-    caches.tourney.update(snapshot, facts);
+    if sink.wants(OsuPointer::OsuSkinBuiltin) {
+        caches.skin.project(facts, snapshot, sink);
+    }
+    if sink.wants(OsuPointer::OsuTourney) {
+        caches.tourney.update(snapshot, facts);
+    }
 }
 
 #[derive(Default)]
 pub struct Projector {
     pub(crate) last_snapshot: Option<Arc<StateBundleSnapshot>>,
     last: LastValues,
+    // None means cold/invalidated: every pointer must be visited on retry.
+    dirty: Option<dirty::Dirty>,
 }
 impl Projector {
     pub fn project(
@@ -85,14 +92,23 @@ impl Projector {
         projections: &[Projection],
         caches: &mut Caches,
     ) {
-        let mut sink = DiffSink::new(&mut self.last, writer);
+        let dirty = self.dirty.unwrap_or(dirty::Dirty::ALL);
+        let mut sink = DiffSink::filtered(&mut self.last, writer, dirty);
         for project in projections {
             project(snap, facts, &mut sink);
         }
         project_stateful(caches, facts, snap, &mut sink);
+        self.dirty = Some(dirty::Dirty::ALL);
+    }
+    // Compare before the publisher replaces last_snapshot with its attempt.
+    pub(crate) fn prepare(&mut self, snap: &StateBundleSnapshot) {
+        if self.dirty.is_some() {
+            self.dirty = Some(dirty::Dirty::between(self.last_snapshot.as_deref(), snap));
+        }
     }
     pub(crate) fn invalidate(&mut self) {
         self.last.invalidate();
+        self.dirty = None;
     }
 }
 pub(crate) fn projections() -> &'static [Projection] {

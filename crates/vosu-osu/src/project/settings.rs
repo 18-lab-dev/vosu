@@ -135,6 +135,18 @@ pub(super) fn project(
     facts: &SessionFacts,
     sink: &mut dyn ProjectionSink,
 ) {
+    if ![
+        P::OsuSettingsInterfaceVisible,
+        P::OsuSettingsResolution,
+        P::OsuSettingsMode,
+        P::OsuSettingsLeaderboard,
+        P::OsuSettingsBassDensity,
+    ]
+    .into_iter()
+    .any(|at| sink.wants(at))
+    {
+        return;
+    }
     let r = &snap.regular;
     let s = &r.settings.values;
     let lazer = facts.client == ClientType::Lazer;

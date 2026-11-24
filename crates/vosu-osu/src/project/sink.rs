@@ -3,6 +3,10 @@ use super::OsuPointer;
 use vosu_plugin_api::{PublishBatchWriter, PublishValueRef};
 
 pub trait ProjectionSink {
+    /// Whether this pointer's inputs changed. Cold/custom sinks visit everything.
+    fn wants(&self, _at: OsuPointer) -> bool {
+        true
+    }
     fn put(&mut self, at: OsuPointer, value: PublishValueRef<'_>);
     fn put_cbor(&mut self, at: OsuPointer, write: &mut dyn FnMut(&mut Vec<u8>));
 }
@@ -41,14 +45,32 @@ impl LastValues {
 pub struct DiffSink<'a> {
     last: &'a mut LastValues,
     writer: &'a mut PublishBatchWriter,
+    dirty: super::dirty::Dirty,
 }
 impl<'a> DiffSink<'a> {
     pub fn new(last: &'a mut LastValues, writer: &'a mut PublishBatchWriter) -> Self {
-        Self { last, writer }
+        Self::filtered(last, writer, super::dirty::Dirty::ALL)
+    }
+    pub(crate) fn filtered(
+        last: &'a mut LastValues,
+        writer: &'a mut PublishBatchWriter,
+        dirty: super::dirty::Dirty,
+    ) -> Self {
+        Self {
+            last,
+            writer,
+            dirty,
+        }
     }
 }
 impl ProjectionSink for DiffSink<'_> {
+    fn wants(&self, at: OsuPointer) -> bool {
+        self.dirty.contains(at)
+    }
     fn put(&mut self, at: OsuPointer, value: PublishValueRef<'_>) {
+        if !self.dirty.contains(at) {
+            return;
+        }
         let (kind, scalar, bytes): (u8, u64, &[u8]) = match value {
             PublishValueRef::Null => (0, 0, &[]),
             PublishValueRef::Bool(v) => (1, u64::from(v), &[]),
@@ -73,6 +95,9 @@ impl ProjectionSink for DiffSink<'_> {
         self.writer.push(at.ns(), at.pointer(), value);
     }
     fn put_cbor(&mut self, at: OsuPointer, write: &mut dyn FnMut(&mut Vec<u8>)) {
+        if !self.dirty.contains(at) {
+            return;
+        }
         // Move the single scratch buffer out temporarily, retaining its capacity.
         let mut scratch = std::mem::take(&mut self.last.scratch);
         scratch.clear();

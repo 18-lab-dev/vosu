@@ -80,7 +80,7 @@ encoding path, not a second implementation of the osu! projector:
 | `osu_projection/cold` | Fresh publisher projection, diff, encoding and capture sink |
 | `osu_projection/incremental_regular`, `incremental_precise` | Alternating one changed source lane, warmed publisher and reusable encoding buffers |
 | `osu_projection/unchanged` | Same regular/precise Arcs; no publication |
-| `end_to_end/bus` | Alternating gameplay snapshots → projector → flat batch → commit → `api_json` → changed selection and one `STATE_UPDATE` encoding for a ten-selector subscriber |
+| `end_to_end/bus`, `bus_precise` | Both-lane or precise-only snapshots → projector → flat batch → commit → `api_json` → changed selection and one `STATE_UPDATE` encoding for a ten-selector subscriber |
 | `end_to_end/legacy` | The same gameplay snapshot → uncached v2 and precise serializers |
 
 The fixture changes score and play time; it is not an oracle for every client
@@ -99,8 +99,46 @@ Criterion accepts one regex filter; the plan's literal two positional filters
 
 The invariants use the existing thread-local counting allocator: an active
 publisher must allocate and publish nothing for repeated unchanged source Arcs,
-and repeated scalar commits must stay under a fixed allocation ceiling while
-actually advancing revisions and replacing values.
+allocate nothing for warmed alternating precise ticks, and keep repeated scalar
+commits under a fixed allocation ceiling while actually replacing values.
+
+### Projection skipping
+
+The projector retains only its existing previous snapshot. Equal lane Arcs skip
+their input groups; changed regular Arcs compare their owned source groups
+without cloning them. An exhaustive dependency table preserves cross-lane reads:
+precise status gates regular gameplay/mods/tourney, and progress also reads the
+regular beatmap. Skipped pointers retain their diff values; generation, reset,
+refusal and unwind invalidation still visit every pointer on the next attempt.
+
+The opt-in diagnostic times source equality against batched production
+encoder/diff callbacks, without timing assertions:
+
+```sh
+cargo test --release --locked -p vosu-osu --lib projection_group_costs -- --ignored --nocapture
+```
+
+Shared-host release results on default snapshots (ns). Encoder work forced by
+the always-dirty result group is excluded from other groups' savings. Remaining
+dependent pointer sets overlap, exclude dispatch/input lookup, and must not be summed:
+
+| Source | Compare | Skippable encode + diff |
+|---|---:|---:|
+| global | 654.39 | 980.91 |
+| settings | 0.44 | 2496.44 |
+| beatmap | 259.00 | 2254.75 |
+| menu | 204.15 | 1378.64 |
+| bass density | 0.67 | 96.33 |
+| gameplay / leaderboard | 785.62 | 1129.98 |
+| result screen | 647.50 | 640.01 |
+| user | 0.55 | 57.10 |
+| lazer spectating / tourney | 0.55 | 22.31 |
+| ranked play | 0.75 | 10.52 |
+| room | 0.50 | 10.34 |
+
+Result-screen equality was too close to encoding cost, so that group is gated
+only by regular-lane identity, not by group equality. These empty/default inputs
+are not a large-history or populated-lobby performance guarantee.
 
 ### Live B1 and bus ticks
 
@@ -146,21 +184,26 @@ false` and each comparison's `inconclusive` flag in the evidence.
 non-overlapping 95% intervals is still required before claiming the 10% milestone
 and cumulative bar.
 
-The 2026-11-24 acceptance run (shared host, not CPU-pinned, concurrent host
-activity) produced the following Criterion estimates. These are instrument
-smoke results, **not D17 evidence** or revision-to-revision speedup claims.
-All values below are microseconds; brackets are Criterion's 95% interval.
+The X2b projection-skipping comparison uses unmodified M2 `fdf045c` versus the
+skip implementation, with the identical additive `bus_precise` instrument in
+both binaries. Separate targets: `m2-x2b-baseline` and `m2-x2b`. CPU 7, sibling
+23 unreserved, three interleaved rounds, 1 s warm-up, 2 s measurement, 50 samples,
+`scripts/bench-compare.py --no-reserve --filter 'bus_commit|osu_projection|end_to_end'`.
+All rows have `exclusive: false`; intervals below bootstrap the round medians,
+not Criterion samples. Raw evidence: `m2-x2b/comparison/summary.json` under the
+local Cargo-target cache. These are **not a D17 milestone/cumulative pass**.
 
-| M2 case | Estimate [95% interval], µs |
-|---|---|
-| `bus_commit/regular_batch` | 0.87173 [0.85806, 0.88591] |
-| `bus_commit/precise_batch` | 1.0833 [1.0677, 1.1007] |
-| `osu_projection/cold` | 8.7289 [8.4532, 9.0343] |
-| `osu_projection/incremental_regular` | 10.024 [9.9103, 10.144] |
-| `osu_projection/incremental_precise` | 10.016 [9.9146, 10.123] |
-| `osu_projection/unchanged` | 0.047802 [0.047503, 0.048119] |
-| `end_to_end/bus` | 28.424 [28.031, 28.848] |
-| `end_to_end/legacy` | 1.9737 [1.9309, 2.0213] |
+| M2 case | Before [95% interval], µs | After [95% interval], µs | Delta | Inconclusive |
+|---|---:|---:|---:|---|
+| `bus_commit/regular_batch` | 0.778 [0.764, 0.806] | 0.790 [0.771, 0.852] | +1.50% | yes |
+| `bus_commit/precise_batch` | 0.889 [0.886, 0.911] | 0.882 [0.864, 0.906] | −0.87% | yes |
+| `osu_projection/cold` | 7.877 [7.866, 8.005] | 8.118 [7.736, 14.115] | +3.06% | yes |
+| `osu_projection/incremental_regular` | 9.417 [9.336, 10.449] | 5.283 [5.211, 5.439] | −43.90% | no |
+| `osu_projection/incremental_precise` | 9.362 [9.312, 9.372] | 0.697 [0.686, 0.701] | −92.56% | no |
+| `osu_projection/unchanged` | 0.049 [0.049, 0.055] | 0.045 [0.043, 0.054] | −8.04% | yes |
+| `end_to_end/bus` | 25.974 [24.913, 33.163] | 21.155 [21.141, 21.163] | −18.55% | yes |
+| `end_to_end/bus_precise` | 24.358 [24.231, 25.339] | 15.571 [15.463, 15.627] | −36.07% | no |
+| `end_to_end/legacy` | 1.641 [1.633, 1.681] | 1.673 [1.671, 1.685] | +1.94% | yes |
 
 The incremental commit fixture clears the captured cold batch before projecting
 the changed snapshot and asserts that a new batch was sent. Both capture lanes

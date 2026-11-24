@@ -846,14 +846,36 @@ fn unchanged_snapshot_publishes_and_allocates_nothing() {
     let mut precise = (*changed.precise).clone();
     precise.play_time = 1234.0;
     changed.precise = Arc::new(precise);
+    let changed = Arc::new(changed);
     publisher
-        .publish(Arc::new(changed), Delivery::Precise)
+        .publish(changed.clone(), Delivery::Precise)
         .unwrap();
     assert_eq!(
         sends.load(Ordering::Relaxed),
         2,
         "a changed precise input must publish"
     );
+    // Both lanes and the output buffers have been warmed. Changing the precise
+    // lane must not allocate to remember regular groups or build dirty flags.
+    publisher
+        .publish(snapshot.clone(), Delivery::Precise)
+        .unwrap();
+    publisher
+        .publish(changed.clone(), Delivery::Precise)
+        .unwrap();
+    let before = sends.load(Ordering::Relaxed);
+    let (_, allocations) = allocations_during(|| {
+        for _ in 0..100 {
+            publisher
+                .publish(snapshot.clone(), Delivery::Precise)
+                .unwrap();
+            publisher
+                .publish(changed.clone(), Delivery::Precise)
+                .unwrap();
+        }
+    });
+    assert_eq!(allocations, 0);
+    assert_eq!(sends.load(Ordering::Relaxed), before + 200);
 }
 
 #[test]

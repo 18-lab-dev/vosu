@@ -14,6 +14,16 @@ pub(super) fn project(
     facts: &SessionFacts,
     sink: &mut dyn ProjectionSink,
 ) {
+    super::keys::project(s, sink);
+    super::leaderboard::project(s, sink);
+    super::performance::project(s, sink);
+    super::result::project(s, sink);
+    if ![P::OsuPlaySource, P::OsuPlayPp]
+        .into_iter()
+        .any(|at| sink.wants(at))
+    {
+        return;
+    }
     let r = &s.regular;
     let g = &r.gameplay;
     let status = s.precise.status;
@@ -91,10 +101,6 @@ pub(super) fn project(
     });
     // 1.x's regular play field is regular gameplay UR, not the precise estimator.
     sink.put(P::OsuPlayUnstableRate, V::F64(g.unstable_rate));
-    super::keys::project(s, sink);
-    super::leaderboard::project(s, sink);
-    super::performance::project(s, sink);
-    super::result::project(s, sink);
 }
 
 pub(super) fn number_name(b: &mut Vec<u8>, mode: Option<i64>) {

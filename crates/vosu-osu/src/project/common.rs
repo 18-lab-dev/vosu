@@ -10,6 +10,30 @@ pub(super) fn project(
     sink: &mut dyn ProjectionSink,
 ) {
     session::project(s, facts, sink);
+    if ![
+        P::StatusStatus,
+        P::ChartTitle,
+        P::ChartLength,
+        P::ChartKeyCount,
+        P::SkinName,
+        P::PlayJudgements,
+        P::PlayRate,
+    ]
+    .into_iter()
+    .any(|at| sink.wants(at))
+    {
+        // Precise time advances without walking any regular projection group.
+        // Progress is genuinely cross-lane: its denominator is the parsed map.
+        sink.put(P::OsuBeatmapTimeLive, V::F64(s.precise.play_time));
+        let length = s
+            .regular
+            .beatmap
+            .parsed
+            .as_ref()
+            .map_or(0.0, |p| p.times.full);
+        sink.put(P::PlayProgress, progress(s, length));
+        return;
+    }
     beatmap::project(s, facts, sink);
     let r = &s.regular;
     sink.put(
@@ -77,14 +101,7 @@ pub(super) fn project(
                 _ => None,
             }),
         ),
-        (
-            P::PlayProgress,
-            if length > 0.0 {
-                V::F64((s.precise.play_time / length).clamp(0.0, 1.0))
-            } else {
-                V::Null
-            },
-        ),
+        (P::PlayProgress, progress(s, length)),
         (P::PlayRate, number(beatmap::rate(s, facts))),
     ] {
         sink.put(at, if in_play { value } else { V::Null });
@@ -117,6 +134,14 @@ pub(super) fn project(
         });
     } else {
         sink.put(P::PlayJudgements, V::Null);
+    }
+}
+
+fn progress(s: &StateBundleSnapshot, length: f64) -> V<'static> {
+    if s.precise.status == 2 && length > 0.0 {
+        V::F64((s.precise.play_time / length).clamp(0.0, 1.0))
+    } else {
+        V::Null
     }
 }
 

@@ -156,6 +156,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
                 if force || reset || inner.retry || !unchanged {
+                    inner.projector.prepare(&snapshot);
                     // Retain the attempted snapshot so a refresh after an unwind
                     // can retry even the first publication.
                     inner.projector.last_snapshot = Some(snapshot.clone());
