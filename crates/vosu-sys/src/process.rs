@@ -64,6 +64,25 @@ impl<'a> IndirectReadRequest<'a> {
     }
 }
 
+/// An ordered pointer chain ending in a byte read. Empty offsets are a direct
+/// read, so a batch can combine independent spans and dependent scalar fields.
+pub struct ChainReadRequest<'a> {
+    pub address: usize,
+    pub offsets: &'a [usize],
+    pub dst: &'a mut [u8],
+}
+
+impl<'a> ChainReadRequest<'a> {
+    #[must_use]
+    pub fn new(address: usize, offsets: &'a [usize], dst: &'a mut [u8]) -> Self {
+        Self {
+            address,
+            offsets,
+            dst,
+        }
+    }
+}
+
 impl fmt::Debug for ReadRequest<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -164,6 +183,18 @@ pub trait ProcessMemory: Send + Sync {
                 })?;
         }
         self.read_exact(address, dst)
+    }
+    /// Executes chains in request order. Backends may combine their dependency
+    /// stages, but must publish destinations and report errors in that order.
+    fn read_chains(
+        &self,
+        reads: &mut [ChainReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        for read in reads {
+            self.read_chain(read.address, read.offsets, bitness, read.dst)?;
+        }
+        Ok(())
     }
     /// Reads pointer holders together, then their pointees together, in chunks
     /// of at most 24. Native backends retain two batches; plan backends may

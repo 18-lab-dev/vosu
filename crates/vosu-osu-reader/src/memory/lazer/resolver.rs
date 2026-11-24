@@ -70,7 +70,10 @@ impl LazerMemory {
         // Windows RPM's fixed cost favors the bounded per-capture root/screen
         // spans already used by regular reads. Failed spans keep scalar fallback.
         #[cfg(windows)]
-        self.reset_capture_roots(true);
+        {
+            self.reset_capture_roots(true);
+            let _ = self.prefetch_precise_roots();
+        }
         self.set_read_context_mode(mode);
     }
     pub fn set_resolved_state(&mut self, game_base: usize, current_screen: usize) {
@@ -520,6 +523,71 @@ impl LazerMemory {
         Ok((clock != 0).then_some(clock))
     }
 
+    /// The two menu classifiers share a connection value; its chain and the
+    /// independent clock probe can cross the host boundary together.
+    #[cfg(any(windows, test))]
+    pub(super) fn prefetch_precise_menu(&mut self) -> Option<()> {
+        if self.process.pointer_size() != 8 {
+            return None;
+        }
+        let client = self.root(GameRoot::MultiplayerClient).ok()?;
+        if client == 0 {
+            return None;
+        }
+        let clock = self.beatmap_clock().ok()?;
+        let mut connected = [0; 1];
+        let mut decoupled = [0; 8];
+        self.process
+            .read_chains(
+                &mut [
+                    crate::process::ChainReadRequest::new(
+                        add(
+                            client,
+                            self.offsets
+                                .osu_game_online_multiplayer_online_multiplayer_client
+                                .is_connected_k_backing_field,
+                        )
+                        .ok()?,
+                        &[0x40],
+                        &mut connected,
+                    ),
+                    crate::process::ChainReadRequest::new(
+                        add(
+                            clock,
+                            self.offsets
+                                .osu_game_beatmaps_framed_beatmap_clock
+                                .decoupled_track,
+                        )
+                        .ok()?,
+                        &[],
+                        &mut decoupled,
+                    ),
+                ],
+                self.process.bitness(),
+            )
+            .ok()?;
+        let connected = connected[0] == 1;
+        let room = if connected {
+            self.ptr(
+                add(
+                    client,
+                    self.offsets
+                        .osu_game_online_multiplayer_multiplayer_client
+                        .room,
+                )
+                .ok()?,
+            )
+            .ok()?
+        } else {
+            0
+        };
+        let decoupled = usize::try_from(u64::from_le_bytes(decoupled)).ok()?;
+        let time = self.clock_time_after_probe(clock, decoupled).ok()?;
+        self.menu_global.multi = Some((connected, room));
+        self.menu_global.beatmap_time = Some((clock, time));
+        Some(())
+    }
+
     pub(super) fn clock_current_time(&self, clock: usize) -> Result<f64, MemoryError> {
         if let Some((prefetched, time)) = self.menu_global.beatmap_time
             && prefetched == clock
@@ -528,21 +596,25 @@ impl LazerMemory {
         }
         // Gameplay FramedBeatmapClocks advance their DecouplingFramedClock during
         // lead-in even when the shared track/menu beatmapClock is still stopped.
-        if let Ok(decoupled) = self.ptr(add(
-            clock,
-            self.offsets
-                .osu_game_beatmaps_framed_beatmap_clock
-                .decoupled_track,
-        )?) {
-            // osu.Framework.Timing.DecouplingFramedClock.<CurrentTime>k__BackingField
-            // is a stable framework layout offset (not versioned in offsets.json).
-            if decoupled != 0
-                && let Ok(time) = self.process.read_f64(add(decoupled, 0x20)?)
-            {
-                return Ok(time);
-            }
-        }
+        let decoupled = self
+            .ptr(add(
+                clock,
+                self.offsets
+                    .osu_game_beatmaps_framed_beatmap_clock
+                    .decoupled_track,
+            )?)
+            .unwrap_or_default();
+        self.clock_time_after_probe(clock, decoupled)
+    }
 
+    fn clock_time_after_probe(&self, clock: usize, decoupled: usize) -> Result<f64, MemoryError> {
+        // osu.Framework.Timing.DecouplingFramedClock.<CurrentTime>k__BackingField
+        // is a stable framework layout offset (not versioned in offsets.json).
+        if decoupled != 0
+            && let Ok(time) = self.process.read_f64(add(decoupled, 0x20)?)
+        {
+            return Ok(time);
+        }
         let mut bytes = [0; 8];
         self.process.read_chain(
             add(

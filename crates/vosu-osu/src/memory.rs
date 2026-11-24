@@ -26,8 +26,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{cell::RefCell, mem::size_of};
 
 use vosu_osu_reader::process::{
-    IndirectReadRequest, MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
-    read_indirect_many_default,
+    ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRegion, ProcessBitness,
+    ProcessMemory, ReadRequest, read_indirect_many_default,
 };
 use vosu_plugin_api::{
     FlatReadResults, HostServices, PlanBase, PlanMemory, PlanMemoryError, PlanOp, StageBase,
@@ -210,6 +210,98 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
             }
         })
     }
+
+    fn submit_chains<const CAP: usize>(
+        &self,
+        reads: &mut [ChainReadRequest<'_>],
+        total: usize,
+    ) -> Result<(), MemoryError> {
+        let mut ops = [PlanOp {
+            offset: 0,
+            length: 0,
+        }; CAP];
+        let mut cursor = 0;
+        for read in reads.iter() {
+            for depth in 0..=read.offsets.len() {
+                ops[cursor] = PlanOp {
+                    offset: if depth == 0 {
+                        read.address as i64
+                    } else {
+                        read.offsets[depth - 1] as i64
+                    },
+                    length: if depth == read.offsets.len() {
+                        read.dst.len()
+                    } else {
+                        self.bitness.pointer_size()
+                    } as u32,
+                };
+                cursor += 1;
+            }
+        }
+        let mut stages = [StageRef {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: &[],
+        }; CAP];
+        cursor = 0;
+        for read in reads.iter() {
+            for depth in 0..=read.offsets.len() {
+                stages[cursor] = StageRef {
+                    base: if depth == 0 {
+                        StageBase::Root
+                    } else {
+                        StageBase::Dependent {
+                            ref_stage: (cursor - 1) as u32,
+                            ref_op: 0,
+                        }
+                    },
+                    base_offset: 0,
+                    ops: &ops[cursor..cursor + 1],
+                };
+                cursor += 1;
+            }
+        }
+        let (mut read_index, mut depth, mut address) = (0, 0, reads[0].address);
+        self.submit_stages(
+            PlanBase::Absolute(0),
+            &stages[..total],
+            total,
+            |index, results| {
+                let read = &mut reads[read_index];
+                if depth == read.offsets.len() {
+                    apply_result(results, index, address, read.dst)?;
+                    read_index += 1;
+                    depth = 0;
+                    if let Some(next) = reads.get(read_index) {
+                        address = next.address;
+                    }
+                } else {
+                    let mut bytes = [0; 8];
+                    apply_result(
+                        results,
+                        index,
+                        address,
+                        &mut bytes[..self.bitness.pointer_size()],
+                    )?;
+                    let pointer = usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| {
+                        MemoryError::Corrupt {
+                            context: "pointer",
+                            address,
+                            message: "target pointer does not fit the host address width",
+                        }
+                    })?;
+                    address = pointer.checked_add(read.offsets[depth]).ok_or(
+                        MemoryError::AddressOverflow {
+                            base: pointer,
+                            offset: read.offsets[depth],
+                        },
+                    )?;
+                    depth += 1;
+                }
+                Ok(())
+            },
+        )
+    }
 }
 
 /// Copies one op's decoded flat result straight into `dst` (no
@@ -363,6 +455,50 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                 }
             },
         )
+    }
+
+    fn read_chains(
+        &self,
+        reads: &mut [ChainReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        for chunk in reads.chunks_mut(24) {
+            let eligible = bitness == self.bitness
+                && chunk.iter().all(|read| {
+                    !read.dst.is_empty()
+                        && read.offsets.len() < 8
+                        && i64::try_from(read.address).is_ok()
+                        && read
+                            .offsets
+                            .iter()
+                            .all(|&offset| i64::try_from(offset).is_ok())
+                });
+            if !eligible {
+                for read in chunk {
+                    self.read_chain(read.address, read.offsets, bitness, read.dst)?;
+                }
+                continue;
+            }
+            let ops: usize = chunk.iter().map(|read| read.offsets.len() + 1).sum();
+            let bytes = chunk.iter().try_fold(RESULT_HEADER_BYTES, |total, read| {
+                total
+                    .checked_add(read.dst.len())?
+                    .checked_add(read.offsets.len().checked_mul(bitness.pointer_size())?)?
+                    .checked_add((read.offsets.len() + 1).checked_mul(RESULT_ENTRY_BYTES)?)
+            });
+            if bytes.is_none_or(|bytes| bytes > PLAN_CAP) {
+                for read in chunk {
+                    self.read_chain(read.address, read.offsets, bitness, read.dst)?;
+                }
+            } else if ops <= 8 {
+                self.submit_chains::<8>(chunk, ops)?;
+            } else if ops <= 32 {
+                self.submit_chains::<32>(chunk, ops)?;
+            } else {
+                self.submit_chains::<192>(chunk, ops)?;
+            }
+        }
+        Ok(())
     }
     fn read_indirect_many(
         &self,

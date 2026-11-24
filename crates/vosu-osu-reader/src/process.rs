@@ -15,8 +15,8 @@ pub use vosu_sys::process::scanner::{
     BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE,
 };
 pub use vosu_sys::process::{
-    IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion, ProcessBitness, ProcessMemory,
-    ReadRequest, ReadStatus,
+    ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion, ProcessBitness,
+    ProcessMemory, ReadRequest, ReadStatus,
 };
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
@@ -121,6 +121,13 @@ impl ProcessHandle {
         dst: &mut [u8],
     ) -> Result<(), MemoryError> {
         self.memory.read_chain(address, offsets, bitness, dst)
+    }
+    pub fn read_chains(
+        &self,
+        reads: &mut [ChainReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        self.memory.read_chains(reads, bitness)
     }
     pub fn read_indirect_many(
         &self,

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use vosu_osu_reader::process::{MemoryError, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_osu_reader::process::{
+    ChainReadRequest, MemoryError, ProcessBitness, ProcessMemory, ReadRequest,
+};
 
 use super::{MAX_SINGLE_OP_BYTES, PlanProcessMemory};
 use crate::test_support::FakeHost;
@@ -357,6 +359,86 @@ fn indirect_many_fuses_holders_and_pointees_without_publishing_on_holder_error()
     assert!(matches!(error, MemoryError::Read { address: 100, .. }));
     assert_eq!(a, [7; 4]);
     assert_eq!(b, [7; 4]);
+}
+
+#[test]
+fn mixed_chains_share_one_submission_and_target_pointer_width() {
+    for bitness in [ProcessBitness::X86, ProcessBitness::X64] {
+        let mut bytes = vec![0; 96];
+        bytes[..bitness.pointer_size()]
+            .copy_from_slice(&32u64.to_le_bytes()[..bitness.pointer_size()]);
+        bytes[36..36 + bitness.pointer_size()]
+            .copy_from_slice(&64u64.to_le_bytes()[..bitness.pointer_size()]);
+        bytes[72..76].copy_from_slice(&123u32.to_le_bytes());
+        bytes[80..84].copy_from_slice(&456u32.to_le_bytes());
+        let host = FakeHost::new(|_, _| {}, bytes, 0, Arc::new(AtomicBool::new(true)));
+        let process = PlanProcessMemory::new(host, 1, 4242, bitness);
+        let (mut direct, mut dependent, mut null) = ([7; 4], [7; 4], [7; 4]);
+        process
+            .read_chains(
+                &mut [
+                    ChainReadRequest::new(80, &[], &mut direct),
+                    ChainReadRequest::new(0, &[4, 8], &mut dependent),
+                    ChainReadRequest::new(88, &[0], &mut null),
+                ],
+                bitness,
+            )
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(direct), 456);
+        assert_eq!(u32::from_le_bytes(dependent), 123);
+        assert_eq!(u32::from_le_bytes(null), 32);
+        assert_eq!(process.host.submission_count(), 1);
+    }
+}
+
+#[test]
+fn mixed_chains_publish_destinations_and_errors_in_request_order() {
+    let mut bytes = vec![0; 96];
+    bytes[..8].copy_from_slice(&128u64.to_le_bytes());
+    bytes[72..76].copy_from_slice(&123u32.to_le_bytes());
+    let process = memory(bytes, 0);
+    let (mut first, mut failed, mut last) = ([7; 4], [7; 4], [7; 4]);
+    let error = process
+        .read_chains(
+            &mut [
+                ChainReadRequest::new(72, &[], &mut first),
+                ChainReadRequest::new(0, &[4], &mut failed),
+                ChainReadRequest::new(72, &[], &mut last),
+            ],
+            ProcessBitness::X64,
+        )
+        .unwrap_err();
+    assert!(matches!(error, MemoryError::Read { address: 132, .. }));
+    assert_eq!(u32::from_le_bytes(first), 123);
+    assert_eq!(failed, [7; 4]);
+    assert_eq!(last, [7; 4]);
+}
+
+#[test]
+fn mixed_chains_bound_stack_chunks_and_accept_the_maximum_chain_depth() {
+    let process = memory(vec![0; 8], 0);
+    let mut bytes = [[7]; 25];
+    let mut reads: Vec<_> = bytes
+        .iter_mut()
+        .map(|dst| ChainReadRequest::new(0, &[], dst))
+        .collect();
+    process
+        .read_chains(&mut reads, ProcessBitness::X64)
+        .unwrap();
+    assert_eq!(process.host.submission_count(), 2);
+    assert_eq!(bytes, [[0]; 25]);
+    let process = memory(vec![0; 8], 0);
+    let mut bytes = [[7]; 24];
+    let offsets = [0; 7];
+    let mut reads: Vec<_> = bytes
+        .iter_mut()
+        .map(|dst| ChainReadRequest::new(0, &offsets, dst))
+        .collect();
+    process
+        .read_chains(&mut reads, ProcessBitness::X64)
+        .unwrap();
+    assert_eq!(process.host.submission_count(), 1);
+    assert_eq!(bytes, [[0]; 24]);
 }
 
 mod zero_alloc;

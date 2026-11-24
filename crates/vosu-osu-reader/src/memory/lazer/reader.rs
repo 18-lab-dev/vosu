@@ -558,6 +558,10 @@ impl MemoryReader for LazerMemory {
             false
         };
         let playing = player != 0 || is_loader;
+        #[cfg(windows)]
+        if !playing && self.menu_global.multi.is_none() {
+            let _ = self.prefetch_precise_menu();
+        }
         if playing {
             let spectator = self.check_spectator(self.current_screen)?;
             let replay = self.check_watching_replay(self.current_screen, player)?;

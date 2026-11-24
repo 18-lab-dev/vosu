@@ -216,7 +216,9 @@ impl HostServices for ByteEchoHost {
         let mut op_index = 0;
         for stage_index in 0..header.stage_count as usize {
             let stage = stage_at(stage_index);
-            let root = if stage_index == 0 {
+            let root = if stage.base.kind
+                == vosu_plugin_api::vosu_stage_base_kind::VOSU_STAGE_BASE_ROOT as u32
+            {
                 header.root.address
             } else {
                 let reference = (0..stage.base.ref_stage as usize)
@@ -423,4 +425,34 @@ fn indirect_many_is_allocation_free_once_warmed() {
     assert_eq!(u32::from_le_bytes(a), 123);
     assert_eq!(u32::from_le_bytes(b), 456);
     assert_eq!(allocations, 0, "dependent batches must remain stack-only");
+}
+
+#[test]
+fn mixed_chains_are_allocation_free_once_warmed() {
+    let mut bytes = vec![0; 96];
+    bytes[..8].copy_from_slice(&32u64.to_le_bytes());
+    bytes[36..44].copy_from_slice(&64u64.to_le_bytes());
+    bytes[72..76].copy_from_slice(&123u32.to_le_bytes());
+    let mut host = ByteEchoHost::new(bytes, 0);
+    host.expected_stages = 4;
+    let process = PlanProcessMemory::new(host, 1, 123, ProcessBitness::X64);
+    let (mut direct, mut dependent) = ([0; 4], [0; 4]);
+    let mut read = || {
+        process.read_chains(
+            &mut [
+                vosu_osu_reader::process::ChainReadRequest::new(72, &[], &mut direct),
+                vosu_osu_reader::process::ChainReadRequest::new(0, &[4, 8], &mut dependent),
+            ],
+            ProcessBitness::X64,
+        )
+    };
+    read().unwrap();
+    let (result, allocations) = allocations_during(read);
+    result.unwrap();
+    assert_eq!(u32::from_le_bytes(direct), 123);
+    assert_eq!(u32::from_le_bytes(dependent), 123);
+    assert_eq!(
+        allocations, 0,
+        "mixed dependency graphs must remain stack-only"
+    );
 }
