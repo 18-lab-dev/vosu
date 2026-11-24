@@ -294,13 +294,21 @@ jobs:
           ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && '--signed' || '' }}
           --output release-notes.md
 
+      - name: Select GitHub release kind
+        id: release-kind
+        run: python scripts/package-release.py release-flags --tag "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
       # A draft, not a published release: the repository uses immutable releases,
       # which reject new assets after publication, and the OpenPGP signatures are
       # added locally by scripts/sign-release.py --publish (the key never reaches CI).
+      # A prerelease tag creates a prerelease that never becomes the latest
+      # release, so 1.x updaters and /releases/latest keep the newest stable.
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3.0.2
         with:
           draft: true
+          prerelease: ${{ steps.release-kind.outputs.prerelease }}
+          make_latest: ${{ steps.release-kind.outputs.make_latest }}
           fail_on_unmatched_files: true
           body_path: release-notes.md
           files: |

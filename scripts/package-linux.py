@@ -29,10 +29,6 @@ def check_glibc(binary):
     print(f'maximum required GLIBC: {".".join(map(str, max(versions)))}')
 
 
-def package_names(version):
-    return [f'vosu_{version}_amd64.deb', f'vosu-{version}-1.x86_64.rpm', f'vosu-{version}-1-x86_64.pkg.tar.zst']
-
-
 ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512]
 FILES = {'usr/bin/vosu', 'usr/bin/vosux', 'usr/share/applications/vosu.desktop',
          'usr/share/icons/hicolor/scalable/apps/vosu.svg', 'usr/share/licenses/vosu/LICENSE',
@@ -55,6 +51,7 @@ def tar_entries(command):
 
 
 def verify_package(path, version):
+    """Check one package's files and metadata; `version` is its native upstream version."""
     if path.suffix == '.deb':
         entries = tar_entries(['dpkg-deb', '--fsys-tarfile', str(path)])
         metadata = run('dpkg-deb', '-f', str(path), 'Package', 'Version', 'Architecture', 'Depends')
@@ -93,10 +90,12 @@ def build(args):
         stage = Path(temporary)
         shutil.copyfile(args.binary, stage / 'vosu')
         (stage / 'vosu').chmod(0o755)
-        environment = dict(os.environ, VERSION=version, STAGE=str(stage))
-        for packager, name in zip(['deb', 'rpm', 'archlinux'], package_names(version)):
-            run(args.nfpm, 'package', '--config', 'packaging/linux/nfpm.yaml', '--packager', packager, '--target', str(args.output / name), env=environment)
-            verify_package(args.output / name, version)
+        for package in release.distribution_packages(version):
+            # nfpm.yaml disables nfpm's own SemVer splitting; each format gets
+            # its already rendered native version.
+            environment = dict(os.environ, VERSION=package.version, STAGE=str(stage))
+            run(args.nfpm, 'package', '--config', 'packaging/linux/nfpm.yaml', '--packager', package.packager, '--target', str(args.output / package.asset), env=environment)
+            verify_package(args.output / package.asset, package.version)
     archive = args.output / f'vosu-linux-v{version}.zip'
     release.verify_archive(archive, 'linux')
 
