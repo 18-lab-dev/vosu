@@ -369,6 +369,13 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
         reads: &mut [IndirectReadRequest<'_>],
         bitness: ProcessBitness,
     ) -> Result<(), MemoryError> {
+        // Windows coalesces adjacent addresses within a read_many batch. A
+        // dependent stage per pointee discards that coalescing and issues one
+        // ReadProcessMemory per field. Keep the native two-frontier batches;
+        // both submissions still validate the session and process generation.
+        if cfg!(windows) {
+            return read_indirect_many_default(self, reads, bitness);
+        }
         const CAP: usize = 24;
         if bitness != self.bitness
             || reads.iter().any(|read| {
