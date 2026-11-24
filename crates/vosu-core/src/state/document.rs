@@ -5,6 +5,7 @@
 //! `state` module has no outgoing `crate::` edges,
 //! `scripts/module-boundaries/vosu-core.txt`).
 
+use std::fmt;
 use std::sync::Arc;
 
 use super::pointer::Pointer;
@@ -18,12 +19,29 @@ pub struct SessionKey(pub u64);
 /// One session's committed namespace documents at a point in time: the
 /// `ArcSwap` payload `StateStore` publishes (MI). Immutable once built —
 /// a new commit produces a new `SessionState`, never mutates this one.
-#[derive(Debug)]
 pub struct SessionState {
     pub key: SessionKey,
     pub revision: u64,
     namespaces: Vec<(Arc<str>, StateValue)>,
     api_encoding: ApiEncoding,
+}
+
+/// Hand-written, not `#[derive(Debug)]`: every logged view of a session
+/// document goes through [`super::projector::Redacted`] instead (D2, E5),
+/// so this prints only the key, revision, and namespace names — never a
+/// raw value, which would otherwise print `vosu.osu.internal`'s install
+/// paths straight into a `?state`/panic message or log line.
+impl fmt::Debug for SessionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionState")
+            .field("key", &self.key)
+            .field("revision", &self.revision)
+            .field(
+                "namespaces",
+                &self.namespaces.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl SessionState {

@@ -98,9 +98,17 @@ enum Visibility {
     Visible,
     /// Inside a hidden subtree this audience has no grant for: omit.
     Hidden,
-    /// Either an ancestor of a hidden subtree, or inside one with a
-    /// granted descendant somewhere below: structurally recurse.
-    Recurse,
+    /// An ancestor of some hidden path, with nothing hidden *at* this
+    /// node itself: recurse to find it, but a non-object value here has
+    /// no hidden descendant to find, so it is fully visible (P2 fix:
+    /// previously conflated with the `hidden_here` case below and
+    /// defensively dropped, which made a non-object namespace root panic
+    /// through `project_namespace`/`project_document`'s `.expect`).
+    RecurseAncestor,
+    /// Inside a hidden subtree, searching for a granted descendant
+    /// somewhere below: a non-object value here truly has nothing granted
+    /// to find, so it stays hidden.
+    RecurseGranted,
 }
 
 fn visibility(path: &[Box<str>], hidden: &[Pointer], grant: Option<&InternalGrant>) -> Visibility {
@@ -108,7 +116,7 @@ fn visibility(path: &[Box<str>], hidden: &[Pointer], grant: Option<&InternalGran
     if !hidden_here {
         let ancestor_of_hidden = hidden.iter().any(|h| tokens_prefix(path, h.tokens()));
         return if ancestor_of_hidden {
-            Visibility::Recurse
+            Visibility::RecurseAncestor
         } else {
             Visibility::Visible
         };
@@ -119,7 +127,7 @@ fn visibility(path: &[Box<str>], hidden: &[Pointer], grant: Option<&InternalGran
             if grant.fully_grants(path) {
                 Visibility::Visible
             } else if grant.has_granted_descendant(path) {
-                Visibility::Recurse
+                Visibility::RecurseGranted
             } else {
                 Visibility::Hidden
             }
@@ -138,38 +146,42 @@ fn redact<'a>(
     grant: Option<&InternalGrant>,
 ) -> Option<Cow<'a, StateValue>> {
     match visibility(path, hidden, grant) {
-        Visibility::Hidden => None,
-        Visibility::Visible => Some(Cow::Borrowed(value)),
-        Visibility::Recurse => {
-            let StateValue::Object(obj) = value else {
-                // `x-visibility` only ever marks an object subtree (D2); a
-                // hidden/granted boundary can never fall inside an array or
-                // scalar. Treat defensively as hidden rather than risk
-                // leaking it.
-                return None;
-            };
-            let mut changed = false;
-            let mut kept = Vec::with_capacity(obj.len());
-            for (key, child) in obj.iter() {
-                path.push(Box::from(key));
-                match redact(child, path, hidden, grant) {
-                    Some(Cow::Borrowed(b)) => kept.push((Arc::from(key), b.clone())),
-                    Some(Cow::Owned(o)) => {
-                        changed = true;
-                        kept.push((Arc::from(key), o));
-                    }
-                    None => changed = true,
-                }
-                path.pop();
-            }
-            if changed {
-                Some(Cow::Owned(StateValue::Object(Arc::new(StateObject::new(
-                    kept,
-                )))))
-            } else {
-                Some(Cow::Borrowed(value))
-            }
+        Visibility::Hidden => return None,
+        Visibility::Visible => return Some(Cow::Borrowed(value)),
+        // Not an object: nothing hidden lives below a scalar or array
+        // (D2 only ever marks an object subtree), so an ancestor-only
+        // position is fully visible here (P2 fix).
+        Visibility::RecurseAncestor if !matches!(value, StateValue::Object(_)) => {
+            return Some(Cow::Borrowed(value));
         }
+        // Searching for a granted descendant below a hidden subtree: a
+        // non-object value has none to find, so it stays hidden.
+        Visibility::RecurseGranted if !matches!(value, StateValue::Object(_)) => return None,
+        Visibility::RecurseAncestor | Visibility::RecurseGranted => (),
+    }
+    let StateValue::Object(obj) = value else {
+        unreachable!("both non-object Recurse cases returned above")
+    };
+    let mut changed = false;
+    let mut kept = Vec::with_capacity(obj.len());
+    for (key, child) in obj.iter() {
+        path.push(Box::from(key));
+        match redact(child, path, hidden, grant) {
+            Some(Cow::Borrowed(b)) => kept.push((Arc::from(key), b.clone())),
+            Some(Cow::Owned(o)) => {
+                changed = true;
+                kept.push((Arc::from(key), o));
+            }
+            None => changed = true,
+        }
+        path.pop();
+    }
+    if changed {
+        Some(Cow::Owned(StateValue::Object(Arc::new(StateObject::new(
+            kept,
+        )))))
+    } else {
+        Some(Cow::Borrowed(value))
     }
 }
 

@@ -1,19 +1,16 @@
 //! `StateValue`: the in-memory value tree a committed namespace document is
 //! built from (S1, S2; plan:567-569). `from_cbor` decodes a publish's CBOR
-//! payload under the same bounds `docs/v2/plugin-abi.md` places on it (MF):
-//! depth at most 32, map keys must be text, and tags are refused.
-//! `write_json` follows D13's JSON projection rule: a non-finite `f64`
-//! writes as `null` (JS `JSON.stringify`), and `BYTES` writes as standard
-//! base64 (no schema in this freeze has a bytes field).
+//! payload under the same bounds `docs/v2/plugin-abi.md` places on it (MF)
+//! ([`super::cbor`]): depth at most 32, map keys must be text, no
+//! duplicates, no tags, no trailing bytes. `write_json` follows D13's JSON
+//! projection rule: a non-finite `f64` writes as `null`
+//! ([`super::ecma_number`], JS `JSON.stringify`), and `BYTES` writes as
+//! standard base64 (no schema in this freeze has a bytes field).
 
 use std::io::Write as _;
 use std::sync::Arc;
 
 use vosu_plugin_api::CborValue;
-
-/// At most 32 levels of CBOR nesting (MF), matching the schema walker's own
-/// D7 bound.
-const MAX_DEPTH: usize = 32;
 
 /// One value in a session's namespace documents: a persistent,
 /// `Arc`-shared tree so a commit only clones the path it writes (MI).
@@ -49,6 +46,10 @@ pub enum ValueError {
     Tagged,
     #[error("CBOR integer {0} does not fit i64 or u64")]
     IntegerOutOfRange(String),
+    #[error("duplicate CBOR map key {0:?} (RFC 8949 S5.6)")]
+    DuplicateKey(String),
+    #[error("bytes remain after the root CBOR value (MF)")]
+    TrailingBytes,
     #[error("unsupported CBOR value kind")]
     Unsupported,
 }
@@ -84,14 +85,16 @@ impl StateObject {
 
 impl StateValue {
     /// Decodes a publish's CBOR bytes, enforcing MF's bounds (depth ≤ 32,
-    /// text-only map keys, no tags). A CBOR integer that fits `i64`
-    /// canonicalizes to [`Self::I64`] even if the publisher encoded it as
-    /// unsigned; only a value past `i64::MAX` decodes as [`Self::U64`] —
-    /// CBOR's wire integer carries no signedness of its own.
+    /// text-only map keys, no tags, no duplicate map keys, no trailing
+    /// bytes). A CBOR integer that fits `i64` canonicalizes to [`Self::I64`]
+    /// even if the publisher encoded it as unsigned; only a value past
+    /// `i64::MAX` decodes as [`Self::U64`] — CBOR's wire integer carries no
+    /// signedness of its own. Decoded header-by-header
+    /// ([`super::cbor::decode`]), not through `ciborium::de::from_reader`'s
+    /// `CborValue` tree, so a bignum tag (2/3) over a short byte string
+    /// cannot silently fold into a plain integer past the "no tags" rule.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, ValueError> {
-        let decoded: CborValue =
-            ciborium::de::from_reader(bytes).map_err(|e| ValueError::Decode(e.to_string()))?;
-        from_cbor_value(decoded, 1)
+        super::cbor::decode(bytes)
     }
 
     /// Converts to the dynamic CBOR value `STATE_UPDATE`/`vosu-surface`
@@ -134,10 +137,7 @@ impl StateValue {
             Self::U64(v) => {
                 let _ = write!(out, "{v}");
             }
-            Self::F64(f) if f.is_finite() => {
-                let _ = write!(out, "{f}");
-            }
-            Self::F64(_) => out.extend_from_slice(b"null"),
+            Self::F64(f) => super::ecma_number::write_js_number(out, *f),
             Self::String(s) => write_json_string(out, s),
             Self::Bytes(b) => write_json_string(out, &base64_standard(b)),
             Self::Array(items) => {
@@ -165,16 +165,17 @@ impl StateValue {
         }
     }
 
-    /// Descends through nested objects by key; the empty token slice
-    /// selects the whole value (the root pointer). Arrays are leaves (ML):
-    /// no token ever descends into one.
+    /// Descends through nested objects by key and arrays by index (1.x
+    /// `parse_array_index`: no leading zero, out-of-range is absent); the
+    /// empty token slice selects the whole value (the root pointer).
     pub fn get(&self, tokens: &[impl AsRef<str>]) -> Option<&StateValue> {
         let mut current = self;
         for token in tokens {
-            let Self::Object(obj) = current else {
-                return None;
+            current = match current {
+                Self::Object(obj) => obj.get(token.as_ref())?,
+                Self::Array(items) => items.get(parse_array_index(token.as_ref())?)?,
+                _ => return None,
             };
-            current = obj.get(token.as_ref())?;
         }
         Some(current)
     }
@@ -196,6 +197,21 @@ pub(super) fn write_document_json(doc: &[(Arc<str>, StateValue)], out: &mut Vec<
     out.push(b'}');
 }
 
+/// 1.x's array-index pointer token rule (`src/server/v2_subscription.rs:
+/// 375-386`): `"0"` is the only index allowed a leading zero; any other
+/// leading zero, an empty token, or a non-digit byte is not an index at
+/// all (not just out of range), so it reports absent exactly as a genuine
+/// out-of-range index does.
+fn parse_array_index(token: &str) -> Option<usize> {
+    if token == "0" {
+        return Some(0);
+    }
+    if token.starts_with('0') || token.is_empty() || !token.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    token.parse().ok()
+}
+
 fn write_json_string(out: &mut Vec<u8>, s: &str) {
     out.push(b'"');
     for ch in s.chars() {
@@ -204,6 +220,8 @@ fn write_json_string(out: &mut Vec<u8>, s: &str) {
             '\\' => out.extend_from_slice(b"\\\\"),
             '\n' => out.extend_from_slice(b"\\n"),
             '\r' => out.extend_from_slice(b"\\r"),
+            '\u{8}' => out.extend_from_slice(b"\\b"),
+            '\u{c}' => out.extend_from_slice(b"\\f"),
             '\t' => out.extend_from_slice(b"\\t"),
             c if (c as u32) < 0x20 => {
                 let _ = write!(out, "\\u{:04x}", c as u32);
@@ -243,47 +261,6 @@ fn base64_standard(bytes: &[u8]) -> String {
     }
     out
 }
-fn from_cbor_value(value: CborValue, depth: usize) -> Result<StateValue, ValueError> {
-    if depth > MAX_DEPTH {
-        return Err(ValueError::TooDeep);
-    }
-    Ok(match value {
-        CborValue::Null => StateValue::Null,
-        CborValue::Bool(b) => StateValue::Bool(b),
-        CborValue::Integer(i) => {
-            if let Ok(v) = i64::try_from(i) {
-                StateValue::I64(v)
-            } else if let Ok(v) = u64::try_from(i) {
-                StateValue::U64(v)
-            } else {
-                return Err(ValueError::IntegerOutOfRange(format!("{i:?}")));
-            }
-        }
-        CborValue::Float(f) => StateValue::F64(f),
-        CborValue::Text(s) => StateValue::String(Arc::from(s)),
-        CborValue::Bytes(b) => StateValue::Bytes(Arc::from(b)),
-        CborValue::Tag(_, _) => return Err(ValueError::Tagged),
-        CborValue::Array(items) => {
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                out.push(from_cbor_value(item, depth + 1)?);
-            }
-            StateValue::Array(Arc::from(out))
-        }
-        CborValue::Map(entries) => {
-            let mut out = Vec::with_capacity(entries.len());
-            for (k, v) in entries {
-                let CborValue::Text(key) = k else {
-                    return Err(ValueError::NonTextKey);
-                };
-                out.push((Arc::from(key), from_cbor_value(v, depth + 1)?));
-            }
-            StateValue::Object(Arc::new(StateObject(out)))
-        }
-        _ => return Err(ValueError::Unsupported),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,11 +290,31 @@ mod tests {
     }
 
     #[test]
-    fn get_does_not_descend_into_scalars_or_arrays() {
+    fn get_does_not_descend_into_scalars() {
         let v = obj(vec![("score", StateValue::I64(5))]);
         assert_eq!(v.get(&["score", "x"]), None);
-        let arr = StateValue::Array(Arc::from(vec![StateValue::I64(1)]));
-        assert_eq!(arr.get(&["0"]), None);
+    }
+
+    #[test]
+    fn get_indexes_arrays_with_1x_rules() {
+        let arr = StateValue::Array(Arc::from(vec![
+            StateValue::I64(10),
+            StateValue::I64(11),
+            StateValue::I64(12),
+        ]));
+        assert_eq!(arr.get(&["0"]), Some(&StateValue::I64(10)));
+        assert_eq!(arr.get(&["2"]), Some(&StateValue::I64(12)));
+        // Out of range: absent, not an error.
+        assert_eq!(arr.get(&["3"]), None);
+        // A leading zero is refused for any index but "0" itself.
+        assert_eq!(arr.get(&["00"]), None);
+        assert_eq!(arr.get(&["01"]), None);
+        // Non-digit and empty tokens are refused too.
+        assert_eq!(arr.get(&["1a"]), None);
+        assert_eq!(arr.get(&[""]), None);
+        // Nested: an array inside an object, and vice versa.
+        let nested = obj(vec![("items", arr)]);
+        assert_eq!(nested.get(&["items", "1"]), Some(&StateValue::I64(11)));
     }
 
     #[test]
@@ -343,95 +340,7 @@ mod tests {
     #[test]
     fn json_escapes_strings() {
         let mut out = Vec::new();
-        StateValue::String(Arc::from("a\"b\\c\n")).write_json(&mut out);
-        assert_eq!(out, b"\"a\\\"b\\\\c\\n\"");
-    }
-
-    #[test]
-    fn cbor_roundtrips_through_to_cbor_value() {
-        let v = obj(vec![
-            ("n", StateValue::Null),
-            ("b", StateValue::Bool(true)),
-            ("i", StateValue::I64(-5)),
-            ("u", StateValue::U64(u64::MAX)),
-            ("f", StateValue::F64(1.25)),
-            ("s", StateValue::String(Arc::from("hi"))),
-            ("bytes", StateValue::Bytes(Arc::from(b"xy".as_slice()))),
-            (
-                "arr",
-                StateValue::Array(Arc::from(vec![StateValue::I64(1), StateValue::I64(2)])),
-            ),
-        ]);
-        let mut bytes = Vec::new();
-        v.write_cbor(&mut bytes);
-        let back = StateValue::from_cbor(&bytes).expect("round-trips");
-        assert_eq!(v, back);
-    }
-
-    #[test]
-    fn from_cbor_rejects_non_text_keys() {
-        let mut bytes = Vec::new();
-        ciborium::ser::into_writer(
-            &CborValue::Map(vec![(CborValue::Integer(1.into()), CborValue::Null)]),
-            &mut bytes,
-        )
-        .unwrap();
-        assert_eq!(StateValue::from_cbor(&bytes), Err(ValueError::NonTextKey));
-    }
-
-    #[test]
-    fn from_cbor_rejects_tags() {
-        let mut bytes = Vec::new();
-        ciborium::ser::into_writer(&CborValue::Tag(0, Box::new(CborValue::Null)), &mut bytes)
-            .unwrap();
-        assert_eq!(StateValue::from_cbor(&bytes), Err(ValueError::Tagged));
-    }
-
-    #[test]
-    fn from_cbor_rejects_too_deep() {
-        let mut value = CborValue::Null;
-        for _ in 0..=MAX_DEPTH {
-            value = CborValue::Array(vec![value]);
-        }
-        let mut bytes = Vec::new();
-        ciborium::ser::into_writer(&value, &mut bytes).unwrap();
-        assert_eq!(StateValue::from_cbor(&bytes), Err(ValueError::TooDeep));
-    }
-
-    fn arb_state_value() -> impl proptest::strategy::Strategy<Value = StateValue> {
-        use proptest::prelude::*;
-        let leaf = prop_oneof![
-            Just(StateValue::Null),
-            any::<bool>().prop_map(StateValue::Bool),
-            any::<i64>().prop_map(StateValue::I64),
-            ((i64::MAX as u64 + 1)..=u64::MAX).prop_map(StateValue::U64),
-            (-1.0e10f64..1.0e10f64).prop_map(StateValue::F64),
-            "[ -~]{0,8}".prop_map(|s: String| StateValue::String(Arc::from(s))),
-            proptest::collection::vec(any::<u8>(), 0..8)
-                .prop_map(|b| StateValue::Bytes(Arc::from(b))),
-        ];
-        leaf.prop_recursive(3, 16, 4, |inner| {
-            prop_oneof![
-                proptest::collection::vec(inner.clone(), 0..4)
-                    .prop_map(|v| StateValue::Array(Arc::from(v))),
-                proptest::collection::vec(("[a-z]{1,6}", inner), 0..4).prop_map(|entries| {
-                    let fields = entries
-                        .into_iter()
-                        .map(|(k, v)| (Arc::from(k), v))
-                        .collect();
-                    StateValue::Object(Arc::new(StateObject::new(fields)))
-                }),
-            ]
-        })
-    }
-
-    proptest::proptest! {
-        #[test]
-        fn prop_cbor_value_roundtrip(v in arb_state_value()) {
-            let mut bytes = Vec::new();
-            v.write_cbor(&mut bytes);
-            let back = StateValue::from_cbor(&bytes).expect("round-trips");
-            proptest::prop_assert_eq!(v, back);
-        }
+        StateValue::String(Arc::from("a\"b\\c\n\u{8}\u{c}")).write_json(&mut out);
+        assert_eq!(out, b"\"a\\\"b\\\\c\\n\\b\\f\"");
     }
 }
