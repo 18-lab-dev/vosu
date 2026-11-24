@@ -58,6 +58,8 @@ use crate::identity::PluginInstanceId;
 use crate::logging::Logger;
 use crate::state::StateRuntime;
 
+pub use capabilities::validation::{PackageRegistration, ProviderRegistration, ValidationSnapshot};
+
 /// One registered instance's metadata alongside its [`PluginInstance`]:
 /// enough to attribute its logs (§6.10) without re-deriving the plugin id
 /// from the manifest on every `LOG_RECORD`.
@@ -83,6 +85,7 @@ struct InstanceEntry {
     outstanding_scans: Arc<OutstandingScans>,
     publisher: Arc<state::Publisher>,
     capabilities: Vec<capabilities::ProvidedCapability>,
+    replaces: Vec<String>,
 }
 
 /// One `instances` map slot's lifecycle state. Every state keeps

@@ -343,7 +343,7 @@ fn identification_after_five_seconds_opens_the_bus_only_then() {
     let events = delayed::register();
     h.load(
         &format!(
-            "{}concurrent_dispatch=true\n[match]\nprocess_names=['{id}']\n",
+            "{}concurrent_dispatch=true\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
             manifest(id)
         ),
         delayed::vosu_plugin_vtable,

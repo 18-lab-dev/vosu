@@ -13,7 +13,7 @@ use vosu_core::state::{
 use vosu_osu::project::{Caches, DiffSink, LastValues, Projector, SessionFacts};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::StateBundleSnapshot;
-use vosu_plugin_api::{PluginManifest, PublishBatchWriter, decode_publish_batch_ref};
+use vosu_plugin_api::{PublishBatchWriter, decode_publish_batch_ref};
 #[path = "state_api_compat/oracle.rs"]
 #[expect(
     dead_code,
@@ -106,7 +106,9 @@ impl Bus {
             store: StateStore::new(registry.clone()),
             registry,
             grant: PublisherGrant::from_manifest(
-                &PluginManifest::parse(vosu_osu::MANIFEST).unwrap(),
+                &vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+                    .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+                    .unwrap(),
             )
             .unwrap(),
             projector: Projector::default(),
@@ -116,7 +118,9 @@ impl Bus {
         }
     }
     fn open(&self, input: &oracle::Input, pid: u32) {
-        let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+        let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+            .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+            .unwrap();
         self.store.open_session(
             SessionKey(u64::from(pid)),
             &self.grant,
@@ -821,7 +825,7 @@ fn oracle_cases_validate_and_match_the_state_bus() {
             equal(
                 &input.id,
                 "client facts",
-                &json!({"game":"osu", "variant":input.source, "name":"osu!", "version":"", "pid":10, "session":"oracle-10", "focused":true, "plugin":{"id":"vosu.osu", "version":PluginManifest::parse(vosu_osu::MANIFEST).unwrap().version}}),
+                &json!({"game":"osu", "variant":input.source, "name":"osu!", "version":"", "pid":10, "session":"oracle-10", "focused":true, "plugin":{"id":"vosu.osu", "version":vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST).and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap().version}}),
                 &doc["vosu.client"],
             );
             let manager = oracle::manager_with(

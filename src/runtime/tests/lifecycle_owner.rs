@@ -152,7 +152,8 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &owner.paths,
                 &owner.logger,
                 &pool,
-                std::slice::from_ref(&broken)
+                std::slice::from_ref(&broken),
+                &[],
             )
             .is_err()
         );
@@ -168,8 +169,15 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
             broken,
         ];
         assert_eq!(
-            dev_plugins::load_bundled(&owner.plugins, &owner.paths, &owner.logger, &pool, &entries)
-                .unwrap(),
+            dev_plugins::load_bundled(
+                &owner.plugins,
+                &owner.paths,
+                &owner.logger,
+                &pool,
+                &entries,
+                &[]
+            )
+            .unwrap(),
             2
         );
         assert!(owner.plugins.has_enabled_matchers());

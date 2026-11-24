@@ -7,11 +7,10 @@
 //! `vosu-osu` has no dependency edge onto `vosu-core`
 //! (`scripts/crate-boundaries.txt`), so this does not compile the
 //! manifest's `[match]` table through `vosu_core::plugin::matcher`'s
-//! `MatcherEngine` — it validates through `vosu_plugin_api::PluginManifest::parse`
-//! instead (the plan's documented fallback) plus this test's own length
-//! check, which reproduces the same 1-15 byte rule
-//! `vosu_core::plugin::matcher::MatcherError::InvalidLinuxNameContains`
-//! enforces at compile time there. Likewise `parse_overlay_entries` below
+//! `MatcherEngine` — it validates through `vosu_plugin_api::manifest::PackageManifest::parse`
+//! instead, using the same portable document validator as the core matcher.
+//! The independent byte-bound assertions below retain the fixture contract.
+//! Likewise `parse_overlay_entries` below
 //! is this test's own narrow reader of the overlay settings array shape
 //! (`docs/tools/protocol.md`) — it is not a stand-in for core's
 //! `vosu_core::plugin::settings::SettingsSchema::parse`, which this crate
@@ -19,11 +18,12 @@
 //! (`invalid_bundled_settings_schema_refuses_load`, unit P0).
 
 use vosu_osu::settings::OsuSettings;
-use vosu_plugin_api::PluginManifest;
 
 #[test]
 fn manifest_parses() {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).expect("manifest.toml parses");
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .expect("manifest.toml parses");
     assert_eq!(manifest.id, "vosu.osu");
     assert_eq!(manifest.abi_version, 1);
     assert!(manifest.concurrent_dispatch);
@@ -35,7 +35,9 @@ fn manifest_parses() {
 
 #[test]
 fn match_table_has_the_revised_db_fields() {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).expect("manifest.toml parses");
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .expect("manifest.toml parses");
     let table = manifest.matcher.expect("manifest declares [match]");
     assert_eq!(table.process_names, vec!["osu!.exe", "osulazer.exe"]);
     assert!(table.process_path_patterns.is_empty());
@@ -49,7 +51,9 @@ fn match_table_has_the_revised_db_fields() {
 
 #[test]
 fn every_linux_name_contains_entry_is_at_most_15_bytes() {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).expect("manifest.toml parses");
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .expect("manifest.toml parses");
     let table = manifest.matcher.expect("manifest declares [match]");
     for entry in &table.linux_name_contains {
         assert!(
@@ -191,7 +195,9 @@ fn osu_settings_default_matches_reader_settings_default() {
 
 #[test]
 fn manifest_covers_match_coverage_table() {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     let expected = [
         "field:vosu.status.status",
         "field:vosu.chart.title",
@@ -217,7 +223,9 @@ fn manifest_covers_match_coverage_table() {
 
 #[test]
 fn provides_version_equals_schema_version() {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     let schema: serde_json::Value = serde_json::from_str(vosu_osu::OSU_NAMESPACE_SCHEMA).unwrap();
     assert_eq!(manifest.provides.len(), 2);
     assert_eq!(manifest.provides[1].id, "action:vosu.osu.beatmap.import");

@@ -4,15 +4,24 @@ impl ManifestError {
     pub(super) fn for_manifest(&self, manifest: &super::PluginManifest) -> ValidationError {
         let mut diagnostic = self.diagnostic();
         let (id, member) = match self {
-            Self::Capability(id) | Self::CapabilityForeignNamespace(id)
-                | Self::CapabilitySelfDependency(id) | Self::CapabilityDuplicate(id) => (id, "id"),
+            Self::Capability(id)
+            | Self::CapabilityForeignNamespace(id)
+            | Self::CapabilitySelfDependency(id)
+            | Self::CapabilityDuplicate(id) => (id, "id"),
             Self::CapabilityVersion(id) | Self::CapabilityGameVersion(id) => (id, "version"),
-            Self::CapabilityMissingSchema(id) | Self::CapabilityUnexpectedSchema(id) => (id, "schema"),
+            Self::CapabilityMissingSchema(id) | Self::CapabilityUnexpectedSchema(id) => {
+                (id, "schema")
+            }
             _ => return diagnostic,
         };
-        for (name, list) in [("provides", &manifest.provides), ("requires", &manifest.requires), ("optional", &manifest.optional)] {
+        for (name, list) in [
+            ("provides", &manifest.provides),
+            ("requires", &manifest.requires),
+            ("optional", &manifest.optional),
+        ] {
             if (matches!(self, Self::CapabilitySelfDependency(_)) && name == "provides")
-                || (matches!(self, Self::CapabilityDuplicate(_)) && name != "optional") {
+                || (matches!(self, Self::CapabilityDuplicate(_)) && name != "optional")
+            {
                 continue;
             }
             if let Some(i) = list.iter().position(|c| c.id == *id) {

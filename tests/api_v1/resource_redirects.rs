@@ -12,7 +12,7 @@ fn resources_convenience_redirect_only_published_urls_and_encode_once() {
     let id = "test.r4.redirect";
     let mut h = Harness::new();
     let manifest = format!(
-        "{}\n[match]\nprocess_names=['{id}']\n[[resource_kinds]]\nkind='audio'\nfamilies=['audio']\n[[resource_kinds]]\nkind='skin'\ntree=true\nfamilies=['image']\n",
+        "{}\n[match]\nprocess_names=['{id}']\n[[resource_kinds]]\nkind='audio'\nfamilies=['audio']\n[[resource_kinds]]\nkind='skin'\ntree=true\nfamilies=['image']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
         manifest(id)
     );
     publisher::register_manifest(id, &manifest);

@@ -8,7 +8,7 @@ use vosu_core::state::{
 use vosu_osu::project::{Caches, OsuPointer, ProjectionSink, Projector, SessionFacts};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings, states::HitErrorArray};
 use vosu_osu_state::*;
-use vosu_plugin_api::{PluginManifest, PublishValueRef};
+use vosu_plugin_api::PublishValueRef;
 #[derive(Default)]
 struct Paths(Option<StateValue>, usize);
 const SENTINELS: &[&str] = &[
@@ -116,7 +116,7 @@ fn snapshot() -> StateBundleSnapshot {
     }
 }
 fn grant(cap: &str) -> InternalGrant {
-    InternalGrant::from_manifest(&PluginManifest::parse(&format!("kind='plugin'\nmanifest_version=1\nid='acme.privacy'\nname='Privacy'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[requires]]\nid='field:{cap}'\nversion='*'\n")).unwrap())
+    InternalGrant::from_manifest(&vosu_plugin_api::manifest::PackageManifest::parse(&format!("kind='plugin'\nmanifest_version=1\nid='acme.privacy'\nname='Privacy'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[requires]]\nid='field:{cap}'\nversion='*'\n")).and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap())
 }
 #[test]
 fn actual_osu_paths_are_visible_only_to_explicit_internal_grant() {

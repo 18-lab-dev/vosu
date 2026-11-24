@@ -143,32 +143,37 @@ impl Attachment {
         let host = PluginHost::new(logger, settings, runtime.handle().clone());
         let (tx, rx) = sync_channel(1);
         let manifest = format!(
-            "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Reader benchmark'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=[{}]\n",
+            "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Reader benchmark'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=[{}]\n[[provides]]\nid='game:osu'\nversion='*'\n",
             serde_json::to_string(&record.name)?
         );
         let manifest = if bus {
-            let production = vosu_plugin_api::PluginManifest::parse(include_str!(
+            let production = vosu_plugin_api::manifest::PackageManifest::parse(include_str!(
                 "../../crates/vosu-osu/manifest.toml"
-            ))?;
+            ))?
+            .into_plugin()?;
             format!(
-                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Bus benchmark'\nversion='2.0.0-alpha.0'\nhost='*'\nabi_version=1\nruntime='in-process'\ncovers={}\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='schema.json'\n[match]\nprocess_names=[{}]\n",
+                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Bus benchmark'\nversion='2.0.0-alpha.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\ncovers={}\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='schema.json'\n[match]\nprocess_names=[{}]\n[[provides]]\nid='game:osu'\nversion='*'\n",
                 serde_json::to_string(&production.covers)?,
                 serde_json::to_string(&record.name)?
             )
         } else {
             manifest
         };
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: if bus {
-                &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")]
-            } else {
-                &[]
-            },
-            action_schemas: &[],
-            vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
-        }])?;
+        let loaded = plugin::load_bundled(
+            vosu::application_version(),
+            &host.validation_snapshot(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: if bus {
+                    &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")]
+                } else {
+                    &[]
+                },
+                action_schemas: &[],
+                vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
+            }],
+        )?;
         assert!(ATTACH.lock().unwrap().insert(id.into(), tx).is_none());
         let created = host.create_instance(
             PluginInstanceId::new(1),

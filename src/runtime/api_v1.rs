@@ -97,6 +97,12 @@ impl crate::tools::capabilities::InstalledCapabilities for InstalledProviders {
     fn version(&self, capability: &str) -> Option<semver::Version> {
         self.0.upgrade()?.installed_capability_version(capability)
     }
+
+    fn validation_snapshot(&self) -> vosu_core::plugin::ValidationSnapshot {
+        self.0
+            .upgrade()
+            .map_or_else(Default::default, |host| host.validation_snapshot())
+    }
 }
 #[cfg(test)]
 #[path = "api_v1_tests.rs"]

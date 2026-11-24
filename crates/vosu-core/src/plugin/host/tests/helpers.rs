@@ -103,7 +103,7 @@ pub(super) fn session_manifest(plugin_id: &str, process_names: &[&str]) -> Strin
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=[{names}]\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=[{names}]\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     )
 }
 
@@ -144,13 +144,17 @@ pub(super) fn create_session_instance_from_manifest(
     manifest_text: &str,
 ) -> std::sync::mpsc::Receiver<SessionEvent> {
     let events = session::register_with_config(plugin_id, config);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: manifest_text,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: session::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: manifest_text,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: session::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the session testkit plugin");
     let data_dir = tempfile::tempdir().unwrap();
     host.create_instance(id, &loaded[0], data_dir.path().to_path_buf(), None)
@@ -163,7 +167,7 @@ pub(super) fn create_session_instance_from_manifest(
 /// [`create_session_instance_from_manifest`]'s doc comment.
 pub(super) fn session_manifest_by_path_suffix(plugin_id: &str, name: &str) -> String {
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_path_patterns=['.*/{name}']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_path_patterns=['.*/{name}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     )
 }
 

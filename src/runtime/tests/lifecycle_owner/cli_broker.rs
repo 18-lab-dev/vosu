@@ -67,13 +67,17 @@ cli = false
 id = "action:fixture.c0.metadata.hidden"
 version = "1.0.0"
 "#;
-    let loaded = load_bundled(&[BundledPlugin {
-        manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[("args.json", "true"), ("result.json", "true")],
-        vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
-    }])
+    let loaded = load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[BundledPlugin {
+            manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[("args.json", "true"), ("result.json", "true")],
+            vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     let instance = PluginInstanceId::new(770091);
     host.create_instance(instance, &loaded[0], root.path().join("plugin"), None)

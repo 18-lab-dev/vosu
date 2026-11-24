@@ -231,6 +231,7 @@ impl PluginHost {
                 instance,
                 plugin_id,
                 settings_schema: schema,
+                replaces: plugin.manifest().replaces.clone(),
                 capabilities: plugin
                     .manifest()
                     .provides

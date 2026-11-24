@@ -70,8 +70,8 @@ pub use limits::{
     VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
 pub use manifest::{
-    ActionDeclaration, ActionSessionMode, Capability, ManifestError, MatchTable, PluginManifest,
-    ResourceKind, Runtime, Target,
+    ActionDeclaration, ActionSessionMode, Capability, MatchTable, PluginManifest, ResourceKind,
+    Runtime, Target,
 };
 #[cfg(feature = "unstable-sync-reads")]
 pub use message::flat::StageRef;

@@ -1,3 +1,7 @@
+//! Legacy `tool.toml` protocol input and host presentation model.
+//! The M3-to-M7 exception does not validate v2 package documents or grant
+//! capability/action authority; those belong to the SDK and live host registry.
+
 use std::path::{Component, Path};
 
 use semver::{Version, VersionReq};

@@ -15,6 +15,10 @@ covers = ["field:vosu.status.status",
           "field:vosu.play", "field:vosu.skin.name"]
 
 [[provides]]
+id = "game:osu"
+version = "*"
+
+[[provides]]
 id = "field:vosu.osu"
 version = "1.2.0"
 schema = "schemas/vosu.osu.schema.json"

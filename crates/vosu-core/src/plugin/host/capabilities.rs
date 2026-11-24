@@ -2,7 +2,9 @@
 //! creation, loss and destruction immediately cease to provide capabilities.
 use super::{InstanceSlot, PluginHost};
 use semver::Version;
-use vosu_plugin_api::{CapabilityId, parse_capability};
+use vosu_plugin_api::{CapabilityId, covers, parse_capability};
+
+pub mod validation;
 
 pub(super) struct ProvidedCapability {
     pub id: String,
@@ -16,13 +18,13 @@ impl PluginHost {
             return None;
         }
         if let CapabilityId::Field(field) = kind {
-            if field == "vosu.osu.internal" || field.starts_with("vosu.osu.internal.") {
+            if covers("vosu.osu.internal", field) {
                 return None;
             }
             // Core namespaces are always installed. Their schema version, not
             // the application's version, is the public capability version.
             for ns in crate::state::schema::CORE_NAMESPACES {
-                if field == ns || field.strip_prefix(ns).is_some_and(|s| s.starts_with('.')) {
+                if covers(ns, field) {
                     return self
                         .state
                         .registry
@@ -45,11 +47,7 @@ impl PluginHost {
             .flat_map(|entry| &entry.capabilities)
             .filter(|provided| {
                 provided.id == capability
-                    || matches!(kind, CapabilityId::Field(_))
-                        && provided.id.starts_with("field:")
-                        && capability
-                            .strip_prefix(&provided.id)
-                            .is_some_and(|suffix| suffix.starts_with('.'))
+                    || matches!(kind, CapabilityId::Field(_)) && covers(&provided.id, capability)
             })
             .map(|provided| &provided.version)
             .max()

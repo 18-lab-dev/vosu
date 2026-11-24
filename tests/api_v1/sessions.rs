@@ -128,7 +128,10 @@ fn attached_but_unidentified_session_is_hidden_on_every_route() {
         },
     );
     h.load(
-        &format!("{}\n[match]\nprocess_names=['{id}']\n", manifest(id)),
+        &format!(
+            "{}\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
+            manifest(id)
+        ),
         &[],
         &[],
         session::vosu_plugin_vtable,

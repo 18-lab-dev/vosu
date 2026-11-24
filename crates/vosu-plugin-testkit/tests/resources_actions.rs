@@ -336,9 +336,10 @@ fn actions_real_queue_and_pending_limits_are_bounded() {
 
 #[test]
 fn development_manifest_constructs_both_platforms_and_two_actions() {
-    let manifest = PluginManifest::parse(include_str!(
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(include_str!(
         "../../../tests/fixtures/api-v1-plugin/manifest.toml"
     ))
+    .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
     .unwrap();
     assert_eq!(manifest.id, "test.api.fixture");
     assert_eq!(manifest.actions.len(), 2);

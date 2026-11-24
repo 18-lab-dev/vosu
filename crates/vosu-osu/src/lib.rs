@@ -43,7 +43,7 @@ pub use session::test_support;
 vosu_plugin_api::export_plugin!(bundled concurrent plugin::OsuPlugin);
 
 /// The plugin's `manifest.toml`, embedded verbatim (`docs/v2/plugin-abi.md`
-/// §8). Parse with `vosu_plugin_api::PluginManifest::parse`.
+/// §8). Parse with `vosu_plugin_api::manifest::PackageManifest::parse`.
 pub const MANIFEST: &str = include_str!("../manifest.toml");
 
 /// The plugin's `settings.schema.json`, embedded verbatim (§6.9, D19): the

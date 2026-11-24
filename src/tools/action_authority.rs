@@ -107,6 +107,24 @@ impl ToolHost {
         Ok(())
     }
 
+    fn validation_snapshot(
+        &self,
+        installed: &dyn InstalledCapabilities,
+    ) -> vosu_core::plugin::ValidationSnapshot {
+        // Build from actual current entries, never a second registry/cache.
+        // Provider callbacks run before taking the tool entries lock.
+        let mut snapshot = installed.validation_snapshot();
+        snapshot
+            .packages
+            .extend(self.entries.lock().values().filter_map(|entry| {
+                entry
+                    .manifest_v2
+                    .as_ref()
+                    .map(|manifest| manifest.registration(entry.source))
+            }));
+        snapshot
+    }
+
     fn authorize_entry(
         &self,
         entry: &Arc<Entry>,
@@ -119,6 +137,9 @@ impl ToolHost {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
         };
+        manifest
+            .validate_context(&self.validation_snapshot(installed.as_ref()), entry.source)
+            .map_err(|_| Forbidden)?;
         let descriptor = registry.get(action).ok_or(Forbidden)?;
         if descriptor.id != action
             || expected.is_some_and(|value| value.version != descriptor.version)
@@ -133,7 +154,8 @@ impl ToolHost {
             return Err(Forbidden);
         }
         if !manifest.requires.iter().chain(&manifest.optional).any(|r| {
-            r.id.strip_prefix("action:") == Some(action) && r.version.matches(&descriptor.version)
+            r.id.strip_prefix("action:") == Some(action)
+                && r.satisfied_by_version(&r.id, &descriptor.version)
         }) {
             return Err(Forbidden);
         }
@@ -153,6 +175,11 @@ impl ToolHost {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
         };
+        if let Err(error) =
+            manifest.validate_context(&self.validation_snapshot(installed.as_ref()), entry.source)
+        {
+            return Some(error);
+        }
         manifest
             .requires
             .iter()
@@ -175,7 +202,7 @@ impl ToolHost {
                     .iter()
                     .map(|r| {
                         serde_json::json!({
-                            "id": r.id, "version": r.version.to_string(),
+                            "id": r.id, "version": r.raw_version,
                             "satisfied": r.resolved(actions.as_ref(), installed.as_ref()),
                         })
                     })

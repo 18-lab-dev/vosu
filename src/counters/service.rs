@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use serde_json::Value;
@@ -14,6 +14,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::model::{BrokenOverlay, Counter, CounterSetting, DownloadRequest, SettingInput};
 use super::settings::{SettingsError, SettingsStore, validate_component};
+
+mod discovery;
+mod manifest;
+pub use discovery::parse_metadata;
 
 const USER_AGENT: &str = concat!(
     "vosu/",
@@ -219,6 +223,15 @@ impl ReloadableCounterService {
 
     pub fn names(&self) -> &super::names::OverlayNames {
         &self.names
+    }
+
+    pub fn set_validation_host(&self, host: &Arc<vosu_core::plugin::PluginHost>) {
+        *self
+            .current
+            .load()
+            .validation_host
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(host);
     }
 
     /// Points a nickname/alias change at the current static root.
@@ -450,6 +463,7 @@ pub struct CounterService {
     active_installs: Arc<AtomicUsize>,
     install_done: Arc<tokio::sync::Notify>,
     install_slots: Arc<tokio::sync::Semaphore>,
+    validation_host: Arc<std::sync::RwLock<std::sync::Weak<vosu_core::plugin::PluginHost>>>,
 }
 
 impl CounterService {
@@ -480,6 +494,7 @@ impl CounterService {
             active_installs: Arc::new(AtomicUsize::new(0)),
             install_done: Arc::new(tokio::sync::Notify::new()),
             install_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            validation_host: Arc::default(),
         }
     }
 
@@ -507,95 +522,6 @@ impl CounterService {
             found.into_iter().map(|found| found.counter).collect(),
             broken,
         ))
-    }
-
-    /// The overlay catalog scan behind [`Self::discover`], recording which
-    /// file each entry came from: metadata-only folders are listed (and
-    /// served) like any overlay, but only folders with an `index.html` can
-    /// be loaded as a page.
-    fn scan(&self) -> Result<(Vec<Discovered>, Vec<BrokenOverlay>), CounterError> {
-        let metadata = recursive_named_files(&self.static_root, "metadata.txt", true)?;
-        let indexes = recursive_named_files(&self.static_root, "index.html", true)?;
-        let metadata_dirs: std::collections::HashSet<_> = metadata
-            .iter()
-            .filter_map(|path| path.parent())
-            .map(Path::to_path_buf)
-            .collect();
-        let index_dirs: std::collections::HashSet<_> = indexes
-            .iter()
-            .filter_map(|path| path.parent())
-            .map(Path::to_path_buf)
-            .collect();
-        let mut found = Vec::new();
-        let mut broken = Vec::new();
-        // Settings errors already name their file; other errors are reported
-        // against the file being read.
-        let mut record =
-            |directory: &Path, file: &str, error: CounterError| -> Result<(), CounterError> {
-                let folder_name = relative_folder(&self.static_root, directory)?;
-                broken.push(BrokenOverlay {
-                    name: directory
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| folder_name.clone()),
-                    folder_name,
-                    error: match error {
-                        CounterError::Settings(error) => error.to_string(),
-                        error => format!("{file}: {error}"),
-                    },
-                });
-                Ok(())
-            };
-        for path in metadata {
-            let directory = path.parent().expect("metadata has parent");
-            match parse_metadata(&self.static_root, &path, &self.settings) {
-                Ok(counter) if !counter.name.is_empty() => found.push(Discovered {
-                    counter,
-                    metadata: true,
-                    index: index_dirs.contains(directory),
-                }),
-                Ok(_) => {}
-                Err(error) => record(directory, "metadata.txt", error)?,
-            }
-        }
-        for path in indexes {
-            let directory = path.parent().expect("index has parent");
-            if metadata_dirs.contains(directory) {
-                continue;
-            }
-            let folder_name = relative_folder(&self.static_root, directory)?;
-            let settings = match load_discovered_settings(&self.settings, &folder_name) {
-                Ok(settings) => settings,
-                Err(error) => {
-                    record(directory, "settings", error)?;
-                    continue;
-                }
-            };
-            found.push(Discovered {
-                counter: Counter {
-                    downloaded: false,
-                    updatable: false,
-                    folder_name,
-                    name: directory
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or_default()
-                        .to_owned(),
-                    version: "1.0".into(),
-                    author: "local".into(),
-                    resolution: vec![Value::from(-2), Value::from("400")],
-                    authorlinks: Vec::new(),
-                    settings,
-                    usecase: None,
-                    compatiblewith: None,
-                    assets: None,
-                    download_link: None,
-                },
-                metadata: false,
-                index: true,
-            });
-        }
-        Ok((found, broken))
     }
 
     pub fn parse_download_request(
@@ -829,193 +755,7 @@ fn remove_counter_symlink(path: &Path, file_type: &fs::FileType) -> io::Result<(
     }
 }
 
-const MAX_DISCOVERY_FILES: usize = 4096;
 const MAX_METADATA_BYTES: usize = 64 * 1024;
-pub fn parse_metadata(
-    static_root: &Path,
-    metadata_path: &Path,
-    settings_store: &SettingsStore,
-) -> Result<Counter, CounterError> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(metadata_path)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.len() > MAX_METADATA_BYTES as u64 {
-        return Err(CounterError::Io(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "metadata file exceeds limit",
-        )));
-    }
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take((MAX_METADATA_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_METADATA_BYTES {
-        return Err(CounterError::Io(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "metadata file exceeds limit",
-        )));
-    }
-    let text = String::from_utf8(bytes)
-        .map_err(|error| CounterError::Io(io::Error::new(io::ErrorKind::InvalidData, error)))?;
-    let mut fields = HashMap::new();
-    for line in text.lines() {
-        let Some((key, rest)) = line.split_once(':') else {
-            continue;
-        };
-        let value = rest
-            .split("##")
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        fields.insert(key.to_lowercase(), value);
-    }
-    let directory = metadata_path.parent().ok_or(CounterError::InvalidName)?;
-    let folder_name = relative_folder(static_root, directory)?;
-    let settings = load_discovered_settings(settings_store, &folder_name)?;
-    let resolution = fields
-        .remove("resolution")
-        .map(|value| {
-            if dimensions(&value) {
-                value
-                    .split(['x', 'X'])
-                    .map(|part| {
-                        part.trim()
-                            .parse::<i64>()
-                            .map(Value::from)
-                            .unwrap_or(Value::Null)
-                    })
-                    .collect()
-            } else {
-                vec![Value::from("Any"), Value::from("Any")]
-            }
-        })
-        .unwrap_or_else(|| vec![Value::from("Any"), Value::from("Any")]);
-    let authorlinks = fields
-        .remove("authorlinks")
-        .map(|value| value.split(',').map(str::to_owned).collect())
-        .unwrap_or_default();
-    Ok(Counter {
-        downloaded: false,
-        updatable: false,
-        folder_name,
-        name: fields.remove("name").unwrap_or_default(),
-        author: fields.remove("author").unwrap_or_default(),
-        version: fields
-            .remove("version")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "1.0".into()),
-        resolution,
-        authorlinks,
-        settings,
-        usecase: None,
-        compatiblewith: None,
-        assets: None,
-        download_link: None,
-    })
-}
-
-fn dimensions(value: &str) -> bool {
-    let Some((left, right)) = value.split_once(['x', 'X']) else {
-        return false;
-    };
-    !left.trim().is_empty()
-        && !right.trim().is_empty()
-        && left.trim().chars().all(|ch| ch.is_ascii_digit())
-        && right
-            .trim()
-            .chars()
-            .all(|ch| ch.is_ascii_digit() || ch == '-')
-}
-
-fn recursive_named_files(
-    root: &Path,
-    filename: &str,
-    immediate_ignore: bool,
-) -> Result<Vec<PathBuf>, CounterError> {
-    fn walk(
-        dir: &Path,
-        filename: &str,
-        honor_ignore: bool,
-        allow_top_level_alias: bool,
-        active_directories: &mut std::collections::HashSet<PathBuf>,
-        out: &mut Vec<(SystemTime, PathBuf)>,
-    ) -> io::Result<()> {
-        let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            let name = entry.file_name();
-            if allow_top_level_alias && name.to_string_lossy().eq_ignore_ascii_case("tools") {
-                continue;
-            }
-            if name.to_string_lossy().starts_with('.') {
-                continue;
-            }
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            let is_symlink = metadata.file_type().is_symlink();
-            let is_directory = if is_symlink {
-                match fs::metadata(&path) {
-                    Ok(target_metadata) => target_metadata.is_dir(),
-                    Err(_) => false,
-                }
-            } else {
-                metadata.is_dir()
-            };
-            if is_symlink && !allow_top_level_alias {
-                continue;
-            }
-            if is_directory {
-                if name == "node_modules" {
-                    continue;
-                }
-                if honor_ignore && path.join("ignore.txt").exists() {
-                    continue;
-                }
-                let canonical = match fs::canonicalize(&path) {
-                    Ok(canonical) => canonical,
-                    Err(_) if is_symlink => continue,
-                    Err(error) => return Err(error),
-                };
-                if active_directories.insert(canonical.clone()) {
-                    let result = walk(&path, filename, false, false, active_directories, out);
-                    active_directories.remove(&canonical);
-                    result?;
-                }
-            } else if !is_symlink && name == filename {
-                out.push((metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH), path));
-                if out.len() > MAX_DISCOVERY_FILES {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "counter discovery limit exceeded",
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-    let mut found = Vec::new();
-    let mut active_directories = std::collections::HashSet::from([fs::canonicalize(root)?]);
-    walk(
-        root,
-        filename,
-        immediate_ignore,
-        true,
-        &mut active_directories,
-        &mut found,
-    )?;
-    found.sort_by(|(left_time, left_path), (right_time, right_path)| {
-        left_time
-            .cmp(right_time)
-            .then_with(|| left_path.cmp(right_path))
-    });
-    Ok(found.into_iter().map(|(_, path)| path).collect())
-}
 
 fn relative_folder(root: &Path, directory: &Path) -> Result<String, CounterError> {
     let relative = directory

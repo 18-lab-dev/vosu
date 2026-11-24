@@ -114,7 +114,7 @@ fn comm_hint_over_15_bytes_is_rejected() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Linux, &table),
-        Err(MatcherError::HintTooLong { .. })
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
 }
 
@@ -131,13 +131,13 @@ fn empty_comm_hint_is_rejected() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Linux, &table),
-        Err(MatcherError::HintEmpty)
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
 }
 
 /// F2fix review P3: an empty `comm_hints` entry must be refused on
 /// every platform, not only Linux -- on Windows this field is
-/// "accepted but unused" (length/NUL never matter there), but an empty
+/// accepted but unused after portable packaging validation, but an empty
 /// entry would still silently make `overlaps` refuse every later
 /// plugin's own matcher as overlapping (empty is a substring of
 /// anything), the same freeze the Linux-only check already guarded
@@ -150,7 +150,7 @@ fn empty_comm_hint_is_rejected_on_windows_too() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Windows, &table),
-        Err(MatcherError::HintEmpty)
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
 }
 
@@ -165,7 +165,7 @@ fn comm_hint_with_nul_byte_is_rejected() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Linux, &table),
-        Err(MatcherError::HintContainsNul { .. })
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
 }
 
@@ -225,7 +225,7 @@ fn linux_name_contains_over_15_bytes_is_rejected() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Linux, &table),
-        Err(MatcherError::InvalidLinuxNameContains { .. })
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
 }
 
@@ -237,7 +237,7 @@ fn linux_name_contains_empty_entry_is_rejected() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Linux, &table),
-        Err(MatcherError::InvalidLinuxNameContains { .. })
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
 }
 
@@ -253,8 +253,33 @@ fn linux_name_contains_with_nul_byte_is_rejected() {
     };
     assert!(matches!(
         CompiledMatcher::compile(MatchPlatform::Linux, &table),
-        Err(MatcherError::InvalidLinuxNameContains { .. })
+        Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"
     ));
+}
+
+#[test]
+fn manifest_hints_are_validated_identically_on_both_runtime_platforms() {
+    for platform in [MatchPlatform::Linux, MatchPlatform::Windows] {
+        for field in ["comm_hints", "linux_name_contains"] {
+            for value in ["", "1234567890123456", "nul\0", "éééééééé"] {
+                let mut table = MatchTable::default();
+                if field == "comm_hints" {
+                    table.comm_hints.push(value.into());
+                } else {
+                    table.linux_name_contains.push(value.into());
+                }
+                assert!(matches!(CompiledMatcher::compile(platform, &table),
+                    Err(MatcherError::Document(error)) if error.rule == "manifest.matcher-hint"));
+            }
+            let mut table = MatchTable::default();
+            if field == "comm_hints" {
+                table.comm_hints.push("123456789012345".into());
+            } else {
+                table.linux_name_contains.push("123456789012345".into());
+            }
+            assert!(CompiledMatcher::compile(platform, &table).is_ok());
+        }
+    }
 }
 
 #[test]
@@ -510,15 +535,15 @@ fn prefilter_excludes_a_process_names_entry_over_15_bytes_on_linux() {
 
 #[test]
 fn prefilter_on_windows_ignores_comm_hints_and_the_15_byte_limit() {
-    // §6.1: `comm_hints` is "accepted but unused on Windows", and
-    // Windows has no kernel `comm` field width to respect.
+    // Valid comm hints remain unused at runtime on Windows. Packaging rules
+    // are portable, but the Windows executable-name prefilter is not 15-byte bound.
     let mut engine = MatcherEngine::new(MatchPlatform::Windows);
     engine
         .register(
             "vosu.osu".to_string(),
             MatchTable {
                 process_names: vec!["this-name-is-sixteen!".to_string()],
-                comm_hints: vec!["unused-on-windows".to_string()],
+                comm_hints: vec!["unused-hint".to_string()],
                 ..Default::default()
             },
         )

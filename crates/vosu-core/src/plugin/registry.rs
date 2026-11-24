@@ -146,11 +146,15 @@ fn current_target_triple() -> &'static str {
 /// the explicit `BUNDLED` array — it is never `dlopen`ed, so there is no
 /// separate trust question to ask of it the way an external plugin's
 /// `runtime` request raises one.
-pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, HostError> {
+pub fn load_bundled(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    bundled: &[BundledPlugin<'_>],
+) -> Result<Vec<LoadedPlugin>, HostError> {
     bundled
         .iter()
         .map(|entry| {
-            let manifest = PluginManifest::parse(entry.manifest)?;
+            let manifest = parse_plugin(entry.manifest, application_version, snapshot, true)?;
             if manifest.runtime != Runtime::InProcess {
                 return Err(HostError::InProcessRefused {
                     reason: "a bundled plugin's manifest must request runtime = \"in-process\"",
@@ -214,54 +218,58 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
 /// in-process only in a debug build (`debug_build` is `cfg!(debug_assertions)`
 /// at the call site), refused outright in release with an explicit
 /// message rather than a silent downgrade.
-pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, HostError> {
+pub fn load_development(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    debug_build: bool,
+) -> Result<LoadedPlugin, HostError> {
     if !debug_build {
         return Err(HostError::InProcessRefused {
             reason: "release builds trust only bundled and officially sourced plugins in-process; `--plugin <dir>` is refused",
         });
     }
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
-    let manifest = PluginManifest::parse(&text)?;
+    let manifest = parse_plugin(&text, application_version, snapshot, false)?;
     if manifest.runtime != Runtime::InProcess {
         return Err(HostError::InProcessRefused {
             reason: "`--plugin <dir>` only loads an in-process development plugin",
         });
     }
+    let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
         .as_ref()
         .map(|relative| {
-            let text = std::fs::read_to_string(dir.join(relative))?;
+            let text = std::fs::read_to_string(confined_asset(&root, relative)?)?;
             SettingsSchema::parse(&text).map_err(HostError::Settings)
         })
         .transpose()?;
     // Canonical containment also rejects symlinks escaping the plugin root.
     // Manifest validation has already rejected non-relative schema paths.
-    let root = dir.canonicalize()?;
     let namespace_schemas = manifest
         .provides
         .iter()
         .filter_map(|provided| provided.schema.as_ref())
         .map(|relative| {
-            let path = root.join(relative).canonicalize()?;
-            if !path.starts_with(&root) {
+            use std::io::Read as _;
+            let path = confined_asset(&root, relative)?;
+            let limit = vosu_plugin_api::manifest::schema::MAX_BYTES;
+            let mut text = String::new();
+            std::fs::File::open(path)?
+                .take((limit + 1) as u64)
+                .read_to_string(&mut text)?;
+            if text.len() > limit {
                 return Err(HostError::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "namespace schema escapes plugin directory",
+                    std::io::ErrorKind::InvalidData,
+                    "namespace schema byte budget exceeded",
                 )));
             }
-            std::fs::read_to_string(path).map_err(HostError::Io)
+            Ok(text)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let action_schemas = load_action_schemas(&manifest, |relative| {
-        let path = root.join(relative).canonicalize()?;
-        if !path.starts_with(&root) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "action schema escapes plugin directory",
-            )
-            .into());
-        }
+        let path = confined_asset(&root, relative)?;
         use std::io::Read as _;
         let limit = crate::action_schema::MAX_SCHEMA_BYTES;
         let mut text = String::new();
@@ -283,7 +291,7 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
         .targets
         .get(triple)
         .ok_or(HostError::MissingTarget)?;
-    let library_path = dir.join(&target.library);
+    let library_path = confined_asset(&root, &target.library)?;
     // SAFETY: `library_path` names a file the developer passed via the
     // debug-only `--plugin <dir>` flag; loading and running its code
     // in-process is exactly the trust this development tier accepts
@@ -347,6 +355,42 @@ pub fn development_roots(args: &[OsString]) -> std::io::Result<Vec<PathBuf>> {
         }
     }
     result.into_iter().map(std::path::absolute).collect()
+}
+
+fn confined_asset(root: &Path, relative: &str) -> Result<PathBuf, HostError> {
+    let path = root.join(relative).canonicalize()?;
+    if !path.starts_with(root) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "plugin asset escapes package directory",
+        )
+        .into());
+    }
+    Ok(path)
+}
+
+fn parse_plugin(
+    text: &str,
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    bundled: bool,
+) -> Result<PluginManifest, HostError> {
+    let package =
+        vosu_plugin_api::manifest::PackageManifest::parse(text).map_err(HostError::from)?;
+    let support = snapshot
+        .validate(
+            &package,
+            application_version,
+            if bundled { "bundled" } else { "development" },
+            bundled,
+        )
+        .map_err(HostError::from)?;
+    if support != vosu_plugin_api::manifest::HostSupport::Supported {
+        return Err(HostError::State(
+            "plugin manifest host range does not support this daemon".into(),
+        ));
+    }
+    package.into_plugin().map_err(HostError::from)
 }
 
 fn load_action_schemas(

@@ -59,13 +59,17 @@ fn real_osu_import_action_http_registry_schema_and_terminal() {
     let h = Harness::new();
     let results = super::import_fixture::register(h.root.path().into());
     let production = &vosu::plugins::BUNDLED[0];
-    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-        manifest: production.manifest,
-        settings_schema: production.settings_schema,
-        namespace_schemas: production.namespace_schemas,
-        action_schemas: production.action_schemas,
-        vtable: super::import_fixture::vosu_plugin_vtable,
-    }])
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[plugin::BundledPlugin {
+            manifest: production.manifest,
+            settings_schema: production.settings_schema,
+            namespace_schemas: production.namespace_schemas,
+            action_schemas: production.action_schemas,
+            vtable: super::import_fixture::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     h.host
         .create_instance(

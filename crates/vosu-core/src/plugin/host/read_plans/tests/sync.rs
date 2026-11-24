@@ -570,15 +570,19 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
     let plugin_id = "testkit.readplan.nestedsync";
     let (events, trigger) = nested_sync_plugin::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-nestedsync']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-nestedsync']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: nested_sync_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: nested_sync_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the nested-sync testkit plugin");
     let data_dir = tempfile::tempdir().unwrap();
     host.create_instance(

@@ -107,13 +107,17 @@ impl Harness {
         schema: Option<(&str, &str)>,
     ) {
         let schemas: Vec<_> = schema.into_iter().map(|(_, text)| text).collect();
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest,
-            settings_schema: None,
-            namespace_schemas: &schemas,
-            action_schemas: &[],
-            vtable,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &vosu_core::plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest,
+                settings_schema: None,
+                namespace_schemas: &schemas,
+                action_schemas: &[],
+                vtable,
+            }],
+        )
         .unwrap();
         self.host
             .create_instance(
@@ -127,7 +131,7 @@ impl Harness {
     }
     pub fn publisher(&mut self, id: &str, pid: u32) -> (u64, Receiver<PublisherEvent>) {
         let manifest = format!(
-            "{}\nconcurrent_dispatch=true\n[[provides]]\nid='field:{id}'\nversion='1.2.0'\nschema='osu.json'\n[match]\nprocess_names=['{id}']\n",
+            "{}\nconcurrent_dispatch=true\n[[provides]]\nid='field:{id}'\nversion='1.2.0'\nschema='osu.json'\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
             manifest(id)
         );
         publisher::register_manifest(id, &manifest);

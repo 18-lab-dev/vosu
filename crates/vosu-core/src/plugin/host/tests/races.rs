@@ -155,13 +155,17 @@ fn a_timer_set_during_create_that_fires_before_registration_is_queued_and_replay
     let manifest_text = format!(
         "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Gated Timer'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest_text,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: gated_timer_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest_text,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: gated_timer_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the gated-timer test plugin");
 
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -285,13 +289,17 @@ fn destroy_all_does_not_leak_an_instance_still_creating_when_it_races() {
     let manifest_text = format!(
         "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Race Gated'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest_text,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: race_gated_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest_text,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: race_gated_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the race-gated test plugin");
 
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
