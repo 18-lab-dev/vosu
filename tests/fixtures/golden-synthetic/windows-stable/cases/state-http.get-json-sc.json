@@ -1,0 +1,274 @@
+{
+  "format": "vosu-golden-case-v1",
+  "id": "state-http.get-json-sc",
+  "family": "state-http",
+  "barrier": "paused",
+  "conditional": null,
+  "attempts": 1,
+  "normalized": [
+    "header-date"
+  ],
+  "request": {
+    "text": "GET /json/sc HTTP/1.1\r\nHost: 127.0.0.1:24050\r\nConnection: close\r\n\r\n"
+  },
+  "expected": {
+    "status": 200,
+    "headers": [
+      [
+        "access-control-allow-headers",
+        "Origin, X-Requested-With, Content-Type, Accept"
+      ],
+      [
+        "access-control-allow-methods",
+        "POST, GET, PUT, DELETE, OPTIONS"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "access-control-allow-private-network",
+        "true"
+      ],
+      [
+        "connection",
+        "close"
+      ],
+      [
+        "content-length",
+        "3272"
+      ],
+      [
+        "content-type",
+        "application/json; charset=utf-8"
+      ],
+      [
+        "date",
+        "<golden:date>"
+      ]
+    ],
+    "body": {
+      "text": "{\"osuIsRunning\":1,\"chatIsEnabled\":0,\"ingameInterfaceIsEnabled\":0,\"isBreakTime\":0,\"banchoIsConnected\":0,\"banchoId\":0,\"banchoUsername\":\"\",\"banchoStatus\":0,\"banchoCountry\":\"\",\"artistRoman\":\"\",\"artistUnicode\":\"\",\"titleRoman\":\"\",\"titleUnicode\":\"\",\"mapArtistTitle\":\" - \",\"mapArtistTitleUnicode\":\" - \",\"diffName\":\"\",\"mapDiff\":\"[]\",\"creator\":\"\",\"liveStarRating\":0,\"mStars\":0,\"ar\":0,\"mAR\":0,\"od\":0,\"mOD\":0,\"cs\":0,\"mCS\":0,\"hp\":0,\"mHP\":0,\"currentBpm\":0,\"bpm\":187.5,\"mainBpm\":187.5,\"maxBpm\":187.5,\"minBpm\":187.5,\"mMainBpm\":187.5,\"mMaxBpm\":187.5,\"mMinBpm\":187.5,\"mBpm\":\"187.5\",\"md5\":\"\",\"gameMode\":\"osu\",\"mode\":0,\"time\":2.5,\"previewtime\":-1,\"totaltime\":10000,\"timeLeft\":\"00:00:07.500\",\"drainingtime\":0,\"totalAudioTime\":0,\"firstHitObjectTime\":10000,\"mapid\":0,\"mapsetid\":0,\"mapStrains\":{\"0\":0,\"400\":0,\"800\":0,\"1200\":0,\"1600\":0,\"2000\":0,\"2400\":0,\"2800\":0,\"3200\":0,\"3600\":0,\"4000\":0,\"4400\":0,\"4800\":0,\"5200\":0,\"5600\":0,\"6000\":0,\"6400\":0,\"6800\":0,\"7200\":0,\"7600\":0,\"8000\":0,\"8400\":0,\"8800\":0,\"9200\":0,\"9600\":0,\"10000\":0},\"mapBreaks\":[],\"mapKiaiPoints\":[],\"mapPosition\":\"00:00:02.500\",\"mapTimingPoints\":[{\"startTime\":0,\"beatLength\":320}],\"sliders\":0,\"circles\":1,\"spinners\":0,\"maxCombo\":1,\"mp3Name\":\"stable-play-osu-fl-audio.ogg\",\"osuFileName\":\"chart.osu\",\"backgroundImageFileName\":\"stable-play-osu-fl-background.jpg\",\"osuFileLocation\":\"synthetic/chart.osu\",\"backgroundImageLocation\":\"synthetic/stable-play-osu-fl-background.jpg\",\"retries\":0,\"username\":\"\",\"score\":1234567,\"playerHp\":142,\"playerHpSmooth\":118,\"combo\":71,\"currentMaxCombo\":89,\"keyOverlay\":\"{\\\"Enabled\\\":true,\\\"K1Pressed\\\":false,\\\"K1Count\\\":0,\\\"K2Pressed\\\":false,\\\"K2Count\\\":0,\\\"M1Pressed\\\":false,\\\"M1Count\\\":0,\\\"M2Pressed\\\":false,\\\"M2Count\\\":0}\",\"geki\":0,\"c300\":23,\"katsu\":0,\"c100\":41,\"c50\":53,\"miss\":67,\"sliderBreaks\":13,\"acc\":97.13,\"unstableRate\":0,\"convertedUnstableRate\":0,\"hitErrors\":[1.25,-2.5],\"mods\":\"FL\",\"modsEnum\":1024,\"ppIfMapEndsNow\":0,\"ppIfRestFced\":0,\"leaderBoardMainPlayer\":\"{\\\"IsLeaderboardVisible\\\":true,\\\"Username\\\":\\\"\\\",\\\"Score\\\":0,\\\"Combo\\\":0,\\\"MaxCombo\\\":0,\\\"Mods\\\":{\\\"ModsXor1\\\":-1,\\\"ModsXor2\\\":-1,\\\"Value\\\":0},\\\"Hit300\\\":0,\\\"Hit100\\\":0,\\\"Hit50\\\":0,\\\"HitMiss\\\":0,\\\"Team\\\":0,\\\"Position\\\":0,\\\"IsPassing\\\":false}\",\"leaderBoardPlayers\":\"[{\\\"Username\\\":\\\"Alice\\\",\\\"Score\\\":123456,\\\"Combo\\\":321,\\\"MaxCombo\\\":400,\\\"Mods\\\":{\\\"ModsXor1\\\":-1,\\\"ModsXor2\\\":-1,\\\"Value\\\":1024},\\\"Hit300\\\":300,\\\"Hit100\\\":0,\\\"Hit50\\\":0,\\\"HitMiss\\\":1,\\\"Team\\\":1,\\\"Position\\\":2,\\\"IsPassing\\\":true}]\",\"rankedStatus\":0,\"songSelectionRankingType\":0,\"rawStatus\":2,\"dir\":\"synthetic\",\"dl\":\"https://osu.ppy.sh/b/0\",\"osu_90PP\":0,\"osu_95PP\":0,\"osu_96PP\":0,\"osu_97PP\":0,\"osu_98PP\":0,\"osu_99PP\":0,\"osu_SSPP\":0,\"osu_m90PP\":0,\"osu_m95PP\":0,\"osu_m96PP\":0,\"osu_m97PP\":0,\"osu_m98PP\":0,\"osu_m99PP\":0,\"osu_mSSPP\":0,\"accPpIfMapEndsNow\":0,\"aimPpIfMapEndsNow\":0,\"speedPpIfMapEndsNow\":0,\"strainPpIfMapEndsNow\":0,\"noChokePp\":0,\"skin\":\"/compat-private/stable-play-osu-fl/skin\",\"skinPath\":\"/compat-private/stable-play-osu-fl/skin\",\"songSelectionScores\":\"[]\",\"songSelectionMainPlayerScore\":\"{}\",\"songSelectionTotalScores\":-1,\"status\":2,\"osu_99_9PP\":-1,\"osu_m99_9PP\":-1,\"mania_1_000_000PP\":-1,\"mania_m1_000_000PP\":-1,\"simulatedPp\":0,\"plays\":0,\"tags\":\"\",\"source\":\"\",\"starsNomod\":-1,\"comboLeft\":-1,\"localTime\":0,\"localTimeISO\":\"0\",\"sl\":-1,\"sv\":-1,\"threadid\":0,\"test\":\"\"}"
+    }
+  },
+  "replay": {
+    "format": "vosu-adapter-capture-v1",
+    "schema": "sc",
+    "provider_generation": 3,
+    "session": {
+      "ordinal": 0,
+      "generation": 1,
+      "owner": "vosu.osu",
+      "owner_instance": 0,
+      "game": "osu",
+      "variant": "stable",
+      "foreground": true
+    },
+    "focus_revision": 3,
+    "roster": {
+      "revision": 3,
+      "sessions": [
+        {
+          "ordinal": 0,
+          "generation": 1,
+          "owner": "vosu.osu",
+          "owner_instance": 0,
+          "game": "osu",
+          "variant": "stable",
+          "foreground": true
+        }
+      ]
+    },
+    "bus_revision": 1,
+    "namespace_revisions": [
+      [
+        "vosu.osu",
+        1
+      ],
+      [
+        "vosu.chart",
+        1
+      ]
+    ],
+    "entries": [
+      {
+        "ns": "vosu.osu",
+        "pointer": "/beatmap",
+        "value_cbor_b64": "s2Zpc0tpYWn0Z2lzQnJlYWv0aWlzQ29udmVydPRkdGltZahkbGl2Zflo4mRyYXRl+TwAZ3J1bm5pbmf2a2ZpcnN0T2JqZWN0AGpsYXN0T2JqZWN0+XDiaW1wM0xlbmd0aPkAAG5maXJzdEhpdE9iamVjdBknEGdwcmV2aWV3IG1zZWxlY3Rpb25Nb2RlAGZzdGF0dXOiZm51bWJlcvkAAGRuYW1lYGhjaGVja3N1bWBmYXJ0aXN0YG1hcnRpc3RVbmljb2RlYGV0aXRsZWBsdGl0bGVVbmljb2RlYGZtYXBwZXJgZ3ZlcnNpb25gYmlkAGNzZXQAZG1vZGWiZm51bWJlcgBkbmFtZWNvc3Vmc291cmNlYGR0YWdzYGVzdGF0c6llc3RhcnOiZGxpdmX5AABldG90YWz5AABiYXKiaG9yaWdpbmFs+QAAaWNvbnZlcnRlZPkAAGJjc6Job3JpZ2luYWz5AABpY29udmVydGVk+QAAYm9komhvcmlnaW5hbPkAAGljb252ZXJ0ZWT5AABiaHCiaG9yaWdpbmFs+QAAaWNvbnZlcnRlZPkAAGloaXRXaW5kb3egY2JwbaRocmVhbHRpbWX5AABmY29tbW9u+VncY21pbvlZ3GNtYXj5Wdxnb2JqZWN0c6VnY2lyY2xlcwFnc2xpZGVycwBoc3Bpbm5lcnMAZWhvbGRzAGV0b3RhbAFobWF4Q29tYm8A",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/internal/paths",
+        "value_cbor_b64": "pGZzdGFibGWkZGdhbWV4Ki9jb21wYXQtcHJpdmF0ZS9zdGFibGUtcGxheS1vc3UtZmwvaW5zdGFsbGVzb25nc3goL2NvbXBhdC1wcml2YXRlL3N0YWJsZS1wbGF5LW9zdS1mbC9zb25nc2Vza2luc3gwL2NvbXBhdC1wcml2YXRlL3N0YWJsZS1wbGF5LW9zdS1mbC9pbnN0YWxsL1NraW5zZ3JlcGxheXN4Mi9jb21wYXQtcHJpdmF0ZS9zdGFibGUtcGxheS1vc3UtZmwvaW5zdGFsbC9SZXBsYXlzZWxhemVy9mdjdXJyZW50pG1iZWF0bWFwRm9sZGVyaXN5bnRoZXRpY2tiZWF0bWFwRmlsZWljaGFydC5vc3VqYmFja2dyb3VuZHghc3RhYmxlLXBsYXktb3N1LWZsLWJhY2tncm91bmQuanBnZWF1ZGlveBxzdGFibGUtcGxheS1vc3UtZmwtYXVkaW8ub2dnanNraW5Gb2xkZXJ4Jy9jb21wYXQtcHJpdmF0ZS9zdGFibGUtcGxheS1vc3UtZmwvc2tpbg==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/playerName",
+        "value_cbor_b64": "YA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/mode",
+        "value_cbor_b64": "omZudW1iZXIAZG5hbWVjb3N1",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/score",
+        "value_cbor_b64": "+kmWtDg=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/combo",
+        "value_cbor_b64": "omdjdXJyZW50GEdjbWF4GFk=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/accuracyPercent",
+        "value_cbor_b64": "+VYS",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/healthRaw",
+        "value_cbor_b64": "omZub3JtYWz5WHBmc21vb3Ro+Vdg",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/judgements",
+        "value_cbor_b64": "pmRtaXNzGENjbWVoGDVib2sYKWVncmVhdBdncGVyZmVjdAtkZ29vZBgl",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/retries",
+        "value_cbor_b64": "AA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/preciseUnstableRate",
+        "value_cbor_b64": "+QAA",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/mods",
+        "value_cbor_b64": "pWhjaGVja3N1bWJmbGZudW1iZXIZBABkbmFtZWJGTGRyYXRl+TwAZWFycmF5gaFnYWNyb255bWJGTA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/rank",
+        "value_cbor_b64": "omdjdXJyZW50YGttYXhUaGlzUGxheWA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/statistics",
+        "value_cbor_b64": "rm1zbWFsbFRpY2tNaXNzAGxzbWFsbFRpY2tIaXQYT21sYXJnZVRpY2tNaXNzAGxsYXJnZVRpY2tIaXQYU2pzbWFsbEJvbnVzAGpsYXJnZUJvbnVzAGppZ25vcmVNaXNzAGlpZ25vcmVIaXQAamNvbWJvQnJlYWsAbXNsaWRlclRhaWxIaXQYYWxzbGlkZXJCcmVha3MNbXNsaWRlckVuZEhpdHMYYWRnb29kGCVzbGVnYWN5Q29tYm9JbmNyZWFzZQA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/profile",
+        "value_cbor_b64": "rmp1c2VyU3RhdHVzomZudW1iZXIAZG5hbWVscmVjb25uZWN0aW5nbGJhbmNob1N0YXR1c6JmbnVtYmVyAGRuYW1lZGlkbGVkbW9kZaJmbnVtYmVyAGRuYW1lY29zdWtjb3VudHJ5Q29kZaJmbnVtYmVyAGRuYW1lYGJpZABpcGxheUNvdW50AGpnbG9iYWxSYW5rAGRuYW1lYGtyYW5rZWRTY29yZfkAAGVsZXZlbPkAAGhhY2N1cmFjefkAAGJwcPkAAHBiYWNrZ3JvdW5kQ29sb3VyYTBrbWF0Y2htYWtpbmf2",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/state",
+        "value_cbor_b64": "omZudW1iZXICZG5hbWVkcGxheQ==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/watchingReplay",
+        "value_cbor_b64": "9A==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/settings/chatVisibilityStatus",
+        "value_cbor_b64": "omZudW1iZXIAZG5hbWVmaGlkZGVu",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/settings/interfaceVisible",
+        "value_cbor_b64": "9A==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/settings/leaderboard",
+        "value_cbor_b64": "omd2aXNpYmxl9WR0eXBlomZudW1iZXIAZG5hbWVlbG9jYWw=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/keys/overlay",
+        "value_cbor_b64": "9g==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/hitErrors/all",
+        "value_cbor_b64": "gvk9APnBAA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/leaderboard",
+        "value_cbor_b64": "gatoaXNGYWlsZWT0aHBvc2l0aW9uAmR0ZWFtAWJpZBgqZG5hbWVlQWxpY2Vlc2NvcmX6R/EgAGhhY2N1cmFjeflWOGpzdGF0aXN0aWNzpmRtaXNzAWNtZWgAYm9rAGVncmVhdBkBLGdwZXJmZWN0AGRnb29kAGVjb21ib6JnY3VycmVudBkBQWNtYXgZAZBkbW9kc6VoY2hlY2tzdW1iZmxmbnVtYmVyGQQAZG5hbWViRkxkcmF0Zfk8AGVhcnJheYGhZ2Fjcm9ueW1iRkxkcmFua2A=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/leaderboardState",
+        "value_cbor_b64": "omd2aXNpYmxl9WZwbGF5ZXKpZG5hbWVgZXNjb3Jl+QAAZWNvbWJvAGhtYXhDb21ibwBkbW9kc6VoY2hlY2tzdW1gZm51bWJlcgBkbmFtZWBkcmF0Zfk8AGVhcnJheYBqanVkZ2VtZW50c6ZkbWlzcwBjbWVoAGJvawBlZ3JlYXQAZ3BlcmZlY3QAZGdvb2QAZHRlYW0AaHBvc2l0aW9uAGlpc1Bhc3Npbmf0",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/pp",
+        "value_cbor_b64": "pWdjdXJyZW50+QAAYmZj+QAAa21heEFjaGlldmVk+QAAbW1heEFjaGlldmFibGX5AABoZGV0YWlsZWSiZ2N1cnJlbnSmY2FpbfkAAGVzcGVlZPkAAGhhY2N1cmFjefkAAGpkaWZmaWN1bHR5+QAAamZsYXNobGlnaHT5AABldG90YWz5AABiZmOmY2FpbfkAAGVzcGVlZPkAAGhhY2N1cmFjefkAAGpkaWZmaWN1bHR5+QAAamZsYXNobGlnaHT5AABldG90YWz5AAA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/performance/accuracy",
+        "value_cbor_b64": "q2I5MPkAAGI5MfkAAGI5MvkAAGI5M/kAAGI5NPkAAGI5NfkAAGI5NvkAAGI5N/kAAGI5OPkAAGI5OfkAAGMxMDD5AAA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/result/mode",
+        "value_cbor_b64": "omZudW1iZXIAZG5hbWVjb3N1",
+        "error": null
+      },
+      {
+        "ns": "vosu.chart",
+        "pointer": "/resources/file",
+        "value_cbor_b64": "omN1cmx4eS9hcGkvdjEvcmVzb3VyY2VzLzEuci5kbTl6ZFM1dmMzVS4xOGhZa251b29qSk02N3dYS3QzWlBpbWhPVWtGLTIxamNzTjBZQWFVdjg0LmoyN3FSQlBOalB2bEpDY0RaU0xpTVc1WGFRazJ6Mk5xSkx1dll2NlBGT2tkdHlwZXgZdGV4dC9wbGFpbjsgY2hhcnNldD11dGYtOA==",
+        "error": null
+      }
+    ],
+    "derived": {
+      "revision": 3,
+      "status": "ready"
+    },
+    "http": {
+      "kind": "ready",
+      "status": 200,
+      "body_utf8": "{\"osuIsRunning\":1,\"chatIsEnabled\":0,\"ingameInterfaceIsEnabled\":0,\"isBreakTime\":0,\"banchoIsConnected\":0,\"banchoId\":0,\"banchoUsername\":\"\",\"banchoStatus\":0,\"banchoCountry\":\"\",\"artistRoman\":\"\",\"artistUnicode\":\"\",\"titleRoman\":\"\",\"titleUnicode\":\"\",\"mapArtistTitle\":\" - \",\"mapArtistTitleUnicode\":\" - \",\"diffName\":\"\",\"mapDiff\":\"[]\",\"creator\":\"\",\"liveStarRating\":0,\"mStars\":0,\"ar\":0,\"mAR\":0,\"od\":0,\"mOD\":0,\"cs\":0,\"mCS\":0,\"hp\":0,\"mHP\":0,\"currentBpm\":0,\"bpm\":187.5,\"mainBpm\":187.5,\"maxBpm\":187.5,\"minBpm\":187.5,\"mMainBpm\":187.5,\"mMaxBpm\":187.5,\"mMinBpm\":187.5,\"mBpm\":\"187.5\",\"md5\":\"\",\"gameMode\":\"osu\",\"mode\":0,\"time\":2.5,\"previewtime\":-1,\"totaltime\":10000,\"timeLeft\":\"00:00:07.500\",\"drainingtime\":0,\"totalAudioTime\":0,\"firstHitObjectTime\":10000,\"mapid\":0,\"mapsetid\":0,\"mapStrains\":{\"0\":0,\"400\":0,\"800\":0,\"1200\":0,\"1600\":0,\"2000\":0,\"2400\":0,\"2800\":0,\"3200\":0,\"3600\":0,\"4000\":0,\"4400\":0,\"4800\":0,\"5200\":0,\"5600\":0,\"6000\":0,\"6400\":0,\"6800\":0,\"7200\":0,\"7600\":0,\"8000\":0,\"8400\":0,\"8800\":0,\"9200\":0,\"9600\":0,\"10000\":0},\"mapBreaks\":[],\"mapKiaiPoints\":[],\"mapPosition\":\"00:00:02.500\",\"mapTimingPoints\":[{\"startTime\":0,\"beatLength\":320}],\"sliders\":0,\"circles\":1,\"spinners\":0,\"maxCombo\":1,\"mp3Name\":\"stable-play-osu-fl-audio.ogg\",\"osuFileName\":\"chart.osu\",\"backgroundImageFileName\":\"stable-play-osu-fl-background.jpg\",\"osuFileLocation\":\"synthetic/chart.osu\",\"backgroundImageLocation\":\"synthetic/stable-play-osu-fl-background.jpg\",\"retries\":0,\"username\":\"\",\"score\":1234567,\"playerHp\":142,\"playerHpSmooth\":118,\"combo\":71,\"currentMaxCombo\":89,\"keyOverlay\":\"{\\\"Enabled\\\":true,\\\"K1Pressed\\\":false,\\\"K1Count\\\":0,\\\"K2Pressed\\\":false,\\\"K2Count\\\":0,\\\"M1Pressed\\\":false,\\\"M1Count\\\":0,\\\"M2Pressed\\\":false,\\\"M2Count\\\":0}\",\"geki\":0,\"c300\":23,\"katsu\":0,\"c100\":41,\"c50\":53,\"miss\":67,\"sliderBreaks\":13,\"acc\":97.13,\"unstableRate\":0,\"convertedUnstableRate\":0,\"hitErrors\":[1.25,-2.5],\"mods\":\"FL\",\"modsEnum\":1024,\"ppIfMapEndsNow\":0,\"ppIfRestFced\":0,\"leaderBoardMainPlayer\":\"{\\\"IsLeaderboardVisible\\\":true,\\\"Username\\\":\\\"\\\",\\\"Score\\\":0,\\\"Combo\\\":0,\\\"MaxCombo\\\":0,\\\"Mods\\\":{\\\"ModsXor1\\\":-1,\\\"ModsXor2\\\":-1,\\\"Value\\\":0},\\\"Hit300\\\":0,\\\"Hit100\\\":0,\\\"Hit50\\\":0,\\\"HitMiss\\\":0,\\\"Team\\\":0,\\\"Position\\\":0,\\\"IsPassing\\\":false}\",\"leaderBoardPlayers\":\"[{\\\"Username\\\":\\\"Alice\\\",\\\"Score\\\":123456,\\\"Combo\\\":321,\\\"MaxCombo\\\":400,\\\"Mods\\\":{\\\"ModsXor1\\\":-1,\\\"ModsXor2\\\":-1,\\\"Value\\\":1024},\\\"Hit300\\\":300,\\\"Hit100\\\":0,\\\"Hit50\\\":0,\\\"HitMiss\\\":1,\\\"Team\\\":1,\\\"Position\\\":2,\\\"IsPassing\\\":true}]\",\"rankedStatus\":0,\"songSelectionRankingType\":0,\"rawStatus\":2,\"dir\":\"synthetic\",\"dl\":\"https://osu.ppy.sh/b/0\",\"osu_90PP\":0,\"osu_95PP\":0,\"osu_96PP\":0,\"osu_97PP\":0,\"osu_98PP\":0,\"osu_99PP\":0,\"osu_SSPP\":0,\"osu_m90PP\":0,\"osu_m95PP\":0,\"osu_m96PP\":0,\"osu_m97PP\":0,\"osu_m98PP\":0,\"osu_m99PP\":0,\"osu_mSSPP\":0,\"accPpIfMapEndsNow\":0,\"aimPpIfMapEndsNow\":0,\"speedPpIfMapEndsNow\":0,\"strainPpIfMapEndsNow\":0,\"noChokePp\":0,\"skin\":\"/compat-private/stable-play-osu-fl/skin\",\"skinPath\":\"/compat-private/stable-play-osu-fl/skin\",\"songSelectionScores\":\"[]\",\"songSelectionMainPlayerScore\":\"{}\",\"songSelectionTotalScores\":-1,\"status\":2,\"osu_99_9PP\":-1,\"osu_m99_9PP\":-1,\"mania_1_000_000PP\":-1,\"mania_m1_000_000PP\":-1,\"simulatedPp\":0,\"plays\":0,\"tags\":\"\",\"source\":\"\",\"starsNomod\":-1,\"comboLeft\":-1,\"localTime\":0,\"localTimeISO\":\"0\",\"sl\":-1,\"sv\":-1,\"threadid\":0,\"test\":\"\"}"
+    },
+    "digest": "sha256:26a2f7dfc22bfd4f108c7b0b677a09604ec7938dab285f25b32b001086b94af3"
+  }
+}

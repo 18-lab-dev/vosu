@@ -1,0 +1,15 @@
+{
+  "format": "vosu-golden-assets-v1",
+  "assets": [
+    {
+      "id": "synthetic-chart",
+      "slot": "songs",
+      "relative": "synthetic/chart.osu",
+      "media_type": "text/plain; charset=utf-8",
+      "generator": "adapter_golden synthetic exporter: the state_api_compat stable-play-osu-fl corpus chart",
+      "license": "MIT OR Apache-2.0 (vosu-owned test data)",
+      "sha256": "d9b6f314cf5d859f3f540e99b594c0903cfeb9cbf5e9b7350ed1f5840bc57bb0",
+      "bytes": 271
+    }
+  ]
+}
