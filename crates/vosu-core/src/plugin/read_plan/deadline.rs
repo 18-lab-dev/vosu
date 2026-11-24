@@ -28,6 +28,8 @@ fn precise_now() -> Instant {
         reads.set((precise + 1, coarse));
     });
     read_plan_profile::precise_clock_read();
+    #[cfg(windows)]
+    vosu_sys::process::WindowsProcessMemory::bench_qpc();
     Instant::now()
 }
 fn coarse_now() -> Result<u64, ReadPlanError> {

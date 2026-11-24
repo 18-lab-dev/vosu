@@ -47,6 +47,8 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         let global_not_ready = matches!(global, Ok(vosu_sys::process::ReadStatus::NotReady));
         let snapshot = RawRegularSnapshotBuilder::new(request.context, global);
         if global_not_ready && self.source == ClientType::Lazer {
+            #[cfg(windows)]
+            vosu_sys::process::WindowsProcessMemory::bench_lock();
             *self.synchronization.lock().map_err(|_| {
                 StateWorkerError::Capture("reader synchronization lock poisoned".into())
             })? = self.reader.reader_synchronization();
@@ -69,6 +71,8 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         };
         let mut snapshot = snapshot.menu(menu);
         if menu_not_ready {
+            #[cfg(windows)]
+            vosu_sys::process::WindowsProcessMemory::bench_lock();
             *self.synchronization.lock().map_err(|_| {
                 StateWorkerError::Capture("reader synchronization lock poisoned".into())
             })? = self.reader.reader_synchronization();
@@ -84,6 +88,8 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
             let result_not_ready = matches!(result, Ok(vosu_sys::process::ReadStatus::NotReady));
             snapshot = snapshot.result_screen(result);
             if result_not_ready {
+                #[cfg(windows)]
+                vosu_sys::process::WindowsProcessMemory::bench_lock();
                 *self.synchronization.lock().map_err(|_| {
                     StateWorkerError::Capture("reader synchronization lock poisoned".into())
                 })? = self.reader.reader_synchronization();
@@ -130,6 +136,8 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         }
         snapshot = snapshot.user(self.reader.user());
 
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_lock();
         *self.synchronization.lock().map_err(|_| {
             StateWorkerError::Capture("reader synchronization lock poisoned".into())
         })? = self.reader.reader_synchronization();

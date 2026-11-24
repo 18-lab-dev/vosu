@@ -342,11 +342,7 @@ fn indirect_many_fuses_holders_and_pointees_without_publishing_on_holder_error()
         .unwrap();
     assert_eq!(u32::from_le_bytes(a), 123);
     assert_eq!(u32::from_le_bytes(b), 456);
-    if cfg!(windows) {
-        assert_eq!(process.host.submission_count(), 2);
-    } else {
-        assert_eq!(process.host.submission_count(), 1);
-    }
+    assert_eq!(process.host.submission_count(), 1);
     a = [7; 4];
     b = [7; 4];
     let error = process

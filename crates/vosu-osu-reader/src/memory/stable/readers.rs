@@ -842,6 +842,9 @@ impl MemoryReader for StableMemory {
         self.not_ready()
     }
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise> {
+        if let Some(value) = self.precise_cached() {
+            return Ok(ReadStatus::Ready(value));
+        }
         let status = self.status_value()?;
         let time = if status == 3 {
             0.0

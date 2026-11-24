@@ -771,6 +771,8 @@ impl PluginHost {
     /// (`include/vosu_plugin.h:396-399`) firing first, and the root
     /// `panic = "abort"` profile would abort the whole process.
     fn deliver_sync_result_raw(&self, instance: PluginInstanceId, payload: &[u8]) -> vosu_status {
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_lock();
         let target = self
             .instances
             .lock()

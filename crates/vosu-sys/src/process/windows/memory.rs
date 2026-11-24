@@ -1,7 +1,7 @@
 //! Native process-memory trait operations, kept separate from process discovery.
 use super::*;
 thread_local! {
-    static COUNTS: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
+    static COUNTS: std::cell::Cell<[u64; 6]> = const { std::cell::Cell::new([0; 6]) };
 }
 pub(super) fn count(index: usize) {
     COUNTS.with(|counts| {
@@ -11,8 +11,14 @@ pub(super) fn count(index: usize) {
     });
 }
 impl WindowsProcessMemory {
-    pub fn take_bench_counts() -> [u64; 4] {
-        COUNTS.with(|counts| counts.replace([0; 4]))
+    pub fn bench_lock() {
+        count(4);
+    }
+    pub fn bench_qpc() {
+        count(5);
+    }
+    pub fn take_bench_counts() -> [u64; 6] {
+        COUNTS.with(|counts| counts.replace([0; 6]))
     }
 }
 

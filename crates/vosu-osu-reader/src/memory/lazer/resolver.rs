@@ -50,6 +50,8 @@ impl LazerMemory {
     }
 
     pub fn game_base_address(&self) -> Option<usize> {
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_lock();
         let base = *self.game_base_address.read().ok()?;
         (base != 0).then_some(base)
     }
@@ -63,6 +65,8 @@ impl LazerMemory {
     }
 
     pub fn set_resolved_state(&mut self, game_base: usize, current_screen: usize) {
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_lock();
         *self
             .game_base_address
             .write()
@@ -98,6 +102,8 @@ impl LazerMemory {
             },
         )?;
         if let Some(base) = resolved {
+            #[cfg(windows)]
+            vosu_sys::process::WindowsProcessMemory::bench_lock();
             *self
                 .game_base_address
                 .write()
@@ -156,6 +162,8 @@ impl LazerMemory {
             return Ok(validated);
         }
 
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_lock();
         let cached = *self
             .game_base_address
             .read()
@@ -201,6 +209,8 @@ impl LazerMemory {
             },
         )?;
         if let Some(base) = resolved {
+            #[cfg(windows)]
+            vosu_sys::process::WindowsProcessMemory::bench_lock();
             *self
                 .game_base_address
                 .write()
@@ -502,18 +512,22 @@ impl LazerMemory {
             }
         }
 
-        let source = self.ptr(add(
-            clock,
-            self.offsets
-                .osu_game_beatmaps_framed_beatmap_clock
-                .final_clock_source,
-        )?)?;
-        self.process.read_f64(add(
-            source,
-            self.offsets
+        let mut bytes = [0; 8];
+        self.process.read_chain(
+            add(
+                clock,
+                self.offsets
+                    .osu_game_beatmaps_framed_beatmap_clock
+                    .final_clock_source,
+            )?,
+            &[self
+                .offsets
                 .osu_framework_timing_framed_clock
-                .current_time_k_backing_field,
-        )?)
+                .current_time_k_backing_field],
+            self.process.bitness(),
+            &mut bytes,
+        )?;
+        Ok(f64::from_le_bytes(bytes))
     }
 
     /// Reads lazer's authoritative pause bindable when player gameplay is loaded.

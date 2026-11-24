@@ -152,10 +152,14 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
     let _ = counts::take();
     let _ = vosu_plugin_api::read_plan_profile::take_thread_snapshot();
     for time in &mut times {
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_qpc();
         let start = Instant::now();
         for _ in 0..args.cycles {
             errors += usize::from(black_box(cycle()));
         }
+        #[cfg(windows)]
+        vosu_sys::process::WindowsProcessMemory::bench_qpc();
         *time = start.elapsed().as_nanos() as f64 / args.cycles as f64;
     }
     #[cfg(windows)]
