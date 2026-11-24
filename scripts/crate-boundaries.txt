@@ -23,12 +23,14 @@
 #   `vosu_net::{ZipLimits, extract_zip_atomic}` for hardened extraction of
 #   its embedded bundle; not interim, unlike the vosu-sys edges above.
 # - vosu-osu -> vosu-surface: interim bridge B1 (P1, plan D3/plan:447-452),
-#   M1->M4a. `vosu-osu` installs/reads the process-wide `LegacySink` slot
-#   through this edge only because the ABI's `create(host, init)` has no
-#   Rust-level parameter to thread a per-instance hook through instead
-#   (`crates/vosu-surface/src/lib.rs` module doc); deleted alongside
-#   `vosu_surface::bridge_b1` itself at M4a (`vosu-surface` otherwise
-#   continues on as the permanent D3 surface API).
+#   M1->M4a. The root installs the process-wide `LegacySink` slot (plan
+#   P5); `vosu-osu` needs this edge only to call
+#   `vosu_surface::bridge_b1::current()` and reach it, because the ABI's
+#   `create(host, init)` has no Rust-level parameter to thread a
+#   per-instance hook through instead (`crates/vosu-surface/src/lib.rs`
+#   module doc); deleted alongside `vosu_surface::bridge_b1` itself at
+#   M4a (`vosu-surface` otherwise continues on as the permanent D3
+#   surface API).
 vosu-sys
 vosu-proptest
 vosu-osu-model

@@ -1,7 +1,8 @@
 //! P1 acceptance: `vosu_osu::MANIFEST` parses, its `[match]` table obeys
 //! the DB (revised) `linux_name_contains` length rule, and
-//! `vosu_osu::SETTINGS_SCHEMA`'s defaults agree with
-//! `vosu_osu_state::ReaderSettings::default()` for the five D19 keys.
+//! `vosu_osu::SETTINGS_SCHEMA`'s shape/defaults agree with
+//! `vosu_osu::settings::OsuSettings` and `vosu_osu_state::ReaderSettings::default()`
+//! for the five D19 keys.
 //!
 //! `vosu-osu` has no dependency edge onto `vosu-core`
 //! (`scripts/crate-boundaries.txt`), so this does not compile the
@@ -10,8 +11,14 @@
 //! instead (the plan's documented fallback) plus this test's own length
 //! check, which reproduces the same 1-15 byte rule
 //! `vosu_core::plugin::matcher::MatcherError::InvalidLinuxNameContains`
-//! enforces at compile time there.
+//! enforces at compile time there. Likewise `parse_overlay_entries` below
+//! is this test's own narrow reader of the overlay settings array shape
+//! (`docs/tools/protocol.md`) — it is not a stand-in for core's
+//! `vosu_core::plugin::settings::SettingsSchema::parse`, which this crate
+//! cannot depend on and which real bundled-plugin loading still runs
+//! (`invalid_bundled_settings_schema_refuses_load`, unit P0).
 
+use vosu_osu::settings::OsuSettings;
 use vosu_plugin_api::PluginManifest;
 
 #[test]
@@ -52,69 +59,132 @@ fn every_linux_name_contains_entry_is_at_most_15_bytes() {
     }
 }
 
-#[test]
-fn settings_schema_defaults_match_reader_settings_default() {
-    let schema = vosu_core_settings_schema_parse(vosu_osu::SETTINGS_SCHEMA);
-    let reader_defaults = vosu_osu_state::ReaderSettings::default();
-
-    assert_eq!(
-        bool_default(&schema, "CALCULATE_PP"),
-        reader_defaults.calculate_pp
-    );
-    assert_eq!(
-        number_default(&schema, "POLL_RATE"),
-        reader_defaults.poll_rate
-    );
-    assert_eq!(
-        number_default(&schema, "PRECISE_DATA_POLL_RATE"),
-        reader_defaults.precise_data_poll_rate
-    );
-    assert_eq!(
-        bool_default(&schema, "SHOW_MP_COMMANDS"),
-        reader_defaults.show_mp_commands
-    );
-    assert_eq!(
-        bool_default(&schema, "READ_MANIA_SCROLL_SPEED"),
-        reader_defaults.read_mania_scroll_speed
-    );
+/// One `settings.schema.json` entry, this test's own narrow view (module
+/// doc above): `uniqueID`, `type`, and the entry's own default `value`.
+struct OverlayEntry {
+    id: String,
+    kind: String,
+    value: serde_json::Value,
 }
 
-/// `vosu-osu` has no `vosu-core` dependency, so this parses
-/// `settings.schema.json` as the plain overlay-settings array
-/// `docs/tools/protocol.md` defines (the same shape
-/// `vosu_core::plugin::settings::SettingsSchema::parse` validates) rather
-/// than reusing that core-only type.
-fn vosu_core_settings_schema_parse(text: &str) -> Vec<(String, serde_json::Value)> {
+/// Parses `text` as the plain overlay-settings array `docs/tools/protocol.md`
+/// defines. Not `vosu_core::plugin::settings::SettingsSchema::parse`
+/// (module doc above): this only reads the three fields this test needs
+/// and does not validate every entry shape core's parser does.
+fn parse_overlay_entries(text: &str) -> Vec<OverlayEntry> {
     let entries: Vec<serde_json::Value> =
         serde_json::from_str(text).expect("settings.schema.json is a JSON array");
     entries
         .into_iter()
-        .map(|entry| {
-            let id = entry["uniqueID"]
+        .map(|entry| OverlayEntry {
+            id: entry["uniqueID"]
                 .as_str()
                 .expect("every entry has a uniqueID")
-                .to_string();
-            (id, entry["value"].clone())
+                .to_string(),
+            kind: entry["type"]
+                .as_str()
+                .expect("every entry has a type")
+                .to_string(),
+            value: entry["value"].clone(),
         })
         .collect()
 }
 
-fn bool_default(schema: &[(String, serde_json::Value)], key: &str) -> bool {
-    schema
+fn find<'a>(entries: &'a [OverlayEntry], key: &str) -> &'a OverlayEntry {
+    entries
         .iter()
-        .find(|(id, _)| id == key)
+        .find(|entry| entry.id == key)
         .unwrap_or_else(|| panic!("schema has no entry {key:?}"))
-        .1
-        .as_bool()
-        .unwrap_or_else(|| panic!("{key:?}'s default is not a bool"))
 }
 
-fn number_default(schema: &[(String, serde_json::Value)], key: &str) -> f64 {
-    schema
-        .iter()
-        .find(|(id, _)| id == key)
-        .unwrap_or_else(|| panic!("schema has no entry {key:?}"))
-        .1
-        .as_f64()
-        .unwrap_or_else(|| panic!("{key:?}'s default is not a number"))
+#[test]
+fn schema_ids_are_unique_and_types_match_from_cbor() {
+    let entries = parse_overlay_entries(vosu_osu::SETTINGS_SCHEMA);
+
+    let mut seen = std::collections::HashSet::new();
+    for entry in &entries {
+        assert!(
+            seen.insert(entry.id.clone()),
+            "duplicate uniqueID {:?}",
+            entry.id
+        );
+    }
+
+    // Every key `OsuSettings::from_cbor` decodes as a bool must declare
+    // `checkbox`, and every key it decodes as a number must declare
+    // `number` (`crates/vosu-osu/src/settings.rs`'s `as_bool`/`as_number`
+    // dispatch by these same five uppercase ids).
+    let checkbox_keys = [
+        "CALCULATE_PP",
+        "SHOW_MP_COMMANDS",
+        "READ_MANIA_SCROLL_SPEED",
+    ];
+    let number_keys = ["POLL_RATE", "PRECISE_DATA_POLL_RATE"];
+    for key in checkbox_keys {
+        assert_eq!(
+            find(&entries, key).kind,
+            "checkbox",
+            "{key} should be a checkbox"
+        );
+    }
+    for key in number_keys {
+        assert_eq!(
+            find(&entries, key).kind,
+            "number",
+            "{key} should be a number"
+        );
+    }
+    assert_eq!(entries.len(), checkbox_keys.len() + number_keys.len());
+}
+
+#[test]
+fn schema_defaults_match_reader_settings_default() {
+    let entries = parse_overlay_entries(vosu_osu::SETTINGS_SCHEMA);
+    let reader_defaults = vosu_osu_state::ReaderSettings::default();
+
+    let as_bool = |key: &str| {
+        find(&entries, key)
+            .value
+            .as_bool()
+            .unwrap_or_else(|| panic!("{key:?}'s default is not a bool"))
+    };
+    let as_number = |key: &str| {
+        find(&entries, key)
+            .value
+            .as_f64()
+            .unwrap_or_else(|| panic!("{key:?}'s default is not a number"))
+    };
+
+    assert_eq!(as_bool("CALCULATE_PP"), reader_defaults.calculate_pp);
+    assert_eq!(as_number("POLL_RATE"), reader_defaults.poll_rate);
+    assert_eq!(
+        as_number("PRECISE_DATA_POLL_RATE"),
+        reader_defaults.precise_data_poll_rate
+    );
+    assert_eq!(
+        as_bool("SHOW_MP_COMMANDS"),
+        reader_defaults.show_mp_commands
+    );
+    assert_eq!(
+        as_bool("READ_MANIA_SCROLL_SPEED"),
+        reader_defaults.read_mania_scroll_speed
+    );
+}
+
+#[test]
+fn osu_settings_default_matches_reader_settings_default() {
+    let defaults = OsuSettings::default();
+    let reader_defaults = vosu_osu_state::ReaderSettings::default();
+
+    assert_eq!(defaults.calculate_pp, reader_defaults.calculate_pp);
+    assert_eq!(defaults.poll_rate, reader_defaults.poll_rate);
+    assert_eq!(
+        defaults.precise_data_poll_rate,
+        reader_defaults.precise_data_poll_rate
+    );
+    assert_eq!(defaults.show_mp_commands, reader_defaults.show_mp_commands);
+    assert_eq!(
+        defaults.read_mania_scroll_speed,
+        reader_defaults.read_mania_scroll_speed
+    );
 }
