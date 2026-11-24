@@ -47,6 +47,18 @@ All notable user-visible changes to vosu are documented here. Older sections are
   never widen or displace the Linux process-event filter, so path-only entries
   detect only processes already observed. Native Windows observation evidence
   remains pending.
+- Install confirmed catalog plans through the core executor: every package is
+  downloaded public-only and credential-free, checked for exact size and
+  SHA-256 from the same handle, ZIP-preflighted into same-filesystem staging
+  (now also refusing duplicate entries and Windows case/device-name/trailing-dot
+  collisions), and verified against its catalog entry with the SDK
+  (manifest, schemas, lanes, target library/UI) before anything is published.
+  The dependency-first graph and its provenance/approval/`installed_for` records
+  commit through a journal with all-or-rollback recovery before discovery/load.
+  Committed plugins load only under current trust policy; process plugins
+  report "requires M5 process runtime". Native Windows rename/reparse/locked-file
+  and crash-recovery evidence remains pending; root composition, routes and the
+  legacy catalog-v1 install cutover are not part of this change.
 
 ## Unreleased — 2.0 M6a
 

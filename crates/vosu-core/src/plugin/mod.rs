@@ -111,7 +111,7 @@ pub use read_plan::{
     deliver_sync, execute, execute_bytes, execute_into, on_dispatch_thread,
 };
 pub use registry::{
-    BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development,
+    BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development, load_installed,
 };
 #[cfg(target_os = "linux")]
 pub use scan::LinuxModuleTable;

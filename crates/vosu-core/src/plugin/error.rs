@@ -80,6 +80,9 @@ pub enum HostError {
         entry_declares_one: bool,
     },
     State(String),
+    /// A catalog-installed `runtime = "process"` plugin needs M5's real
+    /// external process runtime; it is never loaded in-process instead.
+    ProcessRuntimeUnavailable,
 }
 
 impl fmt::Display for HostError {
@@ -136,6 +139,9 @@ impl fmt::Display for HostError {
                 },
             ),
             Self::State(e) => write!(f, "state: {e}"),
+            Self::ProcessRuntimeUnavailable => {
+                write!(f, "process plugin requires the M5 process runtime")
+            }
         }
     }
 }

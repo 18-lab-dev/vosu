@@ -528,8 +528,13 @@ pub fn is_global_unicast(address: IpAddr) -> bool {
 
 mod archive;
 
-pub use archive::{extract_zip_atomic, extract_zip_atomic_validated};
+pub use archive::{
+    StagedTree, extract_zip_atomic, extract_zip_atomic_validated, extract_zip_staged,
+    portable_component, rename_directory_no_replace,
+};
 pub use archive::{open_preflighted_zip, preflight_zip_entries, validate_zip_entry};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_staged;

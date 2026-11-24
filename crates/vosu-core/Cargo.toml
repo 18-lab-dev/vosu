@@ -67,6 +67,9 @@ wmi = "=0.18.4"
 proptest = "1.12"
 vosu-plugin-testkit = { path = "../vosu-plugin-testkit", features = ["test-harness"] }
 vosu-proptest = { path = "../vosu-proptest" }
+# I0 package-download tests observe real request headers over the exact
+# loopback harness; production never enables this feature.
+vosu-net = { path = "../vosu-net", features = ["test-harness"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 vosu-sys = { path = "../vosu-sys", features = ["test-harness"] }

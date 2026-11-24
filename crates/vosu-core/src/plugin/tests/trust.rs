@@ -218,3 +218,42 @@ fn bundled_settings_schema_presence_mismatch_is_refused() {
         Ok(_) => panic!("expected the manifest/entry schema mismatch to refuse the load"),
     }
 }
+
+#[test]
+fn installed_process_plugin_requires_m5_and_is_never_loaded_in_process() {
+    let dir = tempfile::tempdir().unwrap();
+    // Positive control for the refusal reason: the same package with an
+    // in-process request reaches library loading (and fails on the absent
+    // library), so only the runtime decides the typed refusal.
+    std::fs::write(
+        dir.path().join("manifest.toml"),
+        manifest(
+            "acme.installed",
+            "\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libacme.so'\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/acme.dll'\n",
+        ),
+    )
+    .unwrap();
+    let load = |dir: &std::path::Path| {
+        registry::load_installed(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            dir,
+            "alice/plugins",
+            false,
+        )
+    };
+    match load(dir.path()) {
+        Err(HostError::Io(_)) => {}
+        Err(other) => panic!("expected the absent library to fail, got {other}"),
+        Ok(_) => panic!("fixture has no library"),
+    }
+    let text = std::fs::read_to_string(dir.path().join("manifest.toml"))
+        .unwrap()
+        .replace("runtime='in-process'", "runtime='process'");
+    std::fs::write(dir.path().join("manifest.toml"), text).unwrap();
+    match load(dir.path()) {
+        Err(HostError::ProcessRuntimeUnavailable) => {}
+        Err(other) => panic!("expected ProcessRuntimeUnavailable, got {other}"),
+        Ok(_) => panic!("a process plugin must never load in-process"),
+    }
+}

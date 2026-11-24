@@ -210,6 +210,12 @@ impl SchemaRegistry {
             .retain(|_, schema| schema.owner != SchemaOwner::Plugin(Arc::from(provider)));
     }
 
+    /// `common-defs.schema.json`'s parsed `$defs`, for SDK compilation of
+    /// package schemas before installation (catalog I0).
+    pub fn common_defs(&self) -> &Value {
+        &self.common_defs
+    }
+
     pub fn get(&self, ns: &str) -> Option<&Arc<NamespaceSchema>> {
         self.namespaces.get(ns)
     }
