@@ -522,6 +522,28 @@ def _case(value: Any, index: int) -> dict[str, Any]:
     raise GoldenError(f"case {case_id}: no complete attempt")
 
 
+def dump_sandwich_difference(before: dict[str, Any], after: dict[str, Any]) -> str | None:
+    """The first envelope field in which a vosu dump sandwich differs, or None.
+
+    `sc` reads release the streamCompanion chart-work handle, so its provider generation
+    and derived revision advance on every read (GOLDEN_CONTRACT §6). For `sc` the
+    sandwich therefore compares everything else: digest, selection, derived status and
+    HTTP bytes. `v1`/`v2`/`v2-precise` keep full equality.
+    """
+    sc = before["schema"] == "sc" and after["schema"] == "sc"
+    for key in _ENVELOPE_KEYS:
+        left, right = before[key], after[key]
+        if sc and key == "provider_generation":
+            continue
+        if sc and key == "derived":
+            if left["status"] != right["status"]:
+                return "derived.status"
+            continue
+        if left != right:
+            return key
+    return None
+
+
 def _check_sandwiches(case: dict[str, Any]) -> None:
     case_id = case["id"]
     first, second = case["source"]
@@ -539,9 +561,9 @@ def _check_sandwiches(case: dict[str, Any]) -> None:
         raise GoldenError(f"case {case_id}: vosu and upstream requests differ beyond the "
                           "declared conditional validator")
     before, after = case["dumps"]
-    for key in _ENVELOPE_KEYS:
-        if before[key] != after[key]:
-            raise GoldenError(f"case {case_id}: vosu dump sandwich differs in {key}")
+    differs = dump_sandwich_difference(before, after)
+    if differs is not None:
+        raise GoldenError(f"case {case_id}: vosu dump sandwich differs in {differs}")
     if before["schema"] != case["dump_schema"]:
         raise GoldenError(f"case {case_id}: dump schema differs from the case's dump_schema")
     method, target = _request_line(first["request"])
@@ -549,7 +571,9 @@ def _check_sandwiches(case: dict[str, Any]) -> None:
     if case["family"] == "state-http" and method in ("GET", "HEAD") and path in STATE_ROUTES:
         if STATE_ROUTES[path] != before["schema"]:
             raise GoldenError(f"case {case_id}: state route must dump its own schema")
-        if route["status"] != before["http"]["status"]:
+        # The dump records the adapter's GET response; a HEAD status is a route property
+        # (GOLDEN_CONTRACT §6: status and headers come from the route record).
+        if method == "GET" and route["status"] != before["http"]["status"]:
             raise GoldenError(f"case {case_id}: vosu route status differs from the dump's adapter status")
         if method == "GET" and route["body"] != before["http"]["body_utf8"].encode("utf-8"):
             raise GoldenError(f"case {case_id}: vosu route bytes differ from the dump's adapter bytes")

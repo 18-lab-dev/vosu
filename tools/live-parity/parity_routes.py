@@ -289,8 +289,10 @@ def _exchange(endpoint: RouteEndpoint, request: bytes, rendered: rm.RenderedCase
     wire = _Wire(sock, deadline, limits.transcript)
     try:
         try:
-            sock.sendall(request)
+            # Attest the accepted connection before sending: a daemon that answers
+            # `Connection: close` at once may already have closed its side afterwards.
             _assert_owner(endpoint, f"route/{case.id}/{phase}/connection", started, sock)
+            sock.sendall(request)
             response = _read_response(wire, case.method, limits, record, upgrade=case.websocket)
             if case.websocket and response["status"] == 101:
                 record["outcome"] = "upgraded"
