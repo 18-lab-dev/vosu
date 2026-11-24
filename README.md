@@ -459,13 +459,9 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `START_AT_LOGIN` | `false` | Linux only: run vosu as a systemd user service at graphical login. |
 | `DEBUG_LOG` | `false` | Include debug-level file and console logging. |
 | `CALCULATE_PP` | `true` | Enable live performance calculations. |
-| `ENABLE_KEY_OVERLAY` | `true` | Publish key-overlay data in compatible schemas. |
-| `ENABLE_MANIA_KEY_HIT_ERRORS` | `false` | Opt in to per-column mania press/release timing arrays in vosu v2 and precise payloads. |
-| `ENABLE_HIT_OFFSETS` | `false` | Opt in to osu!standard cursor-offset and timing triples in vosu v2 and precise payloads. |
 | `POLL_RATE` | `150` | Regular state interval in milliseconds; range `100`–`60000`. |
 | `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; range `1`–`60000`. |
-| `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Fast selected-field reader interval and minimum interval between subscription frames, in milliseconds; range `1`–`60000`, fractional values supported. Slow selectors do not accelerate readers. |
-| `API_V1_SUBSCRIPTION_DEBOUNCE` | `1` | API v1 subscription minimum interval, independent of selected-field V2 subscriptions; range `1`–`60000` milliseconds, fractional values supported. |
+| `API_V1_SUBSCRIPTION_DEBOUNCE` | `1` | API v1 subscription minimum interval; range `1`–`60000` milliseconds, fractional values supported. |
 | `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
 | `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
 | `SERVER_IP` | `127.0.0.1` | Overlay/data listener hostname or address (unchanged overlay origin). |
@@ -528,53 +524,18 @@ Calculator file inputs are limited to 64 MiB, including opened-handle checks and
 
 The v2 snapshot and matching WebSocket streams expose `beatmap.stats.hitWindow`. The object has optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`; unsupported judgements are omitted. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied. An unparsed/missing map serializes an empty object. Catch publishes all six fields as zero, matching upstream's empty-window implementation, while `stars.hitWindow` remains absent. Catch's spatial catcher width is not a timing window.
 
-The tosu hit-error arrays keep their original names and shapes: `hitErrorArray` in v1 and regular v2, and `hitErrors` in streamCompanion and precise v2. Vosu adds sibling `pressHitErrors` and `releaseHitErrors` arrays. The original array preserves every timing event in order, `pressHitErrors` contains note presses, and `releaseHitErrors` contains osu!mania hold-note releases; together they hold every value of the original array exactly once, in order. osu!lazer classifies from its judgement results. osu!stable classifies native mania maps, including with the Mirror mod, by matching each error to the map's judgement times and the replay's key transitions; classification can lag the original array while that evidence arrives. An error that matches no transition (for example under the Random mod, whose column shuffle vosu does not reproduce) is published as a press once the replay has moved 250 ms past it or one second has passed, so it never holds back later errors. vosu keeps the newest 8192 replay frames, so when it attaches to a play that already has more, hits whose key transitions have been dropped are published as presses too; later hits are classified normally. Stable converted maps and maps whose metadata is unavailable stay press-only, because vosu does not reproduce stable's osu!-to-mania lane conversion. osu!, taiko and catch have no release judgements.
+Upstream adapters retain the upstream hit-error arrays (`hitErrorArray` in v1
+and regular v2, `hitErrors` in streamCompanion and precise v2). Extension-only
+press/release arrays, per-key errors, hit offsets, logical `keys.all` and catcher
+state are API v1 namespace facts, not upstream adapter fields. Regular v2 has
+no `keys` object; precise v2 retains upstream k1/k2/m1/m2.
+See the [state schema](docs/v2/state-schema.md) for accurate source semantics.
 
-Hit-error capture and appends require a fresh `play` state, including the opening 150 ms. Polling before the first object, a temporarily shrinking native event list, and unavailable precise status do not clear accumulated arrays. Pause and results retain the current attempt's history. Returning to song selection or otherwise exiting the attempt clears it; a genuine quick retry starts a fresh attempt.
-
-With `ENABLE_MANIA_KEY_HIT_ERRORS = true`, v2 `play` and the precise payload additionally expose `keyHitErrors: { "press": number[][], "release": number[][] }`. The outer index is the zero-based displayed mania lane, including Mirror; untouched lanes before the highest observed lane are empty. The field is omitted entirely by default and is never added to v1 or streamCompanion. Outside mania attempts both outer arrays are empty. History follows the existing hit-error reset/retention rules; enabling mid-attempt starts per-key history with subsequent classifications, without rebuilding earlier events.
-
-Stable includes only errors matched to a native mania map judgement and replay transition. Unmatched errors published by the 250 ms/one-second fallback, Random-mod plays, and converted maps have unknown columns and are excluded from these per-key arrays (but remain in the original aggregate arrays). Lazer reads each judged object's column and moves a tail's timing from that column's press array to its release array if its hold aggregate arrives later. Missing/unmeasured column offsets omit those events rather than inventing a lane.
-
-Regular and precise v2 responses include a mode-free `keys` object. Its tosu-compatible `k1`, `k2`, `m1`, and `m2` members and stable in-game-overlay source remain unchanged. The additive `all` array contains ordered logical actions with `name`, `isPressed`, `count`, `pressedAt`, and `releasedAt`. Names are `B1` onwards on both clients, not physical key names. `ENABLE_KEY_OVERLAY` still gates key updates after the opening 150 ms. Stable `all` follows replay frames even when its in-game overlay is hidden; legacy members do not switch to frames.
-
-| Ruleset | `keys.all` order (stable and lazer) | Stable replay source |
-| --- | --- | --- |
-| osu! | `B1` left button, `B2` right button, `B3` Smoke | bits `1 or 4`, `2 or 8`, `16`; keyboard/mouse inputs merge into logical actions |
-| taiko | `B1` left rim, `B2` left centre, `B3` right centre, `B4` right rim | bits `2`, `1`, `4`, `8` respectively |
-| catch | `B1` move left, `B2` move right, `B3` dash | left/right are **never pressed**, counts zero and timestamps null: stable records position, not these actions; dash is button state exactly `1` |
-| mania | `B1` through `BN`, displayed column order | x-slot column bitfield, bit 0 first; N is the converted map key count (including key mods/dual stages) |
-
-The mapping is source-verified against osu!lazer [2026.921.0-lazer](https://github.com/ppy/osu/tree/2026.921.0-lazer): [trigger ordering](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game/Rulesets/UI/RulesetInputManager.cs), [trigger names](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game/Screens/Play/HUD/KeyCounterActionTrigger.cs), default bindings in [osu](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Osu/OsuRuleset.cs), [taiko](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Taiko/TaikoRuleset.cs), [catch](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/CatchRuleset.cs), and mania [single](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Mania/SingleStageVariantGenerator.cs)/[dual](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Mania/DualStageVariantGenerator.cs) stage generators. Triggers enumerate distinct **default bindings**, not available-action enums. Mania single-stage 4K–10K yields B1–B4 through B1–B10; dual-stage N+N yields B1–B(2N), stage one then stage two, up to 20. The lazer reader previously capped entries at 18; it now supports 20, without changing existing names/order.
-
-Stable encodings follow upstream legacy replay conversion: [osu](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Osu/Replays/OsuReplayFrame.cs), [taiko](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Taiko/Replays/TaikoReplayFrame.cs), [catch](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/Replays/CatchReplayFrame.cs), [mania](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Mania/Replays/ManiaReplayFrame.cs), and [button flags](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game/Replays/Legacy/ReplayButtonState.cs). Live stable (`b20260924.1`) confirmed the in-memory button byte for osu! keys and smoke, all four taiko drums and catch dash, and that `keys.all` keeps counting with the in-game key overlay hidden while the legacy members stay at zero.
-
-Edge timestamps are nullable gameplay milliseconds. Stable counts every retained frame down-edge, with exact frame timestamps, including complete taps between polls; state stops at the current play clock, even for preloaded replays/spectating. Retry/rewind resets the attempt. Rolling-window eviction preserves accumulated counts; if the consumer misses more than 8192 frames, it takes the first available state as a baseline without inventing a press, so lost edges cannot be recovered. Attaching midway likewise cannot recover evicted history. Lazer retains sampled-edge timestamps: a count jump can report missed complete taps without fabricating timestamps. Catch left/right and unrecoverable history are remaining parity differences, not physical-input measurements.
-
-Catch gameplay also publishes the vosu-only `catcher: { "x": number, "dashing": boolean }` object in v2 `play` and at the precise payload's top level. It is omitted in menus, results, and other rulesets. `x` is the client's stored playfield position in osu! pixels (0–512), not a screen-space coordinate; `dashing` is ordinary dash, not hyperdash. Stable selects the replay frame at the current play time (including preloaded watched replays), independently of new judgements. The legacy x slot and dash value 1 follow [lazer's legacy catch replay conversion](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/Replays/CatchReplayFrame.cs); live stable autoplay confirmed both. Lazer reads the catcher's native X and Dashing fields during precise polling, using the measured catch entries of the offsets asset or runtime generation (see [offset maintenance](docs/operations/offsets-asset.md)).
-
-With `ENABLE_HIT_OFFSETS = true`, v2 payloads additionally expose `play.hitOffsets`
-(regular v2) and top-level `hitOffsets` (precise v2): a flat stride-3 array `[x, y, error, …]` for osu!standard
-circle and slider-head hits. `x`/`y` are cursor minus stacked center in displayed
-512×384 playfield pixels; `error` is the original matching timing error in ms.
-The array is empty outside standard gameplay; missing spatial evidence omits a
-triple rather than inventing a position. Stable matches replay down edges to
-unjudged map heads using `press time - error` (±1 ms), with calculator stacking
-and HR reflection: HR reflects the raw position, and the stack offset is then
-applied unreflected, as stable's own HR autoplay cursor shows. Pending evidence
-expires after 250 ms and never blocks later
-matched judgements. Mirror and other positional transformations are unsupported
-on stable (Mirror produces no triples). Lazer reads the actual judgement cursor
-and object's position/stack/scale, so its applied positional mods need no map
-reconstruction. Lazer needs the measured spatial offsets from the embedded asset
-or runtime generation; without them it emits no triples. These fields are not
-added to v1 or streamCompanion.
-The field is omitted entirely by default. While disabled, stable skips spatial
-replay/map matching and lazer skips judgement-position and object-property reads.
-Enabling mid-attempt records subsequent hits only; it does not backfill history.
-`keys.all` and `catcher` are independent of this setting.
-
-These additive hit-error and `keys.all` fields are planned for a tosu port soon(tm). Until that lands, overlays targeting both servers must treat them as optional. Existing tosu overlays can use vosu's regular and precise v2 streams without adapting to the extensions.
+The retired `ENABLE_KEY_OVERLAY`, `ENABLE_MANIA_KEY_HIT_ERRORS`,
+`ENABLE_HIT_OFFSETS` and `V2_SUBSCRIPTION_DEBOUNCE` bindings are ignored and
+are not saved. Authorized subscriptions request collection through their actual
+selectors; HTTP reads create no sampling demand. Unrelated unknown
+configuration keys and tables survive saves.
 
 Maintainers can run the zero-dependency harness with `cd tools/input-validation && uv run python run.py ...`. `capture` accounts for precise transitions and `scan-maps` selects long-note-heavy mania maps. `autoplay <map.osu>` and `live-autoplay <map.osu>` generate deterministic plans for osu!, taiko, catch, and mania, then inject them through Windows `SendInput` or Linux `/dev/uinput`; live mania plans additionally support bounded seeded timing jitter. Standard-mode and catch pointer injection requires `--playfield x,y,width,height`; Linux also requires the full compositor layout as `--desktop x,y,width,height`, not only the target monitor. Default controls are `Z` for osu!, `F,J,D,K` for taiko plan controls `DON_LEFT,DON_RIGHT,KAT_LEFT,KAT_RIGHT`, pointer-only for catch, and `D,F,J,K` for 4-key mania.
 
@@ -599,8 +560,8 @@ pointer-array/frame protocol described below. `active` follows focus; its initia
 upgrade returns 404 when there is no focus. API v1 uses the independent, live
 `API_V1_SUBSCRIPTION_DEBOUNCE` setting. These read endpoints need no credential
 but retain peer/Origin checks, and are not served by the dashboard listener.
-The existing 1.x routes and `/websocket/v2/subscribe` remain available during
-the transition. See the [API v1 specification](docs/v2/api-v1.md).
+`/websocket/v2/subscribe` is removed (ordinary 404, never an upgrade).
+Use the [API v1 specification](docs/v2/api-v1.md) for selected state.
 
 Plugin actions use `POST /api/v1/sessions/{id|active}/actions/{action}` or
 `POST /api/v1/actions/{action}`, according to the action's declared session mode.
@@ -612,56 +573,14 @@ broker credential for CLI-exposed actions; API keys grant no action authority.
 Tool jobs remain private to the exact launch session. All action/job responses
 are no-store, and credentials never bypass peer or same-origin checks.
 
-### Renderer state (v2)
+### Renderer state (API v1)
 
-Tools following the current map can subscribe to these additive fields through
-`/websocket/v2/subscribe` (the same fields appear in `/json/v2`):
+Renderers subscribe to the game namespaces through API v1, not the removed
+selected-v2 feed. Use the [state schema](docs/v2/state-schema.md) for namespace
+pointers and the [API v1 specification](docs/v2/api-v1.md) for selection,
+absence, focus and sampling rules. Independent client leases union their
+actual lane demand and release it on filter replacement or disconnect.
 
-| JSON Pointer | Meaning |
-| --- | --- |
-| `/play/source` | `null` outside gameplay; `player` for local play (including multiplayer), `replay`, `spectator`, `autoplay` (AT/CN), or `watching` for stable's combined replay/spectate flag. A preview must hide for `state.number == 2` and `source == "player"`; treat missing/unknown sources during play as hidden too. |
-| `/beatmap/time/live` | Existing absolute map clock in milliseconds, including the song-select preview track. Do not replace it with time since opening the tool. |
-| `/beatmap/time/rate`, `/beatmap/time/running` | Actual lazer track frequency × tempo and decoupled-clock running flag. They follow custom rates and dynamic rate-adjust mods, rather than guessing from acronyms. Null when unavailable. Stable rate uses its fixed selected/gameplay mods; stable running remains null because no authoritative flag is read. |
-| `/settings/mode/number` | Current effective ruleset, including converts. `/play/mods/array` contains current song-select mod selection (with lazer settings), switching to gameplay/results mods in those states. Unset lazer random seeds are null until the client chooses one. |
-| `/settings/mania/scrollSpeedValue`, `/settings/mania/scrollTime` | Optional lazer double-precision speed and unadjusted base visible-time range `11485 / speed` ms. Existing integer `scrollSpeed` is retained. The renderer must still apply rate and skin hit-position scaling; do not apply this lazer formula to stable. |
-| `/settings/mania/scrollDirection` | Existing `{number,name}` (`0/up`, `1/down`). Lazer reads its ruleset setting. Stable has no equivalent read; its skin.ini `UpsideDown` must be honoured by the renderer. |
-| `/settings/mania/timingBasedNoteColouring` | Optional lazer ruleset boolean. |
-| `/settings/mania/perBeatmapScrollSpeed` | Optional stable current-map speed when per-map speeds are enabled and its memory value is available (`READ_MANIA_SCROLL_SPEED` must be enabled). |
-| `/settings/visual` | Optional object with nullable `snakingInSliders`, `snakingOutSliders`, `hitLighting`, `beatmapColours`, `hitAnimations`, `rateAdjustedHitAnimation`. Lazer reads client/ruleset config; stable exposes its `SnakingSliders` and `HitLighting`. Ruleset-dependent animation toggles describe the selected ruleset, not a previously selected one. Beatmap skin permission remains the inverse of `/settings/skin/ignoreBeatmapSkins`. |
-| `/settings/visual/comboColourNormalisation` | Lazer's current `ComboColourNormalisationAmount` float (`0`–`1`, client default `0.2`), read using the client's generated configuration key. Stable reports null; an unavailable lazer value is null, never replaced with the default. |
-| `/settings/visual/scalingMode`, `/settings/visual/positionX`, `/settings/visual/positionY`, `/settings/visual/sizeX`, `/settings/visual/sizeY` | Optional lazer viewport scaling mode and normalized position/size settings; unknown values are null. Skin hit positions and column widths remain skin resources, not separate client configuration. |
-
-Selected-field sampling follows the requested fields' producing reader, rather
-than merely the presence of a subscriber:
-
-| Selection | Additional reader demand |
-| --- | --- |
-| Client, folders, settings values (including `/settings/mode`), beatmap checksum/metadata and file paths | None; configured polling continues unchanged. |
-| `/keys`, hit-error arrays, key errors, hit offsets and catcher state | Precise reader, only during play (including replay/spectate). |
-| Score, accuracy, HP, hits, combo, mods, rank, pp, leaderboard and live gameplay map statistics | Regular reader, only during play. Unstable rate needs both lanes. |
-| `/state`, `/beatmap/time/live` | Precise reader, also outside play for status transitions and the song-select audio clock. |
-| `/session/playTime`, `/settings/bassDensity`, `/room` | Regular reader, also outside play. |
-
-Parent pointers inherit their descendants' demand: `/play` selects both gameplay
-lanes; `/settings` includes bass density; `/beatmap` includes the live clock; the
-empty pointer selects the whole document and both lanes. Select narrow leaves
-when following identity or settings only. Multiple clients' demands are unioned
-and released when those clients disconnect.
-
-Only a demanded, currently active lane uses the smaller of its configured
-interval and `V2_SUBSCRIPTION_DEBOUNCE` (default 1 ms). Other lanes retain
-`POLL_RATE` / `PRECISE_DATA_POLL_RATE`; gameplay-only demand goes dormant outside
-play. Debounce still limits frames for every subscription, including slow ones.
-This permits fast updates but is not a guaranteed frame rate. Publication and
-backpressure stay latest-only. Missing but syntactically valid JSON Pointers are permitted and
-report per-pointer absence; they do not invalidate the whole subscription.
-
-Beatmap selection changes bypass the compatibility API's regular polling interval:
-the checksum and its current beatmap/audio/background paths are published together
-before selected-field subscribers are notified. Between selection changes, regular
-fields retain their configured API cadence. Separate requests are not a transaction: if the user changes
-selection again during a fetch, consumers should compare the downloaded map's MD5
-with their latest selected checksum.
 
 ### Current game files
 
@@ -671,8 +590,9 @@ with their latest selected checksum.
 - `GET /files/beatmap/file`
 - `GET /Songs/{path}`
 - `GET /files/beatmap/{path}`
-- `GET /files/skin/`; current skin metadata `{"client":"stable"|"lazer"|null,"name":string|null,"files":bool,"builtin":string|null,"base":string|null,"entries":[{"path":string,"size":number,"modified"?:number,"hash"?:string}],"truncated":bool}` without absolute paths. The existing `files` boolean is unchanged. Stable entries carry `modified` (mtime in milliseconds since Unix epoch); lazer entries carry the content-store `hash` instead. `base` identifies the rendering family (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`) for built-in **and imported** skins; unknown families are null. Stable skins use `legacy`.
-- `GET /files/skin/{path}`; stable and imported lazer skin files, with case-insensitive relative filename/subfolder lookup on both clients. Exact stable paths win; otherwise the complete index selects the lexicographically smallest matching path. Missing/unavailable lazer files return 404. Built-in lazer skins have no files: `files:false`, `entries:[]`, and `builtin` equal to `argon`, `argon-pro`, `triangles`, `legacy`, or `retro`.
+- `GET /files/skin/{path}`; stable skin files only. The metadata index
+  `/files/skin/` and legacy lazer skin files return 404; use API v1 skin trees
+  and resources for lazer.
 
 File routes enforce root containment and support validated single HTTP byte ranges for media. Every response from these routes, including `/Songs/` directory listings, carries `Content-Security-Policy: sandbox`: a page or SVG from a beatmap or skin folder opened directly in a browser runs without script and outside the overlay origin. Content types are unchanged, so embedding these files in an overlay works as before.
 

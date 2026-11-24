@@ -7,11 +7,12 @@ use std::fmt::Write as _;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ConfigDocument {
     config: Config,
+    unknown: toml::Table,
 }
 
 impl ConfigDocument {
     pub fn new(config: Config) -> Self {
-        Self { config }
+        Self { config, unknown: toml::Table::new() }
     }
 
     /// Parses a TOML document over the schema defaults.
@@ -49,6 +50,13 @@ impl ConfigDocument {
     }
 
     pub(super) fn apply_table(&mut self, table: &toml::Table) {
+        for (key, value) in table {
+            if !DEFAULT_SCHEMA.items().iter().any(|item| item.binding == key)
+                && !RETIRED_BINDINGS.contains(&key.as_str())
+            {
+                self.unknown.insert(key.clone(), value.clone());
+            }
+        }
         for schema_item in DEFAULT_SCHEMA.items() {
             let Some(value) = table.get(schema_item.binding) else {
                 continue;
@@ -147,6 +155,10 @@ impl ConfigDocument {
             }
         }
         output.push('\n');
+        if !self.unknown.is_empty() {
+            output.push('\n');
+            output.push_str(&toml::to_string(&self.unknown).expect("parsed TOML values serialize"));
+        }
 
         output
     }
@@ -213,3 +225,10 @@ impl ConfigDocument {
         }
     }
 }
+
+pub(super) const RETIRED_BINDINGS: [&str; 4] = [
+    "ENABLE_KEY_OVERLAY",
+    "ENABLE_MANIA_KEY_HIT_ERRORS",
+    "ENABLE_HIT_OFFSETS",
+    "V2_SUBSCRIPTION_DEBOUNCE",
+];

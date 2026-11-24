@@ -1,4 +1,3 @@
-//! JSON Pointer parsing, compilation, and traversal: examples and properties.
 
 use proptest::prelude::*;
 

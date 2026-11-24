@@ -276,7 +276,7 @@ fn schema_minima_are_clamped() {
             "\
 POLL_RATE = -5.0
 PRECISE_DATA_POLL_RATE = 0.0
-V2_SUBSCRIPTION_DEBOUNCE = -0.25
+API_V1_SUBSCRIPTION_DEBOUNCE = -0.25
 SERVER_PORT = -1.5
 ",
         )
@@ -284,14 +284,14 @@ SERVER_PORT = -1.5
 
     assert_eq!(document.config().poll_rate, 100.0);
     assert_eq!(document.config().precise_data_poll_rate, 1.0);
-    assert_eq!(document.config().v2_subscription_debounce, 1.0);
+    assert_eq!(document.config().api_v1_subscription_debounce, 1.0);
     assert_eq!(document.config().server_port, -1.5);
 }
 
 #[test]
 fn oversized_disk_intervals_are_bounded_before_publication() {
     let document = ConfigDocument::parse(
-        "POLL_RATE = 1e100\nPRECISE_DATA_POLL_RATE = 1e300\nV2_SUBSCRIPTION_DEBOUNCE = 1e200\n",
+        "POLL_RATE = 1e100\nPRECISE_DATA_POLL_RATE = 1e300\nAPI_V1_SUBSCRIPTION_DEBOUNCE = 1e200\n",
     )
     .unwrap();
     assert_eq!(document.config().poll_rate, ConfigDocument::MAX_INTERVAL_MS);
@@ -300,7 +300,7 @@ fn oversized_disk_intervals_are_bounded_before_publication() {
         ConfigDocument::MAX_INTERVAL_MS
     );
     assert_eq!(
-        document.config().v2_subscription_debounce,
+        document.config().api_v1_subscription_debounce,
         ConfigDocument::MAX_INTERVAL_MS
     );
 }
@@ -366,8 +366,8 @@ UNKNOWN_BINDING = true
     );
     let canonical = toml::from_str::<toml::Table>(std::str::from_utf8(&initial.bytes).unwrap())
         .expect("canonical TOML");
-    assert_eq!(canonical.len(), BINDING_ORDER.len());
-    assert!(!canonical.contains_key("UNKNOWN_BINDING"));
+    assert_eq!(canonical.len(), BINDING_ORDER.len() + 1);
+    assert_eq!(canonical["UNKNOWN_BINDING"].as_bool(), Some(true));
     assert_eq!(
         std::fs::read(&path).expect("read canonical file"),
         initial.bytes

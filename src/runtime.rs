@@ -137,7 +137,6 @@ mod tests {
     use vosu_adapter_support::filtered::*;
     include!("runtime/tests/projection_reference.rs");
     include!("runtime/tests/projection.rs");
-    include!("runtime/tests/subscription_projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/lifecycle.rs");

@@ -348,7 +348,7 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directions() {
+async fn extended_error_collection_follows_bus_demand_and_releases_on_unsubscribe() {
     let session = capture_session(61103, ClientType::Stable);
     let (sink, mut events) = sink();
     session
@@ -364,46 +364,20 @@ async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directio
     .await
     .unwrap();
     let (mut reader, _) = session.capture_controls.borrow().as_ref().unwrap().clone();
-    assert!(!reader.borrow_and_update().enable_hit_offsets);
-    assert!(!reader.borrow().enable_mania_key_hit_errors);
+    assert!(!reader.borrow_and_update().collect_hit_errors);
     let publication = session.publication.get().unwrap();
     publication.demand.set_bus_collection(false, true, true);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
         .unwrap()
         .unwrap();
-    assert!(reader.borrow_and_update().enable_hit_offsets);
-    assert!(reader.borrow().enable_mania_key_hit_errors);
+    assert!(reader.borrow_and_update().collect_hit_errors);
     publication.demand.set_bus(false, false);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
         .unwrap()
         .unwrap();
-    assert!(!reader.borrow_and_update().enable_hit_offsets);
-    assert!(!reader.borrow().enable_mania_key_hit_errors);
-    sink.inputs.send_modify(|inputs| {
-        inputs.enable_hit_offsets = true;
-        inputs.enable_mania_key_hit_errors = true;
-    });
-    tokio::time::timeout(Duration::from_secs(5), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(reader.borrow_and_update().enable_hit_offsets);
-    assert!(reader.borrow().enable_mania_key_hit_errors);
-    publication.demand.set_bus_collection(false, true, true);
-    tokio::time::timeout(Duration::from_secs(5), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
-    reader.borrow_and_update();
-    publication.demand.set_bus(false, false);
-    tokio::time::timeout(Duration::from_secs(5), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(reader.borrow_and_update().enable_hit_offsets);
-    assert!(reader.borrow().enable_mania_key_hit_errors);
+    assert!(!reader.borrow_and_update().collect_hit_errors);
     session.cancel();
     tokio::time::timeout(Duration::from_secs(5), session.join_resolver())
         .await

@@ -96,6 +96,9 @@ fn socket_overlay(request: &Request<Body>) -> Option<String> {
     // concrete local overlay path.
     let referer = request.headers().get(header::REFERER)?.to_str().ok()?;
     let url = url::Url::parse(referer).ok()?;
+    if url.scheme() != "http" || !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
     let host = request.headers().get(header::HOST)?.to_str().ok()?;
     if url[url::Position::BeforeHost..url::Position::AfterPort] != *host { return None; }
     let encoded = url.path().trim_start_matches('/').split('/').next()?;

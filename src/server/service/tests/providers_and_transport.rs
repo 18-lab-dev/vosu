@@ -21,7 +21,6 @@
                 v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
                 precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
                 commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
                 processor: processor.clone(), relays: relays.clone(),
             },
         ));
@@ -74,7 +73,6 @@
                 v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
                 precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
                 commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
                 processor: processor.clone(), relays: relays.clone(),
             },
         ));

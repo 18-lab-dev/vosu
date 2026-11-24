@@ -132,7 +132,6 @@ impl ProductionRouteDelegate {
             | Endpoint::WsTokens
             | Endpoint::WsV2
             | Endpoint::WsV2Precise
-            | Endpoint::WsV2Subscribe
             | Endpoint::WsCommands => self.websocket(endpoint, request).await,
         }
     }
@@ -731,7 +730,6 @@ fn websocket_endpoint(endpoint: Endpoint) -> websocket::Endpoint {
         Endpoint::WsTokens => websocket::Endpoint::StreamCompanion,
         Endpoint::WsV2 => websocket::Endpoint::V2,
         Endpoint::WsV2Precise => websocket::Endpoint::V2Precise,
-        Endpoint::WsV2Subscribe => websocket::Endpoint::V2Subscribe,
         Endpoint::WsCommands => websocket::Endpoint::Commands,
         _ => unreachable!(),
     }

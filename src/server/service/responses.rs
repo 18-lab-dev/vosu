@@ -1,26 +1,3 @@
-#[derive(serde::Serialize)]
-struct SkinMetadata<'a> {
-    client: Option<&'static str>,
-    name: &'a Option<String>,
-    files: bool,
-    builtin: Option<&'a str>,
-    base: Option<&'a str>,
-    #[serde(flatten)]
-    index: &'a files::SkinFileIndex,
-}
-
-fn skin_metadata<'a>(selected: &'a BeatmapFiles, index: &'a files::SkinFileIndex) -> SkinMetadata<'a> {
-    let skin = selected.skin.as_deref();
-    SkinMetadata {
-        client: selected.skin_client,
-        name: &selected.skin_name,
-        files: if selected.lazer { skin.is_some_and(|s| !s.files.is_empty()) }
-            else { selected.skin_root.as_ref().is_some_and(|p| p.is_dir()) },
-        builtin: skin.and_then(|s| s.builtin.as_deref()),
-        base: if selected.lazer { skin.and_then(|s| s.base.as_deref()) } else { selected.skin_client.map(|_| "legacy") },
-        index,
-    }
-}
 
 #[derive(Debug)]
 enum FileRouteError {

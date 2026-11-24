@@ -447,7 +447,8 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     if let Some(endpoint @ Endpoint::Removed(_)) = classify(&method, &path) {
-        return cors(providers.delegate.handle(endpoint, request, Bytes::new()).await);
+        let _ = providers.delegate.handle(endpoint, request, Bytes::new()).await;
+        return cors(not_found());
     }
     let websocket_upgrade = request
         .headers()
@@ -845,6 +846,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/websocket/v2/precise" if get => Some(WsV2Precise),
         "/websocket/v2/subscribe" => Some(Removed(RemovedFeature::SelectedV2Feed)),
         "/files/skin/" => Some(Removed(RemovedFeature::LegacySkinIndex)),
+        "/files/skin" => None,
         "/websocket/commands" if get => Some(WsCommands),
         "/api/dashboard/status" if get => Some(DashboardStatus),
         _ if get && path.starts_with("/api/counters/details/") => Some(CounterDetails),

@@ -1235,6 +1235,15 @@ Scope:
   list. Requests to a removed route are attributed to the requesting overlay
   for the D20 dashboard notice. Delete bridge B1, its interim crate edge,
   and `src/api/snapshot.rs`.
+  **M8 migration inventory:** delete exactly the four uppercase TOML/environment
+  bindings above, idempotently; preserve `API_V1_SUBSCRIPTION_DEBOUNCE`,
+  unrelated unknown keys/tables, overlays, profiles and settings. No new
+  replacement flag is written: authorized subscription selectors own demand.
+  Removed-route attribution retains at most 128 validated installed overlays
+  (LRU, 24-hour inactivity expiry) and one unknown bucket per fixed feature.
+  D20 consumes only identity, feature, first/last seen and saturating count;
+  unknown requests never acquire a guessed overlay name. M8 day-0 execution,
+  M7's migration-guide notice UI and the clean-room page remain separate work.
 - **Stable tournament-manager aggregate (D6, mandatory M4a exit).** The osu!
   plugin attaches the `--tournament` process
   as an identified `stable` session, setting `focus_priority: true` on its

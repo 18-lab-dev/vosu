@@ -1,6 +1,3 @@
-fn skin_report_value(selected: &BeatmapFiles, index: &files::SkinFileIndex) -> Value {
-    serde_json::to_value(skin_metadata(selected, index)).unwrap()
-}
 
 fn skin_index_delegate(root: &Path, files: BeatmapFiles) -> ProductionRouteDelegate {
     let counters = Arc::new(ReloadableCounterService::production(root.join("static"), root.join("settings"), root.join("cache")));
@@ -18,38 +15,20 @@ fn skin_index_delegate(root: &Path, files: BeatmapFiles) -> ProductionRouteDeleg
             v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
             precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
             commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-            subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO), processor, relays,
+            processor, relays,
         },
     ))
 }
 
 #[tokio::test]
-async fn skin_report_entries_are_additive_conditional_and_invalidate_without_skin_switch() {
+async fn legacy_skin_report_is_removed_without_metadata_or_upgrade() {
     let root = tempfile::tempdir().unwrap();
-    let skin = root.path().join("skin"); std::fs::create_dir(&skin).unwrap();
-    std::fs::write(skin.join("skin.ini"), b"[General]").unwrap();
-    let delegate = skin_index_delegate(root.path(), BeatmapFiles {
-        skin_root: Some(skin.clone()), skin_client: Some("stable"), skin_name: Some("fixture".into()), ready: true, ..Default::default()
-    });
-    let request = || Request::builder().uri("/files/skin/").body(Body::empty()).unwrap();
-    let first = bounded!(delegate.file(Endpoint::SkinFile, request()));
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(first.headers()[header::CACHE_CONTROL], "no-cache");
-    let etag = first.headers()[header::ETAG].clone();
-    let body: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(first.into_body(), usize::MAX)).unwrap()).unwrap();
-    assert_eq!(body["files"], true);
-    assert_eq!(body["entries"][0]["path"], "skin.ini");
-    assert_eq!(body["entries"][0]["size"], 9);
-    assert!(body["entries"][0]["modified"].is_u64());
-    assert!(body["entries"][0].get("hash").is_none());
-    assert_eq!(body["truncated"], false);
-    let cached = bounded!(delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()));
-    assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
-    assert!(bounded!(axum::body::to_bytes(cached.into_body(), usize::MAX)).unwrap().is_empty());
-    std::fs::write(skin.join("skin.ini"), b"[General]\nName: changed").unwrap();
-    let changed = bounded!(delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()));
-    assert_eq!(changed.status(), StatusCode::OK);
-    assert_ne!(changed.headers()[header::ETAG], etag);
+    let delegate = skin_index_delegate(root.path(), BeatmapFiles::default());
+    let request = Request::builder().uri("/files/skin/").header(header::UPGRADE, "websocket").body(Body::empty()).unwrap();
+    let response = bounded!(delegate.dispatch(Endpoint::Removed(super::super::routes::RemovedFeature::LegacySkinIndex), request, Bytes::new()));
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(!response.headers().contains_key(header::UPGRADE));
+    assert_eq!(bounded!(axum::body::to_bytes(response.into_body(), 1024)).unwrap(), "Not Found");
 }
 
 #[tokio::test]
@@ -111,13 +90,7 @@ async fn lazer_file_etag_is_the_store_hash() {
         skin: Some(Arc::new(vosu_osu_model::memory::CurrentSkin { name: "skin".into(), base: None, builtin: None, files: [("skin.ini".into(), relative)].into() })),
         ..Default::default()
     });
-    let report = bounded!(delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").body(Body::empty()).unwrap()));
-    let report: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(report.into_body(), usize::MAX)).unwrap()).unwrap();
-    assert_eq!(report["entries"][0]["path"], "skin.ini");
-    assert_eq!(report["entries"][0]["hash"], hash);
-    assert_eq!(report["entries"][0]["size"], 4);
-    assert!(report["entries"][0].get("modified").is_none());
-    for (endpoint, path) in [(Endpoint::SkinFile, "/files/skin/skin.ini"), (Endpoint::BeatmapFile, "/files/beatmap/file")] {
+    for (endpoint, path) in [(Endpoint::BeatmapFile, "/files/beatmap/file")] {
         let response = bounded!(delegate.file(endpoint, Request::builder().uri(path).body(Body::empty()).unwrap()));
         assert_eq!(response.headers()[header::ETAG], format!("\"{hash}\""));
     }
@@ -157,4 +130,35 @@ async fn game_files_are_sandboxed_but_counter_pages_are_not() {
     let counter_page = bounded!(delegate.file(Endpoint::CounterStatic, Request::builder().uri("/counter/").body(Body::empty()).unwrap()));
     assert_eq!(counter_page.status(), StatusCode::OK);
     assert!(counter_page.headers().get(header::CONTENT_SECURITY_POLICY).is_none(), "counters must keep running script");
+}
+
+#[tokio::test]
+async fn removed_routes_attribute_only_installed_explicit_identity_or_local_provenance() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("static/counter")).unwrap();
+    std::fs::write(root.path().join("static/counter/index.html"), b"overlay").unwrap();
+    let delegate = skin_index_delegate(root.path(), BeatmapFiles::default());
+    for (uri, referer, origin, expected) in [
+        ("/websocket/v2/subscribe?l=counter", None, None, Some("counter")),
+        ("/websocket/v2/subscribe?l=uninstalled", None, None, None),
+        ("/websocket/v2/subscribe", Some("http://localhost:24050/counter/index.html"), None, Some("counter")),
+        ("/websocket/v2/subscribe", Some("http://foreign.test/counter/"), None, None),
+        ("/websocket/v2/subscribe", Some("https://localhost:24050/counter/"), None, None),
+        ("/websocket/v2/subscribe", Some("http://localhost:24050/unknown/"), None, None),
+        ("/websocket/v2/subscribe", None, Some("http://localhost:24050"), None),
+    ] {
+        let mut request = Request::builder().uri(uri).header(header::HOST, "localhost:24050");
+        if let Some(value) = referer { request = request.header(header::REFERER, value); }
+        if let Some(value) = origin { request = request.header(header::ORIGIN, value); }
+        let before: u64 = delegate.removed_notices().iter().filter(|notice| notice.overlay.as_deref() == expected).map(|notice| notice.attempts).sum();
+        let response = bounded!(delegate.dispatch(Endpoint::Removed(super::super::routes::RemovedFeature::SelectedV2Feed), request.body(Body::empty()).unwrap(), Bytes::new()));
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let after: u64 = delegate.removed_notices().iter().filter(|notice| notice.overlay.as_deref() == expected).map(|notice| notice.attempts).sum();
+        assert_eq!(after, before + 1, "{uri}");
+    }
+    std::fs::remove_dir_all(root.path().join("static/counter")).unwrap();
+    assert!(delegate.removed_notices().iter().all(|notice| notice.overlay.is_none()));
+    bounded!(delegate.services.counters.shutdown());
+    bounded!(delegate.services.websocket.processor.shutdown());
+    bounded!(delegate.services.websocket.relays.shutdown());
 }

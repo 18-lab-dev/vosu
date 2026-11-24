@@ -109,8 +109,6 @@ async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_service
         owner.plugins.destroy_all(Duration::ZERO);
         *owner.hubs.get_mut() = Some(WebSocketHubs::start(
             owner.snapshots.clone(),
-            owner.snapshots.clone(),
-            Duration::ZERO,
         ));
         let error = owner.compose().await.unwrap_err();
         assert!(

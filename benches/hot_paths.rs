@@ -10,9 +10,6 @@ use tokio::sync::watch;
 use vosu::api::{
     ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
 };
-use vosu::server::v2_subscription::{
-    V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
-};
 use vosu::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_core::plugin::{ModuleResolver, execute_into};
 use vosu_osu_calc::beatmap::{
@@ -486,147 +483,6 @@ fn bench_publication(c: &mut Criterion) {
     group.finish();
 }
 
-const SUBSCRIPTION_PLAN_VALUES: usize = 1_000;
-
-struct SubscriptionSnapshot {
-    revision: u64,
-    document_builds: Arc<AtomicUsize>,
-}
-
-impl V2SubscriptionSnapshot for SubscriptionSnapshot {
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    fn document(&self, _pointers: &[&[String]]) -> Result<Option<serde_json::Value>, ApiError> {
-        self.document_builds.fetch_add(1, Ordering::Relaxed);
-        let clients: Vec<_> = (0..SUBSCRIPTION_PLAN_VALUES)
-            .map(|index| serde_json::Value::from(index as u64))
-            .collect();
-        Ok(Some(serde_json::json!({
-            "revision": self.revision,
-            "clients": clients,
-        })))
-    }
-}
-
-struct SubscriptionProvider {
-    revision: AtomicU64,
-    document_builds: Arc<AtomicUsize>,
-    event: watch::Sender<u64>,
-}
-
-impl SubscriptionProvider {
-    fn new() -> Self {
-        let (event, _) = watch::channel(0);
-        Self {
-            revision: AtomicU64::new(0),
-            document_builds: Arc::new(AtomicUsize::new(0)),
-            event,
-        }
-    }
-
-    fn publish(&self) {
-        let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
-        self.event.send_replace(revision);
-    }
-}
-
-impl V2SubscriptionProvider for SubscriptionProvider {
-    fn subscribe(&self) -> watch::Receiver<u64> {
-        self.event.subscribe()
-    }
-
-    fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
-        Arc::new(SubscriptionSnapshot {
-            revision: self.revision.load(Ordering::Acquire),
-            document_builds: Arc::clone(&self.document_builds),
-        })
-    }
-}
-
-fn bench_v2_subscription(c: &mut Criterion) {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let mut group = c.benchmark_group("v2_subscription");
-
-    for plan_kind in ["shared_plan", "distinct_plans"] {
-        for clients in [1_usize, 100, 1_000] {
-            let provider = Arc::new(SubscriptionProvider::new());
-            let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
-            let mut connections = Vec::with_capacity(clients);
-            let mut receivers = Vec::with_capacity(clients);
-            for index in 0..clients {
-                let (connection, receiver) = hub.connect();
-                let pointers = if plan_kind == "shared_plan" {
-                    vec!["/revision".to_owned(), "/clients/0".to_owned()]
-                } else {
-                    vec![format!("/clients/{index}"), "/revision".to_owned()]
-                };
-                connection.subscribe(pointers).unwrap();
-                connections.push(connection);
-                receivers.push(receiver);
-            }
-
-            let runner = runtime.spawn({
-                let hub = hub.clone();
-                async move { hub.run().await }
-            });
-            runtime.block_on(async {
-                for receiver in &mut receivers {
-                    assert!(matches!(
-                        receiver.recv().await,
-                        Some(V2SubscriptionOutbound::Text(_))
-                    ));
-                }
-                assert_eq!(provider.document_builds.load(Ordering::Relaxed), 1);
-
-                provider.publish();
-                tokio::time::sleep(Duration::from_millis(1)).await;
-                assert_eq!(provider.document_builds.load(Ordering::Relaxed), 1);
-
-                for connection in &connections {
-                    connection.write_completed();
-                }
-                for receiver in &mut receivers {
-                    assert!(matches!(
-                        receiver.recv().await,
-                        Some(V2SubscriptionOutbound::Text(_))
-                    ));
-                }
-                assert_eq!(provider.document_builds.load(Ordering::Relaxed), 2);
-                for connection in &connections {
-                    connection.write_completed();
-                }
-            });
-
-            group.throughput(Throughput::Elements(clients as u64));
-            group.bench_with_input(BenchmarkId::new(plan_kind, clients), &clients, |b, _| {
-                b.iter(|| {
-                    runtime.block_on(async {
-                        let before = provider.document_builds.load(Ordering::Relaxed);
-                        provider.publish();
-                        for receiver in &mut receivers {
-                            assert!(matches!(
-                                receiver.recv().await,
-                                Some(V2SubscriptionOutbound::Text(_))
-                            ));
-                        }
-                        assert_eq!(provider.document_builds.load(Ordering::Relaxed), before + 1);
-                        for connection in &connections {
-                            connection.write_completed();
-                        }
-                    })
-                });
-            });
-            hub.shutdown();
-            runtime.block_on(runner).unwrap();
-        }
-    }
-    group.finish();
-}
 
 #[cfg(target_os = "windows")]
 #[repr(align(4096))]
@@ -758,75 +614,6 @@ fn bench_linux_process_memory(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_subscription_documents(c: &mut Criterion) {
-    use vosu::runtime::ProductionSnapshotEncoder;
-    let mut group = c.benchmark_group("v2_subscription_document");
-    for history in [0, 7_500] {
-        let snapshot = api_snapshot_with_history(history);
-        let plans = [
-            (
-                "keys_time",
-                vec![
-                    vec!["keys", "all"],
-                    vec!["beatmap", "time", "live"],
-                    vec!["state"],
-                ],
-            ),
-            (
-                "whole_history",
-                vec![
-                    vec!["play", "pressHitErrors"],
-                    vec!["play", "releaseHitErrors"],
-                ],
-            ),
-            (
-                "indexed_history",
-                (0..32).map(|_| vec!["play", "hitErrorArray"]).collect(),
-            ),
-        ];
-        for (name, paths) in plans {
-            let pointers: Vec<Vec<String>> = paths
-                .into_iter()
-                .enumerate()
-                .map(|(index, tokens)| {
-                    let mut tokens: Vec<_> = tokens.into_iter().map(str::to_owned).collect();
-                    if name == "indexed_history" {
-                        tokens.push(index.to_string());
-                    }
-                    tokens
-                })
-                .collect();
-            let pointers: Vec<_> = pointers.iter().map(Vec::as_slice).collect();
-            group.bench_function(BenchmarkId::new(name, history), |b| {
-                b.iter(|| {
-                    black_box(
-                        ProductionSnapshotEncoder::subscription_document(
-                            black_box(&snapshot),
-                            black_box(&pointers),
-                        )
-                        .unwrap(),
-                    )
-                })
-            });
-        }
-        group.bench_function(BenchmarkId::new("whole_document", history), |b| {
-            b.iter_batched(
-                || api_snapshot_with_history(history),
-                |snapshot| {
-                    black_box(
-                        ProductionSnapshotEncoder::subscription_document(
-                            black_box(&snapshot),
-                            &[&[]],
-                        )
-                        .unwrap(),
-                    )
-                },
-                BatchSize::PerIteration,
-            );
-        });
-    }
-    group.finish();
-}
 
 fn hot_paths(c: &mut Criterion) {
     bench_batch_scan(c);
@@ -839,8 +626,6 @@ fn hot_paths(c: &mut Criterion) {
     bench_windows_process_memory(c);
     bench_serializers(c);
     bench_publication(c);
-    bench_v2_subscription(c);
-    bench_subscription_documents(c);
 }
 
 criterion_group!(benches, hot_paths);

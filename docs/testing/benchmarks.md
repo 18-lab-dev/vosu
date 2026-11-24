@@ -11,6 +11,15 @@ This guide keeps only the latest result of each benchmark. A rerun replaces
 its section; earlier results stay in this file's Git history
 (`git log -p -- docs/testing/benchmarks.md`).
 
+ADR 0021 removes `/websocket/v2/subscribe` in M4a. The selected-feed-only
+`v2_subscription/*`, `v2_subscription_document/*` Criterion groups and
+`subscription_cadence_cpu_and_wakeups` ignored benchmark are removed with that
+protocol, not reported as performance regressions. Shared subscription wire
+properties remain tested under `server::subscription_wire`; API v1 and legacy
+filter benchmarks remain. M4a D17's bus-to-adapter cases replace measurements of
+the removed transport rather than comparing unlike protocols.
+
+
 ## Reproduce
 
 Run from the repository root with the pinned Rust toolchain. Bench profiles

@@ -94,7 +94,7 @@ pub async fn start_test_production_composition(
     });
     let relays = Arc::new(WebSocketRelaySink::new());
     let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
-    let hubs = WebSocketHubs::start(snapshots.clone(), snapshots.clone(), Duration::ZERO);
+    let hubs = WebSocketHubs::start(snapshots.clone());
     let endpoints = options
         .network
         .endpoints()

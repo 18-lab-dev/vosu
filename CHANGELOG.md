@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+- Remove the selected-v2 subscription feed, legacy skin metadata index and four
+  extension-only config flags. API v1 subscriptions retain their own debounce;
+  real selector demand owns collection. Keep bounded validated removed-route
+  attribution for the future D20 notice, and preserve unrelated unknown config.
 - Share the pure chart calculation engine from `vosu-osu-calc`, independently of state orchestration.
 - Derive streamCompanion strains, breaks, timing and kiai facts from authorized chart resources with bounded latest-only, joined workers; preserve the upstream empty `mapKiaiPoints` wire quirk.
 

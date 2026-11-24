@@ -73,39 +73,8 @@ fn precise_publication_wakes_native_subscription_without_waking_regular_stream()
     providers.publish(manager(2, precise(2.0)));
     assert!(!regular_rx.has_changed().unwrap());
     assert!(precise_rx.has_changed().unwrap());
-    let native = V2SubscriptionProvider::capture(&providers)
-        .document(&[&[]])
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        native["keys"]["all"],
-        serde_json::json!([{
-            "name": "K1",
-            "isPressed": true,
-            "count": 7,
-            "pressedAt": 2,
-            "releasedAt": null
-        }])
-    );
-    assert_eq!(
-        native["play"]["mode"],
-        serde_json::json!({"number": 0, "name": "osu"})
-    );
 }
 
-#[test]
-fn v2_subscription_capture_keeps_not_ready_revision_and_missing_document() {
-    let providers = SnapshotProviders::new(
-        Arc::new(ManagerSnapshot::not_ready(
-            17,
-            ApiRuntimeSettings::default(),
-        )),
-        Arc::new(ProductionSnapshotEncoder),
-    );
-    let snapshot = V2SubscriptionProvider::capture(&providers);
-    assert_eq!(snapshot.revision(), 17);
-    assert_eq!(snapshot.document(&[&[]]).unwrap(), None);
-}
 #[tokio::test]
 async fn signal_completion_cancels_the_shared_runtime_token() {
     let shutdown = CancellationToken::new();

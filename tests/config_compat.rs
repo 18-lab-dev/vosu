@@ -116,7 +116,7 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
 
     let persisted = fs::read_to_string(&current).unwrap();
     assert!(persisted.ends_with('\n'));
-    assert!(!persisted.contains("DEPRECATED_BINDING"));
+    assert!(persisted.contains("DEPRECATED_BINDING"));
     let persisted: toml::Table = toml::from_str(&persisted).unwrap();
     assert_eq!(
         persisted.get("DEBUG_LOG").and_then(toml::Value::as_bool),
@@ -316,4 +316,31 @@ fn api_v1_debounce_duration_uses_validated_fractional_milliseconds() {
         );
         assert!(!document.serialize().contains("\nV2_SUBSCRIPTION_DEBOUNCE"));
     }
+}
+
+#[tokio::test]
+async fn retired_bindings_are_ignored_on_reload_while_unknown_values_survive_saves() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("vosu.toml");
+    let retired = "ENABLE_KEY_OVERLAY = false\nENABLE_MANIA_KEY_HIT_ERRORS = true\nENABLE_HIT_OFFSETS = true\nV2_SUBSCRIPTION_DEBOUNCE = 9999\n";
+    fs::write(&path, format!("{retired}API_V1_SUBSCRIPTION_DEBOUNCE = 7.375\nCUSTOM_SENTINEL = 'keep'\n[custom]\nvalue = 42\n")).unwrap();
+    let store = bounded!(ConfigStore::initialize(&path)).unwrap();
+    assert_eq!(store.current().api_v1_subscription_debounce, 7.375);
+    assert!(store.update(|config| config.debug_log = true));
+    bounded!(store.flush()).unwrap();
+    let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    for key in ["ENABLE_KEY_OVERLAY", "ENABLE_MANIA_KEY_HIT_ERRORS", "ENABLE_HIT_OFFSETS", "V2_SUBSCRIPTION_DEBOUNCE"] {
+        assert!(!table.contains_key(key), "{key}");
+    }
+    assert_eq!(table["CUSTOM_SENTINEL"].as_str(), Some("keep"));
+    assert_eq!(table["custom"]["value"].as_integer(), Some(42));
+    let mut changes = store.subscribe();
+    fs::write(&path, format!("{retired}API_V1_SUBSCRIPTION_DEBOUNCE = 3.125\nCUSTOM_SENTINEL = 'updated'\n")).unwrap();
+    let change = bounded!(changes.recv()).unwrap();
+    assert_eq!(change.new.api_v1_subscription_debounce, 3.125);
+    assert!(store.update(|config| config.debug_log = false));
+    bounded!(store.shutdown()).unwrap();
+    let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(table["CUSTOM_SENTINEL"].as_str(), Some("updated"));
+    assert!(!table.contains_key("V2_SUBSCRIPTION_DEBOUNCE"));
 }
