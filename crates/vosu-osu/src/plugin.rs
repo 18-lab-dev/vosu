@@ -350,10 +350,15 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
     }
 
     fn send_decline(&self, handle: u64) -> Result<(), PluginError> {
-        status_to_result(
-            self.host
-                .send(&Message::SessionDecline(SessionDecline { handle }), 0),
-        )
+        match self
+            .host
+            .send(&Message::SessionDecline(SessionDecline { handle }), 0)
+        {
+            // Discovery can retire the handle before this concurrent attach
+            // callback runs. No decline or session work remains in that case.
+            vosu_status::VOSU_ERR_TARGET_GONE => Ok(()),
+            status => status_to_result(status),
+        }
     }
 
     fn schedule_settle(&self, handle: u64, pending: PendingIdentify) -> Result<(), PluginError> {
@@ -409,7 +414,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                     String::new(),
                     identified.named,
                 );
-                if result.is_ok() {
+                if matches!(result, Ok(true)) {
                     register_session(
                         &self.host,
                         &self.state,
@@ -420,7 +425,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                         &identified,
                     );
                 }
-                result
+                result.map(|_| ())
             }
             ClientType::Lazer => {
                 let host = Arc::clone(&self.host);
@@ -445,7 +450,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                             version,
                             named,
                         );
-                        if result.is_ok() {
+                        if matches!(result, Ok(true)) {
                             register_session(
                                 &host,
                                 &state,
@@ -482,7 +487,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                             version,
                             identified.named,
                         );
-                        if result.is_ok() {
+                        if matches!(result, Ok(true)) {
                             register_session(
                                 &self.host,
                                 &self.state,
@@ -493,7 +498,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                                 &identified,
                             );
                         }
-                        result
+                        result.map(|_| ())
                     }
                 }
             }
@@ -632,15 +637,21 @@ fn finish_identify<H: HostServices>(
     name: &str,
     version: String,
     named: bool,
-) -> Result<(), PluginError> {
-    status_to_result(host.identify_session(handle, "osu", variant, name, &version, false))?;
+) -> Result<bool, PluginError> {
+    match host.identify_session(handle, "osu", variant, name, &version, false) {
+        // The host may have removed the handle before its queued detach
+        // reaches us. This is not a malformed attach, and must not register
+        // a reader for an identification the host never accepted.
+        vosu_status::VOSU_ERR_TARGET_GONE => return Ok(false),
+        status => status_to_result(status)?,
+    }
     if named {
         let mut state = state.lock().expect("plugin state mutex poisoned");
         if state.live_handles.contains(&handle) {
             state.named_stable_handles.insert(handle);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Builds this handle's `ProcessHandle` (P3's `PlanProcessMemory` +

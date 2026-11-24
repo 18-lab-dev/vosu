@@ -59,8 +59,10 @@ pub struct DiscoveredProcess {
 /// Every way a `SESSION_DECLINE`/`SESSION_IDENTIFY` call can be refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionError {
-    /// No pending or identified session has this handle.
+    /// This handle was never issued by the session registry.
     UnknownHandle,
+    /// This handle was issued, but discovery already retired it.
+    TargetGone,
     /// This handle belongs to a different plugin instance than the caller.
     NotOwner,
     /// `SESSION_DECLINE` arrived after this plugin's own `SESSION_IDENTIFY`
@@ -191,6 +193,15 @@ impl SessionRegistry {
             .expect("session handle exhausted");
         SessionHandle(self.next_handle)
     }
+    fn missing_handle_error(&self, handle: SessionHandle) -> SessionError {
+        // Handles start at one and are never reused. A high-water mark
+        // distinguishes stale lifecycle replies without a tombstone map.
+        if handle.0 != 0 && handle.0 <= self.next_handle {
+            SessionError::TargetGone
+        } else {
+            SessionError::UnknownHandle
+        }
+    }
 
     fn next_public_id(&mut self) -> String {
         self.next_public_id = self
@@ -287,7 +298,7 @@ impl SessionRegistry {
             return Err(SessionError::AlreadyIdentified);
         }
         match self.pending.get(&handle) {
-            None => return Err(SessionError::UnknownHandle),
+            None => return Err(self.missing_handle_error(handle)),
             Some(record) if record.owner != plugin => return Err(SessionError::NotOwner),
             Some(_) => {}
         }
@@ -340,7 +351,7 @@ impl SessionRegistry {
             return Err(SessionError::AlreadyIdentified);
         }
         match self.pending.get(&handle) {
-            None => return Err(SessionError::UnknownHandle),
+            None => return Err(self.missing_handle_error(handle)),
             Some(record) if record.owner != plugin => return Err(SessionError::NotOwner),
             Some(_) => {}
         }
@@ -506,6 +517,7 @@ impl From<SessionError> for vosu_status {
             // Nothing this registry tracks has that handle at all: the
             // call itself is malformed, not a permission question.
             SessionError::UnknownHandle => Self::VOSU_ERR_INVALID_ARGUMENT,
+            SessionError::TargetGone => Self::VOSU_ERR_TARGET_GONE,
             // The handle exists, but belongs to a different plugin
             // instance — exactly §5's `VOSU_ERR_PERMISSION_DENIED`
             // example ("a read plan touching a session it did not
@@ -545,6 +557,53 @@ mod tests {
             name: "player".into(),
             version: "1.0".into(),
             focus_priority,
+        }
+    }
+    #[test]
+    fn replies_racing_detach_report_target_gone_but_unissued_handles_are_invalid() {
+        let mut registry = SessionRegistry::new();
+        let attached = registry
+            .attach(process(), vec!["test.stale".into()], Instant::now())
+            .unwrap();
+        assert!(
+            registry
+                .detach(attached.handle, DetachReason::Exited)
+                .is_some()
+        );
+        let identify_error = registry
+            .identify(
+                "test.stale",
+                attached.handle,
+                identify("osu", false),
+                Instant::now(),
+            )
+            .unwrap_err();
+        let decline_error = registry
+            .decline("test.stale", attached.handle, Instant::now())
+            .unwrap_err();
+        assert_eq!(
+            vosu_status::from(identify_error),
+            vosu_status::VOSU_ERR_TARGET_GONE
+        );
+        assert_eq!(
+            vosu_status::from(decline_error),
+            vosu_status::VOSU_ERR_TARGET_GONE
+        );
+        for handle in [SessionHandle(0), SessionHandle(attached.handle.0 + 1)] {
+            let identify_error = registry
+                .identify("test.stale", handle, identify("osu", false), Instant::now())
+                .unwrap_err();
+            let decline_error = registry
+                .decline("test.stale", handle, Instant::now())
+                .unwrap_err();
+            assert_eq!(
+                vosu_status::from(identify_error),
+                vosu_status::VOSU_ERR_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                vosu_status::from(decline_error),
+                vosu_status::VOSU_ERR_INVALID_ARGUMENT
+            );
         }
     }
 

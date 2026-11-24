@@ -842,3 +842,4 @@ fn destroy_revokes_a_gated_lazer_lookup_before_it_can_register() {
 }
 
 mod capture;
+mod stale_session;
