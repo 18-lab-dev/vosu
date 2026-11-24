@@ -11,8 +11,8 @@ use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_NO_MORE_FILES, FILETIME, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-            STILL_ACTIVE,
+            CloseHandle, ERROR_ACCESS_DENIED, ERROR_NO_MORE_FILES, FILETIME, GetLastError, HANDLE,
+            INVALID_HANDLE_VALUE, STILL_ACTIVE,
         },
         Security::{EqualSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
         System::{
@@ -385,19 +385,30 @@ pub fn foreground_process_id() -> Option<u32> {
 }
 
 /// Whether `pid` currently names a live process, probed with the
-/// weakest possible access right (`PROCESS_QUERY_LIMITED_INFORMATION`,
-/// granted even for a protected or elevated process this host has no
-/// `PROCESS_VM_READ` rights to) so a denied [`WindowsProcessMemory::open`]
-/// can be told apart from a genuinely dead `pid` (`docs/v2/plugin-abi.md`
-/// §5: only a dead process is `VOSU_ERR_TARGET_GONE`; an OS failure to
-/// open a live one is `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`).
+/// weakest possible access right (`PROCESS_QUERY_LIMITED_INFORMATION`)
+/// so a denied [`WindowsProcessMemory::open`] can be told apart from a
+/// genuinely dead `pid` (`docs/v2/plugin-abi.md` §5: only a dead process
+/// is `VOSU_ERR_TARGET_GONE`; an OS failure to open a live one is
+/// `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`). Even this weakest
+/// right is denied by the kernel for a Protected-Process-Light target
+/// (`csrss.exe`, `smss.exe`, `wininit.exe`, `services.exe`, `lsass.exe`,
+/// `Registry`, `Memory Compression`, `Secure System`, a protected
+/// antimalware service): `OpenProcess` there fails with
+/// `ERROR_ACCESS_DENIED`, an error only a *live* process can produce (a
+/// dead or never-existing `pid` fails with `ERROR_INVALID_PARAMETER`
+/// instead), so that specific error is still reported as alive; every
+/// other `OpenProcess` failure is reported as dead.
 #[must_use]
 pub fn is_process_alive(pid: u32) -> bool {
     // SAFETY: `OpenProcess` returns an owned handle on success; no
     // caller-owned buffers are passed.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-        return false;
+        // SAFETY: `GetLastError` has no memory-safety preconditions;
+        // reading it immediately after the failed call above is required
+        // for it to reflect that call's own error, not some later one.
+        let error = unsafe { GetLastError() };
+        return error == ERROR_ACCESS_DENIED;
     }
     let mut exit_code = 0u32;
     // SAFETY: `handle` was just opened above and is closed below;
@@ -415,11 +426,15 @@ pub fn is_process_alive(pid: u32) -> bool {
 /// The full executable image path for `pid`
 /// (`QueryFullProcessImageNameW`, `PROCESS_NAME_WIN32` format), opened
 /// with the same weakest-possible access right [`is_process_alive`] uses
-/// (`PROCESS_QUERY_LIMITED_INFORMATION`) so a protected or elevated
-/// process this host cannot `PROCESS_VM_READ` still yields a path. The
-/// preferred source for `process_path_patterns` matching (§6.1): unlike
-/// a raw command line's argv[0], this is never relative, never bare, and
-/// never whatever an unrelated `lpApplicationName` happened to be.
+/// (`PROCESS_QUERY_LIMITED_INFORMATION`) so an elevated process this
+/// host cannot `PROCESS_VM_READ` still yields a path. A
+/// Protected-Process-Light target denies even this right
+/// ([`is_process_alive`]'s own doc comment); callers fall back to the
+/// process list's bare name instead (`windows_source.rs`'s own
+/// `build_record`) when this fails. The preferred source for
+/// `process_path_patterns` matching (§6.1): unlike a raw command line's
+/// argv[0], this is never relative, never bare, and never whatever an
+/// unrelated `lpApplicationName` happened to be.
 pub fn process_image_path(pid: u32) -> Result<String, MemoryError> {
     // SAFETY: `OpenProcess` returns an owned handle on success; no
     // caller-owned buffers are passed.

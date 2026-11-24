@@ -386,3 +386,60 @@ fn is_process_alive_reports_a_recycled_pid_as_dead() {
     child.wait().unwrap();
     assert!(!is_process_alive(pid));
 }
+
+#[cfg(target_os = "windows")]
+#[test]
+fn is_process_alive_reports_a_protected_process_light_target_as_alive() {
+    // `csrss.exe`/`smss.exe` are Protected-Process-Light: `OpenProcess`
+    // with even `PROCESS_QUERY_LIMITED_INFORMATION` fails with
+    // `ERROR_ACCESS_DENIED` for them, an error only a live process can
+    // produce. Pick whichever of the two is present (both always are on
+    // a real Windows host, but this stays robust to either).
+    let entries = enumerate_processes().unwrap();
+    let ppl = entries
+        .iter()
+        .find(|entry| {
+            entry.executable.eq_ignore_ascii_case("csrss.exe")
+                || entry.executable.eq_ignore_ascii_case("smss.exe")
+        })
+        .expect("csrss.exe or smss.exe must be present on a real Windows host");
+    assert!(
+        is_process_alive(ppl.pid),
+        "a PPL target denying PROCESS_QUERY_LIMITED_INFORMATION must still be reported alive"
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn is_process_alive_tracks_a_spawned_child_until_it_is_reaped() {
+    let mut child = std::process::Command::new("cmd.exe")
+        .args(["/C", "ping", "-n", "5", "127.0.0.1"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    assert!(
+        is_process_alive(pid),
+        "the spawned child must be alive while it runs"
+    );
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        !is_process_alive(pid),
+        "the child must no longer be alive once it has been killed and reaped"
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn is_process_alive_reports_a_pid_absent_from_the_process_list_as_dead() {
+    let entries = enumerate_processes().unwrap();
+    let free_pid = (1u32..)
+        .step_by(4)
+        .find(|candidate| entries.iter().all(|entry| entry.pid != *candidate))
+        .expect("some low pid must be unused");
+    assert!(!is_process_alive(free_pid));
+}
