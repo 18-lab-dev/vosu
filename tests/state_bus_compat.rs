@@ -575,13 +575,15 @@ fn parity(
         doc,
         "/vosu.osu/performance/accuracy",
     );
-    row(
-        id,
-        v2,
-        "/performance/graph",
-        doc,
-        "/vosu.osu/performance/graph",
-    );
+    for field in ["series", "xaxis"] {
+        row(
+            id,
+            v2,
+            &format!("/performance/graph/{field}"),
+            doc,
+            &format!("/vosu.osu/performance/graph/{field}"),
+        );
+    }
     let mut result = v2["resultsScreen"].clone();
     renamed_hits(&mut result);
     require(entries, "result.statistics.sliderBreaks", "contract");
@@ -847,6 +849,8 @@ fn oracle_cases_validate_and_match_the_state_bus() {
             }
             parity(&input, &snapshot, &v2, &precise, &doc, &private, &entries);
             fidelity::check(&snapshot, &doc, &v2, &precise);
+            let v1: Value = serde_json::from_slice(&oracle::encode("v1", &manager)).unwrap();
+            fidelity::independent_sources(&snapshot, &doc, &private, &v1);
             privacy(&bus, &v2, &doc);
             let revision = bus.store.current(bus.key).unwrap().revision;
             assert_eq!(

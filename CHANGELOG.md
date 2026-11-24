@@ -9,6 +9,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Publish osu! schema 1.3 source facts for independent overlay buttons, raw
   gameplay values, parsed chart clocks, leaderboard identity and tournament
   readiness, without changing existing common fields or legacy routes.
+- Preserve independent primary strain histories and captured background/audio
+  names even while the chart folder and filename are unavailable.
+- Add coherent, demand-free bundled adapter captures with identified session
+  rosters, per-namespace revisions and independent foreground observations;
+  add atomic route/feed registration and RAII demand/registration cleanup.
 
 ## Unreleased — 2.0 M3
 
