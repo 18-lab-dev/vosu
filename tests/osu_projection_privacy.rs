@@ -10,14 +10,60 @@ use vosu_osu_model::{enums::ClientType, launch::InstanceSettings, states::HitErr
 use vosu_osu_state::*;
 use vosu_plugin_api::{PluginManifest, PublishValueRef};
 #[derive(Default)]
-struct Paths(Option<StateValue>);
+struct Paths(Option<StateValue>, usize);
+const SENTINELS: &[&str] = &[
+    "/private/osu",
+    "/private/songs",
+    "/private/skin",
+    "private-map",
+    "private.osu",
+    "private.jpg",
+    "private.mp3",
+];
+fn assert_public_value(at: OsuPointer, bytes: &[u8]) {
+    if at.ns() == "vosu.osu"
+        && (at.pointer() == "/internal" || at.pointer().starts_with("/internal/"))
+    {
+        return;
+    }
+    for sentinel in SENTINELS {
+        assert!(
+            !bytes
+                .windows(sentinel.len())
+                .any(|w| w == sentinel.as_bytes()),
+            "{}{} leaks {sentinel}",
+            at.ns(),
+            at.pointer()
+        );
+    }
+}
 impl ProjectionSink for Paths {
-    fn put(&mut self, _: OsuPointer, _: PublishValueRef<'_>) {}
+    fn put(&mut self, at: OsuPointer, value: PublishValueRef<'_>) {
+        self.1 += 1;
+        match value {
+            PublishValueRef::String(s) => assert_public_value(at, s.as_bytes()),
+            PublishValueRef::Cbor(bytes) => {
+                let mut json = Vec::new();
+                StateValue::from_cbor(bytes).unwrap().write_json(&mut json);
+                assert_public_value(at, &json);
+            }
+            PublishValueRef::Bytes(bytes)
+            | PublishValueRef::ResourceRef(bytes)
+            | PublishValueRef::TreeRef(bytes) => assert_public_value(at, bytes),
+            _ => {}
+        }
+    }
     fn put_cbor(&mut self, at: OsuPointer, write: &mut dyn FnMut(&mut Vec<u8>)) {
+        let mut bytes = vec![];
+        write(&mut bytes);
+        let value = StateValue::from_cbor(&bytes).unwrap();
+        let mut json = Vec::new();
+        value.write_json(&mut json);
+        assert_public_value(at, &json);
         if at == OsuPointer::OsuInternalPaths {
-            let mut bytes = vec![];
-            write(&mut bytes);
-            self.0 = Some(StateValue::from_cbor(&bytes).unwrap())
+            self.0 = Some(value);
+        } else {
+            self.1 += 1;
         }
     }
 }
@@ -90,6 +136,10 @@ fn actual_osu_paths_are_visible_only_to_explicit_internal_grant() {
         };
         let mut paths = Paths::default();
         Projector::default().project(&snapshot(), &facts, &mut paths);
+        assert!(
+            paths.1 > 0,
+            "privacy check must inspect public projected pointers"
+        );
         let ns = object(vec![(
             "internal",
             object(vec![("paths", paths.0.unwrap())]),

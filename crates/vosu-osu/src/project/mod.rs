@@ -103,6 +103,9 @@ mod o5_parity;
 #[path = "tests/o5.rs"]
 mod o5_tests;
 #[cfg(test)]
+#[path = "tests/skin_paths.rs"]
+mod skin_paths_tests;
+#[cfg(test)]
 #[path = "tests/skin.rs"]
 mod skin_tests;
 #[cfg(test)]
