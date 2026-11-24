@@ -17,6 +17,7 @@ vosu-proptest
 vosu-osu-model
 vosu-pp
 vosu-release-smoke
+vosu-surface
 vosu-plugin-api -> vosu-proptest
 vosu-plugin-testkit -> vosu-plugin-api
 
@@ -56,3 +57,4 @@ vosu -> vosu-osu-reader
 vosu -> vosu-osu-state
 vosu -> vosu-pp
 vosu -> vosu-proptest
+vosu -> vosu-surface

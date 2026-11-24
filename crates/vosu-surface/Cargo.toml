@@ -1,0 +1,16 @@
+[package]
+name = "vosu-surface"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "=1.52.3", default-features = false, features = ["sync"] }

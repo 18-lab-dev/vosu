@@ -3217,6 +3217,7 @@ dependencies = [
  "vosu-plugin-testkit",
  "vosu-pp",
  "vosu-proptest",
+ "vosu-surface",
  "vosu-sys",
  "windows-sys 0.61.2",
  "winresource",
@@ -3420,6 +3421,13 @@ dependencies = [
  "proptest",
  "rosu-mods",
  "vosu-rosu-map",
+]
+
+[[package]]
+name = "vosu-surface"
+version = "0.1.0"
+dependencies = [
+ "tokio",
 ]
 
 [[package]]
