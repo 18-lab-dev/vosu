@@ -199,20 +199,8 @@ impl Encode for f64 {
 }
 impl Encode for f32 {
     fn write(&self, b: &mut Vec<u8>) {
-        // JSON's f32 serializer uses its shortest decimal, not the exact f64
-        // widening. Preserve that 1.x number before the bus stores an f64.
-        use std::io::Write;
-        let mut storage = [0_u8; 64];
-        let len = {
-            let mut cursor = std::io::Cursor::new(storage.as_mut_slice());
-            write!(cursor, "{self}").expect("a shortest f32 fits in 64 bytes");
-            cursor.position() as usize
-        };
-        let number: f64 = std::str::from_utf8(&storage[..len])
-            .expect("float formatting is ASCII")
-            .parse()
-            .expect("float formatting is numeric");
-        number.write(b);
+        // 1.x's JsFormatter and Catcher writer widen before formatting.
+        f64::from(*self).write(b);
     }
 }
 impl<T: Encode> Encode for Option<T> {

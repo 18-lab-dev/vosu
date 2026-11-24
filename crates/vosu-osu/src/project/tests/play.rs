@@ -157,8 +157,7 @@ fn catcher_and_offsets_respect_precise_status_and_mode() {
         json!({"x":123.5,"dashing":true})
     );
     Arc::make_mut(&mut s.precise).catcher.as_mut().unwrap().x = 0.1;
-    let expected: Value =
-        serde_json::from_str(&serde_json::to_string(&s.precise.active_catcher()).unwrap()).unwrap();
+    let expected = json!({"x": f64::from(0.1_f32), "dashing": true});
     assert_eq!(collect(&s)["/play/catcher"], expected);
     assert_eq!(collect(&s)["/play/hitOffsets"], json!([]));
     Arc::make_mut(&mut s.precise).status = 7;
@@ -251,7 +250,11 @@ fn regular_play_and_results_mapping() {
     a.current.accuracy = 3.456;
     a.current.difficulty = 4.567;
     a.current.flashlight = 5.678;
-    a.fc = a.current;
+    a.fc.aim = 6.789;
+    a.fc.speed = 7.891;
+    a.fc.accuracy = 8.912;
+    a.fc.difficulty = 9.123;
+    a.fc.flashlight = 10.234;
     let raw = &mut r.result_screen.raw;
     raw.online_id = 55.0;
     raw.player_name = "winner".into();
@@ -284,8 +287,7 @@ fn regular_play_and_results_mapping() {
     );
     let detailed = json!({"aim":fix_decimals(1.234),"speed":fix_decimals(2.345),"accuracy":fix_decimals(3.456),"difficulty":fix_decimals(4.567),"flashlight":fix_decimals(5.678),"total":fix_decimals(123.456)});
     assert_eq!(doc["/play/pp"]["detailed"]["current"], detailed);
-    let mut fc = detailed;
-    fc["total"] = json!(fix_decimals(234.567));
+    let fc = json!({"aim":fix_decimals(6.789),"speed":fix_decimals(7.891),"accuracy":fix_decimals(8.912),"difficulty":fix_decimals(9.123),"flashlight":fix_decimals(10.234),"total":fix_decimals(234.567)});
     assert_eq!(
         doc["/play/pp"],
         json!({"current":fix_decimals(123.456),"fc":fix_decimals(234.567),"maxAchieved":fix_decimals(345.678),"maxAchievable":fix_decimals(456.789),"detailed":{"current":doc["/play/pp"]["detailed"]["current"],"fc":fc}})
@@ -340,6 +342,15 @@ fn graph_published_once_per_change() {
     for n in 90..=100 {
         r.beatmap.pp_acc.insert(n, f64::from(n) + 0.12345);
     }
+    let graph = Arc::make_mut(&mut r.beatmap.graph);
+    graph.series.push(vosu_osu_calc::beatmap::GraphSeries {
+        name: "Aim".into(),
+        data: vec![1.25, 2.5],
+    });
+    graph.series.push(vosu_osu_calc::beatmap::GraphSeries {
+        name: "Speed".into(),
+        data: vec![3.75, 4.5],
+    });
     let mut projector = super::super::Projector::default();
     let mut writer = PublishBatchWriter::new();
     writer.begin(4);
@@ -363,7 +374,10 @@ fn graph_published_once_per_change() {
             json!(fix_decimals(f64::from(n) + 0.12345))
         );
     }
-    assert_eq!(doc["/performance/graph"], json!({"series":[],"xaxis":[]}));
+    assert_eq!(
+        doc["/performance/graph"],
+        json!({"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[]})
+    );
     writer.begin(4);
     projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
     assert!(writer.is_empty());
@@ -382,7 +396,7 @@ fn graph_published_once_per_change() {
     );
     assert_eq!(
         collect(&s)["/performance/graph"],
-        json!({"series":[],"xaxis":[1.5]})
+        json!({"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[1.5]})
     );
 }
 
