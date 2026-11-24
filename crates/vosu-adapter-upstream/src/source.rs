@@ -21,7 +21,6 @@ pub(crate) struct HitErrors {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SourcePlay {
-    pub source: Option<PlaySource>,
     pub failed: bool,
     pub player_name: String,
     pub mode: NumberName,
@@ -71,7 +70,6 @@ impl SourcePlay {
             })
         };
         Play {
-            source: self.source,
             failed: self.failed,
             player_name: self.player_name,
             mode: self.mode,

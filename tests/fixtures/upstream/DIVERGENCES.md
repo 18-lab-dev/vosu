@@ -14,6 +14,11 @@ adapters restore upstream names and distinguish pending from missing-score
 failure. A4 approval is not implementation evidence and closes no temporary
 entry by itself.
 
+The former vosu-only v2 clock/source wire fields (`beatmap.time.rate`,
+`beatmap.time.running`, `play.source`, including nested play copies) are removed
+by the approved M4a extension cutover. Their accurate state-bus facts remain;
+this is not an exemption allowing extra fields in an upstream adapter.
+
 | id | class | scope | reason | closed by |
 | --- | --- | --- | --- | --- |
 | tourney-null-without-score | contract | vosu.osu.tourney on a tick with an IPC client lacking score | A2b publishes null instead of failing the entire 1.x v2 response with HTTP 500 | permanent A2b state-schema contract |

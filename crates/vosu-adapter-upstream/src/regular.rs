@@ -23,7 +23,6 @@ const PATHS: &[&str] = &[
     "/settings",
     "/profile",
     "/beatmap",
-    "/play/source",
     "/play/failed",
     "/play/playerName",
     "/play/mode",
@@ -90,7 +89,6 @@ impl View {
         }
         let raw: vosu_osu_model::source::HealthRaw = view::decode(capture, "/play/healthRaw")?;
         let play = SourcePlay {
-            source: view::decode(capture, "/play/source")?,
             failed: view::decode(capture, "/play/failed")?,
             player_name: view::decode(capture, "/play/playerName")?,
             mode: view::decode(capture, "/play/mode")?,

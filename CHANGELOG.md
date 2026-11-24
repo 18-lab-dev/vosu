@@ -4,6 +4,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+- Remove vosu-only `/json/v2` fields `beatmap.time.rate`, `beatmap.time.running`
+  and `play.source` (including filtered and WebSocket output). Accurate facts
+  remain available as `vosu.osu.beatmap.time.{rate,running}` and
+  `vosu.osu.play.source` on the state bus; `vosu.play.rate` is unchanged.
+
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
   Capture, settings, resource/action ownership and precise ABI demand stay

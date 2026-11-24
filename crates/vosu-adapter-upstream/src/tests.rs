@@ -386,3 +386,67 @@ fn lazer_null_skin_path_echoes_the_pinned_empty_string() {
     );
     assert_eq!(emitted["directPath"]["skinFolder"], "");
 }
+
+#[test]
+fn clock_and_play_source_remain_bus_only_in_dto_direct_and_filtered_output() {
+    use std::sync::Arc;
+    use vosu_adapter_support::filtered::Filter;
+    use vosu_osu_model::memory::{ClientRenderState, PlaybackClock};
+    let mut source = fixture::source();
+    Arc::make_mut(&mut source.regular).global.render = Some(ClientRenderState {
+        spectating: true,
+        clock: Some(PlaybackClock {
+            rate: 1.37,
+            running: false,
+        }),
+    });
+    let facts = fixture::capture(
+        &source,
+        &view::selectors(&["/beatmap/time", "/play/source"]),
+    );
+    let time: Value = view::decode(&facts, "/beatmap/time").unwrap();
+    assert_eq!(time["rate"], 1.37);
+    assert_eq!(time["running"], false);
+    assert_eq!(
+        view::decode::<Value>(&facts, "/play/source").unwrap(),
+        "spectator"
+    );
+    let selected = fixture::capture(&source, &regular::selectors());
+    let view = regular::View::from_capture(&selected).unwrap();
+    let direct = regular::encode(&view).unwrap();
+    assert_eq!(direct.as_ref(), dto_bytes(regular::build(&view)));
+    let document = json(&direct);
+    for pointer in [
+        "/beatmap/time/rate",
+        "/beatmap/time/running",
+        "/play/source",
+    ] {
+        assert!(document.pointer(pointer).is_none(), "{pointer}");
+    }
+    let filtered = regular::filtered(&view)
+        .encode(&[
+            Filter::Nested {
+                field: "beatmap".into(),
+                keys: vec![Filter::Nested {
+                    field: "time".into(),
+                    keys: vec![
+                        Filter::Field("live".into()),
+                        Filter::Field("rate".into()),
+                        Filter::Field("running".into()),
+                    ],
+                }],
+            },
+            Filter::Nested {
+                field: "play".into(),
+                keys: vec![
+                    Filter::Field("source".into()),
+                    Filter::Field("score".into()),
+                ],
+            },
+        ])
+        .unwrap();
+    assert_eq!(
+        json(&filtered),
+        json!({"beatmap":{"time":{"live":1234.5}},"play":{"score":123456.789}})
+    );
+}

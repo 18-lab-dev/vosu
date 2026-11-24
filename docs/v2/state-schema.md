@@ -256,14 +256,14 @@ carry the same values while subscribed, at different cadences.
 | `rankedPlay` | `vosu.osu.rankedPlay` | |
 | `profile` (all fields) | `vosu.osu.profile` | No common-layer equivalent; osu!'s bancho identity model does not generalize. |
 | `beatmap.isKiai`, `.isBreak`, `.isConvert` | `vosu.osu.beatmap.isKiai`/`.isBreak`/`.isConvert` | |
-| `beatmap.time.*` | `vosu.osu.beatmap.time.*` | `live` also feeds `vosu.play.progress` (`clamp(live / lastObject, 0, 1)` during play, `null` when `lastObject <= 0`); `lastObject` also feeds `vosu.chart.length` (map ms, unaffected by rate); `rate` also feeds `vosu.play.rate`. |
+| `beatmap.time.*` | `vosu.osu.beatmap.time.*` | `live` also feeds `vosu.play.progress` (`clamp(live / lastObject, 0, 1)` during play, `null` when `lastObject <= 0`); `lastObject` also feeds `vosu.chart.length` (map ms, unaffected by rate); `rate` also feeds `vosu.play.rate`. The former vosu-only `rate`/`running` wire extensions are absent from M4a legacy adapters; these accurate bus facts remain unchanged. |
 | `beatmap.status` | `vosu.osu.beatmap.status` | The ranked status (`{number,name}`), distinct from the coarse `state` row above. |
 | `beatmap.checksum`, `.id`, `.set` | `vosu.osu.beatmap.checksum`/`.id`/`.set` | |
 | `beatmap.mode` | `vosu.osu.beatmap.mode` | |
 | `beatmap.artist`, `.artistUnicode`, `.title`, `.titleUnicode`, `.mapper`, `.version` | same path under `vosu.osu.beatmap`, and `artist`/`title`/`mapper`/`version` additionally feed `vosu.chart.artist`/`.title`/`.charter`/`.difficultyName` | |
 | `beatmap.source`, `.tags` | `vosu.osu.beatmap.source`/`.tags` | No common-layer equivalent. |
 | `beatmap.stats.*` | `vosu.osu.beatmap.stats.*`; `cs.converted` also feeds `vosu.chart.keyCount` (`round(cs.converted)`) when the *effective* ruleset (1.x `select_mode`, `vosu.osu.play.mode`) is mania, `null` otherwise | `vosu.chart.bpm` is **not** fed by this row's rate-adjusted `bpm.common`: it is the rate-1.0 `BpmSummary.common` (`crates/vosu-osu-calc/src/beatmap/model.rs:659`), rounded to 4 decimals like 1.x (`fix_decimals_to`), since the schema states `bpm` is "unaffected by rate". `keyCount` is gated on the *effective* ruleset, not `vosu.osu.beatmap.mode` (the chart's original ruleset, `src/api/v2/builders.rs:45-51`'s `select_mode`): an osu!→mania convert has `beatmap.mode == 0` but is exactly the case `cs.converted`'s key-mod/dual-stage shape exists for (`crates/vosu-osu-state/src/state_backend.rs:144`). |
-| `play.source` | `vosu.osu.play.source` | |
+| `play.source` | `vosu.osu.play.source` | Former vosu-only wire extension; absent from M4a legacy adapters, retained on the bus. |
 | `play.failed` | `vosu.osu.play.failed` | |
 | `play.playerName` | `vosu.osu.play.playerName` | |
 | `play.mode` | `vosu.osu.play.mode` | |
