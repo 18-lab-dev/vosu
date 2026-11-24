@@ -24,8 +24,11 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use vosu_plugin_api::{
     FocusChanged, HostServices, Init, Message, Plugin, PluginError, Selector, SessionAttached,
@@ -108,6 +111,9 @@ pub fn register(
 }
 
 pub struct SubscriberPlugin {
+    plugin_id: String,
+    stopped: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
     events: SyncSender<SubscriberEvent>,
     /// Parts accumulated for an in-progress `more: true` `STATE_UPDATE`
     /// delivery, by session, until the matching `more: false` part
@@ -141,14 +147,29 @@ impl Plugin for SubscriberPlugin {
 
         let reader_host = host;
         let reader_events = events.clone();
-        std::thread::spawn(move || {
-            while let Ok(command) = commands.recv() {
-                let status = reader_host.subscribe_state(command.session, command.selectors);
-                let _ = reader_events.send(SubscriberEvent::SubscribeStatus(status));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let thread_stopped = stopped.clone();
+        let thread = std::thread::spawn(move || {
+            while !thread_stopped.load(Ordering::Acquire) {
+                match commands.recv_timeout(Duration::from_millis(10)) {
+                    Ok(command) => {
+                        if thread_stopped.load(Ordering::Acquire) {
+                            break;
+                        }
+                        let status =
+                            reader_host.subscribe_state(command.session, command.selectors);
+                        let _ = reader_events.try_send(SubscriberEvent::SubscribeStatus(status));
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
             }
         });
 
         Ok(Self {
+            plugin_id: init.plugin_id,
+            stopped,
+            thread: Some(thread),
             events,
             pending: HashMap::new(),
         })
@@ -157,13 +178,14 @@ impl Plugin for SubscriberPlugin {
     fn on_message(&mut self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
         match message {
             Message::SessionAttached(attached) => {
-                let _ = self.events.send(SubscriberEvent::Attached(attached));
+                let _ = self.events.try_send(SubscriberEvent::Attached(attached));
             }
             Message::SessionDetached(detached) => {
-                let _ = self.events.send(SubscriberEvent::Detached(detached));
+                self.pending.remove(&detached.handle);
+                let _ = self.events.try_send(SubscriberEvent::Detached(detached));
             }
             Message::FocusChanged(focus) => {
-                let _ = self.events.send(SubscriberEvent::Focus(focus));
+                let _ = self.events.try_send(SubscriberEvent::Focus(focus));
             }
             Message::StateUpdate(StateUpdate {
                 session,
@@ -175,12 +197,28 @@ impl Plugin for SubscriberPlugin {
                     let values = self.pending.remove(&session).unwrap_or_default();
                     let _ = self
                         .events
-                        .send(SubscriberEvent::Update { session, values });
+                        .try_send(SubscriberEvent::Update { session, values });
                 }
             }
             _ => {}
         }
         Ok(())
+    }
+}
+
+// Event channels are bounded and deliberately lossy when full: tests must
+// drain them or fail on their bounded receive, never stall host dispatch.
+// Shutdown stops command consumption and joins before the borrowed host dies.
+impl Drop for SubscriberPlugin {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        events_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.plugin_id);
     }
 }
 

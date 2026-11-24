@@ -20,8 +20,8 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 use vosu_plugin_api::{
@@ -56,8 +56,8 @@ fn manifest_registry() -> &'static Mutex<HashMap<String, String>> {
     &REGISTRY
 }
 
-fn host_services_registry() -> &'static Mutex<HashMap<String, VtableHostServices>> {
-    static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, VtableHostServices>>> =
+fn host_services_registry() -> &'static Mutex<HashMap<String, LiveHost>> {
+    static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, LiveHost>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
     &REGISTRY
 }
@@ -102,15 +102,83 @@ pub fn manifest(plugin_id: &str) -> String {
         .unwrap_or_else(|| panic!("no manifest text registered for {plugin_id:?}"))
 }
 
-/// The [`VtableHostServices`] [`PublisherPlugin::create`] stored for
-/// `plugin_id`, so [`spawn_writers`] can publish from threads this plugin
-/// does not itself own. Panics if `plugin_id`'s instance has not finished
-/// `create` yet.
-pub fn host_services(plugin_id: &str) -> VtableHostServices {
-    *host_services_registry()
+/// A host handle that refuses calls after plugin destruction. Outstanding
+/// calls drain before destroy returns; no lock is held while calling host code.
+#[derive(Clone)]
+pub struct LiveHost(Arc<HostLifetime>);
+
+struct HostLifetime {
+    state: Mutex<(Option<VtableHostServices>, usize)>,
+    drained: Condvar,
+}
+
+struct HostCall<'a>(&'a HostLifetime);
+
+impl Drop for HostCall<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.1 -= 1;
+        self.0.drained.notify_all();
+    }
+}
+
+impl LiveHost {
+    fn new(host: VtableHostServices) -> Self {
+        Self(Arc::new(HostLifetime {
+            state: Mutex::new((Some(host), 0)),
+            drained: Condvar::new(),
+        }))
+    }
+
+    fn call(&self, send: impl FnOnce(VtableHostServices) -> vosu_status) -> vosu_status {
+        let host = {
+            let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(host) = state.0 else {
+                return vosu_status::VOSU_ERR_TARGET_GONE;
+            };
+            state.1 += 1;
+            host
+        };
+        let _call = HostCall(&self.0);
+        send(host)
+    }
+
+    fn close(&self) {
+        let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.0 = None;
+        while state.1 != 0 {
+            state = self
+                .0
+                .drained
+                .wait(state)
+                .unwrap_or_else(|p| p.into_inner());
+        }
+    }
+}
+
+impl HostServices for LiveHost {
+    fn send(&self, message: &Message, correlation_id: u64) -> vosu_status {
+        self.call(|host| host.send(message, correlation_id))
+    }
+
+    fn send_flat(
+        &self,
+        opcode: vosu_opcode,
+        flags: u32,
+        correlation_id: u64,
+        payload: &[u8],
+    ) -> vosu_status {
+        self.call(|host| host.send_flat(opcode, flags, correlation_id, payload))
+    }
+}
+
+/// Returns a lifetime-checked host handle; panics if no live instance exists.
+pub fn host_services(plugin_id: &str) -> LiveHost {
+    host_services_registry()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
         .get(plugin_id)
+        .cloned()
         .unwrap_or_else(|| panic!("no host services registered for {plugin_id:?} yet"))
 }
 
@@ -125,17 +193,14 @@ pub fn register(plugin_id: impl Into<String>) -> Receiver<PublisherEvent> {
     rx
 }
 
-/// One writer thread's per-batch fill callback ([`spawn_writers`]).
-pub type Writer = Box<dyn FnMut(&mut PublishBatchWriter) + Send>;
+/// One writer thread's fill callback. Return `true` to publish this batch
+/// and run again, or `false` to stop without publishing another batch.
+pub type Writer = Box<dyn FnMut(&mut PublishBatchWriter) -> bool + Send>;
 
-/// Spawns one thread per entry of `writers`, each publishing exactly one
-/// `VOSU_OP_PUBLISH_BATCH` for `handle` on `plugin_id`'s instance: builds
-/// a fresh [`PublishBatchWriter`], lets the writer closure fill it, then
-/// sends the finished batch through [`HostServices::send_flat`] — the
-/// allocation-free wire path D4/S2 describe, run concurrently from
-/// threads this plugin's own dispatch thread never touches (plan E7).
-/// Returns each thread's `JoinHandle`, carrying the `send_flat` status, so
-/// a test can join every writer and assert on all of them.
+/// Runs each writer on its own thread, reusing its batch and wire buffer.
+/// Stops on the first rejected publish or when the callback returns false.
+/// Join handles return the final status; retained host handles are invalidated
+/// before plugin destruction returns.
 pub fn spawn_writers(
     plugin_id: impl Into<String>,
     handle: u64,
@@ -148,12 +213,19 @@ pub fn spawn_writers(
             let host = host_services(&plugin_id);
             std::thread::spawn(move || {
                 let mut batch = PublishBatchWriter::new();
-                batch.begin(handle);
-                writer(&mut batch);
                 let mut buf = Vec::new();
-                match batch.finish_into(&mut buf) {
-                    Ok(()) => host.send_flat(vosu_opcode::VOSU_OP_PUBLISH_BATCH, 0, 0, &buf),
-                    Err(_) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+                loop {
+                    batch.begin(handle);
+                    if !writer(&mut batch) {
+                        break vosu_status::VOSU_OK;
+                    }
+                    if batch.finish_into(&mut buf).is_err() {
+                        break vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+                    }
+                    let status = host.send_flat(vosu_opcode::VOSU_OP_PUBLISH_BATCH, 0, 0, &buf);
+                    if status != vosu_status::VOSU_OK {
+                        break status;
+                    }
                 }
             })
         })
@@ -161,7 +233,8 @@ pub fn spawn_writers(
 }
 
 pub struct PublisherPlugin {
-    host: VtableHostServices,
+    plugin_id: String,
+    host: LiveHost,
     events: SyncSender<PublisherEvent>,
 }
 
@@ -178,11 +251,13 @@ impl ConcurrentPlugin for PublisherPlugin {
                     init.plugin_id
                 )
             });
-        host_services_registry()
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .insert(init.plugin_id.clone(), host);
-        Ok(Self { host, events })
+        let host = LiveHost::new(host);
+        insert_unique(host_services_registry(), &init.plugin_id, host.clone());
+        Ok(Self {
+            plugin_id: init.plugin_id,
+            host,
+            events,
+        })
     }
 
     fn on_message(&self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
@@ -212,6 +287,24 @@ impl ConcurrentPlugin for PublisherPlugin {
             _ => {}
         }
         Ok(())
+    }
+}
+
+impl Drop for PublisherPlugin {
+    fn drop(&mut self) {
+        self.host.close();
+        host_services_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.plugin_id);
+        events_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.plugin_id);
+        manifest_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.plugin_id);
     }
 }
 
