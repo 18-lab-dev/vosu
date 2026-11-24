@@ -13,6 +13,7 @@
     reason = "mirrors include/vosu_plugin.h's type and enumerator names exactly, so the header and these Rust types read as the same contract rather than two spellings of it"
 )]
 mod capability;
+pub mod catalog;
 mod cbor;
 mod envelope;
 mod flags;
