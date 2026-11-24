@@ -69,7 +69,7 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
             assert_eq!(context["osu_dir"], serde_json::json!(game));
             assert_eq!(
                 context["skin"]["folder"],
-                serde_json::json!(game.join("Skins/Selected Skin"))
+                serde_json::json!(game.join("Skins").join("Selected Skin"))
             );
             assert_eq!(
                 context["songs_dir"],
