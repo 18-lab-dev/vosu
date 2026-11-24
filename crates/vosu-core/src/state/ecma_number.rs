@@ -3,14 +3,10 @@
 //! 1.x's own `write_js_json_number`/`finite_ecma_number`
 //! (`crates/vosu-osu-model/src/root/{helpers.rs:141-151, mods.rs:313-440}`).
 //!
-//! `vosu-core` cannot depend on `vosu-osu-model`
-//! (`scripts/crate-boundaries.txt` has no such edge, and 1.x's value
-//! formatting is root/osu-plugin-owned, not a `vosu-core` concern to
-//! import). This is a deliberate, tested duplicate of that algorithm
-//! rather than a second, divergent convention: [`write_js_number`]'s own
-//! tests use the same vectors 1.x's `write_js_json_number` is exercised
-//! against, so the two can never silently drift without a test catching
-//! it.
+//! There is no shared production crate below core and osu-model (only the
+//! test-support crate `vosu-proptest` is common). Keep this game-agnostic copy
+//! here; `tests/state_number_compat.rs` runs both writers over shared boundary
+//! vectors and compares their outputs directly.
 
 use std::sync::Arc;
 
@@ -139,6 +135,9 @@ mod tests {
     /// `write_js_json_number`/`JSON.stringify`.
     #[test]
     fn matches_js_json_stringify_vectors() {
+        for &(value, expected) in vosu_proptest::ECMA_NUMBER_CASES {
+            assert_eq!(write(value), expected, "value {value:?}");
+        }
         assert_eq!(write(f64::NAN), "null");
         assert_eq!(write(f64::INFINITY), "null");
         assert_eq!(write(f64::NEG_INFINITY), "null");

@@ -28,11 +28,37 @@ fn demand_is_union_of_selectors_with_status_gating() {
             InternalGrant::default(),
         )
         .unwrap();
+    let demand = subscriptions.demand(key, Some("play"));
+    assert_eq!(demand.selectors.len(), 2);
+    for (id, ns, pointer) in [
+        (5103, "vosu.play", "/progress"),
+        (5104, "vosu.chart", "/title"),
+        (5105, "vosu.play", "/accuracy"),
+        (5106, "vosu.chart", "/title"),
+    ] {
+        subscriptions
+            .replace(
+                &schemas,
+                SubscriberId::Plugin(id),
+                key,
+                select(ns, pointer),
+                InternalGrant::default(),
+            )
+            .unwrap();
+    }
     for status in ["play", "pause"] {
         let demand = subscriptions.demand(key, Some(status));
         assert!(demand.regular);
         assert!(demand.precise);
-        assert_eq!(demand.selectors.len(), 2);
+        assert_eq!(demand.selectors.len(), 3);
+        assert_eq!(
+            demand.selectors,
+            vec![
+                (Arc::from("vosu.chart"), Arc::from("/title")),
+                (Arc::from("vosu.play"), Arc::from("/accuracy")),
+                (Arc::from("vosu.play"), Arc::from("/progress")),
+            ]
+        );
     }
     for status in [Some("results"), None] {
         let demand = subscriptions.demand(key, status);
@@ -68,19 +94,32 @@ fn both_lane_sets_both_flags() {
 fn complete_demand_is_sorted_and_deduplicated() {
     let schemas = SchemaRegistry::with_core().unwrap();
     let mut subscriptions = SubscriptionRegistry::default();
-    for id in [5301, 5302] {
+    for (id, ns, pointers) in [
+        (5301, "vosu.play", vec!["/score", "/combo"]),
+        (5302, "vosu.chart", vec!["/title", "/artist"]),
+        (5303, "vosu.play", vec!["/combo", "/score"]),
+        (5304, "vosu.chart", vec!["/artist", "/title"]),
+    ] {
         subscriptions
             .replace(
                 &schemas,
                 SubscriberId::Plugin(id),
                 SessionKey(5301),
-                select("vosu.chart", "/title"),
+                pointers
+                    .into_iter()
+                    .map(|p| (Arc::from(ns), Pointer::parse(p).unwrap()))
+                    .collect(),
                 InternalGrant::default(),
             )
             .unwrap();
     }
     assert_eq!(
         subscriptions.demand(SessionKey(5301), None).selectors,
-        vec![(Arc::from("vosu.chart"), Arc::from("/title"))]
+        vec![
+            (Arc::from("vosu.chart"), Arc::from("/artist")),
+            (Arc::from("vosu.chart"), Arc::from("/title")),
+            (Arc::from("vosu.play"), Arc::from("/combo")),
+            (Arc::from("vosu.play"), Arc::from("/score")),
+        ]
     );
 }

@@ -12,6 +12,27 @@ use proptest::test_runner::{FileFailurePersistence, RngSeed};
 
 pub mod wait;
 
+/// Shared JSON.stringify boundary vectors for the independent core/model writers.
+pub const ECMA_NUMBER_CASES: &[(f64, &str)] = &[
+    (0.0, "0"),
+    (-0.0, "0"),
+    (f64::NAN, "null"),
+    (f64::INFINITY, "null"),
+    (f64::NEG_INFINITY, "null"),
+    (f64::MIN_POSITIVE, "2.2250738585072014e-308"),
+    (-1.0, "-1"),
+    (1.0, "1"),
+    (42.0, "42"),
+    (f64::from_bits(1), "5e-324"),
+    (f64::MAX, "1.7976931348623157e+308"),
+    (1e-7, "1e-7"),
+    (1e-6, "0.000001"),
+    (1e20, "100000000000000000000"),
+    (1e21, "1e+21"),
+    (1_000_000_000_000_000_128.0, "1000000000000000100"),
+    (-1e20, "-100000000000000000000"),
+];
+
 /// Awaits a test future with a diagnostic naming the stalled operation.
 /// The caller supplies Tokio, so synchronous users need no runtime dependency.
 #[macro_export]

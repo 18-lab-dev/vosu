@@ -101,17 +101,11 @@ impl SubscriptionRegistry {
             .iter()
             .filter(|s| s.session == session && s.who != who)
         {
-            for key in &s.selectors {
-                if !demand_keys.contains(&key) {
-                    demand_keys.push(key);
-                }
-            }
+            demand_keys.extend(s.selectors.iter().map(|(ns, p)| (ns, p.tokens())));
         }
-        for key in &selectors {
-            if !demand_keys.contains(&key) {
-                demand_keys.push(key);
-            }
-        }
+        demand_keys.extend(selectors.iter().map(|(ns, p)| (ns, p.tokens())));
+        demand_keys.sort_unstable();
+        demand_keys.dedup();
         if demand_keys.len() > MAX_DEMAND_SELECTORS {
             return Err(SubscribeError::TooManySelectors);
         }
@@ -164,13 +158,10 @@ impl SubscriptionRegistry {
         let mut selectors = Vec::new();
         for s in self.subscriptions.iter().filter(|s| s.session == session) {
             lanes = lanes.union(s.lanes);
-            for selector in &s.wire_selectors {
-                if !selectors.contains(selector) {
-                    selectors.push(selector.clone());
-                }
-            }
+            selectors.extend(s.wire_selectors.iter().cloned());
         }
         selectors.sort_unstable();
+        selectors.dedup();
         let (regular, precise) = lanes.effective(matches!(status, Some("play" | "pause")));
         DemandSnapshot {
             regular,
@@ -209,27 +200,32 @@ impl SubscriptionRegistry {
                 let entries: Vec<_> = s
                     .selectors
                     .iter()
-                    .filter(|(ns, p)| {
-                        outcome
+                    .filter_map(|(ns, p)| {
+                        if !outcome
                             .touched
                             .iter()
                             .any(|(other, q)| ns == other && p.overlaps(q))
-                            && !same(outcome.previous.get(ns, p), outcome.current.get(ns, p))
-                            && project_select(
-                                reg,
-                                &outcome.previous,
-                                ns,
-                                p,
-                                Audience::Plugin(&s.grant),
-                            ) != project_select(
-                                reg,
-                                &outcome.current,
-                                ns,
-                                p,
-                                Audience::Plugin(&s.grant),
-                            )
+                            || same(outcome.previous.get(ns, p), outcome.current.get(ns, p))
+                        {
+                            return None;
+                        }
+                        let previous = project_select(
+                            reg,
+                            &outcome.previous,
+                            ns,
+                            p,
+                            Audience::Plugin(&s.grant),
+                        );
+                        let current = project_select(
+                            reg,
+                            &outcome.current,
+                            ns,
+                            p,
+                            Audience::Plugin(&s.grant),
+                        );
+                        (!same(previous.as_deref(), current.as_deref()))
+                            .then(|| projected_entry(ns, p, current.as_deref()))
                     })
-                    .map(|(ns, p)| entry(reg, s, &outcome.current, ns, p))
                     .collect();
                 (!entries.is_empty()).then_some((s.who, entries))
             })
@@ -237,10 +233,23 @@ impl SubscriptionRegistry {
     }
 }
 
+/// Change detection preserves IEEE bits without changing StateValue's PartialEq.
+/// Recurse through rebuilt containers, retaining the shared-tree fast path.
 fn same(a: Option<&StateValue>, b: Option<&StateValue>) -> bool {
     match (a, b) {
-        (Some(StateValue::Object(a)), Some(StateValue::Object(b))) => Arc::ptr_eq(a, b) || a == b,
-        (Some(StateValue::Array(a)), Some(StateValue::Array(b))) => Arc::ptr_eq(a, b) || a == b,
+        (Some(StateValue::F64(a)), Some(StateValue::F64(b))) => a.to_bits() == b.to_bits(),
+        (Some(StateValue::Object(a)), Some(StateValue::Object(b))) => {
+            Arc::ptr_eq(a, b)
+                || (a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|((ka, a), (kb, b))| ka == kb && same(Some(a), Some(b))))
+        }
+        (Some(StateValue::Array(a)), Some(StateValue::Array(b))) => {
+            Arc::ptr_eq(a, b)
+                || (a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(a, b)| same(Some(a), Some(b))))
+        }
         _ => a == b,
     }
 }
@@ -252,11 +261,15 @@ fn entry(
     ns: &str,
     p: &Pointer,
 ) -> StateEntry {
+    let value = project_select(reg, state, ns, p, Audience::Plugin(&s.grant));
+    projected_entry(ns, p, value.as_deref())
+}
+
+fn projected_entry(ns: &str, p: &Pointer, value: Option<&StateValue>) -> StateEntry {
     StateEntry {
         ns: ns.into(),
         pointer: p.to_string(),
-        value: project_select(reg, state, ns, p, Audience::Plugin(&s.grant))
-            .map(|v| v.to_cbor_value()),
+        value: value.map(StateValue::to_cbor_value),
         error: None,
     }
 }

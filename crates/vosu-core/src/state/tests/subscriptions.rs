@@ -108,6 +108,115 @@ fn changes_report_only_touched_selected_values() {
 }
 
 #[test]
+fn unchanged_nan_does_not_produce_state_update() {
+    let schemas = SchemaRegistry::with_core().unwrap();
+    let key = SessionKey(5511);
+    let who = SubscriberId::Plugin(5511);
+    let nan = f64::from_bits(0x7ff8_0000_0000_0042);
+    for pointer in ["/score", ""] {
+        for wrap in [false, true] {
+            let mut registry = SubscriptionRegistry::default();
+            registry
+                .replace(
+                    &schemas,
+                    who,
+                    key,
+                    selectors(pointer),
+                    InternalGrant::default(),
+                )
+                .unwrap();
+            let document = |value| {
+                let value = StateValue::F64(value);
+                let value = if wrap {
+                    StateValue::Array(Arc::from([value]))
+                } else {
+                    value
+                };
+                Arc::new(SessionState::new(
+                    key,
+                    1,
+                    vec![(
+                        Arc::from("vosu.play"),
+                        StateValue::Object(Arc::new(StateObject::new(vec![(
+                            Arc::from("score"),
+                            value,
+                        )]))),
+                    )],
+                ))
+            };
+            let mut outcome = CommitOutcome {
+                previous: document(nan),
+                current: document(nan),
+                touched: selectors("/score"),
+            };
+            assert!(registry.changes(&schemas, &outcome).is_empty());
+            outcome.current = document(1.0);
+            assert_eq!(registry.changes(&schemas, &outcome).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn changes_and_baselines_are_session_local() {
+    let schemas = SchemaRegistry::with_core().unwrap();
+    let mut registry = SubscriptionRegistry::default();
+    let who = SubscriberId::Plugin(5521);
+    let other = SubscriberId::Plugin(5522);
+    let first = SessionKey(5521);
+    let second = SessionKey(5522);
+    for (subscriber, key, pointer) in [
+        (who, first, "/score"),
+        (who, second, "/combo"),
+        (other, second, "/score"),
+    ] {
+        registry
+            .replace(
+                &schemas,
+                subscriber,
+                key,
+                selectors(pointer),
+                InternalGrant::default(),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        registry.baseline(&schemas, who, &state(first, 1, 2)),
+        vec![entry("/score", CborValue::Integer(1.into()))]
+    );
+    assert_eq!(
+        registry.baseline(&schemas, who, &state(second, 3, 4)),
+        vec![entry("/combo", CborValue::Integer(4.into()))]
+    );
+    assert!(
+        registry
+            .baseline(&schemas, other, &state(first, 1, 2))
+            .is_empty()
+    );
+    for (key, expected) in [
+        (
+            first,
+            vec![(who, vec![entry("/score", CborValue::Integer(3.into()))])],
+        ),
+        (
+            second,
+            vec![
+                (who, vec![entry("/combo", CborValue::Integer(4.into()))]),
+                (other, vec![entry("/score", CborValue::Integer(3.into()))]),
+            ],
+        ),
+    ] {
+        let mut touched = selectors("/score");
+        touched.extend(selectors("/combo"));
+        let outcome = CommitOutcome {
+            previous: state(key, 1, 2),
+            current: state(key, 3, 4),
+            touched,
+        };
+        assert_eq!(registry.changes(&schemas, &outcome), expected);
+    }
+}
+
+#[test]
 fn split_never_cuts_an_entry_and_marks_more() {
     let entries: Vec<_> = (0..30)
         .map(|i| entry(&format!("/{i}"), CborValue::Text("x".repeat(100))))
@@ -226,6 +335,26 @@ fn internal_selector_without_grant_reports_absent() {
         touched: vec![(Arc::from("vosu.osu"), Pointer::root())],
     };
     assert!(registry.changes(&schemas, &outcome).is_empty());
+    let granted = SubscriberId::Plugin(5702);
+    registry
+        .replace(
+            &schemas,
+            granted,
+            key,
+            vec![(Arc::from("vosu.osu"), Pointer::parse("/internal").unwrap())],
+            InternalGrant::from_subtrees(vec![Pointer::parse("/internal").unwrap()]),
+        )
+        .unwrap();
+    assert_eq!(
+        registry.baseline(&schemas, granted, &outcome.previous)[0].value,
+        Some(CborValue::Text("private".into()))
+    );
+    let changes = registry.changes(&schemas, &outcome);
+    assert!(changes.iter().all(|(subscriber, _)| *subscriber != who));
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].0, granted);
+    assert_eq!(changes[0].1[0].pointer, "/internal");
+    assert!(changes[0].1[0].value.is_none());
 }
 
 #[test]
