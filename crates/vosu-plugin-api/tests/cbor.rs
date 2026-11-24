@@ -318,6 +318,16 @@ fn roundtrip_resource_resolved_shapes() {
         stream: 9,
         size: 1024,
     });
+    roundtrip(ResourceResolved::TreePath {
+        root: "skin".into(),
+        path: "hash-store/abcdef".into(),
+        entry_path: "fallback/image.png".into(),
+    });
+    roundtrip(ResourceResolved::TreeStream {
+        stream: 17,
+        size: 4097,
+        entry_path: "audio/theme.ogg".into(),
+    });
     roundtrip(ResourceResolved::Tree {
         entries: vec![
             TreeEntry {
@@ -400,6 +410,7 @@ fn stream_chunk_data_is_a_cbor_byte_string_not_an_array() {
 fn roundtrip_action_messages() {
     roundtrip(ActionInvoke {
         invocation: 1,
+        action: "test.actions.first".into(),
         session: Some(2),
         caller: Caller {
             kind: CallerKind::Tool,
@@ -409,6 +420,7 @@ fn roundtrip_action_messages() {
     });
     roundtrip(ActionInvoke {
         invocation: 1,
+        action: "test.actions.second".into(),
         session: None,
         caller: Caller {
             kind: CallerKind::Cli,

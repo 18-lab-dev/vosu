@@ -28,6 +28,8 @@ pub struct BundledPlugin<'a> {
     pub settings_schema: Option<&'a str>,
     /// Embedded schemas for this plugin's namespace capabilities.
     pub namespace_schemas: &'a [&'a str],
+    /// Package-relative paths paired with embedded action schema text.
+    pub action_schemas: &'a [(&'a str, &'a str)],
     pub vtable: fn() -> vosu_plugin_vtable,
 }
 
@@ -43,6 +45,7 @@ pub struct LoadedPlugin {
     /// `load_development`'s `manifest.settings_schema` path).
     settings_schema: Option<SettingsSchema>,
     namespace_schemas: Vec<String>,
+    action_schemas: std::collections::BTreeMap<String, String>,
     // Shared, not just held: unloading while an instance's `plugin_ctx`
     // still points into the library would be immediate undefined behavior
     // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
@@ -71,6 +74,11 @@ impl LoadedPlugin {
 
     pub fn namespace_schemas(&self) -> &[String] {
         &self.namespace_schemas
+    }
+
+    /// Raw schema assets keyed by exact manifest package path, for compilation.
+    pub fn action_schemas(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.action_schemas
     }
 
     /// Clones this plugin's `Arc<Library>` handle, so a `PluginInstance`
@@ -151,12 +159,27 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                 .map(SettingsSchema::parse)
                 .transpose()
                 .map_err(HostError::Settings)?;
+            let action_schemas = load_action_schemas(&manifest, |path| {
+                let mut matches = entry.action_schemas.iter().filter(|(p, _)| *p == path);
+                let (_, text) = matches.next().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "missing action schema asset")
+                })?;
+                if matches.next().is_some() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "duplicate action schema asset",
+                    )
+                    .into());
+                }
+                Ok((*text).to_owned())
+            })?;
             let vtable = (entry.vtable)();
             check_descriptor(&vtable)?;
             Ok(LoadedPlugin {
                 manifest,
                 vtable,
                 settings_schema,
+                action_schemas,
                 namespace_schemas: entry
                     .namespace_schemas
                     .iter()
@@ -212,6 +235,17 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
             std::fs::read_to_string(path).map_err(HostError::Io)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let action_schemas = load_action_schemas(&manifest, |relative| {
+        let path = root.join(relative).canonicalize()?;
+        if !path.starts_with(&root) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "action schema escapes plugin directory",
+            )
+            .into());
+        }
+        std::fs::read_to_string(path).map_err(HostError::Io)
+    })?;
     let triple = current_target_triple();
     let target = manifest
         .targets
@@ -257,6 +291,7 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
         vtable,
         settings_schema,
         namespace_schemas,
+        action_schemas,
         library: Some(Arc::new(library)),
     })
 }
@@ -280,3 +315,21 @@ pub fn development_roots(args: &[OsString]) -> std::io::Result<Vec<PathBuf>> {
     }
     result.into_iter().map(std::path::absolute).collect()
 }
+
+fn load_action_schemas(
+    manifest: &PluginManifest,
+    mut read: impl FnMut(&str) -> Result<String, HostError>,
+) -> Result<std::collections::BTreeMap<String, String>, HostError> {
+    let mut schemas = std::collections::BTreeMap::new();
+    for action in &manifest.actions {
+        for path in [&action.args_schema, &action.result_schema] {
+            if !schemas.contains_key(path) {
+                schemas.insert(path.clone(), read(path)?);
+            }
+        }
+    }
+    Ok(schemas)
+}
+
+#[cfg(test)]
+mod action_tests;

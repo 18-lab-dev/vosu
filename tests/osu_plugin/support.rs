@@ -472,6 +472,7 @@ impl Harness {
             manifest: &manifest,
             settings_schema: None,
             namespace_schemas: &[],
+            action_schemas: &[],
             vtable: vosu_plugin_testkit::subscriber::vosu_plugin_vtable,
         }])
         .unwrap();

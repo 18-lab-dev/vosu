@@ -46,6 +46,7 @@ fn create_scan_instance(
         manifest: &scan_manifest(plugin_id, process_names),
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: scan_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the scan testkit plugin");

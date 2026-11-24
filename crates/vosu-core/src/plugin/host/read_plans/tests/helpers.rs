@@ -48,6 +48,7 @@ pub(super) fn create_read_plan_instance(
         manifest: &read_plan_manifest(plugin_id, process_names),
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: read_plan_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");

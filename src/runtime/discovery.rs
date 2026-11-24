@@ -315,6 +315,7 @@ mod tests {
                 manifest: &manifest,
                 settings_schema: None,
                 namespace_schemas: &[],
+                action_schemas: &[],
                 vtable: session::vosu_plugin_vtable,
             }])
             .expect("loading the session testkit plugin");
@@ -393,6 +394,7 @@ mod tests {
                 manifest: &manifest,
                 settings_schema: None,
                 namespace_schemas: &[],
+                action_schemas: &[],
                 vtable: session::vosu_plugin_vtable,
             }])
             .expect("loading the session testkit plugin");
@@ -535,6 +537,7 @@ mod tests {
                 manifest: &manifest,
                 settings_schema: None,
                 namespace_schemas: &[],
+                action_schemas: &[],
                 vtable: session::vosu_plugin_vtable,
             }])
             .expect("loading the session testkit plugin");

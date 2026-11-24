@@ -22,6 +22,7 @@ fn owned_subscriber(
         manifest: &manifest,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: subscriber::vosu_plugin_vtable,
     }])
     .unwrap();

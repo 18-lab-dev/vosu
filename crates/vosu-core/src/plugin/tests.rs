@@ -197,6 +197,7 @@ fn bundled_manifest_requesting_process_runtime_is_rejected() {
         manifest: text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]));
 }
@@ -209,6 +210,7 @@ fn bundled_settings_schema_is_parsed_and_served() {
         manifest: &text,
         settings_schema: Some(schema_text),
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -226,6 +228,7 @@ fn invalid_bundled_settings_schema_refuses_load() {
         manifest: &text,
         settings_schema: Some("not valid json"),
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]);
     match result {
@@ -248,6 +251,7 @@ fn bundled_settings_schema_presence_mismatch_is_refused() {
         manifest: &declaring_manifest,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]) {
         Err(HostError::SettingsSchemaMismatch {
@@ -265,6 +269,7 @@ fn bundled_settings_schema_presence_mismatch_is_refused() {
         manifest: &non_declaring_manifest,
         settings_schema: Some(r#"[{"uniqueID":"RATE","type":"number","value":1.0}]"#),
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]) {
         Err(HostError::SettingsSchemaMismatch {
@@ -319,6 +324,7 @@ fn serial_dispatch_runs_messages_strictly_in_order() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: serial_recorder::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -388,6 +394,7 @@ fn concurrent_dispatch_runs_messages_in_overlapping_windows() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: concurrent_recorder::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -486,6 +493,7 @@ fn send_from_a_thread_long_after_create_reaches_the_live_host_table() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: stack_churn_sender::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -611,6 +619,7 @@ fn destroy_waits_for_in_flight_concurrent_jobs_before_tearing_down() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: concurrent_destroy_guard::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -681,6 +690,7 @@ fn destroy_times_out_when_the_plugin_does_not_return_in_time() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: slow_destroy::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -750,6 +760,7 @@ fn destroy_timeout_leaks_host_ctx_so_a_late_send_from_the_plugin_stays_valid() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: slow_destroy_sends_late::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -903,6 +914,7 @@ fn dispatch_queue_full_reports_backpressure_without_blocking() {
         manifest: &text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: blocking_plugin::vosu_plugin_vtable,
     }])
     .unwrap();

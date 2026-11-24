@@ -37,6 +37,7 @@ fn publisher_instance(
         manifest: &publisher::manifest(id),
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: publisher::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -317,6 +318,7 @@ fn namespace_schema_registration_refuses_visibility_and_unregisters_on_destroy()
         manifest: &manifest,
         settings_schema: None,
         namespace_schemas: &[invalid],
+        action_schemas: &[],
         vtable: vosu_plugin_testkit::session::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -335,6 +337,7 @@ fn namespace_schema_registration_refuses_visibility_and_unregisters_on_destroy()
         manifest: &manifest,
         settings_schema: None,
         namespace_schemas: &[valid],
+        action_schemas: &[],
         vtable: vosu_plugin_testkit::session::vosu_plugin_vtable,
     }])
     .unwrap();

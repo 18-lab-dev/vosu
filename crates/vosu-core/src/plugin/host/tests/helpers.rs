@@ -148,6 +148,7 @@ pub(super) fn create_session_instance_from_manifest(
         manifest: manifest_text,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: session::vosu_plugin_vtable,
     }])
     .expect("loading the session testkit plugin");

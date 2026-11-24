@@ -91,8 +91,9 @@ where
 /// The single reply opcode for `RESOURCE_RESOLVE`, `TREE_LIST`, and
 /// `TREE_LOOKUP` (plugin -> host, reply correlated by `correlation_id`):
 /// the host's own pending-request table disambiguates which request each
-/// reply answers, so this one opcode carries one of four shapes. Every
-/// variant denies unknown fields: without it, `#[serde(untagged)]`'s
+/// reply answers, so this one opcode carries distinct resource, tree-member,
+/// tree-index and error shapes. Successful tree lookups require `entry_path`.
+/// Every variant denies unknown fields: without it, `#[serde(untagged)]`'s
 /// first-matching-variant search would accept a reply mixing fields from
 /// more than one shape (e.g. both `path` and `error`) as whichever variant
 /// happens to need only a subset of what was sent.
@@ -103,6 +104,18 @@ pub enum ResourceResolved {
     Path {
         root: String,
         path: String,
+    },
+    /// Successful `TREE_LOOKUP`, identifying a canonical published index member.
+    TreePath {
+        root: String,
+        path: String,
+        entry_path: String,
+    },
+    /// Successful streamed `TREE_LOOKUP`, with canonical index identity.
+    TreeStream {
+        stream: u64,
+        size: u64,
+        entry_path: String,
     },
     /// a `vosu_resource_id` naming a bounded byte stream of the given
     /// total size, served through `STREAM_READ`/`STREAM_CHUNK`

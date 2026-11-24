@@ -111,6 +111,7 @@ impl Harness {
             manifest,
             settings_schema: None,
             namespace_schemas: &schemas,
+            action_schemas: &[],
             vtable,
         }])
         .unwrap();

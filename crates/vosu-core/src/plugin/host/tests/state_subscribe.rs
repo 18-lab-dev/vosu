@@ -29,6 +29,7 @@ fn publisher(host: &Host, n: u64) -> (String, u64, Receiver<PublisherEvent>) {
         manifest: &manifest,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: publisher::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -61,6 +62,7 @@ fn subscriber(host: &Host, n: u64, pool: Option<Arc<WorkerPool>>) -> Receiver<Su
         manifest: &manifest,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: subscriber::vosu_plugin_vtable,
     }])
     .unwrap();

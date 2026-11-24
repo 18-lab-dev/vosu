@@ -402,6 +402,7 @@ fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
         manifest: &manifest,
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");

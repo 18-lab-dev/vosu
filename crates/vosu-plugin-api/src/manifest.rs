@@ -19,6 +19,9 @@ use crate::capability::{
 };
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
+mod actions;
+pub use actions::{ActionDeclaration, ActionSessionMode};
+
 /// A validated `manifest.toml` for `kind = "plugin"` (`docs/v2/plugin-abi.md`
 /// §8's runtime fields only).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -44,6 +47,8 @@ pub struct PluginManifest {
     pub matcher: Option<MatchTable>,
     #[serde(default, rename = "resource_kinds")]
     pub resource_kinds: Vec<ResourceKind>,
+    #[serde(default)]
+    pub actions: Vec<ActionDeclaration>,
     #[serde(default)]
     pub provides: Vec<Capability>,
     #[serde(default)]
@@ -173,12 +178,15 @@ pub enum ManifestError {
     /// plugin's own `provides` namespace (no self-dependency,
     /// `docs/v2/catalog-v2.md` "Capability fields").
     CapabilitySelfDependency(String),
+    /// An action declaration or its matching provide is invalid.
+    Action(String),
 }
 
 impl fmt::Display for ManifestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml(e) => write!(f, "manifest.toml: {e}"),
+            Self::Action(reason) => write!(f, "actions: {reason}"),
             Self::Kind => write!(f, "kind must be \"plugin\""),
             Self::ManifestVersion => write!(f, "manifest_version must be 1"),
             Self::Id => write!(f, "id must match the naming contract's plugin id grammar"),
@@ -443,6 +451,7 @@ impl PluginManifest {
                 return Err(ManifestError::CapabilityDuplicate(cap.id.clone()));
             }
         }
+        actions::validate(self)?;
         Ok(())
     }
 }

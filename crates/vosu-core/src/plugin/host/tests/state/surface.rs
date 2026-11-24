@@ -273,6 +273,7 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         manifest: &publisher::manifest(granted),
         settings_schema: None,
         namespace_schemas: &[],
+        action_schemas: &[],
         vtable: publisher::vosu_plugin_vtable,
     }])
     .unwrap();

@@ -25,6 +25,8 @@ pub struct Caller {
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ActionInvoke {
     pub invocation: u64,
+    /// Bare fully qualified action id, never prefixed with `action:`.
+    pub action: String,
     #[serde(default)]
     pub session: Option<u64>,
     pub caller: Caller,
