@@ -8,7 +8,7 @@ pub(crate) mod plan_memory;
 mod plugin;
 
 #[cfg(feature = "unstable-sync-reads")]
-pub use plan_memory::{PlanMemory, PlanMemoryError};
+pub use plan_memory::{FlatReadResults, PlanMemory, PlanMemoryError, SyncReadBuffers};
 pub use plugin::{ConcurrentPlugin, Init, Plugin, PluginError, VtableHostServices};
 
 #[doc(hidden)]

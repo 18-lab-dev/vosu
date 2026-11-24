@@ -196,6 +196,29 @@ pub trait HostServices {
         self.send(&Message::TimerCancel(TimerCancel { timer }), 0)
     }
 
+    /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set, already
+    /// flat-encoded (`crate::sdk::plan_memory`'s own zero-allocation path,
+    /// D17): sends `payload` verbatim, skipping the `Message` enum/
+    /// `encode_payload` round trip this trait's other methods go through.
+    /// This default implementation instead decodes `payload` back into a
+    /// typed [`Message`] and calls [`Self::send`] — correct, but
+    /// allocating, for a `HostServices` implementation with no faster
+    /// path of its own; [`crate::VtableHostServices`] overrides this to
+    /// pass `payload` straight to the vtable instead.
+    #[cfg(feature = "unstable-sync-reads")]
+    fn send_flat(
+        &self,
+        opcode: crate::vosu_opcode,
+        flags: u32,
+        correlation_id: u64,
+        payload: &[u8],
+    ) -> vosu_status {
+        match Message::decode(opcode, flags, payload) {
+            Ok(message) => self.send(&message, correlation_id),
+            Err(_) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+        }
+    }
+
     /// `VOSU_OP_STATE_SUBSCRIBE` (§6.12): replaces this plugin's previous
     /// selection for `session` wholesale.
     fn subscribe_state(

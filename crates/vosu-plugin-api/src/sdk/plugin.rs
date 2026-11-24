@@ -144,4 +144,40 @@ impl HostServices for VtableHostServices {
             }
         }
     }
+
+    #[cfg(feature = "unstable-sync-reads")]
+    fn send_flat(
+        &self,
+        opcode: crate::vosu_opcode,
+        flags: u32,
+        correlation_id: u64,
+        payload: &[u8],
+    ) -> vosu_status {
+        let raw = vosu_message {
+            opcode: opcode as u32,
+            flags,
+            correlation_id,
+            payload: crate::vosu_bytes {
+                data: payload.as_ptr(),
+                len: payload.len() as u32,
+            },
+        };
+        // SAFETY: see `send`'s identical `struct_size`/offset check and
+        // call above; `payload` outlives this call (it is this method's
+        // own borrowed parameter), so `raw` never dangles.
+        unsafe {
+            let struct_size = core::ptr::addr_of!((*self.host).struct_size).read();
+            let send_offset = core::mem::offset_of!(vosu_host_services, send);
+            if (struct_size as usize) < send_offset + core::mem::size_of::<usize>() {
+                return vosu_status::VOSU_ERR_UNSUPPORTED;
+            }
+            match core::ptr::addr_of!((*self.host).send).read() {
+                Some(send) => {
+                    vosu_status::try_from(send(self.host_ctx, &raw as *const vosu_message))
+                        .unwrap_or(vosu_status::VOSU_ERR_BACKEND)
+                }
+                None => vosu_status::VOSU_ERR_UNSUPPORTED,
+            }
+        }
+    }
 }

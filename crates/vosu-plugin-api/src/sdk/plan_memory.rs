@@ -20,18 +20,35 @@
 use std::cell::Cell;
 
 use crate::message::HostServices;
-use crate::message::flat::ReadPlanResult;
-use crate::{PlanBase, Stage, vosu_plan_id, vosu_session_id, vosu_status};
+use crate::message::flat::{ReadPlanResult, StageRef, encode_submit_into};
+use crate::opcode::vosu_opcode;
+use crate::{
+    PlanBase, Stage, read_flat_header, vosu_plan_id, vosu_read_plan_result_header,
+    vosu_read_result_flat, vosu_read_result_kind, vosu_session_id, vosu_status,
+};
 
 thread_local! {
     /// Set for the duration of an ordinary (non-synchronous) dispatch call
     /// on this thread, by the SDK's dispatch glue.
     pub(crate) static ON_DISPATCH_THREAD: Cell<bool> = const { Cell::new(false) };
     /// The plan this thread is waiting on a synchronous result for, if any.
+    /// Shared by [`PlanMemory::read`] and [`PlanMemory::read_flat`]: both
+    /// expect at most one outstanding synchronous plan per thread at a
+    /// time, and [`intercept`]/[`intercept_raw`] check it the same way.
     static EXPECTING_PLAN: Cell<Option<u64>> = const { Cell::new(None) };
     /// Where the dispatch glue stashes that result once it arrives,
     /// instead of forwarding it to the plugin's own `on_message`.
+    /// [`PlanMemory::read`]'s own (allocating) slot.
     static SYNC_SLOT: Cell<Option<ReadPlanResult>> = const { Cell::new(None) };
+    /// [`PlanMemory::read_flat`]'s own zero-allocation counterpart of
+    /// `SYNC_SLOT`: a raw pointer at the caller's own
+    /// `SyncReadBuffers::result`, valid only for the duration of one
+    /// `read_flat` call on this thread (set just before, cleared again
+    /// just after, the reentrant `send_flat` call it wraps).
+    static SYNC_RAW_TARGET: Cell<Option<*mut Vec<u8>>> = const { Cell::new(None) };
+    /// Whether [`intercept_raw`] found a match and filled `SYNC_RAW_TARGET`
+    /// during the current `read_flat` call.
+    static SYNC_RAW_PRESENT: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Called by the SDK's dispatch glue before forwarding a message to the
@@ -45,6 +62,41 @@ pub(crate) fn intercept(result: &ReadPlanResult) -> bool {
         return false;
     }
     SYNC_SLOT.with(|slot| slot.set(Some(result.clone())));
+    true
+}
+
+/// [`intercept`]'s zero-allocation counterpart, called by the SDK's
+/// dispatch glue instead of `Message::decode`-ing a `VOSU_OP_READ_PLAN_RESULT`
+/// payload at all: reads `payload`'s `plan` field directly out of the
+/// still-raw `vosu_read_plan_result_header` (a `Copy` struct read, no
+/// allocation), and only if it matches this thread's
+/// [`PlanMemory::read_flat`] call (`EXPECTING_PLAN`) *and* that call has a
+/// target buffer waiting (`SYNC_RAW_TARGET` — unset for an ordinary
+/// [`PlanMemory::read`] call, so this reports "not mine" for one of those
+/// and the normal decode-and-forward path runs, landing in [`intercept`]
+/// instead) copies `payload` verbatim into it and reports "handled".
+pub(crate) fn intercept_raw(payload: &[u8]) -> bool {
+    let Some(expected) = EXPECTING_PLAN.with(Cell::get) else {
+        return false;
+    };
+    let Ok(header) = read_flat_header::<vosu_read_plan_result_header>(payload) else {
+        return false;
+    };
+    if header.plan != expected {
+        return false;
+    }
+    let Some(target) = SYNC_RAW_TARGET.with(Cell::get) else {
+        return false;
+    };
+    // SAFETY: `target` was set by this same thread's own `read_flat` stack
+    // frame (`SYNC_RAW_TARGET`'s own doc comment), for the duration of
+    // this reentrant call only, and cleared again before that frame
+    // returns — this function only ever runs reentrant inside that one
+    // window, on this very thread.
+    let buf = unsafe { &mut *target };
+    buf.clear();
+    buf.extend_from_slice(payload);
+    SYNC_RAW_PRESENT.with(|present| present.set(true));
     true
 }
 
@@ -100,5 +152,140 @@ impl PlanMemory {
         SYNC_SLOT
             .with(|slot| slot.take())
             .ok_or(PlanMemoryError::NoResult)
+    }
+
+    /// [`Self::read`]'s zero-allocation counterpart (D17): encodes
+    /// `root`/`stages` into `buffers.submit` with
+    /// [`crate::message::flat::encode_submit_into`] (no owned
+    /// `ReadPlanSubmit`/`Stage`/`Vec` intermediate), submits it through
+    /// [`HostServices::send_flat`] (no `Message` enum round trip either),
+    /// and returns a [`FlatReadResults`] borrowing `buffers.result` — the
+    /// raw `VOSU_OP_READ_PLAN_RESULT` payload [`intercept_raw`] copied
+    /// into it, decoded on demand by [`FlatReadResults::get`] rather than
+    /// up front. Reusing the same `buffers` across repeated same-shaped
+    /// plans on this reader thread allocates nothing once both of its
+    /// buffers have grown to their steady-state capacity. Same
+    /// dispatch-thread refusal as [`Self::read`].
+    pub fn read_flat<'b>(
+        &self,
+        host: &impl HostServices,
+        plan: vosu_plan_id,
+        handle: vosu_session_id,
+        root: PlanBase,
+        stages: &[StageRef<'_>],
+        buffers: &'b mut SyncReadBuffers,
+    ) -> Result<FlatReadResults<'b>, PlanMemoryError> {
+        if ON_DISPATCH_THREAD.with(Cell::get) {
+            return Err(PlanMemoryError::OnDispatchThread);
+        }
+        encode_submit_into(&mut buffers.submit, plan, handle, &root, stages);
+
+        EXPECTING_PLAN.with(|cell| cell.set(Some(plan)));
+        SYNC_RAW_PRESENT.with(|present| present.set(false));
+        // SAFETY: this raw pointer is used only by `intercept_raw`,
+        // reentrant on this very thread inside the `send_flat` call right
+        // below, and is cleared again before this function returns —
+        // `SYNC_RAW_TARGET`'s own doc comment.
+        SYNC_RAW_TARGET.with(|cell| cell.set(Some(&raw mut buffers.result)));
+        let status = host.send_flat(
+            vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT,
+            crate::VOSU_READ_PLAN_SYNC,
+            0,
+            &buffers.submit,
+        );
+        EXPECTING_PLAN.with(|cell| cell.set(None));
+        SYNC_RAW_TARGET.with(|cell| cell.set(None));
+
+        if status != vosu_status::VOSU_OK {
+            return Err(PlanMemoryError::Rejected(status));
+        }
+        if !SYNC_RAW_PRESENT.with(Cell::get) {
+            return Err(PlanMemoryError::NoResult);
+        }
+        let header: vosu_read_plan_result_header =
+            read_flat_header(&buffers.result).map_err(|_| PlanMemoryError::NoResult)?;
+        Ok(FlatReadResults {
+            buffer: &buffers.result,
+            results_offset: header.results_offset,
+            count: header.result_count as usize,
+        })
+    }
+}
+
+/// Reusable per-reader-thread scratch buffers for [`PlanMemory::read_flat`]
+/// (D17): `submit` holds the flat `VOSU_OP_READ_PLAN_SUBMIT` payload
+/// [`crate::message::flat::encode_submit_into`] builds; `result` holds the
+/// raw `VOSU_OP_READ_PLAN_RESULT` payload [`intercept_raw`] copies into
+/// it. Neither ever shrinks on its own, so a reader thread that keeps
+/// reusing the same `SyncReadBuffers` across repeated same-shaped plans
+/// allocates nothing once both have grown to their steady-state capacity.
+#[derive(Debug, Default)]
+pub struct SyncReadBuffers {
+    submit: Vec<u8>,
+    result: Vec<u8>,
+}
+
+impl SyncReadBuffers {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Borrows [`SyncReadBuffers::result`]: one [`PlanMemory::read_flat`]
+/// call's results, in the same (stage, op) order as the matching
+/// submission, decoded on demand by [`Self::get`] — no owned
+/// `ReadResult`/`Vec<ReadResult>` is ever built.
+pub struct FlatReadResults<'b> {
+    buffer: &'b [u8],
+    results_offset: u32,
+    count: usize,
+}
+
+impl<'b> FlatReadResults<'b> {
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// One flat `vosu_read_result_flat` entry's kind, plus its trailing
+    /// bytes (the read bytes for `VOSU_READ_OK`, the error message for
+    /// `VOSU_READ_ERROR`, empty otherwise). Panics if
+    /// `index >= self.len()`.
+    pub fn get(&self, index: usize) -> (vosu_read_result_kind, &'b [u8]) {
+        assert!(index < self.count, "FlatReadResults index out of bounds");
+        let elem_size = core::mem::size_of::<vosu_read_result_flat>();
+        let offset = self.results_offset as usize + index * elem_size;
+        // SAFETY: `read_flat` only ever builds this type from a buffer
+        // `vosu_plugin_api::validate_read_plan_result` already validated
+        // (`intercept_raw` copies the host's own `VOSU_OP_READ_PLAN_RESULT`
+        // reply verbatim, and the host only ever produces an already-valid
+        // one); `index < self.count` was just asserted above, so `offset`
+        // names a `vosu_read_result_flat`-sized range inside that
+        // validated `results` array.
+        let entry: vosu_read_result_flat = unsafe {
+            self.buffer
+                .as_ptr()
+                .add(offset)
+                .cast::<vosu_read_result_flat>()
+                .read_unaligned()
+        };
+        let kind = vosu_read_result_kind::try_from(entry.kind)
+            .expect("a host-produced VOSU_OP_READ_PLAN_RESULT always carries a valid kind");
+        let bytes = match kind {
+            vosu_read_result_kind::VOSU_READ_OK => {
+                &self.buffer
+                    [entry.bytes_offset as usize..(entry.bytes_offset + entry.bytes_len) as usize]
+            }
+            vosu_read_result_kind::VOSU_READ_ERROR => {
+                &self.buffer[entry.error_message_offset as usize
+                    ..(entry.error_message_offset + entry.error_message_len) as usize]
+            }
+            vosu_read_result_kind::VOSU_READ_NOT_READY
+            | vosu_read_result_kind::VOSU_READ_UNSUPPORTED => &[][..],
+        };
+        (kind, bytes)
     }
 }

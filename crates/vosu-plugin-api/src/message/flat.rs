@@ -124,6 +124,19 @@ pub struct Stage {
     pub ops: Vec<PlanOp>,
 }
 
+/// [`Stage`], borrowed: one stage's `ops` as a slice instead of an owned
+/// `Vec`, so [`encode_submit_into`] builds a `VOSU_OP_READ_PLAN_SUBMIT`
+/// payload straight from a caller's own `&[PlanOp]` without ever owning a
+/// `Stage`/`Vec<Stage>` (D17; `crate::sdk::plan_memory`'s own module doc
+/// comment).
+#[cfg(feature = "unstable-sync-reads")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageRef<'a> {
+    pub base: StageBase,
+    pub base_offset: i64,
+    pub ops: &'a [PlanOp],
+}
+
 /// `VOSU_OP_READ_PLAN_SUBMIT`, decoded. `sync` mirrors
 /// `vosu_message.flags`'s `VOSU_READ_PLAN_SYNC` bit (D5), carried outside
 /// the flat payload itself.
@@ -706,6 +719,121 @@ pub fn encode_read_plan_submit(message: &ReadPlanSubmit) -> Result<Vec<u8>, Mess
     };
     buf[..header_size].copy_from_slice(header_bytes);
     Ok(buf)
+}
+
+/// Writes `plan`/`handle`/`root`/`stages` straight into `buf` as a
+/// `VOSU_OP_READ_PLAN_SUBMIT` payload (this type's own layout, matching
+/// [`encode_read_plan_submit`]), `buf.clear()`ed first but keeping its
+/// existing capacity: a caller that reuses the same `buf` across repeated
+/// submissions of a same-shaped plan allocates nothing once `buf`'s
+/// capacity has grown to fit. Unlike [`encode_read_plan_submit`], there is
+/// no owned `ReadPlanSubmit`/`Stage` intermediate and, since each stage's
+/// own `ops_offset` is computed and written in place as soon as that
+/// stage's own `ops` are appended, no `ops_trailing` scratch buffer either
+/// — every byte `buf` grows to is already final (D17;
+/// `crate::sdk::plan_memory::SyncReadBuffers`'s own doc comment).
+#[cfg(feature = "unstable-sync-reads")]
+pub fn encode_submit_into(
+    buf: &mut Vec<u8>,
+    plan: u64,
+    handle: u64,
+    root: &PlanBase,
+    stages: &[StageRef<'_>],
+) {
+    buf.clear();
+    let header_size = size_of::<vosu_read_plan_submit_header>();
+    buf.resize(header_size, 0);
+
+    let root_flat = match root {
+        PlanBase::Absolute(address) => vosu_plan_base_flat {
+            kind: vosu_plan_base_kind::VOSU_BASE_ABSOLUTE as u32,
+            module_name_offset: 0,
+            module_name_len: 0,
+            reserved: 0,
+            address: *address,
+            module_offset: 0,
+        },
+        PlanBase::Module { name, offset } => {
+            let module_name_offset = buf.len() as u32;
+            buf.extend_from_slice(name.as_bytes());
+            vosu_plan_base_flat {
+                kind: vosu_plan_base_kind::VOSU_BASE_MODULE as u32,
+                module_name_offset,
+                module_name_len: name.len() as u32,
+                reserved: 0,
+                address: 0,
+                module_offset: *offset,
+            }
+        }
+    };
+
+    pad_to(buf, align_of_val_stage());
+    let stages_offset = buf.len() as u32;
+    let stage_size = size_of::<vosu_stage_header>();
+    buf.resize(buf.len() + stage_size * stages.len(), 0);
+
+    for (index, stage) in stages.iter().enumerate() {
+        pad_to(buf, align_of_val_op());
+        let ops_offset = buf.len() as u32;
+        for op in stage.ops {
+            push_struct(
+                buf,
+                &vosu_plan_op {
+                    offset: op.offset,
+                    length: op.length,
+                    reserved: 0,
+                },
+            );
+        }
+        let (kind, ref_stage, ref_op) = match stage.base {
+            StageBase::Root => (vosu_stage_base_kind::VOSU_STAGE_BASE_ROOT as u32, 0, 0),
+            StageBase::Dependent { ref_stage, ref_op } => (
+                vosu_stage_base_kind::VOSU_STAGE_BASE_DEPENDENT as u32,
+                ref_stage,
+                ref_op,
+            ),
+        };
+        let stage_header = vosu_stage_header {
+            base: vosu_stage_base {
+                kind,
+                ref_stage,
+                ref_op,
+                reserved: 0,
+                offset: stage.base_offset,
+            },
+            ops_offset,
+            op_count: stage.ops.len() as u32,
+        };
+        let region_start = stages_offset as usize + index * stage_size;
+        // SAFETY: a `repr(C)` flat header struct of plain integers/arrays/
+        // unions has no padding this byte read could expose uninitialized
+        // memory from; `stage_size` is exactly `size_of::<vosu_stage_header>()`,
+        // and `region_start..region_start + stage_size` was reserved by
+        // the `buf.resize` above.
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                (&stage_header as *const vosu_stage_header).cast::<u8>(),
+                stage_size,
+            )
+        };
+        buf[region_start..region_start + stage_size].copy_from_slice(bytes);
+    }
+
+    let header = vosu_read_plan_submit_header {
+        plan,
+        handle,
+        root: root_flat,
+        stages_offset,
+        stage_count: stages.len() as u32,
+    };
+    // SAFETY: see `encode_read_plan_submit`'s identical header byte copy.
+    let header_bytes = unsafe {
+        core::slice::from_raw_parts(
+            (&header as *const vosu_read_plan_submit_header).cast::<u8>(),
+            header_size,
+        )
+    };
+    buf[..header_size].copy_from_slice(header_bytes);
 }
 
 fn align_of_val_stage() -> usize {

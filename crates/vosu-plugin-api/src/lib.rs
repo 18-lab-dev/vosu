@@ -62,6 +62,8 @@ pub use limits::{
     VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
 pub use manifest::{ManifestError, MatchTable, PluginManifest, ResourceKind, Runtime, Target};
+#[cfg(feature = "unstable-sync-reads")]
+pub use message::flat::StageRef;
 pub use message::flat::{
     DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishField, PublishValue,
     ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase,
@@ -75,7 +77,7 @@ pub use primitives::{
 pub use sdk::{__vtable_for_concurrent, __vtable_for_serialized};
 pub use sdk::{ConcurrentPlugin, Init, Plugin, PluginError, VtableHostServices};
 #[cfg(feature = "unstable-sync-reads")]
-pub use sdk::{PlanMemory, PlanMemoryError};
+pub use sdk::{FlatReadResults, PlanMemory, PlanMemoryError, SyncReadBuffers};
 pub use status::vosu_status;
 pub use validate::{
     ValidationError, read_flat_header, validate_array_range, validate_bytes_range,

@@ -48,6 +48,40 @@ fn decode_message(message: *const vosu_message) -> Result<(Message, u64), vosu_s
     Ok((message, raw.correlation_id))
 }
 
+/// Checked before [`decode_message`] on every `dispatch` call, behind the
+/// unpublished `unstable-sync-reads` feature: if `message` is a
+/// `VOSU_OP_READ_PLAN_RESULT` this thread's own [`PlanMemory::read_flat`]
+/// call is waiting for, hands its still-raw payload straight to
+/// `sdk::plan_memory::intercept_raw` and reports "handled" — no
+/// `Message::decode` (and so no owned `ReadPlanResult`/`Vec<ReadResult>`)
+/// ever runs for it (D17). `None` for anything else (including a
+/// `VOSU_OP_READ_PLAN_RESULT` this thread was not expecting, or one an
+/// ordinary [`PlanMemory::read`] call is waiting for instead), so
+/// `dispatch` falls through to the normal decode-and-forward path, which
+/// `run_dispatch`'s own (typed) `intercept` still covers.
+///
+/// [`PlanMemory::read_flat`]: crate::sdk::plan_memory::PlanMemory::read_flat
+/// [`PlanMemory::read`]: crate::sdk::plan_memory::PlanMemory::read
+#[cfg(feature = "unstable-sync-reads")]
+fn try_intercept_sync_raw(message: *const vosu_message) -> Option<vosu_status> {
+    if message.is_null() {
+        return None;
+    }
+    // SAFETY: see `decode_message`'s identical borrow of `message` for the
+    // duration of this call.
+    let raw = unsafe { &*message };
+    if vosu_opcode::try_from(raw.opcode) != Ok(vosu_opcode::VOSU_OP_READ_PLAN_RESULT) {
+        return None;
+    }
+    if raw.payload.data.is_null() {
+        return None;
+    }
+    // SAFETY: see `decode_message`'s identical borrow of `raw.payload`.
+    let payload =
+        unsafe { core::slice::from_raw_parts(raw.payload.data, raw.payload.len as usize) };
+    crate::sdk::plan_memory::intercept_raw(payload).then_some(vosu_status::VOSU_OK)
+}
+
 /// `Plugin`'s serialized context: `Mutex` is this SDK's own lock
 /// (`docs/v2/plugin-abi.md` §9), independent of whatever the manifest's
 /// `concurrent_dispatch` declares.
@@ -116,6 +150,10 @@ pub extern "C" fn dispatch_serialized<T: Plugin>(
     if plugin_ctx.is_null() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
     }
+    #[cfg(feature = "unstable-sync-reads")]
+    if let Some(status) = try_intercept_sync_raw(message) {
+        return status as u32;
+    }
     let (decoded, correlation_id) = match decode_message(message) {
         Ok(decoded) => decoded,
         Err(status) => return status as u32,
@@ -169,6 +207,10 @@ pub extern "C" fn dispatch_concurrent<T: ConcurrentPlugin>(
 ) -> u32 {
     if plugin_ctx.is_null() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
+    }
+    #[cfg(feature = "unstable-sync-reads")]
+    if let Some(status) = try_intercept_sync_raw(message) {
+        return status as u32;
     }
     let (decoded, correlation_id) = match decode_message(message) {
         Ok(decoded) => decoded,
