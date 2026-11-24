@@ -7,6 +7,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add exact-identity catalog source settings and HTTPS source parsing, with
   dedicated trust/private-network mutations and journaled credential-purge
   recovery. Preserve legacy source lists and migration markers for M8.
+- Resolve catalog capability graphs with bounded deterministic ranked backtracking,
+  retained installed consumers, one version per plugin, dependency-first output,
+  and optional grants that never initiate installation.
 
 ## Unreleased — 2.0 M6a
 
