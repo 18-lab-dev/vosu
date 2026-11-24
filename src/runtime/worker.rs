@@ -1,7 +1,8 @@
+#[cfg(test)]
 use super::bridge_b1::*;
 use super::*;
+#[cfg(test)]
 use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Publisher, B1SessionKey};
-use vosu_osu::capture::{CaptureTarget, create_state_worker, initialize_state_worker};
 
 /// Exactly five state publication loops. Connections are owned by their hubs;
 /// shutdown cancels every loop and joins it before the provider can be dropped.
@@ -203,68 +204,10 @@ impl ListenerOwner {
     }
 }
 
-pub(super) struct PidWorker {
-    generation: u64,
-    cancel: CancellationToken,
-    task: JoinHandle<()>,
-}
-
-/// Race-free, exactly-one-worker-per-process registry. A PID reuse with a new
-/// process generation is a restart, never an in-place mutation.
-#[derive(Default)]
-pub(super) struct PidWorkerRegistry {
-    pub(super) workers: BTreeMap<u32, PidWorker>,
-}
-
-impl PidWorkerRegistry {
-    pub(super) async fn reconcile<F>(&mut self, desired: &BTreeMap<u32, u64>, mut spawn: F)
-    where
-        F: FnMut(u32, u64, CancellationToken) -> JoinHandle<()>,
-    {
-        let stale = self
-            .workers
-            .iter()
-            .filter_map(|(&pid, worker)| {
-                (desired.get(&pid).copied() != Some(worker.generation)).then_some(pid)
-            })
-            .collect::<Vec<_>>();
-        for pid in stale {
-            self.stop(pid).await;
-        }
-        for (&pid, &generation) in desired {
-            if self.workers.contains_key(&pid) {
-                continue;
-            }
-            let cancel = CancellationToken::new();
-            let task = spawn(pid, generation, cancel.clone());
-            self.workers.insert(
-                pid,
-                PidWorker {
-                    generation,
-                    cancel,
-                    task,
-                },
-            );
-        }
-    }
-
-    async fn stop(&mut self, pid: u32) {
-        if let Some(worker) = self.workers.remove(&pid) {
-            worker.cancel.cancel();
-            let _ = worker.task.await;
-        }
-    }
-
-    pub(super) async fn shutdown(&mut self) {
-        let pids = self.workers.keys().copied().collect::<Vec<_>>();
-        for pid in pids {
-            self.stop(pid).await;
-        }
-    }
-}
-
+#[cfg(test)]
 pub(super) struct StatePublicationSink(B1Publisher);
 
+#[cfg(test)]
 impl StatePublicationSink {
     pub(super) fn new(pid: u32, generation: u64, publications: Arc<StatePublicationQueue>) -> Self {
         Self(B1Publisher::new(
@@ -274,6 +217,7 @@ impl StatePublicationSink {
     }
 }
 
+#[cfg(test)]
 impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
     fn publish(
         &self,
@@ -284,6 +228,7 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
     }
 }
 
+#[cfg(test)]
 impl vosu_surface::LegacySink<B1Event, B1Inputs> for StatePublicationQueue {
     fn send(&self, event: B1Event) {
         if let B1Event::Publish { key, api, live } = event {
@@ -299,209 +244,4 @@ impl vosu_surface::LegacySink<B1Event, B1Inputs> for StatePublicationQueue {
     fn inputs(&self) -> watch::Receiver<B1Inputs> {
         watch::channel(B1Inputs::default()).1
     }
-}
-
-/// Owns per-ready-instance state workers and the single atomic manager
-/// publication loop.
-pub struct ProductionStateSupervisor {
-    pub(super) cancel: CancellationToken,
-    pub(super) task: JoinHandle<()>,
-}
-
-impl ProductionStateSupervisor {
-    pub fn start(
-        lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
-        config: watch::Receiver<Arc<vosu_core::config::Config>>,
-        subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
-        snapshots: Arc<SnapshotProviders>,
-        logger: Logger,
-    ) -> Self {
-        let cancel = CancellationToken::new();
-        let task_cancel = cancel.clone();
-        let task = tokio::spawn(run_state_supervisor(
-            lifecycle,
-            config,
-            subscription_demand,
-            snapshots,
-            logger,
-            task_cancel,
-        ));
-        Self { cancel, task }
-    }
-
-    pub async fn shutdown(self) {
-        self.shutdown_with_timeout(Duration::from_secs(2)).await;
-    }
-
-    pub(super) async fn shutdown_with_timeout(self, deadline: Duration) {
-        let Self { cancel, mut task } = self;
-        cancel.cancel();
-        if tokio::time::timeout(deadline, &mut task).await.is_err() {
-            task.abort();
-            let _ = task.await;
-        }
-    }
-}
-
-pub(super) async fn run_state_supervisor(
-    mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
-    mut config: watch::Receiver<Arc<vosu_core::config::Config>>,
-    subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
-    snapshots: Arc<SnapshotProviders>,
-    logger: Logger,
-    cancel: CancellationToken,
-) {
-    let publications = Arc::new(StatePublicationQueue::default());
-    let mut workers = PidWorkerRegistry::default();
-    let mut api = ManagerView::default();
-    let mut live = ManagerView::default();
-    let mut lifecycle_value = lifecycle.borrow_and_update().clone();
-    let mut config_value = config.borrow_and_update().clone();
-    let (reader_settings_tx, reader_settings_rx) =
-        watch::channel(reader_settings_from(&config_value));
-
-    loop {
-        let ready = lifecycle_value
-            .instances
-            .iter()
-            .filter(|entry| entry.client == ClientType::Stable || entry.offset_ready)
-            .cloned()
-            .map(|entry| (entry.pid, entry))
-            .collect::<BTreeMap<_, _>>();
-        let desired = ready
-            .iter()
-            .map(|(&pid, entry)| (pid, entry.generation))
-            .collect::<BTreeMap<_, _>>();
-        api.retain(&desired);
-        live.retain(&desired);
-
-        let worker_reader_settings = reader_settings_rx.clone();
-        let worker_demand = subscription_demand.clone();
-        let worker_publications = Arc::clone(&publications);
-        let worker_logger = logger.clone();
-        workers
-            .reconcile(&desired, |pid, _generation, worker_cancel| {
-                let entry = ready.get(&pid).expect("desired entry").clone();
-                let publications = Arc::clone(&worker_publications);
-                let reader_settings = worker_reader_settings.clone();
-                let demand = worker_demand.clone();
-                let logger = worker_logger.clone();
-                tokio::spawn(async move {
-                    run_instance_state_worker(
-                        entry,
-                        reader_settings,
-                        demand,
-                        publications,
-                        logger,
-                        worker_cancel,
-                    )
-                    .await;
-                })
-            })
-            .await;
-
-        let bridge_lifecycle = B1Lifecycle::from(lifecycle_value.as_ref());
-        if let Some(manager) = api.manager(&bridge_lifecycle, &config_value) {
-            snapshots.publish_api(manager);
-        }
-        if let Some(manager) = live.manager(&bridge_lifecycle, &config_value) {
-            snapshots.publish_live(manager);
-        }
-
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            changed = lifecycle.changed() => {
-                if changed.is_err() { break; }
-                lifecycle_value = lifecycle.borrow_and_update().clone();
-            }
-            changed = config.changed() => {
-                if changed.is_err() { break; }
-                config_value = config.borrow_and_update().clone();
-                let _ = reader_settings_tx.send(reader_settings_from(&config_value));
-                snapshots.set_poll_rates(
-                    poll_duration(config_value.poll_rate),
-                    poll_duration(config_value.precise_data_poll_rate),
-                );
-            }
-            _ = publications.notified() => {
-                for (pid, publication) in publications.drain() {
-                    if desired.get(&pid).copied() == Some(publication.generation) {
-                        api.update(pid, publication.api);
-                        live.update(pid, publication.live);
-                    }
-                }
-            }
-        }
-    }
-    publications.close();
-    workers.shutdown().await;
-}
-
-/// Narrows `Config` to the fields `vosu-osu-state` reads, so that crate does
-/// not depend on `vosu-core` (`scripts/crate-boundaries.txt`: no such edge exists).
-fn reader_settings_from(config: &vosu_core::config::Config) -> vosu_osu_state::ReaderSettings {
-    vosu_osu_state::ReaderSettings {
-        calculate_pp: config.calculate_pp,
-        enable_key_overlay: config.enable_key_overlay,
-        enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-        enable_hit_offsets: config.enable_hit_offsets,
-        poll_rate: config.poll_rate,
-        precise_data_poll_rate: config.precise_data_poll_rate,
-        v2_subscription_debounce: config.v2_subscription_debounce,
-        show_mp_commands: config.show_mp_commands,
-        read_mania_scroll_speed: config.read_mania_scroll_speed,
-    }
-}
-
-pub(super) async fn run_instance_state_worker(
-    entry: InstanceGeneration,
-    reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
-    subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
-    publications: Arc<StatePublicationQueue>,
-    logger: Logger,
-    cancel: CancellationToken,
-) {
-    let target = CaptureTarget {
-        pid: entry.pid,
-        generation: entry.generation,
-        client: entry.client,
-        process: entry.instance.process().clone(),
-        root: entry.instance.root().to_path_buf(),
-        settings: entry.settings.clone(),
-        is_tournament_manager: entry.instance.is_tournament_manager(),
-        lazer_offsets: entry.instance.lazer_offsets(),
-    };
-    let publisher = Arc::new(StatePublicationSink::new(
-        entry.pid,
-        entry.generation,
-        publications,
-    ));
-    let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
-    let worker = initialize_state_worker(
-        &cancel,
-        Duration::from_secs(1),
-        || {
-            let target = target.clone();
-            let reader_settings = reader_settings.clone();
-            let demand = subscription_demand.clone();
-            let publisher: Arc<dyn SnapshotPublisher<Arc<StateBundleSnapshot>>> = publisher.clone();
-            let synchronization = Arc::clone(&synchronization);
-            async move {
-                create_state_worker(&target, reader_settings, demand, publisher, synchronization)
-                    .await
-            }
-        },
-        |error| {
-            logger.error(format!(
-                "State initialization stopped for PID {} ({:?}, generation {}): {error}",
-                entry.pid, entry.client, entry.generation
-            ));
-        },
-    )
-    .await;
-    let Some(worker) = worker else {
-        return;
-    };
-    cancel.cancelled().await;
-    let _ = worker.shutdown().await;
 }

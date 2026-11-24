@@ -32,7 +32,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use vosu_osu::capture::poll_duration;
 use vosu_osu_model::enums::ClientType;
-use vosu_osu_reader::memory::{ReaderSynchronization, lazer_loader::LazerOffsetLoader};
 use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
@@ -40,11 +39,7 @@ use crate::{
         ApiError, ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot,
         ManagerSnapshot, SnapshotManager,
     },
-    assets::DaemonAssets,
     counters::ReloadableCounterService,
-    instance::{
-        InstanceGeneration, InstanceLifecycleSnapshot, InstanceRuntime, NativeProcessProvider,
-    },
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
         catalog::{CatalogOverlay, CatalogService, LocalOverlay},
@@ -87,10 +82,7 @@ use vosu_core::{
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
-use vosu_osu_state::{
-    Delivery, SnapshotPublisher, StateBundleSnapshot, StateWorkerError,
-    duration_from_millis_saturating,
-};
+use vosu_osu_state::{StateBundleSnapshot, StateWorkerError, duration_from_millis_saturating};
 
 pub(crate) mod bridge_b1;
 mod cli;
@@ -116,7 +108,7 @@ pub use projection::{
 pub use test_support::{
     TestProductionComposition, TestProductionCompositionOptions, start_test_production_composition,
 };
-pub use worker::{ListenerOwner, ProductionStateSupervisor, WebSocketHubs};
+pub use worker::{ListenerOwner, WebSocketHubs};
 
 #[cfg(test)]
 use bridge_b1::*;
@@ -126,16 +118,14 @@ use lifecycle::*;
 use projection::*;
 use render::*;
 use service::*;
-use vosu_osu_reader::offset_generator::EmbeddedOffsetGenerator;
+#[cfg(test)]
+use vosu_osu_state::{Delivery, SnapshotPublisher};
 #[cfg(test)]
 use worker::*;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::sync::{Mutex, atomic::Ordering};
 
     use tokio::sync::mpsc;
 

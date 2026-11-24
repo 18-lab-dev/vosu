@@ -46,14 +46,6 @@ where
         Self::start_inner(provider, loader, None)
     }
 
-    pub(crate) fn start_with_logger(
-        provider: P,
-        loader: LazerOffsetLoader<G>,
-        logger: Logger,
-    ) -> Self {
-        Self::start_inner(provider, loader, Some(logger))
-    }
-
     fn start_inner(provider: P, loader: LazerOffsetLoader<G>, logger: Option<Logger>) -> Self {
         let manager_value = InstanceManager::default();
         let lifecycle_changed = manager_value.lifecycle_changed.clone();

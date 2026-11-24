@@ -1,11 +1,4 @@
 //! Interim root-side B1 bridge; removed with the 1.x surfaces in M4a.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "C3 installs the bridge in this same m1-cutover landing"
-    )
-)]
 use super::*;
 use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Phase};
 use vosu_osu::capture::equivalent_state_snapshots;
@@ -79,10 +72,6 @@ impl StatePublicationQueue {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::mem::take(&mut state.pending)
-    }
-
-    pub(super) async fn notified(&self) {
-        self.notified.notified().await;
     }
 
     pub(super) fn close(&self) {
@@ -287,31 +276,6 @@ pub(super) struct B1Lifecycle {
     pub revision: u64,
     pub sessions: Arc<[B1SessionView]>,
     pub focus: FocusState,
-}
-// Deleted by C3 in this same m1-cutover landing, before v2/main.
-impl From<&InstanceLifecycleSnapshot> for B1Lifecycle {
-    fn from(value: &InstanceLifecycleSnapshot) -> Self {
-        Self {
-            revision: value.revision,
-            focus: value.focus,
-            sessions: value
-                .instances
-                .iter()
-                .map(|entry| B1SessionView {
-                    pid: entry.pid,
-                    generation: entry.generation,
-                    client: entry.client,
-                    settings: entry.settings.clone(),
-                    phase: if entry.offset_ready {
-                        B1Phase::StartingReader
-                    } else {
-                        B1Phase::ResolvingOffsets
-                    },
-                    is_tournament_manager: entry.instance.is_tournament_manager(),
-                })
-                .collect(),
-        }
-    }
 }
 
 #[derive(Default)]

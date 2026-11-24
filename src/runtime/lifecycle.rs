@@ -30,15 +30,10 @@ pub struct ProductionRuntime {
     hubs: AsyncMutex<Option<WebSocketHubs>>,
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
-    supervisor: AsyncMutex<Option<ProductionStateSupervisor>>,
-    instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
+    bridge: AsyncMutex<Option<bridge_b1::LegacyBridgeTask>>,
+    bridge_installed: AsyncMutex<Option<vosu_surface::Installed>>,
     ordinary_role: bool,
     tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
-    /// M1 §4 phase d2b unit d: `None` whenever no enabled plugin has a
-    /// `[match]` table (`discovery::start_discovery`'s own doc
-    /// comment) — production `BUNDLED` holds none until `vosu-osu`
-    /// lands, so this is `None` there and 1.x's own discovery
-    /// (`instances`) stays the only active one.
     discovery: AsyncMutex<Option<vosu_core::plugin::DiscoveryService>>,
     #[cfg(windows)]
     foreground: AsyncMutex<Option<vosu_core::plugin::ForegroundPoller>>,
@@ -79,6 +74,10 @@ impl ProductionRuntime {
         tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
             .await
             .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
+        if let Some(bridge) = self.bridge.lock().await.take() {
+            bridge.shutdown().await;
+        }
+        self.bridge_installed.lock().await.take();
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
@@ -105,12 +104,6 @@ impl ProductionRuntime {
         if let Some(relays) = self.relays.lock().await.take() {
             relays.shutdown().await;
         }
-        if let Some(supervisor) = self.supervisor.lock().await.take() {
-            supervisor.shutdown().await;
-        }
-        if let Some(instances) = self.instances.lock().await.take() {
-            instances.shutdown().await;
-        }
         if let Some(counters) = self.counters.lock().await.take() {
             counters.shutdown().await;
         }
@@ -136,15 +129,6 @@ impl ProductionRuntime {
         // long-lived task.
         let target = listen_target(&config)?;
         let program = env::current_exe()?;
-        let asset = DaemonAssets::get("offsets.json").ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "embedded offsets.json is missing")
-        })?;
-        let generator = EmbeddedOffsetGenerator::new(self.paths.cache().join("offset-generator"));
-        let loader = LazerOffsetLoader::new(
-            generator,
-            self.paths.cache().join("offsets"),
-            Bytes::copy_from_slice(&asset.data),
-        );
         let static_root = resolved_static_root(&self.paths, &config)?;
         let counters = Arc::new(ReloadableCounterService::production(
             static_root,
@@ -334,42 +318,28 @@ impl ProductionRuntime {
             )
         ));
         *self.dashboard_listener.get_mut() = Some(dashboard_listener);
-        // Bind the existing discovery stream; do not maintain a second roster.
-        let process_provider = NativeProcessProvider::new();
-        self.logger.info(format!(
-            "Process events backend: {}",
-            process_provider.process_event_backend_name()
-        ));
-        let instances =
-            InstanceRuntime::start_with_logger(process_provider, loader, self.logger.clone());
-        dashboard_lifecycle.store(Some(Arc::new(instances.subscribe_current().into())));
-        let supervisor = ProductionStateSupervisor::start(
-            instances.subscribe_current(),
+        let bridge = bridge_b1::LegacyBridge::new(
             self.config.subscribe_current(),
             hubs.v2_subscription.demand(),
             self.snapshots.clone(),
             self.logger.clone(),
-        );
-        self.snapshots.set_poll_rates(
-            poll_duration(config.poll_rate),
-            poll_duration(config.precise_data_poll_rate),
         );
         *self.counters.get_mut() = Some(counters);
         *self.listener.get_mut() = Some(listener);
         *self.hubs.get_mut() = Some(hubs);
         *self.processor.get_mut() = Some(processor);
         *self.relays.get_mut() = Some(relays);
-        *self.supervisor.get_mut() = Some(supervisor);
-        *self.instances.get_mut() = Some(instances);
-        // M1 §4 phase d2b unit d: started here (after `instances`, 1.x's
-        // own discovery, is set above) so it only runs after `App::run`'s
-        // Archive/OneDrive guard and update decision (P3 review finding:
-        // starting any earlier could attach sessions to plugins before a
-        // guarded or handed-off run exits); zero cost when no enabled
-        // plugin has a `[match]` table (`discovery::start_discovery`'s own
-        // doc comment). Every exit path from here on routes through
-        // `ProductionRuntime::shutdown`, which stops both before
-        // `plugins.destroy_all`.
+        let installed = vosu_surface::install(bridge.clone()).map_err(io::Error::other)?;
+        dashboard_lifecycle.store(Some(Arc::new(bridge.lifecycle())));
+        *self.bridge_installed.get_mut() = Some(installed);
+        *self.bridge.get_mut() =
+            Some(bridge.start(Arc::new(vosu_core::plugin::OsForegroundSource)));
+        self.snapshots.set_poll_rates(
+            poll_duration(config.poll_rate),
+            poll_duration(config.precise_data_poll_rate),
+        );
+        // Discovery starts only after B1 is installed and its manager task is
+        // owned by this runtime. All subsequent exits use ordered shutdown.
         let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger);
         #[cfg(windows)]
         let foreground = discovery
@@ -972,9 +942,9 @@ pub async fn run_cli() -> io::Result<()> {
         origins,
         hubs: AsyncMutex::new(None),
         processor: AsyncMutex::new(None),
-        supervisor: AsyncMutex::new(None),
+        bridge: AsyncMutex::new(None),
         relays: AsyncMutex::new(None),
-        instances: AsyncMutex::new(None),
+        bridge_installed: AsyncMutex::new(None),
         ordinary_role,
         tray: AsyncMutex::new(None),
         discovery: AsyncMutex::new(None),

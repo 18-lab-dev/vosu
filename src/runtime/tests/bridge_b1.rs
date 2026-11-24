@@ -185,13 +185,13 @@ async fn dashboard_attachment_status_uses_existing_roster_and_published_version(
         let mut session = b1_session(21301, ClientType::Lazer, false);
         session.phase = phase;
         let (_, receiver) = watch::channel(Arc::new(B1Lifecycle { revision: 1, sessions: [session].into(), focus: Default::default() }));
-        provider.lifecycle.store(Some(Arc::new(DashboardLifecycleReceiver::B1(receiver))));
+        provider.lifecycle.store(Some(Arc::new(receiver)));
         assert_eq!(provider.dashboard_status()["instances"][0]["state"], expected);
     }
     let (_, lifecycle) = tokio::sync::watch::channel(Arc::new(B1Lifecycle {
         revision: 2, sessions: Arc::from([]), focus: Default::default(),
     }));
-    provider.lifecycle.store(Some(Arc::new(DashboardLifecycleReceiver::B1(lifecycle))));
+    provider.lifecycle.store(Some(Arc::new(lifecycle)));
     assert_eq!(provider.dashboard_status()["instances"], serde_json::json!([]), "exited instances must not linger through a stale published state");
     tokio::time::timeout(Duration::from_secs(2), config.shutdown()).await.unwrap().unwrap();
 }

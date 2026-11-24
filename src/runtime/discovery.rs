@@ -11,12 +11,8 @@
 //! directly, under the same [`PluginHost::has_enabled_matchers`] gate
 //! [`start_discovery`] applies.
 //!
-//! Separate from this crate's own 1.x-style discovery
-//! (`crate::instance::NativeProcessProvider`, wired in
-//! `ProductionRuntime::compose`): until a plugin with a `[match]` table
-//! is registered (`BUNDLED` holds none until `vosu-osu` lands), this
-//! module's [`start_discovery`] returns `None` and 1.x discovery stays
-//! the only active one — zero added cost in production today.
+//! This is the sole production discovery path. The bundled osu! plugin
+//! classifies sessions and publishes legacy surface state through B1.
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use std::io;
@@ -139,10 +135,7 @@ impl ProcessSource for PollingLinuxSource {
 /// returned service's one asynchronous wait, the same role it plays for
 /// [`DiscoveryService::start`] directly. Logs
 /// `"Process events backend: {name}"` (DI, `ProcessSource::backend_name`)
-/// exactly like 1.x's own startup log (`src/runtime/lifecycle.rs:340`,
-/// `tests/daemon_smoke.rs:1128`'s own assertion) — dormant today, since
-/// production's `BUNDLED` has no `[match]` table until `vosu-osu` lands
-/// (module doc comment), so this never actually runs in production yet.
+/// with the same backend name as the previous runtime.
 #[must_use]
 pub(super) fn start_discovery(
     plugin_host: &Arc<PluginHost>,
@@ -215,11 +208,109 @@ mod tests {
         (log_dir, logger, host)
     }
 
-    /// The zero-cost case (M1 §4 phase d2b unit d's own "production
-    /// `BUNDLED` holds no matching plugin until `vosu-osu` lands"): no
-    /// plugin ever registered a `[match]` table, so `start_discovery`
-    /// must return `None` — no background thread spawned at all, exactly
-    /// production's own state today.
+    /// §7 row 12: the production bundle reaches the installed bridge, and
+    /// plugin destruction delivers detach before the bridge is closed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bundled_osu_discovery_and_bridge_shutdown_are_joined() {
+        use crate::runtime::bridge_b1::LegacyBridge;
+        use crate::runtime::{
+            ApiRuntimeSettings, Config, ManagerSnapshot, ProductionSnapshotEncoder,
+            SnapshotProviders,
+        };
+        use std::time::Duration;
+        use vosu_core::plugin::{
+            DiscoveryService, PluginInstanceId, ProcessRecord, ProcessSource, load_bundled,
+        };
+
+        struct Source;
+        impl ProcessSource for Source {
+            fn enumerate(&self) -> std::io::Result<Vec<ProcessRecord>> {
+                Ok(vec![ProcessRecord {
+                    pid: 0x7c30_0001,
+                    name: "osu!.exe".into(),
+                    path: "/missing/c3/osu!.exe".into(),
+                    command_line: "osu!.exe".into(),
+                    argv: Some(vec!["osu!.exe".into()]),
+                    bitness: vosu_plugin_api::Bitness::X86,
+                    start_time: 1,
+                }])
+            }
+            fn is_alive(&self, _pid: u32) -> bool {
+                true
+            }
+        }
+        let wait = Duration::from_secs(10);
+        let (_logs, logger, host) = test_host(Handle::current());
+        let (_config, config) = tokio::sync::watch::channel(Arc::new(Config::default()));
+        let (_demand, demand) = tokio::sync::watch::channel(Default::default());
+        let snapshots = Arc::new(SnapshotProviders::new(
+            Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default())),
+            Arc::new(ProductionSnapshotEncoder),
+        ));
+        let bridge = LegacyBridge::new(config, demand, snapshots, logger);
+        let installed = vosu_surface::install(bridge.clone()).unwrap();
+        let task = bridge.start(Arc::new(vosu_core::plugin::SyntheticForegroundSource::new(
+            None,
+        )));
+        let mut lifecycle = bridge.lifecycle();
+        let loaded = load_bundled(crate::plugins::BUNDLED).unwrap();
+        let osu = loaded
+            .iter()
+            .find(|plugin| plugin.manifest().id == "vosu.osu")
+            .unwrap();
+        let data = tempfile::tempdir().unwrap();
+        host.create_instance(
+            PluginInstanceId::new(313),
+            osu,
+            data.path().into(),
+            Some(vosu_core::plugin::WorkerPool::new(2, 65536)),
+        )
+        .unwrap();
+        let discovery = DiscoveryService::start(&host, Arc::new(Source), Handle::current());
+        tokio::time::timeout(wait, async {
+            while lifecycle.borrow_and_update().sessions.is_empty() {
+                lifecycle.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(lifecycle.borrow().sessions[0].pid, 0x7c30_0001);
+        tokio::time::timeout(wait, tokio::task::spawn_blocking(move || discovery.stop()))
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(
+            wait,
+            tokio::task::spawn_blocking(move || host.destroy_all(Duration::from_secs(5))),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            lifecycle.borrow().sessions.is_empty(),
+            "destroy must detach while B1 is still open"
+        );
+        assert!(
+            vosu_surface::current::<vosu_osu::bridge_b1::B1Event, vosu_osu::bridge_b1::B1Inputs>()
+                .is_some()
+        );
+        tokio::time::timeout(wait, task.shutdown()).await.unwrap();
+        lifecycle.borrow_and_update();
+        drop(bridge);
+        drop(installed);
+        assert!(
+            tokio::time::timeout(wait, lifecycle.changed())
+                .await
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            vosu_surface::current::<vosu_osu::bridge_b1::B1Event, vosu_osu::bridge_b1::B1Inputs>()
+                .is_none()
+        );
+    }
+
+    /// No enabled matcher means no source or discovery thread is needed.
     #[test]
     fn no_enabled_matchers_starts_no_discovery_thread() {
         let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");

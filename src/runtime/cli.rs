@@ -129,15 +129,19 @@ fn run_setup() -> io::Result<()> {
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 fn run_backend_probe(backend: BackendProbe) -> io::Result<()> {
-    use crate::instance::{CommHints, LinuxProcessEvents, ProcessEventMode};
+    use vosu_sys::events::{CommHints, LinuxProcessEvents, ProcessEventMode};
 
     let mode = match backend {
         BackendProbe::Ebpf => ProcessEventMode::Ebpf,
         BackendProbe::CnProc => ProcessEventMode::CnProc,
     };
-    // Byte-identical to the former hard-coded `osu!`/`osulazer.exe` filter.
-    let comm_hints = CommHints::new(["osu!", "osulazer.exe"])
-        .expect("hardcoded default comm hints satisfy CommHints::new's bounds");
+    let manifest =
+        vosu_plugin_api::PluginManifest::parse(vosu_osu::MANIFEST).map_err(io::Error::other)?;
+    let matcher = manifest
+        .matcher
+        .expect("bundled osu! manifest declares matching");
+    let comm_hints =
+        CommHints::new(matcher.comm_hints.iter().map(String::as_str)).map_err(io::Error::other)?;
     let _events = LinuxProcessEvents::open(mode, &comm_hints)?;
     Ok(())
 }
