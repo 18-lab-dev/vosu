@@ -177,6 +177,7 @@ pub struct PluginHost {
     state_demand_serial: Mutex<()>,
     pub(super) surfaces: Mutex<crate::state::surface::SurfaceReaders>,
     api_readers: Mutex<crate::api::ApiReaders>,
+    resource_state: Mutex<resources::ResourceState>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
@@ -315,6 +316,7 @@ impl PluginHost {
             state_demand_serial: Mutex::new(()),
             surfaces: Mutex::new(Default::default()),
             api_readers: Mutex::new(Default::default()),
+            resource_state: Mutex::new(resources::ResourceState::default()),
             instances: Mutex::new(HashMap::new()),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
@@ -589,6 +591,17 @@ impl PluginHostHandler for PluginHost {
         correlation_id: u64,
     ) -> vosu_status {
         match message {
+            Message::RootDeclare(request) => self.handle_root_declare(instance, request),
+            Message::ResourceResolved(reply) => self.handle_resource_reply(
+                instance,
+                correlation_id,
+                resource_requests::ResourceReply::Resolved(reply),
+            ),
+            Message::StreamChunk(reply) => self.handle_resource_reply(
+                instance,
+                correlation_id,
+                resource_requests::ResourceReply::Chunk(reply),
+            ),
             Message::StateSubscribe(request) => self.handle_state_subscribe(instance, request),
             Message::LogRecord(record) => {
                 let plugin_id = self
@@ -656,6 +669,7 @@ impl PluginHostHandler for PluginHost {
                         // this handle is delivered before it, never
                         // after, on serial dispatch.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
+                        self.resource_session_detached(declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
                         self.state_session_detaching(&detached, Some(&plugin_id));
                         self.forget_read_plan_session(declined_handle);
@@ -684,6 +698,7 @@ impl PluginHostHandler for PluginHost {
                         // P3: same cancel-before-dispatch ordering as the
                         // `ReOffered` arm above.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
+                        self.resource_session_detached(declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
                         self.state_session_detaching(&detached, Some(&plugin_id));
                         self.forget_read_plan_session(declined_handle);
@@ -833,6 +848,8 @@ mod api;
 mod instances;
 mod lifecycle;
 pub(super) mod read_plans;
+pub mod resource_requests;
+pub mod resources;
 mod scans;
 mod state;
 mod state_delivery;

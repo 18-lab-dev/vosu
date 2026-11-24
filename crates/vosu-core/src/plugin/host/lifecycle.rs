@@ -139,6 +139,10 @@ impl PluginHost {
                 }
             };
             let (id, instance) = next;
+            self.resource_state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(id);
             self.state_subscriber_removed(id);
             if let Some(plugin_id) = self.plugin_id_of(id) {
                 self.surface_reader_removed(&plugin_id);
@@ -225,6 +229,7 @@ impl PluginHost {
         detached: vosu_plugin_api::SessionDetached,
     ) {
         self.surface_session_detaching(crate::state::SessionKey(handle.0));
+        self.resource_session_detached(handle);
         if let Some(owner) = &owner {
             self.cancel_read_plans_for_session(owner, handle);
             self.cancel_scans_for_session(owner, handle);

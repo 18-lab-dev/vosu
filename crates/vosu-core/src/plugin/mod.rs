@@ -85,6 +85,11 @@ pub use focus::{
     FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
     SyntheticForegroundSource,
 };
+pub use host::resource_requests::{
+    MAX_PENDING_RESOURCE_REQUESTS, ResourceOwner, ResourceReply, ResourceRequest,
+    ResourceRequestError, ResourceRequests,
+};
+pub use host::resources::RootCapability;
 pub use host::{PluginHost, ProcessRecord};
 pub use host_services::{PluginHostHandler, PluginInstanceId};
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};

@@ -114,6 +114,10 @@ impl PluginHost {
                     pending: Vec::new(),
                 },
             );
+        self.resource_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .register(id, &plugin.manifest().root_slots);
 
         let created = (|| {
             let settings = self
@@ -139,6 +143,10 @@ impl PluginHost {
             Ok(instance) => instance,
             Err(error) => {
                 self.timers.cancel_all(id);
+                self.resource_state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(id);
                 self.instances
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
@@ -167,6 +175,10 @@ impl PluginHost {
             drop(guard);
             self.instances_changed.notify_all();
             self.timers.cancel_all(id);
+            self.resource_state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(id);
             // F3: same reason as the `created` error path above — this
             // instance is being destroyed, never published `Live`, so
             // its matcher table (not yet registered) needs no unregister.
@@ -197,6 +209,10 @@ impl PluginHost {
                 drop(guard);
                 self.instances_changed.notify_all();
                 self.timers.cancel_all(id);
+                self.resource_state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(id);
                 if let Err(destroy_error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
                     tracing::warn!(
                         ?id, %destroy_error,
