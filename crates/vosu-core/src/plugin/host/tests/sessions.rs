@@ -449,10 +449,17 @@ fn reoffer_keeps_process_facts() {
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
     let _enter = runtime.enter();
     let (_log_dir, host) = test_host(runtime.handle().clone());
+    // Distinct plugin ids from `decline_re_offers_to_next_candidate_and_
+    // detaches_decliner`'s own `testkit.session.decliner`/
+    // `testkit.session.accepter` — the testkit's own event/config
+    // registries are process-wide statics keyed by plugin id (this
+    // module's own doc comment), so two tests racing on the same id in
+    // parallel overwrite each other's event channel (this one and that
+    // one flaked natively, intermittently, from exactly that collision).
     let decliner_events = create_session_instance(
         &host,
         PluginInstanceId::new(1),
-        "testkit.session.decliner",
+        "testkit.session.decliner.reoffer",
         &["shared2.exe"],
         SessionPluginConfig {
             focus_priority: false,
@@ -463,9 +470,9 @@ fn reoffer_keeps_process_facts() {
     let accepter_events = create_session_instance_from_manifest(
         &host,
         PluginInstanceId::new(2),
-        "testkit.session.accepter",
+        "testkit.session.accepter.reoffer",
         SessionPluginConfig::default(),
-        &session_manifest_by_path_suffix("testkit.session.accepter", "shared2.exe"),
+        &session_manifest_by_path_suffix("testkit.session.accepter.reoffer", "shared2.exe"),
     );
 
     host.process_appeared(ProcessRecord {

@@ -85,10 +85,18 @@ pub fn register_with_config(
 ) -> Receiver<SessionEvent> {
     let plugin_id = plugin_id.into();
     let (tx, rx) = sync_channel(64);
-    events_registry()
+    let mut events = events_registry()
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .insert(plugin_id.clone(), tx);
+        .unwrap_or_else(|poison| poison.into_inner());
+    assert!(
+        !events.contains_key(&plugin_id),
+        "testkit plugin id {plugin_id:?} is already registered: ids must be unique per test \
+         (a process-wide registry keyed by plugin id silently overwrites the earlier test's \
+         event channel when two tests share one, which can deliver its events to the wrong \
+         test under parallel execution)"
+    );
+    events.insert(plugin_id.clone(), tx);
+    drop(events);
     config_registry()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
@@ -104,11 +112,14 @@ pub struct SessionPlugin {
 
 impl Plugin for SessionPlugin {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+        // Consumed (`remove`, not `get().cloned()`): once this instance has
+        // taken its own registration, the plugin id is free again for a
+        // later, different test to reuse without tripping
+        // `register_with_config`'s own duplicate check.
         let config = config_registry()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .get(&init.plugin_id)
-            .copied()
+            .remove(&init.plugin_id)
             .unwrap_or_default();
         if config.fail_create {
             return Err(PluginError(vosu_plugin_api::vosu_status::VOSU_ERR_BACKEND));
@@ -116,8 +127,7 @@ impl Plugin for SessionPlugin {
         let events = events_registry()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .get(&init.plugin_id)
-            .cloned()
+            .remove(&init.plugin_id)
             .unwrap_or_else(|| {
                 panic!(
                     "no session-event channel registered for {:?}",

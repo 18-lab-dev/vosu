@@ -176,7 +176,10 @@ with an MSVC cross-check and a native Windows job. Coding agents with access
 to the project's Windows VM: for Windows-sensitive changes, run
 `python scripts/vm-test.py [--package P] [--test T] [--lib] [-- <filter>]`
 before handing off. It is a fast, narrower lever than the native phase of
-`scripts/prepush.py`; it never starts the VM.
+`scripts/prepush.py`; it never starts the VM. For a suspected native flake,
+`python scripts/vm-stress.py [--package P] [--lib] [--iterations N] [--keep-remote] -- <filter>`
+builds the filtered test binary once and reruns it (default 30x), reporting
+every failing test name and iteration.
 
 Keep these in the same pull request:
 

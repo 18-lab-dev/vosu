@@ -207,7 +207,18 @@ fn sync_on_a_cached_dead_process_answers_target_gone() {
         ReadPlanPluginConfig::default(),
     );
 
-    let pid = 500_100_301;
+    // A synthetic pid distinct from every other test's own
+    // (`set_session_memory_hook_for_tests`'s own doc comment: its
+    // registry is keyed by pid and process-wide, so two tests sharing
+    // one pid clobber each other's hook when they run concurrently). This
+    // used to collide with `pool.rs`'s own `500_100_301`
+    // (`a_cancel_racing_admission_still_removes_the_queued_job_and_leaves_no_leak`),
+    // which flaked natively under full-suite parallelism: whichever test's
+    // `set_session_memory_hook_for_tests` call landed second silently
+    // redirected the other's reads to its own `ProcessMemory`, so an
+    // occupying plan here could run against `DyingMemory` instead of
+    // `GatedMemory` (or vice versa) and finish instead of blocking.
+    let pid = 500_100_304;
     let memory = Arc::new(DyingMemory::new());
     set_session_memory_hook_for_tests(
         pid,

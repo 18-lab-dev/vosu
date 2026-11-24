@@ -398,7 +398,10 @@ mod tests {
         registry.set(other, 1, Some(10), delivery);
         rx.recv_timeout(Duration::from_secs(2)).unwrap();
         // Drains whatever had already fired for either instance before
-        // cancellation.
+        // cancellation. Best-effort only (never load-bearing): the
+        // assertion loop below tolerates a stray `instance` delivery on
+        // its own, since this drain cannot actually prove `instance`'s
+        // own still-ticking periodic timers have gone quiet (see below).
         while rx.recv_timeout(Duration::from_millis(5)).is_ok() {}
 
         registry.cancel_all(instance);
@@ -406,13 +409,46 @@ mod tests {
         assert_eq!(registry.live_count(other), 1);
 
         // `cancel_all` removes every entry of `instance` under the same
-        // lock `run_timer` checks before delivering, so no `instance`
-        // timer can fire after this call has returned: every delivery
-        // seen from here on must be `other`'s, deterministically (no
-        // "wait and hope nothing was in flight" sleep needed).
+        // lock `run_timer` checks before delivering, so no *new*
+        // `instance` delivery can start after this call has returned.
+        // That is not quite "every delivery from here on is `other`'s",
+        // though: `cancel`'s own doc comment documents a `TIMER_FIRED`
+        // that `timer_fired` already decided to deliver as still able to
+        // reach this channel once more after `cancel`/`cancel_all`
+        // returns — this test's own preceding drain loop cannot close
+        // that window deterministically (a 10ms-period timer can still
+        // have a tick genuinely in flight, racing this test's own thread
+        // for `cancel_all`'s lock, regardless of how long the drain
+        // waited first), and under real contention it does land here
+        // (flaked natively, intermittently, from exactly this gap).
+        // Tolerate at most one stray delivery per timer `instance`
+        // itself registered (1 and 2, so two total) strictly before the
+        // first `other` delivery; once `other` has been seen, every
+        // later delivery must still be `other`, deterministically — a
+        // genuinely new `instance` delivery at that point would mean one
+        // started after `cancel_all` returned, the real race this test
+        // exists to close.
+        let mut stray_instance_budget = 2;
+        let mut seen_other = false;
         for _ in 0..5 {
             match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok((fired_instance, _)) => assert_eq!(fired_instance, other),
+                Ok((fired_instance, _)) if fired_instance == other => {
+                    seen_other = true;
+                }
+                Ok((fired_instance, _)) => {
+                    assert_eq!(fired_instance, instance);
+                    assert!(
+                        !seen_other,
+                        "an `instance` delivery after `other` has already been \
+                         seen means one started after `cancel_all` returned"
+                    );
+                    assert!(
+                        stray_instance_budget > 0,
+                        "more stray `instance` deliveries than it had its own \
+                         timers (2): a genuinely new delivery, not a straggler"
+                    );
+                    stray_instance_budget -= 1;
+                }
                 Err(_) => break,
             }
         }

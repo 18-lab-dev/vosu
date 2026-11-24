@@ -69,10 +69,17 @@ pub fn register(plugin_id: impl Into<String>) -> (Receiver<ScanEvent>, SyncSende
     let plugin_id = plugin_id.into();
     let (events_tx, events_rx) = sync_channel(64);
     let (commands_tx, commands_rx) = sync_channel(64);
-    events_registry()
+    let mut events = events_registry()
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .insert(plugin_id.clone(), events_tx);
+        .unwrap_or_else(|poison| poison.into_inner());
+    assert!(
+        !events.contains_key(&plugin_id),
+        "testkit plugin id {plugin_id:?} is already registered: ids must be unique per test \
+         (a process-wide registry keyed by plugin id silently overwrites the earlier test's \
+         event channel when two tests share one)"
+    );
+    events.insert(plugin_id.clone(), events_tx);
+    drop(events);
     commands_registry()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
@@ -87,11 +94,12 @@ pub struct ScanPlugin {
 
 impl Plugin for ScanPlugin {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+        // Consumed (`remove`): frees the plugin id for a later, different
+        // test to reuse without tripping `register`'s duplicate check.
         let events = events_registry()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .get(&init.plugin_id)
-            .cloned()
+            .remove(&init.plugin_id)
             .unwrap_or_else(|| panic!("no scan event channel registered for {:?}", init.plugin_id));
         let commands = commands_registry()
             .lock()

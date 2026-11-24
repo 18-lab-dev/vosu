@@ -293,18 +293,25 @@ pub(crate) fn set_session_memory_hook_for_tests(
     process: Arc<dyn ProcessMemory>,
     bitness: ProcessBitness,
 ) {
-    session_memory_hooks()
+    let mut hooks = session_memory_hooks()
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(
+        .unwrap_or_else(PoisonError::into_inner);
+    assert!(
+        !hooks.contains_key(&pid),
+        "synthetic pid {pid} is already hooked: pids must be unique per test (a process-wide \
+         registry keyed by pid silently overwrites the earlier test's `ProcessMemory`, \
+         redirecting its reads to the wrong test, when two tests share one); call \
+         `clear_session_memory_hook_for_tests` first if this test genuinely reuses it"
+    );
+    hooks.insert(
+        pid,
+        Arc::new(SessionMemory {
+            process,
+            bitness,
             pid,
-            Arc::new(SessionMemory {
-                process,
-                bitness,
-                pid,
-                modules: Mutex::new(None),
-            }),
-        );
+            modules: Mutex::new(None),
+        }),
+    );
 }
 
 /// Removes `pid`'s hook, the inverse of
