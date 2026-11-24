@@ -85,6 +85,9 @@ calculation backend (`crates/vosu-osu-state/src/state_backend.rs`) live under
 depend only on the model and `vosu-osu-state -> vosu-osu-calc` (a `scripts/crate-boundaries.txt`
 crate edge, not a `scripts/module-boundaries/<crate>.txt` module edge, since `state` is no longer a top-level
 module of the `vosu` package) is the only edge left.
+The pure `LiveBeatmapEngine` implementation is shared from
+`vosu-osu-calc::live_beatmap`; state owns only calculation orchestration, so
+chart-resource consumers need no state-reducer dependency.
 `server` and `tools` no longer cycle either: `server::routes::RouteExtension`
 (implemented by `tools::ToolHost`) covers the reserved `/tools` overlay prefix
 and the dashboard tool management routes, and `server::ids::valid_id`

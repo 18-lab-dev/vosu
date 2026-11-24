@@ -4,6 +4,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+- Share the pure chart calculation engine from `vosu-osu-calc`, independently of state orchestration.
+
 - Add the unmounted bus-backed upstream v2/precise projection crate, with
   explicit private-path grants, source-faithful key slots and tournament
   readiness, upstream wire names and ADR 0021 field removals.
