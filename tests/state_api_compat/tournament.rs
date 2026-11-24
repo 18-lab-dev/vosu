@@ -250,8 +250,7 @@ fn state_schema_contract_entries_do_not_authorize_adapter_wire_differences() {
     publisher
         .publish(Arc::new(snapshot), Delivery::All)
         .unwrap();
-    // Both adapters that emit the lazer client list fail like 1.x; precise
-    // carries no tourney aggregate and is outside this contract entry.
+    // Both adapters that emit the lazer client list fail like 1.x.
     for schema in ["v1", "v2"] {
         match fixture.outcome(schema) {
             CachedJson::Failed { status, body } => {
@@ -262,6 +261,34 @@ fn state_schema_contract_entries_do_not_authorize_adapter_wire_differences() {
             other => panic!("{schema}: missing score must fail, got {other:?}"),
         }
     }
+    // Precise does NOT fail: it stays Ready with `tourney: []`, over HTTP and
+    // on the precise WebSocket feed alike. Evidence for the 1.x behavior:
+    // - v1.2.5 (and pre-M0 baseline e1df38f) `src/api/precise.rs`
+    //   `tourney_spectators` returns an empty list unless a stable
+    //   tournament-manager instance exists, and reads only stable IPC
+    //   spectator instances; lazer multi-spectating scores are never consulted,
+    //   so a missing lazer score has no precise failure path.
+    // - The pinned source oracle `lazer-lobby-tournament/v2-precise.json`
+    //   (upstream 2359305) is `..."tourney":[]` for an input with two lazer
+    //   spectating clients, i.e. precise never lists lazer clients.
+    let pinned =
+        fs::read(oracle::fixture_root().join("lazer-lobby-tournament/v2-precise.json")).unwrap();
+    let http = ready(&input.id, "v2-precise", fixture.outcome("v2-precise"));
+    assert_eq!(
+        String::from_utf8_lossy(&http),
+        String::from_utf8_lossy(&pinned)
+    );
+    let frame = {
+        use vosu::server::websocket::{Schema, StateProvider};
+        fixture.providers[3]
+            .capture(Schema::V2Precise)
+            .expect("precise feed snapshot")
+            .encode_unfiltered()
+            .expect("the precise feed frame must not fail for a missing lazer score")
+    };
+    assert_eq!(frame, http, "the precise feed sends the same document");
+    let precise: Value = serde_json::from_slice(&http).unwrap();
+    assert_eq!(precise["tourney"], json!([]));
     drop(publisher);
     drop(fixture);
 
