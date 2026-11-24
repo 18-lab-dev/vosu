@@ -3539,6 +3539,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vosu-adapter-streamcompanion"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "vosu-adapter-support",
+ "vosu-osu-model",
+ "vosu-plugin-api",
+ "vosu-surface",
+]
+
+[[package]]
 name = "vosu-adapter-support"
 version = "0.1.0"
 dependencies = [

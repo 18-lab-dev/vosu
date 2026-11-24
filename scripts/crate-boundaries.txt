@@ -100,3 +100,8 @@ vosu-osu -> vosu-proptest
 
 vosu-adapter-support -> vosu-osu-model
 vosu -> vosu-adapter-support
+
+vosu-adapter-streamcompanion -> vosu-adapter-support
+vosu-adapter-streamcompanion -> vosu-osu-model
+vosu-adapter-streamcompanion -> vosu-plugin-api
+vosu-adapter-streamcompanion -> vosu-surface
