@@ -200,6 +200,83 @@ async fn update_failure_rolls_back_and_success_replaces_with_backup_removed() {
 }
 
 #[tokio::test]
+async fn replaces_of_installed_package_and_foreign_source_update_change_nothing() {
+    let fixture = Fixture::new(vec![record(OFFICIAL, true), record("alice/trusted", true)]).await;
+    let mut old = plugin("acme.old", "1.0.0", "in-process", json!([]));
+    old.publish(&fixture.server, "/old.zip");
+    let job = fixture
+        .install(
+            plan(
+                &catalog(&[&old], &[]),
+                &record(OFFICIAL, true),
+                PackageKind::Plugin,
+                "acme.old",
+            ),
+            &[],
+        )
+        .await;
+    assert_eq!(job.status, "completed", "{:?}", job.error);
+    // Same package id from another (trusted) source: never overwritten.
+    let mut foreign = plugin("acme.old", "1.1.0", "in-process", json!([]));
+    foreign.publish(&fixture.server, "/foreign.zip");
+    let job = fixture
+        .install(
+            plan(
+                &catalog(&[&foreign], &[]),
+                &record("alice/trusted", true),
+                PackageKind::Plugin,
+                "acme.old",
+            ),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        job.error.as_deref(),
+        Some("acme.old is installed from a different source")
+    );
+    // A successor naming the installed id in `replaces`: no implicit migration.
+    let mut successor = plugin("acme.new", "2.0.0", "in-process", json!([]));
+    set_replaces(&mut successor, "acme.old");
+    successor.publish(&fixture.server, "/new.zip");
+    let job = fixture
+        .install(
+            plan(
+                &catalog(&[&successor], &[]),
+                &record(OFFICIAL, true),
+                PackageKind::Plugin,
+                "acme.new",
+            ),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        job.error.as_deref(),
+        Some(
+            "acme.old is installed and named in replaces; data-preserving replacement is not performed by catalog install"
+        )
+    );
+    assert_eq!(names(&fixture.layout.plugins), ["acme.old"]);
+    let document = fixture.records();
+    assert_eq!((document.generation, document.records.len()), (1, 1));
+    assert_eq!(installed_version_of(&fixture, "acme.old"), "1.0.0");
+}
+
+fn set_replaces(package: &mut Plugin, old: &str) {
+    package.manifest["replaces"] = json!([old]);
+    package.entry["replaces"] = json!([old]);
+    package.files[0].1 = toml::to_string(&package.manifest).unwrap().into_bytes();
+}
+
+fn installed_version_of(fixture: &Fixture, id: &str) -> String {
+    let text =
+        std::fs::read_to_string(fixture.layout.plugins.join(id).join("manifest.toml")).unwrap();
+    toml::from_str::<toml::Value>(&text).unwrap()["version"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
 async fn unmanaged_and_foreign_destinations_are_never_overwritten() {
     let fixture = Fixture::new(vec![record(OFFICIAL, true)]).await;
     let mut dependency = plugin("acme.dep", "1.0.0", "in-process", json!([]));

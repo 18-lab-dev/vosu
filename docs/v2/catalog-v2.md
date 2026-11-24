@@ -985,6 +985,24 @@ unpublished batch, and crash recovery runs before discovery/load.
 Expose/load only a completely committed dependency graph. No partial
 dependency install may become visible because a later root failed.
 
+**I0 implementation contract (`vosu-core::catalog::install`).** ZIP preflight
+also refuses a repeated entry name and any two names that one supported OS
+would merge or alter: case-insensitive collisions, Windows device names
+(`CON`, `NUL`, `COM1`… with any extension) and a trailing dot or space. The
+downloaded archive is hashed and extracted from one retained handle; package
+assets are read only from the staged tree, refusing links/reparse points,
+missing files and traversal. A plugin package must contain the
+`[targets.<host target>]` library, a tool its `ui.root/ui.entry`, an overlay
+its root `index.html`. Installation never overwrites a package directory the
+catalog did not install, nor one installed from another source, and does not
+perform `replaces` data migration: an add whose `replaces` names an installed
+package fails with no change. The installed-records generation is the single
+commit point: recovery rolls forward when it matches the journal's next
+generation, rolls back when it matches the previous one, and otherwise refuses
+rather than guessing. After commit, each plugin is authorized against current
+source policy and approval; a `process` plugin is recorded and reported as
+requiring the M5 process runtime and is never loaded in-process instead.
+
 ### Dependency-only autoremove
 
 Each installed plugin's origin is recorded as `installed_for: "requested"` (the
