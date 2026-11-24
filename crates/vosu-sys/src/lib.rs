@@ -16,5 +16,6 @@ compile_error!("the test-harness feature is forbidden in release builds");
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub mod events;
+pub mod fs;
 pub mod platform;
 pub mod process;

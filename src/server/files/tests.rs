@@ -15,12 +15,11 @@ fn decoding_is_exactly_once_and_path_safe() {
 
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("folder")).unwrap();
-    let child = safe_child(root.path(), "folder/map.osu").unwrap();
-    assert_eq!(child.root, root.path());
-    assert_eq!(child.relative, Path::new("folder/map.osu"));
+    let child = SafeRelativePath::parse("folder/map.osu").unwrap();
+    assert_eq!(child.as_path(), Path::new("folder/map.osu"));
     for hostile in ["/etc/passwd", "../secret", "folder/../../secret"] {
         assert!(matches!(
-            safe_child(root.path(), hostile),
+            SafeRelativePath::parse(hostile),
             Err(SafePathError::InvalidComponent)
         ));
     }
@@ -30,25 +29,26 @@ fn decoding_is_exactly_once_and_path_safe() {
         "%2Fetc/passwd",
     ] {
         let decoded = decode_request_path(encoded).unwrap();
-        assert!(safe_child(root.path(), &decoded).is_err(), "{encoded}");
+        assert!(SafeRelativePath::parse(&decoded).is_err(), "{encoded}");
     }
 }
 
 #[cfg(windows)]
 #[test]
 fn drive_prefixed_later_segments_cannot_replace_the_relative_path() {
-    let root = tempfile::tempdir().unwrap();
     for hostile in [r"folder\C:Windows", r"¡\a:", r"x\c:secret.txt"] {
         assert!(
             matches!(
-                safe_child(root.path(), hostile),
+                SafeRelativePath::parse(hostile),
                 Err(SafePathError::InvalidComponent)
             ),
             "{hostile}"
         );
     }
-    let child = safe_child(root.path(), r"folder\name:stream").unwrap();
-    assert_eq!(child.relative, Path::new(r"folder\name:stream"));
+    assert!(matches!(
+        SafeRelativePath::parse(r"folder\name:stream"),
+        Err(SafePathError::InvalidComponent)
+    ));
 }
 
 #[cfg(target_os = "linux")]
@@ -302,48 +302,12 @@ fn mime_and_media_policy_use_requested_name_not_symlink_target() {
     assert!(!target.range_eligible);
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn forced_fallback_follows_in_root_alias_and_rejects_outside_alias() {
-    use std::io::Read;
-    use std::os::unix::fs::symlink;
-
-    let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("inside.txt"), b"inside").unwrap();
-    fs::write(outside.path().join("outside.txt"), b"outside").unwrap();
-    symlink("inside.txt", root.path().join("inside-alias")).unwrap();
-    symlink(
-        outside.path().join("outside.txt"),
-        root.path().join("outside-alias"),
-    )
-    .unwrap();
-    let root_file = fs::File::open(root.path()).unwrap();
-
-    let mut inside = secure_open_linux_fallback(
-        &safe_child(root.path(), "inside-alias").unwrap(),
-        &root_file,
-    )
-    .unwrap();
-    let mut content = String::new();
-    inside.read_to_string(&mut content).unwrap();
-    assert_eq!(content, "inside");
-
-    assert!(matches!(
-        secure_open_linux_fallback(
-            &safe_child(root.path(), "outside-alias").unwrap(),
-            &root_file,
-        ),
-        Err(SafePathError::EscapesRoot)
-    ));
-}
-
 #[test]
 fn directory_index_escapes_text_and_encodes_hrefs() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("report & 'x'.osu"), b"").unwrap();
     fs::create_dir(root.path().join("space + ü")).unwrap();
-    let opened = secure_open(&safe_child(root.path(), "").unwrap()).unwrap();
+    let opened = open_child(root.path(), &SafeRelativePath::parse("").unwrap()).unwrap();
     let html = build_directory_index(&opened.file, "/Songs/").unwrap();
     assert!(html.contains("<ul id=\"overlays-list\">"));
     assert!(html.contains("<title>vosu - /Songs/</title>"));
@@ -358,7 +322,7 @@ fn directory_index_enumerates_open_handle_after_name_swap() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("served")).unwrap();
     fs::write(root.path().join("served/original.txt"), b"safe").unwrap();
-    let opened = secure_open(&safe_child(root.path(), "served").unwrap()).unwrap();
+    let opened = open_child(root.path(), &SafeRelativePath::parse("served").unwrap()).unwrap();
 
     fs::rename(root.path().join("served"), root.path().join("held")).unwrap();
     fs::create_dir(root.path().join("served")).unwrap();
@@ -485,24 +449,27 @@ fn response_plan_contains_handler_ready_headers() {
     }
 }
 
-#[cfg(windows)]
-#[test]
-fn windows_final_path_check_rejects_junction_escape_and_prefix_collision() {
-    assert!(windows_path_is_within(
-        Path::new(r"C:\static"),
-        Path::new(r"c:\static\counter")
-    ));
-    assert!(!windows_path_is_within(
-        Path::new(r"C:\static"),
-        Path::new(r"C:\static-escape\counter")
-    ));
-    // A junction/name-surrogate resolves to its target in the handle-derived
-    // final path, so an outside target fails this same component comparison.
-    assert!(!windows_path_is_within(
-        Path::new(r"C:\static"),
-        Path::new(r"D:\outside\counter")
-    ));
-}
-
 #[path = "tests_prop.rs"]
 mod tests_prop;
+
+#[cfg(target_os = "linux")]
+#[test]
+fn legacy_static_and_counter_files_preserve_colon_names() {
+    use std::io::Read;
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("name:with-colon"), b"legacy-colon").unwrap();
+    for resolve in [resolve_encoded_resource, resolve_encoded_counter_resource] {
+        let ResourceOutcome::File(mut target) = resolve(
+            Some(root.path()),
+            "name%3Awith-colon",
+            "/name%3Awith-colon",
+            MissingKind::NotFound,
+        )
+        .unwrap() else {
+            panic!("Unix colon name must remain served");
+        };
+        let mut content = String::new();
+        target.file.read_to_string(&mut content).unwrap();
+        assert_eq!(content, "legacy-colon");
+    }
+}
