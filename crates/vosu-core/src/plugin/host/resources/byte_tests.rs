@@ -124,7 +124,7 @@ impl BytesTest {
         let plugin = format!("testkit.bytes.{suffix}");
         let executable = format!("byte-{pid}.exe");
         let manifest = format!(
-            "kind='plugin'\nmanifest_version=1\nid='{plugin}'\nname='bytes'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs']\n[match]\nprocess_names=['{executable}']\n"
+            "kind='plugin'\nmanifest_version=1\nid='{plugin}'\nname='bytes'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs']\n[match]\nprocess_names=['{executable}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
         );
         let (attached, attachments) = sync_channel(1);
         let (closed, close_events) = sync_channel(128);
@@ -143,13 +143,17 @@ impl BytesTest {
             .lock()
             .unwrap()
             .insert(plugin, Arc::clone(&fixture));
-        let loaded = load_bundled(&[BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_plugin_vtable,
-        }])
+        let loaded = load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            &[BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let instance = PluginInstanceId(u64::from(pid));

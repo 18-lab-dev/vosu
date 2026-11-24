@@ -414,9 +414,9 @@ async fn prerelease_startup_and_restart_import_only_once_into_isolated_roots() {
 }
 #[test]
 fn prerelease_bundled_manifest_accepts_the_executable_version() {
-    let manifest = vosu_plugin_api::PluginManifest::parse(include_str!(
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(include_str!(
         "../../../crates/vosu-osu/manifest.toml"
-    ))
+    )).and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
     .unwrap();
     let host = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
     let requirement = semver::VersionReq::parse(&manifest.host).unwrap();

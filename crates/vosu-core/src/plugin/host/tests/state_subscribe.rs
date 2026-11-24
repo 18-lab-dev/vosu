@@ -23,13 +23,17 @@ fn publisher(host: &Host, n: u64) -> (String, u64, Receiver<PublisherEvent>) {
     let manifest = session_manifest(&id, &[&id]).replace("[match]", "concurrent_dispatch=true\ncovers=['field:vosu.play.combo','field:vosu.play.accuracy','field:vosu.status.status']\n[match]");
     publisher::register_manifest(&id, &manifest);
     let events = publisher::register(&id);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: publisher::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(n),
@@ -56,13 +60,17 @@ fn subscriber(host: &Host, n: u64, pool: Option<Arc<WorkerPool>>) -> Receiver<Su
             "[match]"
         },
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: subscriber::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: subscriber::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(n),

@@ -22,7 +22,7 @@ async fn perform(
 fn attach(host: &Arc<PluginHost>, instance: PluginInstanceId, plugin: &str, pid: u32) -> u64 {
     let executable = format!("resource-{pid}.exe");
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin}'\nname='roots'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs']\n[match]\nprocess_names=['{executable}']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin}'\nname='roots'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs']\n[match]\nprocess_names=['{executable}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     );
     let events = session::register_with_config(
         plugin,
@@ -31,13 +31,17 @@ fn attach(host: &Arc<PluginHost>, instance: PluginInstanceId, plugin: &str, pid:
             ..Default::default()
         },
     );
-    let loaded = load_bundled(&[BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: session::vosu_plugin_vtable,
-    }])
+    let loaded = load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: session::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     let dir = tempfile::tempdir().unwrap();
     host.create_instance(instance, &loaded[0], dir.path().to_owned(), None)
@@ -315,14 +319,18 @@ fn resource_requests_real_abi_reentrancy_and_dispatch_failure() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let _enter = runtime.enter();
     let (_logs, host) = test_host(runtime.handle().clone());
-    let manifest = "kind='plugin'\nmanifest_version=1\nid='testkit.resources.reentrant'\nname='reentrant'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs']\n[match]\nprocess_names=['reentrant-98206.exe']\n";
-    let loaded = load_bundled(&[BundledPlugin {
-        manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: reentrant::vosu_plugin_vtable,
-    }])
+    let manifest = "kind='plugin'\nmanifest_version=1\nid='testkit.resources.reentrant'\nname='reentrant'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs']\n[match]\nprocess_names=['reentrant-98206.exe']\n[[provides]]\nid='game:fixture'\nversion='*'\n";
+    let loaded = load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[BundledPlugin {
+            manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: reentrant::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     let data = tempfile::tempdir().unwrap();
     let instance = PluginInstanceId(8206);

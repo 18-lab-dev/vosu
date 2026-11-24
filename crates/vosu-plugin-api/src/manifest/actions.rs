@@ -32,7 +32,11 @@ pub(super) fn validate(manifest: &PluginManifest) -> Result<(), ManifestError> {
 }
 
 /// Shared exact declaration/provide bijection for manifests and catalog entries.
-pub fn validate_actions(id: &str, actions: &[ActionDeclaration], capabilities: &[Capability]) -> Result<(), ManifestError> {
+pub fn validate_actions(
+    id: &str,
+    actions: &[ActionDeclaration],
+    capabilities: &[Capability],
+) -> Result<(), ManifestError> {
     let fail = |reason: &str| ManifestError::Action(reason.to_owned());
     let mut names = HashSet::new();
     for action in actions {

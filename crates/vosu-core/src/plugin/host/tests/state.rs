@@ -21,6 +21,62 @@ mod api;
 mod resources;
 mod surface;
 
+#[test]
+fn validation_context_observes_provider_enabled_after_startup() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_logs, host) = test_host(rt.handle().clone());
+    let application_version = semver::Version::parse("2.0.0-alpha.1").unwrap();
+    let package = vosu_plugin_api::manifest::PackageManifest::parse(
+        &format!("manifest_version=1\nkind='overlay'\nid='observer'\nname='Observer'\nversion='1.0.0'\nhost='={application_version}'\n[[requires]]\nid='field:test.enabled.state'\nversion='^1.0.0'\n"),
+    ).unwrap();
+    let before = host.validation_snapshot();
+    assert_eq!(
+        before
+            .validate(&package, &application_version, "overlays", false)
+            .unwrap_err()
+            .rule,
+        "manifest.unknown-namespace",
+    );
+    let manifest = "kind='plugin'\nmanifest_version=1\nid='test.enabled.state'\nname='Enabled source'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:test.enabled.state'\nversion='1.0.0'\nschema='state.json'\n";
+    publisher::register_manifest("test.enabled.state", manifest);
+    let _events = publisher::register("test.enabled.state");
+    let loaded = registry::load_bundled(
+        &application_version,
+        &before,
+        &[registry::BundledPlugin {
+            manifest,
+            settings_schema: None,
+            namespace_schemas: &[r#"{"title":"test.enabled.state","version":"1.0.0","type":"object","properties":{}}"#],
+            action_schemas: &[],
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    ).unwrap();
+    host.create_instance(
+        PluginInstanceId::new(78401),
+        &loaded[0],
+        std::env::temp_dir(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        host.validation_snapshot()
+            .validate(&package, &application_version, "overlays", false)
+            .unwrap(),
+        vosu_plugin_api::manifest::HostSupport::Supported,
+    );
+    assert!(
+        before
+            .validate(&package, &application_version, "overlays", false)
+            .is_err()
+    );
+    host.destroy_all(RECV_TIMEOUT);
+    assert!(
+        host.validation_snapshot()
+            .validate(&package, &application_version, "overlays", false)
+            .is_err()
+    );
+}
 fn publisher_instance(
     host: &Arc<super::super::PluginHost>,
     id: &str,
@@ -43,13 +99,17 @@ fn publisher_instance_covering(
     );
     publisher::register_manifest(id, &manifest);
     let events = publisher::register(id);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &publisher::manifest(id),
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: publisher::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &publisher::manifest(id),
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(instance),
@@ -324,13 +384,17 @@ fn namespace_schema_registration_refuses_visibility_and_unregisters_on_destroy()
         "[[provides]]\nid='field:test.k4.schemas'\nversion='1.0.0'\nschema='schema.json'\n[match]",
     );
     let invalid = r#"{"title":"test.k4.schemas","version":"1.0.0","type":"object","properties":{"internal":{"type":"object","x-visibility":"plugins"}}}"#;
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[invalid],
-        action_schemas: &[],
-        vtable: vosu_plugin_testkit::session::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[invalid],
+            action_schemas: &[],
+            vtable: vosu_plugin_testkit::session::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     assert!(matches!(
         host.create_instance(
@@ -343,13 +407,17 @@ fn namespace_schema_registration_refuses_visibility_and_unregisters_on_destroy()
     ));
     assert!(host.state().registry.read().unwrap().get(id).is_none());
     let valid = r#"{"title":"test.k4.schemas","version":"1.0.0","type":"object","properties":{}}"#;
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[valid],
-        action_schemas: &[],
-        vtable: vosu_plugin_testkit::session::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[valid],
+            action_schemas: &[],
+            vtable: vosu_plugin_testkit::session::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     let _events = vosu_plugin_testkit::session::register(id);
     host.create_instance(
@@ -395,7 +463,13 @@ fn development_schema_with_x_visibility_refuses_instance() {
     );
     std::fs::write(dir.path().join("manifest.toml"), manifest).unwrap();
     std::fs::write(dir.path().join("schema.json"), r#"{"title":"test.k4.development","version":"1.0.0","type":"object","properties":{"internal":{"type":"object","x-visibility":"plugins"}}}"#).unwrap();
-    let loaded = registry::load_development(dir.path(), true).unwrap();
+    let loaded = registry::load_development(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        dir.path(),
+        true,
+    )
+    .unwrap();
     assert_eq!(loaded.namespace_schemas().len(), 1);
     assert!(matches!(
         host.create_instance(
@@ -424,7 +498,7 @@ fn development_schema_symlink_cannot_escape_plugin_directory() {
     std::os::unix::fs::symlink(outside.path(), dir.path().join("schema.json")).unwrap();
     std::fs::write(dir.path().join("manifest.toml"), "kind='plugin'\nmanifest_version=1\nid='test.k4.confine'\nname='Confine'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:test.k4.confine'\nversion='1.0.0'\nschema='schema.json'\n").unwrap();
     assert!(
-        matches!(registry::load_development(dir.path(), true), Err(crate::plugin::HostError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied)
+        matches!(registry::load_development(&semver::Version::parse("2.0.0-alpha.1").unwrap(), &crate::plugin::ValidationSnapshot::default(), dir.path(), true), Err(crate::plugin::HostError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied)
     );
 }
 

@@ -17,7 +17,7 @@ fn setup(id: &str, pid: u32) -> Harness {
     let mut h = Harness::new();
     std::fs::write(h.root.path().join("fixture.osu"), FILE).unwrap();
     let manifest = format!(
-        "{}\nroot_slots=['fixture']\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='field:{id}'\nversion='1.0.0'\nschema='namespace.json'\n[[resource_kinds]]\nkind='fixture-file'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-stream'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-tree'\ntree=true\nfamilies=['chart-text']\n",
+        "{}\nroot_slots=['fixture']\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='field:{id}'\nversion='1.0.0'\nschema='namespace.json'\n[[resource_kinds]]\nkind='fixture-file'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-stream'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-tree'\ntree=true\nfamilies=['chart-text']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
         manifest(id)
     );
     let schema =

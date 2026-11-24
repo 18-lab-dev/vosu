@@ -5,11 +5,14 @@ fn actions_callee_calls_back_into_caller_during_dispatch_without_deadlock() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let _entered = runtime.enter();
     let (_dir, host) = test_host(runtime.handle().clone());
-    let caller = instance(
+    let caller = instance_mode(
         &host,
         9181,
         "tests.actions.reentrantcaller",
         "[[requires]]\nid = \"action:tests.actions.reentrantcallee.nested.echo\"\nversion = \"^1.0\"",
+        "none",
+        "",
+        &["tests.actions.reentrantcallee"],
     );
     let callee = instance(
         &host,

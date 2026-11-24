@@ -157,9 +157,13 @@ fn steady_state_scalar_commit_allocations_bounded() {
     use vosu_core::state::{
         ClientFacts, Pointer, PublisherGrant, SchemaRegistry, SessionKey, StateStore, StateValue,
     };
-    use vosu_plugin_api::{PluginManifest, PublishFieldRef, PublishValueRef};
+    use vosu_plugin_api::{PublishFieldRef, PublishValueRef};
     let grant = PublisherGrant::from_manifest(
-        &PluginManifest::parse(include_str!("../crates/vosu-osu/manifest.toml")).unwrap(),
+        &vosu_plugin_api::manifest::PackageManifest::parse(include_str!(
+            "../crates/vosu-osu/manifest.toml"
+        ))
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap(),
     )
     .unwrap();
     let store = StateStore::new(Arc::new(RwLock::new(SchemaRegistry::with_core().unwrap())));

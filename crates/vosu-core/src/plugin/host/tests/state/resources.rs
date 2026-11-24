@@ -14,13 +14,17 @@ fn abi_reference_publication_and_detach_update_membership_without_resolving() {
     );
     publisher::register_manifest(id, &manifest);
     let events = publisher::register(id);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &publisher::manifest(id),
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: publisher::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &publisher::manifest(id),
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(18731),

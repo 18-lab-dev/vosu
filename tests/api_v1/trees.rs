@@ -286,7 +286,7 @@ fn resources_real_osu_stable_and_lazer_direct_redirect_trees_mutation_and_privac
                 .is_none()
         );
         let mut text = format!(
-            "{}\nroot_slots=['songs','files','skins']\n[match]\nprocess_names=['{id}']\n",
+            "{}\nroot_slots=['songs','files','skins']\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
             manifest(id)
         );
         for (kind, tree, family) in [

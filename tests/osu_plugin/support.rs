@@ -410,13 +410,17 @@ impl Harness {
         };
         manifest.insert("id".into(), toml::Value::String(id.into()));
         let manifest = toml::to_string(&manifest).unwrap();
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
-            namespace_schemas,
-            action_schemas: vosu_osu::ACTION_SCHEMAS,
-            vtable: vosu_plugin_vtable,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &vosu_core::plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
+                namespace_schemas,
+                action_schemas: vosu_osu::ACTION_SCHEMAS,
+                vtable: vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         let sink = Sink::new();
         let installed =
@@ -470,13 +474,17 @@ impl Harness {
         let manifest = format!(
             "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='{id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
         );
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_plugin_testkit::subscriber::vosu_plugin_vtable,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &vosu_core::plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_testkit::subscriber::vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         self.host
             .create_instance(

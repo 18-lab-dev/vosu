@@ -344,11 +344,11 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
-    use vosu_plugin_api::{PluginManifest, PublishValueRef};
+    use vosu_plugin_api::PublishValueRef;
 
     fn fixture(id: &str, key: SessionKey) -> (Arc<StateStore>, PublisherGrant) {
         let grant = PublisherGrant::from_manifest(
-            &PluginManifest::parse(
+            &vosu_plugin_api::manifest::PackageManifest::parse(
                 &r#"
 kind = "plugin"
 manifest_version = 1
@@ -371,6 +371,7 @@ families = ["image"]
 "#
                 .replace("test.store-locking", id),
             )
+            .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
             .unwrap(),
         )
         .unwrap();

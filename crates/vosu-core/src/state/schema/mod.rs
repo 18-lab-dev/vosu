@@ -161,8 +161,8 @@ impl SchemaRegistry {
     /// replace another provider's namespace. Re-registering under the same
     /// owner (a plugin reloading its own schema) is allowed.
     ///
-    /// Transitional V4 deletion target: the host registration caller must move
-    /// to `register_versioned`, then this unversioned seam becomes test-only.
+    /// Unversioned fixtures only; production must supply revision and provenance.
+    #[cfg(any(test, feature = "test-harness"))]
     pub fn register(
         &mut self,
         provider: &str,

@@ -94,16 +94,20 @@ fn load(h: &Harness, root: &std::path::Path) {
         );
     }
     text += "\n[[provides]]\nid='field:fixture.jtwo.value'\nversion='1.4.0'\n[[provides]]\nid='game:jtwo'\nversion='*'\n";
-    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-        manifest: &text,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[
-            ("args.json", "{\"type\":\"string\"}"),
-            ("result.json", "{\"type\":\"string\"}"),
-        ],
-        vtable: fixture::vosu_plugin_vtable,
-    }])
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[plugin::BundledPlugin {
+            manifest: &text,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[
+                ("args.json", "{\"type\":\"string\"}"),
+                ("result.json", "{\"type\":\"string\"}"),
+            ],
+            vtable: fixture::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     h.host
         .create_instance(PluginInstanceId::new(782301), &loaded[0], root.into(), None)

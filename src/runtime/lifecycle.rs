@@ -166,6 +166,7 @@ impl ProductionRuntime {
             self.paths.config().join("settings"),
             self.paths.cache().join("downloads"),
         ));
+        counters.set_validation_host(&self.plugins);
         {
             let counters = Arc::clone(&counters);
             let paths = self.paths.clone();

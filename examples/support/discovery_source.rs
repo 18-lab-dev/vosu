@@ -29,7 +29,7 @@ use vosu_core::plugin::{
     DiscoveryCadence, LinuxSource, MatchPlatform, MatcherEngine, Prefilter, ProcessSource,
     cadence_interval,
 };
-use vosu_plugin_api::PluginManifest;
+use vosu_plugin_api::manifest::PackageManifest;
 
 /// Builds the Linux pre-filter the real `vosu-osu` plugin would register
 /// (`MatcherEngine::prefilter`, §6.1), from its own bundled manifest
@@ -37,7 +37,7 @@ use vosu_plugin_api::PluginManifest;
 /// from vosu_osu::MANIFEST)` instruction), rather than a hand-maintained
 /// hint list that could drift from the manifest.
 fn osu_prefilter() -> Result<Prefilter, Box<dyn Error>> {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST)?;
+    let manifest = PackageManifest::parse(vosu_osu::MANIFEST)?.into_plugin()?;
     let table = manifest
         .matcher
         .clone()

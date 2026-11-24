@@ -1,3 +1,4 @@
+mod manifest;
 mod settings;
 use std::io;
 use std::path::{Path, PathBuf};

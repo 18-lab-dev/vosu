@@ -111,7 +111,7 @@ mod fixture {
 }
 
 fn instance(host: &Arc<PluginHost>, id: u64, name: &str, grants: &str) -> mpsc::Receiver<Message> {
-    instance_mode(host, id, name, grants, "none", "")
+    instance_mode(host, id, name, grants, "none", "", &[])
 }
 
 fn instance_mode(
@@ -121,6 +121,7 @@ fn instance_mode(
     grants: &str,
     mode: &str,
     matcher: &str,
+    registered_sources: &[&str],
 ) -> mpsc::Receiver<Message> {
     let (tx, rx) = mpsc::sync_channel(512);
     EVENTS.lock().unwrap().insert(name.into(), tx);
@@ -149,16 +150,34 @@ version = "1.0.0"
 {matcher}
 "#
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[
-            ("args.json", "{\"type\":\"string\"}"),
-            ("result.json", "{\"type\":\"string\"}"),
-        ],
-        vtable: fixture::vosu_plugin_vtable,
-    }])
+    let mut snapshot = host.validation_snapshot();
+    snapshot
+        .providers
+        .extend(
+            registered_sources
+                .iter()
+                .map(|id| crate::plugin::ProviderRegistration {
+                    id: (*id).to_owned(),
+                    official: true,
+                    builtin: true,
+                    replaces: Vec::new(),
+                    revision: None,
+                }),
+        );
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &snapshot,
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[
+                ("args.json", "{\"type\":\"string\"}"),
+                ("result.json", "{\"type\":\"string\"}"),
+            ],
+            vtable: fixture::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     let dir = tempfile::tempdir().unwrap();
     host.create_instance(PluginInstanceId(id), &loaded[0], dir.path().into(), None)

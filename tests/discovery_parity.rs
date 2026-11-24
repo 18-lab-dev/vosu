@@ -12,11 +12,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use support::*;
 use vosu_core::plugin::{CandidateProcess, MatchPlatform, MatcherEngine, test_support};
 use vosu_osu_model::enums::ClientType;
-use vosu_plugin_api::{DetachReason, PluginManifest};
+use vosu_plugin_api::DetachReason;
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 fn engine(platform: MatchPlatform) -> MatcherEngine {
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     let mut engine = MatcherEngine::new(platform);
     engine
         .register(manifest.id, manifest.matcher.unwrap())
