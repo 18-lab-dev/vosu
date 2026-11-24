@@ -312,6 +312,7 @@ Mapping notes (A2b):
   `src/server/service/providers.rs:30-33`).
 - **Intentional 1.x divergence:** tourney `bestOF` becomes `bestOf` in the
   schema; its value is unchanged.
+- **Intentional 1.x divergence:** room `roomID` becomes `roomId` in the schema; its value is unchanged.
 
 ### `keys` (`vosu.osu.keys`)
 

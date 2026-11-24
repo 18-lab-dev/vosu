@@ -62,7 +62,7 @@ pub struct Case {
     pub expected: BTreeMap<String, String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Input {
     pub id: String,
@@ -73,7 +73,7 @@ pub struct Input {
     pub services: Services,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Services {
     #[serde(rename = "bassDensity")]
     pub bass_density: Value,
@@ -88,6 +88,11 @@ pub struct Services {
     pub user: Value,
     #[serde(rename = "lazerMultiSpectating")]
     pub lazer_multi_spectating: Value,
+    // Synthetic additions only; preserve the pinned corpus's default services.
+    #[serde(skip)]
+    pub room: Value,
+    #[serde(skip)]
+    pub ranked_play: Value,
 }
 
 pub fn fixture_root() -> PathBuf {
@@ -137,10 +142,18 @@ pub fn hit_errors(value: &Value) -> HitErrorArray {
 
     HitErrorArray {
         all: press.clone(),
-        press,
-        release: Vec::new(),
-        key: None,
-        offsets: Vec::new(),
+        press: value
+            .get("pressHitErrors")
+            .map_or(press, |v| serde_json::from_value(v.clone()).unwrap()),
+        release: value
+            .get("releaseHitErrors")
+            .map_or_else(Vec::new, |v| serde_json::from_value(v.clone()).unwrap()),
+        key: value
+            .get("keyHitErrors")
+            .map(|v| serde_json::from_value(v.clone()).unwrap()),
+        offsets: value
+            .get("hitOffsets")
+            .map_or_else(Vec::new, |v| serde_json::from_value(v.clone()).unwrap()),
     }
 }
 
@@ -226,10 +239,33 @@ pub fn parsed_beatmap(input: &Input) -> Option<Arc<vosu_osu_calc::beatmap::Parse
                 identity_path: None,
             },
             Ruleset::Osu,
-            &ModSet::new("", Vec::new(), 1.0).expect("valid fixture mods"),
+            &ModSet::new(
+                "",
+                Vec::new(),
+                input
+                    .services
+                    .beatmap_pp
+                    .get("clockRate")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0),
+            )
+            .expect("valid fixture mods"),
             ScoringMode::Stable,
         )
         .ok()
+        .map(|mut parsed| {
+            if let Some(keys) = input
+                .services
+                .beatmap_pp
+                .get("keyCount")
+                .and_then(Value::as_f64)
+            {
+                let map = Arc::make_mut(&mut parsed);
+                map.reporting_mode = input.mode;
+                map.engine.converted_difficulty.circle_size = keys;
+            }
+            parsed
+        })
 }
 
 pub fn regular(input: &Input) -> RegularState {
@@ -358,7 +394,9 @@ pub fn regular(input: &Input) -> RegularState {
             density: number(&services.bass_density, "density"),
         },
         gameplay: GameplayState {
-            catcher: None,
+            catcher: gameplay
+                .get("catcher")
+                .map(|v| serde_json::from_value(v.clone()).unwrap()),
             is_default_state: false,
             is_key_overlay_default_state: key_overlay.is_empty(),
             failed: boolean(gameplay, "failed"),
@@ -438,8 +476,14 @@ pub fn regular(input: &Input) -> RegularState {
                         .expect("lazer tournament fixture")
                 }),
         },
-        ranked_play: RankedPlayState::default(),
-        room: Default::default(),
+        ranked_play: RankedPlayState {
+            info: (!services.ranked_play.is_null())
+                .then(|| serde_json::from_value(services.ranked_play.clone()).unwrap()),
+        },
+        room: vosu_osu_state::RoomState {
+            info: (!services.room.is_null())
+                .then(|| serde_json::from_value(services.room.clone()).unwrap()),
+        },
     }
 }
 
@@ -449,6 +493,8 @@ pub fn state(input: &Input) -> Arc<StateBundleSnapshot> {
     let key_overlay = Arc::new(regular.gameplay.key_overlay.clone());
     let keypresses = Arc::new(regular.gameplay.keypresses.clone());
     let hit_errors = Arc::new(regular.gameplay.hit_errors.clone());
+    let catcher = regular.gameplay.catcher;
+    let play_time = number(&input.services.global, "precisePlayTime");
     Arc::new(StateBundleSnapshot {
         source: if input.source.as_deref() == Some("lazer") {
             ClientType::Lazer
@@ -459,10 +505,10 @@ pub fn state(input: &Input) -> Arc<StateBundleSnapshot> {
         reset_epoch: 0,
         regular: Arc::new(regular),
         precise: Arc::new(PreciseState {
-            catcher: None,
+            catcher,
             mode,
             status: input.status,
-            play_time: 0.0,
+            play_time,
             key_overlay,
             keypresses,
             hit_errors,

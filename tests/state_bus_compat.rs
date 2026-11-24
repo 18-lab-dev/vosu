@@ -20,6 +20,8 @@ use vosu_plugin_api::{PluginManifest, PublishBatchWriter, decode_publish_batch_r
     reason = "shared oracle also serves the complete 1.x wire suite"
 )]
 mod oracle;
+#[path = "state_bus_compat/seeds.rs"]
+mod seeds;
 
 const NAMESPACES: [&str; 6] = [
     "vosu.chart",
@@ -285,12 +287,18 @@ fn parity(
         ("/state", "/vosu.osu/session/state"),
         ("/rankedPlay", "/vosu.osu/rankedPlay"),
         ("/profile", "/vosu.osu/profile"),
-        ("/room", "/vosu.osu/room"),
         ("/client", "/vosu.client/variant"),
         ("/server", "/vosu.osu/session/server"),
     ] {
         row(id, v2, from, doc, to);
     }
+    let mut room = v2["room"].clone();
+    if let Some(object) = room.as_object_mut() {
+        require(entries, "room-roomId-rename", "contract");
+        let id = object.remove("roomID").unwrap();
+        object.insert("roomId".into(), id);
+    }
+    equal(id, "/vosu.osu/room", &room, &doc["vosu.osu"]["room"]);
     assert_eq!(
         v2["profile"]
             .as_object()
@@ -373,20 +381,24 @@ fn parity(
         doc,
         "/vosu.chart/length",
     );
-    // The synthetic oracle map is built at rate 1; derive the same rounded base
-    // summary independently of the projector and the rate-adjusted 1.x wire.
-    let bpm = snapshot
-        .regular
-        .beatmap
-        .parsed
-        .as_ref()
-        .map_or(0.0, |parsed| parsed.bpm_base.common);
-    equal(
-        id,
-        "/vosu.chart/bpm",
-        &json!(vosu_osu_model::fix_decimals_to(bpm, 4).unwrap()),
-        &doc["vosu.chart"]["bpm"],
-    );
+    // §7 row 238 compares non-rate cases directly with the oracle-pinned
+    // 1.x builder. DT/HT deliberately publish map-time rather than clock BPM;
+    // their synthetic timing-point BPM is an independent input expectation.
+    let bpm = if matches!(
+        id.as_str(),
+        "lazer-play-taiko-dt" | "stable-result-catch-ht"
+    ) {
+        json!(
+            vosu_osu_model::fix_decimals_to(
+                input.services.beatmap_pp["commonBPM"].as_f64().unwrap(),
+                4
+            )
+            .unwrap()
+        )
+    } else {
+        v2["beatmap"]["stats"]["bpm"]["common"].clone()
+    };
+    equal(id, "/vosu.chart/bpm", &bpm, &doc["vosu.chart"]["bpm"]);
     let key_count = if v2["beatmap"]["mode"]["number"] == 3 {
         json!(
             v2["beatmap"]["stats"]["cs"]["converted"]
@@ -774,95 +786,100 @@ fn oracle_cases_validate_and_match_the_state_bus() {
     let baseline = load_input("stable-defaults/input.json");
     let full = InternalGrant::from_subtrees(vec![Pointer::parse("/internal").unwrap()]);
     for case in inventory.cases {
-        let input = load_input(&case.input);
-        assert_eq!(input.id, case.id);
-        let mut bus = Bus::new();
-        if input.source.is_none() {
-            assert!(bus.store.current(bus.key).is_none());
-            continue;
-        }
-        bus.open(&input, 10);
-        let snapshot = oracle::state(&input);
-        let facts = facts(&input);
-        assert!(bus.publish(&snapshot, &facts) > 0);
-        let doc = bus.document(Audience::Api);
-        let private = bus.document(Audience::Plugin(&full));
-        for document in [&doc, &private] {
-            assert_eq!(
-                document
-                    .as_object()
-                    .unwrap()
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<BTreeSet<_>>(),
-                NAMESPACES.into_iter().collect()
-            );
-            for (ns, validator) in &validators {
-                if let Err(error) = validator.validate(&document[ns]) {
-                    panic!("{} {ns}: {error}", input.id);
+        let original = load_input(&case.input);
+        assert_eq!(original.id, case.id);
+        for (input, seeded) in [(original.clone(), false), (seeds::seeded(&original), true)] {
+            let mut bus = Bus::new();
+            if input.source.is_none() {
+                assert!(bus.store.current(bus.key).is_none());
+                continue;
+            }
+            bus.open(&input, 10);
+            let snapshot = oracle::state(&input);
+            let facts = facts(&input);
+            assert!(bus.publish(&snapshot, &facts) > 0);
+            let doc = bus.document(Audience::Api);
+            let private = bus.document(Audience::Plugin(&full));
+            for document in [&doc, &private] {
+                assert_eq!(
+                    document
+                        .as_object()
+                        .unwrap()
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<BTreeSet<_>>(),
+                    NAMESPACES.into_iter().collect()
+                );
+                for (ns, validator) in &validators {
+                    if let Err(error) = validator.validate(&document[ns]) {
+                        panic!("{} {ns}: {error}", input.id);
+                    }
                 }
             }
-        }
-        equal(
-            &input.id,
-            "client facts",
-            &json!({"game":"osu", "variant":input.source, "name":"osu!", "version":"", "pid":10, "session":"oracle-10", "focused":true, "plugin":{"id":"vosu.osu", "version":PluginManifest::parse(vosu_osu::MANIFEST).unwrap().version}}),
-            &doc["vosu.client"],
-        );
-        let manager = oracle::manager_with(
-            &input,
-            ApiRuntimeSettings {
-                enable_key_overlay: true,
-                enable_mania_key_hit_errors: true,
-                enable_hit_offsets: true,
-            },
-        );
-        let v2: Value = serde_json::from_slice(&oracle::encode("v2", &manager)).unwrap();
-        let precise: Value =
-            serde_json::from_slice(&oracle::encode("v2-precise", &manager)).unwrap();
-        parity(&input, &snapshot, &v2, &precise, &doc, &private, &entries);
-        privacy(&bus, &v2, &doc);
-        let revision = bus.store.current(bus.key).unwrap().revision;
-        assert_eq!(
-            bus.publish(&snapshot, &facts),
-            0,
-            "{} not idempotent",
-            input.id
-        );
-        assert_eq!(bus.store.current(bus.key).unwrap().revision, revision);
-        let mut diff = Bus::new();
-        diff.open(&input, 10);
-        diff.publish(&oracle::state(&baseline), &self::facts(&baseline));
-        diff.publish(&snapshot, &facts);
-        equal(
-            &input.id,
-            "diff convergence",
-            &private,
-            &diff.document(Audience::Plugin(&full)),
-        );
-        assert!(doc["vosu.osu"]["session"]["ipcId"].is_null());
-        if input.tournament.as_deref() == Some("stable") {
-            for (pid, ipc) in [(30, 1.0), (40, 2.0)] {
-                let instance = manager.manager().instances().get(&pid).unwrap();
-                assert!(instance.settings().tournament_spectator);
-                assert_eq!(instance.settings().tournament_ipc_id, Some(ipc));
-                let mut spectator = Bus::new();
-                spectator.key = SessionKey(u64::from(instance.pid()));
-                spectator.open(&input, instance.pid());
-                let settings = instance.settings().clone();
-                spectator.publish(
-                    instance.state(),
-                    &SessionFacts {
-                        settings: settings.clone(),
-                        ..self::facts(&input)
-                    },
-                );
-                equal(
-                    &input.id,
-                    "spectator ipcId",
-                    &json!(settings.tournament_ipc_id),
-                    &spectator.document(Audience::Api)["vosu.osu"]["session"]["ipcId"],
-                );
+            equal(
+                &input.id,
+                "client facts",
+                &json!({"game":"osu", "variant":input.source, "name":"osu!", "version":"", "pid":10, "session":"oracle-10", "focused":true, "plugin":{"id":"vosu.osu", "version":PluginManifest::parse(vosu_osu::MANIFEST).unwrap().version}}),
+                &doc["vosu.client"],
+            );
+            let manager = oracle::manager_with(
+                &input,
+                ApiRuntimeSettings {
+                    enable_key_overlay: true,
+                    enable_mania_key_hit_errors: true,
+                    enable_hit_offsets: true,
+                },
+            );
+            let v2: Value = serde_json::from_slice(&oracle::encode("v2", &manager)).unwrap();
+            let precise: Value =
+                serde_json::from_slice(&oracle::encode("v2-precise", &manager)).unwrap();
+            if seeded {
+                seeds::coverage(&input, &v2, &precise);
+            }
+            parity(&input, &snapshot, &v2, &precise, &doc, &private, &entries);
+            privacy(&bus, &v2, &doc);
+            let revision = bus.store.current(bus.key).unwrap().revision;
+            assert_eq!(
+                bus.publish(&snapshot, &facts),
+                0,
+                "{} not idempotent",
+                input.id
+            );
+            assert_eq!(bus.store.current(bus.key).unwrap().revision, revision);
+            let mut diff = Bus::new();
+            diff.open(&input, 10);
+            diff.publish(&oracle::state(&baseline), &self::facts(&baseline));
+            diff.publish(&snapshot, &facts);
+            equal(
+                &input.id,
+                "diff convergence",
+                &private,
+                &diff.document(Audience::Plugin(&full)),
+            );
+            assert!(doc["vosu.osu"]["session"]["ipcId"].is_null());
+            if input.tournament.as_deref() == Some("stable") {
+                for (pid, ipc) in [(30, 1.0), (40, 2.0)] {
+                    let instance = manager.manager().instances().get(&pid).unwrap();
+                    assert!(instance.settings().tournament_spectator);
+                    assert_eq!(instance.settings().tournament_ipc_id, Some(ipc));
+                    let mut spectator = Bus::new();
+                    spectator.key = SessionKey(u64::from(instance.pid()));
+                    spectator.open(&input, instance.pid());
+                    let settings = instance.settings().clone();
+                    spectator.publish(
+                        instance.state(),
+                        &SessionFacts {
+                            settings: settings.clone(),
+                            ..self::facts(&input)
+                        },
+                    );
+                    equal(
+                        &input.id,
+                        "spectator ipcId",
+                        &json!(settings.tournament_ipc_id),
+                        &spectator.document(Audience::Api)["vosu.osu"]["session"]["ipcId"],
+                    );
+                }
             }
         }
     }
@@ -912,6 +929,7 @@ fn comparison_and_exemption_guards_reject_unlisted_differences() {
     for id in [
         "stable-tournament/tourney",
         "tourney-bestOf-rename",
+        "room-roomId-rename",
         "tourney-null-without-score",
         "result.statistics.sliderBreaks",
     ] {
