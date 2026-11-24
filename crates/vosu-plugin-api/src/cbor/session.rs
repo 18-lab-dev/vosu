@@ -18,9 +18,11 @@ pub enum Bitness {
 /// `VOSU_OP_SESSION_ATTACHED` (host -> plugin, no reply). The last four
 /// fields are an additive, backward-compatible growth (A1b/DA,
 /// `docs/v2/plugin-abi.md` §6.2, §1): process facts the matcher and core
-/// already have. `#[serde(default)]` on the three strings and `argv`
-/// defaulting to `None` let an older-shape (pre-amendment) encoded
-/// message, which has none of these keys, still decode.
+/// already have. Absent means unknown, never the empty string (§6.2
+/// amended): `#[serde(default)]` lets an older-shape (pre-amendment)
+/// encoded message, which has none of these keys, still decode, each
+/// field defaulting to `None` rather than collapsing a missing key to
+/// `""`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SessionAttached {
     /// the public id (naming contract)
@@ -32,15 +34,15 @@ pub struct SessionAttached {
     pub bitness: Bitness,
     /// The executable name the matcher saw: Windows the image file name,
     /// Linux the kernel `comm` value.
-    #[serde(default)]
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The full executable path (`ProcessRecord::path`).
-    #[serde(default)]
-    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// Windows: the raw OS command line. Linux: argv joined by spaces,
     /// exactly `ProcessRecord::command_line`.
-    #[serde(default)]
-    pub command_line: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_line: Option<String>,
     /// Linux only: the exact NUL-split argv.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argv: Option<Vec<String>>,

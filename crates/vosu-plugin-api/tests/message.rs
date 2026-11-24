@@ -188,9 +188,9 @@ fn roundtrip_a_cbor_opcode_through_the_same_message_api() {
         generation: 1,
         pid: 1234,
         bitness: Bitness::X64,
-        name: "osu!.exe".into(),
-        path: "C:/osu/osu!.exe".into(),
-        command_line: "osu!.exe".into(),
+        name: Some("osu!.exe".into()),
+        path: Some("C:/osu/osu!.exe".into()),
+        command_line: Some("osu!.exe".into()),
         argv: None,
     }));
     roundtrip(Message::FocusChanged(FocusChanged {

@@ -118,6 +118,21 @@ fn comm_hint_over_15_bytes_is_rejected() {
     ));
 }
 
+/// P3 (review): same freeze risk as `linux_name_contains` — a
+/// `comm_hints` entry with a NUL byte must be refused here, not later
+/// by `CommHints::new`.
+#[test]
+fn comm_hint_with_nul_byte_is_rejected() {
+    let table = MatchTable {
+        comm_hints: vec!["osu\0".to_string()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        CompiledMatcher::compile(MatchPlatform::Linux, &table),
+        Err(MatcherError::HintContainsNul { .. })
+    ));
+}
+
 /// A1b/DB revised: on Linux a `linux_name_contains` entry is a
 /// userspace matcher in its own right, additive to `comm_hints` (which
 /// stays pre-filter-only, unchanged) — a process whose `name` (kernel
@@ -190,6 +205,22 @@ fn linux_name_contains_empty_entry_is_rejected() {
     ));
 }
 
+/// P3 (review): an entry containing a NUL byte must be refused at
+/// manifest validation, not left to fail later when `CommHints::new`
+/// (the kernel/CN_PROC pre-filter sync) rejects it and silently freezes
+/// the Linux pre-filter for every plugin.
+#[test]
+fn linux_name_contains_with_nul_byte_is_rejected() {
+    let table = MatchTable {
+        linux_name_contains: vec!["osu\0".to_string()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        CompiledMatcher::compile(MatchPlatform::Linux, &table),
+        Err(MatcherError::InvalidLinuxNameContains { .. })
+    ));
+}
+
 #[test]
 fn static_overlap_on_equal_process_names() {
     let a = table(&["osu!.exe"]);
@@ -197,13 +228,37 @@ fn static_overlap_on_equal_process_names() {
     assert!(overlaps(MatchPlatform::Windows, &a, &b));
 }
 
+/// Amended §6.1's three-bullet D18 overlap list no longer includes a
+/// `comm_hints` entry contained in the other plugin's `process_names`:
+/// `comm_hints` stays pre-filter-only (it never matches on its own), and
+/// only `linux_name_contains` gets the substring-of-`process_names`
+/// overlap rule. A `comm_hints` entry alone therefore never refuses an
+/// otherwise-disjoint pair.
 #[test]
-fn static_overlap_on_comm_hint_substring_of_process_name() {
+fn comm_hint_substring_of_process_name_is_no_longer_an_overlap() {
     let a = MatchTable {
         comm_hints: vec!["osu!".to_string()],
         ..Default::default()
     };
     let b = table(&["osu!.exe"]);
+    assert!(!overlaps(MatchPlatform::Linux, &a, &b));
+    assert!(!overlaps(MatchPlatform::Linux, &b, &a));
+}
+
+/// §6.1 amended, bullet 3's own `"osu!lazer"` example: two `comm_hints`
+/// entries with no containment or useful suffix-prefix merge still
+/// overlap by plain concatenation, `"osu!"` (4) + `"lazer"` (5) = 9
+/// bytes, well within the 15-byte `comm` field width.
+#[test]
+fn static_overlap_on_comm_hint_merged_length_within_15_bytes() {
+    let a = MatchTable {
+        comm_hints: vec!["osu!".to_string()],
+        ..Default::default()
+    };
+    let b = MatchTable {
+        comm_hints: vec!["lazer".to_string()],
+        ..Default::default()
+    };
     assert!(overlaps(MatchPlatform::Linux, &a, &b));
     assert!(overlaps(MatchPlatform::Linux, &b, &a));
 }
@@ -332,7 +387,11 @@ fn prefilter_union_includes_short_process_names_and_comm_hints_deduplicated() {
         .register(
             "vosu.second".to_string(),
             MatchTable {
-                comm_hints: vec!["other-game".to_string()],
+                // Long enough, and distinct enough from "osu!", that its
+                // merged length with "osu!" exceeds 15 bytes (amended
+                // §6.1 bullet 3): this must contribute to the union
+                // without tripping the D18 overlap refusal below.
+                comm_hints: vec!["zzzzzzzzzzzz".to_string()],
                 ..Default::default()
             },
         )
@@ -342,8 +401,30 @@ fn prefilter_union_includes_short_process_names_and_comm_hints_deduplicated() {
         Prefilter::Names(vec![
             "osu!".to_string(),
             "osu!.exe".to_string(),
-            "other-game".to_string(),
+            "zzzzzzzzzzzz".to_string(),
         ])
+    );
+}
+
+/// Review item 5: `linux_name_contains` feeds the unified pre-filter
+/// exactly like `comm_hints` (A1b/DB revised) — a single-plugin check,
+/// so no cross-plugin overlap is at stake.
+#[test]
+fn prefilter_union_includes_linux_name_contains() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(
+            "vosu.osu".to_string(),
+            MatchTable {
+                process_names: vec!["osu!.exe".to_string()],
+                linux_name_contains: vec!["osu!".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.prefilter(),
+        Prefilter::Names(vec!["osu!".to_string(), "osu!.exe".to_string()])
     );
 }
 
@@ -515,11 +596,53 @@ fn register_refuses_when_combined_prefilter_total_exceeds_256() {
             },
         )
         .unwrap();
+    // A short `process_names` entry, not another `comm_hints`/
+    // `linux_name_contains` entry: amended §6.1 bullet 3 would make
+    // almost any short comm_hints entry overlap one of the 256 above
+    // (their merged length with "extra" is well under 15 bytes), which
+    // is not what this test exercises — it wants the *limit* refusal,
+    // not the *overlap* refusal.
     let err = engine
         .register(
             "vosu.second".to_string(),
             MatchTable {
-                comm_hints: vec!["extra".to_string()],
+                process_names: vec!["extra".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        RegisterError::PreFilterLimit(PreFilterLimitError { candidate, total })
+            if candidate == "vosu.second" && total == 257
+    ));
+}
+
+/// Review item 5: `linux_name_contains` counts toward the combined
+/// 256-entry pre-filter bound too, not just `comm_hints`/`process_names`.
+/// The extra entry uses a character set ("w") disjoint from every
+/// `h{i}` hint's own ("h" plus digits), so no suffix/prefix merge is
+/// possible, and is long enough (14 bytes) that even the shortest hint
+/// (`"h0"`, 2 bytes) sums past the 15-byte bound: this test wants the
+/// *limit* refusal, not an incidental amended-D18 overlap refusal.
+#[test]
+fn register_refuses_when_linux_name_contains_pushes_prefilter_over_256() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    let hints: Vec<String> = (0..256).map(|i| format!("h{i}")).collect();
+    engine
+        .register(
+            "vosu.first".to_string(),
+            MatchTable {
+                comm_hints: hints,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let err = engine
+        .register(
+            "vosu.second".to_string(),
+            MatchTable {
+                linux_name_contains: vec!["w".repeat(14)],
                 ..Default::default()
             },
         )

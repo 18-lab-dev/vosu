@@ -426,9 +426,12 @@ fn attach_carries_process_facts() {
     match events.recv_timeout(RECV_TIMEOUT).expect("attach") {
         SessionEvent::Attached(attached) => {
             assert_eq!(attached.pid, 400);
-            assert_eq!(attached.name, "facts.exe");
-            assert_eq!(attached.path, "/games/facts/facts.exe");
-            assert_eq!(attached.command_line, "facts.exe --tournament");
+            assert_eq!(attached.name, Some("facts.exe".to_owned()));
+            assert_eq!(attached.path, Some("/games/facts/facts.exe".to_owned()));
+            assert_eq!(
+                attached.command_line,
+                Some("facts.exe --tournament".to_owned())
+            );
             assert_eq!(
                 attached.argv,
                 Some(vec!["facts.exe".to_owned(), "--tournament".to_owned()])
@@ -499,9 +502,12 @@ fn reoffer_keeps_process_facts() {
     {
         SessionEvent::Attached(attached) => {
             assert_eq!(attached.pid, 500);
-            assert_eq!(attached.name, "shared2.exe");
-            assert_eq!(attached.path, "/games/shared/shared2.exe");
-            assert_eq!(attached.command_line, "shared2.exe --debug-client-id=1");
+            assert_eq!(attached.name, Some("shared2.exe".to_owned()));
+            assert_eq!(attached.path, Some("/games/shared/shared2.exe".to_owned()));
+            assert_eq!(
+                attached.command_line,
+                Some("shared2.exe --debug-client-id=1".to_owned())
+            );
             assert_eq!(
                 attached.argv,
                 Some(vec![

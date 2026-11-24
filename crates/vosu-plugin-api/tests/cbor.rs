@@ -32,9 +32,9 @@ fn roundtrip_session_attached() {
         generation: 2,
         pid: 1234,
         bitness: Bitness::X64,
-        name: "osu!.exe".into(),
-        path: "C:/osu/osu!.exe".into(),
-        command_line: "osu!.exe".into(),
+        name: Some("osu!.exe".into()),
+        path: Some("C:/osu/osu!.exe".into()),
+        command_line: Some("osu!.exe".into()),
         argv: None,
     });
     roundtrip(SessionAttached {
@@ -43,18 +43,18 @@ fn roundtrip_session_attached() {
         generation: 1,
         pid: 1,
         bitness: Bitness::X86,
-        name: "osu!".into(),
-        path: "/home/user/osu!".into(),
-        command_line: "osu! --tournament".into(),
+        name: Some("osu!".into()),
+        path: Some("/home/user/osu!".into()),
+        command_line: Some("osu! --tournament".into()),
         argv: Some(vec!["osu!".into(), "--tournament".into()]),
     });
 }
 
 /// A1b/DA: an older-shape `SESSION_ATTACHED` (minted before the amendment,
 /// no `name`/`path`/`command_line`/`argv` keys at all) still decodes,
-/// with the four additive fields defaulted (§1 "a minor-version producer
-/// may add fields an older reader does not yet understand" applies
-/// symmetrically to a newer reader decoding an older producer's bytes).
+/// with the four additive fields defaulted to `None` — absent means
+/// unknown, never the empty string (§6.2 amended): a missing key must
+/// not collapse to `""`.
 #[test]
 fn session_attached_decodes_pre_amendment_shape() {
     let bytes = encode(&CborValue::Map(vec![
@@ -89,11 +89,40 @@ fn session_attached_decodes_pre_amendment_shape() {
             generation: 2,
             pid: 1234,
             bitness: Bitness::X64,
-            name: String::new(),
-            path: String::new(),
-            command_line: String::new(),
+            name: None,
+            path: None,
+            command_line: None,
             argv: None,
         }
+    );
+}
+
+/// §1/§6.2: an absent `argv` is omitted from the encoded map entirely,
+/// never sent as an explicit CBOR `null` — `skip_serializing_if` must
+/// actually drop the key, not just let a reader tolerate it either way.
+#[test]
+fn session_attached_omits_absent_argv_key_entirely() {
+    let bytes = encode(&SessionAttached {
+        session: "s-1".into(),
+        handle: 7,
+        generation: 2,
+        pid: 1234,
+        bitness: Bitness::X64,
+        name: None,
+        path: None,
+        command_line: None,
+        argv: None,
+    })
+    .expect("encode");
+    let decoded: CborValue = decode(&bytes).expect("decode as a generic CBOR value");
+    let CborValue::Map(entries) = decoded else {
+        panic!("expected a CBOR map, got {decoded:?}");
+    };
+    assert!(
+        !entries
+            .iter()
+            .any(|(key, _)| matches!(key, CborValue::Text(text) if text == "argv")),
+        "an absent argv must omit the key entirely, not send it as null: {entries:?}"
     );
 }
 

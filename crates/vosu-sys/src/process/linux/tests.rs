@@ -166,6 +166,29 @@ fn enumerates_numeric_proc_entries_and_preserves_nul_arguments() {
     assert_eq!(found[1].command_line[2].as_bytes(), b"non-utf8-\xff");
 }
 
+/// P3 (review): `command_line_from_bytes` strips only the trailing NUL
+/// terminator's empty split piece, never a legitimate empty argv entry
+/// found elsewhere — `b"osu!\0\0--x\0"` must decode to exactly three
+/// entries, the middle one empty, not two with the empty one dropped.
+#[test]
+fn command_line_preserves_a_legitimate_empty_argument() {
+    let fixture = fixture();
+    add_process(
+        fixture.path(),
+        9,
+        2,
+        b"osu!\0\0--x\0",
+        "1000-2000 rw-p 0 00:00 0\n",
+    );
+
+    let found = enumerate_processes_at(fixture.path()).expect("enumeration");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].command_line.len(), 3);
+    assert_eq!(found[0].command_line[0], "osu!");
+    assert_eq!(found[0].command_line[1], "");
+    assert_eq!(found[0].command_line[2], "--x");
+}
+
 #[test]
 fn matching_enumeration_filters_on_comm_before_reading_expensive_metadata() {
     let fixture = fixture();

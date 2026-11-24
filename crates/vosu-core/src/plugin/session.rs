@@ -235,9 +235,9 @@ impl SessionRegistry {
             generation: generation.0,
             pid: process.pid,
             bitness: process.bitness,
-            name: process.name.clone(),
-            path: process.path.clone(),
-            command_line: process.command_line.clone(),
+            name: Some(process.name.clone()),
+            path: Some(process.path.clone()),
+            command_line: Some(process.command_line.clone()),
             argv: process.argv.clone(),
         };
         self.pending.insert(
@@ -309,9 +309,9 @@ impl SessionRegistry {
             generation: record.generation.0,
             pid: record.process.pid,
             bitness: record.process.bitness,
-            name: record.process.name.clone(),
-            path: record.process.path.clone(),
-            command_line: record.process.command_line.clone(),
+            name: Some(record.process.name.clone()),
+            path: Some(record.process.path.clone()),
+            command_line: Some(record.process.command_line.clone()),
             argv: record.process.argv.clone(),
         };
         record.owner = next_owner;

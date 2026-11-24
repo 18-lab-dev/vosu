@@ -49,8 +49,14 @@ pub enum MatcherError {
     /// A `comm_hints` entry is longer than 15 bytes, the kernel/CN_PROC
     /// `comm` field width (§6.1, D18).
     HintTooLong { hint: String },
-    /// A `linux_name_contains` entry is empty or longer than 15 bytes,
-    /// the kernel/CN_PROC `comm` field width (§6.1 revised, A1b/DB).
+    /// A `comm_hints` entry contains a NUL byte: `CommHints::new` would
+    /// reject it later at prefilter sync time, silently freezing the
+    /// Linux pre-filter for every plugin (review P3) rather than
+    /// refusing it up front at manifest validation.
+    HintContainsNul { hint: String },
+    /// A `linux_name_contains` entry is empty, longer than 15 bytes, or
+    /// contains a NUL byte (same freeze risk as `HintContainsNul`), the
+    /// kernel/CN_PROC `comm` field width (§6.1 revised, A1b/DB).
     InvalidLinuxNameContains { entry: String },
 }
 
@@ -65,8 +71,14 @@ impl fmt::Display for MatcherError {
             Self::HintTooLong { hint } => {
                 write!(f, "comm_hints entry {hint:?} exceeds 15 bytes")
             }
+            Self::HintContainsNul { hint } => {
+                write!(f, "comm_hints entry {hint:?} contains a NUL byte")
+            }
             Self::InvalidLinuxNameContains { entry } => {
-                write!(f, "linux_name_contains entry {entry:?} must be 1-15 bytes")
+                write!(
+                    f,
+                    "linux_name_contains entry {entry:?} must be 1-15 bytes with no NUL byte"
+                )
             }
         }
     }
@@ -156,19 +168,6 @@ fn names_equal(platform: MatchPlatform, a: &str, b: &str) -> bool {
     }
 }
 
-/// Substring containment under the platform's case rule, used by the D18
-/// overlap check: "a `comm_hints` entry of one is equal to, or a substring
-/// of, any `process_names`/`comm_hints` entry of the other".
-fn contains_under(platform: MatchPlatform, haystack: &str, needle: &str) -> bool {
-    if case_insensitive_names(platform) {
-        haystack
-            .to_ascii_lowercase()
-            .contains(&needle.to_ascii_lowercase())
-    } else {
-        haystack.contains(needle)
-    }
-}
-
 impl CompiledMatcher {
     /// Compiles `table` for `platform`. `comm_hints` only fills the
     /// kernel/CN_PROC pre-filter in production (§6.1): this matcher
@@ -188,9 +187,12 @@ impl CompiledMatcher {
                 if hint.len() > 15 {
                     return Err(MatcherError::HintTooLong { hint: hint.clone() });
                 }
+                if hint.contains('\0') {
+                    return Err(MatcherError::HintContainsNul { hint: hint.clone() });
+                }
             }
             for entry in &table.linux_name_contains {
-                if entry.is_empty() || entry.len() > 15 {
+                if entry.is_empty() || entry.len() > 15 || entry.contains('\0') {
                     return Err(MatcherError::InvalidLinuxNameContains {
                         entry: entry.clone(),
                     });
@@ -320,17 +322,20 @@ fn substring_entries_overlap(a: &str, b: &str) -> bool {
     merged_length(a, b) <= 15
 }
 
-/// D18's statically decidable overlap rule: equal `process_names`
-/// entries; a `comm_hints` entry of one equal to or a substring of a
-/// `process_names`/`comm_hints` entry of the other (unchanged by A1b/DB:
-/// `comm_hints` stays pre-filter-only); or a `linux_name_contains` entry
-/// of one — a real userspace substring matcher, Linux-only (A1b/DB
-/// revised) — overlapping the other plugin's exact `process_names` (the
-/// name contains the entry, on Linux) or any ≤15-byte substring entry of
-/// either plugin (`comm_hints`/`linux_name_contains`) by
-/// [`substring_entries_overlap`] (regex overlap on
-/// `process_path_patterns`/`command_line_patterns` is undecidable in
-/// general and is never checked here, `docs/v2/plugin-abi.md:121`).
+/// D18's statically decidable overlap rule (§6.1 amended, three bullets):
+/// equal `process_names` entries; a `linux_name_contains` entry of one
+/// contained in a `process_names` entry of the other (a process matching
+/// that exact name would also match the entry's substring rule); or any
+/// `comm_hints`/`linux_name_contains` entry of one and any
+/// `comm_hints`/`linux_name_contains` entry of the other that could both
+/// match some single `comm` of at most 15 bytes
+/// ([`substring_entries_overlap`]) — `comm_hints` stays pre-filter-only
+/// (it never matches on its own in [`CompiledMatcher::matches`]), but it
+/// still participates in this static check exactly as `linux_name_contains`
+/// does, since both narrow the same kernel/CN_PROC pre-filter (regex
+/// overlap on `process_path_patterns`/`command_line_patterns` is
+/// undecidable in general and is never checked here,
+/// `docs/v2/plugin-abi.md:121`).
 #[must_use]
 pub fn overlaps(platform: MatchPlatform, a: &MatchTable, b: &MatchTable) -> bool {
     if a.process_names
@@ -339,45 +344,25 @@ pub fn overlaps(platform: MatchPlatform, a: &MatchTable, b: &MatchTable) -> bool
     {
         return true;
     }
-    let hints_hit = |hints: &[String], names: &[String], other_hints: &[String]| {
-        hints.iter().any(|hint| {
-            names.iter().any(|name| {
-                names_equal(platform, hint, name) || contains_under(platform, name, hint)
-            }) || other_hints.iter().any(|other| {
-                names_equal(platform, hint, other)
-                    || contains_under(platform, other, hint)
-                    || contains_under(platform, hint, other)
-            })
-        })
+    let name_contains_in_process_names = |entries: &[String], names: &[String]| {
+        entries
+            .iter()
+            .any(|entry| names.iter().any(|name| name.contains(entry.as_str())))
     };
-    if hints_hit(&a.comm_hints, &b.process_names, &b.comm_hints)
-        || hints_hit(&b.comm_hints, &a.process_names, &a.comm_hints)
+    if name_contains_in_process_names(&a.linux_name_contains, &b.process_names)
+        || name_contains_in_process_names(&b.linux_name_contains, &a.process_names)
     {
         return true;
     }
-    let substring_hit =
-        |entries: &[String], names: &[String], hints: &[String], other_entries: &[String]| {
-            entries.iter().any(|entry| {
-                names.iter().any(|name| name.contains(entry.as_str()))
-                    || hints
-                        .iter()
-                        .any(|hint| substring_entries_overlap(entry, hint))
-                    || other_entries
-                        .iter()
-                        .any(|other| substring_entries_overlap(entry, other))
-            })
-        };
-    substring_hit(
-        &a.linux_name_contains,
-        &b.process_names,
-        &b.comm_hints,
-        &b.linux_name_contains,
-    ) || substring_hit(
-        &b.linux_name_contains,
-        &a.process_names,
-        &a.comm_hints,
-        &a.linux_name_contains,
-    )
+    let a_substrings = a.comm_hints.iter().chain(a.linux_name_contains.iter());
+    let b_substrings: Vec<&String> = b
+        .comm_hints
+        .iter()
+        .chain(b.linux_name_contains.iter())
+        .collect();
+    a_substrings
+        .into_iter()
+        .any(|x| b_substrings.iter().any(|y| substring_entries_overlap(x, y)))
 }
 
 /// The enumeration-cost pre-filter (§6.1), unified across both released

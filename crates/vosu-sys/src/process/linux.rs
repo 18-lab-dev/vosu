@@ -956,12 +956,21 @@ fn read_command_line_at(dir: &Path) -> io::Result<Vec<u8>> {
     read_bounded(&dir.join("cmdline"), 0)
 }
 
+/// `/proc/<pid>/cmdline` NUL-terminates every argv entry, including the
+/// last, so splitting the raw bytes on NUL yields one trailing empty
+/// element that is not a real argument; this strips only that one
+/// element, keeping any legitimate empty argument found elsewhere in
+/// argv (§6.2's "exact NUL-split argv" contract — a naive
+/// `filter(!is_empty)` would silently drop those too).
 fn command_line_from_bytes(bytes: &[u8]) -> Vec<OsString> {
-    bytes
+    let mut parts: Vec<OsString> = bytes
         .split(|byte| *byte == 0)
-        .filter(|part| !part.is_empty())
         .map(|part| OsString::from_vec(part.to_vec()))
-        .collect()
+        .collect();
+    if parts.last().is_some_and(|last| last.is_empty()) {
+        parts.pop();
+    }
+    parts
 }
 
 pub fn process_executable(pid: u32) -> Result<PathBuf, MemoryError> {
