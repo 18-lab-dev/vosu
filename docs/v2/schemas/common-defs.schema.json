@@ -84,7 +84,7 @@
         },
         "activity": {
           "enum": ["always", "gameplay"],
-          "description": "`always`: the lane runs at its demand-driven rate regardless of game status. `gameplay`: demand applies only while the session's `vosu.status.status` is `play` (including replay/spectate/autoplay sources); outside play the field is still published, at the lane's configured idle cadence."
+          "description": "`always`: the lane runs at its demand-driven rate regardless of game status. `gameplay`: demand applies only while the session's `vosu.status.status` is `play` or `pause` (including replay/spectate/autoplay sources); outside gameplay the field is still published, at the lane's configured idle cadence."
         }
       }
     }

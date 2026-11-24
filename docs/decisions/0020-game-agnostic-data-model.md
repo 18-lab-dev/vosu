@@ -103,7 +103,8 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   plugin's `requires`/`optional` naming the subtree's `field:` id or a
   descendant of it (`docs/v2/state-schema.md`'s `internal` section is
   authoritative for the exact rule). Only `vosu.osu`'s top-level `internal`
-  key (per-variant install paths, `docs/v2/state-schema.md`) uses it in
+  key (per-variant install paths, plus the current chart's/active skin's
+  folder and file names, `docs/v2/state-schema.md`) uses it in
   this freeze, and a schema may use it only on `vosu.osu`'s top-level
   `/internal` key — nowhere else, at any schema load. The carve-out is
   disclosure control, not confinement: an out-of-process plugin already

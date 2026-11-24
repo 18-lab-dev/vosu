@@ -41,8 +41,11 @@ RFC 6901 JSON Pointer relative to the namespace root (`docs/v2/plugin-abi.md`,
 A `field:` requirement's version is always the owning namespace's schema
 version — this document's `schemas/*.schema.json` `version` key, `1.0.0` for
 every namespace at this freeze except `vosu.osu` (bumped to `1.1.0` by two
-additive, optional-field changes: the D2/D8 `internal` subtree and D6's
-`session.ipcId`) — never a value a plugin or catalog entry picks
+additive, optional-field changes — the D2/D8 `internal` subtree and D6's
+`session.ipcId` — then to `1.2.0` by the additive changes `session.state`/
+`.server`, the `result`/leaderboard `good` field, the lazer tourney-client
+fields, `settings.skin`, and `internal.paths.current`/`.skinFolder`, R31) —
+never a value a plugin or catalog entry picks
 independently (`docs/v2/catalog-v2.md`).
 
 ## Namespaces
@@ -135,9 +138,11 @@ nearest listed value for a client state with no exact match):
 | `ResultScreen`, `RankingVs`, `RankingTagCoop`, `RankingTeam` | `results` |
 | `Unknown` | `null` |
 
-Lazer's own `ipcState == 11` (the multiplayer/spectating screen) also maps
-to `selection`, matching 1.x reader gating's non-gameplay treatment of it
-(`crates/vosu-osu-state/src/context.rs:252-262`).
+`GameState::Lobby` (value 11) on a lazer session is the multiplayer/
+spectating screen (`crates/vosu-osu-state/src/readers.rs:123-125`), already
+mapped to `selection` by the table above like every other `Lobby` session;
+it is a distinct value from the tourney-only `ipcState` field, which this
+table does not cover.
 
 ### `vosu.chart`
 
@@ -238,7 +243,7 @@ carry the same values while subscribed, at different cadences.
 | --- | --- | --- |
 | `client` | `vosu.client.variant` | New row (R7): the client-variant identity string, alongside `vosu.client`'s other core-filled leaves. |
 | `game.paused` | `vosu.osu.session.paused` | |
-| `game.focused` | `vosu.osu.session.focused` | Windows-only; `null` elsewhere, as in 1.x. |
+| `game.focused` | `vosu.osu.session.focused` | Windows-only; `null` elsewhere. 1.x means *any* tracked osu! process owns the OS foreground, reported on the selected instance; `FOCUS_CHANGED.foreground` (`docs/v2/plugin-abi.md`) is per-session instead, so this equals 1.x only for a single open session — reproducing 1.x exactly across several needs an OR of `foreground` over every session this plugin owns (M4a's adapter does this). |
 | `session.playTime` | `vosu.osu.session.playTime` | |
 | `session.playCount` | `vosu.osu.session.playCount` | Always `0` in 1.x; kept for shape parity. |
 | `server` | `vosu.osu.session.server` | New field (1.2.0, R7): 1.x's bancho host string, `null` when unknown. |
@@ -252,7 +257,7 @@ carry the same values while subscribed, at different cadences.
 | `beatmap.mode` | `vosu.osu.beatmap.mode` | |
 | `beatmap.artist`, `.artistUnicode`, `.title`, `.titleUnicode`, `.mapper`, `.version` | same path under `vosu.osu.beatmap`, and `artist`/`title`/`mapper`/`version` additionally feed `vosu.chart.artist`/`.title`/`.charter`/`.difficultyName` | |
 | `beatmap.source`, `.tags` | `vosu.osu.beatmap.source`/`.tags` | No common-layer equivalent. |
-| `beatmap.stats.*` | `vosu.osu.beatmap.stats.*`; `cs.converted` also feeds `vosu.chart.keyCount` (`round(cs.converted)`) for mania (`beatmap.mode == 3`), `null` otherwise | `vosu.chart.bpm` is **not** fed by this row's rate-adjusted `bpm.common`: it is the rate-1.0 `BpmSummary.common` (`crates/vosu-osu-calc/src/beatmap/model.rs:659`), rounded to 4 decimals like 1.x (`fix_decimals_to`), since the schema states `bpm` is "unaffected by rate". |
+| `beatmap.stats.*` | `vosu.osu.beatmap.stats.*`; `cs.converted` also feeds `vosu.chart.keyCount` (`round(cs.converted)`) when the *effective* ruleset (1.x `select_mode`, `vosu.osu.play.mode`) is mania, `null` otherwise | `vosu.chart.bpm` is **not** fed by this row's rate-adjusted `bpm.common`: it is the rate-1.0 `BpmSummary.common` (`crates/vosu-osu-calc/src/beatmap/model.rs:659`), rounded to 4 decimals like 1.x (`fix_decimals_to`), since the schema states `bpm` is "unaffected by rate". `keyCount` is gated on the *effective* ruleset, not `vosu.osu.beatmap.mode` (the chart's original ruleset, `src/api/v2/builders.rs:45-51`'s `select_mode`): an osu!→mania convert has `beatmap.mode == 0` but is exactly the case `cs.converted`'s key-mod/dual-stage shape exists for (`crates/vosu-osu-state/src/state_backend.rs:144`). |
 | `play.source` | `vosu.osu.play.source` | |
 | `play.failed` | `vosu.osu.play.failed` | |
 | `play.playerName` | `vosu.osu.play.playerName` | |
@@ -278,7 +283,7 @@ carry the same values while subscribed, at different cadences.
 | `leaderboard[]` | `vosu.osu.leaderboard[]` | Each entry's `statistics.katu` feeds the new `statistics.good` (1.2.0, R5). |
 | `performance.accuracy`, `.graph` | `vosu.osu.performance.accuracy`/`.graph` | |
 | `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. `hits.katu` feeds the new `statistics.good` (1.2.0, R5). There is deliberately no common cross-game result summary until a second game plugin needs one; adding it then takes its own ADR. |
-| `folders.*`, `files.*`, `directPath.*` | removed; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. Unchanged in the upstream adapter. |
+| `folders.*`, `files.*`, `directPath.*` | removed from the API-facing surface; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. The plugin-only `vosu.osu.internal.paths.current`/`.skinFolder` (D8, R8, below) carries the same underlying names for M4a's upstream adapter to echo; API v1 itself never serves them. Unchanged in the upstream adapter. |
 | `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin`'s asset-identity fields are replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`, and its toggle fields (`useDefaultSkinInEditor`, `ignoreBeatmapSkins`, `tintSliderBall`, `useTaikoSkin`) move to the new `vosu.osu.settings.skin` (1.2.0, R7). |
 | `room` | `vosu.osu.room` | |
 | `tourney` | `vosu.osu.tourney` | Published exactly where 1.x builds it (D6): `null` on the lazer multi-spectating path (`ipcState == 11`) before the first lobby read lands, matching 1.x's own "key omitted entirely until then" behavior (`src/api/v2/tourney.rs:28-35`; every upstream-compatible adapter that carries this field — upstream v2 and gosuMemory v1 — drops the key from its own output when this value is `null`, ADR 0021's D6 amendment); populated `clients[]` once that read lands; 1.x's default empty object (`scoreVisible: false`, `clients: []`, and so on) everywhere else. Lazer tourney clients additionally publish `score`, `accuracy`, `combo {current, max}`, and `judgements` (the miss/meh/ok/great/perfect/good counts shape, 1.2.0, R6) in `$defs/tourneyClientPlay`, matching `build_lazer_tourney`'s per-client hit data (`src/api/v2/tourney.rs:166-210`). Only the stable tournament-manager aggregate is deferred, as a `temporary`-class pre-release divergence (`docs/v2/implementation-plan.md`'s M4a-or-later task and day-0 gate): until it lands, the osu! plugin takes 1.x's "no manager found" branch unconditionally on stable, and the `stable-tournament` oracle case is exempted from the M2/M4a byte-equality exits rather than passing it. |
@@ -342,12 +347,27 @@ The rule has two parts, by consumer:
 - **A plugin's own ABI reads are gated by capability, not stripped.** A
   `STATE_UPDATE` a non-owning plugin receives as a subscriber
   (`docs/v2/plugin-abi.md` §6.12), and a bundled plugin's `vosu-surface`
-  read (`docs/v2/plugin-abi.md` §7.5), include `internal` only when that
-  plugin's manifest `requires`/`optional` names `field:vosu.osu.internal` or
-  a path below it; a whole-namespace `field:vosu.osu` requirement does
-  **not** grant it, since granting it to every namespace consumer would
-  defeat the carve-out. `docs/v2/catalog-v2.md`'s `requires_internal_paths`
-  install-plan flag (below) uses this same predicate.
+  read (`docs/v2/plugin-abi.md` §7.5), include `internal` only to the exact
+  extent the plugin's manifest `requires`/`optional` grants: naming
+  `field:vosu.osu.internal` or a descendant of it grants **exactly that
+  named subtree and everything below it, never anything wider** — naming
+  `field:vosu.osu.internal.paths.stable` grants `/internal/paths/stable`
+  only, not the rest of `/internal/paths` or `/internal` itself; a
+  whole-namespace `field:vosu.osu` requirement does **not** grant any of
+  it, since granting it to every namespace consumer would defeat the
+  carve-out. A selector at or below the granted subtree returns the real
+  value. A selector at an ancestor of it — `""`, `/internal`, or any
+  intermediate pointer between the namespace root and the granted subtree —
+  returns a document **pruned** to only the granted descendant(s): every
+  other key under `internal` (and every other top-level key this plugin has
+  no separate grant for, same as always) is omitted as if never published,
+  never nulled, matching ADR 0020's uncovered-field convention. A selector
+  naming a sibling subtree the grant does not cover (e.g.
+  `/internal/paths/lazer` when only `.stable` is granted) reports *absent*
+  (`value: null, error: null`), the same as every other ungranted selector
+  (`docs/v2/plugin-abi.md` §6.12). `docs/v2/catalog-v2.md`'s
+  `requires_internal_paths` install-plan flag (below) uses the same
+  named-subtree predicate.
 
 This is disclosure control, not confinement (`docs/v2/plugin-abi.md` §6.6):
 an out-of-process plugin already has the user's own filesystem access, and
@@ -362,25 +382,33 @@ when unknown or not applicable to the session's variant:
 | --- | --- | --- |
 | `internal.paths.stable.game` | stable | The stable client's install directory. |
 | `internal.paths.stable.songs` | stable | 1.x's `songs_dir` for a stable client. |
-| `internal.paths.stable.skins` | stable | |
-| `internal.paths.stable.replays` | stable | |
-| `internal.paths.lazer.data` | lazer | Lazer's data root (no songs/skins folders; see below). |
-| `internal.paths.lazer.files` | lazer | Lazer's content-addressed file store. |
-| `internal.paths.current.beatmapFolder` | both | 1.x `folders.beatmap`/`menu.folder`: the current chart's own folder (stable) or songs-store entry (lazer). `null` when no chart is selected. |
+| `internal.paths.stable.skins` | stable | `<game>/Skins`, stable's fixed install layout (R29); `null` when `game` itself is `null`. |
+| `internal.paths.stable.replays` | stable | `<game>/Replays`, stable's fixed install layout (R29); `null` when `game` itself is `null`. |
+| `internal.paths.lazer.data` | lazer | Lazer's data root: 1.x `global.game_folder` (no songs/skins folders; see below) (R29). |
+| `internal.paths.lazer.files` | lazer | Lazer's content-addressed file store: 1.x `global.songs_folder` (R29). |
+| `internal.paths.current.beatmapFolder` | both | 1.x `folders.beatmap`/`menu.folder`: the current chart's own folder (stable) or songs-store entry (lazer). |
 | `internal.paths.current.beatmapFile` | both | 1.x `files.beatmap`/`menu.filename`: the current chart's `.osu` file name within `beatmapFolder`. |
 | `internal.paths.current.background` | both | 1.x `files.background`: the current chart's background file name within `beatmapFolder`, `null` when it has none. |
 | `internal.paths.current.audio` | both | 1.x `files.audio`: the current chart's audio file name within `beatmapFolder`, `null` when it has none. |
-| `internal.paths.current.skinFolder` | both | 1.x `directPath.skin_folder`/`global.skin_folder`: the active skin's folder, `null` for a built-in skin or when unknown. |
+| `internal.paths.skinFolder` | both | 1.x `global.skin_folder`/`folders.skin`/`directPath.skinFolder`: the active skin's folder. Not gated by `current`, since 1.x emits this independent of whether a chart is selected. `null` on a lazer session (content-addressed skin storage has no folder) or when 1.x's own value is the empty string it normalizes at read time. |
 
 `internal.paths.stable` is `null` entirely on a lazer session and vice
-versa. `internal.paths.current` (1.2.0, additive) holds folder/file **names**
-only, never the joined full path 1.x's `directPath.beatmap_file` etc. compute
-(ADR 0021 forbids a joined path the same way it forbids every other raw
-path outside this carve-out); it is `null` entirely when no chart is
-selected, and its leaves are independently `null` per the notes above. This
-is the home M4a's upstream adapter needs to echo 1.x's `folders`/`files`
-objects byte-identically (D2, R8) without state ever outgrowing the
-`vosu.osu.internal` carve-out to do it.
+versa. `internal.paths.current` (1.2.0, additive) holds the current chart's
+folder/file **names** only, never the joined full path 1.x's
+`directPath.beatmap_file` etc. compute (ADR 0021 forbids a joined path the
+same way it forbids every other raw path outside this carve-out); the
+whole object is `null` when no chart is selected, which is why
+`beatmapFolder`/`beatmapFile` carry no separate per-leaf null note above —
+only `background`/`audio` can independently be `null` while the chart
+itself is selected (a chart with no background or no audio file).
+`internal.paths.skinFolder` (1.2.0, additive) sits outside `current` for
+exactly this reason: 1.x emits `folders.skin`/`directPath.skinFolder`
+whenever a session exists, not only while a chart is selected, so gating
+it on `current`'s own nullability would make it `null` whenever no chart
+is selected even though 1.x still has a real value there. Together these
+are the home M4a's upstream adapter needs to echo 1.x's
+`folders`/`files`/`directPath` objects byte-identically (D2, R8) without
+state ever outgrowing the `vosu.osu.internal` carve-out to do it.
 A writer plugin or tool imports files through the
 `vosu.osu.beatmap.import` action (M3) rather than writing into `paths`
 directly; the install plan gains a field flagging a plugin whose resolved
@@ -418,7 +446,7 @@ inside a core namespace's `resources` object.
 ADR 0020's Publication section ties sampling rate to subscription demand: a
 plugin samples a high-frequency value at its faster rate only while a client
 is subscribed to it (and, for gameplay-only values, only while the session is
-in `play` status). This generalizes 1.x's fixed selected-field demand
+in `play` or `pause` status). This generalizes 1.x's fixed selected-field demand
 classifier (`V2SubscriptionHub`/the plan compiler, `src/server/v2_subscription.rs`),
 which unions four demand flags — `regular`, `precise`, `gameplay_regular`,
 `gameplay_precise` — from the set of subscribed JSON Pointers.

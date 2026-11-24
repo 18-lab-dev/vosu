@@ -982,7 +982,7 @@
       "properties": {
         "paths": {
           "type": "object",
-          "description": "Per-variant install paths (D8); the variant not matching the session's own client is entirely null. A plugin importing a file uses the vosu.osu.beatmap.import action (M3), never a write through this path.",
+          "description": "Per-variant install paths (D8), the current chart's folder/file names, and the active skin's folder (R8); the variant not matching the session's own client is entirely null. A plugin importing a file uses the vosu.osu.beatmap.import action (M3), never a write through this path.",
           "required": ["stable", "lazer"],
           "additionalProperties": false,
           "properties": {
@@ -1017,22 +1017,25 @@
               ]
             },
             "current": {
-              "description": "1.2.0, additive (R8, M4a-blocking): the current chart's folder/file names only, never a joined path (ADR 0021); `null` entirely when no chart is selected; each leaf independently `null` when the chart has none. Home for the 1.x `folders.beatmap`/`files.*`/`directPath.skin_folder` sources M4a's upstream adapter must echo byte-identically.",
+              "description": "1.2.0, additive (R8, M4a-blocking): the current chart's folder/file names only, never a joined path (ADR 0021); `null` entirely when no chart is selected; `background`/`audio` are independently `null` when the chart has none. Home for the 1.x `folders.beatmap`/`files.*` sources M4a's upstream adapter must echo byte-identically.",
               "oneOf": [
                 {
                   "type": "object",
-                  "required": ["beatmapFolder", "beatmapFile", "background", "audio", "skinFolder"],
+                  "required": ["beatmapFolder", "beatmapFile", "background", "audio"],
                   "additionalProperties": false,
                   "properties": {
                     "beatmapFolder": { "type": ["string", "null"] },
                     "beatmapFile": { "type": ["string", "null"] },
                     "background": { "type": ["string", "null"] },
-                    "audio": { "type": ["string", "null"] },
-                    "skinFolder": { "type": ["string", "null"] }
+                    "audio": { "type": ["string", "null"] }
                   }
                 },
                 { "type": "null" }
               ]
+            },
+            "skinFolder": {
+              "type": ["string", "null"],
+              "description": "1.2.0, additive (R8): the active skin's folder (1.x `global.skin_folder`/`folders.skin`/`directPath.skinFolder`), present independent of whether a chart is selected, unlike `current`. `null` on a lazer session (content-addressed skin storage has no folder) or when 1.x's own value is the empty string it normalizes at read time."
             }
           }
         }

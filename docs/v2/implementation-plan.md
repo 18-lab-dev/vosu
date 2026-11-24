@@ -474,8 +474,9 @@ plan's §9 R1-R32), bundled per that plan's §4 design decisions (MA-MH):
   `statistics.good`, `$defs/tourneyClientPlay`'s `score`/`accuracy`/
   `combo`/`judgements`, `settings.skin`, and (owner's open decision,
   resolved: ADD now) `internal.paths.current {beatmapFolder, beatmapFile,
-  background, audio, skinFolder}` — the 1.x `folders.beatmap`/`files.*`/
-  `directPath.skin_folder` sources M4a's upstream adapter must echo,
+  background, audio}` and `internal.paths.skinFolder` — the 1.x
+  `folders.beatmap`/`files.*`/`folders.skin`/`directPath.skinFolder`
+  sources M4a's upstream adapter must echo,
   consistent with D2/D8 (MD(f), R8).
 - `docs/v2/catalog-v2.md`: the `[[provides]]` example's `version` and the
   "additive amendments bump it from there" prose now read `1.2.0` (R31).
@@ -650,7 +651,8 @@ Scope:
   whole-namespace `field:vosu.osu` (D2).
 - `vosu-osu` projects each `StateBundleSnapshot` onto `vosu.status`,
   `vosu.chart`, `vosu.play`, `vosu.skin`, `vosu.osu`, and
-  `vosu.osu/internal/paths` (per-variant fields, D8), publishing changed
+  `vosu.osu/internal/paths` (per-variant fields, D8, plus the current
+  chart's/active skin's folder and file names, R8), publishing changed
   leaves as one batch per sample, following state-schema.md "1.x-to-2.0
   field mapping", "`keys`", "`skin`", and "Common-layer coverage";
   `vosu.osu.session.ipcId` carries the spectator IPC id (D6) and
@@ -915,7 +917,12 @@ the bounded `[[provides]] schema` profile and the catalog's mirrored schema
 version and lane table (D7); the `comm_hints` matcher field (D18);
 committed JSON Schemas for both documents under `docs/v2/schemas/` so
 ecosystem packaging scripts can validate without vosu. Validation lives in
-`vosu-plugin-api` so plugin authors and core use one implementation.
+`vosu-plugin-api` so plugin authors and core use one implementation. M2's
+K0 parses only the `[[provides]]`/`[[requires]]`/`[[optional]]` subset core
+itself consumes, and K1's lane walker applies D7's bounds only to the
+schemas it walks; this milestone is where both become the full catalog
+rule set, the semver-requirement resolution corpus, and the catalog's own
+schema mirror (R14, R15).
 
 Exit: `cargo test --locked -p vosu-plugin-api manifest` and a corpus test
 `tests/catalog_v2_compat.rs` with valid and invalid manifests for every rule
@@ -1333,7 +1340,8 @@ states what was adopted and why. Spec amendments land in A1.
   0022).
 - **D2 Plugin-only paths.** `x-visibility: "plugins"` is allowed only on
   `vosu.osu`'s top-level `/internal` key and rejected anywhere else at schema
-  load; `/internal` carries **paths only** (per-variant fields, D8); one
+  load; `/internal` carries **paths only** (per-variant fields, D8, plus
+  the current chart's/active skin's folder and file names, R8); one
   projector function strips it from every API-facing document
   unconditionally — whole document, whole namespace, every subscription
   and encoding cache, session events, and debug logs — and gates
