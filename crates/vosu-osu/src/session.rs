@@ -37,6 +37,8 @@ use crate::settings::OsuSettings;
 use std::sync::atomic::AtomicBool;
 
 mod capture;
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_support;
 
 type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>;
 
@@ -90,7 +92,7 @@ impl OsuSession {
         settings: InstanceSettings,
         scans: Option<SessionScanLifecycle>,
     ) -> Arc<Self> {
-        Arc::new(Self {
+        let session = Arc::new(Self {
             handle,
             pid,
             generation,
@@ -105,7 +107,10 @@ impl OsuSession {
             resolver: tokio::sync::Mutex::new(None),
             capture: tokio::sync::Mutex::new(None),
             osu_settings: tokio::sync::watch::channel(OsuSettings::default()).0,
-        })
+        });
+        #[cfg(any(test, feature = "test-harness"))]
+        test_support::register(&session);
+        session
     }
 
     #[must_use]

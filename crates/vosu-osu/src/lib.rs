@@ -29,6 +29,8 @@ pub mod session;
 pub mod settings;
 #[cfg(test)]
 mod test_support;
+#[cfg(all(feature = "test-harness", not(test)))]
+pub use session::test_support;
 
 vosu_plugin_api::export_plugin!(bundled concurrent plugin::OsuPlugin);
 
