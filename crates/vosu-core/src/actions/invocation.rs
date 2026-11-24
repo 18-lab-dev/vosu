@@ -5,21 +5,9 @@ use std::time::Duration;
 use serde_json::Value;
 use vosu_plugin_api::ActionProgress;
 
-use super::{ActionDescriptor, JobOwner, JobRegistry, JobProgress, TerminalOutcome};
-use crate::plugin::{host::PluginHost, host_services::PluginInstanceId};
-
 pub type InvocationId = u64;
 pub type SessionId = String;
 pub type InvocationResult = TerminalOutcome;
-
-/// Tool identities are authenticated and capability-checked by composition on
-/// each request, not derived from a tool id or retained bearer token.
-#[derive(Clone, Debug)]
-pub enum Principal {
-    Tool(JobOwner),
-    Broker,
-    Plugin(PluginInstanceId),
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct InvocationPolicy {
@@ -58,8 +46,14 @@ pub trait InvocationSink: Send + Sync {
 pub struct InvocationExecutor {
     pub(crate) host: Weak<PluginHost>,
     pub(crate) policy: InvocationPolicy,
+    pub(crate) tool_authority: Option<Arc<dyn super::ToolAuthority>>,
 }
 impl InvocationExecutor {
+    pub fn with_tool_authority(mut self, authority: Arc<dyn super::ToolAuthority>) -> Self {
+        self.tool_authority = Some(authority);
+        self
+    }
+
     pub fn invoke(
         &self,
         principal: Principal,

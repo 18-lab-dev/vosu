@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use semver::Version;
-use vosu_plugin_api::manifest::ActionSessionMode;
+use vosu_plugin_api::ActionSessionMode;
 
 use crate::plugin::{action_schema::CompiledActionSchema, host_services::PluginInstanceId};
 
@@ -23,4 +23,10 @@ pub struct ActionDescriptor {
 /// Only currently loaded action providers may be returned.
 pub trait ActionRegistry: Send + Sync {
     fn get(&self, action: &str) -> Option<Arc<ActionDescriptor>>;
+}
+
+/// Live launch/grant check, consulted for every tool invocation.
+/// Missing authority is deny-by-default.
+pub trait ToolAuthority: Send + Sync {
+    fn authorizes(&self, owner: &super::JobOwner, action: &ActionDescriptor) -> bool;
 }

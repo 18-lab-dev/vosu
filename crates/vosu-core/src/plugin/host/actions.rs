@@ -8,7 +8,7 @@ use serde_json::Value;
 use vosu_plugin_api::{ActionCancel, ActionInvoke, ActionProgress, ActionResult, ActionSessionMode,
     ActionStatus, Caller, CallerKind, CborValue, Message, vosu_status};
 
-use super::{InstanceSlot, PluginHost};
+use super::PluginHost;
 use crate::actions::{ActionDescriptor, ActionRegistry, InvocationError, InvocationExecutor,
     InvocationId, InvocationPolicy, InvocationSink, JobFailure, Principal, TerminalOutcome};
 use crate::plugin::{host_services::PluginInstanceId, registry::LoadedPlugin, session::SessionHandle};
@@ -19,9 +19,10 @@ pub(super) const MAX_RELAYS: usize = 64;
 pub(super) struct PendingInvocation {
     pub action: Arc<ActionDescriptor>,
     pub session: Option<SessionHandle>,
-    pub sink: Arc<dyn InvocationSink>,
+    pub sink: Option<Arc<dyn InvocationSink>>,
     pub deadline: Option<tokio::task::JoinHandle<()>>,
     pub cancelled: bool,
+    pub caller: Option<PluginInstanceId>,
 }
 impl Drop for PendingInvocation {
     fn drop(&mut self) {
@@ -32,7 +33,7 @@ impl Drop for PendingInvocation {
 #[derive(Default)]
 pub(super) struct ActionState {
     pub descriptors: HashMap<String, Arc<ActionDescriptor>>,
-    pub grants: HashMap<PluginInstanceId, Vec<vosu_plugin_api::manifest::Capability>>,
+    pub grants: HashMap<PluginInstanceId, Vec<vosu_plugin_api::Capability>>,
     pub pending: HashMap<InvocationId, PendingInvocation>,
     pub relays: HashMap<(PluginInstanceId, u64), Option<InvocationId>>,
     pub next_id: u64,
@@ -128,7 +129,6 @@ impl PluginHost {
             (id, message)
         };
         let weak = self.self_ref.clone();
-        let invocation = id.0;
         let timer = self.state_runtime.spawn(async move {
             tokio::time::sleep(policy.deadline).await;
             if let Some(host) = weak.upgrade() {
@@ -140,10 +140,10 @@ impl PluginHost {
             if let Some(pending) = state.pending.get_mut(&invocation) { pending.deadline = Some(timer); }
             else { timer.abort(); }
         }
-        if self.dispatch_to_instance(action.provider, &id.1, 0).is_err() {
+        if self.dispatch_to_instance(provider, &message, 0).is_err() {
             self.finish_action(invocation, failure("plugin_crashed", "Action provider unavailable"));
         }
-        Ok(invocation)
+        Ok(())
     }
 
     pub(crate) fn cancel_action(&self, invocation: InvocationId) {

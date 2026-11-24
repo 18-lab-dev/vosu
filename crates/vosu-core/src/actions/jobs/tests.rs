@@ -5,7 +5,7 @@ use crate::actions::waiters::{JobWait, MAX_WAITERS, MAX_WAITERS_PER_JOB};
 fn create(registry: &JobRegistry) -> Arc<JobSnapshot> {
     registry
         .create(
-            JobPrincipal::Broker,
+            Principal::Broker,
             "fixture.work".into(),
             Some("session-17".into()),
         )
@@ -24,7 +24,7 @@ fn running_capacity_never_evicts_and_terminal_pressure_evicts_oldest() {
     let now = Instant::now();
     let jobs: Vec<_> = (0..MAX_JOBS).map(|_| create(&registry)).collect();
     assert_eq!(create_result(&registry), Err(JobError::TooManyJobs));
-    assert!(registry.get(&jobs[0].id, &JobPrincipal::Broker).is_ok());
+    assert!(registry.get(&jobs[0].id, &Principal::Broker).is_ok());
     registry
         .finish_at(&jobs[11].id, TerminalOutcome::Cancelled, now)
         .unwrap();
@@ -37,23 +37,23 @@ fn running_capacity_never_evicts_and_terminal_pressure_evicts_oldest() {
         .unwrap();
     let replacement = registry
         .create_at(
-            JobPrincipal::Broker,
+            Principal::Broker,
             "fixture.work".into(),
             None,
             now + Duration::from_secs(2),
         )
         .unwrap();
     assert_eq!(
-        registry.get(&jobs[11].id, &JobPrincipal::Broker),
+        registry.get(&jobs[11].id, &Principal::Broker),
         Err(JobError::UnknownJob)
     );
-    assert!(registry.get(&jobs[3].id, &JobPrincipal::Broker).is_ok());
+    assert!(registry.get(&jobs[3].id, &Principal::Broker).is_ok());
     assert_eq!(replacement.state, JobState::Running);
     assert_eq!(registry.inner.lock().entries.len(), MAX_JOBS);
 }
 
 fn create_result(registry: &JobRegistry) -> Result<Arc<JobSnapshot>, JobError> {
-    registry.create(JobPrincipal::Broker, "fixture.work".into(), None)
+    registry.create(Principal::Broker, "fixture.work".into(), None)
 }
 
 #[test]
@@ -69,18 +69,18 @@ fn retention_expires_at_exact_boundary_without_expiring_running_jobs() {
         registry
             .get_at(
                 &job.id,
-                &JobPrincipal::Broker,
+                &Principal::Broker,
                 now + TERMINAL_RETENTION - Duration::from_nanos(1)
             )
             .is_ok()
     );
     assert_eq!(
-        registry.get_at(&job.id, &JobPrincipal::Broker, now + TERMINAL_RETENTION),
+        registry.get_at(&job.id, &Principal::Broker, now + TERMINAL_RETENTION),
         Err(JobError::UnknownJob)
     );
     assert!(
         registry
-            .get_at(&running.id, &JobPrincipal::Broker, now + TERMINAL_RETENTION)
+            .get_at(&running.id, &Principal::Broker, now + TERMINAL_RETENTION)
             .is_ok()
     );
 }
@@ -89,8 +89,8 @@ fn retention_expires_at_exact_boundary_without_expiring_running_jobs() {
 fn ownership_is_exact_launch_identity_and_broker_is_authoritative() {
     let registry = JobRegistry::new();
     let owner = JobOwner::new();
-    let principal = JobPrincipal::ToolSession(owner.clone());
-    let stranger = JobPrincipal::ToolSession(JobOwner::new());
+    let principal = Principal::Tool(owner.clone());
+    let stranger = Principal::Tool(JobOwner::new());
     let job = registry
         .create(principal.clone(), "fixture.work".into(), None)
         .unwrap();
@@ -107,7 +107,7 @@ fn ownership_is_exact_launch_identity_and_broker_is_authoritative() {
     assert!(!registry.inner.lock().entries[&job.id].cancel_requested);
     assert!(
         registry
-            .request_cancel(&job.id, &JobPrincipal::Broker)
+            .request_cancel(&job.id, &Principal::Broker)
             .unwrap()
             .dispatch
     );
@@ -124,12 +124,12 @@ fn cancel_is_advisory_idempotent_and_session_never_retargets() {
     let registry = JobRegistry::new();
     let job = create(&registry);
     let other = registry
-        .create(JobPrincipal::Broker, "fixture.work".into(), None)
+        .create(Principal::Broker, "fixture.work".into(), None)
         .unwrap();
     assert_eq!(registry.cancel_session("session-17"), vec![job.id.clone()]);
     assert!(registry.cancel_session("session-17").is_empty());
     let cancel = registry
-        .request_cancel(&job.id, &JobPrincipal::Broker)
+        .request_cancel(&job.id, &Principal::Broker)
         .unwrap();
     assert!(!cancel.dispatch);
     assert_eq!(cancel.job.state, JobState::Running);
@@ -141,7 +141,7 @@ fn cancel_is_advisory_idempotent_and_session_never_retargets() {
             .unwrap()
     );
     let current = registry
-        .request_cancel(&job.id, &JobPrincipal::Broker)
+        .request_cancel(&job.id, &Principal::Broker)
         .unwrap();
     assert_eq!(current.job.state, JobState::Succeeded);
     assert_eq!(current.job.result, Some(Value::from(91)));
@@ -170,7 +170,7 @@ fn snapshots_are_immutable_and_first_terminal_result_wins() {
             )
             .unwrap()
     );
-    let progress = registry.get(&initial.id, &JobPrincipal::Broker).unwrap();
+    let progress = registry.get(&initial.id, &Principal::Broker).unwrap();
     assert_eq!(progress.revision, 1);
     assert_eq!(progress.progress.as_ref().unwrap().fraction, Some(0.42));
     assert!(
@@ -200,7 +200,7 @@ fn snapshots_are_immutable_and_first_terminal_result_wins() {
             )
             .unwrap()
     );
-    let terminal = registry.get(&initial.id, &JobPrincipal::Broker).unwrap();
+    let terminal = registry.get(&initial.id, &Principal::Broker).unwrap();
     assert_eq!(terminal.revision, 2);
     assert_eq!(terminal.state, JobState::Failed);
     assert_eq!(terminal.error.as_ref().unwrap().code, "plugin_crashed");
@@ -224,7 +224,7 @@ fn cancelled_failure_has_no_public_error() {
             }),
         )
         .unwrap();
-    let terminal = registry.get(&job.id, &JobPrincipal::Broker).unwrap();
+    let terminal = registry.get(&job.id, &Principal::Broker).unwrap();
     assert_eq!(terminal.state, JobState::Cancelled);
     assert_eq!(terminal.error, None);
     assert_eq!(terminal.result, None);
@@ -237,14 +237,14 @@ async fn waiter_reservation_drops_both_counters_and_overflow_is_current() {
     let mut guards = Vec::new();
     for _ in 0..MAX_WAITERS_PER_JOB {
         let wait = registry
-            .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+            .poll(&job.id, &Principal::Broker, 0, Duration::from_secs(1))
             .unwrap();
         assert!(matches!(wait, JobWait::Waiting(_)));
         guards.push(wait);
     }
     assert!(matches!(
         registry
-            .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+            .poll(&job.id, &Principal::Broker, 0, Duration::from_secs(1))
             .unwrap(),
         JobWait::Immediate(_)
     ));
@@ -268,7 +268,7 @@ async fn global_waiter_capacity_and_drop_release() {
         for _ in 0..MAX_WAITERS_PER_JOB {
             guards.push(
                 registry
-                    .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+                    .poll(&job.id, &Principal::Broker, 0, Duration::from_secs(1))
                     .unwrap(),
             );
         }
@@ -277,14 +277,14 @@ async fn global_waiter_capacity_and_drop_release() {
     let extra = create(&registry);
     assert!(matches!(
         registry
-            .poll(&extra.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+            .poll(&extra.id, &Principal::Broker, 0, Duration::from_secs(1))
             .unwrap(),
         JobWait::Immediate(_)
     ));
     guards.pop();
     assert!(matches!(
         registry
-            .poll(&extra.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+            .poll(&extra.id, &Principal::Broker, 0, Duration::from_secs(1))
             .unwrap(),
         JobWait::Waiting(_)
     ));
@@ -297,7 +297,7 @@ async fn progress_between_reservation_and_wait_is_not_lost() {
     let registry = JobRegistry::new();
     let job = create(&registry);
     let wait = registry
-        .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+        .poll(&job.id, &Principal::Broker, 0, Duration::from_secs(1))
         .unwrap();
     registry
         .progress(
@@ -315,7 +315,7 @@ async fn progress_between_reservation_and_wait_is_not_lost() {
     let terminal_wait = registry
         .poll(
             &job.id,
-            &JobPrincipal::Broker,
+            &Principal::Broker,
             u64::MAX,
             Duration::from_secs(1),
         )
@@ -331,13 +331,13 @@ async fn elapsed_wait_returns_unchanged_snapshot_and_releases_slot() {
     let registry = JobRegistry::new();
     let job = create(&registry);
     let wait = registry
-        .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_millis(1))
+        .poll(&job.id, &Principal::Broker, 0, Duration::from_millis(1))
         .unwrap();
     assert!(matches!(wait, JobWait::Waiting(_)));
     assert_eq!(bounded(wait).await, job);
     assert_eq!(registry.inner.lock().waiters, 0);
     let immediate = registry
-        .poll(&job.id, &JobPrincipal::Broker, 0, Duration::ZERO)
+        .poll(&job.id, &Principal::Broker, 0, Duration::ZERO)
         .unwrap();
     assert!(matches!(immediate, JobWait::Immediate(_)));
 }
@@ -347,14 +347,14 @@ async fn evicted_waiter_releases_global_count_without_touching_new_job() {
     let registry = JobRegistry::new();
     let job = create(&registry);
     let wait = registry
-        .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+        .poll(&job.id, &Principal::Broker, 0, Duration::from_secs(1))
         .unwrap();
     registry
         .finish(&job.id, TerminalOutcome::Cancelled)
         .unwrap();
     let future = Instant::now() + TERMINAL_RETENTION;
     registry
-        .create_at(JobPrincipal::Broker, "fixture.work".into(), None, future)
+        .create_at(Principal::Broker, "fixture.work".into(), None, future)
         .unwrap();
     assert!(!registry.inner.lock().entries.contains_key(&job.id));
     assert_eq!(bounded(wait).await.state, JobState::Cancelled);
@@ -372,7 +372,7 @@ async fn deadline_is_terminal_and_late_success_cannot_resurrect() {
     .arm(&registry, &job.id)
     .unwrap();
     let wait = registry
-        .poll(&job.id, &JobPrincipal::Broker, 0, Duration::from_secs(1))
+        .poll(&job.id, &Principal::Broker, 0, Duration::from_secs(1))
         .unwrap();
     let terminal = bounded(wait).await;
     assert_eq!(terminal.state, JobState::Failed);
@@ -405,7 +405,7 @@ async fn unauthorized_poll_does_not_reserve_a_waiter() {
     assert!(matches!(
         registry.poll(
             &job.id,
-            &JobPrincipal::ToolSession(JobOwner::new()),
+            &Principal::Tool(JobOwner::new()),
             0,
             Duration::from_secs(1)
         ),
@@ -423,7 +423,7 @@ fn creation_snapshot_stays_running_after_synchronous_success() {
         .unwrap();
     assert_eq!(initial.state, JobState::Running);
     assert_eq!(initial.revision, 0);
-    let current = registry.get(&initial.id, &JobPrincipal::Broker).unwrap();
+    let current = registry.get(&initial.id, &Principal::Broker).unwrap();
     assert_eq!(current.state, JobState::Succeeded);
     assert_eq!(current.revision, 1);
     assert_eq!(current.result, Some(Value::from(83)));
@@ -454,7 +454,7 @@ async fn competing_terminal_results_accept_exactly_one() {
     .await
     .expect("bounded terminal race");
     assert_ne!(first.unwrap(), second.unwrap());
-    let current = registry.get(&job.id, &JobPrincipal::Broker).unwrap();
+    let current = registry.get(&job.id, &Principal::Broker).unwrap();
     assert_eq!(current.revision, 1);
     assert!(current.state.is_terminal());
     assert_eq!(

@@ -6,7 +6,7 @@ use serde_json::json;
 use vosu_plugin_api::{ActionCall, ActionCancel, ActionResult, ActionStatus, CborValue, Message, vosu_status};
 
 use super::*;
-use crate::plugin::{host::tests::helpers::test_host, host_services::PluginHostHandler, registry};
+use crate::plugin::{host::tests::test_host, host_services::PluginHostHandler, registry};
 
 const WAIT: Duration = Duration::from_secs(5);
 static EVENTS: LazyLock<Mutex<HashMap<String, mpsc::SyncSender<Message>>>> = LazyLock::new(Mutex::default);
@@ -82,6 +82,7 @@ fn invoke_message(rx: &mpsc::Receiver<Message>) -> vosu_plugin_api::ActionInvoke
 #[test]
 fn actions_exact_lookup_schema_and_wrong_instance_first_terminal() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _entered = runtime.enter();
     let (_dir, host) = test_host(runtime.handle().clone());
     let events = instance(&host, 9101, "tests.actions.exact", "");
     assert!(host.get("tests.actions.exact.nested.echo").is_some());
@@ -105,6 +106,7 @@ fn actions_exact_lookup_schema_and_wrong_instance_first_terminal() {
 #[test]
 fn actions_invalid_result_timeout_and_loss_are_terminal() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _entered = runtime.enter();
     let (_dir, host) = test_host(runtime.handle().clone());
     let events = instance(&host, 9111, "tests.actions.failure", "");
     let descriptor = host.get("tests.actions.failure.nested.echo").unwrap();
@@ -129,6 +131,7 @@ fn actions_invalid_result_timeout_and_loss_are_terminal() {
 #[test]
 fn actions_relay_remaps_ids_and_cancel_keeps_all_64_slots() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _entered = runtime.enter();
     let (_dir, host) = test_host(runtime.handle().clone());
     let callee = instance(&host, 9121, "tests.actions.callee", "");
     let caller = instance(&host, 9122, "tests.actions.caller", "[[requires]]\nid = \"action:tests.actions.callee.nested.echo\"\nversion = \"^1.0\"");

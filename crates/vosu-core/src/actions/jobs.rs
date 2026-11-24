@@ -16,22 +16,32 @@ static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
 /// One exact launch-session identity. Clone into its authentication record;
 /// creating another identity, even for the same tool, never inherits its jobs.
 #[derive(Debug, Clone, Default)]
-pub struct JobOwner(Arc<()>);
+pub struct JobOwner(Arc<()>, Option<Arc<str>>);
 
 impl JobOwner {
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn same(&self, other: &Self) -> bool {
+    /// A fresh launch identity with its authenticated owning tool metadata.
+    pub fn for_tool(tool_id: Arc<str>) -> Self {
+        Self(Arc::new(()), Some(tool_id))
+    }
+
+    pub fn tool_id(&self) -> Option<&str> {
+        self.1.as_deref()
+    }
+
+    pub fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum JobPrincipal {
+pub enum Principal {
     Broker,
-    ToolSession(JobOwner),
+    Tool(JobOwner),
+    Plugin(crate::plugin::PluginInstanceId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -100,7 +110,7 @@ pub struct CancellationRequest {
 
 pub(super) struct Entry {
     pub snapshot: Arc<JobSnapshot>,
-    owner: JobPrincipal,
+    owner: Principal,
     terminal_at: Option<Instant>,
     cancel_requested: bool,
     pub waiters: usize,
@@ -109,10 +119,11 @@ pub(super) struct Entry {
 }
 
 impl Entry {
-    pub(super) fn visible_to(&self, principal: &JobPrincipal) -> bool {
+    pub(super) fn visible_to(&self, principal: &Principal) -> bool {
         match (principal, &self.owner) {
-            (JobPrincipal::Broker, _) => true,
-            (JobPrincipal::ToolSession(a), JobPrincipal::ToolSession(b)) => a.same(b),
+            (Principal::Broker, _) => true,
+            (Principal::Tool(a), Principal::Tool(b)) => a.same(b),
+            (Principal::Plugin(a), Principal::Plugin(b)) => a == b,
             _ => false,
         }
     }
@@ -161,7 +172,7 @@ impl JobRegistry {
     /// Dispatch may finish synchronously; wait=0 must still return this snapshot.
     pub fn create(
         &self,
-        owner: JobPrincipal,
+        owner: Principal,
         action: String,
         session: Option<String>,
     ) -> Result<Arc<JobSnapshot>, JobError> {
@@ -170,7 +181,7 @@ impl JobRegistry {
 
     fn create_at(
         &self,
-        owner: JobPrincipal,
+        owner: Principal,
         action: String,
         session: Option<String>,
         now: Instant,
@@ -219,14 +230,14 @@ impl JobRegistry {
         Ok(snapshot)
     }
 
-    pub fn get(&self, id: &str, principal: &JobPrincipal) -> Result<Arc<JobSnapshot>, JobError> {
+    pub fn get(&self, id: &str, principal: &Principal) -> Result<Arc<JobSnapshot>, JobError> {
         self.get_at(id, principal, Instant::now())
     }
 
     fn get_at(
         &self,
         id: &str,
-        principal: &JobPrincipal,
+        principal: &Principal,
         now: Instant,
     ) -> Result<Arc<JobSnapshot>, JobError> {
         let mut state = self.inner.lock();
@@ -304,7 +315,7 @@ impl JobRegistry {
     pub fn request_cancel(
         &self,
         id: &str,
-        principal: &JobPrincipal,
+        principal: &Principal,
     ) -> Result<CancellationRequest, JobError> {
         let mut state = self.inner.lock();
         state.cleanup(Instant::now());

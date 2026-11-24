@@ -11,10 +11,9 @@ pub mod waiters;
 pub mod invocation;
 pub mod registry;
 
-pub use registry::{ActionDescriptor, ActionRegistry};
 pub use invocation::{
     InvocationError, InvocationExecutor, InvocationId, InvocationPolicy, InvocationResult,
-    InvocationSink, JobSink, Principal, SessionId,
+    InvocationSink, JobSink, PreparedInvocation, SessionId,
 };
 
 pub use deadline::{DeadlineGuard, DeadlinePolicy};

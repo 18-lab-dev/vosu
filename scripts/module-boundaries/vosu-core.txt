@@ -1,4 +1,6 @@
 api -> state
+actions -> plugin
+plugin -> actions
 app -> config
 logging -> config
 plugin -> logging

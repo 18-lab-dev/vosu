@@ -67,7 +67,7 @@ impl JobRegistry {
     pub fn poll(
         &self,
         id: &str,
-        principal: &JobPrincipal,
+        principal: &Principal,
         after: u64,
         wait: Duration,
     ) -> Result<JobWait, JobError> {
