@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tests/core_capture.rs"]
+mod core_capture;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use vosu_plugin_api::{CborValue, StateEntry};

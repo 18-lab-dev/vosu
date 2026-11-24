@@ -178,7 +178,6 @@ pub const POINTERS: &[&str] = &[
     "/profile",
     "/session/state",
     "/session/watchingReplay",
-    "/beatmap/time/live",
     "/settings/chatVisibilityStatus",
     "/settings/interfaceVisible",
     "/settings/leaderboard",
@@ -188,7 +187,6 @@ pub const POINTERS: &[&str] = &[
     "/leaderboardState",
     "/play/pp",
     "/performance/accuracy",
-    "/beatmap/stats",
     "/result/mode",
 ];
 pub fn selectors() -> Vec<Selector> {
@@ -301,12 +299,32 @@ impl Image<'_> {
             .0
             .values
             .iter()
-            .find(|entry| entry.ns == "vosu.osu" && entry.pointer == pointer)
+            .filter(|entry| {
+                entry.ns == "vosu.osu"
+                    && (entry.pointer == pointer
+                        || pointer
+                            .strip_prefix(&entry.pointer)
+                            .is_some_and(|rest| rest.starts_with('/')))
+            })
+            .max_by_key(|entry| entry.pointer.len())
             .ok_or(Error::NotReady)?;
         if entry.error.is_some() {
             return Err(Error::NotReady);
         }
-        let value = entry.value.as_ref().ok_or(Error::NotReady)?;
+        let mut value = entry.value.as_ref().ok_or(Error::NotReady)?;
+        for token in pointer[entry.pointer.len()..]
+            .strip_prefix('/')
+            .into_iter()
+            .flat_map(|rest| rest.split('/'))
+        {
+            let CborValue::Map(fields) = value else {
+                return Err(Error::NotReady);
+            };
+            value = fields
+                .iter()
+                .find_map(|(key, value)| (key.as_text() == Some(token)).then_some(value))
+                .ok_or(Error::NotReady)?;
+        }
         if matches!(value, CborValue::Null) {
             return Err(Error::NotReady);
         }

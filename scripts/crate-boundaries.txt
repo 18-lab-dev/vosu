@@ -113,6 +113,8 @@ vosu-adapter-streamcompanion -> vosu-osu-calc
 vosu-adapter-streamcompanion -> vosu-osu-model
 vosu-adapter-streamcompanion -> vosu-plugin-api
 vosu-adapter-streamcompanion -> vosu-surface
+# Real core requester capture regression fixture; development dependency only.
+vosu-adapter-streamcompanion -> vosu-core
 # Upstream projection production edges; core/state/osu below are test-only ingress.
 vosu-adapter-upstream -> vosu-adapter-support
 vosu-adapter-upstream -> vosu-osu-model

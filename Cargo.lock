@@ -3560,11 +3560,14 @@ name = "vosu-adapter-streamcompanion"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "ciborium",
  "indexmap",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "vosu-adapter-support",
+ "vosu-core",
  "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-plugin-api",
