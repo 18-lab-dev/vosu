@@ -22,6 +22,8 @@ use super::deadline::RawDeadline;
 use super::*;
 use vosu_plugin_api::read_plan_profile::{Phase, Span};
 
+mod shape;
+
 /// Reads a flat header struct out of an already-validated buffer at
 /// `offset`. Every call site in this module only uses offsets
 /// `vosu_plugin_api::validate_read_plan_submit`/`validate_read_plan_ref_op_width`
@@ -318,7 +320,7 @@ fn process_single_op_raw(
 /// dozen allocations.
 const MULTI_OP_CHUNK: usize = 64;
 
-fn process_multi_op_chunk_raw(
+fn process_multi_op_chunk_raw<const CAP: usize>(
     ctx: &RawContext<'_>,
     stage: &vosu_stage_header,
     base: u64,
@@ -330,7 +332,7 @@ fn process_multi_op_chunk_raw(
     let op_size = size_of::<vosu_plan_op>();
     // (op_index, address, out_offset, length) for each op in this chunk
     // whose address resolved — a plain stack array, never a `Vec`.
-    let mut participants = [(0usize, 0usize, 0usize, 0u32); MULTI_OP_CHUNK];
+    let mut participants = [(0usize, 0usize, 0usize, 0u32); CAP];
     let mut participant_count = 0usize;
     // An address-overflow op's message is charged against the budget
     // immediately below (in the same op-index order [`super::execute_stage_ops`]'s
@@ -362,8 +364,8 @@ fn process_multi_op_chunk_raw(
         let region_start = participants[0].2;
 
         let batch_ok = {
-            let mut requests: [MaybeUninit<ReadRequest<'_>>; MULTI_OP_CHUNK] =
-                [const { MaybeUninit::uninit() }; MULTI_OP_CHUNK];
+            let mut requests: [MaybeUninit<ReadRequest<'_>>; CAP] =
+                [const { MaybeUninit::uninit() }; CAP];
             let mut remaining: &mut [u8] = &mut out[region_start..];
             let mut cursor = region_start;
             for (slot, &(_, address, out_offset, length)) in
@@ -449,10 +451,24 @@ fn process_multi_op_raw(
     budget: &mut ErrorBudget,
 ) -> Result<(), ReadPlanError> {
     let op_count = stage.op_count as usize;
+    // Precise captures usually contain only the pointer and its current value.
+    // Avoid clearing the full 64-op scratch array for those reads.
+    // The same implementation retains all overflow, fallback and deadline rules.
+    if op_count <= 4 {
+        return process_multi_op_chunk_raw::<4>(
+            ctx,
+            stage,
+            base,
+            global_index_start,
+            0..op_count,
+            out,
+            budget,
+        );
+    }
     let mut chunk_start = 0usize;
     while chunk_start < op_count {
         let chunk_end = (chunk_start + MULTI_OP_CHUNK).min(op_count);
-        process_multi_op_chunk_raw(
+        process_multi_op_chunk_raw::<MULTI_OP_CHUNK>(
             ctx,
             stage,
             base,
@@ -528,18 +544,18 @@ pub fn execute_into(
 pub(crate) struct ValidatedPlan<'a> {
     payload: &'a [u8],
     header: vosu_read_plan_submit_header,
+    layout: shape::Layout,
 }
 
 impl<'a> ValidatedPlan<'a> {
     pub(crate) fn new(payload: &'a [u8], flags: u32) -> Result<Self, ExecuteBytesError> {
         let _validation_profile = Span::new(Phase::Validation);
-        validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags)
-            .map_err(|error| ExecuteBytesError::Message(error.into()))?;
-        validate_read_plan_submit(payload)
-            .map_err(|error| ExecuteBytesError::Message(error.into()))?;
-        let header =
-            read_flat_header(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
-        Ok(Self { payload, header })
+        let (header, layout) = shape::validate(payload, flags)?;
+        Ok(Self {
+            payload,
+            header,
+            layout,
+        })
     }
 
     pub(crate) fn handle(&self) -> u64 {
@@ -583,17 +599,24 @@ impl<'a> ValidatedPlan<'a> {
         out: &mut Vec<u8>,
     ) -> Result<(), ExecuteBytesError> {
         let validation_profile = Span::new(Phase::Validation);
-        let Self { payload, header } = self;
+        let Self {
+            payload,
+            header,
+            layout,
+        } = self;
 
-        // Validate width before runtime errors. Successful reads need no
-        // separate liveness syscall: the owned native process handle pins the
-        // process object, so PID reuse cannot redirect a Windows handle read.
-        // Failed reads still probe health to distinguish TARGET_GONE from
-        // an ordinary address/permission fault.
-        let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
-        validate_read_plan_ref_op_width(payload, pointer_width)
-            .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
-        if !memory.reads_pin_process_identity() && !memory.is_alive() {
+        // Validate width before runtime errors. Native reads either pin the OS
+        // process object or check its generation after reading, so a second
+        // pre-plan health syscall adds no PID-reuse protection. Failed reads
+        // still probe health to distinguish TARGET_GONE from address faults.
+        let ref_width_ok = match bitness {
+            ProcessBitness::X86 => layout.ref_width_x86,
+            ProcessBitness::X64 => layout.ref_width_x64,
+        };
+        if !ref_width_ok {
+            return Err(ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth));
+        }
+        if (!memory.reads_pin_process_identity() || layout.total_len == 0) && !memory.is_alive() {
             return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
         }
 
@@ -609,21 +632,8 @@ impl<'a> ValidatedPlan<'a> {
         }
 
         let stage_size = size_of::<vosu_stage_header>();
-        let op_size = size_of::<vosu_plan_op>();
-        let mut total_ops: usize = 0;
-        let mut total_len: u64 = 0;
-        for stage_index in 0..header.stage_count as usize {
-            let stage: vosu_stage_header = read_struct_at(
-                payload,
-                header.stages_offset as usize + stage_index * stage_size,
-            );
-            total_ops += stage.op_count as usize;
-            for op_index in 0..stage.op_count as usize {
-                let op: vosu_plan_op =
-                    read_struct_at(payload, stage.ops_offset as usize + op_index * op_size);
-                total_len += u64::from(op.length);
-            }
-        }
+        let total_ops = layout.total_ops;
+        let total_len = layout.total_len;
         let used = RESULT_HEADER_SIZE
             + RESULT_ENTRY_SIZE * total_ops
             + usize::try_from(total_len).unwrap_or(usize::MAX);

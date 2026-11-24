@@ -661,11 +661,11 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         panic!("lazer amplitudes were not ready");
     };
     assert_eq!((values.len(), values[39]), (40, 39.0));
-    assert_eq!(lazer_memory.batch_calls.load(Ordering::Relaxed), 0);
-    assert_eq!(lazer_memory.batch_requests.load(Ordering::Relaxed), 0);
+    assert_eq!(lazer_memory.batch_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(lazer_memory.batch_requests.load(Ordering::Relaxed), 40);
     assert_eq!(
         lazer_memory.forbidden_exact_calls.load(Ordering::Relaxed),
-        40
+        0
     );
 }
 

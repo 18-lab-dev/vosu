@@ -134,6 +134,11 @@ impl Paths {
         &self.data
     }
 
+    /// Data directory passed to a bundled plugin, named by its manifest id.
+    pub fn bundled_plugin_data_dir(&self, plugin_id: &str) -> PathBuf {
+        self.data.join("plugins").join(plugin_id)
+    }
+
     pub fn cache(&self) -> &Path {
         &self.cache
     }
@@ -540,5 +545,26 @@ mod tests {
             "legacy"
         );
         assert!(!legacy.exists());
+    }
+}
+
+#[cfg(test)]
+mod bundled_plugin_paths {
+    use super::Paths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn bundled_plugins_use_data_not_cache_or_launch_root() {
+        let paths = Paths {
+            program: PathBuf::from("program"),
+            launch: PathBuf::from("launch"),
+            config: PathBuf::from("config"),
+            data: PathBuf::from("data"),
+            cache: PathBuf::from("cache"),
+        };
+        assert_eq!(
+            paths.bundled_plugin_data_dir("vosu.osu"),
+            PathBuf::from("data").join("plugins").join("vosu.osu")
+        );
     }
 }

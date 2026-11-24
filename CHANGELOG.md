@@ -28,6 +28,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Store versioned lazer offsets and the embedded generator under
   `<data>/plugins/vosu.osu/`, without migrating the old offsets cache; a version
   not satisfied by embedded offsets regenerates locally on first use.
+- Reduce synchronous plugin-read overhead with revocable host lookup and
+  validated-layout caches, retain Linux PID-generation checks at the native
+  read boundary, and batch lazer's forty visualizer amplitudes in one plan.
 
 ## 1.2.5 - 2026-11-22
 

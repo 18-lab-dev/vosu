@@ -629,3 +629,51 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
         "the outer submission itself (from the reader thread, not nested) must still succeed"
     );
 }
+
+#[test]
+fn detach_generation_and_destroy_revoke_warm_lookup() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let (_directory, host) = test_host(runtime.handle().clone());
+    let instance = PluginInstanceId::new(6301);
+    let (events, _commands) = create_read_plan_instance(
+        &host,
+        instance,
+        "testkit.readplan.cache-generation",
+        &["cache-generation"],
+        ReadPlanPluginConfig::default(),
+    );
+    let pid = 500_163_001;
+    set_session_memory_hook_for_tests(pid, Arc::new(AlwaysOkMemory), ProcessBitness::X64);
+    host.process_appeared(test_process(pid, "cache-generation"));
+    let handle = SessionHandle(expect_attached(&events));
+    let first = host.sync_session_memory(instance, handle).unwrap();
+    assert!(Arc::ptr_eq(
+        &first,
+        &host.sync_session_memory(instance, handle).unwrap()
+    ));
+    host.process_exited(pid);
+    assert!(matches!(
+        host.sync_session_memory(instance, handle),
+        Err(vosu_status::VOSU_ERR_TARGET_GONE)
+    ));
+    assert!(
+        matches!(events.recv_timeout(RECV_TIMEOUT).unwrap(), ReadPlanEvent::Detached { handle: retired } if retired == handle.0)
+    );
+    host.process_appeared(test_process(pid, "cache-generation"));
+    let next = SessionHandle(expect_attached(&events));
+    assert_ne!(handle, next);
+    assert!(host.sync_session_memory(instance, next).is_ok());
+    assert!(matches!(
+        host.sync_session_memory(instance, handle),
+        Err(vosu_status::VOSU_ERR_TARGET_GONE)
+    ));
+    // Prime the new handle again immediately before tearing down its instance.
+    assert!(host.sync_session_memory(instance, next).is_ok());
+    host.destroy_all(Duration::from_secs(1));
+    assert!(matches!(
+        host.sync_session_memory(instance, next),
+        Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT)
+    ));
+    clear_session_memory_hook_for_tests(pid);
+}
