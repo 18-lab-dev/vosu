@@ -7,6 +7,13 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add exact-identity catalog source settings and HTTPS source parsing, with
   dedicated trust/private-network mutations and journaled credential-purge
   recovery. Preserve legacy source lists and migration markers for M8.
+- Add a bounded exact-source credential store in the channel-aware config root,
+  with write-only inputs, redacted presence/errors, serialized durable mutation
+  generations and source-removal purge hooks. Malformed stores are disabled
+  without rewriting; explicit validated replacement repairs them. Persistence
+  follows existing same-directory atomic writes, Unix 0600 temporary/final files
+  and inherited Windows directory ACLs, not a keyring or encrypted secret store.
+  Native Windows ACL/replacement evidence remains pending.
 
 ## Unreleased — 2.0 M6a
 
