@@ -1,4 +1,4 @@
-pub(super) fn game_state_name(v: i64) -> &'static str {
+pub fn game_state_name(v: i64) -> &'static str {
     match v {
         0 => "menu",
         1 => "edit",
@@ -27,7 +27,7 @@ pub(super) fn game_state_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(crate) fn ruleset_name(v: i64) -> &'static str {
+pub fn ruleset_name(v: i64) -> &'static str {
     match v {
         0 => "osu",
         1 => "taiko",
@@ -36,7 +36,7 @@ pub(crate) fn ruleset_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn chat_status_name(v: i64) -> &'static str {
+pub fn chat_status_name(v: i64) -> &'static str {
     match v {
         0 => "hidden",
         1 => "visible",
@@ -44,7 +44,7 @@ pub(super) fn chat_status_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn leaderboard_name(v: i64) -> &'static str {
+pub fn leaderboard_name(v: i64) -> &'static str {
     match v {
         0 => "local",
         1 => "global",
@@ -54,7 +54,7 @@ pub(super) fn leaderboard_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn lazer_leaderboard_name(v: i64) -> &'static str {
+pub fn lazer_leaderboard_name(v: i64) -> &'static str {
     match v {
         0 => "details",
         1 => "local",
@@ -65,7 +65,7 @@ pub(super) fn lazer_leaderboard_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn progress_bar_name(v: i64) -> &'static str {
+pub fn progress_bar_name(v: i64) -> &'static str {
     match v {
         0 => "off",
         1 => "pie",
@@ -75,7 +75,7 @@ pub(super) fn progress_bar_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn score_meter_name(v: i64) -> &'static str {
+pub fn score_meter_name(v: i64) -> &'static str {
     match v {
         0 => "none",
         1 => "colour",
@@ -83,14 +83,14 @@ pub(super) fn score_meter_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn mania_scroll_name(v: i64) -> &'static str {
+pub fn mania_scroll_name(v: i64) -> &'static str {
     match v {
         0 => "up",
         1 => "down",
         _ => "",
     }
 }
-pub(super) fn sort_name(v: i64) -> &'static str {
+pub fn sort_name(v: i64) -> &'static str {
     match v {
         0 => "artist",
         1 => "bpm",
@@ -103,7 +103,7 @@ pub(super) fn sort_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn lazer_sort_name(v: i64) -> &'static str {
+pub fn lazer_sort_name(v: i64) -> &'static str {
     match v {
         0 => "artist",
         1 => "author",
@@ -119,7 +119,7 @@ pub(super) fn lazer_sort_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn group_name(v: i64) -> &'static str {
+pub fn group_name(v: i64) -> &'static str {
     match v {
         0 => "none",
         1 => "artist",
@@ -141,7 +141,7 @@ pub(super) fn group_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn lazer_group_name(v: i64) -> &'static str {
+pub fn lazer_group_name(v: i64) -> &'static str {
     match v {
         0 => "none",
         1 => "artist",
@@ -162,7 +162,7 @@ pub(super) fn lazer_group_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn user_login_name(v: i64) -> &'static str {
+pub fn user_login_name(v: i64) -> &'static str {
     match v {
         0 => "reconnecting",
         256 => "guest",
@@ -172,7 +172,7 @@ pub(super) fn user_login_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn bancho_name(v: i64) -> &'static str {
+pub fn bancho_name(v: i64) -> &'static str {
     match v {
         0 => "idle",
         1 => "afk",
@@ -191,7 +191,7 @@ pub(super) fn bancho_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn beatmap_status_name(v: i64) -> &'static str {
+pub fn beatmap_status_name(v: i64) -> &'static str {
     match v {
         0 => "unknown",
         1 => "notSubmitted",
@@ -203,7 +203,7 @@ pub(super) fn beatmap_status_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn country_name(v: i64) -> &'static str {
+pub fn country_name(v: i64) -> &'static str {
     const CODES: &[&str] = &[
         "", "OC", "EU", "AD", "AE", "AF", "AG", "AI", "AL", "AM", "AN", "AO", "AQ", "AR", "AS",
         "AT", "AU", "AW", "AZ", "BA", "BB", "BD", "BE", "BF", "BG", "BH", "BI", "BJ", "BM", "BN",
@@ -230,7 +230,7 @@ pub(super) fn country_name(v: i64) -> &'static str {
         .unwrap_or("")
 }
 
-pub(super) fn source_country_name(v: i64) -> &'static str {
+pub fn source_country_name(v: i64) -> &'static str {
     match v {
         216 => "TL",
         239 => "RS",

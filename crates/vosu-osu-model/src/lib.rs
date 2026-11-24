@@ -1,10 +1,12 @@
 //! osu! value types and osu!-exact helpers shared by the reader, calculator,
 //! and adapters: memory/state/enum models and the calculation root helpers
-//! (JS-compatible rounding and number writing, mods, grades, legacy hits).
+//! (JS-compatible rounding and number writing, mods, grades, legacy hits),
+//! including the exact names emitted by the 1.x API.
 
 pub mod enums;
 pub mod launch;
 pub mod memory;
+pub mod names;
 #[path = "root.rs"]
 mod root;
 pub mod states;

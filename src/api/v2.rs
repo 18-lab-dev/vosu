@@ -190,13 +190,12 @@ pub(crate) fn encode_dto<T: Serialize>(value: &T) -> Result<Bytes, ApiError> {
 }
 
 mod builders;
-pub(crate) mod names;
 mod tourney;
 mod wire;
 
 use builders::*;
-use names::*;
 use tourney::*;
+use vosu_osu_model::names::*;
 
 #[cfg(test)]
 mod tests;
