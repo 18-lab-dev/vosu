@@ -639,15 +639,15 @@ fn sync_prefilter(
     applied
 }
 
-/// Syncs this host's own matcher-set generation (`MatcherEngine::generation`,
-/// P2) and reports whether it changed since the last sync. The caller
-/// forces a full reconcile on a change and then re-offers every tracked
-/// record (`reoffer_tracked`): a plugin installed (or re-installed) after
-/// discovery already tracked a non-matching process must still get a
-/// chance to match it, which `apply_appeared`'s own same-occurrence skip
-/// would otherwise suppress forever for an unchanged process.
+/// Syncs this host's discovery generation (`PluginHost::discovery_generation`:
+/// matcher set plus observer interest, P2) and reports whether it changed
+/// since the last sync. The caller forces a full reconcile on a change and
+/// then re-offers every tracked record (`reoffer_tracked`): a plugin
+/// installed after discovery already tracked a non-matching process must
+/// still get a chance to match it, which `apply_appeared`'s own
+/// same-occurrence skip would otherwise suppress for an unchanged process.
 fn sync_generation(host: &PluginHost, last_generation: &mut Option<u64>) -> bool {
-    let generation = host.matcher_generation();
+    let generation = host.discovery_generation();
     if *last_generation == Some(generation) {
         return false;
     }

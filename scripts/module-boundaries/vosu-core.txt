@@ -1,4 +1,6 @@
 catalog -> state
+# M6b G0: catalog game offers reuse the runtime matcher and observe discovery.
+catalog -> plugin
 api -> state
 actions -> action_schema
 actions -> identity
@@ -18,5 +20,5 @@ resource_io -> resources
 plugin -> config
 report -> config
 updater -> desktop
-# catalog has no intra-core edges: persistence uses the existing
-# vosu-core -> vosu-sys crate edge for platform::atomic_replace.
+# catalog persistence uses the existing vosu-core -> vosu-sys crate edge
+# for platform::atomic_replace.

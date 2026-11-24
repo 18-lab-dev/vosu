@@ -596,18 +596,35 @@ impl MatcherEngine {
     /// pattern — exactly 1.x's own name-filter-or-nothing behavior).
     #[must_use]
     pub fn prefilter(&self) -> Prefilter {
-        let linux = self.platform == MatchPlatform::Linux;
-        let widens = self
-            .entries
-            .iter()
-            .any(|(_, table, compiled)| !compiled.names_only() && !has_usable_hint(linux, table));
+        Prefilter::for_tables(
+            self.platform,
+            self.entries
+                .iter()
+                .map(|(_, table, compiled)| (table, compiled)),
+        )
+    }
+}
+
+impl Prefilter {
+    /// [`MatcherEngine::prefilter`]'s exact rule over matchers that are
+    /// deliberately *not* registered (M6b G0 catalog game offers): no
+    /// overlap or [`PREFILTER_LIMIT`] refusal, since uninstalled catalog
+    /// alternatives may overlap (§6.1). Callers combine the result with
+    /// the registered set through [`Self::union`], never by registering.
+    #[must_use]
+    pub fn for_tables<'a>(
+        platform: MatchPlatform,
+        tables: impl Iterator<Item = (&'a MatchTable, &'a CompiledMatcher)> + Clone,
+    ) -> Self {
+        let linux = platform == MatchPlatform::Linux;
+        let widens = tables
+            .clone()
+            .any(|(table, compiled)| !compiled.names_only() && !has_usable_hint(linux, table));
         if widens {
-            return Prefilter::Unfiltered;
+            return Self::Unfiltered;
         }
-        let mut names: Vec<String> = self
-            .entries
-            .iter()
-            .flat_map(|(_, table, _)| {
+        let mut names: Vec<String> = tables
+            .flat_map(|(table, _)| {
                 table
                     .process_names
                     .iter()
@@ -627,7 +644,26 @@ impl MatcherEngine {
             .collect();
         names.sort_unstable();
         names.dedup();
-        Prefilter::Names(names)
+        Self::Names(names)
+    }
+
+    /// Combines two enumeration-cost pre-filters for one platform. Widening
+    /// is always sound; narrowing past interest never is. On Linux a union
+    /// beyond the bounded kernel/CN_PROC table ([`PREFILTER_LIMIT`]) widens
+    /// to [`Self::Unfiltered`] instead of being truncated or refused: only
+    /// registration of *installed* matchers is subject to that refusal.
+    #[must_use]
+    pub fn union(self, other: Self, platform: MatchPlatform) -> Self {
+        let (Self::Names(mut names), Self::Names(other)) = (self, other) else {
+            return Self::Unfiltered;
+        };
+        names.extend(other);
+        names.sort_unstable();
+        names.dedup();
+        if platform == MatchPlatform::Linux && names.len() > PREFILTER_LIMIT {
+            return Self::Unfiltered;
+        }
+        Self::Names(names)
     }
 }
 

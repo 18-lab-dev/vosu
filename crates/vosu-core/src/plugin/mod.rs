@@ -95,13 +95,14 @@ pub use host::resource_requests::{
 };
 pub use host::resources::RootCapability;
 pub use host::{
-    PackageRegistration, PluginHost, ProcessRecord, ProviderRegistration, ValidationSnapshot,
+    DiscoveryObserver, PackageRegistration, PluginHost, ProcessRecord, ProviderRegistration,
+    ValidationSnapshot,
 };
 pub use host_services::PluginHostHandler;
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{
     CandidateProcess, CompiledMatcher, MatchOutcome, MatchPlatform, MatcherEngine, MatcherError,
-    OverlapError, PluginId, Prefilter, RegisterError, overlaps,
+    OverlapError, PluginId, Prefilter, RegisterError, host_platform, overlaps,
 };
 pub use read_plan::{
     DispatchThreadScope, ExecuteBytesError, FinishOutcome, MAX_OUTSTANDING_ASYNC_PLANS,

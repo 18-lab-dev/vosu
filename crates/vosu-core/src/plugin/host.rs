@@ -204,6 +204,8 @@ pub struct PluginHost {
     /// Every enabled game plugin's compiled `[match]` table, in install
     /// order (§6.1, D18), registered by [`Self::create_instance`].
     matcher: Mutex<MatcherEngine>,
+    /// The generic discovery notification seam (`observer.rs`, M6b G0).
+    discovery_observer: Mutex<observer::ObserverSlot>,
     /// Session lifecycle bookkeeping (§6.2): PID generations,
     /// `SESSION_IDENTIFY`/`SESSION_DECLINE` processing, the 5-second
     /// identification timeout, `focus_priority` holding.
@@ -353,6 +355,7 @@ impl PluginHost {
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
             matcher: Mutex::new(MatcherEngine::new(host_platform())),
+            discovery_observer: Mutex::new(observer::ObserverSlot::default()),
             sessions: Mutex::new(SessionRegistry::with_identification_timeout(
                 identification_timeout,
             )),
@@ -580,6 +583,9 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .match_candidate(&candidate);
+        // Read-only notification after installed matchers ran (`observer.rs`);
+        // no host lock is held here.
+        self.notify_observed(&process, outcome.winner.is_some());
         let Some(winner) = outcome.winner else {
             return;
         };
@@ -888,6 +894,8 @@ mod api;
 mod capabilities;
 mod instances;
 mod lifecycle;
+mod observer;
+pub use observer::DiscoveryObserver;
 pub(super) mod read_plans;
 pub mod resource_requests;
 pub mod resources;
