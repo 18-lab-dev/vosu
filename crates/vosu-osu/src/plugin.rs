@@ -111,6 +111,8 @@ struct PluginState {
     session_detach_joins: Vec<tokio::task::JoinHandle<()>>,
     settings: OsuSettings,
     missing_sink_logged: bool,
+    #[cfg(test)]
+    settings_before_send: Option<std::sync::mpsc::SyncSender<()>>,
 }
 
 pub struct OsuPlugin<
@@ -236,12 +238,17 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
     fn update_settings(&self, values: &CborValue) -> Result<(), PluginError> {
         let settings =
             OsuSettings::from_cbor(values).map_err(|_| vosu_status::VOSU_ERR_INVALID_ARGUMENT)?;
-        let sessions = {
-            let mut state = self.state.lock().expect("plugin state mutex poisoned");
-            state.settings = settings;
-            state.sessions.values().cloned().collect::<Vec<_>>()
-        };
-        for session in sessions {
+        let mut state = self.state.lock().expect("plugin state mutex poisoned");
+        state.settings = settings;
+        // Serialize the effective value and its watch publication. Otherwise a
+        // concurrent older update can publish after the newer one. Lock order:
+        // PluginState -> watch value; receivers copy settings before calling
+        // out, and send_replace invokes no plugin or host callbacks.
+        for session in state.sessions.values() {
+            #[cfg(test)]
+            if let Some(observer) = &state.settings_before_send {
+                let _ = observer.try_send(());
+            }
             session.osu_settings.send_replace(settings);
         }
         Ok(())
