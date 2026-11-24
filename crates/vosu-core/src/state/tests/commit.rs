@@ -289,7 +289,8 @@ fn refusals_leave_revision_and_tree_unchanged() {
                 "vosu.chart",
                 "",
                 PublishValueRef::Cbor(&[
-                    0xa1, 0x69, b'r', b'e', b's', b'o', b'u', b'r', b'c', b'e', b's', 0xa0,
+                    0xa1, 0x69, b'r', b'e', b's', b'o', b'u', b'r', b'c', b'e', b's', 0xa1, 0x65,
+                    b'a', b'u', b'd', b'i', b'o', 0x01,
                 ]),
             ),
             "uncovered",
@@ -422,6 +423,7 @@ fn null_intermediate_initializes_but_scalar_returns_invalid_argument() {
         )
         .err()
         .unwrap();
+    assert!(matches!(error, CommitError::ArrayDescent(_)));
     assert_eq!(
         vosu_plugin_api::vosu_status::from(error),
         vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT
@@ -477,17 +479,290 @@ fn grant_ancestors_and_reserved_kinds_are_segment_bounded() {
 proptest! {
     #![proptest_config(vosu_proptest::vosu_proptest_config())]
     #[test]
-    fn prop_commit_equals_sequential_json_patch(values in prop::collection::vec((0usize..12, any::<i64>()), 1..80)) {
-        let grant = grant("test.commit-property", "", "");
+    fn prop_commit_equals_sequential_json_patch(values in prop::collection::vec((0usize..12, any::<i64>(), any::<bool>(), any::<bool>()), 1..60)) {
+        let grant = grant("test.commit-property", "", "[[resource_kinds]]\nkind = \"audio\"\nfamilies = [\"audio\"]");
         let store = store(&grant);
-        let mut expected = serde_json::Map::new();
-        for (key, value) in values {
-            let pointer = format!("/key{key}");
-            store.commit(&grant, KEY, [field("test.commit-property", &pointer, PublishValueRef::I64(value))].into_iter()).unwrap();
-            expected.insert(format!("key{key}"), value.into());
+        let mut expected = serde_json::json!({});
+        let mut resources = serde_json::json!({});
+        for (key, value, clear, remove) in values {
+            // Whole CBOR groups, null-reset intermediates and independent nested
+            // leaves coexist with resource-map insertion/removal in one batch.
+            let group = format!("key{key}");
+            let pointer = format!("/{group}");
+            let nested = format!("/{group}/nested/value");
+            let cbor = vosu_plugin_api::encode(&serde_json::json!({"items": [value, null], "text": "a\\\"b"})).unwrap();
+            let entries = [
+                field("test.commit-property", if clear { &pointer } else { &nested }, if clear { PublishValueRef::Null } else { PublishValueRef::I64(value) }),
+                field("test.commit-property", "/subtree", PublishValueRef::Cbor(&cbor)),
+                field("vosu.chart", "/resources/audio", if remove { PublishValueRef::Null } else { PublishValueRef::String("audio") }),
+            ];
+            let old = store.current(KEY).unwrap();
+            store.commit(&grant, KEY, entries.into_iter()).unwrap();
+            if clear { expected[&group] = serde_json::Value::Null; }
+            else {
+                if expected.get(&group).is_none_or(serde_json::Value::is_null) { expected[&group] = serde_json::json!({}); }
+                expected[&group]["nested"] = serde_json::json!({"value": value});
+            }
+            expected["subtree"] = serde_json::json!({"items": [value, null], "text": "a\\\"b"});
+            if remove { resources.as_object_mut().unwrap().remove("audio"); }
+            else { resources["audio"] = "audio".into(); }
+            let current = store.current(KEY).unwrap();
+            prop_assert_eq!(current.revision, old.revision + 1);
             let mut json = Vec::new();
-            store.current(KEY).unwrap().namespace("test.commit-property").unwrap().write_json(&mut json);
-            prop_assert_eq!(serde_json::from_slice::<serde_json::Value>(&json).unwrap(), serde_json::Value::Object(expected.clone()));
+            current.namespace("test.commit-property").unwrap().write_json(&mut json);
+            prop_assert_eq!(serde_json::from_slice::<serde_json::Value>(&json).unwrap(), expected.clone());
+            json.clear();
+            current.get("vosu.chart", &Pointer::parse("/resources").unwrap()).unwrap().write_json(&mut json);
+            prop_assert_eq!(serde_json::from_slice::<serde_json::Value>(&json).unwrap(), resources.clone());
         }
     }
+}
+
+#[test]
+fn core_roots_preserve_required_reference_skeletons() {
+    let grant = grant(
+        "test.commit-roots",
+        "\"field:vosu.chart\", \"field:vosu.skin\", \"field:vosu.play\"",
+        "",
+    );
+    let store = store(&grant);
+    for (ns, field_name) in [("vosu.chart", "resources"), ("vosu.skin", "tree")] {
+        for input in [serde_json::json!({}), serde_json::json!({field_name: null})] {
+            let encoded = vosu_plugin_api::encode(&input).unwrap();
+            let outcome = store
+                .commit(
+                    &grant,
+                    KEY,
+                    [field(ns, "", PublishValueRef::Cbor(&encoded))].into_iter(),
+                )
+                .unwrap();
+            assert!(matches!(
+                outcome.current.namespace(ns),
+                Some(StateValue::Object(_))
+            ));
+            assert_eq!(
+                get(&store, ns, &format!("/{field_name}")),
+                Some(if ns == "vosu.chart" {
+                    StateValue::Object(Arc::new(StateObject::default()))
+                } else {
+                    StateValue::Null
+                })
+            );
+        }
+        for value in [
+            PublishValueRef::Null,
+            PublishValueRef::Bool(false),
+            PublishValueRef::Cbor(&[0x80]),
+        ] {
+            let old = store.current(KEY).unwrap();
+            assert!(matches!(
+                store.commit(&grant, KEY, [field(ns, "", value)].into_iter()),
+                Err(CommitError::CoreRoot)
+            ));
+            assert!(Arc::ptr_eq(&old, &store.current(KEY).unwrap()));
+        }
+    }
+}
+
+#[test]
+fn every_duplicate_protected_root_member_is_checked() {
+    let grant = grant(
+        "test.commit-duplicate-root",
+        "\"field:vosu.chart\", \"field:vosu.skin\"",
+        "[[resource_kinds]]\nkind = \"audio\"\nfamilies = [\"audio\"]",
+    );
+    let object = |fields: Vec<(&str, StateValue)>| {
+        StateValue::Object(Arc::new(StateObject::new(
+            fields.into_iter().map(|(k, v)| (Arc::from(k), v)).collect(),
+        )))
+    };
+    // Exercise the root check independently of the CBOR decoder, which must
+    // also reject duplicates. The second copy must never evade authority.
+    let mut chart = object(vec![
+        ("resources", object(vec![("audio", StateValue::Null)])),
+        ("resources", object(vec![("background", StateValue::Null)])),
+    ]);
+    assert!(matches!(
+        crate::state::commit::normalize_core_root(&grant, "vosu.chart", &mut chart),
+        Err(CommitError::Uncovered { .. })
+    ));
+    let mut skin = object(vec![
+        ("tree", StateValue::Null),
+        ("tree", StateValue::Bool(true)),
+    ]);
+    assert!(matches!(
+        crate::state::commit::normalize_core_root(&grant, "vosu.skin", &mut skin),
+        Err(CommitError::Uncovered { .. })
+    ));
+}
+
+#[test]
+fn empty_batch_is_a_revision_and_watch_noop() {
+    let grant = grant("test.commit-empty", "", "");
+    let store = store(&grant);
+    let watch = store.revisions(KEY).unwrap();
+    let old = store.current(KEY).unwrap();
+    let outcome = store.commit(&grant, KEY, [].into_iter()).unwrap();
+    assert!(Arc::ptr_eq(&old, &outcome.current));
+    assert!(Arc::ptr_eq(&outcome.previous, &outcome.current));
+    assert_eq!(outcome.current.revision, 0);
+    assert!(outcome.touched.is_empty());
+    assert!(!watch.has_changed().unwrap());
+}
+
+#[test]
+fn ten_thousand_entry_batches_are_bounded_and_keep_wire_key_order() {
+    use std::time::{Duration, Instant};
+    let grant = grant("test.commit-wide", "", "");
+    let store = store(&grant);
+    let paths: Vec<_> = (0..10_000).rev().map(|i| format!("/wide/key{i}")).collect();
+    let started = Instant::now();
+    // Run again against a wide existing object to exercise read indexing too.
+    for value in [1, 2] {
+        store
+            .commit(
+                &grant,
+                KEY,
+                paths
+                    .iter()
+                    .map(|p| field("test.commit-wide", p, PublishValueRef::I64(value))),
+            )
+            .unwrap();
+    }
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let state = store.current(KEY).unwrap();
+    let StateValue::Object(wide) = state
+        .get("test.commit-wide", &Pointer::parse("/wide").unwrap())
+        .unwrap()
+    else {
+        panic!("wide object")
+    };
+    assert_eq!(wide.len(), 10_000);
+    for ((key, value), expected) in wide.iter().zip((0..10_000).rev()) {
+        assert_eq!(key, format!("key{expected}"));
+        assert_eq!(value, &StateValue::I64(2));
+    }
+}
+
+#[test]
+fn namespace_byte_budget_is_atomic_and_replacement_releases_capacity() {
+    let grant = grant("test.commit-byte-budget", "", "");
+    let store = store(&grant);
+    // The JSON escape expansion, not just payload bytes, counts.
+    let payload = "\u{1}".repeat(200_000);
+    for path in ["/a", "/b", "/c"] {
+        store
+            .commit(
+                &grant,
+                KEY,
+                [field(
+                    "test.commit-byte-budget",
+                    path,
+                    PublishValueRef::String(&payload),
+                )]
+                .into_iter(),
+            )
+            .unwrap();
+    }
+    let old = store.current(KEY).unwrap();
+    let watch = store.revisions(KEY).unwrap();
+    let error = store
+        .commit(
+            &grant,
+            KEY,
+            [
+                field("test.commit-byte-budget", "/valid", PublishValueRef::Null),
+                field(
+                    "test.commit-byte-budget",
+                    "/d",
+                    PublishValueRef::String(&payload),
+                ),
+            ]
+            .into_iter(),
+        )
+        .err()
+        .unwrap();
+    assert!(matches!(error, CommitError::DocumentBudget));
+    assert_eq!(
+        vosu_plugin_api::vosu_status::from(error),
+        vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT
+    );
+    assert!(Arc::ptr_eq(&old, &store.current(KEY).unwrap()));
+    assert!(!watch.has_changed().unwrap());
+    store
+        .commit(
+            &grant,
+            KEY,
+            [field(
+                "test.commit-byte-budget",
+                "/a",
+                PublishValueRef::Null,
+            )]
+            .into_iter(),
+        )
+        .unwrap();
+    store
+        .commit(
+            &grant,
+            KEY,
+            [field(
+                "test.commit-byte-budget",
+                "/d",
+                PublishValueRef::String(&payload),
+            )]
+            .into_iter(),
+        )
+        .unwrap();
+}
+
+#[test]
+fn session_key_budget_is_atomic_and_subtree_replacement_releases_keys() {
+    let grant = grant("test.commit-key-budget", "", "");
+    let store = store(&grant);
+    let paths: Vec<_> = (0..10_000).map(|i| format!("/group{i}")).collect();
+    for group in 0..6 {
+        let paths: Vec<_> = paths.iter().map(|p| format!("/batch{group}{p}")).collect();
+        store
+            .commit(
+                &grant,
+                KEY,
+                paths
+                    .iter()
+                    .map(|p| field("test.commit-key-budget", p, PublishValueRef::Null)),
+            )
+            .unwrap();
+    }
+    let old = store.current(KEY).unwrap();
+    assert!(matches!(
+        store.commit(
+            &grant,
+            KEY,
+            paths
+                .iter()
+                .map(|p| field("test.commit-key-budget", p, PublishValueRef::Null))
+        ),
+        Err(CommitError::DocumentBudget)
+    ));
+    assert!(Arc::ptr_eq(&old, &store.current(KEY).unwrap()));
+    store
+        .commit(
+            &grant,
+            KEY,
+            [field(
+                "test.commit-key-budget",
+                "/batch0",
+                PublishValueRef::Null,
+            )]
+            .into_iter(),
+        )
+        .unwrap();
+    store
+        .commit(
+            &grant,
+            KEY,
+            paths
+                .iter()
+                .map(|p| field("test.commit-key-budget", p, PublishValueRef::Null)),
+        )
+        .unwrap();
 }
