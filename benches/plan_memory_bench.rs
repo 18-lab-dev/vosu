@@ -22,6 +22,14 @@ use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory
 mod stable_fixture;
 use stable_fixture::patterns;
 struct SliceMemory(Vec<u8>);
+#[cfg(windows)]
+fn native_fixture() -> &'static vosu_sys::process::WindowsProcessMemory {
+    static PROCESS: std::sync::LazyLock<vosu_sys::process::WindowsProcessMemory> =
+        std::sync::LazyLock::new(|| {
+            vosu_sys::process::WindowsProcessMemory::open(std::process::id()).unwrap()
+        });
+    &PROCESS
+}
 impl ProcessMemory for SliceMemory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         let source = address
@@ -31,14 +39,33 @@ impl ProcessMemory for SliceMemory {
                 operation: "bench",
                 message: "outside fixture".into(),
             })?;
+        #[cfg(not(windows))]
         dst.copy_from_slice(source);
+        #[cfg(windows)]
+        native_fixture().read_exact(source.as_ptr() as usize, dst)?;
         Ok(())
     }
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
-        for read in reads {
-            self.read_exact(read.address, read.dst)?;
+        #[cfg(not(windows))]
+        {
+            for read in reads {
+                self.read_exact(read.address, read.dst)?;
+            }
+            Ok(())
         }
-        Ok(())
+        #[cfg(windows)]
+        {
+            for read in reads.iter() {
+                if read.address.checked_add(read.dst.len()).is_none_or(|end| end > self.0.len()) {
+                    return Err(MemoryError::Backend { operation: "bench", message: "outside fixture".into() });
+                }
+            }
+            let base = self.0.as_ptr() as usize;
+            for read in reads.iter_mut() { read.address += base; }
+            let result = native_fixture().read_many(reads);
+            for read in reads.iter_mut() { read.address -= base; }
+            result
+        }
     }
     fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
         Ok(vec![MemoryRegion {
@@ -46,6 +73,7 @@ impl ProcessMemory for SliceMemory {
             size: self.0.len(),
         }])
     }
+    fn reads_pin_process_identity(&self) -> bool { cfg!(windows) }
 }
 struct Modules;
 impl ModuleResolver for Modules {
@@ -273,6 +301,18 @@ fn bench(c: &mut Criterion) {
     assert_eq!(value.status, 3);
     assert_eq!(value.time, 0.0);
     let mut group = c.benchmark_group("plan_memory");
+    #[cfg(windows)]
+    for (name, reader) in [("native", &mut native_stable), ("plan", &mut stable)] {
+        let _ = reader.global_precise().unwrap();
+        let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
+        let _ = reader.global_precise().unwrap();
+        eprintln!("WP_FIXTURE {name} precise {:?}", vosu_sys::process::WindowsProcessMemory::take_bench_counts());
+        let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
+        let _ = reader.global();
+        let _ = reader.menu("");
+        let _ = reader.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME);
+        eprintln!("WP_FIXTURE {name} regular {:?}", vosu_sys::process::WindowsProcessMemory::take_bench_counts());
+    }
     for sequential in [true, false] {
         let (process, counter) = counted_process(ProcessBitness::X86);
         let process = if sequential {
