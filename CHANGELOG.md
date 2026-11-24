@@ -17,6 +17,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
   display metadata. Dashboard/report metadata now comes from host sessions;
   the obsolete "resolving offsets" side-channel label is replaced by the
   host lifecycle states "starting reader" and "reading".
+- Retire pending identification offers as well as identified sessions when a
+  plugin owner is torn down, so shutdown leaves no stale host diagnostics.
 
 - Mount gosuMemory, streamCompanion and upstream v2/precise HTTP/WebSocket
   projections through their explicit bundled plugin registrations and permanent

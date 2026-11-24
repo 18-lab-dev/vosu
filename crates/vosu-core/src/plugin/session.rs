@@ -403,6 +403,29 @@ impl SessionRegistry {
         })
     }
 
+    /// Owner teardown also retires offers that have not identified yet,
+    /// including timed-out offers deliberately kept hidden during discovery.
+    pub(crate) fn detach_owner(&mut self, owner: &str) -> Vec<SessionDetached> {
+        let detached = self
+            .identified
+            .extract_if(|_, record| record.owner.as_str() == owner)
+            .map(|(handle, _)| handle)
+            .chain(
+                self.pending
+                    .extract_if(|_, record| record.owner.as_str() == owner)
+                    .map(|(handle, _)| handle),
+            )
+            .map(|handle| SessionDetached {
+                handle: handle.0,
+                reason: DetachReason::Lost,
+            })
+            .collect();
+        self.priority_holder = self
+            .priority_holder
+            .filter(|handle| self.identified.contains_key(handle));
+        detached
+    }
+
     /// Sweeps every still-pending session for the 5-second identification
     /// timeout (§6.2), returning each handle that just crossed it for the
     /// first time (the caller logs once per handle). A timed-out session
