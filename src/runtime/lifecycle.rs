@@ -287,7 +287,7 @@ impl ProductionRuntime {
             origins: Arc::clone(&self.origins),
             dashboard: true,
         });
-        let listener = match ListenerOwner::start_with_broker(
+        let mut listener = match ListenerOwner::start_with_broker(
             providers,
             target,
             self.paths.broker_path().map(Some),
@@ -304,6 +304,7 @@ impl ProductionRuntime {
                 return Err(error);
             }
         };
+        listener.watch_cli_actions(&self.plugins).await;
         let Some(effective_listener) = listener.state().effective else {
             listener.stop_accepting();
             hubs.shutdown().await;

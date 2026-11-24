@@ -50,6 +50,7 @@ pub(super) struct ActionState {
     pub relays: HashMap<(PluginInstanceId, u64), Option<InvocationId>>,
     pub next_id: u64,
     pub policy: InvocationPolicy,
+    pub cli_updates: Option<tokio::sync::watch::Sender<()>>,
 }
 
 impl ActionRegistry for PluginHost {
@@ -64,6 +65,31 @@ impl ActionRegistry for PluginHost {
 }
 
 impl PluginHost {
+    /// Private broker metadata, sorted by exact action id.
+    pub fn cli_actions(&self) -> Vec<Arc<ActionDescriptor>> {
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        let state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut actions: Vec<_> = state
+            .descriptors
+            .values()
+            .filter(|action| {
+                action.cli && matches!(instances.get(&action.provider), Some(InstanceSlot::Live(_)))
+            })
+            .cloned()
+            .collect();
+        actions.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        actions
+    }
+
+    /// Lifecycle-driven invalidation; latest-only and idle without a consumer.
+    pub fn subscribe_cli_actions(&self) -> tokio::sync::watch::Receiver<()> {
+        let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
+        state
+            .cli_updates
+            .get_or_insert_with(|| tokio::sync::watch::channel(()).0)
+            .subscribe()
+    }
+
     pub fn invocation_executor(&self) -> InvocationExecutor {
         self.invocation_executor_with_policy(self.action_policy())
     }
@@ -134,6 +160,9 @@ impl PluginHost {
                     ),
                 }),
             );
+        }
+        if let Some(updates) = &state.cli_updates {
+            updates.send_replace(());
         }
     }
 
@@ -462,6 +491,9 @@ impl PluginHost {
             state.descriptors.retain(|_, d| d.provider != instance);
             state.grants.remove(&instance);
             state.relays.retain(|(caller, _), _| *caller != instance);
+            if let Some(updates) = &state.cli_updates {
+                updates.send_replace(());
+            }
             let ids: Vec<_> = state
                 .pending
                 .iter()

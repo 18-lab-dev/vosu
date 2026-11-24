@@ -72,6 +72,7 @@ pub struct ListenerOwner {
     pub(super) task: JoinHandle<()>,
     pub(super) broker: Option<Arc<crate::server::broker::BrokerToken>>,
     pub(super) broker_logger: Option<vosu_core::logging::Logger>,
+    pub(super) cli_task: Option<JoinHandle<()>>,
 }
 
 impl ListenerOwner {
@@ -112,12 +113,54 @@ impl ListenerOwner {
             task,
             broker,
             broker_logger: logger,
+            cli_task: None,
         };
         if let Err(error) = owner.wait_for_stage(&target).await {
             owner.shutdown().await;
             return Err(error);
         }
         Ok(owner)
+    }
+
+    /// Refreshes private metadata on plugin lifecycle changes, never by polling.
+    pub(crate) async fn watch_cli_actions(&mut self, host: &Arc<vosu_core::plugin::PluginHost>) {
+        let Some(broker) = &self.broker else { return };
+        // Composition attaches this owner to its one production plugin host.
+        if self.cli_task.is_some() {
+            return;
+        }
+        let mut updates = host.subscribe_cli_actions();
+        broker.set_cli_host(Arc::downgrade(host));
+        let initial = broker.clone();
+        if !matches!(
+            tokio::task::spawn_blocking(move || initial.refresh_cli_actions()).await,
+            Ok(Ok(()))
+        ) && let Some(logger) = &self.broker_logger
+        {
+            logger.warn("Native broker action metadata publication failed");
+        }
+        let weak = Arc::downgrade(broker);
+        let cancel = self.cancel.clone();
+        let logger = self.broker_logger.clone();
+        self.cli_task = Some(tokio::spawn(async move {
+            // The initial snapshot is published before startup reports ready.
+            while tokio::select! {
+                _ = cancel.cancelled() => false,
+                changed = updates.changed() => changed.is_ok(),
+            } {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                let Some(broker) = weak.upgrade() else { break };
+                let result =
+                    tokio::task::spawn_blocking(move || broker.refresh_cli_actions()).await;
+                if !matches!(result, Ok(Ok(())))
+                    && let Some(logger) = &logger
+                {
+                    logger.warn("Native broker action metadata publication failed");
+                }
+            }
+        }));
     }
 
     /// Stages a replacement. The old listener stays effective when DNS or bind
@@ -190,7 +233,10 @@ impl ListenerOwner {
         self.cancel.cancel();
     }
 
-    pub async fn join(self) {
+    pub async fn join(mut self) {
+        if let Some(task) = self.cli_task.take() {
+            let _ = task.await;
+        }
         let _ = self.task.await;
     }
 

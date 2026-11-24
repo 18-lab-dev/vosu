@@ -8,6 +8,8 @@ use std::{
     time::Duration,
 };
 
+mod actions;
+
 pub fn arguments(args: impl IntoIterator<Item = OsString>) -> Option<Vec<OsString>> {
     let mut args = args.into_iter();
     let executable = args.next()?;
@@ -35,6 +37,7 @@ enum Invocation {
         action: String,
         remove_data: Option<bool>,
     },
+    Action(actions::Invocation),
     Tool(String, Vec<OsString>),
 }
 fn parse(args: Vec<OsString>) -> Result<Invocation, String> {
@@ -105,6 +108,12 @@ fn parse(args: Vec<OsString>) -> Result<Invocation, String> {
                 }
                 return Ok(Invocation::Open(id));
             }
+            Some(id) if id.contains('.') => {
+                if list || json {
+                    return Err("--list and --json cannot be combined with an action".into());
+                }
+                return actions::parse(id, args.collect()).map(Invocation::Action);
+            }
             Some(id) if crate::tools::manifest::valid_id(id) => {
                 if list || json {
                     return Err("--list and --json cannot be combined with a tool id".into());
@@ -136,6 +145,8 @@ fn broker_path() -> std::io::Result<PathBuf> {
 struct Broker {
     origin: String,
     token: String,
+    #[serde(default)]
+    actions: std::collections::BTreeMap<String, vosu_plugin_api::ActionSessionMode>,
 }
 struct Connection {
     broker: Broker,
@@ -152,12 +163,18 @@ impl Connection {
         path: &str,
         body: &Value,
     ) -> Result<Value, Failure> {
+        self.request_url(method, &format!("/tools/_host/v1/cli{path}"), body)
+            .await
+    }
+    async fn request_url(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &Value,
+    ) -> Result<Value, Failure> {
         let reply = self
             .client
-            .request(
-                method,
-                format!("{}/tools/_host/v1/cli{path}", self.broker.origin),
-            )
+            .request(method, format!("{}{path}", self.broker.origin))
             .bearer_auth(&self.broker.token)
             .json(body)
             .send()
@@ -180,8 +197,9 @@ impl Connection {
             };
             return Err((
                 code,
-                value["error"]
+                value["error"]["message"]
                     .as_str()
+                    .or_else(|| value["error"].as_str())
                     .unwrap_or("daemon request failed")
                     .into(),
             ));
@@ -204,7 +222,7 @@ pub fn run(args: Vec<OsString>) -> i32 {
         let invocation = parse(args).map_err(|e| (2, e))?;
         if invocation == Invocation::Help {
             println!(
-                "Usage: vosux [--list [--json] | --sources | --open <tool> | --autostart <id> on|off|default | --install <id> | --update <id> | --uninstall <id> (--keep-data|--remove-data) | <tool> [ARGS...]]\n       vosu x [OPTIONS] <tool> [ARGS...]\nOptions apply only before the tool id; tool arguments are passed verbatim."
+                "Usage: vosux [--list [--json] | --sources | --open <tool> | --autostart <id> on|off|default | --install <id> | --update <id> | --uninstall <id> (--keep-data|--remove-data) | <tool> [ARGS...]]\n       vosux <plugin-id> <action> [json-args] [--detach] [--session <id>]\n       vosu x [OPTIONS] <tool> [ARGS...]\nOptions apply only before a dotless tool id; tool arguments are passed verbatim."
             );
             return Ok(0);
         }
@@ -223,13 +241,17 @@ pub fn run(args: Vec<OsString>) -> i32 {
     }
 }
 async fn execute(invocation: Invocation) -> Result<i32, Failure> {
+    execute_from_broker(invocation, &broker_path().map_err(unavailable)?).await
+}
+
+async fn execute_from_broker(invocation: Invocation, path: &Path) -> Result<i32, Failure> {
     // `broker.json` is republished with `atomic_replace` on every listener
     // stage change (`runtime/worker.rs`), a cross-process write this
     // separate `vosux` process can race; goes through the retrying helper
     // to absorb the measured transient Windows missing-name window instead
     // of surfacing this cross-process read as "unavailable".
     let broker: Broker = serde_json::from_slice(
-        &vosu_sys::platform::read_published_async(&broker_path().map_err(unavailable)?)
+        &vosu_sys::platform::read_published_async(path)
             .await
             .map_err(unavailable)?,
     )
@@ -259,6 +281,7 @@ async fn execute(invocation: Invocation) -> Result<i32, Failure> {
     };
     match invocation {
         Invocation::Help => unreachable!(),
+        Invocation::Action(invocation) => actions::execute(&connection, invocation).await,
         Invocation::Autostart(id, autostart) => {
             connection
                 .request_body(

@@ -299,7 +299,18 @@ use `vosu x` or create your own link. Options apply only before the tool id;
 invoked without arguments. The daemon must already be running. Tools inherit
 terminal stdin/stdout/stderr and return their exit status, without shell expansion.
 CLI launch does not start a second daemon. The private native broker credential
-authorizes launching only enabled, trusted, valid tools and opening their UIs, plus tool catalog installation/update/uninstall jobs and source listing. Catalog installation never approves a user-source tool automatically.
+authorizes enabled, trusted tool launches, tool catalog operations and CLI-exposed
+plugin actions. Catalog installation never approves a user-source tool automatically.
+
+Invoke a plugin action with `vosux <dotted-plugin-id> <action> [json-args]`
+(or `vosu x`); omitted arguments mean `{}`. Required and optional session actions
+target `active` unless `--session <id>` selects another session. Session-less
+actions reject `--session`. Private broker metadata selects the route without
+trial requests. Foreground calls print progress to stderr and the successful
+JSON result to stdout; failure exits 1, cancellation exits 130, unknown actions
+exit 127 and denied requests exit 77. Ctrl-C requests advisory cancellation.
+`--detach` prints the job id and exits without polling. Alpha CLI and daemon use
+the same isolated, channel-aware broker path.
 
 ### Hosted tool routes and security
 

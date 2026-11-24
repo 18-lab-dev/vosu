@@ -200,6 +200,7 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
         task,
         broker: None,
         broker_logger: None,
+        cli_task: None,
     };
     assert!(bounded!(owner.stage(replacement.clone())).is_err());
     let state = owner.state();
@@ -244,6 +245,7 @@ async fn broker_publication_failure_keeps_effective_rebind_and_disables_writes()
     let task = tokio::spawn(async move { bounded!(task_cancel.cancelled()); });
     let mut owner = ListenerOwner {
         desired, state, cancel, task, broker: Some(broker.clone()), broker_logger: None,
+        cli_task: None,
     };
     bounded!(owner.stage(target.clone())).expect("live rebind must remain successful");
     assert_eq!(owner.state().effective.unwrap().target, target);
@@ -275,6 +277,7 @@ async fn listener_accept_stop_is_separate_from_forced_drain_join() {
         task,
         broker: None,
         broker_logger: None,
+        cli_task: None,
     };
     owner.stop_accepting();
     assert_eq!(bounded!(event_rx.recv()), Some("accept-stopped"));

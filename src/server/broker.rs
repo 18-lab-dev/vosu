@@ -6,7 +6,10 @@ use std::{
     io::{self, Write},
     net::IpAddr,
     path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use subtle::ConstantTimeEq;
 
@@ -17,6 +20,12 @@ pub(crate) struct BrokerToken {
     path: PathBuf,
     token: [u8; 64],
     enabled: AtomicBool,
+    publication: Mutex<(
+        Option<std::net::SocketAddr>,
+        Weak<vosu_core::plugin::PluginHost>,
+    )>,
+    #[cfg(test)]
+    published: tokio::sync::watch::Sender<u64>,
 }
 
 impl BrokerToken {
@@ -34,10 +43,58 @@ impl BrokerToken {
             path,
             token,
             enabled: AtomicBool::new(false),
+            publication: Mutex::new((None, Weak::new())),
+            #[cfg(test)]
+            published: tokio::sync::watch::channel(0).0,
         })
     }
 
     pub(crate) fn publish(&self, address: std::net::SocketAddr) -> io::Result<()> {
+        let mut publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+        publication.0 = Some(address);
+        self.write_descriptor(address, &publication.1)
+    }
+
+    pub(crate) fn set_cli_host(&self, host: Weak<vosu_core::plugin::PluginHost>) {
+        self.publication.lock().unwrap_or_else(|p| p.into_inner()).1 = host;
+    }
+
+    pub(crate) fn refresh_cli_actions(&self) -> io::Result<()> {
+        let publication = self.publication.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(address) = publication.0 {
+            self.write_descriptor(address, &publication.1)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn publications(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.published.subscribe()
+    }
+
+    fn write_descriptor(
+        &self,
+        address: std::net::SocketAddr,
+        host: &Weak<vosu_core::plugin::PluginHost>,
+    ) -> io::Result<()> {
+        let actions: std::collections::BTreeMap<_, _> = host
+            .upgrade()
+            .map(|host| {
+                host.cli_actions()
+                    .into_iter()
+                    .map(|a| {
+                        (
+                            a.id.clone(),
+                            match a.session {
+                                vosu_plugin_api::ActionSessionMode::None => "none",
+                                vosu_plugin_api::ActionSessionMode::Optional => "optional",
+                                vosu_plugin_api::ActionSessionMode::Required => "required",
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let directory = self
             .path
             .parent()
@@ -63,6 +120,7 @@ impl BrokerToken {
                 "version": 1,
                 "origin": origin.trim_end_matches('/'),
                 "token": std::str::from_utf8(&self.token).expect("hex is ASCII"),
+                "actions": actions,
             }),
         )?;
         file.flush()?;
@@ -70,6 +128,8 @@ impl BrokerToken {
         let file = file.into_temp_path();
         vosu_sys::platform::atomic_replace(&file, &self.path)?;
         self.enabled.store(true, Ordering::Release);
+        #[cfg(test)]
+        self.published.send_modify(|revision| *revision += 1);
         Ok(())
     }
 

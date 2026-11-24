@@ -9,6 +9,10 @@ const WAIT: Duration = Duration::from_secs(10);
 #[path = "shutdown_close.rs"]
 mod shutdown_close;
 
+#[cfg(feature = "test-harness")]
+#[path = "lifecycle_owner/cli_broker.rs"]
+mod cli_broker;
+
 #[derive(Default)]
 struct Console(Mutex<String>);
 impl ConsoleSink for Console {
