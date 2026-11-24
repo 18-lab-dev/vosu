@@ -49,7 +49,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import unquote
 
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION, SUPPORTED_MATRIX
@@ -62,6 +62,8 @@ from parity_golden_rules import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_APPROVED_RULES = REPO_ROOT / "tests/fixtures/upstream/GOLDEN_CONTRACT.md"
+
+Provenance = Literal["captured", "synthetic"]
 
 CAPTURE_FORMAT = "vosu-golden-capture-v1"
 ENVELOPE_FORMAT = "vosu-adapter-capture-v1"
@@ -701,7 +703,8 @@ def _dump(value: Any) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def _platform_files(capture: Any, review_receipt: str | None) -> tuple[str, dict[str, bytes], dict[str, Any]]:
+def _platform_files(capture: Any, review_receipt: str | None,
+                    provenance: Provenance) -> tuple[str, dict[str, bytes], dict[str, Any]]:
     _obj(capture, "capture", ("format", "source_revision", "platform", "scenario_set",
                               "authorization", "attestation", "roots", "assets",
                               "expected_cases", "cases"))
@@ -758,7 +761,7 @@ def _platform_files(capture: Any, review_receipt: str | None) -> tuple[str, dict
         for asset in state.assets.values()]})
     files["manifest.json"] = _dump({
         "format": PLATFORM_FORMAT, "normalization_version": NORMALIZATION_VERSION,
-        "provenance": "captured", "source_revision": PINNED_SOURCE_REVISION,
+        "provenance": provenance, "source_revision": PINNED_SOURCE_REVISION,
         "platform": platform, "client": identity["client"], "source": identity["source"],
         "vosu": identity["vosu"], "scenario_set": identity["scenario_set"],
         "authorization": identity["authorization"], "review_receipt": review_receipt,
@@ -917,7 +920,13 @@ def _publish(target: Path, files: dict[str, bytes]) -> None:
 
 
 def golden(captures: list[str], candidate_dir: str, approved_rules: str | None = None, *,
-           review_receipt: str | None = None, repo_root: Path = REPO_ROOT) -> int:
+           review_receipt: str | None = None, provenance: Provenance = "captured",
+           repo_root: Path = REPO_ROOT) -> int:
+    """Write one candidate. `provenance="synthetic"` labels a vosu-generated mechanics
+    fixture (GOLDEN_CONTRACT.md §9); it is never pilot or full evidence, and
+    `adapter_golden` refuses it under `tests/fixtures/upstream/<pin>/`."""
+    if provenance not in ("captured", "synthetic"):
+        raise GoldenError("provenance must be 'captured' or 'synthetic'")
     rules_path = Path(approved_rules) if approved_rules else DEFAULT_APPROVED_RULES
     try:
         check_approved_rules(rules_path.read_text(encoding="utf-8"))
@@ -931,7 +940,8 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
     files: dict[str, bytes] = {}
     platforms: dict[str, Any] = {}
     for path in captures:
-        platform, platform_files, summary = _platform_files(_load_capture(path), review_receipt)
+        platform, platform_files, summary = _platform_files(_load_capture(path), review_receipt,
+                                                            provenance)
         if platform in platforms:
             raise GoldenError(f"two captures for platform {platform}")
         platforms[platform] = summary
@@ -939,7 +949,7 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
         summary["inventory_sha256"] = hashlib.sha256(platform_files["inventory.json"]).hexdigest()
     files["manifest.json"] = _dump({
         "format": FIXTURE_FORMAT, "normalization_version": NORMALIZATION_VERSION,
-        "provenance": "captured", "source_revision": PINNED_SOURCE_REVISION,
+        "provenance": provenance, "source_revision": PINNED_SOURCE_REVISION,
         "platforms": sorted(platforms),
     })
     files["inventory.json"] = _dump({

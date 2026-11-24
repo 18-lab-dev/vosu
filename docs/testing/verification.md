@@ -155,6 +155,16 @@ Also prove that a default build compiles and that a release-profile
 counts by platform and family. A featureless, zero-case or unpinned run, and
 any synthetic mechanics fixture, is not pilot or full evidence.
 
+Before the pilot fixtures land, `tests/fixtures/upstream/PENDING_PILOT` names
+the Cargo pin. The pinned test then passes but prints that it compared no
+upstream case. Without the marker it fails with "no golden fixtures for pin
+`<pin>`", and it also fails when the marker names another pin or sits beside
+fixtures. X0 deletes the marker in the fixture commit. Until then, report
+adapter goldens as pending. The comparator's nonzero coverage comes from the
+self-tests over `tests/fixtures/golden-synthetic/`. That tree is written by
+G0's writer with `provenance: "synthetic"`, and
+`python tests/adapter_golden/generate_synthetic.py` regenerates it.
+
 Captures run only under a written owner authorization for that session
 (commit and pin, client build/install/profile, scenario, data/media policy,
 private evidence path, GUI operator scope, review route); VM lifecycle

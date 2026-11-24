@@ -1,0 +1,122 @@
+{
+  "format": "vosu-golden-inventory-v1",
+  "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
+  "platform": "windows-stable",
+  "normalization_version": 1,
+  "files": [
+    {
+      "path": "assets.json",
+      "bytes": 489,
+      "sha256": "b99a5c5e136a3fcfc4ac2c00796e997e47d7299627e952f1c556ba74d95c3fc9"
+    },
+    {
+      "path": "assets/synthetic-chart",
+      "bytes": 271,
+      "sha256": "d9b6f314cf5d859f3f540e99b594c0903cfeb9cbf5e9b7350ed1f5840bc57bb0"
+    },
+    {
+      "path": "brand-inventory.txt",
+      "bytes": 139,
+      "sha256": "ca426b42469d46c0d19dc07cbd02a529650b38902bec7be92405c8b177205d12"
+    },
+    {
+      "path": "cases/calculation.no-query.json",
+      "bytes": 17297,
+      "sha256": "8140a13f27fc86d6a2dfd54d8bf188e8079687ea8426a2fadb05c7ff6515f1c9"
+    },
+    {
+      "path": "cases/files.get-beatmap-file.json",
+      "bytes": 17860,
+      "sha256": "082c57d4d0d8778009e5839eb2c918023bee042f9294b256d33c952a03cf94f3"
+    },
+    {
+      "path": "cases/files.head-beatmap-file.json",
+      "bytes": 17568,
+      "sha256": "fd13b406fac8c4bad54659928f267f7c0881dc227d42f5bb1a718fbe045f5b11"
+    },
+    {
+      "path": "cases/files.if-modified-since-beatmap-file.json",
+      "bytes": 17502,
+      "sha256": "30805aeba72f6a686f083b8c65935fb4bc110a77b6868f0f38c3c17d5f504ef4"
+    },
+    {
+      "path": "cases/files.if-none-match-beatmap-file.json",
+      "bytes": 17482,
+      "sha256": "bb14e7e9dad9710258f13b66a12d6262108eb33999848cb7981c4ade796ecafd"
+    },
+    {
+      "path": "cases/origin-peer.foreign-origin-json-v2.json",
+      "bytes": 5658,
+      "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
+    },
+    {
+      "path": "cases/path-security.encoded-parent-files-beatmap.json",
+      "bytes": 5848,
+      "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
+    },
+    {
+      "path": "cases/state-http.get-json-sc.json",
+      "bytes": 16840,
+      "sha256": "29e0871cf35da85acbb45b5d52d287f446ca7d2628d4c2fea823b7db4bb92524"
+    },
+    {
+      "path": "cases/state-http.get-json-v2-no-client.json",
+      "bytes": 5736,
+      "sha256": "e08b31a148d45644f720697a6f2565b6d7267dd87e82ffc79c6d892f17fd266d"
+    },
+    {
+      "path": "cases/state-http.get-json-v2.json",
+      "bytes": 23303,
+      "sha256": "f02d4b7c53dfe9a8d91db5aeb6d9c18e4fb5c00bb44ec468a017ece0ba7e49ca"
+    },
+    {
+      "path": "cases/state-http.post-json-v2.json",
+      "bytes": 5711,
+      "sha256": "732563a3b180fca62c4e88e66c1659b8a3e66b365b3b51f96551cc7fe3f5c4ea"
+    },
+    {
+      "path": "cases/state-http.trailing-slash-json-v2.json",
+      "bytes": 5700,
+      "sha256": "0be939718e861c631e6ccfadbcbc92bcadd738a27fbf1c85c46bfa36e4e4b801"
+    },
+    {
+      "path": "cases/ws.get-without-upgrade-websocket-v2.json",
+      "bytes": 5751,
+      "sha256": "4ed6f4bce07c0cb76bf9116b0b35047117581442dd2c88ca4b0a7be0de7afc2c"
+    },
+    {
+      "path": "cases/ws.upgrade-websocket-v2.json",
+      "bytes": 23614,
+      "sha256": "b77539e44431ebe541180b2f2a3786bb672fb903cf7bd67433315a0a9ea8fd24"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 3786,
+      "sha256": "f4e53b1236d192a2fe259b7f83bf90664d62117e660159a5cf30e8d6703590cf"
+    }
+  ],
+  "privacy_scan": {
+    "result": "clean",
+    "text_files": 17,
+    "binary_files": 0,
+    "cbor_text_strings": 3252,
+    "cbor_byte_strings": 0,
+    "cbor_old_brand_strings": 0,
+    "attested_roots": 1,
+    "checks": [
+      "attested private roots",
+      "drive, admin-share and device paths",
+      "profile and private POSIX directories",
+      "capability header",
+      "credential headers",
+      "dump CBOR text strings at any depth including map keys",
+      "old-brand text hidden in dump CBOR"
+    ]
+  },
+  "budget": {
+    "json_bytes": 190284,
+    "json_limit": 8388608,
+    "asset_bytes": 271,
+    "asset_limit": 4194304
+  }
+}

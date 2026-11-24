@@ -71,7 +71,7 @@ pub struct Replay {
     composition: Option<TestProductionComposition>,
     config: Arc<ConfigStore>,
     runtime: tokio::runtime::Runtime,
-    _assets: Materialized,
+    assets: Materialized,
     _dirs: TempDir,
     _serial: MutexGuard<'static, ()>,
 }
@@ -169,7 +169,7 @@ impl Replay {
             composition: Some(composition),
             config,
             runtime,
-            _assets: materialized,
+            assets: materialized,
             _dirs: dirs,
             _serial: serial,
         };
@@ -194,11 +194,20 @@ impl Replay {
         Ok(replay)
     }
 
+    /// The real temporary directory of each declared replay root slot.
+    pub fn roots(&self) -> &[(String, PathBuf)] {
+        &self.assets.roots
+    }
+
     /// The selected-entry dump of the mounted `schema` provider.
     pub fn dump(&self, schema: Schema) -> Result<Envelope, String> {
+        Envelope::parse(&self.dump_bytes(schema)?)
+    }
+
+    /// The raw envelope bytes the harness endpoint would serve for `schema`.
+    pub fn dump_bytes(&self, schema: Schema) -> Result<Vec<u8>, String> {
         let _runtime = self.runtime.enter();
-        let sample = self.composition().adapter_capture(schema)?;
-        Envelope::parse(&sample.envelope()?)
+        self.composition().adapter_capture(schema)?.envelope()
     }
 
     fn composition(&self) -> &TestProductionComposition {

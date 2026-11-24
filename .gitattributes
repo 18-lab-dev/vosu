@@ -5,3 +5,6 @@
 /THIRD_PARTY_NOTICES.md -text
 /**/THIRD_PARTY_LICENSES.txt -text
 /assets/** -text
+# Golden fixtures are covered by SHA-256 inventories (GOLDEN_CONTRACT.md §9).
+/tests/fixtures/golden-synthetic/** -text
+/tests/fixtures/upstream/*/** -text

@@ -1,0 +1,296 @@
+{
+  "format": "vosu-golden-case-v1",
+  "id": "files.if-modified-since-beatmap-file",
+  "family": "files",
+  "barrier": "paused",
+  "conditional": "last-modified",
+  "attempts": 1,
+  "normalized": [
+    "header-date",
+    "header-etag",
+    "header-last-modified"
+  ],
+  "request": {
+    "text": "GET /files/beatmap/file HTTP/1.1\r\nHost: 127.0.0.1:24050\r\nIf-Modified-Since: <golden:last-modified>\r\nConnection: close\r\n\r\n"
+  },
+  "expected": {
+    "status": 304,
+    "headers": [
+      [
+        "access-control-allow-headers",
+        "Origin, X-Requested-With, Content-Type, Accept"
+      ],
+      [
+        "access-control-allow-methods",
+        "POST, GET, PUT, DELETE, OPTIONS"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "access-control-allow-private-network",
+        "true"
+      ],
+      [
+        "cache-control",
+        "no-cache"
+      ],
+      [
+        "connection",
+        "close"
+      ],
+      [
+        "content-security-policy",
+        "sandbox"
+      ],
+      [
+        "date",
+        "<golden:date>"
+      ],
+      [
+        "etag",
+        "\"<golden:etag:1>\""
+      ],
+      [
+        "last-modified",
+        "<golden:last-modified>"
+      ]
+    ],
+    "body": {
+      "text": ""
+    }
+  },
+  "replay": {
+    "format": "vosu-adapter-capture-v1",
+    "schema": "v2",
+    "provider_generation": 1,
+    "session": {
+      "ordinal": 0,
+      "generation": 1,
+      "owner": "vosu.osu",
+      "owner_instance": 0,
+      "game": "osu",
+      "variant": "stable",
+      "foreground": true
+    },
+    "focus_revision": 3,
+    "roster": {
+      "revision": 3,
+      "sessions": [
+        {
+          "ordinal": 0,
+          "generation": 1,
+          "owner": "vosu.osu",
+          "owner_instance": 0,
+          "game": "osu",
+          "variant": "stable",
+          "foreground": true
+        }
+      ]
+    },
+    "bus_revision": 1,
+    "namespace_revisions": [
+      [
+        "vosu.osu",
+        1
+      ],
+      [
+        "vosu.skin",
+        1
+      ]
+    ],
+    "entries": [
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/paused",
+        "value_cbor_b64": "9A==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/playTime",
+        "value_cbor_b64": "+QAA",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/server",
+        "value_cbor_b64": "ZnBweS5zaA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/state",
+        "value_cbor_b64": "omZudW1iZXICZG5hbWVkcGxheQ==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/rankedPlay",
+        "value_cbor_b64": "p2VzdGFnZQJsY3VycmVudFJvdW5kA2pzdGFyUmF0aW5n+UaAcGRhbWFnZU11bHRpcGxpZXL7P/MzMzMzMzNsYWN0aXZlVXNlcklkAW13aW5uaW5nVXNlcklkAmV1c2Vyc4GlYmlkAWZyYXRpbmf5SIBkbGlmZflVAGlyb3VuZHNXb24DcGRhbWFnZU11bHRpcGxpZXL5PgA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/settings",
+        "value_cbor_b64": "tXBpbnRlcmZhY2VWaXNpYmxl9G9yZXBsYXlVSVZpc2libGX1a2Jhc3NEZW5zaXR5+QAAdGNoYXRWaXNpYmlsaXR5U3RhdHVzomZudW1iZXIAZG5hbWVmaGlkZGVua3Byb2dyZXNzQmFyomZudW1iZXIAZG5hbWVjb2ZmZHNvcnSiZm51bWJlcgBkbmFtZWZhcnRpc3RlZ3JvdXCiZm51bWJlcgBkbmFtZWRub25lZG1vZGWiZm51bWJlcgBkbmFtZWNvc3VrbGVhZGVyYm9hcmSiZ3Zpc2libGX1ZHR5cGWiZm51bWJlcgBkbmFtZWVsb2NhbGpyZXNvbHV0aW9upWpmdWxsc2NyZWVu9GV3aWR0aABmaGVpZ2h0AG93aWR0aEZ1bGxzY3JlZW4AcGhlaWdodEZ1bGxzY3JlZW4AZmNsaWVudKNvdXBkYXRlQXZhaWxhYmxl9GZicmFuY2gAZ3ZlcnNpb25gZmN1cnNvcqRtdXNlU2tpbkN1cnNvcvRoYXV0b1NpemX0ZHNpemX5AABobWVudVNpemX5AABlbW91c2WkaHJhd0lucHV09G5kaXNhYmxlQnV0dG9uc/RsZGlzYWJsZVdoZWVs9GtzZW5zaXRpdml0efkAAGZ0YWJsZXSnZ2VuYWJsZWT0YXj5AABhefkAAGV3aWR0aPkAAGZoZWlnaHT5AABocm90YXRpb275AABxcHJlc3N1cmVUaHJlc2hvbGT5AABqYmFja2dyb3VuZKRqc3Rvcnlib2FyZPRldmlkZW/0ZGJsdXL5AABjZGlt+QAAZHNraW6kdnVzZURlZmF1bHRTa2luSW5FZGl0b3L0cmlnbm9yZUJlYXRtYXBTa2luc/RudGludFNsaWRlckJhbGz0bHVzZVRhaWtvU2tpbvRqc2NvcmVNZXRlcqJkdHlwZaJmbnVtYmVyAGRuYW1lZG5vbmVkc2l6ZfkAAGVtYW5pYaRtc3BlZWRCUE1TY2FsZfR3dXNlUGVyQmVhdG1hcFNwZWVkU2NhbGX0a3Njcm9sbFNwZWVkAG9zY3JvbGxEaXJlY3Rpb26iZm51bWJlcgBkbmFtZWJ1cGVhdWRpb6RzaWdub3JlQmVhdG1hcFNvdW5kc/RudXNlU2tpblNhbXBsZXP0ZnZvbHVtZaRubWFzdGVySW5hY3RpdmX5AABmbWFzdGVy+QAAZW11c2lj+QAAZmVmZmVjdPkAAGZvZmZzZXShaXVuaXZlcnNhbPkAAGhrZXliaW5kc6Rjb3N1o2JrMWBiazJgaHNtb2tlS2V5YGZmcnVpdHOjYmsxYGJrMmBkRGFzaGBldGFpa2+kaWlubmVyTGVmdGBqaW5uZXJSaWdodGBpb3V0ZXJMZWZ0YGpvdXRlclJpZ2h0YGpxdWlja1JldHJ5YGZ2aXN1YWz2",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/profile",
+        "value_cbor_b64": "rmp1c2VyU3RhdHVzomZudW1iZXIAZG5hbWVscmVjb25uZWN0aW5nbGJhbmNob1N0YXR1c6JmbnVtYmVyAGRuYW1lZGlkbGVkbW9kZaJmbnVtYmVyAGRuYW1lY29zdWtjb3VudHJ5Q29kZaJmbnVtYmVyAGRuYW1lYGJpZABpcGxheUNvdW50AGpnbG9iYWxSYW5rAGRuYW1lYGtyYW5rZWRTY29yZfkAAGVsZXZlbPkAAGhhY2N1cmFjefkAAGJwcPkAAHBiYWNrZ3JvdW5kQ29sb3VyYTBrbWF0Y2htYWtpbmf2",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/beatmap",
+        "value_cbor_b64": "s2Zpc0tpYWn0Z2lzQnJlYWv0aWlzQ29udmVydPRkdGltZahkbGl2Zflo4mRyYXRl+TwAZ3J1bm5pbmf2a2ZpcnN0T2JqZWN0AGpsYXN0T2JqZWN0+XDiaW1wM0xlbmd0aPkAAG5maXJzdEhpdE9iamVjdBknEGdwcmV2aWV3IG1zZWxlY3Rpb25Nb2RlAGZzdGF0dXOiZm51bWJlcvkAAGRuYW1lYGhjaGVja3N1bWBmYXJ0aXN0YG1hcnRpc3RVbmljb2RlYGV0aXRsZWBsdGl0bGVVbmljb2RlYGZtYXBwZXJgZ3ZlcnNpb25gYmlkAGNzZXQAZG1vZGWiZm51bWJlcgBkbmFtZWNvc3Vmc291cmNlYGR0YWdzYGVzdGF0c6llc3RhcnOiZGxpdmX5AABldG90YWz5AABiYXKiaG9yaWdpbmFs+QAAaWNvbnZlcnRlZPkAAGJjc6Job3JpZ2luYWz5AABpY29udmVydGVk+QAAYm9komhvcmlnaW5hbPkAAGljb252ZXJ0ZWT5AABiaHCiaG9yaWdpbmFs+QAAaWNvbnZlcnRlZPkAAGloaXRXaW5kb3egY2JwbaRocmVhbHRpbWX5AABmY29tbW9u+VncY21pbvlZ3GNtYXj5Wdxnb2JqZWN0c6VnY2lyY2xlcwFnc2xpZGVycwBoc3Bpbm5lcnMAZWhvbGRzAGV0b3RhbAFobWF4Q29tYm8A",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/failed",
+        "value_cbor_b64": "9A==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/playerName",
+        "value_cbor_b64": "YA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/mode",
+        "value_cbor_b64": "omZudW1iZXIAZG5hbWVjb3N1",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/score",
+        "value_cbor_b64": "+kmWtDg=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/accuracyPercent",
+        "value_cbor_b64": "+VYS",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/healthRaw",
+        "value_cbor_b64": "omZub3JtYWz5WHBmc21vb3Ro+Vdg",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/judgements",
+        "value_cbor_b64": "pmRtaXNzGENjbWVoGDVib2sYKWVncmVhdBdncGVyZmVjdAtkZ29vZBgl",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/statistics",
+        "value_cbor_b64": "rm1zbWFsbFRpY2tNaXNzAGxzbWFsbFRpY2tIaXQYT21sYXJnZVRpY2tNaXNzAGxsYXJnZVRpY2tIaXQYU2pzbWFsbEJvbnVzAGpsYXJnZUJvbnVzAGppZ25vcmVNaXNzAGlpZ25vcmVIaXQAamNvbWJvQnJlYWsAbXNsaWRlclRhaWxIaXQYYWxzbGlkZXJCcmVha3MNbXNsaWRlckVuZEhpdHMYYWRnb29kGCVzbGVnYWN5Q29tYm9JbmNyZWFzZQA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/hitErrors/all",
+        "value_cbor_b64": "gvk9APnBAA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/combo",
+        "value_cbor_b64": "omdjdXJyZW50GEdjbWF4GFk=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/mods",
+        "value_cbor_b64": "pWhjaGVja3N1bWJmbGZudW1iZXIZBABkbmFtZWJGTGRyYXRl+TwAZWFycmF5gaFnYWNyb255bWJGTA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/rank",
+        "value_cbor_b64": "omdjdXJyZW50YGttYXhUaGlzUGxheWA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/pp",
+        "value_cbor_b64": "pWdjdXJyZW50+QAAYmZj+QAAa21heEFjaGlldmVk+QAAbW1heEFjaGlldmFibGX5AABoZGV0YWlsZWSiZ2N1cnJlbnSmY2FpbfkAAGVzcGVlZPkAAGhhY2N1cmFjefkAAGpkaWZmaWN1bHR5+QAAamZsYXNobGlnaHT5AABldG90YWz5AABiZmOmY2FpbfkAAGVzcGVlZPkAAGhhY2N1cmFjefkAAGpkaWZmaWN1bHR5+QAAamZsYXNobGlnaHT5AABldG90YWz5AAA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/unstableRate",
+        "value_cbor_b64": "+QAA",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/leaderboard",
+        "value_cbor_b64": "gatoaXNGYWlsZWT0aHBvc2l0aW9uAmR0ZWFtAWJpZBgqZG5hbWVlQWxpY2Vlc2NvcmX6R/EgAGhhY2N1cmFjeflWOGpzdGF0aXN0aWNzpmRtaXNzAWNtZWgAYm9rAGVncmVhdBkBLGdwZXJmZWN0AGRnb29kAGVjb21ib6JnY3VycmVudBkBQWNtYXgZAZBkbW9kc6VoY2hlY2tzdW1iZmxmbnVtYmVyGQQAZG5hbWViRkxkcmF0Zfk8AGVhcnJheYGhZ2Fjcm9ueW1iRkxkcmFua2A=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/performance",
+        "value_cbor_b64": "omhhY2N1cmFjeatiOTD5AABiOTH5AABiOTL5AABiOTP5AABiOTT5AABiOTX5AABiOTb5AABiOTf5AABiOTj5AABiOTn5AABjMTAw+QAAZWdyYXBoo2dwcmltYXJ5gGZzZXJpZXOAZXhheGlzgA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/result",
+        "value_cbor_b64": "rGdzY29yZUlk+QAAanBsYXllck5hbWVgZG1vZGWiZm51bWJlcgBkbmFtZWNvc3Vlc2NvcmX5AABoYWNjdXJhY3n5AABkbmFtZWBqc3RhdGlzdGljc6pkbWlzcwBjbWVoAGJvawBlZ3JlYXQAZ3BlcmZlY3QAZGdvb2QAbXNsaWRlckVuZEhpdHMAbXNtYWxsVGlja0hpdHMAbWxhcmdlVGlja0hpdHMAbHNsaWRlckJyZWFrcwBkbW9kc6VoY2hlY2tzdW1iZmxmbnVtYmVyGQQAZG5hbWViRkxkcmF0Zfk8AGVhcnJheYGhZ2Fjcm9ueW1iRkxobWF4Q29tYm8AZHJhbmtgYnBwomdjdXJyZW50+QAAYmZj+QAAaWNyZWF0ZWRBdGA=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/internal/paths",
+        "value_cbor_b64": "pGZzdGFibGWkZGdhbWV4Ki9jb21wYXQtcHJpdmF0ZS9zdGFibGUtcGxheS1vc3UtZmwvaW5zdGFsbGVzb25nc3goL2NvbXBhdC1wcml2YXRlL3N0YWJsZS1wbGF5LW9zdS1mbC9zb25nc2Vza2luc3gwL2NvbXBhdC1wcml2YXRlL3N0YWJsZS1wbGF5LW9zdS1mbC9pbnN0YWxsL1NraW5zZ3JlcGxheXN4Mi9jb21wYXQtcHJpdmF0ZS9zdGFibGUtcGxheS1vc3UtZmwvaW5zdGFsbC9SZXBsYXlzZWxhemVy9mdjdXJyZW50pG1iZWF0bWFwRm9sZGVyaXN5bnRoZXRpY2tiZWF0bWFwRmlsZWljaGFydC5vc3VqYmFja2dyb3VuZHghc3RhYmxlLXBsYXktb3N1LWZsLWJhY2tncm91bmQuanBnZWF1ZGlveBxzdGFibGUtcGxheS1vc3UtZmwtYXVkaW8ub2dnanNraW5Gb2xkZXJ4Jy9jb21wYXQtcHJpdmF0ZS9zdGFibGUtcGxheS1vc3UtZmwvc2tpbg==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourney",
+        "value_cbor_b64": "qWxzY29yZVZpc2libGX0bHN0YXJzVmlzaWJsZfRoaXBjU3RhdGUAZmJlc3RPZgBkdGVhbaJkbGVmdGBlcmlnaHRgZnBvaW50c6JkbGVmdABlcmlnaHQAZGNoYXSAanRvdGFsU2NvcmWiZGxlZnT5AABlcmlnaHT5AABnY2xpZW50c4A=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourneyAvailability",
+        "value_cbor_b64": "ZXJlYWR5",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/room",
+        "value_cbor_b64": "omZyb29tSWQZATpldXNlcnOBpGJpZBkBD2h1c2VybmFtZWtSb29tIHBsYXllcmtjb3VudHJ5Q29kZRhvaWF2YXRhclVybHgeaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvYXZhdGFy",
+        "error": null
+      },
+      {
+        "ns": "vosu.skin",
+        "pointer": "/name",
+        "value_cbor_b64": "YA==",
+        "error": null
+      }
+    ],
+    "derived": {
+      "revision": 0,
+      "status": "none"
+    },
+    "http": {
+      "kind": "ready",
+      "status": 200,
+      "body_utf8": "{\"game\":{\"paused\":false},\"client\":\"stable\",\"server\":\"ppy.sh\",\"state\":{\"number\":2,\"name\":\"play\"},\"session\":{\"playTime\":0,\"playCount\":0},\"rankedPlay\":{\"stage\":2,\"currentRound\":3,\"starRating\":6.5,\"damageMultiplier\":1.2,\"activeUserId\":1,\"winningUserId\":2,\"users\":[{\"id\":1,\"rating\":9,\"life\":80,\"roundsWon\":3,\"damageMultiplier\":1.5}]},\"settings\":{\"interfaceVisible\":false,\"replayUIVisible\":true,\"chatVisibilityStatus\":{\"number\":0,\"name\":\"hidden\"},\"leaderboard\":{\"visible\":true,\"type\":{\"number\":0,\"name\":\"local\"}},\"progressBar\":{\"number\":0,\"name\":\"off\"},\"bassDensity\":0,\"resolution\":{\"fullscreen\":false,\"width\":0,\"height\":0,\"widthFullscreen\":0,\"heightFullscreen\":0},\"client\":{\"updateAvailable\":false,\"branch\":0,\"version\":\"\"},\"scoreMeter\":{\"type\":{\"number\":0,\"name\":\"none\"},\"size\":0},\"cursor\":{\"useSkinCursor\":false,\"autoSize\":false,\"size\":0,\"menuSize\":0},\"mouse\":{\"rawInput\":false,\"disableButtons\":false,\"disableWheel\":false,\"sensitivity\":0},\"tablet\":{\"enabled\":false,\"x\":0,\"y\":0,\"width\":0,\"height\":0,\"rotation\":0,\"pressureThreshold\":0},\"mania\":{\"speedBPMScale\":false,\"usePerBeatmapSpeedScale\":false,\"scrollSpeed\":0,\"scrollDirection\":{\"number\":0,\"name\":\"up\"}},\"sort\":{\"number\":0,\"name\":\"artist\"},\"group\":{\"number\":0,\"name\":\"none\"},\"skin\":{\"useDefaultSkinInEditor\":false,\"ignoreBeatmapSkins\":false,\"tintSliderBall\":false,\"useTaikoSkin\":false,\"name\":\"\"},\"mode\":{\"number\":0,\"name\":\"osu\"},\"audio\":{\"ignoreBeatmapSounds\":false,\"useSkinSamples\":false,\"volume\":{\"masterInactive\":0,\"master\":0,\"music\":0,\"effect\":0},\"offset\":{\"universal\":0}},\"background\":{\"storyboard\":false,\"video\":false,\"blur\":0,\"dim\":0},\"keybinds\":{\"osu\":{\"k1\":\"\",\"k2\":\"\",\"smokeKey\":\"\"},\"fruits\":{\"k1\":\"\",\"k2\":\"\",\"Dash\":\"\"},\"taiko\":{\"innerLeft\":\"\",\"innerRight\":\"\",\"outerLeft\":\"\",\"outerRight\":\"\"},\"quickRetry\":\"\"}},\"profile\":{\"userStatus\":{\"number\":0,\"name\":\"reconnecting\"},\"banchoStatus\":{\"number\":0,\"name\":\"idle\"},\"id\":0,\"name\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"rankedScore\":0,\"level\":0,\"accuracy\":0,\"pp\":0,\"playCount\":0,\"globalRank\":0,\"countryCode\":{\"number\":0,\"name\":\"\"},\"backgroundColour\":\"0\",\"matchmaking\":null},\"beatmap\":{\"isKiai\":false,\"isBreak\":false,\"isConvert\":false,\"time\":{\"live\":2500,\"firstObject\":0,\"lastObject\":10000,\"mp3Length\":0},\"status\":{\"number\":0,\"name\":\"\"},\"checksum\":\"\",\"id\":0,\"set\":0,\"mode\":{\"number\":0,\"name\":\"osu\"},\"artist\":\"\",\"artistUnicode\":\"\",\"title\":\"\",\"titleUnicode\":\"\",\"mapper\":\"\",\"version\":\"\",\"source\":\"\",\"tags\":\"\",\"stats\":{\"stars\":{\"live\":0,\"total\":0},\"ar\":{\"original\":0,\"converted\":0},\"cs\":{\"original\":0,\"converted\":0},\"od\":{\"original\":0,\"converted\":0},\"hp\":{\"original\":0,\"converted\":0},\"bpm\":{\"realtime\":0,\"common\":187.5,\"min\":187.5,\"max\":187.5},\"objects\":{\"circles\":1,\"sliders\":0,\"spinners\":0,\"holds\":0,\"total\":1},\"hitWindow\":{},\"maxCombo\":0}},\"play\":{\"failed\":false,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":1234567,\"accuracy\":97.125,\"healthBar\":{\"normal\":71,\"smooth\":59},\"hits\":{\"0\":67,\"50\":53,\"100\":41,\"300\":23,\"geki\":11,\"katu\":37,\"sliderBreaks\":13,\"sliderEndHits\":97,\"smallTickHits\":79,\"largeTickHits\":83},\"hitErrorArray\":[1.25,-2.5],\"combo\":{\"current\":71,\"max\":89},\"mods\":{\"checksum\":\"fl\",\"number\":1024,\"name\":\"FL\",\"array\":[{\"acronym\":\"FL\"}],\"rate\":1},\"rank\":{\"current\":\"\",\"maxThisPlay\":\"\"},\"pp\":{\"current\":0,\"fc\":0,\"maxAchieved\":0,\"maxAchievable\":0,\"detailed\":{\"current\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0},\"fc\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0}}},\"unstableRate\":0},\"leaderboard\":[{\"isFailed\":false,\"position\":2,\"team\":1,\"id\":42,\"name\":\"Alice\",\"score\":123456,\"accuracy\":99.5,\"hits\":{\"0\":1,\"50\":0,\"100\":0,\"300\":300,\"geki\":0,\"katu\":0},\"combo\":{\"current\":321,\"max\":400},\"mods\":{\"checksum\":\"fl\",\"number\":1024,\"name\":\"FL\",\"array\":[{\"acronym\":\"FL\"}],\"rate\":1},\"rank\":\"\"}],\"performance\":{\"accuracy\":{\"90\":0,\"91\":0,\"92\":0,\"93\":0,\"94\":0,\"95\":0,\"96\":0,\"97\":0,\"98\":0,\"99\":0,\"100\":0},\"graph\":{\"series\":[],\"xaxis\":[]}},\"resultsScreen\":{\"scoreId\":0,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":0,\"name\":\"\",\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"mods\":{\"checksum\":\"fl\",\"number\":1024,\"name\":\"FL\",\"array\":[{\"acronym\":\"FL\"}],\"rate\":1},\"maxCombo\":0,\"rank\":\"\",\"pp\":{\"current\":0,\"fc\":0},\"createdAt\":\"\"},\"folders\":{\"game\":\"/compat-private/stable-play-osu-fl/install\",\"skin\":\"/compat-private/stable-play-osu-fl/skin\",\"songs\":\"/compat-private/stable-play-osu-fl/songs\",\"beatmap\":\"synthetic\"},\"files\":{\"beatmap\":\"chart.osu\",\"background\":\"stable-play-osu-fl-background.jpg\",\"audio\":\"stable-play-osu-fl-audio.ogg\"},\"directPath\":{\"beatmapFile\":\"synthetic/chart.osu\",\"beatmapBackground\":\"synthetic/stable-play-osu-fl-background.jpg\",\"beatmapAudio\":\"synthetic/stable-play-osu-fl-audio.ogg\",\"beatmapFolder\":\"synthetic\",\"skinFolder\":\"/compat-private/stable-play-osu-fl/skin\"},\"tourney\":{\"scoreVisible\":false,\"starsVisible\":false,\"ipcState\":0,\"bestOF\":0,\"team\":{\"left\":\"\",\"right\":\"\"},\"points\":{\"left\":0,\"right\":0},\"chat\":[],\"totalScore\":{\"left\":0,\"right\":0},\"clients\":[]},\"room\":{\"roomID\":314,\"users\":[{\"id\":271,\"username\":\"Room player\",\"countryCode\":111,\"avatarUrl\":\"https://example.invalid/avatar\"}]}}"
+    },
+    "digest": "sha256:86e0e7faa09ddfc2dceabba0951488e92299e8f8d05202d36c93e3ce80fa76bd"
+  }
+}

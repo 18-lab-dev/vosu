@@ -233,6 +233,24 @@ class CandidateLayoutTests(GoldenTestCase):
         self.run_golden(capture([state_case()]), candidate=empty)
         self.assertTrue((empty / "manifest.json").is_file())
 
+    def test_synthetic_provenance_labels_both_manifests_and_nothing_else(self) -> None:
+        value = capture([state_case()])
+        captured = self.run_golden(value)
+        synthetic = self.run_golden(value, provenance="synthetic")
+        for manifest in ("manifest.json", "windows-lazer/manifest.json"):
+            self.assertEqual("captured", json.loads((captured / manifest).read_text())["provenance"])
+            self.assertEqual("synthetic", json.loads((synthetic / manifest).read_text())["provenance"])
+        # The label is the only difference; the inventories cover the relabelled manifests.
+        case = "windows-lazer/cases/state-http.get-json-v2.json"
+        self.assertEqual((captured / case).read_bytes(), (synthetic / case).read_bytes())
+        inventory = json.loads((synthetic / "windows-lazer/inventory.json").read_text())
+        manifest = (synthetic / "windows-lazer/manifest.json").read_bytes()
+        self.assertIn({"path": "manifest.json", "bytes": len(manifest),
+                       "sha256": hashlib.sha256(manifest).hexdigest()}, inventory["files"])
+        with self.assertRaisesRegex(GoldenError, "provenance must be"):
+            self.run_golden(value, candidate=self.root / "unlabelled", provenance="upstream")
+        self.assertFalse((self.root / "unlabelled").exists())
+
     def test_contract_table_must_equal_implemented_rules(self) -> None:
         check_approved_rules(CONTRACT)
         missing = CONTRACT.replace("| `client-timestamp-pointer` | exact |\n", "")
