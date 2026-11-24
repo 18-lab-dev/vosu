@@ -11,8 +11,8 @@ use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_NO_MORE_FILES, FILETIME, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-            STILL_ACTIVE,
+            CloseHandle, ERROR_BAD_LENGTH, ERROR_NO_MORE_FILES, ERROR_PARTIAL_COPY, FILETIME,
+            GetLastError, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,
         },
         Security::{EqualSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
         System::{
@@ -87,10 +87,46 @@ struct Snapshot(OwnedHandle);
 
 impl Snapshot {
     fn create(flags: u32, pid: u32) -> Result<Self, MemoryError> {
-        // SAFETY: no pointers are passed and the returned handle is immediately owned.
-        let handle = unsafe { CreateToolhelp32Snapshot(flags, pid) };
+        let handle = snapshot_with_retry(
+            flags,
+            || {
+                // SAFETY: no pointers are passed; capture the error before yielding.
+                let handle = unsafe { CreateToolhelp32Snapshot(flags, pid) };
+                if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                    // SAFETY: `GetLastError` has no preconditions.
+                    Err(unsafe { GetLastError() })
+                } else {
+                    Ok(handle)
+                }
+            },
+            std::thread::yield_now,
+        )
+        .map_err(|code| backend("CreateToolhelp32Snapshot", &format!("Windows error {code}")))?;
         OwnedHandle::new(handle, "CreateToolhelp32Snapshot").map(Self)
     }
+}
+
+// Module lists can change while Toolhelp copies them. Bound retries so an
+// inaccessible or continuously changing target cannot stall attachment forever.
+fn snapshot_with_retry<T>(
+    flags: u32,
+    mut call: impl FnMut() -> Result<T, u32>,
+    mut yield_now: impl FnMut(),
+) -> Result<T, u32> {
+    const ATTEMPTS: usize = 8;
+    for attempt in 0..ATTEMPTS {
+        match call() {
+            Err(code)
+                if flags & (TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32) != 0
+                    && matches!(code, ERROR_BAD_LENGTH | ERROR_PARTIAL_COPY)
+                    && attempt + 1 < ATTEMPTS =>
+            {
+                yield_now();
+            }
+            result => return result,
+        }
+    }
+    unreachable!("the final attempt always returns")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

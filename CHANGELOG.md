@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Windows
+
+- Retry transient module-snapshot failures while osu! is loading or unloading modules, avoiding failed attachment at startup. Retries are limited to eight attempts for Windows errors 24 and 299; other snapshot failures still return immediately.
+
 ## 1.2.5 - 2026-11-22
 
 ### Server

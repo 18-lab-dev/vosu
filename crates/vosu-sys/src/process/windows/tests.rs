@@ -2,6 +2,85 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
+fn module_snapshot_retries_only_transient_errors() {
+    for flags in [
+        TH32CS_SNAPMODULE,
+        TH32CS_SNAPMODULE32,
+        TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
+    ] {
+        let mut errors = [Err(ERROR_BAD_LENGTH), Err(ERROR_PARTIAL_COPY), Ok(17)].into_iter();
+        let mut yields = 0;
+        assert_eq!(
+            snapshot_with_retry(flags, || errors.next().unwrap(), || yields += 1),
+            Ok(17)
+        );
+        assert_eq!(yields, 2);
+    }
+    for flags in [TH32CS_SNAPTHREAD, TH32CS_SNAPPROCESS] {
+        for code in [ERROR_BAD_LENGTH, ERROR_PARTIAL_COPY] {
+            let mut calls = 0;
+            assert_eq!(
+                snapshot_with_retry::<()>(
+                    flags,
+                    || {
+                        calls += 1;
+                        Err(code)
+                    },
+                    || panic!("unexpected retry"),
+                ),
+                Err(code)
+            );
+            assert_eq!(calls, 1);
+        }
+    }
+    let mut calls = 0;
+    assert_eq!(
+        snapshot_with_retry::<()>(
+            TH32CS_SNAPMODULE,
+            || {
+                calls += 1;
+                Err(windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED)
+            },
+            || panic!("unexpected retry"),
+        ),
+        Err(windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED)
+    );
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn module_snapshot_retry_is_bounded_and_preserves_final_error() {
+    for final_error in [ERROR_BAD_LENGTH, ERROR_PARTIAL_COPY] {
+        let (mut calls, mut yields) = (0, 0);
+        assert_eq!(
+            snapshot_with_retry::<()>(
+                TH32CS_SNAPMODULE,
+                || {
+                    calls += 1;
+                    Err(if calls == 8 {
+                        final_error
+                    } else {
+                        ERROR_BAD_LENGTH
+                    })
+                },
+                || yields += 1,
+            ),
+            Err(final_error)
+        );
+        assert_eq!(calls, 8);
+        assert_eq!(yields, 7);
+    }
+}
+
+#[test]
+fn module_snapshot_success_does_not_yield() {
+    assert_eq!(
+        snapshot_with_retry(TH32CS_SNAPMODULE, || Ok(17), || panic!("unexpected retry")),
+        Ok(17)
+    );
+}
+
+#[test]
 fn same_account_process_open_retains_native_memory_read_access() {
     let expected = 0x7135_a9bd_2468_cdef_u64;
     let memory = WindowsProcessMemory::open(std::process::id()).unwrap();
