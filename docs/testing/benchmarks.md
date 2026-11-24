@@ -1123,6 +1123,7 @@ the two invocation medians, in microseconds:
 | Populated lazer precise | Native | Flat executor + SDK | Full PluginHost |
 | --- | ---: | ---: | ---: |
 | Before dependency fusion | 13.126 | 15.313 | 16.412 |
+| Dependency fusion (`f3a81979f3d7`) | 12.744 | 14.831 | 15.485 |
 
 The flat path adds **2.187 µs** and full routing another **1.098 µs**. The
 untimed real-executor trace has **16 submissions, 52 operations**, requesting
@@ -1137,6 +1138,23 @@ construction was **24.4 ns**. Copying is not the missing microseconds; repeated
 whole submissions, adapter framing and routing require reducing the actual
 dependency graph. Raw component and matched-run data remain in
 `cost-matched-raw/` and `cost-matched-summary.json`.
+
+The fused Windows fixture has **8 submissions, 52 operations**, requesting
+1,848 bytes and returning 3,224 bytes. Its flat overhead is **2.087 µs**;
+routing adds **0.654 µs**, giving **+21.51%** total. Fusion reduced routing
+cost but did not eliminate the flat-path regression. The follow-up live
+campaign failed before its first timed invocation: `CreateToolhelp32Snapshot`
+returned Windows error 24 during attachment. No live timing from that campaign
+is accepted; its cleanup reports no remaining clients.
+
+A subsequent fix reuses the captured screen API pointer instead of issuing a
+duplicate precise-player read; its read-count regression test passes, but it
+has not been measured on Windows. `plan_floor` now captures the real reader's
+complete plan graph and resolved native reads once, then benchmarks prebuilt
+native/flat/full-route replay without reader decoding or adapter construction.
+It compiles with warnings denied, but no Windows floor result is yet available.
+Do not interpret the existing one-op probe or the fused fixture as proof of an
+irreducible frozen-ABI floor. **D17 remains open.**
 
 ## Released tosu comparison
 

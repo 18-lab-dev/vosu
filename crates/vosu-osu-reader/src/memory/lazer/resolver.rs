@@ -611,6 +611,7 @@ impl LazerMemory {
             )
             .ok()?
         };
+        let cached_api = self.screen_bytes::<8>(self.current_screen, 0x3f0);
         let (mut api, mut decoupled, mut replay) = ([0; 8], [0; 8], [0; 8]);
         let mut reads = [
             crate::process::ChainReadRequest::new(
@@ -633,13 +634,13 @@ impl LazerMemory {
         ];
         self.process
             .read_chains(
-                &mut reads[..if drawable == 0 { 2 } else { 3 }],
+                &mut reads[usize::from(cached_api.is_some())..if drawable == 0 { 2 } else { 3 }],
                 self.process.bitness(),
             )
             .ok()?;
         let pointer = |bytes| usize::try_from(u64::from_le_bytes(bytes)).ok();
         let spectator = self
-            .spectator_from_api(self.current_screen, pointer(api)?)
+            .spectator_from_api(self.current_screen, pointer(cached_api.unwrap_or(api))?)
             .ok()?;
         let replay = self
             .watching_replay_from_score(self.current_screen, pointer(replay)?)

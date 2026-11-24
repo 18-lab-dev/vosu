@@ -309,11 +309,14 @@ fn precise_player_probe_matches_classification_and_selected_clock() {
             scalar.check_watching_replay(screen, player).unwrap(),
             scalar.current_time_for_player(player).unwrap(),
         );
-        let mut batched = decoder(memory);
+        let mut batched = decoder(memory.clone());
         batched.set_resolved_state(base, screen);
         batched.reset_capture_roots(true);
         batched.prefetch_precise_roots().unwrap();
+        assert!(batched.screen_bytes::<8>(screen, 0x3f0).is_some());
+        let api_reads = memory.read_count(screen + 0x3f0);
         assert_eq!(batched.prefetch_precise_player(player).unwrap(), expected);
+        assert_eq!(memory.read_count(screen + 0x3f0), api_reads);
     }
 }
 

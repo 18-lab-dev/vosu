@@ -1,5 +1,5 @@
 //! D17: reader decoding through PlanProcessMemory, public core executor and SDK interception.
-//! Release benches cannot use test-harness; PluginHost routing is intentionally excluded.
+//! Includes native, flat executor+SDK, and Windows full-PluginHost routing.
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::{
     ffi::c_void,
@@ -22,6 +22,8 @@ use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory
 mod lazer_fixture;
 #[path = "support/plan_costs.rs"]
 mod plan_costs;
+#[path = "support/plan_floor.rs"]
+mod plan_floor;
 #[path = "support/plan_trace.rs"]
 mod plan_trace;
 #[cfg(windows)]
@@ -519,5 +521,5 @@ fn bench(c: &mut Criterion) {
     });
     group.finish();
 }
-criterion_group!(benches, bench, plan_costs::bench);
+criterion_group!(benches, bench, plan_costs::bench, plan_floor::bench);
 criterion_main!(benches);

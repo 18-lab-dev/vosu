@@ -267,7 +267,11 @@ impl LazerMemory {
         self.i32(add(screen, offset)?)
     }
 
-    fn screen_bytes<const N: usize>(&self, screen: usize, offset: usize) -> Option<[u8; N]> {
+    pub(super) fn screen_bytes<const N: usize>(
+        &self,
+        screen: usize,
+        offset: usize,
+    ) -> Option<[u8; N]> {
         if screen == 0 {
             return None;
         }
