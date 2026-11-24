@@ -696,7 +696,7 @@ impl ToolHost {
         atomic_json(&self.config.join("state.json"), &*self.saved.lock())
             .map_err(|e| e.to_string())?;
         self.cli_sessions.lock().retain(|_, s| s.tool != id);
-        self.sessions.lock().retain(|_, owner| owner != id);
+        self.sessions.lock().retain(|_, session| session.tool != id);
         drop(_gate);
         self.rescan().await;
         Ok(())

@@ -1,9 +1,14 @@
 //! Discovery, trust, credentials and lifetime ownership for out-of-process tools.
+pub mod action_authority;
+#[cfg(test)]
+mod action_authority_tests;
+pub mod capabilities;
 mod catalog;
 mod catalog_art;
 mod cli;
 mod http;
 pub mod manifest;
+mod manifest_v2;
 mod process;
 mod replaces;
 #[cfg(test)]
@@ -66,6 +71,7 @@ struct State {
 struct Entry {
     id: String,
     manifest: Option<Manifest>,
+    manifest_v2: Option<manifest_v2::ManifestV2>,
     root: PathBuf,
     source: &'static str,
     data_dir: PathBuf,
@@ -125,7 +131,8 @@ pub struct ToolHost {
     entries: Mutex<BTreeMap<String, Arc<Entry>>>,
     saved: Mutex<BTreeMap<String, Saved>>,
     codes: Mutex<HashMap<String, Code>>,
-    sessions: Mutex<HashMap<String, String>>,
+    sessions: Mutex<HashMap<String, action_authority::LaunchSession>>,
+    action_providers: Mutex<action_authority::Providers>,
     cli_sessions: Mutex<HashMap<String, CliSession>>,
     config: PathBuf,
     data: PathBuf,
@@ -243,6 +250,7 @@ impl ToolHost {
             saved: Mutex::new(saved),
             codes: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            action_providers: Mutex::new(action_authority::Providers::default()),
             cli_sessions: Mutex::new(HashMap::new()),
             config,
             data,
@@ -357,6 +365,9 @@ impl ToolHost {
         Ok(values)
     }
     fn blocked(&self, entry: &Entry) -> Option<String> {
+        if let Some(reason) = self.blocked_capabilities(entry) {
+            return Some(reason);
+        }
         let manifest = entry.manifest.as_ref()?;
         for dep in &manifest.requires {
             let Ok(other) = self.dependency(&dep.id) else {
@@ -498,6 +509,7 @@ impl ToolHost {
         .collect::<Vec<_>>();
         let autostart = self.saved.lock().get(&entry.id).and_then(|s| s.autostart);
         let starts_with_vosu = m.is_some_and(|m| self.starts_with_vosu(&entry.id, m));
+        let capabilities = self.capability_view(entry);
         let state = entry.state.lock();
         let cli = m
             .and_then(|m| m.cli.as_ref())
@@ -509,6 +521,10 @@ impl ToolHost {
         view["autostart"] = json!(autostart);
         view["starts_with_vosu"] = json!(starts_with_vosu);
         view["update_target"] = json!(self.update_target(&entry.id));
+        if let Some((requires, optional)) = capabilities {
+            view["requires"] = requires;
+            view["optional"] = optional;
+        }
         view
     }
     async fn start(self: &Arc<Self>, id: &str, manual: bool) -> Result<(), String> {
@@ -636,6 +652,7 @@ impl ToolHost {
         self.stopping.store(true, Ordering::Release);
         self.cancel.cancel();
         self.cli_sessions.lock().clear();
+        self.sessions.lock().clear();
         let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
         for entry in &entries {
             if let Some(stop) = &entry.state.lock().stop {
@@ -671,14 +688,27 @@ impl ToolHost {
                     .collect()
             };
             for path in paths {
-                if *source != "dev" && !path.join("tool.toml").is_file() {
+                let v2 = !matches!(fs::symlink_metadata(path.join("manifest.toml")),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound);
+                let filename = if v2 { "manifest.toml" } else { "tool.toml" };
+                if *source != "dev" && !v2 && !path.join(filename).is_file() {
                     continue;
                 }
-                let text = fs::read_to_string(path.join("tool.toml"));
+                let text = fs::read_to_string(path.join(filename));
+                let mut parsed_v2 = None;
                 let parsed = text
                     .as_ref()
-                    .map_err(|e| format!("tool.toml: {e}"))
-                    .and_then(|text| Manifest::parse(text));
+                    .map_err(|e| format!("{filename}: {e}"))
+                    .and_then(|text| {
+                        if v2 {
+                            manifest_v2::ManifestV2::parse(text).map(|(normalized, manifest)| {
+                                parsed_v2 = Some(manifest);
+                                normalized
+                            })
+                        } else {
+                            Manifest::parse(text)
+                        }
+                    });
                 let id = parsed.as_ref().map(|m| m.id.clone()).unwrap_or_else(|_| {
                     path.file_name()
                         .unwrap_or_default()
@@ -774,6 +804,7 @@ impl ToolHost {
                 let entry = Arc::new(Entry {
                     id: id.clone(),
                     manifest: parsed.ok(),
+                    manifest_v2: parsed_v2,
                     root: path,
                     source,
                     data_dir: self
@@ -823,6 +854,9 @@ impl ToolHost {
         for entry in old {
             if !found.values().any(|e| Arc::ptr_eq(e, &entry)) {
                 self.cli_sessions
+                    .lock()
+                    .retain(|_, session| session.tool != entry.id);
+                self.sessions
                     .lock()
                     .retain(|_, session| session.tool != entry.id);
                 self.stop(&entry).await;

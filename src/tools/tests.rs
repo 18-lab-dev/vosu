@@ -495,7 +495,7 @@ async fn access_matrix_includes_sessions_dependencies_and_method_overlap() {
     headers.clear();
     host.sessions
         .lock()
-        .insert("session-secret".into(), "target".into());
+        .insert("session-secret".into(), host.test_session("target"));
     headers.insert("x-vosu-tool-session", "session-secret".parse().unwrap());
     assert_eq!(host.caller(&target, &headers, true).as_deref(), Some("ui"));
     assert!(host.caller(&stranger, &headers, true).is_none());
@@ -536,7 +536,7 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
     );
     host.sessions
         .lock()
-        .insert("fixture-session".into(), "fixture".into());
+        .insert("fixture-session".into(), host.test_session("fixture"));
     let mut write = request(Method::POST, "/tools/fixture/api/v1/write");
     write
         .headers_mut()

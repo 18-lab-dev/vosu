@@ -1,0 +1,17 @@
+manifest_version = 1
+kind = "tool"
+id = "action-web"
+name = "Action web fixture"
+version = "1.0.0"
+host = ">=2.0.0-alpha.1, <3.0.0"
+
+[ui]
+root = "web"
+
+[[requires]]
+id = "action:fixture.game.beatmap.import"
+version = "^1.0.0"
+
+[[optional]]
+id = "action:fixture.game.utility.inspect"
+version = "^2.0.0"

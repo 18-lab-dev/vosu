@@ -261,7 +261,9 @@ impl ToolHost {
         self.cli_sessions
             .lock()
             .retain(|_, session| session.tool != tx.old);
-        self.sessions.lock().retain(|_, owner| owner != &tx.old);
+        self.sessions
+            .lock()
+            .retain(|_, session| session.tool != tx.old);
         self.codes.lock().retain(|_, code| code.tool != tx.old);
         Ok(())
     }

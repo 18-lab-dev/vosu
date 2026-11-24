@@ -24,6 +24,17 @@ Durable tool data is stored separately at `<vosu data directory>/tool-data/<id>/
 
 vosu watches every root. Added, removed, or edited manifests and `settings.json` files apply without restarting vosu. For development tools, a change to the service executable also restarts a running service, so `cargo build` or saving a script is the whole edit loop.
 
+During the v2 transition, discovery prefers a web-only [`manifest.toml`](../v2/catalog-v2.md#kind--tool)
+when present. Invalid or unreadable v2 manifests never fall back to `tool.toml`.
+V2 `requires`/`optional` resolve only against loaded installed providers; no
+catalog download or installation occurs. Required capabilities block launch when
+unavailable. Legacy permissions, including `songs:write` and `[api].write`, grant
+no plugin-action authority. Every action/job request rechecks the live launch
+record, current tool trust/enabled state and exact action/version grant. Tabs
+have distinct job owners; revoking a tab, disabling/removing a tool or replacing
+its manifest does not transfer jobs to a later launch. At most 1,024 live UI
+launch sessions are retained; close/revoke sessions before minting beyond this bound.
+
 vosu embeds no tools. The official SDK, packages, and catalog are maintained in [vosu-tools](https://github.com/18-lab-dev/vosu-tools). Installation downloads dependencies first, checks HTTPS destinations and redirects, verifies package size and SHA-256, rejects unsafe ZIP entries, and validates the manifest before atomically replacing a tool. Running services restart after updates; failed extraction leaves the previous installation intact.
 
 For a development service, a missing relative command is resolved by file name in Cargo output: starting at the tool directory, each ancestor containing `Cargo.toml` is checked for `$CARGO_TARGET_DIR/{debug,release}/<file>` (a relative environment value is resolved against that ancestor), or `target/{debug,release}/<file>` when the variable is unset. Debug is tried before release; the nearest matching ancestor wins. Bare executable names such as `python3` resolve through `PATH`; paths containing a separator resolve under the tool directory before the development fallback. On Windows an extensionless executable gets `.exe`.

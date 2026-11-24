@@ -77,12 +77,12 @@ impl ToolHost {
         headers: &HeaderMap,
         write: bool,
     ) -> Option<String> {
-        if let Some(session) = text_header(headers, "x-vosu-tool-session")
+        if let Some(session_token) = text_header(headers, "x-vosu-tool-session")
             && self
                 .sessions
                 .lock()
                 .iter()
-                .any(|(secret, id)| id == &target.id && equal(secret, &session))
+                .any(|(secret, session)| session.tool == target.id && equal(secret, &session_token))
         {
             return Some("ui".into());
         }
@@ -234,6 +234,8 @@ impl ToolHost {
                     self.cli_sessions
                         .lock()
                         .retain(|_, session| session.tool != id);
+                    self.sessions.lock().retain(|_, session| session.tool != id);
+                    self.codes.lock().retain(|_, code| code.tool != id);
                     self.stop(&entry).await;
                 }
             }
@@ -521,7 +523,25 @@ impl ToolHost {
             let Ok(session) = secret() else {
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "random source failed");
             };
-            self.sessions.lock().insert(session.clone(), tool.into());
+            drop(codes);
+            let Ok(entry) = self.entry(tool) else {
+                return error(StatusCode::FORBIDDEN, "tool is unavailable");
+            };
+            if !matches!(
+                self.status(&entry).0.as_str(),
+                "stopped" | "starting" | "running"
+            ) {
+                return error(StatusCode::FORBIDDEN, "tool is unavailable");
+            }
+            let mut sessions = self.sessions.lock();
+            sessions.retain(|_, record| record.is_live());
+            if sessions.len() >= action_authority::MAX_LAUNCH_SESSIONS {
+                return error(StatusCode::TOO_MANY_REQUESTS, "too many launch sessions");
+            }
+            sessions.insert(
+                session.clone(),
+                action_authority::LaunchSession::new(&entry),
+            );
             return json_response(StatusCode::OK, json!({"session":session}));
         }
         if method != Method::GET {
