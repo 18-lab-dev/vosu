@@ -620,12 +620,15 @@ pub fn brand(
         .lines()
         .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
         .collect();
+    // `scripts/check-brand.py`'s pattern, built at runtime so this checker is
+    // not itself an old-brand occurrence.
+    let needle = ["to", "su"].concat();
     let mut expected = BTreeMap::new();
     for file in files {
         let Ok(text) = std::fs::read_to_string(dir.join(file)) else {
             continue;
         };
-        let count = text.to_lowercase().matches("tosu").count();
+        let count = text.to_ascii_lowercase().matches(&needle).count();
         if count > 0 && file != "brand-inventory.txt" {
             expected.insert(
                 format!("tests/fixtures/upstream/{pin}/{name}/{file}"),
