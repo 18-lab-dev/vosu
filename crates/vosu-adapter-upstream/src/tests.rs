@@ -272,11 +272,34 @@ fn one_shot_projection_uses_exactly_one_coherent_capture_and_no_subscription() {
         atomic::{AtomicUsize, Ordering},
     };
     use vosu_plugin_api::Selector;
+    use vosu_surface::files::{FileError, FilesRequester, OpenedFile, Operation, RootLease};
+    use vosu_surface::resources::{PublishedResource, ResourceRequester};
     use vosu_surface::routes::*;
     use vosu_surface::{requester::BundledRequester, state::*};
     struct Requester {
         image: CapturedSelection,
         captures: AtomicUsize,
+    }
+    impl FilesRequester for Requester {
+        fn declared_root(&self, _: &IdentifiedSession, _: &str) -> Result<RootLease, FileError> {
+            Err(FileError::PermissionDenied)
+        }
+        fn open_calculation_path(
+            &self,
+            _: &IdentifiedSession,
+            _: &str,
+        ) -> Operation<'_, OpenedFile> {
+            Box::pin(async { Err(FileError::PermissionDenied) })
+        }
+    }
+    impl ResourceRequester for Requester {
+        fn open_published_resource(
+            &self,
+            _: &IdentifiedSession,
+            _: &str,
+        ) -> Operation<'_, PublishedResource> {
+            Box::pin(async { Err(FileError::PermissionDenied) })
+        }
     }
     impl BundledRequester for Requester {
         fn capture(

@@ -89,6 +89,7 @@ pub use focus::{
     FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
     SyntheticForegroundSource,
 };
+pub(crate) use host::SurfaceRequester;
 pub use host::resource_requests::{
     MAX_PENDING_RESOURCE_REQUESTS, ResourceOwner, ResourceReply, ResourceRequest,
     ResourceRequestError, ResourceRequests,
