@@ -574,21 +574,33 @@ fn injected_session_memory_answers_a_sync_plan() {
     host.destroy_all(DESTROY_GRACE);
 }
 
-/// F4 review item 5: `module_scoped_scan_on_hooked_pid_resolves_no_modules`
-/// (`vosu-core`'s own `host::scans::tests`) runs under `cfg(test)`, which
-/// the F3 P2 fix's own gate (`cfg(any(test, feature = "test-harness"))`)
-/// already satisfies through `test` alone — it would still pass even if
-/// the `test-harness`-only half of that `cfg` were wrong, so it never
-/// actually exercises the gap the fix closed (`host/scans.rs`'s
-/// `is_hooked_for_tests` caller, `build_module_regions`, used to be
-/// `cfg(test)`-only). This integration test is a separate crate that
-/// links `vosu-core` as an ordinary dependency: it compiles `vosu-core`
-/// with `feature = "test-harness"` enabled and *no* `cfg(test)` at all
-/// (that only ever applies to a crate's own unit-test build, never to a
-/// dependent crate), so a module-scoped scan resolving no real module
-/// for `test_support::set_session_memory`'s synthetic pid here proves
-/// the `test-harness`-only branch of that `cfg` actually works, not just
-/// the `cfg(test)` one.
+/// F4 review item 5 / ReviewF4fix's own P2: the previous version of this
+/// test hooked a synthetic pid (`0x7FFF_FFFD`) that names no real OS
+/// process at all, so it could never discriminate the fix from its own
+/// absence: `build_module_regions_real` would fail to snapshot that pid
+/// either way (no such process exists to snapshot), falling back to the
+/// exact same `UnresolvedModuleRegions`/`module_not_found` answer the
+/// `test-harness` gate itself produces. Hooking `std::process::id()` (a
+/// pid that genuinely exists — this test process) with a module name
+/// that genuinely resolves in it (`libc.so.6`/`ntdll.dll`, below) makes
+/// the two branches disagree: with the `test-harness` gate active,
+/// `is_hooked_for_tests(pid)` still substitutes `UnresolvedModuleRegions`
+/// for this hooked pid, so the scan answers `module_not_found` despite
+/// the module genuinely being loaded; without it (reverted to plain
+/// `cfg(test)`, which this `test-harness`-only integration test crate
+/// never satisfies), `build_module_regions_real` snapshots this real
+/// process's real module table, resolves the module for real, and the
+/// scan instead runs against the tiny injected buffer at that real
+/// address — never `module_not_found`. Verified by reverting
+/// `host/scans.rs`'s `build_module_regions` gate to plain `cfg(test)`:
+/// this test then fails (the result is no longer `module_not_found`),
+/// confirming it actually depends on the `test-harness` branch.
+#[cfg(target_os = "linux")]
+const REAL_MODULE_NAME: &str = "libc.so.6";
+#[cfg(windows)]
+const REAL_MODULE_NAME: &str = "ntdll.dll";
+
+#[cfg(any(target_os = "linux", windows))]
 #[test]
 fn injected_session_memory_resolves_no_modules_for_a_scan() {
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -640,11 +652,12 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     )
     .expect("creating the scan testkit instance");
 
-    // A synthetic pid naming no real OS process: `test_support` is the
-    // only thing that makes this session's memory resolvable, and this
-    // pid was never exec'd, so a real `/proc`/loader-table lookup for its
-    // modules must never even be attempted.
-    let pid: u32 = 0x7FFF_FFFD;
+    // A pid that genuinely exists (this test process itself), so a real
+    // module-table snapshot, were the `test-harness` gate not substituting
+    // `UnresolvedModuleRegions` for it, would genuinely succeed and find
+    // `REAL_MODULE_NAME` — unlike the previous version's synthetic pid,
+    // which could never tell the two branches apart (module doc comment).
+    let pid: u32 = std::process::id();
     let memory: Arc<dyn vosu_sys::process::ProcessMemory> = Arc::new(InjectedBuffer {
         bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
     });
@@ -676,7 +689,7 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
         .send(vosu_plugin_testkit::scan::ScanCommand {
             correlation_id: 11,
             session: handle,
-            module: Some("some.dll".to_owned()),
+            module: Some(REAL_MODULE_NAME.to_owned()),
             pattern: "DE AD BE EF".to_owned(),
             non_zero_mask: false,
             all_matches: true,
@@ -704,7 +717,9 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     assert!(result.addresses.is_empty());
     assert_eq!(
         result.error.expect("module_not_found error").code,
-        "module_not_found"
+        "module_not_found",
+        "the test-harness gate must substitute UnresolvedModuleRegions for this hooked, \
+         really-existing pid — not resolve REAL_MODULE_NAME for real"
     );
 
     vosu_core::plugin::test_support::clear_session_memory(pid);
