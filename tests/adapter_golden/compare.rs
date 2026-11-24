@@ -111,6 +111,8 @@ pub struct Observed {
     pub bound: Vec<(u64, String)>,
     /// Failed local invariants, as (part, detail).
     pub invariants: Vec<(String, String)>,
+    /// vosu closed the connection without a response byte.
+    pub closed: bool,
 }
 
 /// Replays every case of `platform`, one replay per distinct envelope.
@@ -156,6 +158,25 @@ pub fn observe(platform: &Platform) -> Result<Vec<Result<Observed, String>>, Str
 fn case(replay: &Replay, case: &Case, roots: &[(String, String)]) -> Result<Observed, String> {
     let mut invariants = Vec::new();
     let (request, bound) = substitute(replay.address, &case.request, &mut invariants)?;
+    if case.expected.closed {
+        // Upstream closed without a response: vosu must close too, and a
+        // response it sends instead is observed in full for the report.
+        let files = case.family == "files";
+        return Ok(
+            match routes::exchange_or_close(replay.address, request.as_bytes())? {
+                Some(response) => normalize(response, Vec::new(), files, roots, bound, invariants),
+                None => Observed {
+                    status: 0,
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                    frames: Vec::new(),
+                    bound,
+                    invariants,
+                    closed: true,
+                },
+            },
+        );
+    }
     let (response, frames) = if case.family == "ws" {
         let steps: Vec<Step> = case
             .expected
@@ -335,6 +356,7 @@ pub fn normalize(
         frames,
         bound,
         invariants,
+        closed: false,
     }
 }
 
@@ -405,6 +427,23 @@ pub fn compare(
             if let Err(error) = etags.bind(*ordinal, tag) {
                 push("request", error);
             }
+        }
+        if case.expected.closed || observed.closed {
+            if !observed.closed {
+                push(
+                    "outcome",
+                    format!(
+                        "vosu answered {}, expected the connection to close without a response",
+                        observed.status
+                    ),
+                );
+            } else if !case.expected.closed {
+                push(
+                    "outcome",
+                    "vosu closed the connection without a response".into(),
+                );
+            }
+            continue;
         }
         let rule = |part: &Part| {
             rules

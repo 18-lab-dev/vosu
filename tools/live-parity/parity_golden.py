@@ -31,6 +31,8 @@ Capture shape (written by `golden-capture`; every object is closed):
 
     record = {"attempt", "request": bytes, "status_line", "headers": [[name, value]],
               "body": bytes (after transfer-coding removal), "frames": [frame] (ws only)}
+           | {"attempt", "request": bytes, "outcome": "closed", "frames": [] (ws only)}
+             (the connection closed without a response byte; expected {"outcome": "closed"})
     frame  = {"from": "client"|"server", "fin", "opcode", "masked", "mask_key": hex|null,
               "length", "payload": bytes}
     dump   = {"attempt", "envelope": vosu-adapter-capture-v1}
@@ -54,9 +56,10 @@ from urllib.parse import unquote
 
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION, SUPPORTED_MATRIX
 from parity_golden_rules import (
-    CAPABILITY_HEADER, CREDENTIAL_HEADERS, NORMALIZATION_VERSION, OLD_BRAND,
-    VALIDATOR_REQUEST_HEADERS, GoldenError, Root, RootRewriter, Validators,
-    apply_timestamp_pointers, check_approved_rules, entity_tag, normalize_response_headers,
+    CAPABILITY_HEADER, CREDENTIAL_HEADERS, ENVELOPE_KEYS, NON_GOLDEN_SEGMENTS,
+    NORMALIZATION_VERSION, OLD_BRAND, TRANSPORT_OUTCOMES, VALIDATOR_REQUEST_HEADERS,
+    GoldenError, Root, RootRewriter, Validators, apply_timestamp_pointers,
+    check_approved_rules, dump_sandwich_difference, entity_tag, normalize_response_headers,
     privacy_findings, rewrite_cbor_text, synthetic_root, validate_private_root,
 )
 
@@ -95,9 +98,6 @@ _ASSET_ID = re.compile(_SLUG)
 _WINDOWS_RESERVED = re.compile(r"(?i)(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?")
 _STATUS_LINE = re.compile(r"HTTP/1\.[01] ([1-5]\d\d)(?: [^\r\n]*)?")
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
-_ENVELOPE_KEYS = ("format", "schema", "provider_generation", "session", "focus_revision",
-                  "roster", "bus_revision", "namespace_revisions", "entries", "derived",
-                  "http", "digest")
 _SESSION_KEYS = ("ordinal", "generation", "owner", "owner_instance", "game", "variant",
                  "foreground")
 _DIGEST_KEYS = ("session", "focus_revision", "roster", "bus_revision", "namespace_revisions",
@@ -196,7 +196,9 @@ def _utf8(data: bytes) -> str | None:
 
 
 def _record(value: Any, where: str, attempt: int, ws: bool) -> dict[str, Any]:
-    keys = ("attempt", "request", "status_line", "headers", "body") + (("frames",) if ws else ())
+    transport = isinstance(value, dict) and "outcome" in value
+    keys = (("attempt", "request", "outcome") if transport
+            else ("attempt", "request", "status_line", "headers", "body")) + (("frames",) if ws else ())
     _obj(value, where, keys)
     if _int(value["attempt"], f"{where}.attempt") != attempt:
         raise GoldenError(f"{where}: record belongs to attempt {value['attempt']}, not {attempt} "
@@ -204,6 +206,13 @@ def _record(value: Any, where: str, attempt: int, ws: bool) -> dict[str, Any]:
     request = _utf8(_bytes(value["request"], f"{where}.request"))
     if request is None:
         raise GoldenError(f"{where}.request: binary request bytes")
+    if transport:
+        # GOLDEN_CONTRACT §6: the peer closed the connection without a response byte.
+        _str(value["outcome"], f"{where}.outcome", choices=TRANSPORT_OUTCOMES)
+        if ws and value["frames"] != []:
+            raise GoldenError(f"{where}.frames: a connection closed without a response has no frames")
+        return {"request": request, "outcome": value["outcome"], "status": None, "headers": [],
+                "body": b"", "frames": [] if ws else None}
     status = _STATUS_LINE.fullmatch(_str(value["status_line"], f"{where}.status_line"))
     if status is None:
         raise GoldenError(f"{where}.status_line: not an HTTP/1.x status line")
@@ -216,8 +225,8 @@ def _record(value: Any, where: str, attempt: int, ws: bool) -> dict[str, Any]:
         headers.append([header[0], header[1]])
     frames = [_frame(frame, f"{where}.frames[{index}]")
               for index, frame in enumerate(_list(value["frames"], f"{where}.frames"))] if ws else None
-    return {"request": request, "status": int(status.group(1)), "headers": headers,
-            "body": _bytes(value["body"], f"{where}.body"), "frames": frames}
+    return {"request": request, "outcome": None, "status": int(status.group(1)),
+            "headers": headers, "body": _bytes(value["body"], f"{where}.body"), "frames": frames}
 
 
 def _frame(value: Any, where: str) -> dict[str, Any]:
@@ -259,7 +268,7 @@ def envelope_digest(envelope: dict[str, Any]) -> str:
 
 
 def _envelope(value: Any, where: str) -> dict[str, Any]:
-    _obj(value, where, _ENVELOPE_KEYS, ordered=True)
+    _obj(value, where, ENVELOPE_KEYS, ordered=True)
     if value["format"] != ENVELOPE_FORMAT:
         raise GoldenError(f"{where}.format: expected {ENVELOPE_FORMAT}")
     _str(value["schema"], f"{where}.schema", choices=ENVELOPE_SCHEMAS)
@@ -478,6 +487,8 @@ def _case(value: Any, index: int) -> dict[str, Any]:
     if len(case_id) > 120:
         raise GoldenError(f"{where}.id: longer than 120 characters")
     family = _str(value["family"], f"case {case_id}.family", choices=FAMILIES)
+    if NON_GOLDEN_SEGMENTS & set(case_id.split(".")):
+        raise GoldenError(f"case {case_id}: negative and diagnostic route cases are never goldens")
     if not case_id.startswith(family + "."):
         raise GoldenError(f"case {case_id}: id does not start with its family")
     _str(value["barrier"], f"case {case_id}.barrier", choices=BARRIERS)
@@ -520,28 +531,6 @@ def _case(value: Any, index: int) -> dict[str, Any]:
                 "dump_schema": value["dump_schema"], "conditional": conditional,
                 "attempts": len(attempts), "source": records, "route": route, "dumps": dumps}
     raise GoldenError(f"case {case_id}: no complete attempt")
-
-
-def dump_sandwich_difference(before: dict[str, Any], after: dict[str, Any]) -> str | None:
-    """The first envelope field in which a vosu dump sandwich differs, or None.
-
-    `sc` reads release the streamCompanion chart-work handle, so its provider generation
-    and derived revision advance on every read (GOLDEN_CONTRACT §6). For `sc` the
-    sandwich therefore compares everything else: digest, selection, derived status and
-    HTTP bytes. `v1`/`v2`/`v2-precise` keep full equality.
-    """
-    sc = before["schema"] == "sc" and after["schema"] == "sc"
-    for key in _ENVELOPE_KEYS:
-        left, right = before[key], after[key]
-        if sc and key == "provider_generation":
-            continue
-        if sc and key == "derived":
-            if left["status"] != right["status"]:
-                return "derived.status"
-            continue
-        if left != right:
-            return key
-    return None
 
 
 def _check_sandwiches(case: dict[str, Any]) -> None:
@@ -648,6 +637,8 @@ class _Platform:
     def expected(self, case: dict[str, Any], record: dict[str, Any], used: set[str],
                  get_lengths: dict[str, tuple[int, int]]) -> dict[str, Any]:
         family = case["family"]
+        if record["outcome"] is not None:
+            return {"outcome": record["outcome"]}
         headers, rules = normalize_response_headers(
             record["headers"], family == "files", self.validators)
         used |= rules
@@ -753,7 +744,7 @@ def _platform_files(capture: Any, review_receipt: str | None,
     get_lengths: dict[str, tuple[int, int]] = {}
     for case in cases:
         record = case["source"][0]
-        if case["method"] == "GET" and _utf8(record["body"]) is not None:
+        if case["method"] == "GET" and record["outcome"] is None and _utf8(record["body"]) is not None:
             get_lengths[record["request"]] = (
                 len(record["body"]), state.body(case["id"], case["family"], record["body"], set())[1])
 

@@ -55,14 +55,28 @@ pub fn get(address: SocketAddr, path: &str) -> RawResponse {
 /// request asks the server to close, nothing may follow that response (a
 /// `HEAD` response carrying a body fails here).
 pub fn exchange(address: SocketAddr, request: &[u8]) -> Result<RawResponse, String> {
+    exchange_or_close(address, request)?
+        .ok_or_else(|| "connection closed without a response".to_owned())
+}
+
+/// Like [`exchange`], but a connection the server closes or resets before
+/// any response byte is `Ok(None)`: the golden `closed` outcome.
+pub fn exchange_or_close(
+    address: SocketAddr,
+    request: &[u8],
+) -> Result<Option<RawResponse>, String> {
     let mut wire = Wire::connect(address)?;
-    wire.send(request)?;
+    let sent = wire.send(request);
+    if wire.closed_before_response()? {
+        return Ok(None);
+    }
+    sent?;
     let response = wire.response(request.starts_with(b"HEAD "))?;
     let head = String::from_utf8_lossy(request).to_ascii_lowercase();
     if head.contains("\r\nconnection: close\r\n") && !wire.rest()?.is_empty() {
         return Err("bytes follow the response".into());
     }
-    Ok(response)
+    Ok(Some(response))
 }
 
 /// One buffered client connection.
@@ -88,6 +102,29 @@ impl Wire {
 
     pub fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.stream.write_all(bytes).map_err(|e| e.to_string())
+    }
+
+    /// Reads the first response bytes; `true` when the server closed or
+    /// reset the connection before sending any.
+    fn closed_before_response(&mut self) -> Result<bool, String> {
+        let mut chunk = [0_u8; 16 * 1024];
+        match self.stream.read(&mut chunk) {
+            Ok(0) => Ok(true),
+            Ok(count) => {
+                self.read += count;
+                self.buffer.extend_from_slice(&chunk[..count]);
+                Ok(false)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ) =>
+            {
+                Ok(true)
+            }
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     /// Reads more bytes; `Ok(false)` at end of stream.

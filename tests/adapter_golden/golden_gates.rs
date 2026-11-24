@@ -4,7 +4,7 @@
 //! instead of the hash check.
 use super::{
     Value,
-    case_file::excluded_target,
+    case_file::{self, excluded_target},
     fixture::{self, Fixture, Pinned, Provenance},
     golden_cases::{pin, synthetic_dir},
     json,
@@ -346,4 +346,39 @@ fn golden_pin_selection_applies_the_pending_marker_rules() {
             .contains("differs")
     );
     assert!(fixture::agree("main", "main").is_err());
+}
+
+#[test]
+fn golden_case_files_take_the_closed_outcome_and_refuse_non_golden_roles() {
+    let dir = copy();
+    let platform = dir.path().join(PLATFORM);
+    let v2 = "state-http.get-json-v2";
+    // An upstream connection closed without a response is an explicit outcome.
+    let closed = "state-http.closed";
+    let mut value = read(&case_path(dir.path(), v2));
+    value["id"] = json!(closed);
+    value["expected"] = json!({"outcome": "closed"});
+    write(&case_path(dir.path(), closed), &value);
+    let case = case_file::case(&platform, PLATFORM, closed, &[]).unwrap();
+    assert!(case.expected.closed);
+    for (expected, message) in [
+        (json!({"outcome": "reset"}), "not closed"),
+        (json!({"outcome": "closed", "status": 200}), "expected"),
+    ] {
+        value["expected"] = expected;
+        write(&case_path(dir.path(), closed), &value);
+        let error = case_file::case(&platform, PLATFORM, closed, &[])
+            .err()
+            .unwrap();
+        assert!(error.contains(message), "{message:?} not in {error:?}");
+    }
+    // Negative and diagnostic route cases are never goldens.
+    for id in ["state-http.negative.api-v1-suffix", "ws.v2.diagnostic.feed"] {
+        let mut value = read(&case_path(dir.path(), v2));
+        value["id"] = json!(id);
+        value["family"] = json!(id.split('.').next().unwrap());
+        write(&case_path(dir.path(), id), &value);
+        let error = case_file::case(&platform, PLATFORM, id, &[]).err().unwrap();
+        assert!(error.contains("never goldens"), "{error}");
+    }
 }
