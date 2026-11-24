@@ -1481,7 +1481,12 @@ Exit evidence (2026-11-24, on the merged head):
     and the bench fixture waits for that commit before measuring. The live
     adapter-mode example test expected one commit to show thread CPU, but
     Windows `GetThreadTimes` charges whole ~15.6 ms ticks, so it now commits
-    until a tick is attributed (bounded).
+    until a tick is attributed (bounded). A 16,384-entry surface directory
+    page opens every child through the retained root (R0 confinement): 73 ms
+    on Linux, 2.3 s on native Windows alone, over the test's 5 s operation
+    bound under the parallel native suite. The test now has a 60 s hang
+    bound. The per-entry Windows open cost (~140 µs, so a 131,072-entry
+    legacy listing takes ~18 s) is an open performance finding, not fixed here.
   - Stress (`vm-stress.py`): `performance_invariants` adapter cases 0/15
     failures and `runtime_wakeups` 0/15 after the fixes;
     `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`
