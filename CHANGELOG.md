@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M2
 
+- Run graphical daemon launches in the background with a tray **Show logs**
+  action. Add `vosu logs [-n N] [--follow]` for crash-independent file-based
+  log inspection. Windows 11 24H2+ starts without a console; older Windows
+  detaches private daemon consoles. Existing terminal and CLI behavior stays intact.
 - Publish identified osu! sessions to `/vosu.osu` on the 2.0 state bus, plus
   common status, chart, play and skin namespaces and core-owned client facts,
   alongside the unchanged legacy bridge, including when no legacy sink exists.

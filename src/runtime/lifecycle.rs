@@ -213,7 +213,7 @@ impl ProductionRuntime {
                 config: Arc::clone(&self.config),
                 snapshots: self.snapshots.snapshot_manager(),
                 counters: Arc::clone(&counters),
-                logs: self.paths.data().join("logs"),
+                logs: vosu_core::logging::logs_dir(&self.paths),
                 lifecycle: Arc::clone(&dashboard_lifecycle),
             }),
             Arc::new(RuntimeUpdater::production(
@@ -777,10 +777,12 @@ pub async fn run_cli() -> io::Result<()> {
         super::cli::CommandInvocation::InvalidInput => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "vosu command flags must be standalone arguments without values",
+                "invalid command arguments; see vosu --help",
             ));
         }
     }
+    #[cfg(windows)]
+    vosu_sys::platform::detach_private_console();
     let args = StartupArgs::parse(raw_args.clone());
     let startup_flags = StartupFlags {
         update: args.get("update").and_then(StartupValue::as_boolean),
@@ -855,7 +857,7 @@ pub async fn run_cli() -> io::Result<()> {
         }
     }
     let logger = Logger::new(
-        paths.data().join("logs"),
+        vosu_core::logging::logs_dir(&paths),
         LoggerOptions {
             debug_log: config.current().debug_log,
             ..LoggerOptions::default()

@@ -1,6 +1,11 @@
+#[cfg(windows)]
+#[path = "build_support/windows_manifest.rs"]
+mod windows_manifest;
+
 fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_TEST_HARNESS");
     println!("cargo:rerun-if-env-changed=PROFILE");
+    println!("cargo:rerun-if-changed=build_support/windows_manifest.rs");
 
     if std::env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some()
         && std::env::var("PROFILE").as_deref() == Ok("release")
@@ -34,6 +39,7 @@ fn embed_windows_resource() {
     let mut resource = WindowsResource::new();
     resource
         .set_icon("assets/icon.ico")
+        .set_manifest(windows_manifest::WINDOWS_MANIFEST)
         .set_language(0x0409)
         .set("ProductName", "vosu")
         .set("CompanyName", "")

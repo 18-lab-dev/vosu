@@ -1,9 +1,19 @@
 //! Target-specific filesystem, system, and process integration.
 
+#[cfg(windows)]
+mod console;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub use console::{detach_private_console, open_log_console};
+
+/// Stable Windows volume/file identity for an open file, including across renames.
+#[cfg(windows)]
+pub fn file_identity(file: &std::fs::File) -> io::Result<(u64, u64)> {
+    windows::file_identity(file)
+}
 
 use std::ffi::OsString;
 #[cfg(not(windows))]
