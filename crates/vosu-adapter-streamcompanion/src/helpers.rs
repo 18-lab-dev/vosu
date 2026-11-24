@@ -1,8 +1,8 @@
-use serde::Serialize;
 use crate::Error as ApiError;
+use serde::Serialize;
 use vosu_adapter_support::fixed::fix_decimals_to;
-use vosu_osu_model::{js_json_number, safe_join};
 use vosu_osu_model::enums::{CountryCodes, Rulesets};
+use vosu_osu_model::{js_json_number, safe_join};
 pub(super) fn stream_companion_status(raw: i64, watching_replay: bool) -> i64 {
     match raw {
         2 => {
@@ -210,7 +210,10 @@ pub(super) struct LeaderboardMainWire {
     is_passing: bool,
 }
 impl LeaderboardMainWire {
-    pub(super) fn from_state(visible: bool, player: &vosu_osu_model::source::LeaderboardPlayer) -> Self {
+    pub(super) fn from_state(
+        visible: bool,
+        player: &vosu_osu_model::source::LeaderboardPlayer,
+    ) -> Self {
         Self {
             visible,
             username: player.name.to_string(),

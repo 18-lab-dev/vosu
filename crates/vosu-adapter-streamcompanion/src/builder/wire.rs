@@ -13,11 +13,11 @@ use vosu_adapter_support::json::{
     Serde, Wire, With, wire_object, write_js_number, write_str_content,
 };
 
-
 /// Encodes the unfiltered streamCompanion document exactly as
 /// `build` serializes through [`JsFormatter`](vosu_adapter_support::json::JsFormatter).
 pub(super) fn encode(view: &View, chart: Option<&ChartFacts>) -> Result<Vec<u8>, ApiError> {
-    let mut out = Vec::with_capacity(3 * 1024 + 256 * view.leaderboard.len() + 24 * view.hit_errors.len());
+    let mut out =
+        Vec::with_capacity(3 * 1024 + 256 * view.leaderboard.len() + 24 * view.hit_errors.len());
     write_document(&mut out, view, chart).map_err(|e| ApiError::serialization(e.to_string()))?;
     Ok(out)
 }
@@ -196,7 +196,10 @@ fn write_document(out: &mut Vec<u8>, view: &View, parsed: Option<&ChartFacts>) -
     let status = stream_companion_status(raw_status, view.watching_replay);
     let current_mods = &view.play.mods;
     let current_mode = view.mode();
-    let hits = to_legacy_hits(view.play.mode.number.unwrap_or_default() as i32, &view.statistics());
+    let hits = to_legacy_hits(
+        view.play.mode.number.unwrap_or_default() as i32,
+        &view.statistics(),
+    );
 
     let user = view.profile.id.map(|_| &view.profile);
     let raw_login_status = view.profile.user_status.number;
@@ -221,7 +224,12 @@ fn write_document(out: &mut Vec<u8>, view: &View, parsed: Option<&ChartFacts>) -
     let first_object = i64::from(times.first_object);
     let play_time = view.play_time;
     let full = times.full;
-    let keys = [view.overlay.k1, view.overlay.k2, view.overlay.m1, view.overlay.m2];
+    let keys = [
+        view.overlay.k1,
+        view.overlay.k2,
+        view.overlay.m1,
+        view.overlay.m2,
+    ];
     let key = |index: usize| keys[index].as_ref();
     let key_overlay_enabled = true;
     // Too many members for one macro expansion; written in three groups.

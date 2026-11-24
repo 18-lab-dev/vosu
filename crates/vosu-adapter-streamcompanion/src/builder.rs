@@ -1,10 +1,10 @@
 //! Source-compatible streamCompanion builder over one coherent bus selection.
+use crate::helpers::*;
+use crate::{Error as ApiError, chart::ChartFacts, dto::Response, view::View};
 use bytes::Bytes;
 use vosu_adapter_support::fixed::fix_decimals;
 use vosu_osu_model::enums::{CountryCodes, Rulesets};
 use vosu_osu_model::to_legacy_hits;
-use crate::{Error as ApiError, chart::ChartFacts, dto::Response, view::View};
-use crate::helpers::*;
 
 /// Chart facts are supplied only by C1's resource-derived projection.
 pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiError> {
@@ -12,7 +12,10 @@ pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiEr
     let status = stream_companion_status(raw_status, view.watching_replay);
     let current_mods = &view.play.mods;
     let current_mode = view.mode();
-    let hits = to_legacy_hits(view.play.mode.number.unwrap_or_default() as i32, &view.statistics());
+    let hits = to_legacy_hits(
+        view.play.mode.number.unwrap_or_default() as i32,
+        &view.statistics(),
+    );
 
     let user = view.profile.id.map(|_| &view.profile);
     let raw_login_status = view.profile.user_status.number;
@@ -41,7 +44,13 @@ pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiEr
         view.leaderboard_state.visible,
         &view.leaderboard_state.player,
     ))?;
-    let leader_board_players = encode_json(&view.leaderboard.iter().map(LeaderboardPlayerWire::from_player).collect::<Vec<_>>())?;
+    let leader_board_players = encode_json(
+        &view
+            .leaderboard
+            .iter()
+            .map(LeaderboardPlayerWire::from_player)
+            .collect::<Vec<_>>(),
+    )?;
 
     Ok(Response {
         osu_is_running: 1,
@@ -52,7 +61,9 @@ pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiEr
         bancho_id: user.and_then(|user| user.id),
         bancho_username: user.and_then(|user| user.name.clone()),
         bancho_status: raw_login_status,
-        bancho_country: user.map_or_else(String::new, |user| country_name(user.country_code.number.unwrap_or_default())),
+        bancho_country: user.map_or_else(String::new, |user| {
+            country_name(user.country_code.number.unwrap_or_default())
+        }),
         artist_roman: view.metadata.artist.clone(),
         artist_unicode: view.metadata.artist_unicode.clone(),
         title_roman: view.metadata.title.clone(),
@@ -98,23 +109,53 @@ pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiEr
         map_kiai_points: Vec::new(),
         map_position: format_milliseconds(play_time),
         map_timing_points: parsed.map_or_else(Vec::new, |map| {
-            map.timing_points.iter().map(|point| crate::dto::MapTimingPoint {
-                start_time: if point.start_time == 0.0 || point.start_time.is_nan() { 0.0 } else { point.start_time },
-                bpm: None,
-                beat_length: point.beat_length,
-            }).collect()
+            map.timing_points
+                .iter()
+                .map(|point| crate::dto::MapTimingPoint {
+                    start_time: if point.start_time == 0.0 || point.start_time.is_nan() {
+                        0.0
+                    } else {
+                        point.start_time
+                    },
+                    bpm: None,
+                    beat_length: point.beat_length,
+                })
+                .collect()
         }),
         sliders: i64::from(objects.sliders),
         circles: i64::from(objects.circles),
         spinners: i64::from(objects.spinners),
         max_combo: parsed.map_or(0, |map| i64::from(map.difficulty.max_combo)),
         mp3_name: view.paths.current.as_ref().and_then(|p| p.audio.clone()),
-        osu_file_name: view.paths.current.as_ref().and_then(|p| p.beatmap_file.clone()),
-        background_image_file_name: view.paths.current.as_ref().and_then(|p| p.background.clone()),
-        osu_file_location: path_join(view.paths.current.as_ref().and_then(|p| p.beatmap_folder.as_deref()), view.paths.current.as_ref().and_then(|p| p.beatmap_file.as_deref())),
+        osu_file_name: view
+            .paths
+            .current
+            .as_ref()
+            .and_then(|p| p.beatmap_file.clone()),
+        background_image_file_name: view
+            .paths
+            .current
+            .as_ref()
+            .and_then(|p| p.background.clone()),
+        osu_file_location: path_join(
+            view.paths
+                .current
+                .as_ref()
+                .and_then(|p| p.beatmap_folder.as_deref()),
+            view.paths
+                .current
+                .as_ref()
+                .and_then(|p| p.beatmap_file.as_deref()),
+        ),
         background_image_location: path_join(
-            view.paths.current.as_ref().and_then(|p| p.beatmap_folder.as_deref()),
-            view.paths.current.as_ref().and_then(|p| p.background.as_deref()),
+            view.paths
+                .current
+                .as_ref()
+                .and_then(|p| p.beatmap_folder.as_deref()),
+            view.paths
+                .current
+                .as_ref()
+                .and_then(|p| p.background.as_deref()),
         ),
         retries: view.play.retries,
         username: view.play.player_name.clone(),
@@ -146,10 +187,15 @@ pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiEr
         ranked_status: view.metadata.status.number,
         song_selection_ranking_type: view.ranking_type,
         raw_status,
-        dir: view.paths.current.as_ref().and_then(|p| p.beatmap_folder.clone()),
+        dir: view
+            .paths
+            .current
+            .as_ref()
+            .and_then(|p| p.beatmap_folder.clone()),
         dl: format!(
             "https://osu.ppy.sh/b/{}",
-            view.metadata.id
+            view.metadata
+                .id
                 .map_or_else(|| "undefined".to_owned(), |id| id.to_string())
         ),
         osu_90_pp: fix_decimals(pp(90)),
@@ -195,7 +241,6 @@ pub fn build(view: &View, parsed: Option<&ChartFacts>) -> Result<Response, ApiEr
         test: String::new(),
     })
 }
-
 
 pub fn encode(view: &View, chart: Option<&ChartFacts>) -> Result<Bytes, ApiError> {
     wire::encode(view, chart).map(Bytes::from)
