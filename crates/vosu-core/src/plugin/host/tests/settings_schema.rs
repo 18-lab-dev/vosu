@@ -442,6 +442,8 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
         Arc::new(focus::SyntheticForegroundSource::new(None)),
         crate::plugin::session::IDENTIFICATION_TIMEOUT,
     );
+    let mut shutdown =
+        crate::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
 
     let gate = CreateGate::new();
     create_gate_registry()
@@ -508,7 +510,7 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
             std::thread::sleep(Duration::from_millis(1));
         }
 
-        host.watch_bridge_b2(&bridge, &runtime.handle().clone());
+        shutdown.set_watcher(host.watch_bridge_b2(&bridge, &runtime.handle().clone()));
 
         // A plain `ConfigStore::update`, exactly the shape a dashboard
         // write or a `vosu.toml` hot reload uses.
@@ -543,6 +545,13 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
             .unwrap()
             .expect("creating the gated replay instance");
     });
+
+    // Settle persistence before teardown. Without explicit shutdown, this
+    // leaves the blocking store worker idle on commands (no debounce timer
+    // to panic during runtime shutdown), deterministically exposing the hang.
+    runtime
+        .block_on(config.flush())
+        .expect("flushing B2 config");
 
     let message = rx
         .recv_timeout(Duration::from_secs(5))

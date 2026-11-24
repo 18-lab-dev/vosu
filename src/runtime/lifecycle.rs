@@ -45,6 +45,7 @@ pub struct ProductionRuntime {
 
 impl ProductionRuntime {
     async fn shutdown(&self) -> io::Result<()> {
+        let mut result = Ok(());
         self.shutdown_token.cancel();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
             watch.abort();
@@ -58,24 +59,32 @@ impl ProductionRuntime {
         // `foreground_changed`), which must not race a plugin instance
         // tearing down under it.
         if let Some(discovery) = self.discovery.lock().await.take() {
-            tokio::task::spawn_blocking(move || discovery.stop())
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("discovery shutdown task failed: {error}"))
-                })?;
+            result = result.and(
+                tokio::task::spawn_blocking(move || discovery.stop())
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("discovery shutdown task failed: {error}"))
+                    }),
+            );
         }
         #[cfg(windows)]
         if let Some(foreground) = self.foreground.lock().await.take() {
-            tokio::task::spawn_blocking(move || foreground.stop())
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("foreground poller shutdown task failed: {error}"))
-                })?;
+            result = result.and(
+                tokio::task::spawn_blocking(move || foreground.stop())
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("foreground poller shutdown task failed: {error}"))
+                    }),
+            );
         }
         let plugins = Arc::clone(&self.plugins);
-        tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
+        result = result.and(
+            tokio::task::spawn_blocking(move || {
+                plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+            })
             .await
-            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
+            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}"))),
+        );
         if let Some(bridge) = self.bridge.lock().await.take() {
             bridge.shutdown().await;
         }
@@ -111,14 +120,16 @@ impl ProductionRuntime {
             counters.shutdown().await;
         }
         let signal_result = match self.signal_task.lock().await.take() {
-            Some(task) => task
-                .await
-                .map_err(|error| io::Error::other(format!("signal task failed: {error}")))?,
+            Some(task) => task.await.unwrap_or_else(|error| {
+                Err(io::Error::other(format!("signal task failed: {error}")))
+            }),
             None => Ok(()),
         };
-        let config_result = self.config.shutdown().await;
-        let logger_result = self.logger.shutdown().await;
-        signal_result.and(config_result).and(logger_result)
+        // Do not short-circuit cleanup after a task panic: even retained
+        // config Arcs must have their blocking worker joined before runtime drop.
+        result = result.and(signal_result);
+        result = result.and(self.config.shutdown().await);
+        result.and(self.logger.shutdown().await)
     }
 
     async fn compose(&mut self) -> io::Result<()> {
