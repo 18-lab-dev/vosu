@@ -192,7 +192,7 @@ def stage_client_runtime(payload, assembly, work):
     """Give each helper the client's exact CLR and framework instead of its own build
     runtime: a newer game can reference framework APIs unavailable to the helper's SDK,
     and CLR forks can have different object layouts from stock .NET. Mirrors
-    src/runtime/offset_generator/client_runtime.rs so this canary exercises the same
+    crates/vosu-osu-reader/src/offset_generator/client_runtime.rs so this canary exercises the same
     staging the daemon runs at generation time, not a different path."""
     client_deps = json.loads((assembly / "osu!.deps.json").read_text())
     config = json.loads((assembly / "osu!.runtimeconfig.json").read_text())

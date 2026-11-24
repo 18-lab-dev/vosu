@@ -116,7 +116,6 @@ vosu-sys = { path = "crates/vosu-sys" }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
 url = "2.5.8"
-zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zmij = "=1.0.23"
 getrandom = "=0.4.3"
 parking_lot = "0.12.5"
@@ -133,6 +132,7 @@ criterion = "0.7.0"
 proptest = "1.12"
 serde-value = "=0.7.0"
 vosu-proptest = { path = "crates/vosu-proptest" }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [[bench]]
 name = "hot_paths"

@@ -20,7 +20,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Bundled plugins | `src/plugins.rs` | The explicit `BUNDLED` array (D13): every linked-in plugin's embedded manifest text and vtable-builder function, loaded by `src/runtime/dev_plugins.rs` at startup |
 | Native access | `crates/vosu-sys/` | Linux/Windows process handles, memory reads, paths, OS behavior, and process-exit-event backends; all platform `unsafe` lives here |
 | osu! value types | `crates/vosu-osu-model/` | osu! memory/state/enum models and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and adapters |
-| Client decoding | `crates/vosu-osu-reader/` | Stable/lazer memory readers and offsets, the pointer-width managed-heap read layer (`ProcessHandle`, AOB scanning), and osu!-specific discovery inputs (client argv parser, Wine data-path resolution, classification predicates in `discovery::classify`) |
+| Client decoding | `crates/vosu-osu-reader/` | Stable/lazer memory readers and offsets, the pointer-width managed-heap read layer (`ProcessHandle`, AOB scanning), osu!-specific discovery inputs (client argv parser, Wine data-path resolution, classification predicates in `discovery::classify`), and the embedded self-contained lazer offset generator (`offset_generator/`, bundle embedded by this crate's own `build.rs`) |
 | State reduction | `crates/vosu-osu-state/` | Capture scheduling, stale-sample rejection, retention, gameplay state |
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
 | Server and transport | `src/server/`, `crates/vosu-net/` | Exact routes, auth, files, pages, WebSockets, commands, and hardened outbound streaming |
@@ -31,7 +31,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Precise validation | `tools/input-validation/` | Map scanning, navigation, autoplay, edge accounting and capture artifacts |
 | Behavioral contracts | `tests/`, `crates/vosu-test-harness/`, `crates/vosu-release-smoke/` | Compatibility, native, daemon smoke, updater/state/performance, and external packaged-executable tests |
 | Performance evidence | `benches/hot_paths.rs`, [benchmark guide](../testing/benchmarks.md) | Criterion hot paths and machine-specific comparisons |
-| Embedded inputs | `assets/`, `build.rs` | Dashboard, fonts, images, offsets and checksum-covered assets |
+| Embedded inputs | `assets/`, `build.rs`, `crates/vosu-osu-reader/build.rs` | Dashboard, fonts, images, offsets and checksum-covered assets; the reader's own `build.rs` additionally embeds the RID-selected lazer offset generator bundle |
 
 ## Cleanup module boundaries
 
@@ -65,6 +65,11 @@ so `tools -> server` is the only edge left.
 
 - `src/instance/runtime.rs` owns the discovery loop and lifecycle publication;
   `src/instance.rs` retains instance identity, manager state, and the public types.
+- `crates/vosu-osu-reader/src/offset_generator.rs` depends on its own crate's
+  `assets` (the embedded generator bundle and offsets template) and `memory`
+  (`lazer_loader`'s `OffsetGenerator` trait it implements, `lazer_version`'s
+  version check) module edges, recorded in
+  `scripts/module-boundaries/vosu-osu-reader.txt`; no other module reaches it.
 - `crates/vosu-osu-state/src/bundle/publication.rs` owns immutable snapshot materialization and
   regular/precise Arc reuse; `reducer.rs` owns state transitions.
 - `crates/vosu-pp/src/beatmap/random.rs` owns deterministic random-map transforms.

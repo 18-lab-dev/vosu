@@ -15,6 +15,10 @@
 //! Wine data-path resolution (`resolve_osu_path`), both read by the generic
 //! process discoverer that still lives in the root crate until M1 hands the
 //! osu! classification and resolver lifecycle to the bundled plugin.
+//! `offset_generator` holds the embedded self-contained lazer offset
+//! generator (installed and run through `memory::lazer_loader`'s
+//! `OffsetGenerator` seam); its platform-selected bundle is embedded by this
+//! crate's own `build.rs` into `assets::DaemonAssets`.
 
 pub mod assets;
 pub mod discovery;
