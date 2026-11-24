@@ -5,6 +5,7 @@ import functools
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -187,6 +188,32 @@ class CiDriftTest(unittest.TestCase):
         self.assertNotEqual(tampered, text, "fixture replacement did not match ci.yml; update the anchor line")
         missing = uncovered_commands(tampered, covered_commands())
         self.assertIn("cargo foo --not-a-real-check", missing)
+
+    def test_tool_host_requires_browser_module_and_gate_passes_it(self):
+        prepush = _load_module("prepush_x0_test", ROOT / "scripts/prepush.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            module = root / "index.mjs"
+            module.write_text("// fixture")
+            with unittest.mock.patch.object(prepush, "run", return_value=(0, "", "", 0.0)) as run:
+                result = prepush.run_dashboard(root, True, str(module))
+            self.assertEqual(result.status, "passed")
+            tool_commands = [call.args[0] for call in run.call_args_list
+                             if "tests/tool_host_smoke.py" in call.args[0]]
+            self.assertEqual(len(tool_commands), 1)
+            self.assertEqual(tool_commands[0][-2:], ["--playwright-module", str(module)])
+            with unittest.mock.patch.object(prepush, "run") as run:
+                result = prepush.run_dashboard(root, True, str(root / "missing.mjs"))
+            self.assertEqual(result.status, "failed")
+            run.assert_not_called()
+
+        environment = dict(os.environ)
+        environment.pop("VOSU_PLAYWRIGHT_MODULE", None)
+        missing = subprocess.run(
+            [sys.executable, str(ROOT / "tests/tool_host_smoke.py"), "--binary", sys.executable],
+            env=environment, text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("required browser phase needs", missing.stderr)
 
 
 class FakeCompleted:

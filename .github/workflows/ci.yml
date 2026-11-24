@@ -239,7 +239,7 @@ jobs:
           npx --yes playwright@1.61.1 install --with-deps chromium
       - name: Tool host HTTP boundary smoke
         if: needs.changes.outputs.verified != 'true'
-        run: python tests/tool_host_smoke.py --binary target/debug/vosu
+        run: python tests/tool_host_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
       - name: Dashboard browser smoke
         if: needs.changes.outputs.verified != 'true'
         run: python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"

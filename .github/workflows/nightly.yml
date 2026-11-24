@@ -143,7 +143,7 @@ jobs:
           npm install --no-save "playwright@${PLAYWRIGHT_VERSION}"
           npx --yes "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium
       - name: Tool host HTTP boundary smoke
-        run: python tests/tool_host_smoke.py --binary target/debug/vosu
+        run: python tests/tool_host_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
       - name: Dashboard browser smoke
         run: python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
       - name: Catalog art smoke

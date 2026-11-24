@@ -62,6 +62,33 @@ async fn reachable(port: u16) {
     .expect("alpha daemon startup deadline");
 }
 
+type NormalInventory = std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>>;
+
+fn normal_inventory(root: &Path) -> NormalInventory {
+    fn visit(root: &Path, path: &Path, files: &mut NormalInventory) {
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name() == "prerelease" {
+                continue;
+            }
+            if entry.file_type().unwrap().is_dir() {
+                files.insert(entry.path().strip_prefix(root).unwrap().to_owned(), None);
+                visit(root, &entry.path(), files);
+            } else {
+                files.insert(
+                    entry.path().strip_prefix(root).unwrap().to_owned(),
+                    Some(fs::read(entry.path()).unwrap()),
+                );
+            }
+        }
+    }
+    let mut files = std::collections::BTreeMap::new();
+    for directory in ["config", "data", "cache", "runtime"] {
+        visit(root, &root.join(directory), &mut files);
+    }
+    files
+}
+
 #[tokio::test]
 async fn prerelease_daemon_startup_restart_preserves_normal_settings() {
     assert!(env!("CARGO_PKG_VERSION").contains("-alpha."));
@@ -77,6 +104,16 @@ async fn prerelease_daemon_startup_restart_preserves_normal_settings() {
     fs::write(normal.join("vosu.toml"), &source).unwrap();
     fs::write(normal.join("vosu.env"), "POLL_RATE=421\n").unwrap();
     fs::write(normal.join("broker.json"), "private broker sentinel").unwrap();
+    for directory in ["data/vosu", "cache/vosu", "runtime/vosu"] {
+        let path = root.path().join(directory);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(
+            path.join("preserve-6187"),
+            format!("source {directory} 6187"),
+        )
+        .unwrap();
+    }
+    let before = normal_inventory(root.path());
     let daemon = spawn(root.path());
     bounded!(reachable(port));
     let alpha = normal.join("prerelease/vosu.toml");
@@ -98,14 +135,25 @@ async fn prerelease_daemon_startup_restart_preserves_normal_settings() {
     assert!(root.path().join("data/vosu/prerelease/static").is_dir());
     assert!(!root.path().join("data/vosu/static").exists());
     drop(daemon);
+    assert_eq!(
+        normal_inventory(root.path()),
+        before,
+        "first start must preserve all normal-root bytes and inventory"
+    );
 
     fs::write(normal.join("vosu.toml"), "POLL_RATE = [broken on restart").unwrap();
+    let restart_source = normal_inventory(root.path());
     let restarted = spawn(root.path());
     bounded!(reachable(port));
     assert_eq!(fs::read_to_string(alpha).unwrap(), imported);
     assert_eq!(
         fs::read_to_string(normal.join("vosu.toml")).unwrap(),
         "POLL_RATE = [broken on restart"
+    );
+    assert_eq!(
+        normal_inventory(root.path()),
+        restart_source,
+        "restart must not write normal roots or re-import their poisoned config"
     );
     drop(restarted);
 }

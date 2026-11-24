@@ -2,9 +2,9 @@
 //! Copy `tests/fixtures/api-v1-plugin` to a temporary directory, copy the named
 //! cdylib example to its `lib` directory, and start `api_v1_target`. The root is
 //! `Init.data_dir` (prepare `fixture.osu` there before starting the daemon).
-//! `run` echoes arguments, `fail` fails. A `mode` argument of `wait` withholds
-//! the result until cancellation; `ignore` also ignores cancellation. All state
-//! is per instance, including the generated stream lease and invocation ids.
+//! `run` echoes arguments, `fail` fails. `wait` withholds the result until
+//! cancellation; `wait_progress` also publishes nonzero progress first, while
+//! `ignore` ignores cancellation. State (leases and invocations) is per instance.
 use crate::actions::{ActionFixture, ActionScript, ActionStep};
 use crate::resources::CAPACITY;
 use std::collections::HashMap;
@@ -229,6 +229,11 @@ impl Plugin for ApiFixturePlugin {
                 };
                 let steps = if mode == Some("wait") || mode == Some("ignore") {
                     vec![]
+                } else if mode == Some("wait_progress") {
+                    vec![ActionStep::Progress {
+                        fraction: 0.375,
+                        message: "fixture progress 7913".into(),
+                    }]
                 } else if invoke.action == format!("{}.run", self.id) {
                     vec![
                         ActionStep::Progress {

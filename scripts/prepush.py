@@ -219,7 +219,7 @@ COMMAND_MANIFEST = {name: " ".join("python" if token == sys.executable else toke
 COMMAND_MANIFEST["xwin-clippy"] = " ".join(XWIN_CLIPPY_CMD)
 COMMAND_MANIFEST["actionlint"] = ACTIONLINT_CMD_TEXT
 COMMAND_MANIFEST["dashboard-build"] = " ".join(DASHBOARD_BUILD_CMD)
-COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --binary <binary>"
+COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST["dashboard-browser"] = "python tests/dashboard_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST.update(NATIVE_COMMANDS)
 COMMAND_MANIFEST["standalone-crates"] = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
@@ -288,7 +288,7 @@ def run_dashboard(log_dir, applicable, playwright_module):
     binary = Path(LINUX_ENV["CARGO_TARGET_DIR"]) / "debug" / "vosu"
     commands = [
         (DASHBOARD_BUILD_CMD, LINUX_ENV),
-        ([sys.executable, "tests/tool_host_smoke.py", "--binary", str(binary)], None),
+        ([sys.executable, "tests/tool_host_smoke.py", "--binary", str(binary), "--playwright-module", playwright_module], None),
         ([sys.executable, "tests/dashboard_smoke.py", "--binary", str(binary), "--playwright-module", playwright_module], None),
     ]
     log = []

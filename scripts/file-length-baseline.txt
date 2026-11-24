@@ -6,7 +6,6 @@
 1085 src/runtime/tests/projection.rs
 1115 crates/vosu-osu-reader/src/memory/lazer/reader.rs
 1116 crates/vosu-osu-state/src/bundle/tests/epochs.rs
-1129 tests/daemon_smoke.rs
 1197 src/server/websocket/tests.rs
 1201 crates/vosu-sys/src/process/linux/tests/mod.rs
 1211 crates/vosu-sys/src/process/linux.rs

@@ -149,6 +149,156 @@ rebased writable paths and isolated broker/secret/cache/offset/static state.
 Malformed sources stay untouched. Live import uses isolated test installations,
 never the user's real library.
 
+### X0 — daemon, browser, alpha and live exit
+
+Host commands (the fixture plugin is built from this checkout, not downloaded):
+
+```sh
+source scripts/dev-env.sh
+export CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m3-x0
+export VOSU_PLAYWRIGHT_MODULE=/home/user/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/index.mjs
+flock /tmp/vosu-smoke.lock taskset -c 0-7,16-23 nice -n 10 cargo test --locked --features test-harness --test daemon_smoke --test api_v1_compat --test plugin_host --test prerelease_bootstrap
+flock /tmp/vosu-smoke.lock python tests/tool_host_smoke.py --binary "$CARGO_TARGET_DIR/debug/vosu" --playwright-module "$VOSU_PLAYWRIGHT_MODULE"
+/opt/anaconda/bin/python -m pytest scripts -q
+```
+
+The v1 curl/crash/restart/EOF smoke remains mandatory. The subsequent browser
+phase clicks the dashboard's Open control, exchanges its real launch code,
+rejects reuse, subscribes to the discovered fixture session and verifies an
+echoed nonzero sentinel. A separate `wait_progress` fixture script reports
+0.375, remains running until Abort, and acknowledges cancellation through the
+ABI. Browser assertions require actual POST/GET/DELETE responses and the
+cancelled job, not merely an AbortError in JavaScript. Missing Node, Playwright,
+Chromium, fixture library or grants fails the phase. Set `VOSU_CHROMIUM` only
+to select an explicitly installed browser executable. Alpha fixtures compare
+all normal-root file names/bytes before and after import, then poison the old
+config and restart at the imported port without consulting it.
+
+Host evidence (2026-11-24): daemon smoke 2/2, API-v1 compatibility 33/33,
+plugin host 8/8 and alpha bootstrap 1/1 passed. The affected-crate all-feature
+nextest run passed 687 tests (3 pre-existing ignored tests); the retained curl
+and required Chromium browser phases passed. All 232 script tests plus 47
+subtests, formatting, workspace Linux/Windows cross-Clippy, pinned actionlint
+1.7.12 and applicable repository checks passed. Native Windows and all four
+live-client combinations below remain **pending**, not inferred from host tests.
+
+#### Final API-v1 route inventory
+
+All paths below have the `/api/v1` prefix and exist on the overlay listener
+only. `{session}` accepts an identified id or `active`. Exact shapes only:
+near misses, extra segments and upgrades to non-subscription routes are 404.
+Every recognized shape supports OPTIONS (204); unsupported methods are 405
+with the route's Allow list. Queries are strict and percent-decoded once.
+
+| Path | Methods | Successful representation / important failures |
+| --- | --- | --- |
+| `/sessions` | GET | identified summaries; 200 empty list before attachment |
+| `/sessions/{session}` | GET | summary; absent active, unknown or detached id 404 `unknown_session` |
+| `/sessions/{session}/state` | GET | public merged state; optional single `pointer` selection |
+| `/sessions/{session}/state/{namespace}` | GET | public namespace; unknown namespace 404 |
+| `/sessions/subscribe` | GET upgrade | 101 session-summary stream |
+| `/sessions/{session}/subscribe` | GET upgrade | 101 state stream; fixed detach closes, active rebinds |
+| `/resources/{token}` | GET, HEAD | bytes / metadata; conditional 304, range 206/416; invalid 404, authentic retired 410, resolver 502/504 |
+| `/trees/{token}/` | GET | bounded index (HEAD is 405) |
+| `/trees/{token}/{path}` | GET, HEAD | indexed canonical member; confinement and family policy apply |
+| `/sessions/{session}/chart/{kind}` | GET | redirect to current file/audio/background reference |
+| `/sessions/{session}/skin/{path}` | GET | redirect through current indexed skin tree |
+| `/actions/{action}` | POST | session-less job; `arguments`, bounded `wait`; 200 terminal / 202 running |
+| `/sessions/{session}/actions/{action}` | POST | session-bound job; schema/capability/session checks before dispatch |
+| `/jobs/{id}` | GET, DELETE | owned job revision/long poll or cancellation request; unknown/non-owned 404 |
+
+Reads/subscriptions use API privacy projection and overlay CORS policy.
+Resources/tree responses apply secure content policy and validators; actions,
+jobs and errors are no-store. Action/job authority is a live exact tool launch
+or native loopback broker, not an API key: missing credentials 401, insufficient
+capability 403, invalid arguments 400. DELETE requests cancellation rather than
+inventing a terminal state. Dashboard launch/exchange remains
+`POST /api/tools/{tool}/launch` (dashboard CSRF) and
+`POST /tools/_host/v1/session` (single-use code); the v2 client is
+`GET /tools/_host/v2/bridge.js`, and v1 remains available unchanged.
+
+#### Pending native/live runbook (do not use personal game libraries)
+
+Run the native commands below only when the assigned VM is available. The
+Linux-only daemon test is not Windows daemon evidence; native Windows
+`server_compat`/`api_v1_compat` and sys confinement tests remain required.
+Do not start or stop a VM as part of this unit.
+
+For each of Windows stable, Windows lazer, Linux lazer and Linux stable/Wine:
+prepare a fresh disposable client installation/profile with a licensed test
+chart and a distinct chart/audio/background/skin byte sentinel. Complete the
+client's first-run setup **inside that profile**, keep it offline, and record
+its executable, client PID, install/data/Songs/store paths and source hashes.
+Never pass a personal Songs/store path. Launch the exact fixture client:
+
+```sh
+# Linux lazer (fixture profile via isolated HOME/XDG); use absolute paths.
+export LIVE_ROOT="$(mktemp -d /tmp/vosu-x0-live.XXXXXX)"
+mkdir -p "$LIVE_ROOT"/{home,config,data,cache,runtime,evidence}
+HOME="$LIVE_ROOT/home" XDG_CONFIG_HOME="$LIVE_ROOT/config" XDG_DATA_HOME="$LIVE_ROOT/data" XDG_CACHE_HOME="$LIVE_ROOT/cache" XDG_RUNTIME_DIR="$LIVE_ROOT/runtime" "$LAZER_FIXTURE_EXE"
+# Linux stable/Wine: a newly initialized fixture-only Wine prefix.
+WINEPREFIX="$LIVE_ROOT/wine" wine "$STABLE_FIXTURE_EXE"
+# In another terminal, same isolated daemon roots for this run:
+HOME="$LIVE_ROOT/home" XDG_CONFIG_HOME="$LIVE_ROOT/config" XDG_DATA_HOME="$LIVE_ROOT/data" XDG_CACHE_HOME="$LIVE_ROOT/cache" XDG_RUNTIME_DIR="$LIVE_ROOT/runtime" timeout --signal=TERM 600 "$CARGO_TARGET_DIR/debug/vosu" --update=false
+```
+
+On Windows, use a disposable OS profile or sandbox for lazer (its selected
+profile must not resolve into the user's AppData), and a separate portable
+stable fixture installation. In that sandbox's PowerShell:
+
+```powershell
+$env:USERPROFILE = $LiveRoot
+$env:APPDATA = "$LiveRoot\\Roaming"
+$env:LOCALAPPDATA = "$LiveRoot\\Local"
+New-Item -ItemType Directory -Force $env:APPDATA,$env:LOCALAPPDATA | Out-Null
+Start-Process -FilePath $FixtureClientExe -WorkingDirectory (Split-Path $FixtureClientExe)
+& $FixtureVosuExe --update=false
+```
+
+Use the disposable profile's OS-known folders as well as these variables;
+changing environment variables alone is not proof of Windows isolation.
+Close the test daemon normally after each bounded (at most ten minute) run.
+Against the overlay origin configured by that isolated daemon:
+
+```sh
+export BASE=http://127.0.0.1:24050
+curl --fail --max-time 10 "$BASE/api/v1/sessions" | tee "$LIVE_ROOT/evidence/sessions.json"
+export SESSION="$(jq -r '.sessions[] | select(.plugin.id=="vosu.osu") | .session' "$LIVE_ROOT/evidence/sessions.json")"
+curl --fail --max-time 10 "$BASE/api/v1/sessions/$SESSION/state" > "$LIVE_ROOT/evidence/state.json"
+jq '."vosu.chart".resources, ."vosu.skin".resources' "$LIVE_ROOT/evidence/state.json"
+# Choose each published URL from that output, not an arbitrary filesystem path.
+curl --fail --max-time 10 "$BASE$RESOURCE_URL" -o "$LIVE_ROOT/evidence/resource.bin"
+cmp "$EXPECTED_FIXTURE_FILE" "$LIVE_ROOT/evidence/resource.bin"
+curl --fail --max-time 10 -I "$BASE$RESOURCE_URL"
+curl --fail --max-time 10 -H 'Range: bytes=1-7' "$BASE$RESOURCE_URL" -o "$LIVE_ROOT/evidence/range.bin"
+dd if="$EXPECTED_FIXTURE_FILE" bs=1 skip=1 count=7 status=none | cmp - "$LIVE_ROOT/evidence/range.bin"
+# Same isolated root environment as the daemon; vosux discovers its alpha broker.
+"$VOSUX_BIN" vosu.osu beatmap.import --session "$SESSION" "{\"sourcePath\":\"$FIXTURE_OSZ\"}"
+```
+
+Windows equivalents use `curl.exe --max-time 10`, `Get-FileHash` and
+`& $VosuxExe vosu.osu beatmap.import --session $Session
+('{"sourcePath":' + (ConvertTo-Json $FixtureOsz -Compress) + '}')`.
+Expect stable `queued/refreshRequired=true`, byte-identical new archive in the
+selected fixture Songs directory, and unchanged pre-existing same-name files;
+F5/restart is game-owned. Expect lazer `submitted/refreshRequired=false`,
+handoff only to the selected fixture executable/profile, with no direct
+Realm/store writes by vosu. Observe the fixture chart becoming available in the
+game; retain the result and before/after file inventories. Repeat with two
+fixture clients running and explicit session ids: changing foreground must not
+change the selected import destination. Check no orphaned handoff children.
+
+Exercise menu → play → pause → result → client exit; fetch chart, audio,
+background, skin index and a case/alias member while attached. Verify 200/206,
+exact bytes, HEAD validators, conditional 304, invalid range 416 and unpublished
+member 404. Mutate the stable source: the old immutable id must yield old bytes
+or 410, never silently new bytes; a newly published id yields new bytes.
+After detach, verify retired session/resource statuses and no private native
+paths in API JSON, frames or errors. Fetch `/json`, `/websocket/v2` and the
+retained skin/chart legacy routes to confirm unchanged legacy behavior.
+Record every client/version/command/hash/status and pending observation here;
+neither a fixture-only integration test nor cross-Clippy closes this live gate.
+
 Native Windows exit commands (integration owner; A3 does not use/start a VM):
 
 ```sh
@@ -186,7 +336,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
 cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 # UI paths changed: build with --features test-harness, then
-python tests/tool_host_smoke.py --binary target/debug/vosu
+python tests/tool_host_smoke.py --binary target/debug/vosu --playwright-module <playwright/index.mjs>
 python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright/index.mjs>
 # Native Windows (scripts/native-ci.ps1 in the VM):
 cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings

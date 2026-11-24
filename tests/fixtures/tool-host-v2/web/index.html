@@ -1,9 +1,36 @@
 <!doctype html>
-<html><head><title>Tool v2 fixture</title><link rel="stylesheet" href="/tools/_host/v1/theme.css"></head>
-<body><h1>Tool v2 fixture</h1><script type="module">
+<meta charset="utf-8">
+<title>M3 browser fixture</title>
+<button id="invoke">Invoke</button><output id="result"></output>
+<button id="start">Start</button><output id="progress"></output>
+<button id="abort">Abort</button><output id="terminal"></output>
+<output id="subscription"></output>
+<script type="module">
 import {vosu} from '/tools/_host/v2/bridge.js';
+const output = (id, value) => document.getElementById(id).textContent = JSON.stringify(value);
 await vosu.ready;
-document.body.dataset.write = vosu.canWrite;
-// Expose the actual client for the daemon/browser composition smoke.
-window.fixture = vosu;
-</script></body></html>
+document.documentElement.dataset.ready = String(vosu.canWrite);
+const sessions = await (await fetch('/api/v1/sessions')).json();
+const fixture = sessions.sessions.find(value => value.plugin.id === 'test.api.fixture');
+if (!fixture) throw new Error('Real fixture session missing');
+const unsubscribe = vosu.subscribe([''], frame => output('subscription', frame), undefined, {session: fixture.session});
+addEventListener('pagehide', unsubscribe, {once: true});
+let controller;
+document.getElementById('invoke').onclick = async () => {
+  try { output('result', await vosu.invoke('test.api.fixture.run', {sentinel: 'browser-6187'}, {session: null})); }
+  catch (error) { output('result', {error: error.code || error.message}); }
+};
+document.getElementById('start').onclick = async () => {
+  controller = new AbortController();
+  try {
+    const handle = await vosu.start('test.api.fixture.run', {mode: 'wait_progress'}, {
+      session: null, signal: controller.signal,
+      onProgress: progress => { if (progress) output('progress', progress); },
+    });
+    document.documentElement.dataset.job = handle.id;
+    await handle.done;
+    output('terminal', 'unexpected-success');
+  } catch (error) { output('terminal', error.code || error.message); }
+};
+document.getElementById('abort').onclick = () => controller.abort();
+</script>

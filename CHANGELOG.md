@@ -28,6 +28,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add API v1 production-path benchmarks, separate cold resource-identity IO,
   and idle allocation/task plus slow-consumer invariants. Shared-host numbers
   remain provisional; they do not establish a D17 performance pass.
+- Require the tool-host smoke's real Playwright launch/action/progress/cancel
+  phase alongside the retained v1 HTTP checks, and verify debug-plugin resource
+  bytes plus alpha source preservation/restart through the actual daemon.
 
 ## Unreleased — 2.0 M2
 

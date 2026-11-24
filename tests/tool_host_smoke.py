@@ -52,13 +52,27 @@ def wait_for(callback, timeout=20):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/vosu')
+    parser.add_argument('--playwright-module', type=Path,
+                        default=os.environ.get('VOSU_PLAYWRIGHT_MODULE'))
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
+    if args.playwright_module is None or not args.playwright_module.is_file():
+        parser.error('required browser phase needs --playwright-module or VOSU_PLAYWRIGHT_MODULE')
+    playwright = args.playwright_module.resolve(strict=True)
+    subprocess.run(['taskset', '-c', '0-7,16-23', 'nice', '-n', '10', 'cargo', 'build',
+                    '--locked', '-p', 'vosu-plugin-testkit', '--features', 'test-harness',
+                    '--example', 'api_v1_plugin', '--target-dir', str(binary.parent.parent)],
+                   cwd=ROOT, check=True, timeout=600)
+    plugin_library = binary.parent / 'examples/libapi_v1_plugin.so'
+    if not plugin_library.is_file():
+        raise RuntimeError(f'debug fixture missing: {plugin_library}')
     with tempfile.TemporaryDirectory(prefix='vosu-tool-smoke-') as temporary:
         root = Path(temporary)
         environment = dict(os.environ)
         for variable in ['DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS']:
             environment.pop(variable, None)
+        environment['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get(
+            'PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
         for variable, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
                                     ('XDG_DATA_HOME', 'data'), ('XDG_CACHE_HOME', 'cache'),
                                     ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
@@ -80,8 +94,18 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 ''')
         tool = root / 'fixture'
         shutil.copytree(ROOT / 'tests/fixtures/tool-host', tool)
+        v2_tool = root / 'fixture-v2'
+        shutil.copytree(ROOT / 'tests/fixtures/tool-host-v2', v2_tool)
+        plugin = root / 'plugin'
+        shutil.copytree(ROOT / 'tests/fixtures/api-v1-plugin', plugin)
+        (plugin / 'lib').mkdir()
+        shutil.copy2(plugin_library, plugin / 'lib/libapi_v1_plugin.so')
+        target_path = root / 'api_v1_target'
+        shutil.copy2('/bin/sh', target_path)
+        target = subprocess.Popen([str(target_path), '-c', 'read line'], stdin=subprocess.PIPE)
         with (root / 'daemon.log').open('w+') as log:
-            daemon = subprocess.Popen([str(binary), '--tool', str(tool), '--update=false'],
+            daemon = subprocess.Popen([str(binary), '--tool', str(tool), '--tool', str(v2_tool),
+                                       '--plugin', str(plugin), '--update=false'],
                                       cwd=root, env=environment, stdin=subprocess.DEVNULL,
                                       stdout=log, stderr=subprocess.STDOUT)
             child_pid = None
@@ -134,6 +158,10 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                 status, body = curl('/api/tools/fixture/logs?after=0', dashboard=True)
                 assert status == 200 and any('crashed' in line['text'] or 'exited unexpectedly' in line['text'] for line in json.loads(body)['lines'])
                 print(f'curl GET dashboard /api/tools/fixture/logs -> {status} {body}')
+                wait_for(lambda: any(s['plugin']['id'] == 'test.api.fixture'
+                                     for s in json.loads(curl('/api/v1/sessions')[1])['sessions']))
+                subprocess.run(['node', str(ROOT / 'tests/tool_host_v2_browser.mjs'), str(playwright)],
+                               cwd=ROOT, env=environment, check=True, timeout=90)
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=15) == 0
                 assert child_pid is not None and not Path(f'/proc/{child_pid}').exists()
@@ -145,6 +173,8 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                 print((root / 'daemon.log').read_text())
                 raise
             finally:
+                target.terminate()
+                target.wait(timeout=10)
                 if daemon.poll() is None:
                     daemon.terminate()
                     try:
