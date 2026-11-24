@@ -162,7 +162,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 manifest: vosu_osu::MANIFEST,
                 settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
                 namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
-                action_schemas: &[],
+                action_schemas: vosu_osu::ACTION_SCHEMAS,
                 vtable: vosu_osu::vosu_plugin_vtable,
             },
             broken,

@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M3
 
+- Register `vosu.osu.beatmap.import` for session-scoped API and CLI calls with
+  bounded local `.osz` validation, cancellable selected-client preparation and
+  honest queued/submitted results. Stable still needs game-owned refresh;
+  lazer handoff never falls back to another installation or daemon environment.
 - Add the independent API v1 field/session-event subscription hub, with immutable
   selections, bounded latest-only output, focus baseline resets and demand RAII.
 - Serve published API v1 resources and indexed tree members through bounded,

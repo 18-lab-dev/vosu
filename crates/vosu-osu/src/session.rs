@@ -72,6 +72,10 @@ pub struct OsuSession {
     pub root: PathBuf,
     pub executable_root: PathBuf,
     pub settings: InstanceSettings,
+    pub(crate) import_context: std::sync::OnceLock<(
+        vosu_plugin_api::SessionAttached,
+        vosu_sys::process::LaunchContext,
+    )>,
     lifecycle: CancellationToken,
     scans: Option<SessionScanLifecycle>,
     lazer_offsets: ArcSwapOption<LazerOffsets>,
@@ -112,6 +116,7 @@ impl OsuSession {
             root,
             executable_root,
             settings,
+            import_context: std::sync::OnceLock::new(),
             lifecycle: CancellationToken::new(),
             scans,
             lazer_offsets: ArcSwapOption::empty(),

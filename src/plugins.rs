@@ -17,7 +17,7 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         manifest: vosu_osu::MANIFEST,
         settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
         namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
-        action_schemas: &[],
+        action_schemas: vosu_osu::ACTION_SCHEMAS,
         vtable: vosu_osu::vosu_plugin_vtable,
     },
     #[cfg(feature = "test-harness")]

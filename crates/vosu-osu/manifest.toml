@@ -19,6 +19,19 @@ id = "field:vosu.osu"
 version = "1.2.0"
 schema = "schemas/vosu.osu.schema.json"
 
+[[provides]]
+id = "action:vosu.osu.beatmap.import"
+version = "1.0.0"
+
+[[actions]]
+name = "beatmap.import"
+version = "1.0.0"
+title = "Import beatmap archive"
+args_schema = "schemas/beatmap-import.args.json"
+result_schema = "schemas/beatmap-import.result.json"
+session = "required"
+cli = true
+
 [[resource_kinds]]
 kind = "file"
 tree = false

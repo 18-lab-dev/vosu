@@ -10,6 +10,8 @@ use thiserror::Error;
 
 mod clock;
 pub use clock::coarse_monotonic_millis;
+mod launch_context;
+pub use launch_context::{LaunchContext, launch_context};
 pub mod scanner;
 pub use scanner::{BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE};
 

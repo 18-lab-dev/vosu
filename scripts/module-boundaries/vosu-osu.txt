@@ -17,3 +17,5 @@ session -> publish
 publish -> bridge_b1
 plugin -> resources
 publish -> resources
+plugin -> actions
+actions -> session

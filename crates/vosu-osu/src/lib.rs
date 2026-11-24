@@ -54,3 +54,15 @@ pub const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
 /// The bundled namespace schema; its version matches the manifest's provider.
 pub const OSU_NAMESPACE_SCHEMA: &str =
     include_str!("../../../docs/v2/schemas/vosu.osu.schema.json");
+
+/// Bundled beatmap-import action schemas, resolved without filesystem access.
+pub const ACTION_SCHEMAS: &[(&str, &str)] = &[
+    (
+        "schemas/beatmap-import.args.json",
+        include_str!("../schemas/beatmap-import.args.json"),
+    ),
+    (
+        "schemas/beatmap-import.result.json",
+        include_str!("../schemas/beatmap-import.result.json"),
+    ),
+];

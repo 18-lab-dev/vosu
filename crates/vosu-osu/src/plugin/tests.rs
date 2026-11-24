@@ -6,6 +6,7 @@ use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, GenerationIdentity
 use vosu_plugin_api::{Bitness, DetachReason, SessionIdentify, TimerSet};
 
 use super::*;
+mod import_actions;
 
 #[derive(Default, Clone)]
 struct RecordingHost {

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["client", "disposition", "refreshRequired"],
+  "properties": {
+    "client": { "type": "string", "enum": ["stable", "lazer"] },
+    "disposition": { "type": "string", "enum": ["queued", "submitted"] },
+    "refreshRequired": { "type": "boolean" }
+  }
+}

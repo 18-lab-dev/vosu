@@ -405,6 +405,7 @@ impl Harness {
             // Real-id schema registration is also covered by tests/state_bus.rs
             // (K8) and real_manifest_registers_its_namespace_schema.
             manifest.remove("provides");
+            manifest.remove("actions");
             &[][..]
         };
         manifest.insert("id".into(), toml::Value::String(id.into()));
@@ -413,7 +414,7 @@ impl Harness {
             manifest: &manifest,
             settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
             namespace_schemas,
-            action_schemas: &[],
+            action_schemas: vosu_osu::ACTION_SCHEMAS,
             vtable: vosu_plugin_vtable,
         }])
         .unwrap();

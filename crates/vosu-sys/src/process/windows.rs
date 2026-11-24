@@ -38,6 +38,8 @@ use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadReques
 mod memory;
 mod read_impl;
 use read_impl::{read_exact_impl, read_many_impl};
+mod launch_context;
+pub(super) use launch_context::launch_context;
 
 #[derive(Debug)]
 pub struct OwnedHandle {

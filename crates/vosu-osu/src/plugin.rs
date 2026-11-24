@@ -60,7 +60,9 @@ use crate::memory::PlanProcessMemory;
 use crate::scan::{PlanScanBackend, ScanWaiters};
 use crate::session::{OsuSession, SessionScanLifecycle};
 use crate::settings::OsuSettings;
+mod registration;
 mod resources;
+use registration::register_session;
 
 /// abi:82's destroy grace: `destroy` shuts every still-live session down
 /// (cancel, then join) within this budget before shutting the plugin's own
@@ -83,6 +85,7 @@ struct PluginState {
     /// (review #3), and so [`register_session`] never registers a session
     /// for a handle that already detached (P4's analogous race).
     live_handles: HashSet<u64>,
+    attached_facts: HashMap<u64, SessionAttached>,
     /// Handles identified through the Linux "named" rule specifically
     /// (`Identified::named`/review #2), consulted so a later fallback
     /// attach's settle sees a named sibling (DF/R3) — never a settled
@@ -147,6 +150,7 @@ pub struct OsuPlugin<
     /// `Runtime` back out, to shut it down.
     runtime_handle: Handle,
     runtime: Mutex<Option<Runtime>>,
+    imports: crate::actions::ImportActions,
 }
 
 impl<H: HostServices + Send + Sync + Clone + 'static> OsuPlugin<H, EmbeddedOffsetGenerator> {
@@ -220,6 +224,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             loader,
             runtime_handle,
             runtime: Mutex::new(Some(runtime)),
+            imports: crate::actions::ImportActions::default(),
         }
     }
 
@@ -235,6 +240,23 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
     /// tests can drive it directly against a fake `H`.
     pub fn dispatch(&self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
         match message {
+            Message::ActionInvoke(action) => {
+                let session = action.session.and_then(|handle| {
+                    self.state
+                        .lock()
+                        .expect("plugin state mutex poisoned")
+                        .sessions
+                        .get(&handle)
+                        .cloned()
+                });
+                self.imports.invoke(
+                    &self.host,
+                    self.runtime_handle.clone(),
+                    action,
+                    session.as_ref(),
+                )
+            }
+            Message::ActionCancel(cancel) => self.imports.cancel(cancel.invocation),
             message @ (Message::ResourceResolve(_)
             | Message::TreeList(_)
             | Message::TreeLookup(_)
@@ -349,6 +371,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             // classified and replied to below, exactly as usual.
             if !state.detached_before_attached.remove(&facts.handle) {
                 state.live_handles.insert(facts.handle);
+                state.attached_facts.insert(facts.handle, message.clone());
             }
             !state.named_stable_handles.is_empty()
         };
@@ -365,6 +388,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             let was_live = state.live_handles.remove(&detached.handle);
             state.named_stable_handles.remove(&detached.handle);
             state.pending_controls.remove(&detached.handle);
+            state.attached_facts.remove(&detached.handle);
             state
                 .pending_settle
                 .retain(|_, (handle, _)| *handle != detached.handle);
@@ -668,6 +692,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         for session in sessions.values() {
             session.cancel();
         }
+        self.imports.shutdown();
         // Resource callbacks borrow the host context. Like version lookups,
         // never detach a blocked resource worker when our local grace expires;
         // the host's DestroyTimedOut path retains the whole context instead.
@@ -749,120 +774,6 @@ fn finish_identify<H: HostServices>(
         }
     }
     Ok(true)
-}
-
-/// Builds this handle's `ProcessHandle` (P3's `PlanProcessMemory` +
-/// `PlanScanBackend`, sharing this plugin instance's `ScanWaiters`) and
-/// registers its [`OsuSession`] (P4) — but only if the handle is still
-/// live: a detach racing this identify, landing between `finish_identify`
-/// succeeding and the lock this function takes, must never leave a
-/// session registered that nothing will ever detach again (the module
-/// doc comment's "P4's analogous race"). A lazer session's resolver is
-/// started on `runtime_handle` only once registration itself succeeded.
-/// Free (not a method), for the same reason as `finish_identify`: the
-/// lazer identify thread calls this with only the `Arc`s it captured.
-fn register_session<H, G>(
-    host: &Arc<H>,
-    state: &Arc<Mutex<PluginState>>,
-    scan_waiters: &Arc<ScanWaiters>,
-    loader: &Arc<LazerOffsetLoader<G>>,
-    runtime_handle: &Handle,
-    handle: u64,
-    identified: &Identified,
-) where
-    H: HostServices + Send + Sync + Clone + 'static,
-    G: OffsetGenerator + 'static,
-{
-    if !state
-        .lock()
-        .expect("plugin state mutex poisoned")
-        .live_handles
-        .contains(&handle)
-    {
-        return;
-    }
-    let bitness = to_process_bitness(identified.bitness);
-    let memory = Arc::new(PlanProcessMemory::new(
-        (**host).clone(),
-        handle,
-        identified.pid,
-        bitness,
-    ));
-    let alive = memory.alive_flag();
-    let scans: Arc<dyn ScanBackend> = Arc::new(PlanScanBackend::with_shared(
-        (**host).clone(),
-        handle,
-        Arc::clone(scan_waiters),
-        Arc::clone(&alive),
-    ));
-    let process = ProcessHandle::with_scan_backend(memory, bitness, scans);
-    let session = OsuSession::new(
-        handle,
-        identified.pid,
-        identified.generation,
-        identified.client,
-        process,
-        identified.root.clone(),
-        identified.executable_root.clone(),
-        identified.settings.clone(),
-        Some(SessionScanLifecycle {
-            waiters: Arc::clone(scan_waiters),
-            alive,
-        }),
-    );
-    session.configure_publication(Arc::clone(host), runtime_handle);
-    let stream_ids = state
-        .lock()
-        .expect("plugin state mutex poisoned")
-        .stream_ids
-        .clone();
-    resources::configure(&session, host, stream_ids);
-    let registered = {
-        let mut state = state.lock().expect("plugin state mutex poisoned");
-        if state.live_handles.contains(&handle) {
-            session.osu_settings.send_replace(state.settings);
-            if let Some(controls) = state.pending_controls.remove(&handle) {
-                let publication = session.publication.get().expect("publication configured");
-                publication.bus.update_foreground(controls.foreground);
-                publication.demand.set_bus_collection(
-                    controls.regular,
-                    controls.precise,
-                    controls.collect_errors,
-                );
-            }
-            state.sessions.insert(handle, Arc::clone(&session));
-            true
-        } else {
-            false
-        }
-    };
-    if !registered {
-        runtime_handle.spawn(async move {
-            session.join_resolver().await;
-        });
-        return;
-    }
-    if registered && identified.client == ClientType::Lazer {
-        let loader = Arc::clone(loader);
-        let warn = log_warn(host);
-        runtime_handle.spawn(async move {
-            session.start_lazer_resolver(loader, warn).await;
-        });
-    }
-    if registered {
-        let sink = vosu_surface::current::<B1Event, B1Inputs>();
-        let warn = log_warn(host);
-        let error = log_error(host);
-        let session = {
-            let state = state.lock().expect("plugin state mutex poisoned");
-            state.sessions.get(&handle).cloned()
-        };
-        if let Some(session) = session {
-            runtime_handle.spawn(async move {
-                session.start_capture(sink, warn, error).await;
-            });
-        }
-    }
 }
 
 /// A [`LogWarn`] that reports through `host.log` (`VOSU_OP_LOG_RECORD`),

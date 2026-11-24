@@ -101,6 +101,12 @@ impl Publication {
             worker: Mutex::new(Some(worker)),
         })
     }
+    pub(crate) fn import_songs_root(&self) -> Option<std::path::PathBuf> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let facts = state.facts.as_ref()?;
+        (!state.stopped && facts.source == ClientType::Stable && !facts.songs_folder.is_empty())
+            .then(|| std::path::PathBuf::from(&facts.songs_folder))
+    }
     pub fn observe(&self, snapshot: &StateBundleSnapshot) -> bool {
         let changed = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
