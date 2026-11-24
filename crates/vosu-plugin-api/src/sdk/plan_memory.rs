@@ -23,8 +23,9 @@ use crate::message::HostServices;
 use crate::message::flat::{ReadPlanResult, StageRef, encode_submit_into};
 use crate::opcode::vosu_opcode;
 use crate::{
-    PlanBase, Stage, read_flat_header, vosu_plan_id, vosu_read_plan_result_header,
-    vosu_read_result_flat, vosu_read_result_kind, vosu_session_id, vosu_status,
+    PlanBase, Stage, read_flat_header, validate_flags, validate_read_plan_result, vosu_plan_id,
+    vosu_read_plan_result_header, vosu_read_result_flat, vosu_read_result_kind, vosu_session_id,
+    vosu_status,
 };
 
 thread_local! {
@@ -74,20 +75,33 @@ pub(crate) fn intercept(result: &ReadPlanResult) -> bool {
 /// target buffer waiting (`SYNC_RAW_TARGET` — unset for an ordinary
 /// [`PlanMemory::read`] call, so this reports "not mine" for one of those
 /// and the normal decode-and-forward path runs, landing in [`intercept`]
-/// instead) copies `payload` verbatim into it and reports "handled".
-pub(crate) fn intercept_raw(payload: &[u8]) -> bool {
-    let Some(expected) = EXPECTING_PLAN.with(Cell::get) else {
-        return false;
-    };
-    let Ok(header) = read_flat_header::<vosu_read_plan_result_header>(payload) else {
-        return false;
-    };
+/// instead), validates `flags`/`payload` exactly as `Message::decode`
+/// would (`validate_flags`, `validate_read_plan_result` — both
+/// allocation-free) before ever copying anything into that target: a
+/// `HostServices` implementation is a public, safe trait a test double
+/// (or a misbehaving external host) can feed anything to, and
+/// `FlatReadResults::get`'s own unchecked pointer arithmetic depends on
+/// this buffer already being well-formed. Returns `None` ("not mine",
+/// fall through to the normal decode path), `Some(VOSU_OK)` (matched and
+/// copied), or `Some(VOSU_ERR_INVALID_ARGUMENT)` (matched this plan but
+/// failed validation — never copied, so [`SYNC_RAW_TARGET`]/
+/// [`SYNC_RAW_PRESENT`] are left exactly as [`PlanMemory::read_flat`]
+/// already handles for "no result").
+pub(crate) fn intercept_raw(payload: &[u8], flags: u32) -> Option<vosu_status> {
+    let expected = EXPECTING_PLAN.with(Cell::get)?;
+    let header: vosu_read_plan_result_header = read_flat_header(payload).ok()?;
     if header.plan != expected {
-        return false;
+        return None;
     }
-    let Some(target) = SYNC_RAW_TARGET.with(Cell::get) else {
-        return false;
-    };
+    let target = SYNC_RAW_TARGET.with(Cell::get)?;
+    // This message is unambiguously meant for this thread's `read_flat`
+    // call now (the plan id matched); validate it before trusting
+    // anything past the header.
+    if validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_RESULT, flags).is_err()
+        || validate_read_plan_result(payload).is_err()
+    {
+        return Some(vosu_status::VOSU_ERR_INVALID_ARGUMENT);
+    }
     // SAFETY: `target` was set by this same thread's own `read_flat` stack
     // frame (`SYNC_RAW_TARGET`'s own doc comment), for the duration of
     // this reentrant call only, and cleared again before that frame
@@ -97,7 +111,7 @@ pub(crate) fn intercept_raw(payload: &[u8]) -> bool {
     buf.clear();
     buf.extend_from_slice(payload);
     SYNC_RAW_PRESENT.with(|present| present.set(true));
-    true
+    Some(vosu_status::VOSU_OK)
 }
 
 /// Every way [`PlanMemory::read`] can fail without ever submitting a plan.
@@ -144,6 +158,19 @@ impl PlanMemory {
         }
         EXPECTING_PLAN.with(|cell| cell.set(Some(plan)));
         SYNC_SLOT.with(|slot| slot.set(None));
+        // P2 (F4 review): a prior `read_flat` call on this thread whose
+        // `host.send_flat` panicked, caught elsewhere, could otherwise
+        // leave `SYNC_RAW_TARGET` pointing at a `SyncReadBuffers::result`
+        // that may since have been dropped or reused. The generated
+        // dispatch glue always tries the raw path first for every
+        // `VOSU_OP_READ_PLAN_RESULT` (`try_intercept_sync_raw`), whichever
+        // of `read`/`read_flat` this thread is actually running, so a
+        // stale `Some` here would make `intercept_raw` treat this call's
+        // own result as "mine" too and write through that dangling
+        // pointer. `read_flat`'s own `SyncRawGuard` now keeps this clear
+        // on its own exit paths, including unwind; this reset is this
+        // function's own defense regardless of whether that guard ran.
+        SYNC_RAW_TARGET.with(|cell| cell.set(None));
         let status = host.submit_read_plan_sync(plan, handle, root, stages);
         EXPECTING_PLAN.with(|cell| cell.set(None));
         if status != vosu_status::VOSU_OK {
@@ -184,17 +211,28 @@ impl PlanMemory {
         SYNC_RAW_PRESENT.with(|present| present.set(false));
         // SAFETY: this raw pointer is used only by `intercept_raw`,
         // reentrant on this very thread inside the `send_flat` call right
-        // below, and is cleared again before this function returns —
+        // below, and is cleared again before this function returns, on
+        // every exit path including an unwind caught elsewhere
+        // (`SyncRawGuard`, constructed right after this) —
         // `SYNC_RAW_TARGET`'s own doc comment.
         SYNC_RAW_TARGET.with(|cell| cell.set(Some(&raw mut buffers.result)));
+        // P2 (F4 review): `host` is a public, safe trait; if
+        // `send_flat` panics and the unwind is caught elsewhere instead of
+        // propagating out of this process, this guard's `Drop` still
+        // clears `EXPECTING_PLAN`/`SYNC_RAW_TARGET` before this stack
+        // frame is gone — without it, `SYNC_RAW_TARGET` would keep
+        // pointing at this call's own `buffers.result` after `buffers`
+        // may since have been dropped or reused, and the next matching
+        // `VOSU_OP_READ_PLAN_RESULT` on this thread would write through
+        // that dangling pointer from `intercept_raw` (UB from safe code).
+        let _guard = SyncRawGuard;
         let status = host.send_flat(
             vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT,
             crate::VOSU_READ_PLAN_SYNC,
             0,
             &buffers.submit,
         );
-        EXPECTING_PLAN.with(|cell| cell.set(None));
-        SYNC_RAW_TARGET.with(|cell| cell.set(None));
+        drop(_guard);
 
         if status != vosu_status::VOSU_OK {
             return Err(PlanMemoryError::Rejected(status));
@@ -209,6 +247,23 @@ impl PlanMemory {
             results_offset: header.results_offset,
             count: header.result_count as usize,
         })
+    }
+}
+
+/// Clears [`EXPECTING_PLAN`]/[`SYNC_RAW_TARGET`] when dropped, including
+/// on unwind (F4 review, P2): `host.send_flat` is a call into a public,
+/// safe, overridable trait method, so [`PlanMemory::read_flat`] cannot
+/// assume it never panics. Without this, a panic caught above
+/// `read_flat`'s own stack frame would leave `SYNC_RAW_TARGET` holding a
+/// raw pointer at a `SyncReadBuffers::result` that may since have been
+/// dropped or reused — the next matching `VOSU_OP_READ_PLAN_RESULT` on
+/// this thread would then make `intercept_raw` write through it.
+struct SyncRawGuard;
+
+impl Drop for SyncRawGuard {
+    fn drop(&mut self) {
+        EXPECTING_PLAN.with(|cell| cell.set(None));
+        SYNC_RAW_TARGET.with(|cell| cell.set(None));
     }
 }
 
@@ -258,13 +313,16 @@ impl<'b> FlatReadResults<'b> {
         assert!(index < self.count, "FlatReadResults index out of bounds");
         let elem_size = core::mem::size_of::<vosu_read_result_flat>();
         let offset = self.results_offset as usize + index * elem_size;
-        // SAFETY: `read_flat` only ever builds this type from a buffer
-        // `vosu_plugin_api::validate_read_plan_result` already validated
-        // (`intercept_raw` copies the host's own `VOSU_OP_READ_PLAN_RESULT`
-        // reply verbatim, and the host only ever produces an already-valid
-        // one); `index < self.count` was just asserted above, so `offset`
-        // names a `vosu_read_result_flat`-sized range inside that
-        // validated `results` array.
+        // SAFETY: `read_flat` only ever builds this type from
+        // `buffers.result`, and the only thing that ever writes to that
+        // buffer is `intercept_raw`, which calls
+        // `vosu_plugin_api::validate_read_plan_result` on `payload` and
+        // refuses to copy it in (returning `VOSU_ERR_INVALID_ARGUMENT`
+        // instead) on any validation failure — so this buffer is always
+        // the validated one by the time `read_flat` ever constructs a
+        // `FlatReadResults` from it. `index < self.count` was just
+        // asserted above, so `offset` names a `vosu_read_result_flat`-
+        // sized range inside that validated `results` array.
         let entry: vosu_read_result_flat = unsafe {
             self.buffer
                 .as_ptr()

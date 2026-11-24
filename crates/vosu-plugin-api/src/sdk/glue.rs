@@ -51,14 +51,18 @@ fn decode_message(message: *const vosu_message) -> Result<(Message, u64), vosu_s
 /// Checked before [`decode_message`] on every `dispatch` call, behind the
 /// unpublished `unstable-sync-reads` feature: if `message` is a
 /// `VOSU_OP_READ_PLAN_RESULT` this thread's own [`PlanMemory::read_flat`]
-/// call is waiting for, hands its still-raw payload straight to
-/// `sdk::plan_memory::intercept_raw` and reports "handled" — no
+/// call is waiting for, hands its still-raw payload and flags straight to
+/// `sdk::plan_memory::intercept_raw`, which validates it exactly as
+/// [`decode_message`] would before ever copying it in — no
 /// `Message::decode` (and so no owned `ReadPlanResult`/`Vec<ReadResult>`)
 /// ever runs for it (D17). `None` for anything else (including a
 /// `VOSU_OP_READ_PLAN_RESULT` this thread was not expecting, or one an
 /// ordinary [`PlanMemory::read`] call is waiting for instead), so
 /// `dispatch` falls through to the normal decode-and-forward path, which
-/// `run_dispatch`'s own (typed) `intercept` still covers.
+/// `run_dispatch`'s own (typed) `intercept` still covers. `Some(status)`
+/// is `intercept_raw`'s own outcome unchanged: `VOSU_OK` once copied, or
+/// `VOSU_ERR_INVALID_ARGUMENT` for a result that matched this plan but
+/// failed validation.
 ///
 /// [`PlanMemory::read_flat`]: crate::sdk::plan_memory::PlanMemory::read_flat
 /// [`PlanMemory::read`]: crate::sdk::plan_memory::PlanMemory::read
@@ -79,7 +83,7 @@ fn try_intercept_sync_raw(message: *const vosu_message) -> Option<vosu_status> {
     // SAFETY: see `decode_message`'s identical borrow of `raw.payload`.
     let payload =
         unsafe { core::slice::from_raw_parts(raw.payload.data, raw.payload.len as usize) };
-    crate::sdk::plan_memory::intercept_raw(payload).then_some(vosu_status::VOSU_OK)
+    crate::sdk::plan_memory::intercept_raw(payload, raw.flags)
 }
 
 /// `Plugin`'s serialized context: `Mutex` is this SDK's own lock
