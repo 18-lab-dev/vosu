@@ -25,11 +25,11 @@ use vosu_core::catalog::{
 };
 use vosu_plugin_api::{catalog::Catalog, manifest::PackageKind};
 
-const TARGET: &str = "x86_64-unknown-linux-gnu";
-const OFFICIAL: &str = "18-lab-dev/vosu-tools";
+pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
+pub(crate) const OFFICIAL: &str = "18-lab-dev/vosu-tools";
 
 #[derive(Default)]
-struct Memory {
+pub(crate) struct Memory {
     packages: Mutex<HashMap<String, Vec<u8>>>,
     requests: Mutex<Vec<(String, u64)>>,
 }
@@ -59,9 +59,9 @@ impl PackageTransport for Memory {
 
 /// Records each in-process load with whether the graph was already
 /// durably committed (records published, journal gone) at that moment.
-struct Handoff {
-    state: std::path::PathBuf,
-    loads: Mutex<Vec<(String, bool)>>,
+pub(crate) struct Handoff {
+    pub(crate) state: std::path::PathBuf,
+    pub(crate) loads: Mutex<Vec<(String, bool)>>,
 }
 impl RuntimeHandoff for Handoff {
     fn load_in_process<'a>(
@@ -99,14 +99,14 @@ fn zip(entries: &[(String, Vec<u8>)]) -> Vec<u8> {
     cursor.into_inner()
 }
 
-struct Package {
+pub(crate) struct Package {
     files: Vec<(String, Vec<u8>)>,
-    entry: Value,
+    pub(crate) entry: Value,
 }
 fn host() -> String {
     format!("={}", vosu::application_version())
 }
-fn package(id: &str, version: &str, runtime: &str, requires: Value) -> Package {
+pub(crate) fn package(id: &str, version: &str, runtime: &str, requires: Value) -> Package {
     let library = format!("lib/{id}.so");
     let manifest = json!({"manifest_version":1,"kind":"plugin","id":id,"name":id,"version":version,
         "host":host(),"abi_version":1,"runtime":runtime,"targets":{TARGET:{"library":library}},
@@ -130,7 +130,7 @@ fn package(id: &str, version: &str, runtime: &str, requires: Value) -> Package {
     }
 }
 impl Package {
-    fn publish(&mut self, memory: &Memory, archive: Option<Vec<u8>>) {
+    pub(crate) fn publish(&mut self, memory: &Memory, archive: Option<Vec<u8>>) {
         let bytes = zip(&self.files);
         let url = format!(
             "https://packages.example.org/{}.zip",
@@ -147,7 +147,7 @@ impl Package {
     }
 }
 
-fn prerequisites() -> Prerequisites {
+pub(crate) fn prerequisites() -> Prerequisites {
     Prerequisites {
         source_generation: 1,
         trust_generation: 1,
@@ -161,7 +161,7 @@ fn prerequisites() -> Prerequisites {
         max_package_bytes: 512 * 1024 * 1024,
     }
 }
-fn source(identity: &str, trusted: bool) -> SourceRecord {
+pub(crate) fn source(identity: &str, trusted: bool) -> SourceRecord {
     SourceRecord {
         identity: SourceIdentity::parse(identity).unwrap().identity,
         enabled: true,
