@@ -1,14 +1,15 @@
-use std::path::PathBuf;
+use std::io;
 use std::sync::OnceLock;
 
 use vosu_osu_model::launch::InstanceSettings;
+use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, GenerationIdentity};
 use vosu_plugin_api::{Bitness, DetachReason, SessionIdentify, TimerSet};
 
 use super::*;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct RecordingHost {
-    sent: Mutex<Vec<Message>>,
+    sent: Arc<Mutex<Vec<Message>>>,
 }
 
 impl HostServices for RecordingHost {
@@ -24,16 +25,45 @@ impl RecordingHost {
     }
 }
 
+/// Always fails, immediately: every test here that reaches the lazer
+/// offset resolver (P4) uses this rather than a real lazer install or
+/// network access ("use an offline generator").
+#[derive(Clone)]
+struct OfflineGenerator;
+
+impl OffsetGenerator for OfflineGenerator {
+    fn generate<'a>(
+        &'a self,
+        _executable_root: &'a Path,
+        _version: &'a str,
+        _cancel: &'a tokio_util::sync::CancellationToken,
+    ) -> GenerationFuture<'a> {
+        Box::pin(async { Err(io::Error::new(io::ErrorKind::NotFound, "offline")) })
+    }
+}
+
 /// Every production test constructs its `OsuPlugin` through this
 /// helper rather than `OsuPlugin::new`: the injected resolver is pure
 /// path arithmetic, so no test ever performs a real `/proc`/env-var
-/// read through `classify::resolve_root` (review #7). The lazer
-/// version lookup's own `/proc/<pid>/root` read (review #4) is a
-/// deliberate, separate, bounded syscall this does not (and should
-/// not) suppress; tests that reach it use `pid: 0`, which never names
-/// a real process, so that lookup fails closed deterministically too.
-fn hermetic<H: HostServices + Send + Sync + 'static>(host: H, platform: Platform) -> OsuPlugin<H> {
-    OsuPlugin::with_root_resolver(host, platform, test_root_resolver)
+/// read through `classify::resolve_root` (review #7), and the
+/// injected `OfflineGenerator` means no test ever performs a real
+/// lazer offset generation. The lazer version lookup's own
+/// `/proc/<pid>/root` read (review #4) is a deliberate, separate,
+/// bounded syscall this does not (and should not) suppress; tests
+/// that reach it use `pid: 0`, which never names a real process, so
+/// that lookup fails closed deterministically too.
+fn hermetic<H: HostServices + Send + Sync + Clone + 'static>(
+    host: H,
+    platform: Platform,
+) -> OsuPlugin<H, OfflineGenerator> {
+    let data_dir = tempfile::tempdir().expect("tempdir").keep();
+    OsuPlugin::with_generator(
+        host,
+        platform,
+        test_root_resolver,
+        data_dir,
+        OfflineGenerator,
+    )
 }
 
 fn test_root_resolver(_pid: u32, path: Option<&Path>, _command_line: Option<&str>) -> PathBuf {
@@ -217,9 +247,9 @@ fn detached_during_settle_sends_nothing() {
 /// unidentified forever — it resolves immediately instead.
 #[test]
 fn refused_set_timer_identifies_immediately() {
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct RefusingTimerHost {
-        sent: Mutex<Vec<Message>>,
+        sent: Arc<Mutex<Vec<Message>>>,
     }
     impl HostServices for RefusingTimerHost {
         fn send(&self, message: &Message, _correlation_id: u64) -> vosu_status {
@@ -318,17 +348,18 @@ fn a_settled_fallback_does_not_count_as_a_named_sibling() {
             0,
         )
         .unwrap();
-    let timer_for_handle = |plugin: &OsuPlugin<RecordingHost>, handle: u64| -> u64 {
-        plugin
-            .state
-            .lock()
-            .unwrap()
-            .pending_settle
-            .iter()
-            .find(|(_, (settling_handle, _))| *settling_handle == handle)
-            .map(|(timer, _)| *timer)
-            .unwrap_or_else(|| panic!("no pending settle for handle {handle}"))
-    };
+    let timer_for_handle =
+        |plugin: &OsuPlugin<RecordingHost, OfflineGenerator>, handle: u64| -> u64 {
+            plugin
+                .state
+                .lock()
+                .unwrap()
+                .pending_settle
+                .iter()
+                .find(|(_, (settling_handle, _))| *settling_handle == handle)
+                .map(|(timer, _)| *timer)
+                .unwrap_or_else(|| panic!("no pending settle for handle {handle}"))
+        };
     assert_eq!(plugin.state.lock().unwrap().pending_settle.len(), 2);
     let timer_for_1 = timer_for_handle(&plugin, 1);
     let timer_for_2 = timer_for_handle(&plugin, 2);
@@ -371,52 +402,6 @@ fn a_settled_fallback_does_not_count_as_a_named_sibling() {
     assert_eq!(identify_for(&plugin.host.sent(), 2).variant, "lazer");
 }
 
-/// P3 review #4: a `SESSION_DETACHED` that arrives before its own
-/// `SESSION_ATTACHED` (a `WorkerPool` reordering, not a real host
-/// sequence) must not leak `live_handles` forever.
-#[test]
-fn detached_before_attached_does_not_leak_live_handles() {
-    let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
-
-    plugin
-        .dispatch(
-            Message::SessionDetached(SessionDetached {
-                handle: 1,
-                reason: DetachReason::Lost,
-            }),
-            0,
-        )
-        .unwrap();
-    assert!(
-        plugin
-            .state
-            .lock()
-            .unwrap()
-            .detached_before_attached
-            .contains(&1)
-    );
-    assert!(!plugin.state.lock().unwrap().live_handles.contains(&1));
-
-    plugin
-        .dispatch(
-            Message::SessionAttached(attached(1, 0, "osu!.exe", Bitness::X86)),
-            0,
-        )
-        .unwrap();
-    // The record is consumed by the attach, not left behind, and the
-    // handle is never inserted into `live_handles` — nothing will
-    // ever remove it, since no further `SESSION_DETACHED` is coming.
-    assert!(
-        !plugin
-            .state
-            .lock()
-            .unwrap()
-            .detached_before_attached
-            .contains(&1)
-    );
-    assert!(!plugin.state.lock().unwrap().live_handles.contains(&1));
-}
 /// Review #3: a detach landing between `identify_session` returning
 /// and this handle being recorded as a named sibling must not leave a
 /// stale entry behind. A fake host whose `send` immediately dispatches
@@ -425,10 +410,10 @@ fn detached_before_attached_does_not_leak_live_handles() {
 /// host's concurrent worker pool could otherwise produce.
 #[test]
 fn detach_racing_identify_never_leaves_a_stale_named_sibling() {
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct ReentrantHost {
-        sent: Mutex<Vec<Message>>,
-        plugin: OnceLock<std::sync::Weak<OsuPlugin<ReentrantHost>>>,
+        sent: Arc<Mutex<Vec<Message>>>,
+        plugin: Arc<OnceLock<std::sync::Weak<OsuPlugin<ReentrantHost, OfflineGenerator>>>>,
     }
     impl HostServices for ReentrantHost {
         fn send(&self, message: &Message, _correlation_id: u64) -> vosu_status {
@@ -475,6 +460,57 @@ fn detach_racing_identify_never_leaves_a_stale_named_sibling() {
             .named_stable_handles
             .contains(&1),
         "a handle detached mid-identify must never be recorded as a live named sibling"
+    );
+    assert!(!plugin.state.lock().unwrap().live_handles.contains(&1));
+    // P4's analogous race (one step later: between `finish_identify`
+    // succeeding and `register_session`'s own insert) is closed by
+    // the same lock, so no session was registered either.
+    assert!(!plugin.state.lock().unwrap().sessions.contains_key(&1));
+}
+
+/// P3 review #4: a `SESSION_DETACHED` that arrives before its own
+/// `SESSION_ATTACHED` (a `WorkerPool` reordering, not a real host
+/// sequence) must not leak `live_handles` forever.
+#[test]
+fn detached_before_attached_does_not_leak_live_handles() {
+    let host = RecordingHost::default();
+    let plugin = hermetic(host, Platform::Linux);
+
+    plugin
+        .dispatch(
+            Message::SessionDetached(SessionDetached {
+                handle: 1,
+                reason: DetachReason::Lost,
+            }),
+            0,
+        )
+        .unwrap();
+    assert!(
+        plugin
+            .state
+            .lock()
+            .unwrap()
+            .detached_before_attached
+            .contains(&1)
+    );
+    assert!(!plugin.state.lock().unwrap().live_handles.contains(&1));
+
+    plugin
+        .dispatch(
+            Message::SessionAttached(attached(1, 0, "osu!.exe", Bitness::X86)),
+            0,
+        )
+        .unwrap();
+    // The record is consumed by the attach, not left behind, and the
+    // handle is never inserted into `live_handles` — nothing will
+    // ever remove it, since no further `SESSION_DETACHED` is coming.
+    assert!(
+        !plugin
+            .state
+            .lock()
+            .unwrap()
+            .detached_before_attached
+            .contains(&1)
     );
     assert!(!plugin.state.lock().unwrap().live_handles.contains(&1));
 }
@@ -524,4 +560,73 @@ fn from_attached_decodes_spectator_settings_from_argv() {
         .map(vosu_osu_reader::discovery::instance_settings)
         .unwrap();
     assert_eq!(tournament_ipc_id, Some(7.0));
+}
+
+/// P4 acceptance: a stable identify registers a session but never
+/// starts a resolver.
+#[test]
+fn stable_identify_registers_a_session_without_a_resolver() {
+    let host = RecordingHost::default();
+    let plugin = hermetic(host, Platform::Linux);
+    plugin
+        .dispatch(
+            Message::SessionAttached(attached(1, 0, "osu!.exe", Bitness::X86)),
+            0,
+        )
+        .unwrap();
+    assert_eq!(identify_for(&plugin.host.sent(), 1).variant, "stable");
+    let session = plugin
+        .state
+        .lock()
+        .unwrap()
+        .sessions
+        .get(&1)
+        .cloned()
+        .expect("stable identify must register a session");
+    assert_eq!(session.client, ClientType::Stable);
+    assert!(session.lazer_offsets().is_none());
+}
+
+/// P4 acceptance: one resolver per lazer session, and detach joins it
+/// (ported from `src/instance/tests.rs`'s
+/// `lazer_discovery_starts_one_resolver_and_shutdown_joins_it`).
+#[test]
+fn lazer_identify_starts_one_resolver_and_detach_joins_it() {
+    let host = RecordingHost::default();
+    let plugin = hermetic(host, Platform::Windows);
+    let mut message = attached(1, 0, "osu!.exe", Bitness::X64);
+    message.argv = None;
+    message.command_line = None;
+    plugin
+        .dispatch(Message::SessionAttached(message), 0)
+        .unwrap();
+    plugin.join_background_lazer_lookups();
+    assert_eq!(identify_for(&plugin.host.sent(), 1).variant, "lazer");
+
+    let session = plugin
+        .state
+        .lock()
+        .unwrap()
+        .sessions
+        .get(&1)
+        .cloned()
+        .expect("lazer identify must register a session");
+
+    plugin
+        .dispatch(
+            Message::SessionDetached(SessionDetached {
+                handle: 1,
+                reason: DetachReason::Exited,
+            }),
+            0,
+        )
+        .unwrap();
+    // Cancellation is synchronous: `install_lazer_offsets` is refused
+    // immediately, before the join even runs.
+    assert!(!session.install_lazer_offsets(Arc::new(
+        vosu_osu_reader::memory::lazer_offsets::LazerOffsets::embedded().unwrap()
+    )));
+    assert!(!plugin.state.lock().unwrap().sessions.contains_key(&1));
+
+    plugin.join_background_session_detaches();
 }

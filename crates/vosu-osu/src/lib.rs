@@ -8,9 +8,12 @@
 //! [`memory::PlanProcessMemory`] and
 //! [`scan::PlanScanBackend`]/[`scan::ScanWaiters`] (P3) are the
 //! `ProcessMemory`/`ScanBackend` backends a session's `ProcessHandle`
-//! wraps. The session map, reader threads, and lazer offset-resolver
-//! lifecycle are later M1 units (P4-P5); this crate is not yet registered
-//! in `src/plugins.rs`'s `BUNDLED` array (unit C3).
+//! wraps. P4 adds the session map ([`session::OsuSession`]) and this
+//! plugin's own 2-worker Tokio runtime (DG): every identified session gets
+//! a `ProcessHandle`, and a lazer session's offset resolver is started on
+//! that runtime (DH: cached under `data_dir`), never inline on a dispatch
+//! thread. Reader threads and B1 capture wiring are P5; this crate is not
+//! yet registered in `src/plugins.rs`'s `BUNDLED` array (unit C3).
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
@@ -19,6 +22,7 @@ pub mod classify;
 pub mod memory;
 pub mod plugin;
 pub mod scan;
+pub mod session;
 pub mod settings;
 #[cfg(test)]
 mod test_support;

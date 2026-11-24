@@ -3292,8 +3292,10 @@ name = "vosu-osu"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "bytes",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "vosu-osu-model",

@@ -117,7 +117,7 @@ fn parent_or_default(path: Option<&Path>) -> PathBuf {
         .unwrap_or_default()
 }
 
-fn to_process_bitness(bitness: Bitness) -> ProcessBitness {
+pub(crate) fn to_process_bitness(bitness: Bitness) -> ProcessBitness {
     match bitness {
         Bitness::X86 => ProcessBitness::X86,
         Bitness::X64 => ProcessBitness::X64,
@@ -132,6 +132,10 @@ pub struct PendingIdentify {
     pub root: PathBuf,
     pub executable_root: PathBuf,
     pub pid: u32,
+    pub generation: u64,
+    /// Carried through to `resolve_settled`'s `Identified` (P4's
+    /// `OsuSession::process` needs the target's pointer width).
+    pub bitness: Bitness,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +145,10 @@ pub struct Identified {
     pub root: PathBuf,
     pub executable_root: PathBuf,
     pub pid: u32,
+    pub generation: u64,
+    /// Carried through to P4's `OsuSession::process`
+    /// (`ProcessHandle::with_scan_backend`'s pointer width).
+    pub bitness: Bitness,
     /// Whether this identification came from the Linux "named" rule
     /// (`is_linux_named_name`: the name contains `osu!.exe`/
     /// `osulazer.exe`). Only a named identification counts as a sibling
@@ -211,6 +219,8 @@ pub fn decide(
                         root: facts.root.clone(),
                         executable_root: facts.executable_root.clone(),
                         pid: facts.pid,
+                        generation: facts.generation,
+                        bitness: facts.bitness,
                     });
                 }
             }
@@ -225,6 +235,8 @@ pub fn decide(
         root: facts.root.clone(),
         executable_root: facts.executable_root.clone(),
         pid: facts.pid,
+        generation: facts.generation,
+        bitness: facts.bitness,
         named,
     })
 }
@@ -351,6 +363,8 @@ mod tests {
                 root: PathBuf::from("/osu"),
                 executable_root: PathBuf::from("/osu"),
                 pid: 123,
+                generation: 1,
+                bitness: Bitness::X86,
             })
         );
 

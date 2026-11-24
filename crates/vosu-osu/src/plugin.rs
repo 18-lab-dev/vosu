@@ -1,30 +1,51 @@
-//! `OsuPlugin`: the `ConcurrentPlugin` entry point (D22, abi:408 §10). This
-//! unit (P2) wires attach/detach/settle-timer handling through
+//! `OsuPlugin`: the `ConcurrentPlugin` entry point (D22, abi:408 §10). P2
+//! wires attach/detach/settle-timer handling through
 //! [`crate::classify::decide`] into `SESSION_DECLINE`/`SESSION_IDENTIFY`,
 //! and routes `VOSU_OP_SCAN_RESULT` into P3's [`crate::scan::ScanWaiters`].
-//! The session map, reader threads, and lazer offset-resolver lifecycle are
-//! later units (P4-P5).
+//! P4 adds the session map ([`crate::session::OsuSession`]) and this
+//! plugin's own 2-worker Tokio runtime (DG): every identified session gets
+//! a `ProcessHandle` backed by P3's `PlanProcessMemory`/`PlanScanBackend`,
+//! and a lazer session's offset resolver is started on that runtime, never
+//! inline on a dispatch thread. The session map, reader threads, and B1
+//! capture wiring beyond that are P5.
 //!
-//! Generic over `H: HostServices` (default [`VtableHostServices`]), exactly
-//! like `PlanProcessMemory` (P3): the exported entry point only ever
+//! Generic over `H: HostServices` (default [`VtableHostServices`]) and `G:
+//! OffsetGenerator` (default [`EmbeddedOffsetGenerator`]), exactly like
+//! `PlanProcessMemory` (P3): the exported entry point only ever
 //! instantiates `OsuPlugin<VtableHostServices>`, but a test supplies any
-//! other `HostServices` implementation (a recording fake) directly, without
-//! going through the real ABI vtable. `host` and `state` are `Arc`-wrapped
+//! other `HostServices`/`OffsetGenerator` implementation (a recording fake
+//! host, an offline generator) directly, without going through the real
+//! ABI vtable or a real lazer install. `host` and `state` are `Arc`-wrapped
 //! (not bare fields) so a lazer version lookup can run on its own thread
 //! (see [`Self::commit_identify`]) while still sharing them with the
-//! instance that spawned it.
+//! instance that spawned it; `H: Clone` lets [`register_session`] hand
+//! P3's backends their own owned copy, exactly as `PlanProcessMemory`/
+//! `PlanScanBackend` already require.
 //!
-//! Lock order: a single `Mutex<PluginState>`, never held across a call into
-//! `self.host` (`identify_session`/`send`/`set_timer`): every method reads
-//! or mutates the state in its own short-lived guard, drops it, and only
-//! then calls the host.
+//! Lock order: a single `Mutex<PluginState>` — which, since P4, also owns
+//! the session map, so an identify that only now notices a race already
+//! lost (review #3) and a detach that races it (P4's analogous race, one
+//! step later: between `finish_identify` succeeding and
+//! [`register_session`]'s own insert) serialize on the very same lock
+//! rather than needing a second one. Never held across a call into
+//! `self.host` (`identify_session`/`send`/`set_timer`/`log`) or into
+//! `self.runtime_handle`/`self.runtime` (spawning, joining, or shutting
+//! down): every method reads or mutates the state in its own short-lived
+//! guard, drops it, and only then calls out.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
+use bytes::Bytes;
+use tokio::runtime::{Handle, Runtime};
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_reader::assets::DaemonAssets;
+use vosu_osu_reader::memory::lazer_loader::{LazerOffsetLoader, LogWarn, OffsetGenerator};
+use vosu_osu_reader::offset_generator::EmbeddedOffsetGenerator;
+use vosu_osu_reader::process::{ProcessHandle, ScanBackend};
 use vosu_plugin_api::{
     CborValue, ConcurrentPlugin, HostServices, Init, LogLevel, Message, PluginError,
     SessionAttached, SessionDecline, SessionDetached, TimerFired, VtableHostServices, vosu_status,
@@ -32,15 +53,24 @@ use vosu_plugin_api::{
 
 use crate::classify::{
     self, AttachDecision, AttachFacts, Identified, PendingIdentify, Platform, RootResolver,
+    to_process_bitness,
 };
-use crate::scan::ScanWaiters;
+use crate::memory::PlanProcessMemory;
+use crate::scan::{PlanScanBackend, ScanWaiters};
+use crate::session::OsuSession;
+
+/// abi:82's destroy grace: `destroy` shuts every still-live session down
+/// (cancel, then join) within this budget before shutting the plugin's own
+/// runtime down (DG), rather than waiting out a hung resolver forever.
+const DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct PluginState {
     /// Handles currently attached (inserted at `SESSION_ATTACHED`, removed
     /// at `SESSION_DETACHED`): consulted so a detach racing a concurrent
     /// identify never leaves a stale entry in `named_stable_handles`
-    /// (review #3).
+    /// (review #3), and so [`register_session`] never registers a session
+    /// for a handle that already detached (P4's analogous race).
     live_handles: HashSet<u64>,
     /// Handles identified through the Linux "named" rule specifically
     /// (`Identified::named`/review #2), consulted so a later fallback
@@ -67,37 +97,112 @@ struct PluginState {
     /// remove it otherwise — while still classifying and replying to the
     /// attach as usual.
     detached_before_attached: HashSet<u64>,
+    /// Every session a successful identify registered (P4), keyed by
+    /// handle, removed by `SESSION_DETACHED` (or `destroy`). Lives under
+    /// this same lock specifically to close the identify/detach race
+    /// described on the module doc comment.
+    sessions: HashMap<u64, Arc<OsuSession>>,
+    /// A detach's off-thread resolver join (never awaited on the dispatch
+    /// thread that handled the detach itself — see `handle_detached`),
+    /// joined by `destroy` within the grace period, or by a test's
+    /// [`OsuPlugin::join_background_session_detaches`].
+    session_detach_joins: Vec<tokio::task::JoinHandle<()>>,
 }
 
-pub struct OsuPlugin<H: HostServices + Send + Sync + 'static = VtableHostServices> {
+pub struct OsuPlugin<
+    H: HostServices + Send + Sync + Clone + 'static = VtableHostServices,
+    G: OffsetGenerator + 'static = EmbeddedOffsetGenerator,
+> {
     host: Arc<H>,
     platform: Platform,
     state: Arc<Mutex<PluginState>>,
     root_resolver: RootResolver,
     scan_waiters: Arc<ScanWaiters>,
+    /// DH: resolves offsets under `<data_dir>/offsets`, generating with
+    /// `<data_dir>/offset-generator` as scratch space.
+    loader: Arc<LazerOffsetLoader<G>>,
+    /// DG: this plugin's own 2-worker Tokio runtime, created in `create`
+    /// and shut down (bounded, abi:82) in `destroy`. A cheap `Handle`
+    /// clone lets a dispatch thread (which has no runtime context of its
+    /// own) or the lazer-version-lookup OS thread enqueue work on it
+    /// without ever locking `runtime` itself; only `Drop` takes the owned
+    /// `Runtime` back out, to shut it down.
+    runtime_handle: Handle,
+    runtime: Mutex<Option<Runtime>>,
 }
 
-impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
-    pub fn new(host: H, platform: Platform) -> Self {
-        Self::with_root_resolver(host, platform, classify::resolve_root)
+impl<H: HostServices + Send + Sync + Clone + 'static> OsuPlugin<H, EmbeddedOffsetGenerator> {
+    pub fn new(host: H, platform: Platform, data_dir: PathBuf) -> Self {
+        Self::with_root_resolver(host, platform, classify::resolve_root, data_dir)
     }
 
-    /// Like [`Self::new`], with an injectable root resolver (P3 review #7):
-    /// a test uses this to avoid the real `/proc`/env-var reads
-    /// `classify::resolve_root` performs; production
-    /// (`ConcurrentPlugin::create`) always uses [`Self::new`].
-    pub fn with_root_resolver(host: H, platform: Platform, root_resolver: RootResolver) -> Self {
+    /// Like [`Self::new`], with an injectable root resolver (P3 review
+    /// #7): a test uses this to avoid the real `/proc`/env-var reads
+    /// `classify::resolve_root` performs; production (`ConcurrentPlugin::
+    /// create`) always uses [`Self::new`].
+    pub fn with_root_resolver(
+        host: H,
+        platform: Platform,
+        root_resolver: RootResolver,
+        data_dir: PathBuf,
+    ) -> Self {
+        let generator = EmbeddedOffsetGenerator::new(data_dir.join("offset-generator"));
+        Self::with_generator(host, platform, root_resolver, data_dir, generator)
+    }
+}
+
+impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'static>
+    OsuPlugin<H, G>
+{
+    /// Like [`OsuPlugin::<H, EmbeddedOffsetGenerator>::with_root_resolver`],
+    /// with an injectable offset generator: a test supplies one that never
+    /// touches the network or a real osu!lazer install (P4 acceptance:
+    /// "use an offline generator").
+    pub fn with_generator(
+        host: H,
+        platform: Platform,
+        root_resolver: RootResolver,
+        data_dir: PathBuf,
+        generator: G,
+    ) -> Self {
+        let asset =
+            DaemonAssets::get("offsets.json").expect("embedded assets/offsets.json is missing");
+        let loader = Arc::new(LazerOffsetLoader::new(
+            generator,
+            data_dir.join("offsets"),
+            Bytes::copy_from_slice(&asset.data),
+        ));
+        Self::with_loader(host, platform, root_resolver, loader)
+    }
+
+    pub fn with_loader(
+        host: H,
+        platform: Platform,
+        root_resolver: RootResolver,
+        loader: Arc<LazerOffsetLoader<G>>,
+    ) -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("vosu-osu")
+            .enable_all()
+            .build()
+            .expect("failed to start the vosu-osu plugin's own 2-worker runtime (DG)");
+        let runtime_handle = runtime.handle().clone();
         Self {
             host: Arc::new(host),
             platform,
             state: Arc::new(Mutex::new(PluginState::default())),
             root_resolver,
             scan_waiters: ScanWaiters::new(),
+            loader,
+            runtime_handle,
+            runtime: Mutex::new(Some(runtime)),
         }
     }
 
     /// The scan-result waiter map this instance's [`crate::scan::PlanScanBackend`]s
-    /// share (wiring item 8): P4/P5 hand this to each session's backend.
+    /// share (wiring item 8): every session's backend is built from this
+    /// same instance (see [`register_session`]).
     #[must_use]
     pub fn scan_waiters(&self) -> &Arc<ScanWaiters> {
         &self.scan_waiters
@@ -118,8 +223,8 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
                 Ok(())
             }
             // Every other opcode this concurrent dispatch call could see has
-            // no plugin-side action yet (later units: P3 read-plan replies;
-            // P4/P5 session-lifecycle wiring beyond attach/detach/settle).
+            // no plugin-side action yet (later unit: P3 read-plan replies;
+            // P5's capture/B1 wiring beyond attach/detach/settle).
             _ => Ok(()),
         }
     }
@@ -146,17 +251,34 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
     }
 
     fn handle_detached(&self, detached: &SessionDetached) {
-        let mut state = self.state.lock().expect("plugin state mutex poisoned");
-        let was_live = state.live_handles.remove(&detached.handle);
-        state.named_stable_handles.remove(&detached.handle);
-        state
-            .pending_settle
-            .retain(|_, (handle, _)| *handle != detached.handle);
-        if !was_live {
-            state.detached_before_attached.insert(detached.handle);
-        }
-        drop(state);
+        let session = {
+            let mut state = self.state.lock().expect("plugin state mutex poisoned");
+            let was_live = state.live_handles.remove(&detached.handle);
+            state.named_stable_handles.remove(&detached.handle);
+            state
+                .pending_settle
+                .retain(|_, (handle, _)| *handle != detached.handle);
+            if !was_live {
+                state.detached_before_attached.insert(detached.handle);
+            }
+            state.sessions.remove(&detached.handle)
+        };
         self.scan_waiters.detach(detached.handle);
+        if let Some(session) = session {
+            // Synchronous and non-blocking (`CancellationToken::cancel`):
+            // safe on this dispatch thread. Actually reclaiming the
+            // resolver task is a separate step, on this plugin's own
+            // runtime, never awaited here.
+            session.cancel();
+            let join = self
+                .runtime_handle
+                .spawn(async move { session.join_resolver().await });
+            self.state
+                .lock()
+                .expect("plugin state mutex poisoned")
+                .session_detach_joins
+                .push(join);
+        }
     }
 
     fn handle_timer_fired(&self, fired: &TimerFired) -> Result<(), PluginError> {
@@ -193,6 +315,8 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
                 root: pending.root,
                 executable_root: pending.executable_root,
                 pid: pending.pid,
+                generation: pending.generation,
+                bitness: pending.bitness,
                 // A settled fallback is never "named" (review #2), whether
                 // it resolved to stable or lazer.
                 named: false,
@@ -236,10 +360,9 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
 
     /// Sends `SESSION_IDENTIFY` and, once it succeeds, records this handle
     /// as a named sibling if (and only if) `identified.named` and the
-    /// handle is still live (review #2, #3): a stable identification that
-    /// was not itself "named" must never count as a sibling, and a handle
-    /// that detached while `identify_session` was in flight on another
-    /// dispatch thread must never be added at all.
+    /// handle is still live (review #2, #3), then registers this handle's
+    /// session (P4; see [`register_session`]) — again only if the handle
+    /// is still live, closing the same race one step later.
     ///
     /// Stable resolves and sends inline — no lazer version to look up.
     /// Lazer hands off to its own thread (see `resolve_lazer_version`):
@@ -247,30 +370,48 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
     /// blocking work rather than do it inline on the host's worker pool,
     /// and the up-to-4 MiB `osu!.deps.json` read/parse, while bounded,
     /// still is blocking I/O (review #6). The spawned thread calls
-    /// `finish_identify` itself, preserving per-handle identify ordering
-    /// (nothing else ever identifies this handle again).
+    /// `finish_identify`/`register_session` itself, preserving per-handle
+    /// identify ordering (nothing else ever identifies this handle again).
     fn commit_identify(&self, handle: u64, identified: Identified) -> Result<(), PluginError> {
         match identified.client {
-            ClientType::Stable => finish_identify(
-                self.host.as_ref(),
-                &self.state,
-                handle,
-                "stable",
-                "osu!",
-                String::new(),
-                identified.named,
-            ),
+            ClientType::Stable => {
+                let result = finish_identify(
+                    self.host.as_ref(),
+                    &self.state,
+                    handle,
+                    "stable",
+                    "osu!",
+                    String::new(),
+                    identified.named,
+                );
+                if result.is_ok() {
+                    register_session(
+                        &self.host,
+                        &self.state,
+                        &self.scan_waiters,
+                        &self.loader,
+                        &self.runtime_handle,
+                        handle,
+                        &identified,
+                    );
+                }
+                result
+            }
             ClientType::Lazer => {
                 let host = Arc::clone(&self.host);
                 let state = Arc::clone(&self.state);
+                let scan_waiters = Arc::clone(&self.scan_waiters);
+                let loader = Arc::clone(&self.loader);
+                let runtime_handle = self.runtime_handle.clone();
                 let executable_root = identified.executable_root.clone();
                 let pid = identified.pid;
                 let named = identified.named;
+                let identified_for_session = identified.clone();
                 let spawned = thread::Builder::new()
                     .name("vosu-osu-lazer-version".to_owned())
                     .spawn(move || {
                         let version = resolve_lazer_version(host.as_ref(), pid, &executable_root);
-                        let _ = finish_identify(
+                        let result = finish_identify(
                             host.as_ref(),
                             &state,
                             handle,
@@ -279,6 +420,17 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
                             version,
                             named,
                         );
+                        if result.is_ok() {
+                            register_session(
+                                &host,
+                                &state,
+                                &scan_waiters,
+                                &loader,
+                                &runtime_handle,
+                                handle,
+                                &identified_for_session,
+                            );
+                        }
                     });
                 match spawned {
                     Ok(join_handle) => {
@@ -296,7 +448,7 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
                             identified.pid,
                             &identified.executable_root,
                         );
-                        finish_identify(
+                        let result = finish_identify(
                             self.host.as_ref(),
                             &self.state,
                             handle,
@@ -304,7 +456,19 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
                             "osu!(lazer)",
                             version,
                             identified.named,
-                        )
+                        );
+                        if result.is_ok() {
+                            register_session(
+                                &self.host,
+                                &self.state,
+                                &self.scan_waiters,
+                                &self.loader,
+                                &self.runtime_handle,
+                                handle,
+                                &identified,
+                            );
+                        }
+                        result
                     }
                 }
             }
@@ -328,25 +492,77 @@ impl<H: HostServices + Send + Sync + 'static> OsuPlugin<H> {
             let _ = lookup.join();
         }
     }
-}
 
-impl<H: HostServices + Send + Sync + 'static> Drop for OsuPlugin<H> {
-    fn drop(&mut self) {
-        // Every slot `ScanWaiters` handed out is released here if a
-        // session detach did not already release it (wiring item 8).
-        self.scan_waiters.shutdown();
-        // Every lazer-version lookup thread is joined so none outlives
-        // this instance's borrowed `VtableHostServices` (review #6): its
-        // raw pointers are valid only until `destroy` returns (abi:82),
-        // and this `Drop` is exactly what `destroy_concurrent` runs.
-        let lookups = std::mem::take(
+    /// Test-only: blocks until every detach-triggered resolver join
+    /// spawned so far (see `handle_detached`) has actually completed, so a
+    /// test can assert a session's resolver was joined rather than merely
+    /// cancelled.
+    #[cfg(test)]
+    fn join_background_session_detaches(&self) {
+        let joins = std::mem::take(
             &mut self
                 .state
                 .lock()
                 .expect("plugin state mutex poisoned")
-                .lazer_lookups,
+                .session_detach_joins,
         );
-        for lookup in lookups {
+        let runtime = self.runtime.lock().expect("plugin runtime mutex poisoned");
+        if let Some(runtime) = runtime.as_ref() {
+            runtime.block_on(async {
+                for join in joins {
+                    let _ = join.await;
+                }
+            });
+        }
+    }
+}
+
+impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'static> Drop
+    for OsuPlugin<H, G>
+{
+    fn drop(&mut self) {
+        // Every slot `ScanWaiters` handed out is released here if a
+        // session detach did not already release it (wiring item 8).
+        self.scan_waiters.shutdown();
+
+        let (sessions, detach_joins, lazer_lookups) = {
+            let mut state = self.state.lock().expect("plugin state mutex poisoned");
+            (
+                std::mem::take(&mut state.sessions),
+                std::mem::take(&mut state.session_detach_joins),
+                std::mem::take(&mut state.lazer_lookups),
+            )
+        };
+        for session in sessions.values() {
+            session.cancel();
+        }
+        // Shut every still-live session down (cancel already ran above;
+        // this joins) within the grace period, then shut the runtime
+        // itself down (DG, abi:82) — exactly what `destroy_concurrent`
+        // runs, via this `Drop`.
+        if let Some(runtime) = self
+            .runtime
+            .lock()
+            .expect("plugin runtime mutex poisoned")
+            .take()
+        {
+            runtime.block_on(async {
+                let _ = tokio::time::timeout(DESTROY_GRACE, async {
+                    for join in detach_joins {
+                        let _ = join.await;
+                    }
+                    for session in sessions.values() {
+                        session.join_resolver().await;
+                    }
+                })
+                .await;
+            });
+            runtime.shutdown_timeout(DESTROY_GRACE);
+        }
+        // Every lazer-version lookup thread is joined so none outlives
+        // this instance's borrowed `VtableHostServices` (review #6): its
+        // raw pointers are valid only until `destroy` returns (abi:82).
+        for lookup in lazer_lookups {
             let _ = lookup.join();
         }
     }
@@ -374,6 +590,79 @@ fn finish_identify<H: HostServices>(
         }
     }
     Ok(())
+}
+
+/// Builds this handle's `ProcessHandle` (P3's `PlanProcessMemory` +
+/// `PlanScanBackend`, sharing this plugin instance's `ScanWaiters`) and
+/// registers its [`OsuSession`] (P4) — but only if the handle is still
+/// live: a detach racing this identify, landing between `finish_identify`
+/// succeeding and the lock this function takes, must never leave a
+/// session registered that nothing will ever detach again (the module
+/// doc comment's "P4's analogous race"). A lazer session's resolver is
+/// started on `runtime_handle` only once registration itself succeeded.
+/// Free (not a method), for the same reason as `finish_identify`: the
+/// lazer identify thread calls this with only the `Arc`s it captured.
+fn register_session<H, G>(
+    host: &Arc<H>,
+    state: &Arc<Mutex<PluginState>>,
+    scan_waiters: &Arc<ScanWaiters>,
+    loader: &Arc<LazerOffsetLoader<G>>,
+    runtime_handle: &Handle,
+    handle: u64,
+    identified: &Identified,
+) where
+    H: HostServices + Send + Sync + Clone + 'static,
+    G: OffsetGenerator + 'static,
+{
+    let bitness = to_process_bitness(identified.bitness);
+    let memory = Arc::new(PlanProcessMemory::new(
+        (**host).clone(),
+        handle,
+        identified.pid,
+        bitness,
+    ));
+    let scans: Arc<dyn ScanBackend> = Arc::new(PlanScanBackend::new(
+        (**host).clone(),
+        handle,
+        Arc::clone(scan_waiters),
+    ));
+    let process = ProcessHandle::with_scan_backend(memory, bitness, scans);
+    let session = OsuSession::new(
+        handle,
+        identified.pid,
+        identified.generation,
+        identified.client,
+        process,
+        identified.root.clone(),
+        identified.executable_root.clone(),
+        identified.settings.clone(),
+    );
+    let registered = {
+        let mut state = state.lock().expect("plugin state mutex poisoned");
+        if state.live_handles.contains(&handle) {
+            state.sessions.insert(handle, Arc::clone(&session));
+            true
+        } else {
+            false
+        }
+    };
+    if registered && identified.client == ClientType::Lazer {
+        let loader = Arc::clone(loader);
+        let warn = log_warn(host);
+        runtime_handle.spawn(async move {
+            session.start_lazer_resolver(loader, warn).await;
+        });
+    }
+}
+
+/// A [`LogWarn`] that reports through `host.log` (`VOSU_OP_LOG_RECORD`),
+/// for a lazer session's resolver to report a failed attempt without
+/// `vosu-osu-reader` depending on `vosu-core`'s `Logger`.
+fn log_warn<H: HostServices + Send + Sync + 'static>(host: &Arc<H>) -> LogWarn {
+    let host = Arc::clone(host);
+    Arc::new(move |message: String| {
+        let _ = host.log(LogLevel::Warn, &message, CborValue::Map(Vec::new()));
+    })
 }
 
 /// DF: lazer's version comes from `osu!.deps.json`. On Linux this first
@@ -441,8 +730,8 @@ fn resolve_lazer_version_with(
 }
 
 impl ConcurrentPlugin for OsuPlugin<VtableHostServices> {
-    fn create(host: VtableHostServices, _init: Init) -> Result<Self, PluginError> {
-        Ok(Self::new(host, current_platform()))
+    fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+        Ok(Self::new(host, current_platform(), init.data_dir))
     }
 
     fn on_message(&self, message: Message, correlation_id: u64) -> Result<(), PluginError> {

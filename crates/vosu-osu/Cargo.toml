@@ -19,6 +19,7 @@ test-harness = []
 
 [dependencies]
 arc-swap = "1.8.2"
+bytes = "=1.12.1"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
@@ -28,3 +29,6 @@ vosu-osu-reader = { path = "../vosu-osu-reader" }
 vosu-osu-state = { path = "../vosu-osu-state" }
 vosu-plugin-api = { path = "../vosu-plugin-api", features = ["bundled", "unstable-sync-reads"] }
 vosu-surface = { path = "../vosu-surface" }
+
+[dev-dependencies]
+tempfile = "3.26.0"
