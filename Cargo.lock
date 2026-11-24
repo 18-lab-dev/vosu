@@ -3570,6 +3570,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
+ "url",
  "vosu-net",
  "vosu-plugin-api",
  "vosu-plugin-testkit",

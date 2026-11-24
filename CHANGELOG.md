@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M6b
+
+- Add exact-identity catalog source settings and HTTPS source parsing, with
+  dedicated trust/private-network mutations and journaled credential-purge
+  recovery. Preserve legacy source lists and migration markers for M8.
+
 ## Unreleased — 2.0 M6a
 
 - Validate plugin, web-tool and overlay package manifests through the SDK's
