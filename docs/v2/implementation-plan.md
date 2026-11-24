@@ -1468,7 +1468,7 @@ Exit evidence (2026-11-24, on the merged head):
     `vosu-sys`'s two file-symlink cases and `vosu-adapter-upstream`'s
     `windows_reparse_files_and_directories_cannot_escape_declared_routes`.
     The `prepush.py` native phase runs them at High integrity.
-  - Native runs exposed and the exit fixed three test defects. A
+  - Native runs exposed and the exit fixed four test defects. A
     tool-context expectation mixed path separators and expected the `\\?\`
     prefix of `std::fs::canonicalize`. `runtime_wakeups`' positive control
     expected over 10 cadence wakes in 100 ms, but the 1 ms interval fires at
@@ -1478,7 +1478,10 @@ Exit evidence (2026-11-24, on the merged head):
     references commit through the publisher mailbox (measured: 42
     allocations per steady commit, 54 when one absorbed it, 14 when the
     worker held the mailbox). `Publication` now records its applied epoch,
-    and the bench fixture waits for that commit before measuring.
+    and the bench fixture waits for that commit before measuring. The live
+    adapter-mode example test expected one commit to show thread CPU, but
+    Windows `GetThreadTimes` charges whole ~15.6 ms ticks, so it now commits
+    until a tick is attributed (bounded).
   - Stress (`vm-stress.py`): `performance_invariants` adapter cases 0/15
     failures and `runtime_wakeups` 0/15 after the fixes;
     `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`

@@ -137,7 +137,10 @@ pass.** Two measurements decide it, and neither has run:
    and the `bench-compare.py` case alias below exist.
 2. Native `live_reader_bench --adapter` runs (CPU/tick per stage and
    read-to-frame latency, idle and subscribed) on native Windows stable and
-   lazer, and on Linux lazer.
+   lazer, and on Linux lazer. On Windows the stage CPU comes from
+   `GetThreadTimes`, which charges whole ~15.6 ms scheduler ticks, so a
+   per-tick median of a sub-millisecond stage reads 0 there. Use a mean
+   over many ticks, or a finer thread clock, before comparing stages.
 
 The exploratory numbers in the next section decide nothing. They also predate
 the exit merge with `v2/main`, which brought M1 L3's reader and read-plan
