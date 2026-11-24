@@ -115,12 +115,31 @@ pub(super) fn bench(c: &mut Criterion) {
         reads.len()
     );
     let mut destinations: Vec<_> = reads.iter().map(|(_, len)| vec![0; *len]).collect();
+    let mut requests: Vec<_> = reads
+        .iter()
+        .zip(&mut destinations)
+        .map(|((address, _), dst)| ReadRequest::new(*address, dst))
+        .collect();
+    let mut batches = Vec::new();
+    let mut remaining = requests.as_mut_slice();
+    for stage in plans.iter().flat_map(|plan| &plan.stages) {
+        for chunk in stage.ops.chunks(64) {
+            let (batch, rest) = remaining.split_at_mut(chunk.len());
+            batches.push(batch);
+            remaining = rest;
+        }
+    }
+    assert!(remaining.is_empty(), "all recorded backend ops must be replayed");
     let mut group = c.benchmark_group("plan_floor");
     group.bench_function("native", |b| {
         b.iter(|| {
-            for ((address, _), dst) in reads.iter().zip(&mut destinations) {
-                fixture.read_exact(*address, dst).unwrap();
-                black_box(&*dst);
+            for batch in &mut batches {
+                if let [read] = &mut **batch {
+                    fixture.read_exact(read.address, read.dst).unwrap();
+                } else {
+                    fixture.read_many(batch).unwrap();
+                }
+                black_box(&*batch);
             }
         })
     });
