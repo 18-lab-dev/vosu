@@ -77,11 +77,11 @@ impl ProcessVmReadv for MockSyscall {
     }
 }
 
-fn fixture() -> TempDir {
+pub(super) fn fixture() -> TempDir {
     tempfile::tempdir().expect("temporary proc fixture")
 }
 
-fn add_process(root: &Path, pid: u32, class: u8, cmdline: &[u8], maps: &str) -> PathBuf {
+pub(super) fn add_process(root: &Path, pid: u32, class: u8, cmdline: &[u8], maps: &str) -> PathBuf {
     let dir = root.join(pid.to_string());
     fs::create_dir_all(&dir).expect("process directory");
     let executable = root.join(format!("elf-{pid}"));

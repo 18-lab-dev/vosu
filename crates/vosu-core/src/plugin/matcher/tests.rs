@@ -118,6 +118,23 @@ fn comm_hint_over_15_bytes_is_rejected() {
     ));
 }
 
+/// F1 fix review: an older gap — an empty `comm_hints` entry (`""`)
+/// passed `compile` even after the NUL-byte fix below, then froze the
+/// Linux pre-filter the same way (`CommHints::new` rejects it as
+/// `Empty`) and made every other plugin's own matcher refuse to
+/// install as overlapping it (empty is a substring of anything).
+#[test]
+fn empty_comm_hint_is_rejected() {
+    let table = MatchTable {
+        comm_hints: vec![String::new()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        CompiledMatcher::compile(MatchPlatform::Linux, &table),
+        Err(MatcherError::HintEmpty)
+    ));
+}
+
 /// P3 (review): same freeze risk as `linux_name_contains` — a
 /// `comm_hints` entry with a NUL byte must be refused here, not later
 /// by `CommHints::new`.

@@ -958,16 +958,30 @@ fn read_command_line_at(dir: &Path) -> io::Result<Vec<u8>> {
 
 /// `/proc/<pid>/cmdline` NUL-terminates every argv entry, including the
 /// last, so splitting the raw bytes on NUL yields one trailing empty
-/// element that is not a real argument; this strips only that one
-/// element, keeping any legitimate empty argument found elsewhere in
-/// argv (§6.2's "exact NUL-split argv" contract — a naive
-/// `filter(!is_empty)` would silently drop those too).
+/// element that is not a real argument; this strips it, keeping any
+/// legitimate empty argument found elsewhere in argv (§6.2's "exact
+/// NUL-split argv" contract — a naive `filter(!is_empty)` would
+/// silently drop those too).
+///
+/// Strips *every* trailing empty piece, not just one (F1 review P2):
+/// Wine rewrites its own argv in place and zero-fills the leftover tail
+/// (`rebuild_argv`/`prepend_argv` in `dlls/ntdll/unix/env.c`, whenever
+/// `setproctitle` support isn't available — including every glibc
+/// Linux build), so osu! stable under Wine's own `cmdline` can carry
+/// several trailing NUL bytes past the last real argument, each
+/// splitting into its own phantom empty piece. A single `pop()` left
+/// every one of those but the last in `argv`/`command_line`, breaking
+/// `command_line_patterns` matches and leaking phantom arguments to
+/// plugins through `SESSION_ATTACHED`. A real trailing empty argument
+/// is indistinguishable from this padding and is lost the same way —
+/// `/proc/<pid>/cmdline` carries no length-prefix or argc to tell them
+/// apart.
 fn command_line_from_bytes(bytes: &[u8]) -> Vec<OsString> {
     let mut parts: Vec<OsString> = bytes
         .split(|byte| *byte == 0)
         .map(|part| OsString::from_vec(part.to_vec()))
         .collect();
-    if parts.last().is_some_and(|last| last.is_empty()) {
+    while parts.last().is_some_and(|last| last.is_empty()) {
         parts.pop();
     }
     parts
@@ -1162,5 +1176,11 @@ mod empty_read_tests {
     }
 }
 
+/// F1 review P2 (`command_line_from_bytes` doc comment): kept out of
+/// `tests` itself, which is at its own baselined line-count limit
+/// (`scripts/file-length-baseline.txt`).
+#[cfg(test)]
+#[path = "linux/tests/cmdline.rs"]
+mod cmdline_tests;
 #[cfg(test)]
 mod tests;

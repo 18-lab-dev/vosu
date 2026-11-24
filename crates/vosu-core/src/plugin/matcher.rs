@@ -49,6 +49,14 @@ pub enum MatcherError {
     /// A `comm_hints` entry is longer than 15 bytes, the kernel/CN_PROC
     /// `comm` field width (§6.1, D18).
     HintTooLong { hint: String },
+    /// A `comm_hints` entry is empty (F1 review, older gap): empty is
+    /// contained in every other entry, so it would both freeze the
+    /// Linux pre-filter ([`vosu_sys::events::CommHints::new`] rejects it
+    /// as `Empty`) and make a second plugin's own matcher refuse to
+    /// install as overlapping (an empty entry is a substring of
+    /// anything) — refused here instead, exactly like `HintTooLong`/
+    /// `HintContainsNul`.
+    HintEmpty,
     /// A `comm_hints` entry contains a NUL byte: `CommHints::new` would
     /// reject it later at prefilter sync time, silently freezing the
     /// Linux pre-filter for every plugin (review P3) rather than
@@ -71,6 +79,7 @@ impl fmt::Display for MatcherError {
             Self::HintTooLong { hint } => {
                 write!(f, "comm_hints entry {hint:?} exceeds 15 bytes")
             }
+            Self::HintEmpty => write!(f, "comm_hints entry must not be empty"),
             Self::HintContainsNul { hint } => {
                 write!(f, "comm_hints entry {hint:?} contains a NUL byte")
             }
@@ -198,6 +207,9 @@ impl CompiledMatcher {
     pub fn compile(platform: MatchPlatform, table: &MatchTable) -> Result<Self, MatcherError> {
         if platform == MatchPlatform::Linux {
             for hint in &table.comm_hints {
+                if hint.is_empty() {
+                    return Err(MatcherError::HintEmpty);
+                }
                 if hint.len() > 15 {
                     return Err(MatcherError::HintTooLong { hint: hint.clone() });
                 }
