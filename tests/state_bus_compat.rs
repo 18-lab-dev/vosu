@@ -654,7 +654,9 @@ fn tourney(
 ) {
     let mut expected = v2["tourney"].clone();
     if id == "stable-tournament" {
-        require(entries, "stable-tournament/tourney", "temporary");
+        // This test invokes one unregistered session projector, not the plugin
+        // lifecycle/roster. No manager exists in that scope. Production manager
+        // aggregation is covered by tests/osu_plugin/tournament.rs.
         expected = json!({"scoreVisible": false, "starsVisible": false, "ipcState": 0, "bestOF": 0, "team": {"left": "", "right": ""}, "points": {"left": 0, "right": 0}, "chat": [], "totalScore": {"left": 0, "right": 0}, "clients": []});
     } else {
         assert_eq!(precise["tourney"], json!([]));
@@ -669,6 +671,10 @@ fn tourney(
             .iter_mut()
             .enumerate()
         {
+            client
+                .as_object_mut()
+                .unwrap()
+                .insert("keysOverlay".into(), Value::Null);
             let play = client["play"].as_object_mut().unwrap();
             let errors = play.remove("hitErrorArray").unwrap();
             let press = play.remove("pressHitErrors").unwrap();
@@ -692,6 +698,12 @@ fn tourney(
                 .score
                 .as_ref()
                 .unwrap();
+            play.insert(
+                "healthRaw".into(),
+                json!({"normal":score.player_hp,"smooth":score.player_hp_smooth}),
+            );
+            play.insert("rawJudgements".into(), json!({"miss":score.statistics.miss,"meh":score.statistics.meh,"ok":score.statistics.ok,"good":score.statistics.good,"great":score.statistics.great,"perfect":score.statistics.perfect}));
+            play.insert("preciseUnstableRate".into(), json!(0.0));
             play.insert(
                 "statistics".into(),
                 native_statistics(&score.statistics, &hits),
@@ -940,8 +952,14 @@ fn comparison_and_exemption_guards_reject_unlisted_differences() {
         std::panic::catch_unwind(|| equal("guard", "/keys", &json!({"a":1}), &json!({}))).is_err()
     );
     equal("guard", "/null", &json!({}), &json!({"a":null}));
+    let entries = exemptions(DIVERGENCES);
+    assert!(!entries.contains_key("stable-tournament/tourney"));
+    assert!(
+        std::panic::catch_unwind(|| require(&entries, "stable-tournament/tourney", "temporary"))
+            .is_err(),
+        "the retired tournament exemption cannot authorize a skip"
+    );
     for id in [
-        "stable-tournament/tourney",
         "tourney-bestOf-rename",
         "room-roomId-rename",
         "tourney-null-without-score",

@@ -1,4 +1,5 @@
-//! Lazer lobby projection; the stable manager aggregate is intentionally deferred (D6).
+//! Tournament projection with explicit source readiness, separate from wire errors.
+pub(super) mod stable;
 use super::settings::{Cbor, emit};
 use super::{OsuPointer, ProjectionSink, SessionFacts};
 use vosu_osu_model::{
@@ -128,7 +129,9 @@ fn client_value(
     client: &LazerSpectatorEntry,
     index: usize,
 ) {
-    c.map(6);
+    c.map(7);
+    c.text("keysOverlay");
+    c.null();
     c.text("ipcId");
     c.float(index as f64);
     c.text("team");
@@ -171,7 +174,18 @@ fn client_value(
         c.null();
         return;
     };
-    c.map(15);
+    c.map(18);
+    c.text("preciseUnstableRate");
+    c.float(0.0);
+    c.text("healthRaw");
+    c.map(2);
+    c.text("normal");
+    c.float(s.player_hp);
+    c.text("smooth");
+    c.float(s.player_hp_smooth);
+    c.text("rawJudgements");
+    super::play::map(c.0, 6);
+    super::play::counts(c.0, &s.statistics);
     c.text("source");
     c.text("spectator");
     c.text("failed");

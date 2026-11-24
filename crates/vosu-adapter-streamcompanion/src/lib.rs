@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 mod builder;
 pub mod chart;
+pub mod derived;
 pub mod dto;
 mod helpers;
 pub mod view;

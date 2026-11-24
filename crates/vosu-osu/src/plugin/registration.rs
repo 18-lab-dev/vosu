@@ -59,6 +59,29 @@ where
             alive,
         }),
     );
+    let tournament = {
+        let state = state.lock().expect("plugin state mutex poisoned");
+        let manager = state.attached_facts.get(&handle).is_some_and(|attached| {
+            let args = attached
+                .argv
+                .as_ref()
+                .map(|argv| {
+                    vosu_osu_reader::discovery::StartupArgs::parse(
+                        argv.iter().map(std::ffi::OsString::from),
+                    )
+                })
+                .or_else(|| {
+                    attached
+                        .command_line
+                        .as_deref()
+                        .map(vosu_osu_reader::discovery::StartupArgs::parse_command_line)
+                });
+            args.is_some_and(|args| args.get("tournament").is_some())
+        });
+        session.set_tournament_manager(manager);
+        Arc::clone(&state.tournament)
+    };
+    let _ = session.tournament.set(Arc::clone(&tournament));
     if identified.client == ClientType::Lazer {
         let attached = state
             .lock()
@@ -91,6 +114,10 @@ where
                     controls.precise,
                     controls.collect_errors,
                 );
+                publication
+                    .demand
+                    .tournament
+                    .request(controls.tourney.0, controls.tourney.1);
             }
             state.sessions.insert(handle, Arc::clone(&session));
             true
@@ -131,6 +158,35 @@ where
             session.join_resolver().await;
         });
         return identification.map(|_| ());
+    }
+    let _ = session
+        .publication
+        .get()
+        .expect("publication configured")
+        .bus
+        .tournament
+        .set((Arc::clone(&tournament), handle));
+    if session.client == ClientType::Stable {
+        tournament.attach(
+            &session
+                .publication
+                .get()
+                .expect("publication configured")
+                .bus,
+            handle,
+            session.is_tournament_manager(),
+            session.settings.clone(),
+            crate::publish::tournament::Controls {
+                selected: Arc::clone(&session.selected),
+                demand: session
+                    .publication
+                    .get()
+                    .expect("publication configured")
+                    .demand
+                    .tournament
+                    .clone(),
+            },
+        );
     }
     if identified.client == ClientType::Lazer {
         let loader = Arc::clone(loader);

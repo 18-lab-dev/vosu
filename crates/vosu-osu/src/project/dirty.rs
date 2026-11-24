@@ -170,7 +170,7 @@ fn dependencies(p: P) -> u16 {
         | OsuSettingsSkin => SETTINGS,
         OsuRankedPlay => RANKED,
         OsuRoom => ROOM,
-        OsuTourney | OsuTourneyAvailability => TOURNEY | GLOBAL | BEATMAP | STATUS,
+        OsuTourney | OsuTourneyAvailability => TOURNEY | GLOBAL | BEATMAP | STATUS | SESSION,
         OsuInternalPaths => GLOBAL | MENU,
     }
 }

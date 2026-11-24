@@ -19,3 +19,6 @@ plugin -> resources
 publish -> resources
 plugin -> actions
 actions -> session
+plugin -> publish
+plugin -> demand
+publish -> demand
