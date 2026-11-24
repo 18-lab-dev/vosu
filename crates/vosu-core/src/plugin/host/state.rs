@@ -145,6 +145,7 @@ pub(super) struct Publisher {
     pub(super) version: String,
     pub(super) read_grant: crate::state::InternalGrant,
     pub(super) read_fields: Vec<String>,
+    pub(super) read_resources: Vec<String>,
     pub(super) bundled: bool,
     pub(super) _registration: SchemaRegistration,
 }

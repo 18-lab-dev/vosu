@@ -4,13 +4,13 @@ use vosu_surface::requester::BundledRequester;
 use vosu_surface::routes::{RegistrationError, RegistrationLease, RouteDescriptor, RouteProvider};
 use vosu_surface::state::{CapturedSelection, IdentifiedRoster, IdentifiedSession};
 
-pub(super) struct Requester {
+pub(crate) struct Requester {
     pub host: Weak<PluginHost>,
     pub instance: PluginInstanceId,
 }
 
 impl Requester {
-    pub(super) fn live<'a>(
+    pub(in crate::plugin::host) fn live<'a>(
         &self,
         instances: &'a std::collections::HashMap<PluginInstanceId, InstanceSlot>,
     ) -> Result<&'a super::super::InstanceEntry, SurfaceError> {

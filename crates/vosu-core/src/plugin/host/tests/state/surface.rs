@@ -4,6 +4,7 @@ use vosu_plugin_api::{CborValue, Selector};
 use vosu_surface::state::{SessionTarget, SurfaceError, SurfaceSubscription};
 
 mod capture;
+mod r0;
 
 fn selector(ns: &str, pointer: &str) -> Selector {
     Selector {
