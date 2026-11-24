@@ -464,3 +464,5 @@ mod byte_tests;
 mod resolve;
 #[cfg(test)]
 mod stream;
+#[cfg(test)]
+mod tree_tests;
