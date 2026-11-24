@@ -6,3 +6,6 @@ mod selection;
 mod session_events;
 pub mod subscriptions;
 mod transport;
+
+#[cfg(test)]
+mod pointer_properties;
