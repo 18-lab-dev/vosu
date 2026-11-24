@@ -19,6 +19,16 @@ use vosu_surface::{
 
 type Adapter = dyn Projection<Filter, Bytes>;
 type View = dyn ProjectionView<Filter, Bytes>;
+/// Longest an HTTP read waits for retained derived work (the streamCompanion
+/// chart job) already in flight for its exact inputs, before falling back to
+/// the pinned chart-less bytes. 1.x always served chart facts, so one-shot
+/// readers must not race their own release. Measured 2026-11-24, release
+/// build, Ryzen 9 9950X3D pinned to CPUs 0-7 (non-exclusive), 60 cold
+/// `BeatmapCache::load` + projection runs each: oracle fixture chart p99
+/// 0.23 ms; 33 KB `2785319.osu` p99 4.62 ms; 243 KB / 7,052-line
+/// "The Unforgiving [Marathon]" p99 40.08 ms. Bound = 2 × the marathon p99,
+/// well under the 500 ms cap (docs/testing/benchmarks.md, M4a section).
+pub const DERIVED_HTTP_WAIT: Duration = Duration::from_millis(80);
 
 pub struct BusStateProvider {
     schema: Schema,
@@ -161,7 +171,31 @@ impl StateJsonProvider for BusStateProvider {
             if schema != self.schema {
                 return CachedJson::NotReady;
             }
-            match self.snapshot() {
+            // Subscribe before checking, so a completion cannot slip between.
+            let changes = self.adapter.changes();
+            let mut snapshot = self.snapshot();
+            if let Some(mut changes) = changes
+                && snapshot.is_ok()
+            {
+                if self.adapter.pending() {
+                    let _ = tokio::time::timeout(DERIVED_HTTP_WAIT, async {
+                        while self.adapter.pending() {
+                            if changes.changed().await.is_err() {
+                                break;
+                            }
+                        }
+                    })
+                    .await;
+                }
+                // Work may also have completed between decode and the check.
+                if snapshot
+                    .as_ref()
+                    .is_ok_and(|current| current.derived != self.adapter.revision())
+                {
+                    snapshot = self.snapshot();
+                }
+            }
+            match snapshot {
                 Ok(snapshot) => snapshot
                     .http
                     .get_or_init(|| {

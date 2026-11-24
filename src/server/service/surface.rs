@@ -63,6 +63,93 @@ pub fn reserve_core_routes(
     host.reserve_core_surface_routes(descriptors)
 }
 
+/// One bundled adapter's route registrations.
+pub type AdapterRoutes = Vec<(
+    vosu_surface::routes::RouteDescriptor,
+    Arc<dyn RouteProvider>,
+)>;
+
+/// The bundled adapters' overlay route table, grouped by registering owner:
+/// `[upstream, gosumemory, streamcompanion]`. `state` and `feeds` are ordered
+/// v1, streamCompanion, v2, v2 precise. The production mount and the root
+/// compatibility matrix both register exactly this table.
+pub fn adapter_routes(
+    state: [Arc<dyn StateJsonProvider>; 4],
+    feeds: [WebSocketHub; 4],
+    files: &vosu_adapter_upstream::files::Provider,
+) -> [AdapterRoutes; 3] {
+    use vosu_surface::{
+        listener::ListenerRole,
+        routes::{RouteDescriptor, RoutePath},
+    };
+    let mut groups: [AdapterRoutes; 3] = Default::default();
+    let mut add =
+        |owner: usize, path: RoutePath, method: &str, websocket: bool, provider| {
+            groups[owner].push((
+                RouteDescriptor {
+                    listener: ListenerRole::Overlay,
+                    method: method.into(),
+                    path,
+                    websocket,
+                },
+                Arc::new(provider) as Arc<dyn RouteProvider>,
+            ));
+        };
+    let schemas = [
+        (1, StateRoute::V1, "/json", "/ws"),
+        (2, StateRoute::StreamCompanion, "/json/sc", "/tokens"),
+        (0, StateRoute::V2, "/json/v2", "/websocket/v2"),
+        (0, StateRoute::V2Precise, "/json/v2/precise", "/websocket/v2/precise"),
+    ];
+    for (((owner, route, path, ws), provider), hub) in schemas.into_iter().zip(state).zip(feeds) {
+        add(
+            owner,
+            RoutePath::Exact(path.into()),
+            "GET",
+            false,
+            RegisteredProvider::State { provider, route },
+        );
+        add(
+            owner,
+            RoutePath::Exact(ws.into()),
+            "GET",
+            true,
+            RegisteredProvider::Feed(hub),
+        );
+    }
+    add(
+        0,
+        RoutePath::Exact("/api/calculate/pp".into()),
+        "GET",
+        false,
+        RegisteredProvider::Calculate(files.clone()),
+    );
+    for (path, methods) in [
+        ("/backgroundImage", &["GET"][..]),
+        ("/Songs", &["GET"][..]),
+        ("/files/beatmap", &["GET", "HEAD"][..]),
+        ("/files/skin", &["GET", "HEAD"][..]),
+    ] {
+        for method in methods {
+            let matcher = if path == "/backgroundImage" {
+                RoutePath::Exact(path.into())
+            } else {
+                RoutePath::Children(path.into())
+            };
+            add(
+                0,
+                matcher,
+                method,
+                false,
+                RegisteredProvider::File {
+                    provider: files.clone(),
+                },
+            );
+        }
+    }
+    groups
+}
+
 #[derive(Clone)]
 pub struct SurfaceRouter {
     host: Arc<vosu_core::plugin::PluginHost>,

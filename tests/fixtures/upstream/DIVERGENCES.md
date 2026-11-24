@@ -14,10 +14,27 @@ adapters restore upstream names and distinguish pending from missing-score
 failure. A4 approval is not implementation evidence and closes no temporary
 entry by itself.
 
-The former vosu-only v2 clock/source wire fields (`beatmap.time.rate`,
-`beatmap.time.running`, `play.source`, including nested play copies) are removed
-by the approved M4a extension cutover. Their accurate state-bus facts remain;
-this is not an exemption allowing extra fields in an upstream adapter.
+The former vosu 1.x-only wire members and routes removed by the approved M4a
+extension cutover are the `adr0021-*` and `lazer-legacy-skin-404` rows below,
+with exact route and member scope. Their accurate state-bus facts remain; these
+rows are removals that restore the pinned upstream wire, never an exemption
+allowing extra fields in an upstream adapter. `state_api_compat` proves every
+removed member absent at every nesting level while nonempty source facts are
+present on the bus (`seeded_sources_change_every_schema_while_extensions_stay_off_the_wire`).
+
+The four `vosu.osu` rows authorize no adapter wire difference. The adapters
+restore `bestOF` and `roomID`, fail `/json` and `/json/v2` with HTTP 500 for a
+lazer spectator without score while `/json/v2/precise` and its feed stay
+ready with `tourney: []` exactly as 1.x (whose precise builder never read
+lazer spectators), and keep `sliderBreaks` out of v2
+`resultsScreen.hits` (`state_schema_contract_entries_do_not_authorize_adapter_wire_differences`,
+`stable_aggregate_maps_distinct_manager_and_spectators_on_every_session`).
+
+The former stable-tournament temporary exemption is closed: no ledger row
+exists for it, the committed `stable-tournament` oracle matches byte for byte
+for all four schemas, and distinct manager/spectator fixtures prove IPC order,
+per-spectator play, keys and hit errors, manager-only controls and chat, and an
+identical aggregate whichever stable session is focused.
 
 | id | class | scope | reason | closed by |
 | --- | --- | --- | --- | --- |
@@ -30,7 +47,15 @@ this is not an exemption allowing extra fields in an upstream adapter.
 | legacy-directory-listing-budget | security | Legacy HTML directory indexes under `/Songs/{path}`, `/files/beatmap/{path}`, stable `/files/skin/{path}` | Bound one listing to 131,072 entries / 16 MiB of names; larger listings carry an explicit truncated marker. This accommodates heavy 20k–50k Songs collections while bounding attacker-controlled directory allocation. Stable case lookup pages to completion independently, never inferring absence from a truncated HTML listing | approved M4a R1 listing budget |
 | legacy-game-file-sandbox | security | game file responses on the routes above | sandbox CSP and nosniff; no active-content type escalation | permanent ADR 0005 / ADR 0021 |
 | adapter-listener-policy | security | adapter HTTP and WebSocket endpoints | overlay-listener peer, Origin/API-key policy and existing request/frame limits; no dashboard-listener bypass | permanent ADR 0016 / ADR 0021 |
+| adapter-surface-request-budget | security | Every surface-registered adapter route on the overlay listener: `/json`, `/json/sc`, `/json/v2`, `/json/v2/precise`, `/api/calculate/pp`, `/ws`, `/tokens`, `/websocket/v2`, `/websocket/v2/precise`, `/backgroundImage`, `/Songs/{path}`, `/files/beatmap/*`, `/files/skin/{path}` | Under `adapter-listener-policy`: a request carrying more than 128 decoded query pairs (`MAX_QUERY_PAIRS`), more than 16 KiB of query plus forwarded-header metadata (`MAX_METADATA_BYTES`), more than 32 forwarded headers (`MAX_HEADERS`), or a control byte in a forwarded `range`, `if-none-match`, `if-modified-since` or `if-range` value never reaches a provider and gets the ordinary `Not Found` 404, with no upgrade. Source: `crates/vosu-surface/src/routes.rs` (`SurfaceRequest::valid_metadata`). 1.x ignored the query on the state, feed and game-file routes and parsed `/api/calculate/pp` without any pair or byte budget, so such requests were still served | approved M4a X0 bounded-request security divergence; `server_compat` `mounted_origin_peer_limits_and_api_v1_privacy_are_enforced_on_adapter_routes` |
 | legacy-calculation-engine | contract | `/api/calculate/pp` engine/query/result behavior | ADR 0004 keeps LegacyRosuEngine separate from the live lazer engine | permanent ADR 0004 |
+| adr0021-v2-extension-removal | contract | `/json/v2`, `/websocket/v2`: `/beatmap/time/rate`, `/beatmap/time/running`, `/play/source`, `/keys` entirely, `/play/pressHitErrors`, `/play/releaseHitErrors`, `/play/keyHitErrors`, `/play/hitOffsets`, `/play/catcher`, and the same play members under `/tourney/clients/*/play` | vosu 1.x-only extensions are absent, not null or empty; accurate facts stay on the bus as `vosu.osu.beatmap.time.rate`, `vosu.osu.beatmap.time.running`, `vosu.osu.play.source`, `vosu.play.rate`, `vosu.osu.keys`, `vosu.osu.play.hitErrors`; `/play/hitErrorArray` and all pinned members unchanged | permanent ADR 0021 / A4.6; removed by V0 and D0 |
+| adr0021-precise-extension-removal | contract | `/json/v2/precise`, `/websocket/v2/precise`: `/keys/all`, `/pressHitErrors`, `/releaseHitErrors`, `/keyHitErrors`, `/hitOffsets`, `/catcher`, `/tourney/*/keys/all`, `/tourney/*/pressHitErrors`, `/tourney/*/releaseHitErrors` | vosu 1.x-only extensions are absent; upstream `/keys/k1`, `/keys/k2`, `/keys/m1`, `/keys/m2`, `/hitErrors` and `/tourney/*/ipcId`, `/tourney/*/keys`, `/tourney/*/hitErrors` keep upstream order | permanent ADR 0021 / A4.6; removed by V0 |
+| adr0021-gosumemory-extension-removal | contract | `/json`, `/ws`: `/gameplay/hits/pressHitErrors`, `/gameplay/hits/releaseHitErrors`, and the same members under `/tourney/ipcClients/*/gameplay/hits` | vosu 1.x-only extensions are absent; `/gameplay/hits/hitErrorArray` and `/gameplay/keyOverlay` remain | permanent ADR 0021 / A4.6; removed by G0 |
+| adr0021-sc-extension-removal | contract | `/json/sc`, `/tokens`: `pressHitErrors`, `releaseHitErrors` (Rust source names `press_hit_errors`, `release_hit_errors`), including inside embedded JSON string tokens | vosu 1.x-only extensions are absent; `hitErrors` and the `keyOverlay` JSON string remain | permanent ADR 0021 / A4.6; removed by C0 |
+| adr0021-removed-selected-v2-feed | contract | `/websocket/v2/subscribe`, every method, with or without an upgrade request | vosu 1.x-only route: exact `Not Found` 404, never an upgrade or static/overlay fallthrough; near misses stay 404; attribution records only an installed validated overlay identity (A4.5); API v1 session subscriptions replace it | permanent ADR 0021 / A4.5; N0 |
+| adr0021-removed-legacy-skin-index | contract | `/files/skin/` exact path, every method, with or without an upgrade request | vosu 1.x-only metadata index: exact `Not Found` 404, never an upgrade or listing; attribution as above; retained-root private lookup and API v1 skin trees remain | permanent ADR 0021 / A4.5; N0, R1 |
+| lazer-legacy-skin-404 | contract | `/files/skin/{path}` when the captured session is lazer | The legacy lookup and its lazer delegation are removed and return 404; API v1 lazer skin trees and resources remain functional | permanent ADR 0021 / A4.6; R1 |
 
 ADR 0021's clean-room `/api/ingame` replacement is a separately scheduled
 licensing change, not an exemption declaring the present implementation

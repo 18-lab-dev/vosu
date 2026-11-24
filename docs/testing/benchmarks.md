@@ -213,6 +213,29 @@ target\release\examples\live_reader_bench.exe --pid <lazer-pid> --client lazer -
 Linux lazer: `cargo build --release --locked --example live_reader_bench`, then
 `target/release/examples/live_reader_bench --pid <pid> --client lazer --adapter`
 (add `--memory plan`). Each JSON result holds both lanes and both modes.
+### streamCompanion HTTP chart wait bound (X0)
+
+HTTP-only `/json/sc` readers keep chart facts: releasing the last consumer no
+longer cancels the selected key's chart job or drops its completed result,
+and an HTTP read whose exact-input job is in flight waits at most
+`DERIVED_HTTP_WAIT` = **80 ms** (`src/server/bus_provider.rs`) before
+falling back to the pinned chart-less bytes. The bound is 2 × the largest
+measured p99 and stays under the 500 ms cap. Measured 2026-11-24 with a
+throwaway release-build test (not a committed benchmark), Ryzen 9 9950X3D
+pinned to CPUs 0-7, **non-exclusive**, 60 cold `BeatmapCache::load` +
+projection runs per map; resource open/read through the retained root is
+excluded:
+
+| Map | Size | Median | p99 | Max |
+| --- | --- | --- | --- | --- |
+| source-oracle fixture chart (1 object) | 226 B | 0.11 ms | 0.23 ms | 0.27 ms |
+| `crates/vosu-pp/rosu-pp-api/resources/2785319.osu` | 33,573 B | 3.52 ms | 4.62 ms | 4.94 ms |
+| `Within Temptation - The Unforgiving (Armin) [Marathon].osu` | 243,197 B | 36.68 ms | 40.08 ms | 40.17 ms |
+
+Slower hosts that exceed the bound on a very large map serve chart-less bytes
+for that first read only; the job still completes and later reads reuse its
+result. X1's `adapter/sc_unchanged_chart` and `adapter/sc_changed_chart`
+cases measure this path and must be re-baselined after this change.
 
 ## M3 D17 contract
 

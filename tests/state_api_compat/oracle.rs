@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use serde::Deserialize;
 use serde_json::Value;
 #[path = "../adapter_fixture/mod.rs"]
-mod adapter_fixture;
+pub mod adapter_fixture;
 use adapter_fixture::Fixture;
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapInput, EngineOutput, EngineRequest, ModSet, Ruleset,
@@ -324,7 +324,10 @@ pub fn regular(input: &Input) -> RegularState {
             game_folder: string(global, "gameFolder"),
             skin_folder: string(global, "skinFolder"),
             current_skin: None,
-            render: None,
+            // Absent from the pinned corpus; synthetic extension seeds only.
+            render: global
+                .get("render")
+                .map(|render| serde_json::from_value(render.clone()).expect("render fixture")),
             songs_folder: string(global, "songsFolder"),
             memory_songs_folder: String::new(),
         },

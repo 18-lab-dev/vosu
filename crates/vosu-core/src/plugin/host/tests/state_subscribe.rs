@@ -721,4 +721,42 @@ fn fence(host: &Host, who: u64) {
     rx.recv_timeout(RECV_TIMEOUT).unwrap();
 }
 
+#[test]
+fn sessions_watcher_learns_a_session_only_once_its_bus_state_is_open() {
+    use crate::{plugin::session::SessionHandle, state::SessionKey};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_, host) = test_host(rt.handle().clone());
+    let (_, handle, _) = publisher(&host, 8681);
+    // Reproduce the window between recording identification and
+    // `open_bus_session`: the session is identified but has no bus state.
+    host.state.store.close_session(SessionKey(handle));
+    let events = subscriber(&host, 8682, None);
+    assert_eq!(
+        subscribe(&host, 8682, None, vec![select("vosu.sessions", "")]),
+        vosu_status::VOSU_OK
+    );
+    fence(&host, 8682);
+    assert!(
+        events.try_recv().is_err(),
+        "an announced session must accept the watcher's immediate subscription"
+    );
+    host.open_bus_session(SessionHandle(handle), false);
+    host.state_session_identified(SessionHandle(handle));
+    let SubscriberEvent::Attached(attached) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+        panic!("expected attachment once the bus session is open")
+    };
+    assert_eq!(attached.handle, handle);
+    assert_eq!(
+        subscribe(
+            &host,
+            8682,
+            Some(handle),
+            vec![select("vosu.play", "/combo")]
+        ),
+        vosu_status::VOSU_OK
+    );
+    host.destroy_all(Duration::from_secs(5));
+}
+
 mod review;

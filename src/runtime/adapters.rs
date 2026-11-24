@@ -90,101 +90,18 @@ impl Adapters {
         crate::server::service::SurfaceRouter::new(host, self.requesters[0].clone())
     }
     pub(super) fn mount(&self, host: &Arc<PluginHost>, hubs: &WebSocketHubs) -> io::Result<()> {
-        use crate::server::service::RegisteredProvider as Provider;
-        use vosu_surface::listener::ListenerRole;
-        use vosu_surface::routes::{RouteDescriptor, RoutePath, RouteProvider};
-        let mut groups: [Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>; 3] =
-            std::array::from_fn(|_| Vec::new());
-        let mut add =
-            |owner: usize, path: RoutePath, method: &str, websocket: bool, provider: Provider| {
-                groups[owner].push((
-                    RouteDescriptor {
-                        listener: ListenerRole::Overlay,
-                        method: method.into(),
-                        path,
-                        websocket,
-                    },
-                    Arc::new(provider),
-                ));
-            };
-        for (owner, schema, path, ws, hub) in [
-            (1, WebSocketSchema::V1, "/json", "/ws", &hubs.v1),
-            (
-                2,
-                WebSocketSchema::StreamCompanion,
-                "/json/sc",
-                "/tokens",
-                &hubs.stream_companion,
-            ),
-            (
-                0,
-                WebSocketSchema::V2,
-                "/json/v2",
-                "/websocket/v2",
-                &hubs.v2,
-            ),
-            (
-                0,
-                WebSocketSchema::V2Precise,
-                "/json/v2/precise",
-                "/websocket/v2/precise",
-                &hubs.v2_precise,
-            ),
-        ] {
-            let route = match schema {
-                WebSocketSchema::V1 => StateRoute::V1,
-                WebSocketSchema::StreamCompanion => StateRoute::StreamCompanion,
-                WebSocketSchema::V2 => StateRoute::V2,
-                WebSocketSchema::V2Precise => StateRoute::V2Precise,
-            };
-            add(
-                owner,
-                RoutePath::Exact(path.into()),
-                "GET",
-                false,
-                Provider::State {
-                    provider: self.provider(schema).clone(),
-                    route,
-                },
-            );
-            add(
-                owner,
-                RoutePath::Exact(ws.into()),
-                "GET",
-                true,
-                Provider::Feed(hub.clone()),
-            );
-        }
-        add(
-            0,
-            RoutePath::Exact("/api/calculate/pp".into()),
-            "GET",
-            false,
-            Provider::Calculate(self.files.clone()),
+        let groups = crate::server::service::adapter_routes(
+            std::array::from_fn(|index| {
+                self.schemas[index].clone() as Arc<dyn crate::server::routes::StateJsonProvider>
+            }),
+            [
+                hubs.v1.clone(),
+                hubs.stream_companion.clone(),
+                hubs.v2.clone(),
+                hubs.v2_precise.clone(),
+            ],
+            &self.files,
         );
-        for (path, methods) in [
-            ("/backgroundImage", &["GET"][..]),
-            ("/Songs", &["GET"][..]),
-            ("/files/beatmap", &["GET", "HEAD"][..]),
-            ("/files/skin", &["GET", "HEAD"][..]),
-        ] {
-            for method in methods {
-                let matcher = if path == "/backgroundImage" {
-                    RoutePath::Exact(path.into())
-                } else {
-                    RoutePath::Children(path.into())
-                };
-                add(
-                    0,
-                    matcher,
-                    method,
-                    false,
-                    Provider::File {
-                        provider: self.files.clone(),
-                    },
-                );
-            }
-        }
         let mut leases =
             vec![
                 crate::server::service::reserve_core_routes(host).map_err(|error| {

@@ -95,11 +95,8 @@ impl Drop for Retained {
         let mut state = self.0.lock().unwrap();
         state.dependents -= 1;
         if state.dependents == 0 {
-            if let Some(view) = state.last.clone()
-                && let Some(worker) = state.worker.as_mut()
-            {
-                let _ = worker.select(&view, false);
-            }
+            // The worker keeps the selected key's in-flight job and completed
+            // chart: a one-shot reader releasing early must not cancel it.
             state.key = None;
             state.refresh();
         }
@@ -173,7 +170,7 @@ impl Projection<Filter, Bytes> for Provider {
             state.key = state
                 .worker
                 .as_mut()
-                .and_then(|worker| worker.select(&view, true).ok().flatten());
+                .and_then(|worker| worker.select(&view).ok().flatten());
         }
         Some(Box::new(Retained(Arc::clone(&self.state))))
     }
@@ -181,6 +178,13 @@ impl Projection<Filter, Bytes> for Provider {
         let mut state = self.state.lock().unwrap();
         state.refresh();
         state.revision
+    }
+    fn pending(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        match (&state.key, &state.worker) {
+            (Some(key), Some(worker)) => worker.pending_for(key),
+            _ => false,
+        }
     }
     fn changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
         self.state
@@ -199,10 +203,10 @@ impl Projection<Filter, Bytes> for Provider {
         let view = match decoded {
             Ok(view) => Arc::new(view),
             Err(error) => {
-                if let Some(view) = state.last.take()
-                    && let Some(worker) = state.worker.as_mut()
-                {
-                    let _ = worker.select(&view, false);
+                // The selection is no longer valid: an explicit invalidation.
+                state.last = None;
+                if let Some(worker) = state.worker.as_mut() {
+                    worker.invalidate();
                 }
                 state.key = None;
                 state.refresh();
@@ -218,19 +222,18 @@ impl Projection<Filter, Bytes> for Provider {
         let dependent = state.dependents != 0;
         // Chart read/calculation errors intentionally use the pinned not-ready
         // defaults. current_for never pairs an old completion with a new view.
-        let desired = if dependent {
-            ChartKey::from_view(&view).ok().flatten()
-        } else {
-            None
-        };
-        if desired != state.key {
-            state.key = state
-                .worker
-                .as_mut()
-                .unwrap()
-                .select(&view, dependent)
-                .ok()
-                .flatten();
+        let key = ChartKey::from_view(&view).ok().flatten();
+        let state = &mut *state;
+        let worker = state.worker.as_mut().unwrap();
+        if !dependent {
+            // No consumer: start nothing, but a different map cancels and
+            // clears the previous key's job/result instead of keeping it.
+            if worker.key().is_some_and(|selected| Some(selected) != key) {
+                worker.invalidate();
+            }
+            state.key = None;
+        } else if key != state.key {
+            state.key = worker.select(&view).ok().flatten();
         }
         let chart = state.refresh();
         state.last = Some(Arc::clone(&view));

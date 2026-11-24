@@ -301,7 +301,9 @@ impl Fixture {
     pub fn stream_owner(&self, stream: u64) -> Result<Arc<Publisher>, vosu_status> {
         route_stream(&self.publishers, stream)
     }
-    pub fn encode(&self, schema: &str) -> Vec<u8> {
+    /// The provider's typed result, so callers can reject a vacuous not-ready
+    /// response instead of comparing its corpus placeholder bytes.
+    pub fn outcome(&self, schema: &str) -> CachedJson {
         let (index, route) = match schema {
             "v1" => (0, StateRoute::V1),
             "sc" => (1, StateRoute::StreamCompanion),
@@ -309,26 +311,31 @@ impl Fixture {
             "v2-precise" => (3, StateRoute::V2Precise),
             _ => panic!("unknown schema"),
         };
-        let result = self.h.runtime.block_on(async {
+        self.h.runtime.block_on(async {
             let _lease = (index == 1 && self.has_chart)
                 .then(|| self.chart.retain(&[]))
                 .flatten();
             let mut changes = self.chart.changes().expect("live fixture chart worker");
             let first = self.providers[index].cached_json(route).await;
-            if index == 1 && self.has_chart && self.chart.revision() == 0 {
+            if index == 1 && self.has_chart {
+                // A loaded host can exceed the HTTP wait bound: settle the
+                // retained chart job itself, then read its completed view.
                 tokio::time::timeout(Duration::from_secs(5), async {
-                    while self.chart.revision() == 0 {
+                    while self.chart.pending() || self.chart.revision() == 0 {
                         changes.changed().await.unwrap();
                     }
                 })
                 .await
                 .expect("source-oracle chart publication deadline");
+                drop(first);
                 self.providers[index].cached_json(route).await
             } else {
                 first
             }
-        });
-        match result {
+        })
+    }
+    pub fn encode(&self, schema: &str) -> Vec<u8> {
+        match self.outcome(schema) {
             CachedJson::Ready(bytes) => bytes.to_vec(),
             // The source-oracle corpus records the typed not-ready outcome,
             // not the transport's legacy error envelope (covered separately).

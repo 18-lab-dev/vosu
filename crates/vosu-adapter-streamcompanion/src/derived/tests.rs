@@ -150,7 +150,7 @@ async fn parsed_resource_facts_are_nonzero_and_wire_kiai_stays_empty() {
         let mut view = view(Some("a"));
         view.capture.session.as_mut().unwrap().variant = variant.into();
         let mut notices = worker.subscribe();
-        worker.select(&view, true).unwrap();
+        worker.select(&view).unwrap();
         let chart = ready(&worker, &mut notices).await;
         assert!(chart.facts.strains.values().any(|v| *v > 0.0));
         assert_eq!(chart.facts.breaks.len(), 1);
@@ -180,36 +180,36 @@ async fn precise_clients_reuse_chart_and_complete_dependency_key_invalidates() {
     let mut worker = worker(&fixture);
     let mut view = view(Some("a"));
     let mut notices = worker.subscribe();
-    worker.select(&view, true).unwrap();
+    worker.select(&view).unwrap();
     let first = ready(&worker, &mut notices).await;
     for i in 0..100 {
         view.play_time = f64::from(i);
         view.capture.revision += 1;
-        worker.select(&view, true).unwrap();
+        worker.select(&view).unwrap();
         assert!(Arc::ptr_eq(&first, &worker.current().unwrap()));
     }
     assert_eq!(worker.counts().starts, 1);
     assert_eq!(worker.counts().reads, 1);
     assert_eq!(worker.counts().parses, 1);
     view.play.mods.rate = 1.5;
-    worker.select(&view, true).unwrap();
+    worker.select(&view).unwrap();
     let rate = ready(&worker, &mut notices).await;
     assert_eq!(worker.counts().parses, 2);
     assert_ne!(rate.facts.bpm.common, first.facts.bpm.common);
     view.metadata.time.mp3_length = Some(20000.0);
-    worker.select(&view, true).unwrap();
+    worker.select(&view).unwrap();
     let audio = ready(&worker, &mut notices).await;
     assert_eq!(worker.counts().parses, 2); // projection-only dependency
     assert_ne!(audio.facts.strains.len(), rate.facts.strains.len());
     view.play.mode.number = Some(1);
-    worker.select(&view, true).unwrap();
+    worker.select(&view).unwrap();
     ready(&worker, &mut notices).await;
     assert_eq!(worker.counts().parses, 3);
     view.play.mods.array.push(vosu_osu_model::states::Mod {
         acronym: "HR".into(),
         settings: None,
     });
-    worker.select(&view, true).unwrap();
+    worker.select(&view).unwrap();
     ready(&worker, &mut notices).await;
     assert_eq!(worker.counts().parses, 4);
     tokio::time::timeout(WAIT, worker.shutdown())
@@ -226,13 +226,13 @@ async fn canceled_a_cannot_publish_over_latest_b_and_pending_is_bounded() {
     let mut worker = worker(&fixture);
     let a = view(Some("a"));
     let mut notices = worker.subscribe();
-    worker.select(&a, true).unwrap();
+    worker.select(&a).unwrap();
     tokio::time::timeout(WAIT, fixture.started.notified())
         .await
         .unwrap();
     let b = view(Some("b"));
     for _ in 0..1000 {
-        worker.select(&b, true).unwrap();
+        worker.select(&b).unwrap();
     }
     let chart = ready(&worker, &mut notices).await;
     assert_eq!(chart.facts.timing_points[0].beat_length, 600.0);
@@ -251,24 +251,73 @@ async fn no_consumer_missing_resource_and_denied_generation_never_read_private_p
     let fixture = Arc::new(Fixture::default());
     let mut worker = worker(&fixture);
     let a = view(Some("a"));
-    worker.select(&a, false).unwrap();
-    worker.select(&view(None), true).unwrap();
+    worker.invalidate();
+    worker.select(&view(None)).unwrap();
     assert_eq!(worker.counts(), Counts::default());
     let mut notices = worker.subscribe();
-    worker.select(&view(Some("forbidden")), true).unwrap();
+    worker.select(&view(Some("forbidden"))).unwrap();
     failed(&worker, &mut notices).await;
     assert!(worker.current().is_none());
     assert_eq!(worker.counts().reads, 0);
     assert_eq!(worker.counts().parses, 0);
     let mut stale = a.clone();
     stale.capture.session.as_mut().unwrap().generation = 99;
-    worker.select(&stale, true).unwrap();
+    worker.select(&stale).unwrap();
     failed(&worker, &mut notices).await;
     assert_eq!(worker.counts().reads, 0);
-    worker.select(&a, true).unwrap();
+    worker.select(&a).unwrap();
     ready(&worker, &mut notices).await;
-    worker.select(&a, false).unwrap();
-    assert!(worker.current().is_none());
+    // Releasing the last consumer is no worker call: the completed chart for
+    // the selected key stays; only explicit invalidation clears it.
+    assert_eq!(worker.key(), ChartKey::from_view(&a).unwrap());
+    assert!(worker.current().is_some());
+    worker.invalidate();
+    assert!(worker.current().is_none() && worker.key().is_none());
+    tokio::time::timeout(WAIT, worker.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+}
+#[tokio::test]
+async fn released_job_completes_and_is_reused_but_a_new_key_cancels_in_flight_work() {
+    let fixture = Arc::new(Fixture {
+        block_a: true,
+        ..Fixture::default()
+    });
+    let mut worker = worker(&fixture);
+    let mut notices = worker.subscribe();
+    let a = view(Some("a"));
+    let key = worker.select(&a).unwrap().unwrap();
+    tokio::time::timeout(WAIT, fixture.started.notified())
+        .await
+        .unwrap();
+    assert!(worker.pending_for(&key));
+    // The one-shot consumer releases now; releasing is no worker call, so the
+    // in-flight job is not cancelled and its result is kept for the key.
+    fixture.gate.notify_one();
+    let chart = ready(&worker, &mut notices).await;
+    assert!(!worker.pending_for(&key));
+    assert_eq!(worker.counts().cancels, 0);
+    let before = worker.counts();
+    assert_eq!(worker.select(&a).unwrap(), Some(key.clone()));
+    assert!(Arc::ptr_eq(&worker.current_for(&key).unwrap(), &chart));
+    assert_eq!(
+        worker.counts(),
+        before,
+        "the same key reuses, never re-parses"
+    );
+    // A different key cancels in-flight work for the previous one.
+    worker.invalidate();
+    let key = worker.select(&a).unwrap().unwrap();
+    tokio::time::timeout(WAIT, fixture.started.notified())
+        .await
+        .unwrap();
+    let b = worker.select(&view(Some("b"))).unwrap().unwrap();
+    ready(&worker, &mut notices).await;
+    fixture.gate.notify_one();
+    assert!(worker.counts().cancels >= 1);
+    assert!(worker.current_for(&key).is_none());
+    assert!(worker.current_for(&b).is_some());
     tokio::time::timeout(WAIT, worker.shutdown())
         .await
         .unwrap()
@@ -284,9 +333,9 @@ async fn failed_open_is_retried_and_shutdown_cancels_reader_and_joins() {
     let mut worker = worker(&fixture);
     let a = view(Some("a"));
     let mut notices = worker.subscribe();
-    worker.select(&a, true).unwrap();
+    worker.select(&a).unwrap();
     failed(&worker, &mut notices).await;
-    worker.select(&a, true).unwrap();
+    worker.select(&a).unwrap();
     tokio::time::timeout(WAIT, fixture.started.notified())
         .await
         .unwrap();
@@ -316,7 +365,7 @@ async fn completed_a_is_discarded_after_b_is_selected_and_only_latest_pending_ru
         }
     }));
     let mut notices = worker.subscribe();
-    worker.select(&view(Some("a")), true).unwrap();
+    worker.select(&view(Some("a"))).unwrap();
     tokio::time::timeout(WAIT, completed.notified())
         .await
         .unwrap();
@@ -325,7 +374,7 @@ async fn completed_a_is_discarded_after_b_is_selected_and_only_latest_pending_ru
     let mut next = view(Some("b"));
     for generation in 10..1010 {
         next.capture.session.as_mut().unwrap().generation = generation;
-        worker.select(&next, true).unwrap();
+        worker.select(&next).unwrap();
     }
     assert!(worker.current().is_none());
     release.send(()).unwrap();
@@ -347,10 +396,10 @@ async fn resource_and_session_identity_and_scoring_changes_never_reuse_stale_out
     let fixture = Arc::new(Fixture::default());
     let mut worker = worker(&fixture);
     let mut notices = worker.subscribe();
-    worker.select(&view(Some("a")), true).unwrap();
+    worker.select(&view(Some("a"))).unwrap();
     let a = ready(&worker, &mut notices).await;
     let mut b = view(Some("b")); // same echoed filename, distinct content identity/bytes
-    worker.select(&b, true).unwrap();
+    worker.select(&b).unwrap();
     let changed = ready(&worker, &mut notices).await;
     assert_ne!(
         a.facts.timing_points[0].beat_length,
@@ -365,7 +414,7 @@ async fn resource_and_session_identity_and_scoring_changes_never_reuse_stale_out
             2 => session.owner_instance += 1,
             _ => session.variant = "lazer".into(),
         }
-        worker.select(&b, true).unwrap();
+        worker.select(&b).unwrap();
         let result = ready(&worker, &mut notices).await;
         assert!(!Arc::ptr_eq(&changed, &result));
     }
@@ -384,7 +433,7 @@ async fn calculation_failure_clears_output_and_cannot_poison_the_success_cache()
     let fixture = Arc::new(Fixture::default());
     let mut worker = worker(&fixture);
     let mut notices = worker.subscribe();
-    let a_key = worker.select(&view(Some("a")), true).unwrap().unwrap();
+    let a_key = worker.select(&view(Some("a"))).unwrap().unwrap();
     ready(&worker, &mut notices).await;
     assert!(worker.current_for(&a_key).is_some());
     let mut invalid = view(Some("a"));
@@ -395,7 +444,7 @@ async fn calculation_failure_clears_output_and_cannot_poison_the_success_cache()
             json!("not-a-number"),
         )])),
     }];
-    worker.select(&invalid, true).unwrap();
+    worker.select(&invalid).unwrap();
     failed(&worker, &mut notices).await;
     assert!(worker.current_for(&a_key).is_none());
     assert!(worker.current().is_none());
@@ -403,7 +452,7 @@ async fn calculation_failure_clears_output_and_cannot_poison_the_success_cache()
     assert!(defaults.map_strains.is_empty());
     assert!(defaults.map_breaks.is_empty());
     assert!(defaults.map_timing_points.is_empty());
-    worker.select(&view(Some("b")), true).unwrap();
+    worker.select(&view(Some("b"))).unwrap();
     ready(&worker, &mut notices).await;
     assert_eq!(worker.counts().opens, 3);
     assert_eq!(worker.counts().reads, 3);
