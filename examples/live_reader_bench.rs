@@ -278,7 +278,7 @@ fn run<R: SynchronizedMemoryReader + 'static>(
         )?;
         println!(
             "{}",
-            serde_json::json!({"product":"vosu","client_version":version,"pid":args.pid,"bus":result})
+            serde_json::json!({"product":"vosu","client_version":version,"client":if args.client == ClientType::Lazer {"lazer"} else {"stable"},"memory":args.memory,"pid":args.pid,"calculate_pp":false,"state":format!("{state_start} -> {}", bundle.snapshot().precise.status),"bus":result})
         );
         return Ok(());
     }

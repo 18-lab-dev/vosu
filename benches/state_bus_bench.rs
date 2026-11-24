@@ -42,6 +42,7 @@ fn snapshot(n: i64) -> Arc<StateBundleSnapshot> {
     regular.global.status = 2;
     regular.gameplay.score = n as f64;
     let mut precise = (*initial.precise).clone();
+    precise.status = 2;
     precise.play_time = n as f64;
     Arc::new(StateBundleSnapshot {
         source: ClientType::Stable,
@@ -183,6 +184,7 @@ fn bench(c: &mut Criterion) {
     for (name, regular) in [("regular_batch", true), ("precise_batch", false)] {
         let (publisher, bytes) = publisher();
         publisher.publish(a.clone(), Delivery::All).unwrap();
+        bytes.lock().unwrap().clear();
         let mut next = (*a).clone();
         if regular {
             next.regular = b.regular.clone();
@@ -191,6 +193,10 @@ fn bench(c: &mut Criterion) {
         }
         publisher.publish(Arc::new(next), Delivery::All).unwrap();
         let encoded = bytes.lock().unwrap().clone();
+        assert!(
+            !encoded.is_empty(),
+            "incremental source must produce a batch"
+        );
         let bus = Bus::new();
         commits.bench_function(name, |bencher| {
             bencher.iter(|| bus.commit(black_box(&encoded), false))
