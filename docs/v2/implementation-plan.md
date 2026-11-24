@@ -1506,24 +1506,29 @@ states what was adopted and why. Spec amendments land in A1.
   filter widens to all execs and the dashboard says which plugin caused it.
   Overlap is checked statically on `process_names`, `comm_hints`, and
   `linux_name_contains`: two plugins overlap when a `process_names` entry
-  is shared, when a `linux_name_contains` entry of one is contained in a
-  `process_names` entry of the other, or when a `comm_hints`/
-  `linux_name_contains` entry of one and a `comm_hints`/
-  `linux_name_contains` entry of the other could both match some single
-  `comm` value of 15 bytes or fewer (one contains the other, or a
-  suffix/prefix merge of the two is 15 bytes or fewer); at runtime, any
+  is shared, when a `comm_hints`/`linux_name_contains` entry of one is
+  equal to or a substring of a `process_names` entry of the other, or
+  when a `comm_hints`/`linux_name_contains` entry of one is equal to or a
+  substring of a `comm_hints`/`linux_name_contains` entry of the other —
+  exactly the pre-A1b D18 hint-overlap rule, with `linux_name_contains`
+  treated like `comm_hints` for this static check, not a pairwise
+  "could both match some 15-byte `comm`" merged-length rule (an earlier
+  revision of this decision tried that and made almost any two short
+  entries statically conflict, e.g. `linux_name_contains = ["mygame"]`
+  against `vosu.osu`'s `"osu!"`, since `"osu!mygame"` is 15 bytes or
+  fewer — rejecting most real plugin pairs outright); at runtime, any
   process two enabled plugins' matchers both accept — which that static
-  check cannot always catch — goes to whichever plugin was installed
+  check cannot always catch, including two hints with no containment
+  that nonetheless both match one real `comm` (e.g. `osu!` and `lazer`
+  both matching `osu!lazer`) — goes to whichever plugin was installed
   earlier, and core logs once. Why: `process_names` alone is exact and
   cannot express 1.x's Linux substring rules (gap 10); a separate
   `linux_name_contains` field, rather than giving `comm_hints` a second
   meaning, keeps every existing plugin's `comm_hints` declaration
-  unchanged and avoids the overlap gap a dual-purpose `comm_hints` would
-  open (two plugins' hints could jointly match one `comm` value neither
-  hint alone would, e.g. hints `osu!` and `lazer` both matching
-  `osu!lazer`); widening the filter would discard the measured benefit
-  `AGENTS.md:130` requires to keep, and regex overlap cannot be decided
-  statically.
+  unchanged and avoids widening the filter, which would discard the
+  measured benefit `AGENTS.md:130` requires to keep; static overlap
+  stays a cheap, conservative early refusal, and regex overlap cannot
+  be decided statically either way.
 - **D19 osu!-specific configuration.** `CALCULATE_PP`, `POLL_RATE`,
   `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, and `READ_MANIA_SCROLL_SPEED`
   become `vosu.osu` settings in its `settings_schema` (M1); bridge B2 serves
