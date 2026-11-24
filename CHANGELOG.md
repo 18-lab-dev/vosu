@@ -14,6 +14,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add coherent, demand-free bundled adapter captures with identified session
   rosters, per-namespace revisions and independent foreground observations;
   add atomic route/feed registration and RAII demand/registration cleanup.
+- Add the bus-backed streamCompanion base projection and direct/DTO encoders,
+  with explicit path grants and a chart-resource-derived input seam. The new
+  wire model omits extension-only press/release histories; production route
+  mounting remains unchanged until the adapter cutover.
 
 ## Unreleased — 2.0 M3
 

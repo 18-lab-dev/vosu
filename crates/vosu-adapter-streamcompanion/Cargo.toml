@@ -1,0 +1,20 @@
+[package]
+name = "vosu-adapter-streamcompanion"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = "=1.12.1"
+indexmap = { version = "2.13.0", features = ["serde"] }
+serde = { version = "=1.0.228", features = ["derive", "rc"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+vosu-adapter-support = { path = "../vosu-adapter-support" }
+vosu-osu-model = { path = "../vosu-osu-model" }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
+vosu-surface = { path = "../vosu-surface" }
