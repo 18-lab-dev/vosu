@@ -1,8 +1,4 @@
 use super::*;
-thread_local! { static TRACE_STEP: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
-fn step(value: u32) {
-    TRACE_STEP.with(|step| step.set(value));
-}
 
 const ENTRY_STRIDE: usize = 0x18;
 /// Config-store entries are read from the value pointer (+0) through the key (+0x10..+0x14).
@@ -105,12 +101,6 @@ impl LazerMemory {
         // Any failed, missing, or out-of-bounds batched read reruns the sequential decoder,
         // so errors and partially assigned decoder state stay exactly those of its read order.
         let Some(batched) = batched else {
-            if std::env::var_os("VOSU_CONFIG_TRACE").is_some() {
-                eprintln!(
-                    "config batch fallback step={}",
-                    TRACE_STEP.with(std::cell::Cell::get)
-                );
-            }
             return self.read_osu_config_sequential();
         };
         self.scoring_display_mode = batched.scoring_display_mode;
@@ -123,7 +113,6 @@ impl LazerMemory {
     /// Decodes the same fields as the sequential path with one native batch per pointer level:
     /// whole dictionary entry arrays instead of two reads per entry, then every value at once.
     fn read_osu_config_batched(&self, scratch: &mut Vec<u8>) -> Option<BatchedConfig> {
-        step(1);
         if self.process.pointer_size() != 8 {
             return None;
         }
@@ -142,7 +131,6 @@ impl LazerMemory {
             (object != 0).then(|| object.checked_add(offset)).flatten()
         };
         let manager = self.root(GameRoot::SkinManager).unwrap_or(0);
-        step(2);
         let [local_store, framework_store, dict, current] = pointers(read_fixed(
             &self.process,
             [
@@ -155,7 +143,6 @@ impl LazerMemory {
         if local_store == 0 || framework_store == 0 || dict == 0 {
             return None;
         }
-        step(3);
         let mut headers = [[0u8; DICTIONARY_HEADER_LEN]; 3];
         let mut skin_value = [0u8; 8];
         {
@@ -169,12 +156,10 @@ impl LazerMemory {
             stage.read(&self.process)?;
         }
         let skin_value = le_pointer(&skin_value)?;
-        step(4);
         let (local_entries, local_count) = dictionary_shape(&headers[0], MAX_COLLECTION)?;
         let (framework_entries, framework_count) = dictionary_shape(&headers[1], MAX_COLLECTION)?;
         let (dict_entries, dict_count) = dictionary_shape(&headers[2], MAX_CACHE_ENTRIES)?;
 
-        step(5);
         let lengths = [
             entries_len(local_count, STORE_ENTRY_SPAN),
             entries_len(framework_count, STORE_ENTRY_SPAN),
@@ -205,21 +190,18 @@ impl LazerMemory {
             self.process.read_many(&mut requests[..count]).ok()?;
         }
         let skin_name = le_pointer(&skin_name)?;
-        step(6);
         let mut local_addresses = [0; LOCAL_FIELD_COUNT];
         store_addresses(
             local_bytes,
             local_fields.iter().map(|field| field.0),
             &mut local_addresses,
         )?;
-        step(7);
         let mut framework_addresses = [0; LOCAL_FIELD_COUNT];
         store_addresses(
             framework_bytes,
             FRAMEWORK_FIELDS.iter().map(|field| field.0),
             &mut framework_addresses,
         )?;
-        step(8);
         let mut cache_keys = [0; MAX_CACHE_ENTRIES];
         let mut cache_configs = [0; MAX_CACHE_ENTRIES];
         for (index, entry) in dict_bytes.chunks(ENTRY_STRIDE).enumerate() {
@@ -234,7 +216,6 @@ impl LazerMemory {
             Some(config) => Some(self.batched_store_addresses(config, &MANIA_FIELDS, scratch)?),
             None => None,
         };
-        step(9);
 
         let mut requested = [(0usize, 0usize); VALUE_SLOTS];
         for (slot, (address, field)) in requested

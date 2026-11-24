@@ -71,4 +71,6 @@ mod tests_behavior;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]
+mod tests_configuration;
+#[cfg(test)]
 mod tests_menu_batch;
