@@ -114,8 +114,8 @@ fn escaped_unicode_metadata_and_populated_tournament_reference() {
     use vosu::api::{
         ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
     };
-    use vosu::instance::InstanceSettings;
     use vosu::server::websocket::Filter;
+    use vosu_osu_model::launch::InstanceSettings;
     let base = fixture();
     let mut state = (**base.focused().unwrap()).clone();
     Arc::make_mut(&mut state.regular).menu.title = Some("狐 \"kitsune\"\n\\尾".into());

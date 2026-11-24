@@ -2,7 +2,7 @@
 use tokio::sync::Notify;
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 use std::io;
 #[cfg(any(target_os = "linux", windows))]
@@ -14,7 +14,10 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
 use vosu_osu_model::enums::ClientType;
-use vosu_osu_reader::discovery::StartupArgs;
+use vosu_osu_reader::discovery::{
+    StartupArgs, is_linux_candidate_name, is_linux_named_name, windows_client,
+};
+pub use vosu_osu_reader::discovery::{instance_settings, should_skip};
 use vosu_osu_reader::process::ProcessHandle;
 use vosu_sys::process::{MemoryError, ProcessBitness};
 
@@ -42,11 +45,6 @@ pub struct ClassifiedCandidate {
     pub client: ClientType,
 }
 
-fn is_linux_candidate_name(name: &OsStr) -> bool {
-    let name = name.to_string_lossy();
-    name.contains("osu!") || name.contains("osulazer.exe")
-}
-
 /// Pure source-compatible candidate reduction. Linux performs a named first pass;
 /// only an empty first pass enables the broad `osu!` lazer fallback.
 #[must_use]
@@ -64,11 +62,7 @@ pub fn classify_candidates(
                     .then_some(ClassifiedCandidate {
                         index,
                         pid: process.pid,
-                        client: if process.bitness == ProcessBitness::X64 {
-                            ClientType::Lazer
-                        } else {
-                            ClientType::Stable
-                        },
+                        client: windows_client(process.bitness),
                     })
             })
             .collect(),
@@ -78,8 +72,7 @@ pub fn classify_candidates(
                 .enumerate()
                 .filter(|(_, process)| is_linux_candidate_name(&process.name))
                 .filter_map(|(index, process)| {
-                    let name = process.name.to_string_lossy();
-                    (name.contains("osu!.exe") || name.contains("osulazer.exe")).then_some((
+                    is_linux_named_name(&process.name).then_some((
                         process.pid,
                         ClassifiedCandidate {
                             index,
@@ -113,14 +106,6 @@ pub fn classify_candidates(
             candidates.into_values().collect()
         }
     }
-}
-
-#[must_use]
-pub fn should_skip(arguments: &StartupArgs) -> bool {
-    arguments.get("tournament").is_some()
-        || arguments
-            .get("debug-client-id")
-            .is_some_and(|value| value.is_truthy())
 }
 
 pub trait ProcessProvider: Send + Sync {

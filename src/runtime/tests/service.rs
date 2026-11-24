@@ -12,7 +12,7 @@ async fn dashboard_attachment_status_uses_existing_roster_and_published_version(
     let mut state = (*state_bundle(3, 0)).clone();
     Arc::make_mut(&mut Arc::make_mut(&mut state.regular).settings.values).insert("client".into(), serde_json::json!({"version": "2026.1005.0"}));
     snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
-        ManagerInstanceSnapshot::new(42, crate::instance::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
+        ManagerInstanceSnapshot::new(42, vosu_osu_model::launch::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
     ])));
     let status = provider.dashboard_status();
     assert_eq!(status["instances"][0]["pid"], 42);
@@ -45,7 +45,7 @@ fn tool_context_exposes_only_selected_instance_game_and_skin_paths() {
         regular.global.game_folder = game.to_string_lossy().into_owned();
         regular.global.skin_folder = "Selected Skin".into();
         snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
-            ManagerInstanceSnapshot::new(42, crate::instance::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
+            ManagerInstanceSnapshot::new(42, vosu_osu_model::launch::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
         ])));
         let context = provider.tool_context();
         assert_eq!(context["skin"]["name"], "Selected Skin");

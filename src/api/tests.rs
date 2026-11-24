@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::instance::{InstanceSettings, Pid};
+use crate::instance::Pid;
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 
 use std::panic::{AssertUnwindSafe, catch_unwind};

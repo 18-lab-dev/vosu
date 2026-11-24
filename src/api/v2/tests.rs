@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use super::*;
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
-use crate::instance::InstanceSettings;
 use vosu_osu_calc::beatmap::{
     AppliedMod, BeatmapCache, BeatmapInput, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
 };
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::memory::{LazerRoom, LazerRoomUser};
 use vosu_osu_model::states::KeypressButton;
 use vosu_osu_state::state_backend::LiveBeatmapEngine;

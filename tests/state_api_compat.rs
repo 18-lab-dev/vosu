@@ -8,20 +8,17 @@ use std::{
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::watch;
+use vosu::api::{
+    self, ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
+};
 use vosu::server::v2_subscription::{
     V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
-};
-use vosu::{
-    api::{
-        self, ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot,
-        ManagerSnapshot,
-    },
-    instance::InstanceSettings,
 };
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapInput, EngineOutput, EngineRequest, ModSet, Ruleset,
     ScoringMode,
 };
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,
     memory::{LazerSpectator, ResultScreen as RawResultScreen, User as RawUser},

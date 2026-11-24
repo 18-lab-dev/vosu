@@ -9,13 +9,13 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
-use crate::instance::InstanceSettings;
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapInput, GraphSeries, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
     StrainGraph,
 };
 use vosu_osu_calc::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton as StateKeyOverlayButton, KeypressButton,
     Statistics,

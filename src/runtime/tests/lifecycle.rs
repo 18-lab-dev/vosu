@@ -1,6 +1,6 @@
 #[test]
 fn precise_publication_wakes_native_subscription_without_waking_regular_stream() {
-    use crate::instance::InstanceSettings;
+    use vosu_osu_model::launch::InstanceSettings;
     use vosu_osu_state::{
         BassDensityState, BeatmapPPState, GameplayState, GlobalState,
         LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,

@@ -18,7 +18,6 @@ use axum::{
 use criterion::{Criterion, criterion_group, criterion_main};
 use vosu::{
     api::{self, ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot, SnapshotManager},
-    instance::InstanceSettings,
     server::{
         auth::AuthorizationPolicy,
         routes::{
@@ -29,6 +28,7 @@ use vosu::{
         service::SnapshotStateProvider,
     },
 };
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,
     states::{HitErrorArray, KeypressButton},

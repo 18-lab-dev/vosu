@@ -3,6 +3,7 @@
 //! (JS-compatible rounding and number writing, mods, grades, legacy hits).
 
 pub mod enums;
+pub mod launch;
 pub mod memory;
 #[path = "root.rs"]
 mod root;

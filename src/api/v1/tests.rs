@@ -90,8 +90,8 @@ fn bundle(source: ClientType, regular: RegularState) -> Arc<StateBundleSnapshot>
     bundle_with_precise(source, regular, latest)
 }
 
-fn settings(ipc_id: Option<f64>) -> crate::instance::InstanceSettings {
-    crate::instance::InstanceSettings {
+fn settings(ipc_id: Option<f64>) -> vosu_osu_model::launch::InstanceSettings {
+    vosu_osu_model::launch::InstanceSettings {
         tournament_spectator: ipc_id.is_some(),
         tournament_ipc_id: ipc_id,
         devserver_endpoint: None::<OsString>,

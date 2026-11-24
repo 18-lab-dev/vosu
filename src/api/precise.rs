@@ -291,8 +291,9 @@ mod tests {
 
     use super::*;
     use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
-    use crate::instance::{InstanceSettings, Pid};
+    use crate::instance::Pid;
     use vosu_osu_model::enums::ClientType;
+    use vosu_osu_model::launch::InstanceSettings;
     use vosu_osu_model::states::HitErrorArray;
     use vosu_osu_state::{
         BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,

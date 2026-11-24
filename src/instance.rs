@@ -6,7 +6,6 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
@@ -19,7 +18,7 @@ use std::time::Duration;
 
 use vosu_core::logging::Logger;
 use vosu_osu_model::enums::ClientType;
-use vosu_osu_reader::discovery::StartupArgs;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_reader::memory::lazer_loader::{
     GenerationIdentity, LazerLoadError, LazerOffsetLoader, OffsetGenerator, resolve_for_instance,
     resolve_for_instance_with_logger,
@@ -53,34 +52,8 @@ mod runtime;
 pub use discovery::NativeProcessProvider;
 pub use discovery::{
     ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider,
-    classify_candidates, should_skip,
+    classify_candidates, instance_settings, should_skip,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct InstanceSettings {
-    pub tournament_spectator: bool,
-    pub tournament_ipc_id: Option<f64>,
-    pub devserver_endpoint: Option<OsString>,
-}
-
-impl InstanceSettings {
-    fn from_arguments(arguments: &StartupArgs) -> Self {
-        let tournament_ipc_id = arguments
-            .get("spectateclient")
-            .and_then(|value| value.as_number());
-        let devserver_endpoint = arguments
-            .get("devserver")
-            .filter(|value| value.is_truthy())
-            .and_then(|value| value.as_os_str())
-            .filter(|value| !value.is_empty())
-            .map(OsString::from);
-        Self {
-            tournament_spectator: tournament_ipc_id.is_some(),
-            tournament_ipc_id,
-            devserver_endpoint,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Instance {
@@ -510,7 +483,7 @@ impl InstanceManager {
             client,
             process,
             root: descriptor.root.clone(),
-            settings: InstanceSettings::from_arguments(&descriptor.arguments),
+            settings: instance_settings(&descriptor.arguments),
             tournament_manager: AtomicBool::new(false),
             lazer_offsets: ArcSwapOption::empty(),
             lifecycle_cancel: CancellationToken::new(),

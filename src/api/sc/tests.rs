@@ -3,10 +3,10 @@ mod wire;
 use std::sync::Arc;
 
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
-use crate::instance::InstanceSettings;
 use vosu_osu_calc::beatmap::{EventStatus, GraphSeries, StrainGraph};
 use vosu_osu_calc::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::memory::User;
 use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer, Statistics,

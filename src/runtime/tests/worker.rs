@@ -173,7 +173,7 @@ fn live_selection_promotes_file_and_checksum_before_api_cadence() {
     };
     let manager = |revision, state| Arc::new(ManagerSnapshot::new(
         revision, Some(7), false, ApiRuntimeSettings::default(),
-        [ManagerInstanceSnapshot::new(7, crate::instance::InstanceSettings {
+        [ManagerInstanceSnapshot::new(7, vosu_osu_model::launch::InstanceSettings {
             tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None,
         }, false, state)],
     ));

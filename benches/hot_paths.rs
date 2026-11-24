@@ -9,7 +9,6 @@ use tokio::sync::watch;
 use vosu::api::{
     ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
 };
-use vosu::instance::InstanceSettings;
 use vosu::server::v2_subscription::{
     V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
 };
@@ -23,6 +22,7 @@ use vosu_osu_calc::beatmap::{
 };
 use vosu_osu_calc::engine::{LiveDifficultyConfig, LiveLazerEngine, LiveScoreState};
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_osu_reader::memory::{

@@ -7,7 +7,7 @@ use crate::api::wire_fixtures::{
     AWKWARD, NUMBERS, populated_precise, populated_regular, snapshot_with,
 };
 use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
-use crate::instance::InstanceSettings;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::TourneyManagerChatItem;
 use vosu_osu_state::{StateBundleSnapshot, TourneyUserState};
 

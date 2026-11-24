@@ -658,7 +658,7 @@ fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
     let instance = |pid, ipc: Option<f64>| {
         ManagerInstanceSnapshot::new(
             pid,
-            crate::instance::InstanceSettings {
+            vosu_osu_model::launch::InstanceSettings {
                 tournament_spectator: ipc.is_some(),
                 tournament_ipc_id: ipc,
                 devserver_endpoint: None,

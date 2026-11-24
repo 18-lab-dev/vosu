@@ -12,8 +12,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 
-use crate::instance::{InstanceSettings, Pid};
+use crate::instance::Pid;
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 
 /// A concrete, non-stringly-typed public wire schema.
