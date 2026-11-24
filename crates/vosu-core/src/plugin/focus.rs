@@ -41,6 +41,7 @@ impl ForegroundSource for tokio::sync::watch::Receiver<Option<u32>> {
 #[derive(Debug, Default)]
 pub struct SyntheticForegroundSource {
     pid: std::sync::Mutex<Option<u32>>,
+    unavailable: bool,
 }
 
 impl SyntheticForegroundSource {
@@ -48,6 +49,20 @@ impl SyntheticForegroundSource {
     pub fn new(pid: Option<u32>) -> Self {
         Self {
             pid: std::sync::Mutex::new(pid),
+            unavailable: false,
+        }
+    }
+
+    /// A source that reports no OS-foreground source at all, through the
+    /// same [`ForegroundSource::available`] seam the production host's
+    /// sample uses off Windows, so foreground facts are absent rather than
+    /// `false`.
+    #[cfg(any(test, feature = "test-harness"))]
+    #[must_use]
+    pub fn unavailable() -> Self {
+        Self {
+            pid: std::sync::Mutex::new(None),
+            unavailable: true,
         }
     }
 
@@ -59,6 +74,9 @@ impl SyntheticForegroundSource {
 impl ForegroundSource for SyntheticForegroundSource {
     fn foreground_pid(&self) -> Option<u32> {
         *self.pid.lock().unwrap()
+    }
+    fn available(&self) -> bool {
+        !self.unavailable
     }
 }
 
