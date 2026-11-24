@@ -9,6 +9,39 @@ use std::{sync::Arc, time::Duration};
 const RESOURCE_OPERATION_DEADLINE: Duration = Duration::from_secs(5);
 use vosu_core::{config::Config, plugin::PluginHost};
 
+pub(super) async fn resource_host(
+    logger: vosu_core::logging::Logger,
+    settings: Arc<vosu_core::plugin::settings::PluginSettingsService>,
+    data: &std::path::Path,
+) -> std::io::Result<Arc<PluginHost>> {
+    let resources = resource_store(data.to_path_buf()).await?;
+    Ok(PluginHost::new_with_resources(
+        logger,
+        settings,
+        tokio::runtime::Handle::current(),
+        resources,
+    ))
+}
+
+/// Required before loading resource-producing plugins. Corrupt/unreadable
+/// secrets abort startup; public resource identity must never fall back to an
+/// ephemeral registry.
+pub(super) async fn resource_store(
+    data: std::path::PathBuf,
+) -> std::io::Result<Arc<vosu_core::state::ReferenceStore>> {
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&data)?;
+        let secret =
+            vosu_core::resources::ResourceSecret::open_or_create(&data.join("resource-secret"))?;
+        Ok(Arc::new(vosu_core::state::ReferenceStore::new(
+            secret,
+            Default::default(),
+        )))
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
 pub(super) struct ApiV1Service {
     pub(super) router: ApiV1Router,
     hub: ApiV1SubscriptionHub,

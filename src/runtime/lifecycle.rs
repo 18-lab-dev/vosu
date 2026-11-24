@@ -931,7 +931,7 @@ pub async fn run_cli() -> io::Result<()> {
     let settings_bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
     let settings_storage: Arc<dyn SettingsStorage> = settings_bridge.clone();
     let plugin_settings = Arc::new(PluginSettingsService::new(settings_storage));
-    let plugin_host = PluginHost::new(logger.clone(), plugin_settings, Handle::current());
+    let plugin_host = api_v1::resource_host(logger.clone(), plugin_settings, paths.data()).await?;
     let state_host = vosu_surface::state::install_state_host(plugin_host.surface_host())
         .map_err(io::Error::other)?;
     let plugin_settings_watch = plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());

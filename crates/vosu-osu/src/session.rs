@@ -179,6 +179,9 @@ impl OsuSession {
         self.lifecycle.cancel();
         if let Some(publication) = self.publication.get() {
             publication.demand.cancel();
+            if let Some(resources) = publication.bus.resources.get() {
+                resources.cancel();
+            }
         }
         if let Some(scans) = &self.scans {
             scans.cancel(self.handle);
@@ -228,6 +231,11 @@ impl OsuSession {
         let task = self.resolver.lock().await.take();
         if let Some(task) = task {
             let _ = task.await;
+        }
+        if let Some(publication) = self.publication.get()
+            && let Some(resources) = publication.bus.resources.get()
+        {
+            resources.shutdown().await;
         }
     }
 

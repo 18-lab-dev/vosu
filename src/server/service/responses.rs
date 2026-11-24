@@ -77,10 +77,7 @@ fn resolve_file_endpoint(
         Endpoint::SkinFile if selected.lazer => {
             let encoded = path.strip_prefix("/files/skin/").unwrap_or_default();
             let name = vosu_sys::fs::decode_request_path(encoded)?.replace('\\', "/");
-            if name.is_empty() || name.split('/').any(|p| p.is_empty() || p == "." || p == ".." || p.contains(':')) {
-                return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
-            }
-            let Some(relative) = selected.skin.as_ref().and_then(|s| s.files.get(&name.to_lowercase())) else {
+            let Some(relative) = vosu_osu::resources::legacy_skin::lookup(selected.skin.as_deref(), &name) else {
                 return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
             };
             let mut outcome = files::resolve_resource(selected.songs_root.as_deref(), relative, target, MissingKind::NotFound)?;
