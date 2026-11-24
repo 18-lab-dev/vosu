@@ -22,6 +22,8 @@ use super::deadline::RawDeadline;
 use super::*;
 use vosu_plugin_api::read_plan_profile::{Phase, Span};
 
+mod shape;
+
 /// Reads a flat header struct out of an already-validated buffer at
 /// `offset`. Every call site in this module only uses offsets
 /// `vosu_plugin_api::validate_read_plan_submit`/`validate_read_plan_ref_op_width`
@@ -528,18 +530,18 @@ pub fn execute_into(
 pub(crate) struct ValidatedPlan<'a> {
     payload: &'a [u8],
     header: vosu_read_plan_submit_header,
+    layout: shape::Layout,
 }
 
 impl<'a> ValidatedPlan<'a> {
     pub(crate) fn new(payload: &'a [u8], flags: u32) -> Result<Self, ExecuteBytesError> {
         let _validation_profile = Span::new(Phase::Validation);
-        validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags)
-            .map_err(|error| ExecuteBytesError::Message(error.into()))?;
-        validate_read_plan_submit(payload)
-            .map_err(|error| ExecuteBytesError::Message(error.into()))?;
-        let header =
-            read_flat_header(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
-        Ok(Self { payload, header })
+        let (header, layout) = shape::validate(payload, flags)?;
+        Ok(Self {
+            payload,
+            header,
+            layout,
+        })
     }
 
     pub(crate) fn handle(&self) -> u64 {
@@ -583,17 +585,20 @@ impl<'a> ValidatedPlan<'a> {
         out: &mut Vec<u8>,
     ) -> Result<(), ExecuteBytesError> {
         let validation_profile = Span::new(Phase::Validation);
-        let Self { payload, header } = self;
+        let Self {
+            payload,
+            header,
+            layout,
+        } = self;
 
-        // Validate width before runtime errors. Successful reads need no
-        // separate liveness syscall: the owned native process handle pins the
-        // process object, so PID reuse cannot redirect a Windows handle read.
-        // Failed reads still probe health to distinguish TARGET_GONE from
-        // an ordinary address/permission fault.
+        // Validate width before runtime errors. Native reads either pin the OS
+        // process object or check its generation after reading, so a second
+        // pre-plan health syscall adds no PID-reuse protection. Failed reads
+        // still probe health to distinguish TARGET_GONE from address faults.
         let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
         validate_read_plan_ref_op_width(payload, pointer_width)
             .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
-        if !memory.reads_pin_process_identity() && !memory.is_alive() {
+        if (!memory.reads_pin_process_identity() || layout.total_len == 0) && !memory.is_alive() {
             return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
         }
 
@@ -609,21 +614,8 @@ impl<'a> ValidatedPlan<'a> {
         }
 
         let stage_size = size_of::<vosu_stage_header>();
-        let op_size = size_of::<vosu_plan_op>();
-        let mut total_ops: usize = 0;
-        let mut total_len: u64 = 0;
-        for stage_index in 0..header.stage_count as usize {
-            let stage: vosu_stage_header = read_struct_at(
-                payload,
-                header.stages_offset as usize + stage_index * stage_size,
-            );
-            total_ops += stage.op_count as usize;
-            for op_index in 0..stage.op_count as usize {
-                let op: vosu_plan_op =
-                    read_struct_at(payload, stage.ops_offset as usize + op_index * op_size);
-                total_len += u64::from(op.length);
-            }
-        }
+        let total_ops = layout.total_ops;
+        let total_len = layout.total_len;
         let used = RESULT_HEADER_SIZE
             + RESULT_ENTRY_SIZE * total_ops
             + usize::try_from(total_len).unwrap_or(usize::MAX);

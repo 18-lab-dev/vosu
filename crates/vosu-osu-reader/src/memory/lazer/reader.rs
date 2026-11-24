@@ -1,5 +1,7 @@
 use super::*;
 
+mod audio;
+
 fn read_many_key_fields<const WIDTH: usize>(
     process: &ProcessHandle,
     addresses: &[usize; KeyOverlayButton::lazer_button_count()],
@@ -101,10 +103,7 @@ impl MemoryReader for LazerMemory {
         if array == 0 {
             return self.not_ready();
         }
-        let mut out = Vec::with_capacity(40);
-        for index in 0..40 {
-            out.push(self.process.read_f32(add(array, 0x10 + 4 * index)?)?.into());
-        }
+        let out = audio::read(&self.process, array)?;
         Ok(ReadStatus::Ready(out))
     }
     fn user(&mut self) -> MemoryRead<User> {

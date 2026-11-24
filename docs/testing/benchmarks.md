@@ -225,12 +225,15 @@ With an explicitly **x86** fixture session, regular capture uses native **14
 backend calls / 56 ops**, versus plan **15 calls / 56 ops** (one additional
 dependent stage). Non-playing precise capture uses **1 batch / 2 ops** on both.
 These are backend calls, not measured OS syscalls. The original host additionally
-probed health **13 times per regular / once per precise capture**. Windows handle
-reads now defer that probe until read failure; the pinned fake observes **zero**
-successful-path probes. Linux retains its identity preflight for PID-based reads.
-The host also retains a borrowed validation proof instead of scanning the same
-submission twice, and borrows its module resolver's session reference. Result
-delivery still rechecks the instance, preserving teardown-race behavior.
+probed health **13 times per regular / once per precise capture**. Native Windows
+handle reads and Linux post-read generation-checked reads now defer the plan's
+additional health probe until read failure. Linux still checks identity after
+every native read; PID reuse cannot publish a different process's bytes.
+The host caches one successful ownership/session lookup per reader thread,
+revoked under the session-registry lock on detach/decline; instance shutdown
+bypasses the cache. A bounded host-owned layout proof compares all structural
+bytes before reuse, never trusting an SDK producer flag. Aliased header tables
+are fully validated on every call. Delivery still rechecks the instance.
 
 `cargo run --locked --features test-harness --example plan_process_bench` spawns a
 real child holding the populated graph, translates fixture offsets only at the
@@ -261,9 +264,86 @@ stable/lazer shapes repeat that address rather than chasing unknown pointers.
 Output separates application precise/coarse clock counts from the profiler's
 own two precise reads per span. Profiling therefore inflates timings, especially
 on a VM with trapping QPC; unset the environment variable for throughput runs.
-Linux can use `--pid self` without changing ptrace permissions.
+Linux can use `--pid self` without changing ptrace permissions. For a real-child
+measurement, launch a child that explicitly permits this benchmark's read-only
+ptrace access, then pass its PID; the child must remain alive for both modes.
 The diagnostic Cargo feature is off by default and is not part of packaged
 release feature sets. Default builds compile its spans/counters out entirely.
+
+### Linux synchronous-plan fixed-cost follow-up
+
+Baseline `2983097` versus the host lookup/layout cache and native identity-probe
+cutover, measured on the Linux host with Rust 1.96.1, default features, and locked
+dependencies. Builds used `taskset -c 0-7,16-23 nice -n 10`, with
+`CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m1-c6d`. Immutable copies of the
+before/after Criterion executables and raw results are retained locally under
+`target/m1-c6d-evidence/`; these ignored artifacts are not repository fixtures.
+
+`cargo run --release --locked --features read-plan-profile --example
+plan_process_bench -- --pid CHILD_PID --cycles 10000`, with
+`VOSU_READ_PLAN_PROFILE=1`, read a real Python child permitting ptrace access.
+Each shape warmed up 100 times, then interleaved 10,000 native/plan captures;
+baseline and candidate campaigns were sequential, not interleaved by revision.
+The first readable ELF region was selected outside timing. Both clock-pair
+floors were 20 ns. Values below are **before → after**, in ns:
+
+| Phase (arithmetic mean per capture) | One op | Two ops | Eighteen ops | Eight stages / 43 ops |
+| --- | ---: | ---: | ---: | ---: |
+| SDK encode | 30 → 31 | 27 → 30 | 47 → 54 | 95 → 87 |
+| Session/memory resolution | 92 → 26 | 87 → 26 | 95 → 26 | 98 → 26 |
+| Validation, including health preflight | 403 → 48 | 422 → 50 | 403 → 54 | 478 → 65 |
+| Backend | 1095 → 1003 | 916 → 1090 | 1107 → 1393 | 8739 → 8081 |
+| Root resolution | 21 → 21 | 24 → 21 | 21 → 21 | 21 → 22 |
+| Result delivery | 53 → 51 | 47 → 53 | 76 → 78 | 107 → 111 |
+| **Whole plan median** | **1794 → 1443** | **1593 → 1593** | **2294 → 1943** | **10139 → 9488** |
+| Native median | 942 → 1022 | 822 → 1122 | 1152 → 1222 | 8416 → 8226 |
+
+Validation has two spans per capture; each other phase has one, except backend
+has eight for the eight-stage shape. Phase means and whole-capture medians are
+not additive. These profiled host diagnostics are noisy and do not isolate the
+individual optimizations: much of the validation reduction is removal of the
+redundant Linux pre-plan health syscall, not layout checking alone. The native
+post-read PID-generation check remains mandatory.
+
+Both revisions report **zero application precise-clock reads** for every shape.
+Coarse reads are **0 / 0 / 0 / 8**; profiler-only precise reads are
+**14 / 14 / 14 / 28**. The supplied `a709550` perf report attributes its 2.03%
+clock self share to Tokio parking, worker sleep, and WebSocket timing, not a
+per-plan precise clock. There was no renewed single-stage plan clock to remove;
+dependent-stage coarse deadline checks remain to preserve bounded execution.
+The lazer visualizer's forty known scalar addresses now use one batch/plan,
+with separate per-op errors rather than widening the read to unrelated bytes.
+
+The requested Criterion comparison used the preserved baseline and candidate:
+
+```sh
+python scripts/bench-compare.py --no-reserve --cpu 7 --rounds 5 \
+  --warmup 1 --measurement 2 --samples 30 \
+  --binary before=target/m1-c6d-evidence/before-plan-memory-bench \
+  --binary after=target/m1-c6d-evidence/after-plan-memory-bench \
+  --filter '^plan_memory/' --output target/m1-c6d-evidence/paired
+```
+
+CPU 7 was pinned, **not exclusively reserved**; sibling CPU 23 and other host
+activity were not isolated. Builds and correctness gates had completed before
+measurement. Medians of round medians and bootstrap 95% intervals (ns):
+
+| `plan_memory/` case | Before [95% interval] | After [95% interval] | Change |
+| --- | ---: | ---: | ---: |
+| `floor_one_op` | 100.74 [93.74, 160.83] | 102.04 [101.04, 106.95] | +1.29% |
+| `floor_eighteen_independent_ops` | 355.82 [320.83, 617.61] | 334.73 [331.94, 414.64] | −5.93% |
+| `floor_fifty_six_independent_ops` | 857.41 [855.81, 2120.23] | 834.93 [824.48, 838.55] | −2.62% |
+| `stable_native` | 1382.94 [1326.44, 4080.55] | 1368.48 [1321.39, 1753.49] | −1.05% |
+| `stable_unfused_plans` | 3695.73 [3583.60, 4646.00] | 3868.12 [3830.69, 4143.96] | +4.66% |
+| `stable_regular_fields` | 3624.35 [3572.80, 3897.99] | 3787.78 [3737.08, 4137.04] | +4.51% |
+| `lazer_regular_fields` | 13802.77 [12083.34, 14188.36] | 14294.34 [13056.32, 28179.38] | +3.56% |
+
+**Every Criterion result is inconclusive** under the comparison script's spread
+or interval rule. Outliers were retained, including the slow first baseline
+round and final lazer candidate round. This benchmark excludes real PluginHost
+routing and native process syscalls; it cannot measure the main lookup and
+health-preflight savings. No daemon CPU, Linux VM, native Windows, or live osu!
+exit claim is made by these host results; the owner must remeasure D17 CPU.
 
 
 ## vosu hot paths

@@ -490,6 +490,11 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
     /// falls back to [`Self::read_exact`]'s own splitting instead of ever
     /// being batched.
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        if let [read] = reads
+            && i64::try_from(read.address).is_ok()
+        {
+            return self.read_exact(read.address, read.dst);
+        }
         let mut index = 0;
         while index < reads.len() {
             if reads[index].dst.len() > MAX_SINGLE_OP_BYTES {

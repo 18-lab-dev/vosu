@@ -79,6 +79,8 @@ use super::super::scan::ScanWorkerPool;
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
 
+mod sync_cache;
+
 /// Worker threads the shared background pool runs (production default):
 /// comparatively cheap, deadline-bounded work (a read plan's handful of
 /// syscalls, a scan's bounded memory walk), so a small fixed count
@@ -615,45 +617,14 @@ impl PluginHost {
         }
     }
 
-    /// [`Self::resolve_owned_session`]'s allocation-free counterpart
-    /// (D17): resolves `instance`'s owning plugin id and `handle`'s pid
-    /// in one locked step, without [`PluginHost::plugin_id_of`]'s own
-    /// `to_owned()` — on the raw `VOSU_READ_PLAN_SYNC` fast path
-    /// ([`Self::handle_read_plan_submit_raw`], the only caller), that one
-    /// heap allocation per read would be the last one left on this call
-    /// stack (caught by
-    /// `read_plan::tests::zero_alloc::in_process_sync_round_trip_allocates_nothing_after_warmup`,
-    /// the core-level round-trip test the SDK-level
-    /// `vosu-plugin-api::tests::plan_memory_alloc` fake-host test cannot
-    /// reach).
-    ///
-    /// Lock order: `instances` then `sessions`, nested — a pair this host
-    /// has not nested before, but safely: every existing
-    /// `sessions`-then-`dispatch_to`(`instances`) sequence (`handle`'s own
-    /// `SessionIdentify`/`SessionDecline` arms, host.rs) always drops
-    /// `sessions` before it ever touches `instances` again, so the two
-    /// orders never invert against each other.
-    fn resolve_owned_session_for_instance(
+    /// Thread-local successful ownership/memory resolution, revoked by the
+    /// registry's epoch on detach/decline and bypassed during instance teardown.
+    fn sync_session_memory(
         &self,
         instance: PluginInstanceId,
         handle: SessionHandle,
-    ) -> Result<u32, vosu_status> {
-        let instances = self
-            .instances
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let Some(plugin_id) = instances.get(&instance).map(InstanceSlot::plugin_id) else {
-            return Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT);
-        };
-        let sessions = self
-            .sessions
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        match sessions.owner_and_pid(handle) {
-            None => Err(vosu_status::VOSU_ERR_TARGET_GONE),
-            Some((owner, _)) if owner != plugin_id => Err(vosu_status::VOSU_ERR_PERMISSION_DENIED),
-            Some((_, pid)) => Ok(pid),
-        }
+    ) -> Result<Arc<SessionMemory>, vosu_status> {
+        sync_cache::resolve(self, instance, handle)
     }
 
     /// `VOSU_OP_READ_PLAN_SUBMIT` without `VOSU_READ_PLAN_SYNC` set (an
@@ -752,13 +723,9 @@ impl PluginHost {
             vosu_plugin_api::read_plan_profile::Phase::SessionMemory,
         );
         let handle = SessionHandle(plan.handle());
-        let pid = match self.resolve_owned_session_for_instance(instance, handle) {
-            Ok(pid) => pid,
-            Err(status) => return status,
-        };
-        let memory = match self.session_memory(handle, pid) {
+        let memory = match self.sync_session_memory(instance, handle) {
             Ok(memory) => memory,
-            Err(error) => return error.into(),
+            Err(status) => return status,
         };
         drop(session_profile);
         let modules = CachingModuleResolver { memory: &memory };
