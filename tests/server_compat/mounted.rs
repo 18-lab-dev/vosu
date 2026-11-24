@@ -4,8 +4,8 @@
 //!
 //! Only the bundled plugin set is a fixture: the osu! plugin publishes through
 //! its production projection, and the three adapters are the real bundled
-//! manifests and vtables. The adapter route table below mirrors the I0 mount
-//! in `src/runtime/adapters.rs` one-to-one (same owners, methods and matchers).
+//! manifests and vtables. Routes are registered from the production
+//! `adapter_routes` table that `Adapters::mount` also uses, never a copy.
 use super::*;
 #[path = "../state_api_compat/oracle.rs"]
 #[expect(
@@ -31,9 +31,9 @@ use vosu::{
         pages::{DynamicPage, EmbeddedResponse},
         service::{
             BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-            PageDataProvider, ProductionRouteDelegate, ProductionServices, RegisteredProvider,
-            ReportInputProvider, SurfaceRouter, UpdateRouteResult, UpdaterHandoff,
-            WebSocketEndpoints, WebSocketRelaySink, reserve_core_routes,
+            PageDataProvider, ProductionRouteDelegate, ProductionServices, ReportInputProvider,
+            SurfaceRouter, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
+            WebSocketRelaySink, adapter_routes, reserve_core_routes,
         },
         websocket::StateDemand,
     },
@@ -41,10 +41,7 @@ use vosu::{
 use vosu_core::plugin::{PluginHost, PluginInstanceId};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::Delivery;
-use vosu_surface::{
-    listener::ListenerRole,
-    routes::{RegistrationLease, RouteDescriptor, RoutePath, RouteProvider},
-};
+use vosu_surface::routes::RegistrationLease;
 
 pub(super) type Ws =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -134,89 +131,24 @@ impl CurrentBeatmapProvider for NoBeatmap {
     }
 }
 
-/// The production adapter route table (I0 `Adapters::mount`).
+/// Registers the production adapter route table under the fixture's
+/// upstream (2), gosuMemory (3) and streamCompanion (4) plugin instances.
 fn mount(
     host: &Arc<PluginHost>,
     schemas: &Schemas,
     hubs: &WebSocketHubs,
     files: &vosu_adapter_upstream::files::Provider,
 ) -> Vec<RegistrationLease> {
-    let mut groups: [Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>; 3] = Default::default();
-    let mut add = |owner: usize, path: RoutePath, method: &str, ws: bool, provider| {
-        groups[owner].push((
-            RouteDescriptor {
-                listener: ListenerRole::Overlay,
-                method: method.into(),
-                path,
-                websocket: ws,
-            },
-            Arc::new(provider) as Arc<dyn RouteProvider>,
-        ));
-    };
-    for (owner, route, path, ws, hub) in [
-        (1, StateRoute::V1, "/json", "/ws", &hubs.v1),
-        (
-            2,
-            StateRoute::StreamCompanion,
-            "/json/sc",
-            "/tokens",
-            &hubs.stream_companion,
-        ),
-        (0, StateRoute::V2, "/json/v2", "/websocket/v2", &hubs.v2),
-        (
-            0,
-            StateRoute::V2Precise,
-            "/json/v2/precise",
-            "/websocket/v2/precise",
-            &hubs.v2_precise,
-        ),
-    ] {
-        let provider: Arc<dyn StateJsonProvider> = schemas.get(schema_of(route)).clone();
-        add(
-            owner,
-            RoutePath::Exact(path.into()),
-            "GET",
-            false,
-            RegisteredProvider::State { provider, route },
-        );
-        add(
-            owner,
-            RoutePath::Exact(ws.into()),
-            "GET",
-            true,
-            RegisteredProvider::Feed(hub.clone()),
-        );
-    }
-    add(
-        0,
-        RoutePath::Exact("/api/calculate/pp".into()),
-        "GET",
-        false,
-        RegisteredProvider::Calculate(files.clone()),
+    let groups = adapter_routes(
+        std::array::from_fn(|index| schemas.0[index].clone() as Arc<dyn StateJsonProvider>),
+        [
+            hubs.v1.clone(),
+            hubs.stream_companion.clone(),
+            hubs.v2.clone(),
+            hubs.v2_precise.clone(),
+        ],
+        files,
     );
-    for (path, methods) in [
-        ("/backgroundImage", &["GET"][..]),
-        ("/Songs", &["GET"][..]),
-        ("/files/beatmap", &["GET", "HEAD"][..]),
-        ("/files/skin", &["GET", "HEAD"][..]),
-    ] {
-        for method in methods {
-            let matcher = if path == "/backgroundImage" {
-                RoutePath::Exact(path.into())
-            } else {
-                RoutePath::Children(path.into())
-            };
-            add(
-                0,
-                matcher,
-                method,
-                false,
-                RegisteredProvider::File {
-                    provider: files.clone(),
-                },
-            );
-        }
-    }
     let mut leases = vec![reserve_core_routes(host).unwrap()];
     for (index, group) in groups.into_iter().enumerate() {
         let requester = host
