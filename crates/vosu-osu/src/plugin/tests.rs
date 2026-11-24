@@ -753,4 +753,92 @@ fn register_session_refuses_a_handle_that_is_not_live() {
     );
 }
 
+/// Hold a lookup across Drop's session-map take, then let its real
+/// identify/register completion path run. Unlike the not-live unit test,
+/// the handle starts live: only Drop can revoke it.
+#[test]
+fn destroy_revokes_a_gated_lazer_lookup_before_it_can_register() {
+    let (plugin, _data_dir) = hermetic(RecordingHost::default(), Platform::Windows);
+    // A session-map sentinel gives the test an observable shutdown boundary
+    // on both the fixed and pre-fix Drop (both take this map).
+    plugin
+        .dispatch(
+            Message::SessionAttached(attached(904, 0, "osu!.exe", Bitness::X86)),
+            0,
+        )
+        .unwrap();
+    let state = Arc::clone(&plugin.state);
+    assert!(state.lock().unwrap().live_handles.contains(&904));
+    assert!(state.lock().unwrap().sessions.contains_key(&904));
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+    let host = Arc::clone(&plugin.host);
+    let lookup_state = Arc::clone(&state);
+    let waiters = Arc::clone(&plugin.scan_waiters);
+    let loader = Arc::clone(&plugin.loader);
+    let runtime = plugin.runtime_handle.clone();
+    let lookup = std::thread::spawn(move || {
+        entered_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let version = resolve_lazer_version(host.as_ref(), 0, Path::new(""));
+        finish_identify(
+            host.as_ref(),
+            &lookup_state,
+            904,
+            "lazer",
+            "osu!(lazer)",
+            version,
+            false,
+        )
+        .unwrap();
+        let identified = Identified {
+            client: ClientType::Lazer,
+            settings: InstanceSettings {
+                tournament_spectator: false,
+                tournament_ipc_id: None,
+                devserver_endpoint: None,
+            },
+            root: PathBuf::new(),
+            executable_root: PathBuf::new(),
+            pid: 0,
+            generation: 2,
+            bitness: Bitness::X64,
+            named: false,
+        };
+        register_session(
+            &host,
+            &lookup_state,
+            &waiters,
+            &loader,
+            &runtime,
+            904,
+            &identified,
+        );
+        // Sample before this thread returns: Drop is still joining us,
+        // so the runtime has not been shut down to mask a spawned task.
+        result_tx
+            .send((
+                lookup_state.lock().unwrap().sessions.len(),
+                runtime.metrics().num_alive_tasks(),
+            ))
+            .unwrap();
+    });
+    plugin.state.lock().unwrap().lazer_lookups.push(lookup);
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let destroy = std::thread::spawn(move || drop(plugin));
+    wait_until(
+        || state.lock().unwrap().sessions.is_empty(),
+        "destroy to take the session map while the lookup is gated",
+    );
+    release_tx.send(()).unwrap();
+    let (remaining_sessions, resolver_tasks) =
+        result_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    destroy.join().unwrap();
+    assert_eq!(remaining_sessions, 0, "late lookup registered a session");
+    assert_eq!(resolver_tasks, 0, "late lookup spawned a resolver");
+    assert!(state.lock().unwrap().sessions.is_empty());
+}
+
 mod capture;

@@ -554,11 +554,10 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         // session detach did not already release it (wiring item 8).
         self.scan_waiters.shutdown();
 
-        // abi:82's whole 5 s grace, shared across every bounded step
-        // below (review #1): `join_resolver`'s own timeout, and
-        // `shutdown_timeout`, each get only what remains of it, not a
-        // fresh 5 s apiece.
-        let deadline = Instant::now() + DESTROY_GRACE;
+        // Reserve 500 ms of the host's grace for dispatch draining and
+        // destroy-thread scheduling. Session joins and runtime shutdown
+        // share only the remaining budget.
+        let deadline = Instant::now() + (DESTROY_GRACE - Duration::from_millis(500));
 
         // `live_handles` is cleared in the very same critical section
         // that takes `sessions` (review #2): a lazer-version-lookup
@@ -580,14 +579,12 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             session.cancel();
         }
 
-        // Joined first, and unconditionally (review #2): each is a single
-        // bounded read (`resolve_lazer_version`), never the lazer offset
-        // generation itself, so this cannot itself hang; joining it
-        // before the runtime shuts down is what makes the `live_handles`
-        // clear above actually effective against a lookup still in
-        // flight, and also outlives this instance's borrowed
-        // `VtableHostServices` (review #6), whose raw pointers the ABI
-        // documents as valid only until `destroy` returns (abi:82).
+        // Join lookups first, without a timeout: they retain callable host
+        // pointers, so returning while one runs could use freed host state.
+        // Reads are size-capped (and O_NONBLOCK on Linux), but a stalled
+        // filesystem can still hang. In that case the host's DestroyTimedOut
+        // path retains the context rather than freeing it; we must not
+        // bypass that protection by detaching the lookup here.
         for lookup in lazer_lookups {
             let _ = lookup.join();
         }
