@@ -1,3 +1,11 @@
+#[path = "support/adapter/mod.rs"]
+mod adapter;
+#[path = "support/adapter_cases.rs"]
+mod adapter_cases;
+#[path = "support/adapter_e2e.rs"]
+mod adapter_e2e;
+#[path = "../tests/adapter_fixture/mod.rs"]
+mod adapter_fixture;
 #[path = "support/api_e2e.rs"]
 mod api_e2e;
 #[path = "support/api_v1.rs"]
@@ -268,6 +276,8 @@ fn bench(c: &mut Criterion) {
     });
     end.finish();
     api_e2e::bench(c, "end_to_end", "api_frame");
+    adapter_e2e::bench(c);
+    adapter_cases::bench(c);
 }
 criterion_group!(benches, bench);
 criterion_main!(benches);

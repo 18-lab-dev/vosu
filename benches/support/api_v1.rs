@@ -3,8 +3,9 @@
     dead_code,
     reason = "Each benchmark/test consumes a focused subset of the fixture"
 )]
-#[path = "../../tests/api_v1/support.rs"]
-pub mod harness;
+// One copy of the harness per crate: the including root declares
+// `mod adapter_fixture` (tests/adapter_fixture), which owns it.
+pub use crate::adapter_fixture::host as harness;
 use harness::*;
 use vosu_core::api::{ApiPlan, SessionTarget};
 use vosu_plugin_api::PublishValueRef;
