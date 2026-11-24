@@ -20,7 +20,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   cancels old work, and nothing is parsed while no client reads.
 - Announce a session to `vosu.sessions` watchers only once its bus state is
   open, so their immediate subscription is never refused.
-
+- Shutdown still destroys plugins and joins every remaining service when the
+  adapter providers fail to stop, and reports that failure with the other
+  cleanup errors.
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
   Capture, settings, resource/action ownership and precise ABI demand stay

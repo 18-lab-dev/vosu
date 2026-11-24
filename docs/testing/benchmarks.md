@@ -124,6 +124,46 @@ on native Windows stable/lazer and Linux lazer. Existing live reader `--bus`
 mode is not adapter-frame evidence; X1 must add/document the actual adapter
 output mode before measuring. No native/live/capture run is authorized by A4.
 
+## M4a D17 status at the exit
+
+**Status at the M4a exit (2026-11-24): D17 for M4a is pending. It is not a
+pass.** Two measurements decide it, and neither has run:
+
+1. Main's official pinned Criterion comparison of the frozen cases above, on
+   one approved physical core with five paired rounds, independent targets
+   and Criterion homes. It compares `end_to_end/adapter` and
+   `end_to_end/adapter_precise` with the equivalent `end_to_end/legacy`
+   workload at M3 `e1df38f` and pre-M0 `3a91ff9`, once that legacy harness
+   and the `bench-compare.py` case alias below exist.
+2. Native `live_reader_bench --adapter` runs (CPU/tick per stage and
+   read-to-frame latency, idle and subscribed) on native Windows stable and
+   lazer, and on Linux lazer.
+
+The exploratory numbers in the next section decide nothing. They also predate
+the exit merge with `v2/main`, which brought M1 L3's reader and read-plan
+changes, so every case runs again on the final head.
+
+**Inherited M1 rows, carried forward unchanged.** The owner's 2026-11-24
+exception permits the M1 landing on `v2/main` only. Every row below is still
+open and must close at Main's official M4a re-measurement or the M5 re-check,
+or receive a fresh explicit exception
+([source](#m1-planmemory-paired-d17)):
+
+| M1 row (native Windows, source `1162fe6`) | Mean paired overhead | Status |
+|---|---:|---|
+| stable regular fixture, flat | +19.51% | Miss, open |
+| stable precise fixture, flat | +30.81% | Miss, open |
+| lazer regular fixture | — | Not established: no populated fixture |
+| lazer precise fixture, flat | +10.26% | Miss, open |
+| lazer precise fixture, routed | +13.61% | Miss, open |
+| stable regular live | +22.07% | Miss, open |
+| stable precise live | +7.36% | Point pass only; interval inconclusive |
+| lazer regular live | +17.11% | Miss, open |
+| lazer precise live | +31.11% | Miss, open |
+
+The M2 and M3 D17 decisions are also still pending their quiet pinned runs
+([M2](#m2-comparison-status), [M3](#m3-d17-contract)).
+
 ## M4a D17 implementation (exploratory, non-exclusive)
 
 **No D17 pass is claimed.** These are short exploratory runs of X1 commit

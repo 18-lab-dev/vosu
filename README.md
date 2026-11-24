@@ -528,9 +528,16 @@ Methods and paths are exact. Unsupported combinations return `404 Not Found`. St
 | --- | --- |
 | `GET /json` | gosuMemory-compatible v1 snapshot |
 | `GET /json/sc` | streamCompanion-compatible snapshot |
-| `GET /json/v2` | vosu v2 snapshot |
-| `GET /json/v2/precise` | vosu precise snapshot |
-| `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file |
+| `GET /json/v2` | upstream-compatible v2 snapshot |
+| `GET /json/v2/precise` | upstream-compatible precise snapshot |
+| `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file inside the focused session's declared roots |
+
+These routes and their WebSocket feeds are projections of the focused session's
+state-bus values, served by the bundled `vosu.adapter.gosumemory`,
+`vosu.adapter.streamcompanion` and `vosu.adapter.upstream` plugins. A relative
+calculation `path` resolves against that session's songs folder (lazer: its
+files store); an absolute `path` must lie inside one of its declared roots.
+Any other `path` is rejected.
 
 Calculator file inputs are limited to 64 MiB, including opened-handle checks and bounded reads. The live calculator facade additionally admits at most 250,000 parsed objects with finite start timestamps within ±10,000,000 ms. Supported effective clock rates are `0.01`–`100`. Graph output is limited to 1,000,000 aggregate bins; excessive audio padding yields an empty graph. These are per-input limits, not a process-wide concurrent-calculation memory ceiling.
 
@@ -608,30 +615,27 @@ actual lane demand and release it on filter replacement or disconnect.
 
 File routes enforce root containment and support validated single HTTP byte ranges for media. Every response from these routes, including `/Songs/` directory listings, carries `Content-Security-Policy: sandbox`: a page or SVG from a beatmap or skin folder opened directly in a browser runs without script and outside the overlay origin. Content types are unchanged, so embedding these files in an overlay works as before.
 
-The skin index contains at most 20,000 files and visits at most 40,000 directory
-entries. `truncated:true` means it is incomplete (including inaccessible entries
-or directory aliases/cycles); consumers must retain probing as a fallback. Paths
-use `/` separators and are relative to `/files/skin/`. Indexes are cached by skin
-identity/root; metadata requests validate cached file and directory timestamps,
-so edits/additions/removals are reflected without switching skins. Exact file
-reads remain available beyond the listing cap. Unindexed/new files are resolved
-component-by-component, preferring exact component names then lexical case-folded
-matches. Every final open still enforces the existing root/symlink confinement.
+Stable skin files resolve inside the selected skin's folder: an exact
+component path first, then a case-insensitive match of the whole path.
+Directory listings under `/Songs/`, `/files/beatmap/` and stable skins list at
+most 131,072 entries or 16 MiB of names and mark a truncated listing
+explicitly; lookups still page every entry, so a truncated listing never
+hides a file. Every final open still enforces the existing root/symlink
+confinement.
 
-`/files/skin/`, skin files and `/files/beatmap/*` files support `HEAD`, strong
+Skin files and `/files/beatmap/*` files support `HEAD`, strong
 `ETag`, and `Cache-Control: no-cache` (store and revalidate, not `no-store`).
 File `Last-Modified` uses the opened file's mtime where representable as an HTTP
 date. Lazer ETags use the store hash; stable ETags hash path, size and high-resolution
 mtime without reading file contents. `If-None-Match` (including weak comparisons,
 lists and `*`) takes precedence over `If-Modified-Since`; a matching condition
 returns bodyless 304. HEAD returns the normal full-file headers with no body and
-ignores Range; GET retains existing single-range behaviour. Skin metadata has a
-content-derived ETag and may also be revalidated. Peer policy/CORS are unchanged.
+ignores Range; GET retains existing single-range behaviour. Peer policy/CORS are unchanged.
 
 Lazer skins use content-addressed storage, not an export folder. Consequently v2
 `folders.skin` / `directPath.skinFolder` retain their existing compatibility
 semantics rather than exposing the files store as a fictional skin folder.
-Tools should use `/files/skin/` metadata and `/files/skin/{path}` instead; the
+Tools should use API v1 skin trees and resources instead; the
 permission-filtered tool context exposes the same availability and built-in identity
 while keeping `skin.folder:null` for lazer.
 

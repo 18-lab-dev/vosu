@@ -1,4 +1,4 @@
-//! Unmounted bus-backed provider. The adapter owns selectors, typed decoding and
+//! Production bus-backed provider. The adapter owns selectors, typed decoding and
 //! wire semantics; this module owns latest-only caches and connection demand.
 mod demand;
 mod identity;

@@ -1399,6 +1399,107 @@ The approved D17 case names, common baseline harness and evidence requirements
 are [frozen in the benchmark guide](../testing/benchmarks.md#m4a-d17-contract).
 No measurement or D17 pass is claimed by the contract freeze.
 
+#### M4a outcome
+
+M4a is integrated on `m4a/projections` and merged with `v2/main` at `5ac185f`
+(M1 L3, M2 and the M3 exit). Every 1.x state route is now a projection of the
+state bus:
+
+- **Registration.** `src/plugins.rs` lists the required bundled set
+  explicitly: `vosu.osu`, `vosu.adapter.upstream`, `vosu.adapter.gosumemory`,
+  `vosu.adapter.streamcompanion`. If any of the four fails to load or create,
+  composition fails (`src/runtime/dev_plugins.rs`).
+- **Reads.** The adapters read only through `vosu-surface`: one coherent,
+  manifest-granted capture of the focused session per view. Private path
+  echoes need an explicit `vosu.osu.internal` subtree grant and are data only.
+  The production adapter crates depend on `vosu-surface`,
+  `vosu-adapter-support`, `vosu-osu-model`, `vosu-plugin-api` and (upstream,
+  streamCompanion) `vosu-osu-calc`. Their `vosu-core`/`vosu-osu`/
+  `vosu-osu-state` edges are test ingress only (`scripts/crate-boundaries.txt`).
+- **Serving.** One `BusStateProvider` per schema serves HTTP and WebSocket from
+  shared latest-only encodings. HTTP reads create no demand; each WebSocket
+  connection owns one RAII selector lease. Game files and legacy calculation
+  use the session's declared roots (ADR 0005, A4.4); streamCompanion chart
+  facts come from chart-resource bytes and `vosu-osu-calc`.
+- **B1 is deleted in both directions.** The snapshot/event flow and the root
+  control inputs are gone, as are `src/api/snapshot.rs`, the root adapter
+  models and the interim `vosu-osu -> vosu-surface` edge. The crate checker
+  rejects reviving that edge.
+- **Removals.** ADR 0021 removals hold at every nesting level. The four
+  retired configuration keys are ignored and never saved. Removed-route
+  requests are attributed for the future D20 notice.
+- **Tournaments.** D6's stable tournament-manager aggregate landed, and the
+  `stable-tournament` temporary exemption is closed with distinct
+  manager/spectator fixtures.
+
+The [divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md) has 18
+rows: 6 `security`, 12 `contract`, 0 `licensing` and 0 `temporary`. The four
+`vosu.osu`-scoped contract rows authorize no adapter wire difference.
+
+Exit evidence (2026-11-24, on the merged head):
+
+- **Linux.** Formatting, workspace Clippy, Windows cross-Clippy, all nine
+  `check-*.py` scripts and the 234 `scripts/test_*.py` tests passed. So did
+  the tool-host smoke (curl and Chromium phases) and the dashboard smoke
+  against a `test-harness` build. The full workspace nextest run
+  (`--lib --bins --tests --examples --all-features`) passed 2,514 tests
+  (4 skipped). Listed targets:
+  - `cargo test --locked`: `state_api_compat` 7, `server_compat` 27,
+    `state_bus_compat` 5, `config_compat` 9, `performance_invariants` 20
+    (22 with all features), `runtime_wakeups` 3 (1 ignored).
+  - `--features test-harness`: `state_bus` 6, `osu_plugin` 10,
+    `api_v1_compat` 33, `daemon_smoke` 2.
+  - `cargo test --workspace --lib --all-features --locked prop_`: 39.
+- **Native Windows (`vm-test.py`, which always passes `--all-features`).**
+  `server_compat` 27/27, `state_api_compat` 7/7 (including the stable
+  tournament aggregate, the extension-absence proofs and the byte-for-byte
+  oracle replay), `vosu-core` lib `state_subscribe` 17/17, `vosu-osu` lib 203
+  (1 ignored) and `api_v1_compat` 33/33 passed. The full `vosu-core` lib
+  passed 592 of 594. One failure is
+  `surface_calculation_rejects_canonical_non_osu_alias`: it creates a file
+  symlink, which needs `SeCreateSymbolicLinkPrivilege`, and `vm-test.py`'s
+  LIMITED task does not hold it (error 1314). The `prepush.py` native phase
+  runs at High integrity. The other failure was a single 5 s attach timeout in
+  `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`. It
+  passed alone and in 8 further full-lib `vm-stress.py` iterations; those
+  iterations failed only the symlink case. A 12-iteration `plugin::` stress
+  run also saw `destroy_cancels_every_timer_of_an_instance_and_none_fire_again`
+  fail once. That test predates M4a.
+
+Not part of this exit:
+
+- **D17 for M4a is pending.** It needs Main's official pinned Criterion run
+  and native `live_reader_bench --adapter` runs on Windows stable/lazer and
+  Linux lazer. It is not a pass. The M1 rows stay open under their owner
+  exception ([benchmark guide](../testing/benchmarks.md#m4a-d17-status-at-the-exit)).
+- Live parity is an optional diagnostic and did not run. M4b owns the
+  pilot/full owner captures and `adapter_golden`; no capture exists, and
+  none is claimed.
+- The clean-room `/api/ingame` page (licensing), M5 process execution and the
+  M8 day-0 gate and migration remain separate work.
+
+**M8 migration inventory.** Delete exactly `ENABLE_KEY_OVERLAY`,
+`ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS` and
+`V2_SUBSCRIPTION_DEBOUNCE` from `vosu.toml` and the dotenv migration inputs,
+idempotently. Preserve `API_V1_SUBSCRIPTION_DEBOUNCE` and every unrelated
+unknown key or table. Write no replacement flag: subscription selectors own
+collection.
+
+**First-party consumers of removed surfaces.** These still request routes that
+M4a removed, so those requests now fail. Their owners move them to API v1
+namespace subscriptions and skin trees/resources; the routes do not return:
+
+| Consumer | Removed surface it uses | Owner |
+|---|---|---|
+| `assets/server/tool-bridge-v1.js` `subscribe()` | `/websocket/v2/subscribe` (now 404) | M7 tool-host replacement; v2 bridge already uses API v1 |
+| vosu-tools `packages/client-skin` | `GET /files/skin/` index, lazer `/files/skin/{path}`, selected-v2 pointers | vosu-tools, before M8 |
+| vosu-tools `packages/tool-web` bridge typings and the tools calling `vosu.subscribe` (downloader, map-analysis, map-preview, practice, replay-renderer, server-pp, skin-studio) | `/websocket/v2/subscribe` through the v1 bridge | vosu-tools, before M8 |
+| vosu-overlays `ratings-timeline` | `/websocket/v2/subscribe` | vosu-overlays, before M8 |
+| vosu-overlay-quickstart (`app.js`, README, TUTORIAL) | `/websocket/v2/subscribe` | quickstart owner, before M8 |
+
+M8's D20 notice flags user overlays that still request removed routes; they
+stay installed and enabled.
+
 ### M4b: golden fixtures from live captures (owner-dependent)
 
 Scope: extend `tools/live-parity` with (1) a route-probe matrix recording

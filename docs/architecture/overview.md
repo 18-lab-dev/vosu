@@ -153,9 +153,9 @@ sequenceDiagram
 
 ### Discovery and reader boundary
 
-Core's `DiscoveryService` queries a platform `ProcessSource`, matches enabled plugin manifests, and owns session generations. `vosu-osu` parses the attached process facts, declines tournament/debug clients, classifies stable/lazer, and identifies sessions. Linux fallback candidates settle once against named siblings from the discovery pass; their variant then stays fixed for that generation. Windows metadata is keyed by PID plus process start time, so reuse invalidates cached facts and detaches the old generation before attaching the new one. B1 retains the 1.x tournament-manager/foreground-client/lowest-PID selection until M4a; core's API-v1 Focus rule is separate.
+Core's `DiscoveryService` queries a platform `ProcessSource`, matches enabled plugin manifests, and owns session generations. `vosu-osu` parses the attached process facts, declines debug clients, identifies `--tournament` stable managers as priority sessions, classifies stable/lazer, and identifies sessions. Linux fallback candidates settle once against named siblings from the discovery pass; their variant then stays fixed for that generation. Windows metadata is keyed by PID plus process start time, so reuse invalidates cached facts and detaches the old generation before attaching the new one. The upstream adapters capture core's focused session under the API-v1 Focus rule, where a tournament manager's `focus_priority` wins; no separate 1.x client selection remains.
 
-On Windows, core samples the foreground owner once every 100 ms and caches it before recomputing plugin focus. B1 consumes the same latest-value watch, not a second OS query or timer. Session attach/detach still reruns B1's own reduction against the cached sample even when the foreground owner has not changed.
+On Windows, core samples the foreground owner once every 100 ms and caches it before recomputing plugin focus. Surface captures carry that cached observation for every identified session, not a second OS query or timer.
 
 `vosu-sys::process::ProcessMemory` is the native all-or-error syscall boundary. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
 
@@ -171,8 +171,8 @@ exit path; its child processes remain asynchronous and cancellation-aware.
 `src/state/worker.rs` owns two named blocking reader threads plus one async reducer task per ready process generation. The regular path is backpressured by a one-slot permit channel, so only the requested capture plan is produced. The precise path overwrites a latest-only slot; it does not queue every high-frequency observation. The reducer gives regular input priority, rejects samples whose source, generation, sequence, mode/mod context, or hit-error suffix is stale, then calls `StateBundle::apply_regular` or `StateBundle::apply_precise` serially.
 
 The plugin owns one Tokio scheduler worker; reader threads send each sample to
-the serialized reducer, which publishes synchronously into B1's latest-only
-sink. There is no per-publication task or reducer polling timer. Heavy
+the serialized reducer, which publishes synchronously onto the state bus.
+There is no per-publication task or reducer polling timer. Heavy
 PP/progressive calculation runs through the blocking pool, while capture and
 shutdown retain their existing generation checks and bounded lifecycle.
 
@@ -209,12 +209,11 @@ foreground refreshes. Unchanged snapshots publish nothing. The
 [state-schema parity map](../v2/state-schema.md#1x-to-20-field-mapping)
 defines the common formulas and the intentional 1.x differences.
 
-The production plugin publishes to B1 first, then the bus, even without a B1
-sink; bus refusal does not fail legacy publication. `demand.rs` unions B1
-demand with schema-derived bus demand. Selectors overlapping
-`/vosu.osu/play/hitOffsets` or `/vosu.osu/play/keyHitErrors` opt into extended
-reader collection independently of `ENABLE_*`; precise-lane demand alone
-does not. The 1.x serializers still enforce their existing flags.
+The production plugin publishes only to the bus. `demand.rs` synchronously
+combines direct authorized bus demand with instance-owned tournament demand.
+Selectors overlapping `/vosu.osu/play/hitOffsets` or
+`/vosu.osu/play/keyHitErrors` opt into extended reader collection; precise-lane
+demand alone does not. The retired `ENABLE_*` keys gate nothing.
 
 ABI readers and `vosu-surface::state` share subscriptions, demand and grant
 checks; one-shot surface reads create no demand. API audiences always strip
@@ -224,13 +223,13 @@ readers need an explicit `field:vosu.osu.internal` or descendant grant;
 from session replay. Detach flushes final selected state before its terminal
 event and closes the store.
 
-M2 does not replace the HTTP/WebSocket compatibility providers above or expose
-the M3 `/api/v1` transport. B1 remains until M4a. Resource references await M3:
-`vosu.chart.resources` is `{}` and `vosu.skin.tree` is `null`, not absent.
+M2 alone did not replace the HTTP/WebSocket compatibility providers. M3 added
+the `/api/v1` transport and resource references; M4a replaced the providers
+with the bus projections described below.
 
 ### API and server publication
 
-`src/api/snapshot.rs` owns immutable manager/combined snapshots and per-snapshot encoding caches. `src/api/{v1,sc,v2,precise}.rs` own wire construction; `src/runtime/projection.rs::ProductionSnapshotEncoder` is the filtered WebSocket bridge. `src/server/service/providers.rs::SnapshotStateProvider` serves HTTP encodings from the same atomic snapshot and its `OnceLock` caches. No route reads game memory directly.
+The bundled adapter crates own wire construction: `vosu-adapter-gosumemory` (`/json`, `/ws`), `vosu-adapter-streamcompanion` (`/json/sc`, `/tokens`) and `vosu-adapter-upstream` (`/json/v2`, `/json/v2/precise`, their feeds, legacy game files and calculation). Each builds a typed immutable view from one coherent, grant-checked surface capture of the focused session. `src/server/bus_provider.rs::BusStateProvider`, one per schema (`src/runtime/adapters.rs`), serves HTTP and WebSocket from the same latest-only encoding cache. HTTP reads are demand-free captures; each WebSocket connection owns one RAII selector lease, and the leases of a schema share one surface subscription. No route reads game memory or a typed game snapshot.
 
 `src/server/routes.rs` classifies exact methods and paths into typed `Endpoint` values, enforces authorization and request-body limits, and delegates state, calculation, files/pages, counters, settings, reports, updates, and WebSocket upgrades through narrow provider traits. `src/server/runtime.rs::ListenerRuntime` resolves and binds desired targets, retains the old effective listener if replacement resolution/bind fails, and drains superseded listeners. `ListenerOwner::start` does not report readiness until the initial address is actually bound.
 
@@ -241,7 +240,7 @@ the M3 `/api/v1` transport. B1 remains until M4a. Resource references await M3:
 `src/tools` reserves `/tools` before counter static routing. `ToolHost` discovers development, official-catalog, and user tools, persists trust/enabled state and settings in a separate config namespace, and owns bounded service logs and supervised child lifetimes. Ordered configurable catalog sources merge tools and overlays with first-source-wins shadowing; packages undergo shared network/archive hardening, size/digest and manifest checks before atomic installation. Only the default official tool source grants automatic trust. Services receive per-launch secrets, bind ephemeral loopback ports, and pass readiness/health checks before requests are forwarded. Public read prefixes remain overlay-readable; mutations require a dashboard-minted tab session or a declared dependent tool token. Dashboard-only `/api/tools` management retains provenance and CSRF checks. Shutdown closes child stdin and enforces a five-second exit bound; Linux parent-death signals and Windows kill-on-close jobs additionally contain daemon death. See the [tool protocol](../tools/protocol.md).
 
 
-Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; selected-field v2 subscriptions use the separate `src/server/v2_subscription.rs::V2SubscriptionHub`. Publication tasks live in `WebSocketHubs`. Both hub types bound each client to one pending state frame and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`, and the selected-field endpoint does not register a command or relay client.
+Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; publication tasks live in `WebSocketHubs`. The hub bounds each client to one pending state frame, and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. The selected-field `/websocket/v2/subscribe` feed is removed. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`.
 
 State delivery retains its one-frame latest-state bound. Compatibility control queues and the shared relay mailbox each have capacity 16; relay producers use nonblocking admission, and shared delivery never waits for a recipient mutex/control queue. Saturated recipients are cleaned up without stalling healthy recipients. Legacy filter parsing caps input nodes/depth and deduplicates the resulting projection.
 
@@ -250,7 +249,7 @@ State delivery retains its one-frame latest-state bound. Compatibility control q
 There are two intentional paths:
 
 1. **Live state calculation.** Regular state transitions build requests in `src/state/bundle/calculation.rs`. `src/state/state_backend.rs::LiveStateCalculationBackend` resolves beatmap readiness, parsing/cache state, gameplay/result progression, and runs blocking work outside the async reducer. `LiveBeatmapEngine` delegates difficulty, strains, and performance to the `crates/vosu-pp` Rust facade, whose `rosu-map-api` and `rosu-pp-api` workspace members preserve pinned upstream evidence and licensing boundaries. Results return to the reducer only when their state key and calculation generation are still current.
-2. **Calculation endpoint.** `src/server/service/providers.rs::LegacyCalculateProvider` selects either the current beatmap or a canonical regular `.osu` file supplied by the query, maps the request, and invokes `src/calculation/engine.rs::LegacyRosuEngine`. This preserves the legacy rosu-pp-js-compatible setter order and must not be silently routed through the live calculator contract.
+2. **Calculation endpoint.** `src/server/service/declared_calculate.rs::DeclaredCalculateProvider` delegates to `vosu_adapter_upstream::calculate`, which selects either the captured session's current beatmap or a canonical regular `.osu` file inside that session's declared roots, maps the request, and invokes `vosu_osu_calc::engine::LegacyRosuEngine`. This preserves the legacy rosu-pp-js-compatible setter order and must not be silently routed through the live calculator contract.
 
 Beatmap parsing, timing/events, object graphs, and cache ownership are under `src/calculation/beatmap/*`; progressive gameplay/result state is under `src/calculation/progressive/*`.
 

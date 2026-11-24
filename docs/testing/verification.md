@@ -11,12 +11,12 @@ tags: [testing, ci, parity, benchmarks, release]
 ## Fast selection by change
 
 - API projection/routing: affected tests plus `cargo test --locked --test state_api_compat` and/or `server_compat`; add `daemon_smoke` for startup/serving changes.
-- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; keep `state_api_compat` unchanged to guard the B1-served 1.x APIs.
+- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; `state_api_compat` replays the source oracle through the bus-backed adapters, so a projection change must keep its bytes.
 - Configuration/counters: affected unit tests plus `cargo test --locked --test config_compat`; cover flat typed TOML parsing, precedence `vosu.toml > vosu.env > tosu.env > defaults`, canonical replacement before legacy removal, malformed startup/reload preservation of last-good state, watcher handling, and atomic writes.
 - Process/memory: affected tests plus `cargo test --locked --test process_memory -- --nocapture` on every affected native OS.
 - Updater/release: `updater_compat`, native `updater_native`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` for package/startup changes.
 - Calculation/state: `vosu-pp` tests, `performance_invariants`, `state_bus_invariants`, and `state_api_compat`/`server_compat` when observable schemas or timing can change; for v2 stats, cover parsed/missing maps, modes, mods, clock rate, and catch timing-window semantics. The oracle-backed `live_contracts` and `oracle_parity` tests require the crate’s `oracle-debug` feature. Live parity is optional ([ADR 0011](../decisions/0011-live-parity-optional.md)).
-- Compatibility payloads: assert the original `hitErrors`/`hitErrorArray` arrays plus additive sibling `pressHitErrors` and `releaseHitErrors` arrays across v1, stream companion, v2, precise, play, and tournament fixtures; include the lazer mania hold release-correction case.
+- Compatibility payloads: assert the original `hitErrors`/`hitErrorArray` arrays across v1, stream companion, v2, precise, play, and tournament fixtures, and the absence of every ADR 0021 extension member (`pressHitErrors`, `releaseHitErrors`, `keyHitErrors`, `hitOffsets`, `keys.all`, `catcher`) at every nesting level while the bus holds nonempty source facts; include the lazer mania hold release-correction case.
 - Untrusted-input and crash-recovery logic (ZIP preflight, updater recovery, API-state selection, served paths, JSON Pointers): `cargo test --workspace --lib --all-features --locked prop_`. These property tests use a fixed seed; `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores new cases, and the nightly workflow runs 20,000 cases per property. A failure persists its seed to `proptest-regressions/lib-prop-failures.txt`; commit that file with the fix.
 - Lazer offsets: `python scripts/lazer-offset-canary.py [--tag <release>-lazer]` stages the generator on the client's own runtime exactly as the daemon does and fails naming any template field it cannot resolve. The nightly workflow runs it against the newest lazer release.
 - Dashboard and tool host: `tests/tool_host_smoke.py` and `tests/dashboard_smoke.py` against a `--features test-harness` debug build; CI's `dashboard` job runs them when UI paths change, and the nightly workflow also runs the catalog-art and tool-catalog smokes.
@@ -73,10 +73,10 @@ evidence and D17's decision belong there, not in a functional test pass.
 
 A4 resolves the approved choices in the
 [source/removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
-and [P0/R0 surface contract](../v2/adapter-surfaces.md). Until production
-cutover, retain the original B1 wire guard. At cutover, replace its ingress
-with actual producer → ABI/bus → authorized surface → adapter registration
-and compare raw emitted bytes, preserving the source pin and fixture inventory.
+and [P0/R0 surface contract](../v2/adapter-surfaces.md). Since the production
+cutover, `state_api_compat` drives the actual producer → ABI/bus → authorized
+surface → adapter registration and compares raw emitted bytes, preserving the
+source pin and fixture inventory; no B1 ingress remains.
 Do not strip extensions or normalize regular keys away. Nonempty extension
 source facts must exist while the wire keys are absent. Restore schema
 renames on adapter output; schema-only divergences authorize no wire skip.
@@ -118,6 +118,11 @@ confinement cases. No VM lifecycle action is implied by these instructions.
 Use `flock /tmp/vosu-smoke.lock` for smokes. D17 names and measurement policy
 are [frozen separately](benchmarks.md#m4a-d17-contract), not passed by functional
 tests. M4b owns live captures/golden tooling and M8 owns migration execution.
+
+The exit run of these commands, with exact counts, the native Windows results
+and the native-only symlink-privilege and flake observations, is recorded in
+the [M4a outcome](../v2/implementation-plan.md#m4a-outcome). The D17 status is
+in the [benchmark guide](benchmarks.md#m4a-d17-status-at-the-exit).
 
 ## M3 API, resources and actions
 
@@ -185,7 +190,7 @@ shutdown. A test-only forwarding `HostServices` wrapper counts every production
 osu plugin `ACTION_RESULT` before host acceptance, including rejected duplicates.
 J3 also fixes the registration boundary: the plugin's action-target session is
 installed before `SESSION_IDENTIFY` publishes it; rejection rolls that preparation
-back. Capture/B1 still starts only after acceptance, and B2 settings delivery is
+back. Capture still starts only after acceptance, and B2 settings delivery is
 still serialized by the same plugin-state lock. A re-entrant identify/action
 regression tests the formerly missing-target window deterministically.
 
