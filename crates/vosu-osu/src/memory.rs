@@ -2,8 +2,11 @@
 //! `VOSU_READ_PLAN_SYNC` read plans (D5, P3 — `docs/v2/plugin-abi.md`
 //! §6.3). Every `read_exact`/`read_many` call goes through
 //! [`vosu_plugin_api::PlanMemory::read_flat`]'s zero-allocation path (F4,
-//! D17) with a thread-local [`SyncReadBuffers`], never
-//! [`vosu_plugin_api::PlanMemory::read`]'s allocating one.
+//! D17) with thread-local scratch (a [`SyncReadBuffers`] and, for
+//! `read_many`, a reused `Vec<PlanOp>`), copying a successful op's bytes
+//! straight into the caller's own `dst` — never
+//! [`vosu_plugin_api::PlanMemory::read`]'s allocating variant, and never an
+//! intermediate owned `Vec<u8>` on the success path.
 //!
 //! A read plan's encoded submission and worst-case result are both capped
 //! at `VOSU_READ_PLAN_MAX_BYTES` (64 KiB, §6.3): `read_exact` always
@@ -21,10 +24,10 @@ use vosu_osu_reader::process::{
     MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
 };
 use vosu_plugin_api::{
-    HostServices, PlanBase, PlanMemory, PlanMemoryError, PlanOp, StageBase, StageRef,
-    SyncReadBuffers, VOSU_READ_PLAN_MAX_BYTES, VtableHostServices, vosu_plan_id,
-    vosu_read_plan_result_header, vosu_read_plan_submit_header, vosu_read_result_flat,
-    vosu_read_result_kind, vosu_session_id, vosu_stage_header, vosu_status,
+    FlatReadResults, HostServices, PlanBase, PlanMemory, PlanMemoryError, PlanOp, StageBase,
+    StageRef, SyncReadBuffers, VOSU_READ_PLAN_MAX_BYTES, VtableHostServices, vosu_plan_id,
+    vosu_read_error_code, vosu_read_plan_result_header, vosu_read_plan_submit_header,
+    vosu_read_result_flat, vosu_read_result_kind, vosu_session_id, vosu_stage_header, vosu_status,
 };
 
 thread_local! {
@@ -32,6 +35,9 @@ thread_local! {
     /// thread makes, on any session: once both of its buffers have grown
     /// to their steady-state capacity, no call here allocates (D17).
     static SYNC_READ_BUFFERS: RefCell<SyncReadBuffers> = RefCell::new(SyncReadBuffers::new());
+    /// `read_many`'s batch scratch: reused the same way, instead of a
+    /// fresh `Vec<PlanOp>` per batch.
+    static OPS_SCRATCH: RefCell<Vec<PlanOp>> = const { RefCell::new(Vec::new()) };
 }
 
 const PLAN_CAP: usize = VOSU_READ_PLAN_MAX_BYTES as usize;
@@ -73,10 +79,13 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
     }
 
     /// Like [`Self::new`], sharing its plan-id counter and liveness flag
-    /// with another backend for the same session (`PlanScanBackend`'s
-    /// scans also submit over this same `handle`): a `VOSU_ERR_TARGET_GONE`
-    /// seen on either path marks the session dead for both, and plan ids
-    /// never collide between them.
+    /// with another backend for the same session. Pass the same `alive`
+    /// `Arc` to [`crate::scan::PlanScanBackend::with_shared`] for the same
+    /// session (`handle`): a `VOSU_ERR_TARGET_GONE` seen on either path
+    /// then marks the session dead for both. `next_plan` is this read
+    /// path's own plan-id counter; the scan path uses no plan ids, so
+    /// sharing it is only for a single counter source, not collision
+    /// avoidance with scans.
     #[must_use]
     pub fn with_shared(
         host: H,
@@ -119,12 +128,17 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
     /// op's decoded result in submission order via `apply`, entirely
     /// inside this thread's [`SYNC_READ_BUFFERS`] borrow — nothing
     /// borrowed from it ever escapes this call. A `VOSU_ERR_TARGET_GONE`
-    /// rejection flips [`Self::alive`] false before returning.
+    /// rejection flips [`Self::alive`] false before returning;
+    /// `VOSU_ERR_PERMISSION_DENIED` becomes [`MemoryError::PermissionDenied`]
+    /// rather than the generic [`MemoryError::Backend`] every other
+    /// rejection becomes, since nothing else here can tell a permission
+    /// failure apart from any other rejected submission (no per-address
+    /// detail is available at this level — `address`/`len` are `0`).
     fn submit(
         &self,
         root: PlanBase,
         ops: &[PlanOp],
-        mut apply: impl FnMut(usize, vosu_read_result_kind, &[u8]) -> Result<(), MemoryError>,
+        mut apply: impl FnMut(usize, &FlatReadResults<'_>) -> Result<(), MemoryError>,
     ) -> Result<(), MemoryError> {
         let plan = self.next_plan_id();
         let stage = StageRef {
@@ -144,14 +158,21 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
             ) {
                 Ok(results) => {
                     for index in 0..ops.len() {
-                        let (kind, bytes) = results.get(index);
-                        apply(index, kind, bytes)?;
+                        apply(index, &results)?;
                     }
                     Ok(())
                 }
                 Err(PlanMemoryError::Rejected(status)) => {
                     if status == vosu_status::VOSU_ERR_TARGET_GONE {
                         self.alive.store(false, Ordering::Relaxed);
+                    }
+                    if status == vosu_status::VOSU_ERR_PERMISSION_DENIED {
+                        return Err(MemoryError::PermissionDenied {
+                            address: 0,
+                            len: 0,
+                            message: "host rejected the read plan: VOSU_ERR_PERMISSION_DENIED"
+                                .to_owned(),
+                        });
                     }
                     Err(MemoryError::Backend {
                         operation: "read plan",
@@ -171,47 +192,63 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
     }
 }
 
-/// Converts one op's decoded flat result into its read bytes or a
-/// `MemoryError`. `FlatReadResults::get` exposes a `VOSU_READ_ERROR`
-/// entry's message but not its `vosu_read_error_code` (the zero-alloc
-/// decode path does not surface it), so every such entry becomes
-/// [`MemoryError::Read`] rather than the finer `PermissionDenied`/
-/// `AddressOverflow` distinction a CBOR-decoded `ReadResult::Error` could
-/// make; nothing downstream of `ProcessMemory` matches on that
-/// distinction today (only constructs it).
-fn convert_result(
-    kind: vosu_read_result_kind,
-    bytes: &[u8],
+/// Copies one op's decoded flat result straight into `dst` (no
+/// intermediate owned `Vec<u8>`, D17), or returns the `MemoryError` it
+/// decodes to. `results.error_code` recovers `VOSU_READ_ERROR_PERMISSION_DENIED`
+/// as [`MemoryError::PermissionDenied`]; every other error code becomes
+/// [`MemoryError::Read`], since nothing downstream matches on the
+/// remaining distinctions ([`vosu_read_error_code::VOSU_READ_ERROR_BACKEND`]/
+/// `_READ_FAILED`/`_ADDRESS_OVERFLOW`) today. This is not a hot path, so
+/// its one allocation (the UTF-8 message) is fine — only the success path
+/// is zero-allocation.
+fn apply_result(
+    results: &FlatReadResults<'_>,
+    index: usize,
     address: usize,
-    expected_len: usize,
-) -> Result<Vec<u8>, MemoryError> {
+    dst: &mut [u8],
+) -> Result<(), MemoryError> {
+    let (kind, bytes) = results.get(index);
     match kind {
         vosu_read_result_kind::VOSU_READ_OK => {
-            if bytes.len() != expected_len {
+            if bytes.len() != dst.len() {
                 return Err(MemoryError::Backend {
                     operation: "read plan op",
                     message: format!(
-                        "host returned {} bytes for a {expected_len}-byte op",
-                        bytes.len()
+                        "host returned {} bytes for a {}-byte op",
+                        bytes.len(),
+                        dst.len()
                     ),
                 });
             }
-            Ok(bytes.to_vec())
+            dst.copy_from_slice(bytes);
+            Ok(())
         }
         vosu_read_result_kind::VOSU_READ_NOT_READY => Err(MemoryError::Read {
             address,
-            len: expected_len,
+            len: dst.len(),
             message: "target is not ready".to_owned(),
         }),
         vosu_read_result_kind::VOSU_READ_UNSUPPORTED => Err(MemoryError::Backend {
             operation: "read plan op",
             message: "host does not support this read".to_owned(),
         }),
-        vosu_read_result_kind::VOSU_READ_ERROR => Err(MemoryError::Read {
-            address,
-            len: expected_len,
-            message: String::from_utf8_lossy(bytes).into_owned(),
-        }),
+        vosu_read_result_kind::VOSU_READ_ERROR => {
+            let message = String::from_utf8_lossy(bytes).into_owned();
+            match results.error_code(index) {
+                Some(vosu_read_error_code::VOSU_READ_ERROR_PERMISSION_DENIED) => {
+                    Err(MemoryError::PermissionDenied {
+                        address,
+                        len: dst.len(),
+                        message,
+                    })
+                }
+                _ => Err(MemoryError::Read {
+                    address,
+                    len: dst.len(),
+                    message,
+                }),
+            }
+        }
     }
 }
 
@@ -239,10 +276,8 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                 length: u32::try_from(chunk_len).expect("chunk_len is capped well under u32::MAX"),
             };
             let dst_chunk = &mut dst[filled..filled + chunk_len];
-            self.submit(PlanBase::Absolute(root_address), &[op], |_, kind, bytes| {
-                let data = convert_result(kind, bytes, chunk_address, chunk_len)?;
-                dst_chunk.copy_from_slice(&data);
-                Ok(())
+            self.submit(PlanBase::Absolute(root_address), &[op], |index, results| {
+                apply_result(results, index, chunk_address, dst_chunk)
             })?;
             filled += chunk_len;
         }
@@ -251,9 +286,11 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
 
     /// Root `Absolute(0)`, one stage, one op per request with
     /// `offset: address` — batched into as many ops as fit one plan's 64
-    /// KiB result cap before starting the next round trip. A single
-    /// request longer than [`MAX_SINGLE_OP_BYTES`] falls back to
-    /// [`Self::read_exact`]'s own splitting instead of ever being batched.
+    /// KiB result cap before starting the next round trip, using a
+    /// thread-local `Vec<PlanOp>` scratch buffer instead of a fresh one
+    /// per batch. A single request longer than [`MAX_SINGLE_OP_BYTES`]
+    /// falls back to [`Self::read_exact`]'s own splitting instead of ever
+    /// being batched.
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
         let mut index = 0;
         while index < reads.len() {
@@ -286,27 +323,27 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                 "a request within MAX_SINGLE_OP_BYTES always fits alone"
             );
 
-            let mut ops = Vec::with_capacity(end - index);
-            for read in &reads[index..end] {
-                let offset =
-                    i64::try_from(read.address).map_err(|_| MemoryError::AddressOverflow {
-                        base: read.address,
-                        offset: 0,
-                    })?;
-                ops.push(PlanOp {
-                    offset,
-                    length: u32::try_from(read.dst.len())
-                        .expect("read_many chunk lengths are capped well under u32::MAX"),
-                });
-            }
+            OPS_SCRATCH.with(|cell| {
+                let mut ops = cell.borrow_mut();
+                ops.clear();
+                for read in &reads[index..end] {
+                    let offset =
+                        i64::try_from(read.address).map_err(|_| MemoryError::AddressOverflow {
+                            base: read.address,
+                            offset: 0,
+                        })?;
+                    ops.push(PlanOp {
+                        offset,
+                        length: u32::try_from(read.dst.len())
+                            .expect("read_many chunk lengths are capped well under u32::MAX"),
+                    });
+                }
 
-            let batch = &mut reads[index..end];
-            self.submit(PlanBase::Absolute(0), &ops, |op_index, kind, bytes| {
-                let address = batch[op_index].address;
-                let len = batch[op_index].dst.len();
-                let data = convert_result(kind, bytes, address, len)?;
-                batch[op_index].dst.copy_from_slice(&data);
-                Ok(())
+                let batch = &mut reads[index..end];
+                self.submit(PlanBase::Absolute(0), &ops, |op_index, results| {
+                    let address = batch[op_index].address;
+                    apply_result(results, op_index, address, batch[op_index].dst)
+                })
             })?;
             index = end;
         }

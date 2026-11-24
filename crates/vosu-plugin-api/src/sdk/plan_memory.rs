@@ -24,8 +24,8 @@ use crate::message::flat::{ReadPlanResult, StageRef, encode_submit_into};
 use crate::opcode::vosu_opcode;
 use crate::{
     PlanBase, Stage, read_flat_header, validate_flags, validate_read_plan_result, vosu_plan_id,
-    vosu_read_plan_result_header, vosu_read_result_flat, vosu_read_result_kind, vosu_session_id,
-    vosu_status,
+    vosu_read_error_code, vosu_read_plan_result_header, vosu_read_result_flat,
+    vosu_read_result_kind, vosu_session_id, vosu_status,
 };
 
 thread_local! {
@@ -305,11 +305,11 @@ impl<'b> FlatReadResults<'b> {
         self.count == 0
     }
 
-    /// One flat `vosu_read_result_flat` entry's kind, plus its trailing
-    /// bytes (the read bytes for `VOSU_READ_OK`, the error message for
-    /// `VOSU_READ_ERROR`, empty otherwise). Panics if
-    /// `index >= self.len()`.
-    pub fn get(&self, index: usize) -> (vosu_read_result_kind, &'b [u8]) {
+    /// Reads one flat `vosu_read_result_flat` entry (a plain `Copy`
+    /// struct, no allocation). Panics if `index >= self.len()`; shared by
+    /// [`Self::get`] and [`Self::error_code`] so both read the same
+    /// validated bytes the same way.
+    fn entry(&self, index: usize) -> vosu_read_result_flat {
         assert!(index < self.count, "FlatReadResults index out of bounds");
         let elem_size = core::mem::size_of::<vosu_read_result_flat>();
         let offset = self.results_offset as usize + index * elem_size;
@@ -323,13 +323,21 @@ impl<'b> FlatReadResults<'b> {
         // `FlatReadResults` from it. `index < self.count` was just
         // asserted above, so `offset` names a `vosu_read_result_flat`-
         // sized range inside that validated `results` array.
-        let entry: vosu_read_result_flat = unsafe {
+        unsafe {
             self.buffer
                 .as_ptr()
                 .add(offset)
                 .cast::<vosu_read_result_flat>()
                 .read_unaligned()
-        };
+        }
+    }
+
+    /// One flat `vosu_read_result_flat` entry's kind, plus its trailing
+    /// bytes (the read bytes for `VOSU_READ_OK`, the error message for
+    /// `VOSU_READ_ERROR`, empty otherwise). Panics if
+    /// `index >= self.len()`.
+    pub fn get(&self, index: usize) -> (vosu_read_result_kind, &'b [u8]) {
+        let entry = self.entry(index);
         let kind = vosu_read_result_kind::try_from(entry.kind)
             .expect("a host-produced VOSU_OP_READ_PLAN_RESULT always carries a valid kind");
         let bytes = match kind {
@@ -345,5 +353,23 @@ impl<'b> FlatReadResults<'b> {
             | vosu_read_result_kind::VOSU_READ_UNSUPPORTED => &[][..],
         };
         (kind, bytes)
+    }
+
+    /// `index`'s `vosu_read_error_code`, or `None` when its kind is not
+    /// `VOSU_READ_ERROR` (`include/vosu_plugin.h:412-420`'s own per-op
+    /// error vocabulary, mirroring `src/process.rs`'s `MemoryError`
+    /// subset): lets a caller recover `MemoryError::PermissionDenied`
+    /// instead of [`Self::get`]'s generic error-message bytes alone.
+    /// Panics if `index >= self.len()`.
+    pub fn error_code(&self, index: usize) -> Option<vosu_read_error_code> {
+        let entry = self.entry(index);
+        if vosu_read_result_kind::try_from(entry.kind) != Ok(vosu_read_result_kind::VOSU_READ_ERROR)
+        {
+            return None;
+        }
+        Some(
+            vosu_read_error_code::try_from(entry.error_code)
+                .expect("a host-produced VOSU_READ_ERROR entry always carries a valid error_code"),
+        )
     }
 }

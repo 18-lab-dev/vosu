@@ -146,6 +146,42 @@ fn an_unmapped_address_is_a_read_error_not_a_panic() {
 }
 
 #[test]
+fn per_op_permission_denied_becomes_memory_error_permission_denied() {
+    let base = 0x5500;
+    let host = FakeHost::new(
+        |_, _| {},
+        fill(16, 1),
+        base,
+        Arc::new(AtomicBool::new(true)),
+    );
+    host.deny_read_permission_at(base);
+    let process = PlanProcessMemory::new(host, 1, 4242, ProcessBitness::X64);
+    let mut out = [0u8; 16];
+    let err = process
+        .read_exact(base, &mut out)
+        .expect_err("a permission-denied op must not succeed");
+    assert!(matches!(err, MemoryError::PermissionDenied { .. }));
+}
+
+#[test]
+fn submission_level_permission_denied_becomes_memory_error_permission_denied() {
+    let base = 0x5600;
+    let host = FakeHost::new(
+        |_, _| {},
+        fill(16, 1),
+        base,
+        Arc::new(AtomicBool::new(true)),
+    );
+    host.deny_submission_with_permission_denied();
+    let process = PlanProcessMemory::new(host, 1, 4242, ProcessBitness::X64);
+    let mut out = [0u8; 16];
+    let err = process
+        .read_exact(base, &mut out)
+        .expect_err("a permission-denied submission must not succeed");
+    assert!(matches!(err, MemoryError::PermissionDenied { .. }));
+}
+
+#[test]
 fn target_gone_flips_is_alive() {
     let base = 0x6000;
     let alive = Arc::new(AtomicBool::new(true));
@@ -216,3 +252,5 @@ fn readable_regions_is_unsupported_through_read_plans() {
         Err(MemoryError::Backend { .. })
     ));
 }
+
+mod zero_alloc;

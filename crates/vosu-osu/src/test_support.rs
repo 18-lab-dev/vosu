@@ -1,15 +1,19 @@
 //! Shared test harness for P3 (`memory`, `scan`): a `FakeHost` that
 //! re-enters the SDK's own generated `dispatch` synchronously for
 //! `VOSU_READ_PLAN_SYNC` submissions — exactly as a real in-process host's
-//! D5 delivery does — and, for `VOSU_OP_SCAN_REQUEST`s, answers
-//! immediately with a matching `VOSU_OP_SCAN_RESULT` the same way, so a
-//! test exercises `PlanProcessMemory`/`PlanScanBackend` against the real
-//! ABI boundary rather than a shortcut around it.
+//! D5 delivery does — and, for `VOSU_OP_SCAN_REQUEST`s, answers from a
+//! spawned thread after a short simulated delay, the same way a real
+//! host's own dispatch queue delivers a `VOSU_OP_SCAN_RESULT` later,
+//! never inline inside `HostServices::scan`'s own call stack. A `FakeHost`
+//! must be wrapped in [`SharedFakeHost`] to answer scan requests at all
+//! (it needs an owned handle to outlive the spawned thread); a
+//! read-plan-only test may construct it directly.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
+use std::thread;
 
 use vosu_osu_reader::process::Pattern;
 use vosu_plugin_api::{
@@ -18,42 +22,44 @@ use vosu_plugin_api::{
     vosu_opcode, vosu_status,
 };
 
-type DeliverScanResult = dyn Fn(u64, ScanResult);
+type DeliverScanResult = dyn Fn(u64, ScanResult) + Send;
 
 thread_local! {
-    /// Set once per `FakeHost::new` call, before `create`/`dispatch` ever
-    /// run: `HarnessPlugin::on_message` has no other way to reach the
-    /// test's own scan-result sink, since `Plugin::create` takes no
-    /// test-supplied arguments (the real ABI's own constraint, R16). A
-    /// plain callback instead of a `crate::scan::ScanWaiters` directly
-    /// keeps this harness independent of that module (it is a generic
+    /// Set once per `FakeHost::new` call, just before that same thread's
+    /// `vt.create` call: `HarnessPlugin::create` takes it out and stores
+    /// it as its own field, since `on_message` (and so this callback)
+    /// can run on a *different* thread — the spawned thread a
+    /// `VOSU_OP_SCAN_RESULT` is answered from (item 7) — where this
+    /// thread-local would be empty. `Plugin::create` takes no
+    /// test-supplied arguments (the real ABI's own constraint, R16), so
+    /// this hop through a thread-local, read back on the same thread one
+    /// call later, is the only way to hand it in at all. A plain
+    /// callback instead of a `crate::scan::ScanWaiters` directly keeps
+    /// this harness independent of that module (it is a generic
     /// `FakeHost`, not P3-specific).
-    static ACTIVE_DELIVERY: RefCell<Option<Box<DeliverScanResult>>> = const { RefCell::new(None) };
+    static PENDING_DELIVERY: RefCell<Option<Box<DeliverScanResult>>> = const { RefCell::new(None) };
 }
 
 /// The one plugin every `FakeHost`-driven test uses: its whole job is
 /// routing a decoded `Message::ScanResult` into the active test's own
 /// delivery callback, exactly the seam `plugin.rs`'s own `on_message`
 /// must provide in production (there, `ScanWaiters::deliver`).
-struct HarnessPlugin;
+struct HarnessPlugin {
+    deliver: Box<DeliverScanResult>,
+}
 
 impl Plugin for HarnessPlugin {
     fn create(_host: VtableHostServices, _init: Init) -> Result<Self, PluginError> {
-        Ok(Self)
+        let deliver = PENDING_DELIVERY
+            .with(|cell| cell.borrow_mut().take())
+            .expect("FakeHost::new sets PENDING_DELIVERY on this same thread right before create");
+        Ok(Self { deliver })
     }
 
     fn on_message(&mut self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
         match message {
             Message::ScanResult(result) => {
-                ACTIVE_DELIVERY.with(|cell| {
-                    let deliver = cell.borrow();
-                    (deliver
-                        .as_ref()
-                        .expect("FakeHost installs a delivery callback before dispatch ever runs"))(
-                        correlation_id,
-                        result,
-                    );
-                });
+                (self.deliver)(correlation_id, result);
                 Ok(())
             }
             other => panic!("the harness plugin never expects {other:?} in on_message"),
@@ -93,6 +99,24 @@ pub struct FakeHost {
     base: usize,
     alive: Arc<AtomicBool>,
     submissions: Cell<usize>,
+    /// Forces every op at this absolute address to answer
+    /// `VOSU_READ_ERROR_PERMISSION_DENIED` instead of the ordinary
+    /// unmapped-address `ReadFailed`.
+    deny_read_permission_at: Cell<Option<usize>>,
+    /// Forces the next `VOSU_OP_READ_PLAN_SUBMIT` to be rejected outright
+    /// with `VOSU_ERR_PERMISSION_DENIED`, simulating a host that refuses
+    /// the whole submission rather than one op within it.
+    deny_submission_permission: Cell<bool>,
+    /// Forces every `VOSU_OP_SCAN_REQUEST` to answer with the host's own
+    /// `"permission_denied"` scan error code (§6.4).
+    deny_scan_permission: Cell<bool>,
+    /// An owned handle to this same host, set by [`SharedFakeHost::new`]:
+    /// answering a scan request spawns a thread that must outlive the
+    /// call to `HostServices::scan` that triggered it, so it needs a
+    /// `'static` handle rather than `&self`. `None` for a host
+    /// constructed directly (a read-plan-only test, which never receives
+    /// a `ScanRequest`).
+    self_handle: RefCell<Option<Weak<FakeHost>>>,
 }
 
 // SAFETY: `plugin_ctx` is a raw context from a `HarnessPlugin::create`
@@ -110,14 +134,18 @@ unsafe impl Sync for FakeHost {}
 /// `PlanProcessMemory` and `PlanScanBackend` exactly as a real session
 /// shares one `VtableHostServices` (`Copy`) between both — a local
 /// newtype, since the orphan rule forbids implementing the foreign
-/// `HostServices` trait directly for the foreign `Arc<FakeHost>`.
+/// `HostServices` trait directly for the foreign `Arc<FakeHost>`. Also
+/// the only way to give a `FakeHost` the `self_handle` answering a scan
+/// request needs (above).
 #[derive(Clone)]
 pub struct SharedFakeHost(pub Arc<FakeHost>);
 
 impl SharedFakeHost {
     #[must_use]
     pub fn new(host: FakeHost) -> Self {
-        Self(Arc::new(host))
+        let shared = Arc::new(host);
+        *shared.self_handle.borrow_mut() = Some(Arc::downgrade(&shared));
+        Self(shared)
     }
 }
 
@@ -146,12 +174,12 @@ impl FakeHost {
     /// (simulating the target process dying between submission and
     /// execution).
     pub fn new(
-        deliver: impl Fn(u64, ScanResult) + 'static,
+        deliver: impl Fn(u64, ScanResult) + Send + 'static,
         bytes: Vec<u8>,
         base: usize,
         alive: Arc<AtomicBool>,
     ) -> Self {
-        ACTIVE_DELIVERY.with(|cell| *cell.borrow_mut() = Some(Box::new(deliver)));
+        PENDING_DELIVERY.with(|cell| *cell.borrow_mut() = Some(Box::new(deliver)));
         let vt = vosu_plugin_api::__vtable_for_serialized::<HarnessPlugin>();
         let noop = noop_host_services();
         let init = init_bytes();
@@ -175,7 +203,30 @@ impl FakeHost {
             base,
             alive,
             submissions: Cell::new(0),
+            deny_read_permission_at: Cell::new(None),
+            deny_submission_permission: Cell::new(false),
+            deny_scan_permission: Cell::new(false),
+            self_handle: RefCell::new(None),
         }
+    }
+
+    /// Every later op at `address` answers
+    /// `VOSU_READ_ERROR_PERMISSION_DENIED` instead of a plain unmapped
+    /// `ReadFailed`.
+    pub fn deny_read_permission_at(&self, address: usize) {
+        self.deny_read_permission_at.set(Some(address));
+    }
+
+    /// Every later `VOSU_OP_READ_PLAN_SUBMIT` is rejected outright with
+    /// `VOSU_ERR_PERMISSION_DENIED`.
+    pub fn deny_submission_with_permission_denied(&self) {
+        self.deny_submission_permission.set(true);
+    }
+
+    /// Every later `VOSU_OP_SCAN_REQUEST` answers with the host's own
+    /// `"permission_denied"` scan error code.
+    pub fn deny_scan_with_permission_denied(&self) {
+        self.deny_scan_permission.set(true);
     }
 
     /// How many `VOSU_OP_READ_PLAN_SUBMIT`/`VOSU_OP_SCAN_REQUEST`
@@ -210,6 +261,12 @@ impl FakeHost {
     }
 
     fn read_bytes(&self, address: usize, len: usize) -> ReadResult {
+        if self.deny_read_permission_at.get() == Some(address) {
+            return ReadResult::Error {
+                code: ReadErrorCode::PermissionDenied,
+                message: format!("permission denied reading address {address:#x}"),
+            };
+        }
         let Some(end) = address.checked_add(len) else {
             return ReadResult::Error {
                 code: ReadErrorCode::AddressOverflow,
@@ -254,6 +311,15 @@ impl FakeHost {
     }
 
     fn execute_scan(&self, request: &vosu_plugin_api::ScanRequest) -> vosu_plugin_api::ScanResult {
+        if self.deny_scan_permission.get() {
+            return vosu_plugin_api::ScanResult {
+                addresses: Vec::new(),
+                error: Some(vosu_plugin_api::ErrorInfo {
+                    code: "permission_denied".to_owned(),
+                    message: "permission denied scanning this process".to_owned(),
+                }),
+            };
+        }
         let pattern = match Pattern::parse(&request.pattern, request.non_zero_mask) {
             Ok(pattern) => pattern,
             Err(error) => {
@@ -288,8 +354,23 @@ impl vosu_plugin_api::HostServices for FakeHost {
         }
         match message {
             Message::ScanRequest(request) => {
-                let result = self.execute_scan(request);
-                self.dispatch_message(correlation_id, &Message::ScanResult(result));
+                let request = request.clone();
+                let weak = self.self_handle.borrow().clone().expect(
+                    "a scan-answering FakeHost must be constructed through SharedFakeHost::new",
+                );
+                // Answer from a spawned thread, exactly as a real host's
+                // own dispatch queue delivers a VOSU_OP_SCAN_RESULT later
+                // rather than inline inside this `send` call (review item
+                // 7): this is what actually exercises `ScanWaiters`'
+                // cross-thread condvar wakeup, a late-after-timeout drop,
+                // and genuine concurrency between several outstanding
+                // requests.
+                thread::spawn(move || {
+                    if let Some(host) = weak.upgrade() {
+                        let result = host.execute_scan(&request);
+                        host.dispatch_message(correlation_id, &Message::ScanResult(result));
+                    }
+                });
                 vosu_status::VOSU_OK
             }
             other => panic!("FakeHost.send only expects ScanRequest, got {other:?}"),
@@ -306,6 +387,9 @@ impl vosu_plugin_api::HostServices for FakeHost {
         self.submissions.set(self.submissions.get() + 1);
         if !self.alive.load(Ordering::Relaxed) {
             return vosu_status::VOSU_ERR_TARGET_GONE;
+        }
+        if self.deny_submission_permission.get() {
+            return vosu_status::VOSU_ERR_PERMISSION_DENIED;
         }
         assert_eq!(opcode, vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT);
         let message = Message::decode(opcode, flags, payload).expect("well-formed submit");

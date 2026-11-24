@@ -14,6 +14,11 @@ use super::{MAX_OUTSTANDING_SCANS, PlanScanBackend, ScanWaiters};
 use crate::memory::PlanProcessMemory;
 use crate::test_support::{FakeHost, SharedFakeHost};
 
+fn deliverer(waiters: &Arc<ScanWaiters>) -> impl Fn(u64, vosu_plugin_api::ScanResult) + 'static {
+    let waiters = Arc::clone(waiters);
+    move |id, result| waiters.deliver(id, result)
+}
+
 // ---------------------------------------------------------------------
 // ScanWaiters: bounded capacity, semaphore, timeout, detach, shutdown.
 // ---------------------------------------------------------------------
@@ -21,7 +26,7 @@ use crate::test_support::{FakeHost, SharedFakeHost};
 #[test]
 fn register_and_deliver_round_trips_addresses() {
     let waiters = ScanWaiters::new();
-    let slot = waiters.register(1);
+    let slot = waiters.register(1).expect("register succeeds");
     let id = slot.id();
     waiters.deliver(
         id,
@@ -36,7 +41,7 @@ fn register_and_deliver_round_trips_addresses() {
 #[test]
 fn deliver_with_an_error_surfaces_as_a_memory_error() {
     let waiters = ScanWaiters::new();
-    let slot = waiters.register(1);
+    let slot = waiters.register(1).expect("register succeeds");
     waiters.deliver(
         slot.id(),
         vosu_plugin_api::ScanResult {
@@ -57,35 +62,74 @@ fn deliver_with_an_error_surfaces_as_a_memory_error() {
 }
 
 #[test]
-fn an_undelivered_slot_times_out_and_releases_its_permit() {
-    let waiters = ScanWaiters::with_timeout(Duration::from_millis(50));
-    let slot = waiters.register(1);
+fn deliver_with_permission_denied_becomes_memory_error_permission_denied() {
+    let waiters = ScanWaiters::new();
+    let slot = waiters.register(1).expect("register succeeds");
+    waiters.deliver(
+        slot.id(),
+        vosu_plugin_api::ScanResult {
+            addresses: Vec::new(),
+            error: Some(vosu_plugin_api::ErrorInfo {
+                code: "permission_denied".to_owned(),
+                message: "ptrace scope forbids this scan".to_owned(),
+            }),
+        },
+    );
+    let err = slot
+        .wait()
+        .expect_err("permission_denied must not become Ok");
+    assert!(matches!(err, MemoryError::PermissionDenied { .. }));
+}
+
+#[test]
+fn an_undelivered_slot_times_out_and_orphans_its_permit_until_a_late_result() {
+    // A short result timeout (for `wait` below), but a long permit
+    // timeout (for the background thread's `register` calls, which must
+    // stay genuinely blocked for this test's own assertions to mean
+    // anything).
+    let waiters = ScanWaiters::with_timeouts(Duration::from_millis(50), Duration::from_secs(30));
+    let slot = waiters.register(1).expect("register succeeds");
+    let id = slot.id();
     let err = slot.wait().expect_err("nothing was ever delivered");
     assert!(matches!(err, MemoryError::Backend { .. }));
 
-    // The timed-out slot's permit must be back: registering
-    // `MAX_OUTSTANDING_SCANS` more slots must not block.
-    let (tx, rx) = mpsc::sync_channel(1);
+    // The timed-out slot is orphaned, not released outright (P3 review
+    // item 4: no scan cancel opcode exists, so the host may still be
+    // running it): a fresh registration past the cap must still block
+    // until that late result (or detach/shutdown) actually arrives.
     let waiters_for_thread = Arc::clone(&waiters);
+    let (tx, rx) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let mut slots = Vec::new();
+        let mut held = Vec::new();
         for _ in 0..MAX_OUTSTANDING_SCANS {
-            slots.push(waiters_for_thread.register(2));
+            held.push(waiters_for_thread.register(2).expect("register succeeds"));
         }
-        tx.send(slots.len()).unwrap();
+        tx.send(()).unwrap();
     });
     assert_eq!(
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("registration did not block"),
-        MAX_OUTSTANDING_SCANS
+        rx.recv_timeout(Duration::from_millis(300)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "the orphaned permit must still be held, so 48 more must not all register yet"
     );
+
+    // The late result finally arrives: it must release the orphaned slot
+    // immediately (nobody is waiting on it any more).
+    waiters.deliver(
+        id,
+        vosu_plugin_api::ScanResult {
+            addresses: vec![1],
+            error: None,
+        },
+    );
+    rx.recv_timeout(Duration::from_secs(5))
+        .expect("the permit frees once the late result arrives");
 }
 
 #[test]
 fn the_semaphore_blocks_the_49th_registration_until_one_releases() {
     let waiters = ScanWaiters::new();
     let mut held: Vec<super::ScanSlot> = (0..MAX_OUTSTANDING_SCANS)
-        .map(|_| waiters.register(1))
+        .map(|_| waiters.register(1).expect("register succeeds"))
         .collect();
 
     let (started, start_rx) = mpsc::sync_channel(1);
@@ -93,7 +137,7 @@ fn the_semaphore_blocks_the_49th_registration_until_one_releases() {
     let waiters_for_thread = Arc::clone(&waiters);
     thread::spawn(move || {
         started.send(()).unwrap();
-        let slot = waiters_for_thread.register(1);
+        let slot = waiters_for_thread.register(1).expect("register succeeds");
         done.send(slot.id()).unwrap();
     });
     start_rx
@@ -108,7 +152,19 @@ fn the_semaphore_blocks_the_49th_registration_until_one_releases() {
         "the 49th registration must block while 48 are already outstanding"
     );
 
-    held.pop(); // release one permit
+    // Release one permit by delivering its result first (a normal
+    // completion, not giving up on a scan the host may still be
+    // running): dropping an undelivered slot now orphans it instead
+    // (item 4), so this is the realistic way to free a permit in a test.
+    let releasing = held.pop().expect("48 slots were held");
+    waiters.deliver(
+        releasing.id(),
+        vosu_plugin_api::ScanResult {
+            addresses: Vec::new(),
+            error: None,
+        },
+    );
+    drop(releasing);
     let id = done_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("registration unblocks once a permit frees up");
@@ -116,10 +172,81 @@ fn the_semaphore_blocks_the_49th_registration_until_one_releases() {
 }
 
 #[test]
+fn register_many_grants_a_whole_group_or_none_of_it() {
+    // A 60-permit request exceeds the semaphore's own total capacity
+    // (48): `PlanScanBackend::scan_batch` must never submit a group this
+    // large (it groups into chunks of at most 48), so `register_many`
+    // asserts against it rather than silently blocking forever.
+    let waiters = ScanWaiters::new();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        waiters.register_many(1, MAX_OUTSTANDING_SCANS + 12)
+    }));
+    assert!(
+        result.is_err(),
+        "a group above the semaphore's own capacity must be rejected, not accepted"
+    );
+}
+
+#[test]
+fn register_many_atomically_reserves_the_whole_group() {
+    let waiters = ScanWaiters::new();
+    // Fill 40 of 48 permits individually first.
+    let mut held: Vec<super::ScanSlot> = (0..40)
+        .map(|_| waiters.register(1).expect("register succeeds"))
+        .collect();
+
+    // A group of 10 cannot fit (only 8 free): it must block entirely,
+    // never partially claim the 8 that are free.
+    let (done, done_rx) = mpsc::sync_channel(1);
+    let waiters_for_thread = Arc::clone(&waiters);
+    thread::spawn(move || {
+        let slots = waiters_for_thread
+            .register_many(1, 10)
+            .expect("register_many succeeds");
+        done.send(slots.len()).unwrap();
+    });
+    assert_eq!(
+        done_rx.recv_timeout(Duration::from_millis(200)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "a 10-permit group must not proceed while only 8 are free"
+    );
+
+    // Free one more (9 free) by delivering, then dropping, one more held
+    // slot — still not enough for the group of 10.
+    let release_one = |waiters: &Arc<ScanWaiters>, held: &mut Vec<super::ScanSlot>| {
+        let slot = held.pop().expect("a held slot remains");
+        waiters.deliver(
+            slot.id(),
+            vosu_plugin_api::ScanResult {
+                addresses: Vec::new(),
+                error: None,
+            },
+        );
+        drop(slot);
+    };
+    release_one(&waiters, &mut held);
+    assert_eq!(
+        done_rx.recv_timeout(Duration::from_millis(200)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "9 free permits still is not the whole group of 10"
+    );
+
+    // Freeing one more (10 free) must finally let the whole group through
+    // at once.
+    release_one(&waiters, &mut held);
+    assert_eq!(
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the group registers once 10 are free"),
+        10
+    );
+}
+
+#[test]
 fn detach_releases_only_the_matching_handles_pending_slots() {
     let waiters = ScanWaiters::with_timeout(Duration::from_secs(30));
-    let for_a = waiters.register(1);
-    let for_b = waiters.register(2);
+    let for_a = waiters.register(1).expect("register succeeds");
+    let for_b = waiters.register(2).expect("register succeeds");
 
     waiters.detach(1);
     let err = for_a
@@ -141,27 +268,49 @@ fn detach_releases_only_the_matching_handles_pending_slots() {
 }
 
 #[test]
+fn detach_releases_an_orphaned_slot_for_that_handle_too() {
+    let waiters = ScanWaiters::with_timeout(Duration::from_millis(20));
+    let slot = waiters.register(1).expect("register succeeds");
+    let _ = slot.wait(); // times out, orphaning the slot rather than releasing it
+
+    // Without detach, a fresh registration past the (now effectively
+    // 47-permit) cap would still have to wait; detach must release it.
+    waiters.detach(1);
+    let mut held = Vec::new();
+    for _ in 0..MAX_OUTSTANDING_SCANS {
+        held.push(waiters.register(9).expect("register succeeds"));
+    }
+}
+
+#[test]
 fn shutdown_releases_every_pending_slot_regardless_of_handle() {
     let waiters = ScanWaiters::with_timeout(Duration::from_secs(30));
-    let one = waiters.register(1);
-    let two = waiters.register(2);
+    let one = waiters.register(1).expect("register succeeds");
+    let two = waiters.register(2).expect("register succeeds");
     waiters.shutdown();
     assert!(one.wait().is_err());
     assert!(two.wait().is_err());
 }
 
 #[test]
-fn a_dropped_slot_releases_its_permit_without_waiting() {
+fn a_dropped_slot_whose_result_already_arrived_releases_immediately() {
     let waiters = ScanWaiters::new();
     let used = Arc::new(AtomicUsize::new(0));
     for _ in 0..MAX_OUTSTANDING_SCANS {
-        let slot = waiters.register(1);
+        let slot = waiters.register(1).expect("register succeeds");
+        waiters.deliver(
+            slot.id(),
+            vosu_plugin_api::ScanResult {
+                addresses: Vec::new(),
+                error: None,
+            },
+        );
         used.fetch_add(1, Ordering::Relaxed);
-        drop(slot); // never waited on; Drop alone must release
+        drop(slot); // delivered, never explicitly waited on; Drop must still release
     }
     // A fresh registration past the cap must not block, since every
-    // earlier slot released on drop.
-    let slot = waiters.register(1);
+    // earlier slot's result had already arrived before it dropped.
+    let slot = waiters.register(1).expect("register succeeds");
     drop(slot);
     assert_eq!(used.load(Ordering::Relaxed), MAX_OUTSTANDING_SCANS);
 }
@@ -201,10 +350,7 @@ fn scan_all_returns_every_match_in_ascending_order() {
 
     let waiters = ScanWaiters::new();
     let host = SharedFakeHost::new(FakeHost::new(
-        {
-            let waiters = Arc::clone(&waiters);
-            move |id, result| waiters.deliver(id, result)
-        },
+        deliverer(&waiters),
         image,
         base,
         Arc::new(AtomicBool::new(true)),
@@ -216,7 +362,7 @@ fn scan_all_returns_every_match_in_ascending_order() {
 }
 
 #[test]
-fn scan_batch_reports_results_by_pattern_index_skipping_unmatched_patterns() {
+fn scan_batch_sorts_results_by_ascending_address_regardless_of_request_order() {
     let base = 0x2000;
     let (image, patterns) = pattern_image(
         &[("11 22 33 44", 0), ("55 66 77 88", 0), ("99 AA BB CC", 0)],
@@ -225,26 +371,136 @@ fn scan_batch_reports_results_by_pattern_index_skipping_unmatched_patterns() {
     );
     let waiters = ScanWaiters::new();
     let host = SharedFakeHost::new(FakeHost::new(
-        {
-            let waiters = Arc::clone(&waiters);
-            move |id, result| waiters.deliver(id, result)
-        },
+        deliverer(&waiters),
         image,
         base,
         Arc::new(AtomicBool::new(true)),
     ));
     let backend = PlanScanBackend::new(host, 1, waiters);
 
-    // Only patterns 0 and 2 exist in the image; pattern 1 is replaced by
-    // one that never occurs, so `scan_batch` must omit index 1 entirely.
+    // `patterns[0]` matches at the lowest address, `patterns[2]` at the
+    // highest. Request them out of address order (highest first), plus
+    // one that never matches, to prove the result order comes from the
+    // matched address — the `ScanBackend` contract ("the region walk's
+    // own order") — not from the caller's own request order.
     let missing = Pattern::parse("DE AD BE EF", false).unwrap();
-    let requested = [patterns[0].clone(), missing, patterns[2].clone()];
-    let mut results = backend.scan_batch(&requested).expect("batch scan succeeds");
-    results.sort_by_key(|result| result.index);
+    let requested = [patterns[2].clone(), missing, patterns[0].clone()];
+    let results = backend.scan_batch(&requested).expect("batch scan succeeds");
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].index, 0);
-    assert_eq!(results[1].index, 2);
     assert!(results[0].address < results[1].address);
+    assert_eq!(
+        results[0].index, 2,
+        "the lower-address match is patterns[0], requested at index 2"
+    );
+    assert_eq!(
+        results[1].index, 0,
+        "the higher-address match is patterns[2], requested at index 0"
+    );
+}
+
+#[test]
+fn a_60_pattern_batch_is_grouped_into_at_most_48_at_once_and_completes() {
+    let base = 0x6000;
+    let (image, patterns) = pattern_image(&[("AA BB CC DD", 0)], 4, 0xEE);
+    let repeated: Vec<Pattern> = std::iter::repeat_n(patterns[0].clone(), 60).collect();
+
+    let waiters = ScanWaiters::new();
+    let host = SharedFakeHost::new(FakeHost::new(
+        deliverer(&waiters),
+        image,
+        base,
+        Arc::new(AtomicBool::new(true)),
+    ));
+    let backend = PlanScanBackend::new(host, 1, waiters);
+    let results = backend
+        .scan_batch(&repeated)
+        .expect("a >48-pattern batch still succeeds via grouping");
+    assert_eq!(results.len(), 60);
+}
+
+#[test]
+fn four_concurrent_16_pattern_scan_batches_do_not_deadlock() {
+    let base = 0x5000;
+    let (image, patterns) = pattern_image(&[("AA BB CC DD", 0)], 4, 0xEE);
+    let pattern16: Vec<Pattern> = std::iter::repeat_n(patterns[0].clone(), 16).collect();
+
+    let waiters = ScanWaiters::new();
+    let host = SharedFakeHost::new(FakeHost::new(
+        deliverer(&waiters),
+        image,
+        base,
+        Arc::new(AtomicBool::new(true)),
+    ));
+
+    let (tx, rx) = mpsc::sync_channel(4);
+    for session in 0..4u64 {
+        let backend = PlanScanBackend::new(host.clone(), session, Arc::clone(&waiters));
+        let patterns = pattern16.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let outcome = backend.scan_batch(&patterns).map(|results| results.len());
+            // `send` on an mpsc channel never blocks for a bounded
+            // capacity (unlike `sync_channel`), so this cannot itself
+            // deadlock regardless of how the receiver drains it.
+            let _ = tx.send(outcome);
+        });
+    }
+    drop(tx);
+
+    for _ in 0..4 {
+        let outcome = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("every scan_batch call must finish, not deadlock forever (P3 review item 1)");
+        outcome.expect("each 16-pattern batch succeeds");
+    }
+}
+
+#[test]
+fn scan_permission_denied_becomes_memory_error_permission_denied() {
+    let base = 0x3000;
+    let (image, patterns) = pattern_image(&[("11 22 33 44", 0)], 4, 0xEE);
+    let waiters = ScanWaiters::new();
+    let fake = FakeHost::new(
+        deliverer(&waiters),
+        image,
+        base,
+        Arc::new(AtomicBool::new(true)),
+    );
+    fake.deny_scan_with_permission_denied();
+    let host = SharedFakeHost::new(fake);
+    let backend = PlanScanBackend::new(host, 1, waiters);
+    let err = backend
+        .scan_all(&patterns[0])
+        .expect_err("a permission-denied scan must not succeed");
+    assert!(matches!(err, MemoryError::PermissionDenied { .. }));
+}
+
+#[test]
+fn scan_target_gone_flips_the_shared_alive_flag() {
+    let base = 0x4000;
+    let (image, patterns) = pattern_image(&[("11 22 33 44", 0)], 4, 0xEE);
+    let host_alive = Arc::new(AtomicBool::new(true));
+    let waiters = ScanWaiters::new();
+    let fake = FakeHost::new(deliverer(&waiters), image, base, Arc::clone(&host_alive));
+    let host = SharedFakeHost::new(fake);
+
+    let memory = PlanProcessMemory::new(host.clone(), 1, 7, ProcessBitness::X64);
+    let shared_alive = memory.alive_flag();
+    let backend = PlanScanBackend::with_shared(host, 1, waiters, Arc::clone(&shared_alive));
+    assert!(backend.is_alive() && memory.is_alive());
+
+    // Simulate the target dying: the host now rejects every submission
+    // with VOSU_ERR_TARGET_GONE.
+    host_alive.store(false, Ordering::Relaxed);
+    let err = backend
+        .scan_all(&patterns[0])
+        .expect_err("a scan against a gone target fails");
+    assert!(matches!(err, MemoryError::Backend { .. }));
+    assert!(!backend.is_alive());
+    assert!(
+        !memory.is_alive(),
+        "the shared alive flag must reflect the scan path's own TARGET_GONE observation"
+    );
 }
 
 /// Acceptance: `StablePatterns::resolve` over `ProcessHandle::with_scan_backend`
@@ -285,10 +541,7 @@ fn stable_patterns_resolve_over_plan_backends_equals_the_region_walk() {
 
     let waiters = ScanWaiters::new();
     let host = SharedFakeHost::new(FakeHost::new(
-        {
-            let waiters = Arc::clone(&waiters);
-            move |id, result| waiters.deliver(id, result)
-        },
+        deliverer(&waiters),
         image,
         base,
         Arc::new(AtomicBool::new(true)),

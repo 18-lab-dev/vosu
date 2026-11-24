@@ -275,6 +275,158 @@ mod plan_memory_tests {
         unsafe { (vt.destroy.unwrap())(plugin_ctx) };
     }
 
+    /// Like [`SyncAnsweringHost`], but answers with a caller-chosen
+    /// `ReadResult` so a test can exercise an error kind/code instead of
+    /// the fixed `VOSU_READ_OK` payload above.
+    struct SyncAnsweringHostWithResult {
+        plugin_ctx: *mut c_void,
+        dispatch: unsafe extern "C" fn(*mut c_void, *const vosu_message) -> u32,
+        result: ReadResult,
+    }
+
+    impl HostServices for SyncAnsweringHostWithResult {
+        fn send(&self, message: &Message, _correlation_id: u64) -> vosu_status {
+            let Message::ReadPlanSubmit(submit) = message else {
+                panic!("test host only answers ReadPlanSubmit");
+            };
+            let result = Message::ReadPlanResult(vosu_plugin_api::ReadPlanResult {
+                plan: submit.plan,
+                results: vec![self.result.clone()],
+            });
+            let payload = result.encode_payload().expect("encode");
+            let raw = vosu_message {
+                opcode: vosu_plugin_api::vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32,
+                flags: 0,
+                correlation_id: 0,
+                payload: vosu_bytes {
+                    data: payload.as_ptr(),
+                    len: payload.len() as u32,
+                },
+            };
+            // SAFETY: see `SyncAnsweringHost::send`.
+            let raw_status =
+                unsafe { (self.dispatch)(self.plugin_ctx, &raw as *const vosu_message) };
+            vosu_status::try_from(raw_status).unwrap_or(vosu_status::VOSU_ERR_BACKEND)
+        }
+    }
+
+    #[test]
+    fn flat_read_results_exposes_the_permission_denied_error_code() {
+        let _guard = super::TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let vt = vosu_plugin_api::__vtable_for_serialized::<TestPlugin>();
+        let noop = noop_host_services();
+        let init = init_bytes();
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        let plugin_ctx = unsafe {
+            (vt.create.unwrap())(
+                &noop as *const vosu_host_services,
+                core::ptr::null_mut(),
+                vosu_bytes {
+                    data: init.as_ptr(),
+                    len: init.len() as u32,
+                },
+            )
+        };
+        assert!(!plugin_ctx.is_null());
+
+        let host = SyncAnsweringHostWithResult {
+            plugin_ctx,
+            dispatch: vt.dispatch.unwrap(),
+            result: ReadResult::Error {
+                code: vosu_plugin_api::ReadErrorCode::PermissionDenied,
+                message: "ptrace scope forbids this read".to_owned(),
+            },
+        };
+        let plan_memory = PlanMemory::new();
+        let mut buffers = vosu_plugin_api::SyncReadBuffers::new();
+        let op = vosu_plugin_api::PlanOp {
+            offset: 0,
+            length: 4,
+        };
+        let stage = vosu_plugin_api::StageRef {
+            base: vosu_plugin_api::StageBase::Root,
+            base_offset: 0,
+            ops: core::slice::from_ref(&op),
+        };
+        let results = plan_memory
+            .read_flat(
+                &host,
+                7,
+                1,
+                PlanBase::Absolute(0x1000),
+                &[stage],
+                &mut buffers,
+            )
+            .expect("synchronous read succeeds");
+        assert_eq!(results.len(), 1);
+        let (kind, _) = results.get(0);
+        assert_eq!(
+            kind,
+            vosu_plugin_api::vosu_read_result_kind::VOSU_READ_ERROR
+        );
+        assert_eq!(
+            results.error_code(0),
+            Some(vosu_plugin_api::vosu_read_error_code::VOSU_READ_ERROR_PERMISSION_DENIED)
+        );
+
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        unsafe { (vt.destroy.unwrap())(plugin_ctx) };
+    }
+
+    #[test]
+    fn flat_read_results_error_code_is_none_for_a_successful_op() {
+        let _guard = super::TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let vt = vosu_plugin_api::__vtable_for_serialized::<TestPlugin>();
+        let noop = noop_host_services();
+        let init = init_bytes();
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        let plugin_ctx = unsafe {
+            (vt.create.unwrap())(
+                &noop as *const vosu_host_services,
+                core::ptr::null_mut(),
+                vosu_bytes {
+                    data: init.as_ptr(),
+                    len: init.len() as u32,
+                },
+            )
+        };
+        assert!(!plugin_ctx.is_null());
+
+        let host = SyncAnsweringHost {
+            plugin_ctx,
+            dispatch: vt.dispatch.unwrap(),
+        };
+        let plan_memory = PlanMemory::new();
+        let mut buffers = vosu_plugin_api::SyncReadBuffers::new();
+        let op = vosu_plugin_api::PlanOp {
+            offset: 0,
+            length: 4,
+        };
+        let stage = vosu_plugin_api::StageRef {
+            base: vosu_plugin_api::StageBase::Root,
+            base_offset: 0,
+            ops: core::slice::from_ref(&op),
+        };
+        let results = plan_memory
+            .read_flat(
+                &host,
+                8,
+                1,
+                PlanBase::Absolute(0x1000),
+                &[stage],
+                &mut buffers,
+            )
+            .expect("synchronous read succeeds");
+        assert_eq!(
+            results.error_code(0),
+            None,
+            "a VOSU_READ_OK entry has no error_code"
+        );
+
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        unsafe { (vt.destroy.unwrap())(plugin_ctx) };
+    }
+
     /// A plugin that tries a synchronous read from inside its own
     /// `on_message` — exactly the host's own documented deadlock case
     /// (`include/vosu_plugin.h:396-399`) — and records what `PlanMemory`
