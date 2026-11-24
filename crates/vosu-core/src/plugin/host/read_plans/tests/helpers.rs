@@ -46,6 +46,7 @@ pub(super) fn create_read_plan_instance(
     let (events, commands) = read_plan_plugin::register_with_config(plugin_id, config);
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &read_plan_manifest(plugin_id, process_names),
+        settings_schema: None,
         vtable: read_plan_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");

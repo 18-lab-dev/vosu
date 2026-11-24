@@ -158,6 +158,7 @@ fn a_timer_set_during_create_that_fires_before_registration_is_queued_and_replay
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_text,
+        settings_schema: None,
         vtable: gated_timer_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the gated-timer test plugin");
@@ -286,6 +287,7 @@ fn destroy_all_does_not_leak_an_instance_still_creating_when_it_races() {
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_text,
+        settings_schema: None,
         vtable: race_gated_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the race-gated test plugin");

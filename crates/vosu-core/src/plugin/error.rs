@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use super::settings::SettingsError;
 use vosu_plugin_api::ManifestError;
 
 use super::matcher::RegisterError;
@@ -63,6 +64,10 @@ pub enum HostError {
     /// with `MatcherEngine` (§6.1, D18: static overlap, the Linux
     /// pre-filter bound, or the table itself failing to compile).
     MatcherRegister(RegisterError),
+    /// `BundledPlugin::settings_schema`/`--plugin <dir>`'s own
+    /// `manifest.settings_schema` path failed to parse as a
+    /// `settings.schema.json` (§6.9, §8).
+    Settings(SettingsError),
 }
 
 impl fmt::Display for HostError {
@@ -99,6 +104,7 @@ impl fmt::Display for HostError {
             Self::UnknownInstance => write!(f, "no instance is registered under that id"),
             Self::ShuttingDown => write!(f, "the plugin host is shutting down"),
             Self::MatcherRegister(e) => write!(f, "{e}"),
+            Self::Settings(e) => write!(f, "{e}"),
         }
     }
 }
@@ -110,6 +116,7 @@ impl std::error::Error for HostError {
             Self::Io(e) => Some(e),
             Self::Load(e) => Some(e),
             Self::MatcherRegister(e) => Some(e),
+            Self::Settings(e) => Some(e),
             _ => None,
         }
     }

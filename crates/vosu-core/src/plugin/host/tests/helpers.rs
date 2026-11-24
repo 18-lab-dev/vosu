@@ -146,6 +146,7 @@ pub(super) fn create_session_instance_from_manifest(
     let events = session::register_with_config(plugin_id, config);
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: manifest_text,
+        settings_schema: None,
         vtable: session::vosu_plugin_vtable,
     }])
     .expect("loading the session testkit plugin");

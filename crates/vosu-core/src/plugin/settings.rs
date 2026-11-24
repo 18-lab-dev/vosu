@@ -184,12 +184,13 @@ pub trait SettingsStorage: Send + Sync {
 /// `READ_MANIA_SCROLL_SPEED` become its `vosu.osu` settings.
 pub const BRIDGE_B2_PLUGIN_ID: &str = "vosu.osu";
 
-/// **Interim bridge B2** (`docs/v2/implementation-plan.md` D19, M1→M8).
-/// `vosu-osu` (the bundled osu! plugin, built in a parallel M1 slice) does
-/// not yet ship its own `settings.schema.json` in this tree, so
-/// [`ConfigSettingsBridgeB2::schema`] is the schema this bridge itself
-/// enforces for `vosu.osu` until that plugin's real file replaces it and
-/// this whole bridge is deleted in M8.
+/// **Interim bridge B2** (`docs/v2/implementation-plan.md` D19, M1→M8),
+/// deleted whole in M8. Its own settings storage, not a schema: `vosu.osu`'s
+/// real `settings.schema.json` (P1) is what `create_instance`/
+/// `watch_config_changes` validate and merge these stored overrides
+/// against, resolved through [`SettingsSchemaSource`] from the live
+/// `vosu.osu` plugin instance rather than a schema this bridge embeds
+/// itself.
 pub struct ConfigSettingsBridgeB2 {
     config: Arc<ConfigStore>,
 }
@@ -198,22 +199,16 @@ impl ConfigSettingsBridgeB2 {
     pub fn new(config: Arc<ConfigStore>) -> Self {
         Self { config }
     }
+}
 
-    /// The five `vosu.toml` keys D19 moves into `vosu.osu` settings,
-    /// mirroring `crates/vosu-core/src/config/schema.rs`'s own defaults so
-    /// an unset `vosu.toml` and an unset plugin setting agree.
-    pub fn schema() -> SettingsSchema {
-        SettingsSchema::parse(
-            r#"[
-                {"uniqueID":"CALCULATE_PP","type":"checkbox","title":"Calculate pp","value":true},
-                {"uniqueID":"POLL_RATE","type":"number","title":"Poll rate","value":150.0},
-                {"uniqueID":"PRECISE_DATA_POLL_RATE","type":"number","title":"Precise data poll rate","value":10.0},
-                {"uniqueID":"SHOW_MP_COMMANDS","type":"checkbox","title":"Show multiplayer commands","value":false},
-                {"uniqueID":"READ_MANIA_SCROLL_SPEED","type":"checkbox","title":"Read mania scroll speed","value":true}
-            ]"#,
-        )
-        .expect("the bridge's own embedded schema is valid JSON")
-    }
+/// Where [`ConfigSettingsBridgeB2::watch_config_changes`] resolves
+/// `BRIDGE_B2_PLUGIN_ID`'s (`vosu.osu`'s) current `settings.schema.json`
+/// from: the live plugin instance's own [`SettingsSchema`]
+/// (`registry::LoadedPlugin::settings_schema`), not a copy this bridge
+/// keeps — `None` (an empty effective-settings delivery) until `vosu.osu`
+/// actually has a live instance to ask.
+pub trait SettingsSchemaSource: Send + Sync {
+    fn schema_for(&self, plugin_id: &str) -> Option<SettingsSchema>;
 }
 
 /// Delivers a `VOSU_OP_SETTINGS_CHANGED` this layer built back to every
@@ -253,14 +248,15 @@ impl ConfigSettingsBridgeB2 {
         self: &Arc<Self>,
         runtime: &Handle,
         service: Arc<PluginSettingsService>,
+        schema_source: Arc<dyn SettingsSchemaSource>,
         delivery: Arc<dyn SettingsChangeDelivery>,
     ) -> tokio::task::JoinHandle<()> {
         let mut changes = self.config.subscribe();
         runtime.spawn(async move {
             let deliver_current = |values_service: &PluginSettingsService| {
-                let schema = ConfigSettingsBridgeB2::schema();
+                let schema = schema_source.schema_for(BRIDGE_B2_PLUGIN_ID);
                 if let Ok(values) =
-                    values_service.effective_settings(BRIDGE_B2_PLUGIN_ID, Some(&schema))
+                    values_service.effective_settings(BRIDGE_B2_PLUGIN_ID, schema.as_ref())
                 {
                     delivery.settings_changed(
                         BRIDGE_B2_PLUGIN_ID,
@@ -506,20 +502,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bridge_b2_schema_matches_config_defaults() {
-        let defaults = ConfigSettingsBridgeB2::schema().defaults();
-        assert_eq!(defaults.get("CALCULATE_PP"), Some(&Value::Bool(true)));
-        assert_eq!(defaults.get("POLL_RATE"), Some(&Value::from(150.0)));
-        assert_eq!(
-            defaults.get("PRECISE_DATA_POLL_RATE"),
-            Some(&Value::from(10.0))
-        );
-        assert_eq!(defaults.get("SHOW_MP_COMMANDS"), Some(&Value::Bool(false)));
-        assert_eq!(
-            defaults.get("READ_MANIA_SCROLL_SPEED"),
-            Some(&Value::Bool(true))
-        );
+    /// A test-local stand-in for bridge B2's own five `vosu.toml` keys
+    /// (mirroring `config/schema.rs`'s own defaults), now that the bridge
+    /// no longer embeds a `settings.schema.json` of its own (P0; the real
+    /// one is `vosu-osu`'s, P1).
+    fn bridge_b2_test_schema() -> SettingsSchema {
+        SettingsSchema::parse(
+            r#"[
+                {"uniqueID":"CALCULATE_PP","type":"checkbox","title":"Calculate pp","value":true},
+                {"uniqueID":"POLL_RATE","type":"number","title":"Poll rate","value":150.0},
+                {"uniqueID":"PRECISE_DATA_POLL_RATE","type":"number","title":"Precise data poll rate","value":10.0},
+                {"uniqueID":"SHOW_MP_COMMANDS","type":"checkbox","title":"Show multiplayer commands","value":false},
+                {"uniqueID":"READ_MANIA_SCROLL_SPEED","type":"checkbox","title":"Read mania scroll speed","value":true}
+            ]"#,
+        )
+        .expect("the test fixture's own embedded schema is valid JSON")
     }
 
     async fn config_store() -> (tempfile::TempDir, Arc<ConfigStore>) {
@@ -572,11 +569,7 @@ mod tests {
         let mut patch = Map::new();
         patch.insert("POLL_RATE".into(), Value::from(250.0));
         let message = service
-            .apply(
-                BRIDGE_B2_PLUGIN_ID,
-                &ConfigSettingsBridgeB2::schema(),
-                &patch,
-            )
+            .apply(BRIDGE_B2_PLUGIN_ID, &bridge_b2_test_schema(), &patch)
             .unwrap();
         let Message::SettingsChanged(changed) = message else {
             panic!("expected SettingsChanged");
@@ -600,11 +593,7 @@ mod tests {
         let mut patch = Map::new();
         patch.insert("POLL_RATE".into(), Value::from(50.0));
         let message = service
-            .apply(
-                BRIDGE_B2_PLUGIN_ID,
-                &ConfigSettingsBridgeB2::schema(),
-                &patch,
-            )
+            .apply(BRIDGE_B2_PLUGIN_ID, &bridge_b2_test_schema(), &patch)
             .unwrap();
         let Message::SettingsChanged(changed) = message else {
             panic!("expected SettingsChanged");
@@ -631,6 +620,14 @@ mod tests {
         assert_eq!(value, CborValue::Map(Vec::new()));
     }
 
+    struct FixedSchemaSource(SettingsSchema);
+
+    impl SettingsSchemaSource for FixedSchemaSource {
+        fn schema_for(&self, _plugin_id: &str) -> Option<SettingsSchema> {
+            Some(self.0.clone())
+        }
+    }
+
     struct RecordingSettingsDelivery {
         tx: std::sync::Mutex<std::sync::mpsc::Sender<(String, Message)>>,
     }
@@ -654,7 +651,12 @@ mod tests {
         let delivery = Arc::new(RecordingSettingsDelivery {
             tx: std::sync::Mutex::new(tx),
         });
-        bridge.watch_config_changes(&Handle::current(), service, delivery);
+        bridge.watch_config_changes(
+            &Handle::current(),
+            service,
+            Arc::new(FixedSchemaSource(bridge_b2_test_schema())),
+            delivery,
+        );
 
         // A plain `ConfigStore::update` call, exactly the shape the
         // existing dashboard settings page (`src/runtime/render/settings.rs`)
@@ -699,7 +701,12 @@ mod tests {
         let delivery = Arc::new(RecordingSettingsDelivery {
             tx: std::sync::Mutex::new(tx),
         });
-        bridge.watch_config_changes(&Handle::current(), service, delivery);
+        bridge.watch_config_changes(
+            &Handle::current(),
+            service,
+            Arc::new(FixedSchemaSource(bridge_b2_test_schema())),
+            delivery,
+        );
 
         config.update(|c| {
             c.debug_log = !c.debug_log;

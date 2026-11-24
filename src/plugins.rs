@@ -17,6 +17,7 @@ const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu
 pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] =
     &[vosu_core::plugin::BundledPlugin {
         manifest: TESTKIT_ECHO_MANIFEST,
+        settings_schema: None,
         vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
     }];
 

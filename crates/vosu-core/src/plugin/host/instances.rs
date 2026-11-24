@@ -110,8 +110,8 @@ impl PluginHost {
                 },
             );
 
+        let schema = plugin.settings_schema().cloned();
         let created = (|| {
-            let schema = Self::schema_for(&plugin_id);
             let settings = self
                 .settings
                 .effective_settings(&plugin_id, schema.as_ref())
@@ -208,6 +208,7 @@ impl PluginHost {
             InstanceSlot::Live(InstanceEntry {
                 instance,
                 plugin_id,
+                settings_schema: schema,
                 outstanding_plans: Arc::new(OutstandingPlans::new()),
                 outstanding_scans: OutstandingScans::new(),
             }),
@@ -248,15 +249,23 @@ impl PluginHost {
 
     /// Spawns bridge B2's background `ConfigStore` change watcher (§6.9:
     /// "every later change arrives as `SETTINGS_CHANGED`"), delivering
-    /// through this host. A no-op for a `bridge` whose plugin id has no
-    /// live instance yet or ever — `settings_changed` below simply finds
-    /// nothing to deliver to.
+    /// through this host and resolving `vosu.osu`'s current
+    /// `settings.schema.json` from this host's own `SettingsSchemaSource`
+    /// impl (the live instance's `LoadedPlugin::settings_schema`, P0/P1) —
+    /// no longer a schema bridge B2 embeds itself. A no-op for a `bridge`
+    /// whose plugin id has no live instance yet or ever —
+    /// `settings_changed` below simply finds nothing to deliver to.
     pub fn watch_bridge_b2(
         self: &Arc<Self>,
         bridge: &Arc<ConfigSettingsBridgeB2>,
         runtime: &Handle,
     ) -> tokio::task::JoinHandle<()> {
-        bridge.watch_config_changes(runtime, Arc::clone(&self.settings), self.clone())
+        bridge.watch_config_changes(
+            runtime,
+            Arc::clone(&self.settings),
+            self.clone(),
+            self.clone(),
+        )
     }
 
     /// Dispatches `message` directly to `instance`'s own queue, exactly

@@ -400,6 +400,7 @@ fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
     );
     let loaded = crate::plugin::load_bundled(&[crate::plugin::BundledPlugin {
         manifest: &manifest,
+        settings_schema: None,
         vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");

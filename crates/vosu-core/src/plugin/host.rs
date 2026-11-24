@@ -52,7 +52,7 @@ use super::read_plan::OutstandingPlans;
 use super::scan::{OutstandingScans, ScanWorkerPool};
 use super::session::{DiscoveredProcess, SessionHandle, SessionRegistry};
 use super::settings::{
-    BRIDGE_B2_PLUGIN_ID, ConfigSettingsBridgeB2, PluginSettingsService, SettingsChangeDelivery,
+    PluginSettingsService, SettingsChangeDelivery, SettingsSchema, SettingsSchemaSource,
 };
 use super::timers::TimerDelivery;
 use super::timers::TimerRegistry;
@@ -64,6 +64,12 @@ use crate::logging::Logger;
 struct InstanceEntry {
     instance: PluginInstance,
     plugin_id: String,
+    /// This instance's own parsed `settings.schema.json` (`registry::
+    /// LoadedPlugin::settings_schema`), kept here so this host's
+    /// `SettingsSchemaSource` impl can resolve `BRIDGE_B2_PLUGIN_ID`'s
+    /// (`vosu.osu`'s) schema from its live instance instead of a copy
+    /// bridge B2 used to embed itself (P0).
+    settings_schema: Option<SettingsSchema>,
     /// This instance's own asynchronous (non-`VOSU_READ_PLAN_SYNC`) read
     /// plans (§6.3, `read_plans.rs`): capped at
     /// [`super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`], freed on
@@ -309,17 +315,6 @@ impl PluginHost {
         self.self_ref
             .upgrade()
             .expect("PluginHost is called only through a live Arc<Self>")
-    }
-
-    /// The `settings.schema.json` this plugin id validates its settings
-    /// against, if any. M1 only ever resolves one for bridge B2's own
-    /// plugin id: no in-tree plugin ships a real `settings.schema.json`
-    /// yet (`vosu-osu` is a parallel M1 slice), and `LoadedPlugin` carries
-    /// no manifest directory a general resolver could read one from —
-    /// recorded in the original handoff notes as a spec/tooling gap, not
-    /// addressed here.
-    fn schema_for(plugin_id: &str) -> Option<super::settings::SettingsSchema> {
-        (plugin_id == BRIDGE_B2_PLUGIN_ID).then(ConfigSettingsBridgeB2::schema)
     }
 
     /// The attached session's public id to attribute `plugin_id`'s next
@@ -686,6 +681,27 @@ impl TimerDelivery for PluginHost {
 impl SettingsChangeDelivery for PluginHost {
     fn settings_changed(&self, plugin_id: &str, message: Message) {
         self.dispatch_to(plugin_id, &message);
+    }
+}
+
+impl SettingsSchemaSource for PluginHost {
+    /// `BRIDGE_B2_PLUGIN_ID`'s (`vosu.osu`'s) live instance carries its
+    /// own `LoadedPlugin::settings_schema` (P1's real
+    /// `settings.schema.json`), cloned into `InstanceEntry` by
+    /// `create_instance`: `None` until that instance is actually `Live`,
+    /// matching `effective_settings`'s own "no schema → empty map"
+    /// fallback.
+    fn schema_for(&self, plugin_id: &str) -> Option<SettingsSchema> {
+        self.instances
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .values()
+            .find_map(|slot| match slot {
+                InstanceSlot::Live(entry) if entry.plugin_id == plugin_id => {
+                    entry.settings_schema.clone()
+                }
+                _ => None,
+            })
     }
 }
 

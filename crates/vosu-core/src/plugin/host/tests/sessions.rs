@@ -112,6 +112,7 @@ fn failed_create_unregisters_the_matcher_so_a_shadowed_plugin_still_gets_the_ses
     );
     let failing_loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &session_manifest("testkit.session.failing", &["shared-p25.exe"]),
+        settings_schema: None,
         vtable: session::vosu_plugin_vtable,
     }])
     .expect("loading the failing testkit plugin");
@@ -261,6 +262,7 @@ fn matcher_registers_only_once_live_so_a_process_during_creating_goes_to_the_liv
     let manifest_a = session_manifest(plugin_a_id, &["shared-gatedmatcher.exe"]);
     let loaded_a = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_a,
+        settings_schema: None,
         vtable: gated_matcher_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the gated-matcher test plugin");

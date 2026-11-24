@@ -239,6 +239,41 @@ fn release_builds_refuse_development_plugins() {
     }
 }
 
+#[test]
+fn development_settings_schema_is_read_from_the_manifest_dir() {
+    let dir = tempfile::tempdir().expect("creating a temp dev-plugin directory");
+    let lib_dir = dir.path().join("lib");
+    std::fs::create_dir_all(&lib_dir).expect("creating the dev-plugin dir's lib/ subdirectory");
+    let source = testkit_cdylib_path();
+    let filename = source
+        .file_name()
+        .expect("the testkit cdylib path has a file name");
+    std::fs::copy(&source, lib_dir.join(filename))
+        .expect("copying the testkit cdylib into the dev-plugin directory");
+    std::fs::write(
+        dir.path().join("settings.schema.json"),
+        r#"[{"uniqueID":"RATE","type":"number","value":42.0}]"#,
+    )
+    .expect("writing settings.schema.json");
+    std::fs::write(
+        dir.path().join("manifest.toml"),
+        format!(
+            "kind='plugin'\nmanifest_version=1\nid='acme.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\nsettings_schema='settings.schema.json'\n\n[targets.{}]\nlibrary='lib/{}'\n",
+            current_target_triple(),
+            filename.to_str().expect("the cdylib filename is UTF-8"),
+        ),
+    )
+    .expect("writing manifest.toml");
+
+    let loaded = plugin::load_development(dir.path(), true)
+        .expect("loading the dev-plugin directory this test just wrote");
+    let defaults = loaded
+        .settings_schema()
+        .expect("manifest declared settings_schema")
+        .defaults();
+    assert_eq!(defaults.get("RATE"), Some(&serde_json::Value::from(42.0)));
+}
+
 // --- `BUNDLED`: the same plugin's linked-in, non-`dlopen`ed form ---------
 
 #[test]
@@ -345,6 +380,7 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
     let manifest = "kind='plugin'\nmanifest_version=1\nid='acme.testkit.host-services'\nname='Host Services Testkit'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n";
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest,
+        settings_schema: None,
         vtable: vosu_plugin_testkit::host_services::vosu_plugin_vtable,
     }])
     .expect("loading the host-services testkit plugin");
@@ -492,6 +528,7 @@ fn injected_session_memory_answers_a_sync_plan() {
     );
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest: &manifest,
+        settings_schema: None,
         vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");

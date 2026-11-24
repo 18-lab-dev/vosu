@@ -44,6 +44,7 @@ fn create_scan_instance(
     let (events, commands) = scan_plugin::register(plugin_id);
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &scan_manifest(plugin_id, process_names),
+        settings_schema: None,
         vtable: scan_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the scan testkit plugin");

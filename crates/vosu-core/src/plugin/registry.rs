@@ -13,6 +13,7 @@ use vosu_plugin_api::{
 };
 
 use super::error::HostError;
+use super::settings::SettingsSchema;
 
 /// One bundled plugin entry the root crate's explicit `BUNDLED` array lists
 /// (D13): its embedded manifest text (never carrying `[targets.*]`, §8) and
@@ -20,6 +21,11 @@ use super::error::HostError;
 #[derive(Clone, Copy)]
 pub struct BundledPlugin<'a> {
     pub manifest: &'a str,
+    /// This plugin's own embedded `settings.schema.json` text (§6.9,
+    /// §8's `settings_schema` manifest field), the same way `manifest`
+    /// is embedded: `None` for a plugin that declares no
+    /// `settings_schema`.
+    pub settings_schema: Option<&'a str>,
     pub vtable: fn() -> vosu_plugin_vtable,
 }
 
@@ -28,6 +34,12 @@ pub struct BundledPlugin<'a> {
 pub struct LoadedPlugin {
     manifest: PluginManifest,
     vtable: vosu_plugin_vtable,
+    /// This plugin's own parsed `settings.schema.json` (§6.9), if it
+    /// declares one: `create_instance` builds `init.settings` against it
+    /// and keeps a copy for bridge-style settings-change watchers (§8's
+    /// `settings_schema` manifest field; `BundledPlugin::settings_schema`/
+    /// `load_development`'s `manifest.settings_schema` path).
+    settings_schema: Option<SettingsSchema>,
     // Shared, not just held: unloading while an instance's `plugin_ctx`
     // still points into the library would be immediate undefined behavior
     // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
@@ -46,6 +58,12 @@ impl LoadedPlugin {
 
     pub fn vtable(&self) -> vosu_plugin_vtable {
         self.vtable
+    }
+
+    /// This plugin's own parsed `settings.schema.json`, if it declared
+    /// one.
+    pub fn settings_schema(&self) -> Option<&SettingsSchema> {
+        self.settings_schema.as_ref()
     }
 
     /// Clones this plugin's `Arc<Library>` handle, so a `PluginInstance`
@@ -114,11 +132,17 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                     reason: "a bundled plugin's manifest must request runtime = \"in-process\"",
                 });
             }
+            let settings_schema = entry
+                .settings_schema
+                .map(SettingsSchema::parse)
+                .transpose()
+                .map_err(HostError::Settings)?;
             let vtable = (entry.vtable)();
             check_descriptor(&vtable)?;
             Ok(LoadedPlugin {
                 manifest,
                 vtable,
+                settings_schema,
                 library: None,
             })
         })
@@ -143,6 +167,14 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
             reason: "`--plugin <dir>` only loads an in-process development plugin",
         });
     }
+    let settings_schema = manifest
+        .settings_schema
+        .as_ref()
+        .map(|relative| {
+            let text = std::fs::read_to_string(dir.join(relative))?;
+            SettingsSchema::parse(&text).map_err(HostError::Settings)
+        })
+        .transpose()?;
     let triple = current_target_triple();
     let target = manifest
         .targets
@@ -186,6 +218,7 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
     Ok(LoadedPlugin {
         manifest,
         vtable,
+        settings_schema,
         library: Some(Arc::new(library)),
     })
 }

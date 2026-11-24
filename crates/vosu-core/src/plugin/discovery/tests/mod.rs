@@ -104,6 +104,7 @@ fn create_session_instance(
     let manifest = session_manifest(plugin_id, process_names);
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,
+        settings_schema: None,
         vtable: session::vosu_plugin_vtable,
     }])
     .expect("loading the session testkit plugin");
