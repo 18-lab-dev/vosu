@@ -1,6 +1,9 @@
-#![expect(
-    clippy::disallowed_methods,
-    reason = "isolated temporary test fixtures"
+#![cfg_attr(
+    test,
+    expect(
+        clippy::disallowed_methods,
+        reason = "isolated temporary test fixtures"
+    )
 )]
 
 use std::io::Write;

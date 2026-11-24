@@ -20,7 +20,8 @@ impl ToolHost {
 struct Registry(Mutex<HashMap<String, Arc<ActionDescriptor>>>);
 impl Registry {
     fn insert(&self, action: &str, version: &str) {
-        let schema = Arc::new(vosu_core::action_schema::CompiledActionSchema::compile("true").unwrap());
+        let schema =
+            Arc::new(vosu_core::action_schema::CompiledActionSchema::compile("true").unwrap());
         self.0.lock().insert(
             action.into(),
             Arc::new(ActionDescriptor {
@@ -212,10 +213,7 @@ async fn live_versions_exact_ids_optional_grants_and_exact_launch_job_ownership(
     let job = jobs.create(a.clone(), ACTION.into(), None).unwrap();
     assert!(jobs.get(&a, &job.id).is_ok());
     assert_eq!(jobs.get(&b, &job.id).unwrap_err(), JobError::UnknownJob);
-    assert_eq!(
-        jobs.cancel(&b, &job.id).unwrap_err(),
-        JobError::UnknownJob
-    );
+    assert_eq!(jobs.cancel(&b, &job.id).unwrap_err(), JobError::UnknownJob);
     assert!(host.authorize_action_session(&first, OPTIONAL).is_err());
     registry.insert(OPTIONAL, "2.1.0");
     assert_eq!(
@@ -253,7 +251,7 @@ async fn live_versions_exact_ids_optional_grants_and_exact_launch_job_ownership(
     assert!(host.authorize_action_session(&second, ACTION).is_ok());
     let third = bounded!(launch(&host, "action-web"));
     let c = host.authorize_action_session(&third, ACTION).unwrap();
-    assert_eq!(jobs.get(&job.id, &c).unwrap_err(), JobError::UnknownJob);
+    assert_eq!(jobs.get(&c, &job.id).unwrap_err(), JobError::UnknownJob);
     bounded!(host.shutdown());
     assert!(host.authorize_action_session(&second, ACTION).is_err());
 }
