@@ -132,6 +132,13 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                     reason: "a bundled plugin's manifest must request runtime = \"in-process\"",
                 });
             }
+            if manifest.settings_schema.is_some() != entry.settings_schema.is_some() {
+                return Err(HostError::SettingsSchemaMismatch {
+                    plugin_id: manifest.id.clone(),
+                    manifest_declares_one: manifest.settings_schema.is_some(),
+                    entry_declares_one: entry.settings_schema.is_some(),
+                });
+            }
             let settings_schema = entry
                 .settings_schema
                 .map(SettingsSchema::parse)

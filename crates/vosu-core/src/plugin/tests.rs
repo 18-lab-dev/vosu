@@ -127,6 +127,46 @@ fn development_plugin_is_refused_outside_debug_builds() {
     }
 }
 
+#[test]
+fn development_plugin_with_an_invalid_settings_schema_refuses_with_settings_error() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("manifest.toml"),
+        manifest(
+            "acme.dev-badschema",
+            "settings_schema='settings.schema.json'\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("settings.schema.json"), "not valid json").unwrap();
+
+    match registry::load_development(dir.path(), true) {
+        Err(HostError::Settings(_)) => {}
+        Err(other) => panic!("expected HostError::Settings, got {other}"),
+        Ok(_) => panic!("expected an invalid settings_schema to refuse the load"),
+    }
+}
+
+#[test]
+fn development_plugin_with_a_missing_settings_schema_file_refuses_with_io_error() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("manifest.toml"),
+        manifest(
+            "acme.dev-missingschema",
+            "settings_schema='settings.schema.json'\n",
+        ),
+    )
+    .unwrap();
+    // Deliberately not writing `settings.schema.json`.
+
+    match registry::load_development(dir.path(), true) {
+        Err(HostError::Io(_)) => {}
+        Err(other) => panic!("expected HostError::Io, got {other}"),
+        Ok(_) => panic!("expected a missing settings_schema file to refuse the load"),
+    }
+}
+
 mod dummy_plugin {
     use super::{Init, Message, Plugin, PluginError};
 
@@ -161,7 +201,7 @@ fn bundled_manifest_requesting_process_runtime_is_rejected() {
 
 #[test]
 fn bundled_settings_schema_is_parsed_and_served() {
-    let text = manifest("acme.schema", "");
+    let text = manifest("acme.schema", "settings_schema='settings.schema.json'\n");
     let schema_text = r#"[{"uniqueID":"RATE","type":"number","value":42.0}]"#;
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
@@ -178,7 +218,7 @@ fn bundled_settings_schema_is_parsed_and_served() {
 
 #[test]
 fn invalid_bundled_settings_schema_refuses_load() {
-    let text = manifest("acme.badschema", "");
+    let text = manifest("acme.badschema", "settings_schema='settings.schema.json'\n");
     let result = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: Some("not valid json"),
@@ -188,6 +228,46 @@ fn invalid_bundled_settings_schema_refuses_load() {
         Err(HostError::Settings(_)) => {}
         Err(other) => panic!("expected HostError::Settings, got {other}"),
         Ok(_) => panic!("expected an invalid settings_schema to refuse the load"),
+    }
+}
+
+#[test]
+fn bundled_settings_schema_presence_mismatch_is_refused() {
+    // Manifest declares a schema, but the `BundledPlugin` entry does not
+    // (the exact shape a missed `Some(SETTINGS_SCHEMA)` in a production
+    // `BUNDLED` entry would have, P0 review).
+    let declaring_manifest = manifest(
+        "acme.schema-mismatch",
+        "settings_schema='settings.schema.json'\n",
+    );
+    match registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &declaring_manifest,
+        settings_schema: None,
+        vtable: dummy_plugin::vosu_plugin_vtable,
+    }]) {
+        Err(HostError::SettingsSchemaMismatch {
+            manifest_declares_one: true,
+            entry_declares_one: false,
+            ..
+        }) => {}
+        Err(other) => panic!("expected SettingsSchemaMismatch, got {other}"),
+        Ok(_) => panic!("expected the manifest/entry schema mismatch to refuse the load"),
+    }
+
+    // The reverse: the entry declares one, but the manifest does not.
+    let non_declaring_manifest = manifest("acme.schema-mismatch2", "");
+    match registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &non_declaring_manifest,
+        settings_schema: Some(r#"[{"uniqueID":"RATE","type":"number","value":1.0}]"#),
+        vtable: dummy_plugin::vosu_plugin_vtable,
+    }]) {
+        Err(HostError::SettingsSchemaMismatch {
+            manifest_declares_one: false,
+            entry_declares_one: true,
+            ..
+        }) => {}
+        Err(other) => panic!("expected SettingsSchemaMismatch, got {other}"),
+        Ok(_) => panic!("expected the manifest/entry schema mismatch to refuse the load"),
     }
 }
 

@@ -21,3 +21,8 @@ mod sessions;
 /// queued and replayed once `create` returns, and `destroy_all` not
 /// leaking an instance still racing `create_instance`.
 mod races;
+
+/// P0 review: `create_instance` building `init.settings` from the
+/// loaded plugin's own schema, and `PluginHost::schema_for` (plugin-id
+/// match, `Creating`-and-`Live` resolution).
+mod settings_schema;

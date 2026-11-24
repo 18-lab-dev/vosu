@@ -68,6 +68,17 @@ pub enum HostError {
     /// `manifest.settings_schema` path failed to parse as a
     /// `settings.schema.json` (§6.9, §8).
     Settings(SettingsError),
+    /// `load_bundled`: a manifest's own `settings_schema` key and its
+    /// `BundledPlugin::settings_schema` entry disagree about whether this
+    /// plugin declares a schema at all (P0 review: a missed
+    /// `Some(SETTINGS_SCHEMA)` would otherwise silently load the plugin
+    /// with no schema — an empty `init.settings` and empty bridge B2
+    /// deliveries, with nothing to catch it).
+    SettingsSchemaMismatch {
+        plugin_id: String,
+        manifest_declares_one: bool,
+        entry_declares_one: bool,
+    },
 }
 
 impl fmt::Display for HostError {
@@ -105,6 +116,24 @@ impl fmt::Display for HostError {
             Self::ShuttingDown => write!(f, "the plugin host is shutting down"),
             Self::MatcherRegister(e) => write!(f, "{e}"),
             Self::Settings(e) => write!(f, "{e}"),
+            Self::SettingsSchemaMismatch {
+                plugin_id,
+                manifest_declares_one,
+                entry_declares_one,
+            } => write!(
+                f,
+                "plugin {plugin_id:?}'s manifest {} a settings_schema, but its BundledPlugin entry {} one",
+                if *manifest_declares_one {
+                    "declares"
+                } else {
+                    "declares no"
+                },
+                if *entry_declares_one {
+                    "declares"
+                } else {
+                    "declares no"
+                },
+            ),
         }
     }
 }

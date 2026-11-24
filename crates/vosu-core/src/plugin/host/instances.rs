@@ -99,6 +99,7 @@ impl PluginHost {
         }
         let plugin_id = plugin.manifest().id.clone();
         let matcher_table = plugin.manifest().matcher.clone();
+        let schema = plugin.settings_schema().cloned();
         self.instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -106,11 +107,11 @@ impl PluginHost {
                 id,
                 InstanceSlot::Creating {
                     plugin_id: plugin_id.clone(),
+                    settings_schema: schema.clone(),
                     pending: Vec::new(),
                 },
             );
 
-        let schema = plugin.settings_schema().cloned();
         let created = (|| {
             let settings = self
                 .settings
@@ -316,6 +317,7 @@ impl PluginHost {
                 InstanceSlot::Creating {
                     plugin_id: creating_id,
                     pending,
+                    ..
                 } if creating_id == plugin_id => pending.push(PendingDelivery {
                     message: message.clone(),
                 }),

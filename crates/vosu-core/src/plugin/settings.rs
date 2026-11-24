@@ -254,9 +254,17 @@ impl ConfigSettingsBridgeB2 {
         let mut changes = self.config.subscribe();
         runtime.spawn(async move {
             let deliver_current = |values_service: &PluginSettingsService| {
-                let schema = schema_source.schema_for(BRIDGE_B2_PLUGIN_ID);
+                // No schema resolves until `vosu.osu` is at least
+                // registered `Creating` (`PluginHost::schema_for`):
+                // skip delivery rather than broadcasting the empty map
+                // `effective_settings(.., None)` would otherwise hand
+                // back, which would violate §6.9's "always the complete
+                // effective settings object" once replayed to `Live`.
+                let Some(schema) = schema_source.schema_for(BRIDGE_B2_PLUGIN_ID) else {
+                    return;
+                };
                 if let Ok(values) =
-                    values_service.effective_settings(BRIDGE_B2_PLUGIN_ID, schema.as_ref())
+                    values_service.effective_settings(BRIDGE_B2_PLUGIN_ID, Some(&schema))
                 {
                     delivery.settings_changed(
                         BRIDGE_B2_PLUGIN_ID,
