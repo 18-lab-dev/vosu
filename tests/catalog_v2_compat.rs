@@ -13,6 +13,8 @@ mod consumers;
 mod context;
 #[path = "catalog_v2/declarations.rs"]
 mod declarations;
+#[path = "catalog_v2/game_detection.rs"]
+mod game_detection;
 #[path = "catalog_v2/legacy.rs"]
 mod legacy;
 #[path = "catalog_v2/manifest.rs"]

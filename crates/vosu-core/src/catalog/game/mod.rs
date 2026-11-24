@@ -10,8 +10,9 @@
 //! `comm_hints` never accept a process; `linux_name_contains` is a Linux-only
 //! userspace matcher). Nothing is registered with the host's `MatcherEngine`, so
 //! overlapping catalog alternatives stay allowed and installed overlap/256-entry
-//! pre-filter refusal is unchanged. A process already claimed by an installed,
-//! enabled game plugin produces no offer.
+//! pre-filter refusal is unchanged. Following `catalog-v2.md` literally, a
+//! process an installed, enabled game plugin already matched still produces
+//! offers for matching uninstalled alternatives, flagged `installed_match`.
 //!
 //! Offers are keyed by `(source, plugin id, pid, start_time)`, bounded by
 //! [`MAX_GAME_OFFERS`] and expose only [`GameOfferView`] (no path, argv or

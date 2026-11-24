@@ -228,7 +228,7 @@ fn overlapping_uninstalled_alternatives_pass_validation_and_both_offer() {
 }
 
 #[test]
-fn reused_pid_exit_and_claimed_processes_drop_offers() {
+fn reused_pid_exit_rename_and_installed_match_flags_offers() {
     let sources = Sources::new(&[input("acme/games", true)]);
     let snapshot = sources.fetch(vec![(
         "acme/games",
@@ -252,11 +252,19 @@ fn reused_pid_exit_and_claimed_processes_drop_offers() {
     assert_ne!(first, second);
     offers.process_exited(40);
     assert!(offers.offers().is_empty());
-    // An installed enabled plugin already claimed this process.
+    // An installed enabled plugin already matched this process: the spec still
+    // offers the alternative, flagged for presentation.
     offers.process_observed(&process(41, 1, "mygame"), true);
-    assert!(offers.offers().is_empty());
-    offers.process_observed(&process(42, 1, "mygame"), false);
-    offers.process_observed(&process(42, 1, "mygame"), true);
+    let views = offers.offers();
+    assert_eq!(views.len(), 1);
+    assert!(views[0].installed_match);
+    let flagged = views[0].offer_id.clone();
+    offers.process_observed(&process(41, 1, "mygame"), false);
+    let views = offers.offers();
+    assert_eq!((views.len(), views[0].installed_match), (1, false));
+    assert_eq!(views[0].offer_id, flagged, "same occurrence deduplicated");
+    // An in-place rename of the same occurrence that stops matching.
+    offers.process_observed(&process(41, 1, "renamed"), false);
     assert!(offers.offers().is_empty());
 }
 

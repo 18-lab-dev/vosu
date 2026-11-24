@@ -27,6 +27,9 @@ pub struct GameOfferView {
     pub source: SourceIdentity,
     /// The observed executable/`comm` name only.
     pub process: String,
+    /// An installed, enabled game plugin already matched this process. The
+    /// spec still offers the uninstalled alternative; presentation is H0's.
+    pub installed_match: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -70,6 +73,7 @@ struct Offer {
     pid: u32,
     start_time: u64,
     process: String,
+    claimed: bool,
 }
 
 #[derive(Default)]
@@ -166,6 +170,7 @@ impl GameOffers {
                     version: candidate.version.clone(),
                     source: candidate.key.source.clone(),
                     process: offer.process.clone(),
+                    installed_match: offer.claimed,
                 }
             })
             .collect()
@@ -271,6 +276,11 @@ impl DiscoveryObserver for GameOffers {
                 || offer.start_time != process.start_time
                 || matched.contains(&offer.candidate)
         });
+        for offer in &mut state.offers {
+            if offer.pid == process.pid {
+                offer.claimed = claimed;
+            }
+        }
         for index in matched {
             let present = state.offers.iter().any(|offer| {
                 offer.pid == process.pid
@@ -295,6 +305,7 @@ impl DiscoveryObserver for GameOffers {
                 pid: process.pid,
                 start_time: process.start_time,
                 process: process.name.clone(),
+                claimed,
             });
         }
     }

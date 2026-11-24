@@ -37,6 +37,13 @@ All notable user-visible changes to vosu are documented here. Older sections are
   Add the dashboard/config `MAX_PACKAGE_MIB` integer setting (1–4096, default
   512), pinning the same checked byte cap for resolution and executor downloads.
   Package installation is handed to M6b I0, not implemented by plan creation.
+- Offer "add support" for running games matched by uninstalled catalog game
+  plugins from enabled sources, using the existing discovery service and the
+  runtime process matcher (catalog hints alone never match; overlapping catalog
+  alternatives are allowed). Offers are bounded, never download, approve or
+  trust anything, and vanish on process exit, PID reuse, source changes or
+  install; accepting one builds a normal requested install plan for its exact
+  source. Native Windows observation evidence remains pending.
 
 ## Unreleased — 2.0 M6a
 
