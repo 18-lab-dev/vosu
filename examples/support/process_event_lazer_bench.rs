@@ -1,3 +1,6 @@
+#[path = "discovery_source.rs"]
+mod discovery_source;
+use discovery_source::{DiscoverySource, OSU_COMM_HINTS};
 
 use std::collections::HashSet;
 use std::env;
@@ -9,17 +12,20 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use serde_json::json;
+use tokio::runtime::Handle;
 use tokio::time::{sleep, timeout_at};
-use vosu::instance::{InstanceRuntime, NativeProcessProvider, Pid, ProcessEventMode};
-use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
+use vosu_core::plugin::Prefilter;
+
+/// Mirrors `vosu::instance::Pid` (`src/instance.rs:30`); these examples
+/// no longer depend on the 1.x instance module (C5).
+type Pid = u32;
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(15);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(7);
 const DEFAULT_DWELL: Duration = Duration::from_secs(10);
 
-type Runtime = InstanceRuntime<NativeProcessProvider, DisabledGenerator>;
+type Runtime = DiscoverySource;
 
 #[derive(Clone, Copy)]
 struct ResourceUsage {
@@ -27,22 +33,6 @@ struct ResourceUsage {
     system_cpu: Duration,
     voluntary_context_switches: u64,
     involuntary_context_switches: u64,
-}
-
-#[derive(Clone, Copy)]
-struct DisabledGenerator;
-
-impl OffsetGenerator for DisabledGenerator {
-    fn generate<'a>(
-        &'a self,
-        _executable_root: &'a std::path::Path,
-        _version: &'a str,
-        _cancel: &'a tokio_util::sync::CancellationToken,
-    ) -> GenerationFuture<'a> {
-        Box::pin(async {
-            Err(io::Error::other("offset generation disabled by live lazer benchmark"))
-        })
-    }
 }
 
 struct Client {
@@ -123,26 +113,23 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let (mode, executable, dwell) = parse_args()?;
-    let provider = NativeProcessProvider::open_process_events(match mode.as_str() {
-        "poll" => None,
-        "cn-proc" => Some(ProcessEventMode::CnProc),
-        "ebpf" => Some(ProcessEventMode::Ebpf),
-        _ => unreachable!("validated benchmark mode"),
-    })?;
-    let loader = LazerOffsetLoader::new(
-        DisabledGenerator,
-        PathBuf::from("/dev/null/vosu-process-event-lazer-bench"),
-        Bytes::new(),
-    );
-    let runtime = InstanceRuntime::start(provider, loader);
+    // SAFETY: no other thread reads or writes environment variables at
+    // this point in `main` — `DiscoverySource::start` below is the first
+    // thing that opens a `LinuxSource`, and it is the only reader of
+    // `VOSU_PROCESS_EVENTS` (mirrors 1.x's own `--mode`-to-env selection,
+    // `NativeProcessProvider::open_process_events`).
+    unsafe {
+        env::set_var("VOSU_PROCESS_EVENTS", &mode);
+    }
+    let prefilter = Prefilter::Names(OSU_COMM_HINTS.iter().map(|hint| (*hint).to_owned()).collect());
+    let runtime = DiscoverySource::start(prefilter, Handle::current())?;
     wait_for_scan(&runtime).await?;
 
     let baseline = runtime
         .subscribe_current()
         .borrow()
-        .instances
         .iter()
-        .map(|instance| instance.pid)
+        .copied()
         .collect::<HashSet<_>>();
     let events_before = runtime.process_event_count();
     let scans_before = runtime.discovery_scan_count();
@@ -301,9 +288,8 @@ async fn wait_for_new_pid(
     loop {
         let new_pids = snapshots
             .borrow()
-            .instances
             .iter()
-            .map(|instance| instance.pid)
+            .copied()
             .filter(|pid| !baseline.contains(pid))
             .collect::<Vec<_>>();
         match new_pids.as_slice() {
@@ -333,11 +319,7 @@ async fn wait_for_pid(
     let mut snapshots = runtime.subscribe_current();
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let present = snapshots
-            .borrow()
-            .instances
-            .iter()
-            .any(|instance| instance.pid == pid);
+        let present = snapshots.borrow().contains(&pid);
         if present == expected_present {
             return Ok(true);
         }

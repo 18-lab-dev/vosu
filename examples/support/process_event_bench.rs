@@ -3,6 +3,9 @@ mod metrics;
 use metrics::{
     duration_from_nanos, duration_ms, get_resource_usage, output_json, subtract_resource_usage,
 };
+#[path = "discovery_source.rs"]
+mod discovery_source;
+use discovery_source::{DiscoverySource, OSU_COMM_HINTS};
 
 use std::env;
 use std::error::Error;
@@ -12,11 +15,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use serde_json::{Value, json};
+use tokio::runtime::Handle;
 use tokio::time::{Instant as TokioInstant, sleep, sleep_until, timeout_at};
-use vosu::instance::{InstanceRuntime, NativeProcessProvider, Pid, ProcessEventMode};
-use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
+use vosu_core::plugin::Prefilter;
+
+/// Mirrors `vosu::instance::Pid` (`src/instance.rs:30`); these examples
+/// no longer depend on the 1.x instance module (C5).
+type Pid = u32;
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(2);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(7);
@@ -27,7 +33,7 @@ const MAX_DURATION: Duration = Duration::from_secs(3_600);
 const MAX_ITERATIONS: usize = 1_000_000;
 const MAX_CHURN_RATE_HZ: u64 = 1_000;
 
-type Runtime = InstanceRuntime<NativeProcessProvider, DisabledGenerator>;
+type Runtime = DiscoverySource;
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -56,13 +62,6 @@ impl Mode {
         }
     }
 
-    const fn event_mode(self) -> Option<ProcessEventMode> {
-        match self {
-            Self::Poll => None,
-            Self::CnProc => Some(ProcessEventMode::CnProc),
-            Self::Ebpf => Some(ProcessEventMode::Ebpf),
-        }
-    }
 }
 
 struct Args {
@@ -112,22 +111,6 @@ struct Results {
     total_targeted_inspections: u64,
     total_event_wakes: u64,
     total_reconciliation_requests: u64,
-}
-
-#[derive(Clone, Copy)]
-struct DisabledGenerator;
-
-impl OffsetGenerator for DisabledGenerator {
-    fn generate<'a>(
-        &'a self,
-        _executable_root: &'a std::path::Path,
-        _version: &'a str,
-        _cancel: &'a tokio_util::sync::CancellationToken,
-    ) -> GenerationFuture<'a> {
-        Box::pin(async {
-            Err(io::Error::other("offset generation disabled by process-event benchmark"))
-        })
-    }
 }
 
 struct ExecutableAlias {
@@ -241,13 +224,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Err("timed out preparing the initial-scan target helper".into());
     }
 
-    let provider = NativeProcessProvider::open_process_events(args.mode.event_mode())?;
-    let loader = LazerOffsetLoader::new(
-        DisabledGenerator,
-        PathBuf::from("/dev/null/vosu-process-event-bench"),
-        Bytes::new(),
-    );
-    let runtime = InstanceRuntime::start(provider, loader);
+    // SAFETY: no other thread reads or writes environment variables at
+    // this point in `main` — `DiscoverySource::start` below is the first
+    // thing that opens a `LinuxSource`, and it is the only reader of
+    // `VOSU_PROCESS_EVENTS` (mirrors 1.x's own `--mode`-to-env selection,
+    // `NativeProcessProvider::open_process_events`).
+    unsafe {
+        env::set_var("VOSU_PROCESS_EVENTS", args.mode.name());
+    }
+    let prefilter = Prefilter::Names(OSU_COMM_HINTS.iter().map(|hint| (*hint).to_owned()).collect());
+    let runtime = DiscoverySource::start(prefilter, Handle::current())?;
 
     wait_for_scan(&runtime, 0).await?;
     if !wait_for_pid(&runtime, initial_scan_helper.pid, true, EVENT_TIMEOUT).await? {
@@ -749,11 +735,7 @@ async fn wait_for_pid(
     let mut snapshots = runtime.subscribe_current();
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        let present = snapshots
-            .borrow()
-            .instances
-            .iter()
-            .any(|instance| instance.pid == pid);
+        let present = snapshots.borrow().contains(&pid);
         if present == expected_present {
             return Ok(true);
         }
@@ -763,7 +745,7 @@ async fn wait_for_pid(
         }
         match tokio::time::timeout_at(deadline, snapshots.changed()).await {
             Ok(Ok(())) => {}
-            Ok(Err(_)) => return Err("lifecycle snapshot publisher stopped".into()),
+            Ok(Err(_)) => return Err("discovery tracked-set publisher stopped".into()),
             Err(_) => return Ok(false),
         }
     }
