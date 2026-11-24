@@ -69,7 +69,7 @@ pub use manifest::{
 #[cfg(feature = "unstable-sync-reads")]
 pub use message::flat::StageRef;
 pub use message::flat::{
-    DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishBatchRef,
+    CborAppend, DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishBatchRef,
     PublishBatchWriter, PublishField, PublishFieldRef, PublishValue, PublishValueRef,
     ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase,
     decode_publish_batch_ref, decode_publish_field_ref,

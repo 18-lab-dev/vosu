@@ -7,6 +7,14 @@
 //! This module only splits the reserved prefix from its dotted suffix and
 //! checks that suffix's own segment grammar; it never locates a namespace
 //! boundary inside it.
+//!
+//! The segment grammars here (`valid_kind_segment`/`valid_camel_path_segment`)
+//! are also `crate::manifest`'s: a resource kind, action-name segment, and
+//! plugin-id segment share one dash grammar, and a `field:` path segment
+//! below a namespace uses a separate camelCase grammar
+//! (`docs/v2/naming.md` "Kinds", `docs/v2/state-schema.md` "Naming"); they
+//! live here, the lower-level module, so neither module re-derives a third
+//! grammar of its own.
 
 use core::fmt;
 
@@ -34,26 +42,42 @@ impl fmt::Display for CapabilityError {
 
 impl std::error::Error for CapabilityError {}
 
-/// One dotted segment of a `field:`/`resource:`/`action:` suffix. Such a
-/// segment is either a namespace/kind/action-name segment
-/// (`[a-z0-9][a-z0-9-]{0,31}`, `docs/v2/naming.md` "Kinds") or, below a
-/// `field:` namespace, a camelCase schema-key segment
-/// (`docs/v2/state-schema.md` "Naming"); without the namespace boundary
-/// this module cannot tell which a given segment is (module doc comment),
-/// so it accepts either grammar's segments here.
-fn valid_suffix_segment(s: &str) -> bool {
+/// `[a-z0-9][a-z0-9-]{0,31}` segment grammar shared by resource kinds,
+/// action-name segments, and plugin id segments (`docs/v2/naming.md`
+/// "Kinds"). `max_len`/`allow_underscore` let `crate::manifest`'s
+/// `root_slots` grammar (`[a-z0-9][a-z0-9_-]{0,63}`) reuse the same
+/// first-character rule without a third near-duplicate.
+pub(crate) fn valid_segment(s: &str, max_len: usize, allow_underscore: bool) -> bool {
     let mut chars = s.chars();
     let Some(first) = chars.next() else {
         return false;
     };
-    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
         return false;
     }
-    s.len() <= 63 && chars.all(|c| c.is_ascii_alphanumeric() || c == '-')
+    s.len() <= max_len
+        && chars.all(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '-'
+                || (allow_underscore && c == '_')
+        })
 }
 
-fn valid_suffix(suffix: &str) -> bool {
-    !suffix.is_empty() && suffix.split('.').all(valid_suffix_segment)
+/// `[a-z0-9][a-z0-9-]{0,31}` (`docs/v2/naming.md` "Kinds"): a resource
+/// kind, an action-name segment, or a plugin-id segment.
+pub(crate) fn valid_kind_segment(s: &str) -> bool {
+    valid_segment(s, 32, false)
+}
+
+/// One dotted segment of a `field:` id's path part below its namespace:
+/// the dotted form of a namespace's own camelCase JSON Schema key
+/// (`docs/v2/state-schema.md` "Naming": schema keys are camelCase and
+/// never contain a dot).
+pub(crate) fn valid_camel_path_segment(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_alphanumeric())
 }
 
 /// `^[a-z][a-z0-9-]{0,31}$` (`docs/v2/naming.md` "Game ids").
@@ -64,25 +88,102 @@ fn valid_game_id(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// `vosu.sessions` is reserved and never a `field:` id, namespace, or
+/// descendant of one (`docs/v2/naming.md` "Namespaces": "it is never a
+/// plugin id, a published data namespace, or a `field:`/`resource:`/
+/// `action:` capability, in any manifest, schema, or catalog entry").
+const RESERVED_SESSIONS_NAMESPACE: &str = "vosu.sessions";
+
+fn names_reserved_sessions_namespace(suffix: &str) -> bool {
+    suffix == RESERVED_SESSIONS_NAMESPACE
+        || suffix.starts_with(&format!("{RESERVED_SESSIONS_NAMESPACE}."))
+}
+
+/// The five core namespaces (`docs/v2/naming.md` "Namespaces"), the only
+/// namespaces this module can recognize by name without the full
+/// installed/catalogued set (module doc comment).
+pub(crate) const CORE_NAMESPACES: [&str; 5] = [
+    "vosu.client",
+    "vosu.status",
+    "vosu.chart",
+    "vosu.play",
+    "vosu.skin",
+];
+
+/// A `field:` id's suffix is a namespace (bare, at least two dot-segments —
+/// every core namespace is `vosu.<x>` and every plugin id is 2-4 segments,
+/// so no valid namespace is a single segment) or a namespace plus a
+/// dotted camelCase path below it; `docs/v2/naming.md` "Namespaces"
+/// reserves `vosu.sessions` out of this entirely.
+fn valid_field_suffix(suffix: &str) -> bool {
+    if names_reserved_sessions_namespace(suffix) {
+        return false;
+    }
+    // A core namespace is a closed, known set (unlike an arbitrary
+    // plugin id): once the suffix names one, whatever remains below it
+    // is a schema-key path, camelCase only, never a dash segment — this
+    // mirrors `crate::manifest::valid_covers_entry`'s same core-namespace
+    // check.
+    for namespace in CORE_NAMESPACES {
+        if suffix == namespace {
+            return true;
+        }
+        if let Some(path) = suffix
+            .strip_prefix(namespace)
+            .and_then(|rest| rest.strip_prefix('.'))
+        {
+            return !path.is_empty() && path.split('.').all(valid_camel_path_segment);
+        }
+    }
+    // Not a core namespace: a plugin's own namespace (2-4 dash segments)
+    // optionally followed by a camelCase path below it. The
+    // namespace/path boundary is unknowable here (module doc comment),
+    // so every segment independently matches either grammar.
+    let segments: Vec<&str> = suffix.split('.').collect();
+    segments.len() >= 2
+        && segments
+            .iter()
+            .all(|s| valid_kind_segment(s) || valid_camel_path_segment(s))
+}
+
+/// A `resource:` id's suffix: a bare core kind (`"skin"`), a core kind
+/// under its owning namespace's short name (`"chart.background"`), or a
+/// plugin's own kind (`"<plugin-id>.<kind>"`) — every segment the
+/// dash-grammar `valid_kind_segment` (`docs/v2/naming.md` "Kinds";
+/// resource suffixes never carry a camelCase path component).
+fn valid_resource_suffix(suffix: &str) -> bool {
+    suffix.split('.').all(valid_kind_segment)
+}
+
+/// An `action:` id's suffix: `<plugin-id>.<name>`, where `<plugin-id>` is
+/// 2-4 segments and `<name>` is one or more further dot-segments
+/// (`docs/v2/naming.md` "Kinds": "the full capability id is
+/// `action:<plugin-id>.<name>`") — at least three segments total, every
+/// one the dash grammar.
+fn valid_action_suffix(suffix: &str) -> bool {
+    let segments: Vec<&str> = suffix.split('.').collect();
+    segments.len() >= 3 && segments.iter().all(|s| valid_kind_segment(s))
+}
+
 /// Parses one capability id into its prefix and suffix, checking the
 /// suffix's own grammar (`docs/v2/naming.md` "Capability id grammar",
-/// "Kinds", "Game ids"). Namespace-boundary resolution is out of scope
-/// (module doc comment) — the caller (`crate::manifest`, and eventually
-/// M6a's resolver) checks anything that needs it.
+/// "Kinds", "Game ids", "Namespaces"). Namespace-boundary resolution is
+/// out of scope (module doc comment) — the caller (`crate::manifest`, and
+/// eventually M6a's resolver) checks anything that needs it.
 pub fn parse_capability(id: &str) -> Result<CapabilityId<'_>, CapabilityError> {
     let err = || CapabilityError(id.to_string());
     if let Some(suffix) = id.strip_prefix("field:") {
-        return valid_suffix(suffix)
+        return valid_field_suffix(suffix)
             .then_some(CapabilityId::Field(suffix))
             .ok_or_else(err);
     }
     if let Some(suffix) = id.strip_prefix("resource:") {
-        return valid_suffix(suffix)
+        return valid_resource_suffix(suffix)
             .then_some(CapabilityId::Resource(suffix))
             .ok_or_else(err);
     }
     if let Some(suffix) = id.strip_prefix("action:") {
-        return valid_suffix(suffix)
+        return valid_action_suffix(suffix)
             .then_some(CapabilityId::Action(suffix))
             .ok_or_else(err);
     }
@@ -144,6 +245,10 @@ mod tests {
             CapabilityId::Resource("chart.background")
         );
         assert_eq!(
+            parse_capability("resource:skin").unwrap(),
+            CapabilityId::Resource("skin")
+        );
+        assert_eq!(
             parse_capability("action:vosu.osu.beatmap.import").unwrap(),
             CapabilityId::Action("vosu.osu.beatmap.import")
         );
@@ -159,6 +264,36 @@ mod tests {
         assert!(parse_capability("osu.combo").is_err());
         assert!(parse_capability("game:Osu").is_err());
         assert!(parse_capability("game:").is_err());
+        assert!(parse_capability("game:o.su").is_err());
+    }
+
+    #[test]
+    fn rejects_one_segment_field_namespace() {
+        assert!(parse_capability("field:vosu").is_err());
+        assert!(parse_capability("field:acme").is_err());
+    }
+
+    #[test]
+    fn rejects_reserved_sessions_namespace() {
+        assert!(parse_capability("field:vosu.sessions").is_err());
+        assert!(parse_capability("field:vosu.sessions.focused").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_segments() {
+        // Uppercase and over-length segments never parse, under any
+        // prefix: there is no grammar (dash or camelCase) that accepts
+        // them.
+        assert!(parse_capability("field:vosu.play.c-ombo").is_err());
+        assert!(parse_capability("action:acme.game.doIt").is_err());
+        assert!(parse_capability(&format!("resource:{}", "a".repeat(63))).is_err());
+    }
+
+    #[test]
+    fn rejects_action_id_with_too_few_segments() {
+        assert!(parse_capability("action:acme").is_err());
+        assert!(parse_capability("action:acme.game").is_err());
+        assert!(parse_capability("action:acme.game.import").is_ok());
     }
 
     #[test]

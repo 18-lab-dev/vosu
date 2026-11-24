@@ -189,6 +189,31 @@ fn roundtrip_session_decline_and_focus_changed() {
     });
 }
 
+/// `foreground: None` must omit the key entirely from the encoded CBOR
+/// map, not merely decode back to `None` (which an explicit CBOR `null`
+/// would also do): decodes a `FocusChanged { foreground: None, .. }`
+/// encoding back into a generic `CborValue::Map` and asserts no entry's
+/// key is `"foreground"`.
+#[test]
+fn focus_changed_omits_foreground_key_entirely_when_none() {
+    let bytes = encode(&FocusChanged {
+        handle: 1,
+        focused: true,
+        foreground: None,
+    })
+    .expect("encode");
+    let value: CborValue = decode(&bytes).expect("decode as a generic CborValue");
+    let CborValue::Map(entries) = value else {
+        panic!("expected a CBOR map, got {value:?}");
+    };
+    assert!(
+        !entries
+            .iter()
+            .any(|(key, _)| matches!(key, CborValue::Text(k) if k == "foreground")),
+        "foreground: None must omit the key, not encode it as null: {entries:?}"
+    );
+}
+
 /// An older-shape `FOCUS_CHANGED` message (pre-ME, no `foreground` key at
 /// all) still decodes, with `foreground` defaulting to `None` rather than
 /// collapsing to `Some(false)` (ME's additive, backward-compatible

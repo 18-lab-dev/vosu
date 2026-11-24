@@ -33,7 +33,7 @@ use crate::value::vosu_value_kind;
 
 mod publish;
 pub use publish::{
-    PublishBatchRef, PublishBatchWriter, PublishFieldRef, PublishValueRef,
+    CborAppend, PublishBatchRef, PublishBatchWriter, PublishFieldRef, PublishValueRef,
     decode_publish_batch_ref, decode_publish_field_ref,
 };
 

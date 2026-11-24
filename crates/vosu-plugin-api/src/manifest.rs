@@ -13,7 +13,10 @@ use std::fmt;
 
 use serde::Deserialize;
 
-use crate::capability::{CapabilityId, parse_capability};
+use crate::capability::{
+    CORE_NAMESPACES, CapabilityId, parse_capability, valid_camel_path_segment, valid_kind_segment,
+    valid_segment,
+};
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
 /// A validated `manifest.toml` for `kind = "plugin"` (`docs/v2/plugin-abi.md`
@@ -159,6 +162,17 @@ pub enum ManifestError {
     CapabilityForeignNamespace(String),
     /// A capability id appeared in both `requires` and `optional`.
     CapabilityDuplicate(String),
+    /// A capability `schema` path was not a confined relative path
+    /// (`relative`, same confinement as `settings_schema`).
+    CapabilitySchemaPath(String),
+    /// A capability entry carried `schema` where only a whole-namespace
+    /// `field:<own id>` `provides` entry may (`docs/v2/catalog-v2.md`
+    /// "Capability fields").
+    CapabilityUnexpectedSchema(String),
+    /// A `requires`/`optional` entry named a capability under this
+    /// plugin's own `provides` namespace (no self-dependency,
+    /// `docs/v2/catalog-v2.md` "Capability fields").
+    CapabilitySelfDependency(String),
 }
 
 impl fmt::Display for ManifestError {
@@ -198,6 +212,20 @@ impl fmt::Display for ManifestError {
             Self::CapabilityDuplicate(s) => {
                 write!(f, "capability {s:?}: present in both requires and optional")
             }
+            Self::CapabilitySchemaPath(s) => {
+                write!(
+                    f,
+                    "capability schema {s:?} must be a confined relative path"
+                )
+            }
+            Self::CapabilityUnexpectedSchema(s) => write!(
+                f,
+                "capability {s:?}: schema is only valid on a whole-namespace provides entry for this plugin's own namespace"
+            ),
+            Self::CapabilitySelfDependency(s) => write!(
+                f,
+                "capability {s:?}: requires/optional must not name this plugin's own provides namespace"
+            ),
         }
     }
 }
@@ -216,12 +244,6 @@ fn relative(path: &str) -> bool {
             .all(|c| matches!(c, Component::Normal(_)))
 }
 
-/// `[a-z0-9][a-z0-9-]{0,31}` segment grammar shared by resource kinds and
-/// plugin id segments (`docs/v2/naming.md`).
-fn valid_kind_segment(s: &str) -> bool {
-    valid_segment(s, 32, false)
-}
-
 /// `[a-z0-9][a-z0-9_-]{0,63}` grammar (`root_slots`, `docs/v2/naming.md`
 /// is silent on slot names specifically; plugin-abi.md §8 states this
 /// grammar directly).
@@ -229,47 +251,28 @@ fn valid_root_slot(s: &str) -> bool {
     valid_segment(s, 64, true)
 }
 
-fn valid_segment(s: &str, max_len: usize, allow_underscore: bool) -> bool {
-    let mut chars = s.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
-        return false;
-    }
-    s.len() <= max_len
-        && chars.all(|c| {
-            c.is_ascii_lowercase()
-                || c.is_ascii_digit()
-                || c == '-'
-                || (allow_underscore && c == '_')
-        })
-}
-
 /// `^[a-z0-9][a-z0-9-]{0,31}(\.[a-z0-9][a-z0-9-]{0,31}){1,3}$`
-/// (`docs/v2/naming.md` "Plugin ids"): 2-4 dot-separated segments.
+/// (`docs/v2/naming.md` "Plugin ids"): 2-4 dot-separated segments, never
+/// equal to or extending a core-owned or reserved namespace
+/// (`docs/v2/catalog-v2.md` "Namespace and kind parsing": "A plugin id
+/// that equals or extends any core-owned namespace ... is always
+/// rejected, from any source").
 fn valid_plugin_id(id: &str) -> bool {
     let segments: Vec<&str> = id.split('.').collect();
-    (2..=4).contains(&segments.len()) && segments.iter().all(|s| valid_kind_segment(s))
+    (2..=4).contains(&segments.len())
+        && segments.iter().all(|s| valid_kind_segment(s))
+        && !is_reserved_namespace(id)
 }
 
-/// The five core namespaces `covers` may address
-/// (`docs/v2/catalog-v2.md` "`kind = \"plugin\"`").
-const COVERS_CORE_NAMESPACES: [&str; 5] = [
-    "vosu.client",
-    "vosu.status",
-    "vosu.chart",
-    "vosu.play",
-    "vosu.skin",
-];
-
-/// One dotted segment of a `field:` id's `<path>` part: the dotted form
-/// of a namespace's own camelCase JSON Schema key (`docs/v2/state-schema.md`
-/// "Naming": schema keys are camelCase and never contain a dot).
-fn valid_camel_path_segment(s: &str) -> bool {
-    let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
-        && chars.all(|c| c.is_ascii_alphanumeric())
+/// Core-owned namespaces and the reserved `vosu.sessions` pseudo-namespace
+/// are never satisfiable as a plugin id, equal or as a dotted prefix
+/// (`docs/v2/catalog-v2.md` "Namespace and kind parsing",
+/// `docs/v2/naming.md` "Reserved names").
+fn is_reserved_namespace(id: &str) -> bool {
+    CORE_NAMESPACES
+        .iter()
+        .chain(["vosu.sessions"].iter())
+        .any(|ns| id == *ns || id.starts_with(&format!("{ns}.")))
 }
 
 /// `field:<core-namespace>[.<path>]` (`docs/v2/catalog-v2.md`
@@ -287,7 +290,7 @@ fn valid_covers_entry(cover: &str) -> bool {
     let Some(rest) = cover.strip_prefix("field:") else {
         return false;
     };
-    for namespace in COVERS_CORE_NAMESPACES {
+    for namespace in CORE_NAMESPACES {
         if rest == namespace {
             return true;
         }
@@ -368,34 +371,69 @@ impl PluginManifest {
                     if cap.version != "*" {
                         return Err(ManifestError::CapabilityGameVersion(cap.id.clone()));
                     }
+                    if cap.schema.is_some() {
+                        return Err(ManifestError::CapabilityUnexpectedSchema(cap.id.clone()));
+                    }
                 }
                 CapabilityId::Field(suffix) => {
                     semver::Version::parse(&cap.version)
                         .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
                     if suffix == self.id.as_str() {
-                        if cap.schema.is_none() {
-                            return Err(ManifestError::CapabilityMissingSchema(cap.id.clone()));
+                        match &cap.schema {
+                            None => {
+                                return Err(ManifestError::CapabilityMissingSchema(cap.id.clone()));
+                            }
+                            Some(schema) if !relative(schema) => {
+                                return Err(ManifestError::CapabilitySchemaPath(schema.clone()));
+                            }
+                            Some(_) => {}
                         }
-                    } else if !suffix.starts_with(&format!("{}.", self.id)) {
-                        return Err(ManifestError::CapabilityForeignNamespace(cap.id.clone()));
+                    } else {
+                        if cap.schema.is_some() {
+                            return Err(ManifestError::CapabilityUnexpectedSchema(cap.id.clone()));
+                        }
+                        if !suffix.starts_with(&format!("{}.", self.id)) {
+                            return Err(ManifestError::CapabilityForeignNamespace(cap.id.clone()));
+                        }
                     }
                 }
-                CapabilityId::Resource(_) | CapabilityId::Action(_) => {
+                CapabilityId::Resource(suffix) | CapabilityId::Action(suffix) => {
                     semver::Version::parse(&cap.version)
                         .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
+                    if cap.schema.is_some() {
+                        return Err(ManifestError::CapabilityUnexpectedSchema(cap.id.clone()));
+                    }
+                    if !suffix.starts_with(&format!("{}.", self.id)) {
+                        return Err(ManifestError::CapabilityForeignNamespace(cap.id.clone()));
+                    }
                 }
             }
         }
         for cap in self.requires.iter().chain(self.optional.iter()) {
             let parsed =
                 parse_capability(&cap.id).map_err(|_| ManifestError::Capability(cap.id.clone()))?;
-            if let CapabilityId::Game(_) = parsed {
-                if cap.version != "*" {
-                    return Err(ManifestError::CapabilityGameVersion(cap.id.clone()));
+            if cap.schema.is_some() {
+                return Err(ManifestError::CapabilityUnexpectedSchema(cap.id.clone()));
+            }
+            let own_namespace_suffix = match parsed {
+                CapabilityId::Game(_) => {
+                    if cap.version != "*" {
+                        return Err(ManifestError::CapabilityGameVersion(cap.id.clone()));
+                    }
+                    None
                 }
-            } else {
-                semver::VersionReq::parse(&cap.version)
-                    .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
+                CapabilityId::Field(suffix)
+                | CapabilityId::Resource(suffix)
+                | CapabilityId::Action(suffix) => {
+                    semver::VersionReq::parse(&cap.version)
+                        .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
+                    Some(suffix)
+                }
+            };
+            if let Some(suffix) = own_namespace_suffix
+                && (suffix == self.id.as_str() || suffix.starts_with(&format!("{}.", self.id)))
+            {
+                return Err(ManifestError::CapabilitySelfDependency(cap.id.clone()));
             }
         }
         let required_ids: std::collections::HashSet<&str> =
@@ -725,5 +763,114 @@ mod tests {
             PluginManifest::parse(&text).unwrap_err(),
             ManifestError::Capability("vosu.play.combo".into())
         );
+    }
+
+    #[test]
+    fn rejects_unconfined_capability_schema_path() {
+        for bad in ["/etc/passwd", "../../x", "a/../../x"] {
+            let text = format!(
+                "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\nschema = '{bad}'\n",
+                base()
+            );
+            assert_eq!(
+                PluginManifest::parse(&text).unwrap_err(),
+                ManifestError::CapabilitySchemaPath(bad.into()),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_plugin_id_equal_to_or_extending_a_core_namespace() {
+        for bad in [
+            "vosu.play",
+            "vosu.play.pp",
+            "vosu.sessions",
+            "vosu.sessions.focused",
+        ] {
+            assert_eq!(
+                PluginManifest::parse(&base().replace("id='vosu.osu'", &format!("id='{bad}'")))
+                    .unwrap_err(),
+                ManifestError::Id,
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_core_namespace_field_provides_even_with_schema() {
+        // With `id = "vosu.osu"` (not a core namespace), a provides entry
+        // naming a *different* core namespace is already both a foreign
+        // namespace and a leaf entry carrying a schema it must not
+        // (schema is checked first); this only passes if `id` itself is
+        // also allowed to be a core namespace, which it no longer is
+        // (the test above).
+        let text = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.play'\nversion = '1.0.0'\nschema = 'schemas/vosu.play.schema.json'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityUnexpectedSchema("field:vosu.play".into())
+        );
+    }
+
+    #[test]
+    fn rejects_schema_on_leaf_field_provides_entry() {
+        let text = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.osu.play'\nversion = '1.0.0'\nschema = 'schemas/x.schema.json'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityUnexpectedSchema("field:vosu.osu.play".into())
+        );
+    }
+
+    #[test]
+    fn rejects_schema_on_requires_or_optional_entry() {
+        let text = format!(
+            "{}\n[[requires]]\nid = 'field:vosu.play.combo'\nversion = '^1.0.0'\nschema = 'schemas/x.schema.json'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityUnexpectedSchema("field:vosu.play.combo".into())
+        );
+    }
+
+    #[test]
+    fn rejects_core_resource_kind_in_provides() {
+        let text = format!(
+            "{}\n[[provides]]\nid = 'resource:chart.background'\nversion = '1.0.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityForeignNamespace("resource:chart.background".into())
+        );
+        let text = format!(
+            "{}\n[[provides]]\nid = 'resource:skin'\nversion = '1.0.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityForeignNamespace("resource:skin".into())
+        );
+    }
+
+    #[test]
+    fn rejects_self_dependency() {
+        for id in ["field:vosu.osu", "field:vosu.osu.play.pp"] {
+            let text = format!(
+                "{}\n[[requires]]\nid = '{id}'\nversion = '^1.0.0'\n",
+                base()
+            );
+            assert_eq!(
+                PluginManifest::parse(&text).unwrap_err(),
+                ManifestError::CapabilitySelfDependency(id.into()),
+                "expected {id:?} to be rejected"
+            );
+        }
     }
 }

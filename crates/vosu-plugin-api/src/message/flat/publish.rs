@@ -5,7 +5,15 @@
 //! [`decode_publish_batch_ref`] are the allocation-free counterparts of
 //! [`super::decode_publish_field`]/[`super::decode_publish_batch`], and
 //! [`PublishBatchWriter`] is the allocation-free counterpart of
-//! [`super::encode_publish_batch`].
+//! [`super::encode_publish_batch`] — with two differences from their
+//! owning counterparts, both deliberate (K2/K3 own closing them):
+//! a `VOSU_VALUE_CBOR`/`RESOURCE_REF`/`TREE_REF` leaf's bytes are
+//! returned raw and unvalidated (the owning decode runs `cbor::decode` on
+//! them; this borrowed path never does, so it can accept a batch the
+//! owning path rejects as malformed CBOR), and neither function here
+//! checks `vosu_message.flags` — only [`crate::Message::decode`] does
+//! that, so a caller reaching these directly must call
+//! [`crate::validate_flags`] itself first.
 
 use core::mem::size_of;
 
@@ -106,18 +114,23 @@ fn decode_field_header_ref<'a>(
 
 /// Borrowed decode of `VOSU_OP_PUBLISH_FIELD`: allocates nothing, keeping
 /// every `ns`/`pointer`/`data` range as a borrow into `buffer`
-/// ([`super::decode_publish_field`] is the owning equivalent).
+/// ([`super::decode_publish_field`] is the owning equivalent; the module
+/// doc comment's two differences from it apply here).
 pub fn decode_publish_field_ref(buffer: &[u8]) -> Result<PublishFieldRef<'_>, MessageError> {
     validate::validate_publish_field(buffer)?;
     let header: vosu_field_publish_header = read_flat_header(buffer)?;
     decode_field_header_ref(buffer, &header)
 }
 
-/// Borrowed decode of `VOSU_OP_PUBLISH_BATCH` (D4): validates the whole
-/// payload and every entry's `ns`/`pointer`/string UTF-8 once, up front, so
+/// Borrowed decode of `VOSU_OP_PUBLISH_BATCH` (D4): validates every
+/// entry's layout and its `ns`/`pointer`/string UTF-8 once, up front, so
 /// [`PublishBatchRef::entries`] can be an infallible, allocation-free
-/// iterator over borrows into `buffer` ([`super::decode_publish_batch`] is the
-/// owning equivalent).
+/// iterator over borrows into `buffer` ([`super::decode_publish_batch`]
+/// is the owning equivalent; the module doc comment's two differences
+/// from it apply here — in particular, a CBOR-kind entry's bytes are not
+/// parsed as CBOR here, so the consumer (K3's commit path) must validate
+/// every entry, CBOR included, before building or committing any tree
+/// from it).
 pub fn decode_publish_batch_ref(buffer: &[u8]) -> Result<PublishBatchRef<'_>, MessageError> {
     validate::validate_publish_batch(buffer)?;
     let header: vosu_publish_batch_header = read_flat_header(buffer)?;
@@ -169,6 +182,34 @@ impl<'a> PublishBatchRef<'a> {
                     .expect("validated by decode_publish_batch_ref");
             decode_field_header_ref(buffer, &entry).expect("validated by decode_publish_batch_ref")
         })
+    }
+}
+
+/// An append-only view of [`PublishBatchWriter`]'s own `data` buffer,
+/// handed to a [`PublishBatchWriter::push_cbor_with`] closure: it exposes
+/// only `extend_from_slice`/`std::io::Write` (so `ciborium::into_writer`
+/// can serialize straight into it), never `clear`/`truncate`/`resize` or
+/// any other way to shrink the buffer. Without this, a closure that
+/// cleared or truncated the shared `data` buffer would make
+/// `push_cbor_with`'s own length computation underflow (or, past that
+/// point, silently corrupt every earlier entry's data range); this type
+/// makes that impossible rather than merely improbable.
+pub struct CborAppend<'a>(&'a mut Vec<u8>);
+
+impl CborAppend<'_> {
+    pub fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.0.extend_from_slice(bytes);
+    }
+}
+
+impl std::io::Write for CborAppend<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -310,15 +351,22 @@ impl PublishBatchWriter {
 
     /// Appends one `VOSU_VALUE_CBOR` entry, serializing it in place:
     /// `write` appends the encoded CBOR bytes directly to `self.data`
-    /// (reused buffer, no intermediate allocation), rather than building
-    /// them in a `Vec` of their own first.
-    pub fn push_cbor_with(&mut self, ns: &str, pointer: &str, write: impl FnOnce(&mut Vec<u8>)) {
+    /// through an append-only [`CborAppend`] view (reused buffer, no
+    /// intermediate allocation, and no way for `write` to disturb any
+    /// earlier entry's data), rather than building them in a `Vec` of
+    /// their own first.
+    pub fn push_cbor_with(
+        &mut self,
+        ns: &str,
+        pointer: &str,
+        write: impl FnOnce(&mut CborAppend<'_>),
+    ) {
         let ns_offset = self.data.len() as u32;
         self.data.extend_from_slice(ns.as_bytes());
         let pointer_offset = self.data.len() as u32;
         self.data.extend_from_slice(pointer.as_bytes());
         let data_offset = self.data.len() as u32;
-        write(&mut self.data);
+        write(&mut CborAppend(&mut self.data));
         let data_len = self.data.len() as u32 - data_offset;
         self.entries.push(PendingEntry {
             handle: self.handle,

@@ -11,8 +11,8 @@ use std::hint::black_box;
 
 use proptest::prelude::*;
 use vosu_plugin_api::{
-    Message, PublishBatchWriter, PublishValue, PublishValueRef, decode_publish_batch_ref,
-    vosu_opcode,
+    CborValue, Message, PublishBatchWriter, PublishField, PublishValue, PublishValueRef,
+    decode_publish_batch_ref, decode_publish_field_ref, encode, vosu_opcode,
 };
 use vosu_proptest::vosu_proptest_config;
 
@@ -44,7 +44,7 @@ fn arbitrary_value() -> impl Strategy<Value = PublishValue> {
         any::<i64>().prop_map(PublishValue::I64),
         any::<u64>().prop_map(PublishValue::U64),
         any::<f64>().prop_map(PublishValue::F64),
-        "[a-zA-Z0-9 ]{0,24}".prop_map(PublishValue::String),
+        "[a-zA-Z0-9 ÀéñÜ日本語🎮]{0,24}".prop_map(PublishValue::String),
         proptest::collection::vec(any::<u8>(), 0..24).prop_map(PublishValue::Bytes),
     ]
 }
@@ -255,4 +255,127 @@ fn publish_batch_writer_allocates_nothing_once_warmed() {
         allocations, 0,
         "PublishBatchWriter must not allocate once warmed"
     );
+}
+
+/// [`decode_publish_field_ref`] agrees with the owning decode behind
+/// `Message::decode` on a standalone `VOSU_OP_PUBLISH_FIELD` payload
+/// (`PublishBatchWriter`/`decode_publish_batch_ref`'s roundtrip above
+/// only exercises the batch opcode).
+#[test]
+fn decode_publish_field_ref_matches_owned_decode() {
+    let field = PublishField {
+        handle: 7,
+        ns: "vosu.osu".into(),
+        pointer: "/play/pp/current".into(),
+        value: PublishValue::F64(123.5),
+    };
+    let payload = Message::PublishField(field.clone())
+        .encode_payload()
+        .expect("encode");
+
+    let field_ref = decode_publish_field_ref(&payload).expect("decode_publish_field_ref");
+    assert_eq!(field_ref.handle, field.handle);
+    assert_eq!(field_ref.ns, field.ns);
+    assert_eq!(field_ref.pointer, field.pointer);
+    assert!(values_match(&field.value, field_ref.value));
+
+    let decoded =
+        Message::decode(vosu_opcode::VOSU_OP_PUBLISH_FIELD, 0, &payload).expect("Message::decode");
+    assert_eq!(decoded, Message::PublishField(field));
+}
+
+/// `PublishBatchWriter::push_cbor_with` writes the exact bytes its
+/// closure appends (through the append-only `CborAppend`, never a
+/// separate `Vec` the writer copies from), and both decoders agree on the
+/// result: the borrowed path returns them raw, the owning path decodes
+/// them back to the original `CborValue`.
+#[test]
+fn push_cbor_with_roundtrips_through_both_decoders() {
+    let value = CborValue::Map(vec![(
+        CborValue::Text("judgements".into()),
+        CborValue::Integer(300.into()),
+    )]);
+    let encoded = encode(&value).expect("encode");
+
+    let mut writer = PublishBatchWriter::new();
+    writer.begin(9);
+    writer.push_cbor_with("vosu.osu", "/result/statistics", |w| {
+        w.extend_from_slice(&encoded);
+    });
+    let mut buf = Vec::new();
+    writer.finish_into(&mut buf).expect("finish_into");
+
+    let batch_ref = decode_publish_batch_ref(&buf).expect("decode_publish_batch_ref");
+    let entry_ref = batch_ref.entries().next().expect("one entry");
+    match entry_ref.value {
+        PublishValueRef::Cbor(bytes) => assert_eq!(bytes, encoded.as_slice()),
+        other => panic!("expected PublishValueRef::Cbor, got {other:?}"),
+    }
+
+    let decoded =
+        Message::decode(vosu_opcode::VOSU_OP_PUBLISH_BATCH, 0, &buf).expect("Message::decode");
+    let Message::PublishBatch(owned) = decoded else {
+        panic!("expected Message::PublishBatch, got {decoded:?}");
+    };
+    assert_eq!(owned.entries[0].value, PublishValue::Cbor(value));
+}
+
+/// Lays a one-entry `VOSU_OP_PUBLISH_BATCH` payload out through
+/// `PublishBatchWriter`, for building a known-good buffer to corrupt.
+fn one_entry_batch_bytes(
+    handle: u64,
+    ns: &str,
+    pointer: &str,
+    value: PublishValueRef<'_>,
+) -> Vec<u8> {
+    let mut writer = PublishBatchWriter::new();
+    writer.begin(handle);
+    writer.push(ns, pointer, value);
+    let mut buf = Vec::new();
+    writer.finish_into(&mut buf).expect("finish_into");
+    buf
+}
+
+/// `decode_publish_batch_ref` and the owning decode behind
+/// `Message::decode` share the same layout validation
+/// (`crate::validate::validate_publish_batch`) and the same per-string
+/// UTF-8 check, so every malformed input one rejects, the other does too
+/// — the only documented exception is CBOR-kind payload bytes, which the
+/// borrowed path never parses (see `message/flat/publish.rs`'s module
+/// doc comment), so this test sticks to corruptions that do not depend on
+/// CBOR content.
+#[test]
+fn both_decoders_reject_the_same_malformed_batches() {
+    let good = one_entry_batch_bytes(1, "vosu.osu", "/play/combo", PublishValueRef::U64(1));
+    // 16-byte batch header + one 48-byte `vosu_field_publish_header`:
+    // `ns`'s trailing bytes start right after the entry array.
+    let data_start = 16 + 48;
+    assert_eq!(&good[data_start..data_start + 8], b"vosu.osu");
+
+    // Truncated: cuts off the last byte of the trailing `pointer` bytes,
+    // so `validate_bytes_range` sees a range past the buffer's end.
+    let truncated = good[..good.len() - 1].to_vec();
+    // Nonzero `reserved`: offset 28 inside `vosu_field_publish_header`
+    // (handle 8 + ns_offset 4 + ns_len 4 + pointer_offset 4 + pointer_len
+    // 4 + value_kind 4), so global offset 16 + 28 = 44.
+    let mut reserved_nonzero = good.clone();
+    reserved_nonzero[44] = 1;
+    // Invalid UTF-8: the first byte of `ns`'s trailing bytes.
+    let mut bad_utf8 = good.clone();
+    bad_utf8[data_start] = 0xFF;
+
+    for (name, bytes) in [
+        ("truncated", truncated),
+        ("reserved_nonzero", reserved_nonzero),
+        ("bad_utf8", bad_utf8),
+    ] {
+        assert!(
+            decode_publish_batch_ref(&bytes).is_err(),
+            "{name}: decode_publish_batch_ref should reject this input"
+        );
+        assert!(
+            Message::decode(vosu_opcode::VOSU_OP_PUBLISH_BATCH, 0, &bytes).is_err(),
+            "{name}: the owning decode (via Message::decode) should reject this input"
+        );
+    }
 }
