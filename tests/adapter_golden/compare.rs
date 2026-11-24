@@ -16,7 +16,7 @@ use super::{
     assets::{AssetFile, ReplayAssets, ResourceAsset, RootAsset},
     case_file::etag_ordinal,
     divergence::{self, Part, Rule},
-    envelope::{Envelope, reference_position, tokens},
+    envelope::{Envelope, reference_position, tokens, tree_position},
     fixture::{Asset, Body, Case, DATE, LAST_MODIFIED, Platform, compared},
     replay::Replay,
     routes::{self, RawResponse},
@@ -37,12 +37,12 @@ pub fn replay_mtime() -> SystemTime {
 
 /// The replay assets for one envelope: every fixture asset in its declared
 /// root (with the declared mtime) when a session is selected, and each
-/// recorded `vosu.chart` resource reference backed by the one asset of its
-/// recorded media type. No recorded path selects an asset.
+/// recorded `vosu.chart` resource reference backed by the asset the osu!
+/// plugin would resolve for it (`recorded_asset`).
 pub fn replay_assets(assets: &[Asset], envelope: &Envelope) -> Result<ReplayAssets, String> {
-    if envelope.session.is_none() {
+    let Some(session) = &envelope.session else {
         return Ok(ReplayAssets::default());
-    }
+    };
     let mut roots: Vec<RootAsset> = Vec::new();
     for asset in assets {
         let file = AssetFile {
@@ -61,7 +61,10 @@ pub fn replay_assets(assets: &[Asset], envelope: &Envelope) -> Result<ReplayAsse
     let mut resources = Vec::new();
     for entry in &envelope.entries {
         let Some(bytes) = &entry.value else { continue };
-        if entry.ns != "vosu.chart" || !reference_position(&entry.ns, &entry.pointer) {
+        if entry.ns != "vosu.chart"
+            || !reference_position(&entry.ns, &entry.pointer)
+            || tree_position(&entry.ns, &entry.pointer)
+        {
             continue;
         }
         let CborValue::Map(fields) =
@@ -74,15 +77,15 @@ pub fn replay_assets(assets: &[Asset], envelope: &Envelope) -> Result<ReplayAsse
             .find(|(key, _)| key.as_text() == Some("type"))
             .and_then(|(_, value)| value.as_text())
             .ok_or(format!("{}: reference has no media type", entry.pointer))?;
-        let matching: Vec<&Asset> = assets.iter().filter(|a| a.media_type == media).collect();
-        let [asset] = matching[..] else {
-            return Err(format!(
-                "{}: {} approved assets have media type {media}; exactly one backs a resource",
-                entry.pointer,
-                matching.len()
-            ));
-        };
         let kind = tokens(&entry.pointer).expect("reference pointer")[1].clone();
+        let asset = recorded_asset(assets, envelope, session.variant == "lazer", &kind)
+            .map_err(|e| format!("{}: {e}", entry.pointer))?;
+        if asset.media_type != media {
+            return Err(format!(
+                "{}: recorded media type {media}, approved asset {} is {}",
+                entry.pointer, asset.id, asset.media_type
+            ));
+        }
         resources.push(ResourceAsset {
             kind,
             name: asset
@@ -96,6 +99,65 @@ pub fn replay_assets(assets: &[Asset], envelope: &Envelope) -> Result<ReplayAsse
         });
     }
     Ok(ReplayAssets { roots, resources })
+}
+
+/// The approved asset a recorded `kind` reference names, by the identity
+/// the osu! plugin resolves it from: the recorded `vosu.osu`
+/// `/internal/paths` `current` leaf, joined under `beatmapFolder` on stable,
+/// in the variant's songs slot (`songs`, lazer `files`). This keeps two
+/// approved assets of one media type apart. The recorded string only
+/// selects among approved assets; it never names a file to read, so an
+/// absolute or private recorded path matches nothing.
+fn recorded_asset<'a>(
+    assets: &'a [Asset],
+    envelope: &Envelope,
+    lazer: bool,
+    kind: &str,
+) -> Result<&'a Asset, String> {
+    let leaf_key = match kind {
+        "file" => "beatmapFile",
+        "audio" => "audio",
+        "background" => "background",
+        _ => return Err(format!("{kind} is not a replayable resource kind")),
+    };
+    let paths = envelope
+        .entries
+        .iter()
+        .find(|e| e.ns == "vosu.osu" && e.pointer == "/internal/paths")
+        .and_then(|e| e.value.as_deref())
+        .ok_or("the envelope records no /internal/paths to identify its asset")?;
+    let paths: CborValue = vosu_plugin_api::decode(paths).map_err(|e| e.to_string())?;
+    let text = |map: &CborValue, key: &str| -> Option<String> {
+        map.as_map()?
+            .iter()
+            .find(|(k, _)| k.as_text() == Some(key))?
+            .1
+            .as_text()
+            .filter(|text| !text.is_empty())
+            .map(|text| text.replace('\\', "/"))
+    };
+    let current = paths
+        .as_map()
+        .and_then(|fields| fields.iter().find(|(k, _)| k.as_text() == Some("current")))
+        .map(|(_, current)| current.clone())
+        .ok_or("the recorded /internal/paths has no current selection")?;
+    let leaf = text(&current, leaf_key).ok_or(format!("no recorded current {leaf_key}"))?;
+    let relative = match text(&current, "beatmapFolder").filter(|_| !lazer) {
+        Some(folder) => format!("{folder}/{leaf}"),
+        None => leaf,
+    };
+    let slot = if lazer { "files" } else { "songs" };
+    let matching: Vec<&Asset> = assets
+        .iter()
+        .filter(|a| a.slot == slot && a.relative == relative)
+        .collect();
+    match matching[..] {
+        [asset] => Ok(asset),
+        _ => Err(format!(
+            "no approved {slot} asset is at the recorded current {leaf_key} location; \
+             recorded paths are never file authority"
+        )),
+    }
 }
 
 /// One normalized vosu record.

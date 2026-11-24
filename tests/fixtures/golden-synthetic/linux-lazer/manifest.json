@@ -1,0 +1,98 @@
+{
+  "format": "vosu-golden-platform-v1",
+  "normalization_version": 1,
+  "provenance": "synthetic",
+  "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
+  "platform": "linux-lazer",
+  "client": {
+    "variant": "lazer",
+    "version": "synthetic",
+    "sha256": "6bb37d8d1be3b90b7d81f6eef20b6cc0d9c564e442a6e39be976a703cb568b60"
+  },
+  "source": {
+    "kind": "source",
+    "sha256": "6ba575b5dd369e931e2c76ebff449a4a3f12b829da6959e931f0d267e5588e45"
+  },
+  "vosu": {
+    "commit": "e66f5ce8af28d5f6b7a9af845d7805bf0b118f7d",
+    "version": "2.0.0-alpha.1",
+    "profile": "debug",
+    "features": [
+      "test-harness"
+    ],
+    "target": "synthetic-replay",
+    "sha256": "023df263cbcb2751b96b53e5b76e35b81b698d23b11c7db97078c084563fa483"
+  },
+  "scenario_set": "synthetic-mechanics",
+  "authorization": "synthetic-mechanics-no-capture",
+  "review_receipt": null,
+  "synthetic_roots": {
+    "files": "/vosu-golden/files/"
+  },
+  "case_counts": {
+    "state-http": 2,
+    "ws": 2,
+    "files": 1,
+    "path-security": 1,
+    "calculation": 1,
+    "origin-peer": 1
+  },
+  "cases": [
+    {
+      "id": "calculation.no-query",
+      "family": "calculation",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/calculation.no-query.json"
+    },
+    {
+      "id": "files.get-beatmap-file",
+      "family": "files",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/files.get-beatmap-file.json"
+    },
+    {
+      "id": "origin-peer.foreign-origin-json-v2",
+      "family": "origin-peer",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/origin-peer.foreign-origin-json-v2.json"
+    },
+    {
+      "id": "path-security.encoded-parent-files-beatmap",
+      "family": "path-security",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/path-security.encoded-parent-files-beatmap.json"
+    },
+    {
+      "id": "state-http.get-json-sc",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.get-json-sc.json"
+    },
+    {
+      "id": "state-http.get-json-v2",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.get-json-v2.json"
+    },
+    {
+      "id": "ws.get-without-upgrade-websocket-v2",
+      "family": "ws",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/ws.get-without-upgrade-websocket-v2.json"
+    },
+    {
+      "id": "ws.upgrade-websocket-v2",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.upgrade-websocket-v2.json"
+    }
+  ]
+}

@@ -4,7 +4,9 @@
 use super::{
     Value,
     assets::{AssetFile, ReplayAssets, RootAsset},
-    envelope::{Envelope, selection_digest},
+    compare::replay_assets,
+    envelope::{Envelope, TREE_POSITIONS, selection_digest, tokens},
+    fixture::Asset,
     json,
     replay::Replay,
     routes::{self, state_path},
@@ -81,7 +83,10 @@ fn cbor(value: &CborValue) -> Value {
 }
 /// Rewrites the recorded `/internal/paths` current chart location.
 fn with_chart_path(source: &Source, folder: &str, file: &str) -> Envelope {
-    let mut value = raw(source, Schema::V2);
+    with_chart_path_in(source, Schema::V2, folder, file)
+}
+fn with_chart_path_in(source: &Source, schema: Schema, folder: &str, file: &str) -> Envelope {
+    let mut value = raw(source, schema);
     let entry = entry_mut(&mut value, "vosu.osu", "/internal/paths");
     let bytes = STANDARD
         .decode(entry["value_cbor_b64"].as_str().unwrap())
@@ -334,4 +339,154 @@ fn replay_listener_and_workers_stop_when_dropped() {
     // The process-global game setup and serial lock were released.
     let replay = start(std::slice::from_ref(&sc), &source.assets);
     assert_route(&replay, &sc);
+}
+
+/// Replay refuses recorded tree references instead of serving trees, because
+/// no adapter selects one. This fails the day an adapter starts to, both in
+/// its own selector list and in the selection the production composition
+/// actually dumps for each schema.
+#[test]
+fn adapter_selections_never_include_tree_refs() {
+    let covers_tree = |ns: &str, pointer: &str| {
+        let selected = tokens(pointer).expect("valid selector pointer");
+        TREE_POSITIONS.iter().any(|(tree_ns, tree_pointer)| {
+            ns == *tree_ns && tokens(tree_pointer).unwrap().starts_with(&selected)
+        })
+    };
+    let adapters = [
+        (Schema::V1, vosu_adapter_gosumemory::view::selectors()),
+        (
+            Schema::StreamCompanion,
+            vosu_adapter_streamcompanion::view::selectors(),
+        ),
+        (Schema::V2, vosu_adapter_upstream::regular::selectors()),
+        (
+            Schema::V2Precise,
+            vosu_adapter_upstream::precise::selectors(),
+        ),
+    ];
+    let source = single();
+    let replay = start(&source.parsed(), &source.assets);
+    for (schema, selectors) in adapters {
+        assert!(!selectors.is_empty());
+        for selector in &selectors {
+            assert!(
+                !covers_tree(&selector.ns, &selector.pointer),
+                "{schema:?} selects {}{}, which holds a tree reference; extend replay to \
+                 serve trees before allowing it",
+                selector.ns,
+                selector.pointer
+            );
+        }
+        // The production composition dumps exactly these selectors.
+        let dumped: Vec<_> = replay
+            .dump(schema)
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| (entry.ns, entry.pointer))
+            .collect();
+        let declared: Vec<_> = selectors
+            .into_iter()
+            .map(|selector| (selector.ns, selector.pointer))
+            .collect();
+        assert_eq!(dumped, declared, "{schema:?}");
+    }
+}
+
+#[test]
+fn replay_refuses_a_recorded_tree_reference() {
+    let tree = CborValue::Map(vec![(
+        CborValue::Text("url".into()),
+        CborValue::Text("/api/v1/trees/recorded/".into()),
+    )]);
+    for (ns, pointer) in TREE_POSITIONS {
+        let mut value = raw(single(), Schema::V2);
+        value["entries"].as_array_mut().unwrap().push(json!({
+            "ns": ns,
+            "pointer": pointer,
+            "value_cbor_b64": cbor(&tree),
+            "error": null,
+        }));
+        let error = rejected(&[reseal(value)], &single().assets);
+        assert!(
+            error.contains("adapter selections never include tree refs"),
+            "{ns}{pointer}: {error}"
+        );
+    }
+}
+
+/// Linux hosts have no OS-foreground source and record `null`. Replay uses a
+/// source that is unavailable through the same core seam, so the replayed
+/// roster says `null` too, never `false` (`Replay::start` also checks every
+/// replayed fact against the recording).
+#[test]
+fn replay_reproduces_a_recorded_unknown_foreground() {
+    let source = single();
+    let mut value = raw(source, Schema::V2);
+    value["session"]["foreground"] = Value::Null;
+    value["roster"]["sessions"][0]["foreground"] = Value::Null;
+    let recorded = reseal(value);
+    let replay = start(std::slice::from_ref(&recorded), &source.assets);
+    let dump = replay.dump(Schema::V2).unwrap();
+    assert_eq!(dump.session.unwrap().foreground, None);
+    assert_eq!(dump.roster[0].foreground, None);
+    drop(replay);
+
+    // One host source cannot report a fact for one session and none for
+    // another.
+    let mut value = raw(pair(), Schema::V2);
+    value["roster"]["sessions"][0]["foreground"] = Value::Null;
+    let error = rejected(&[reseal(value)], &pair().assets);
+    assert!(error.contains("partly unknown"), "{error}");
+}
+
+/// Two approved assets of one media type are told apart by the recorded
+/// location the osu! plugin resolves its reference from. A recorded private
+/// absolute location selects no asset, so its file is never served.
+#[test]
+fn replay_assets_follow_the_recorded_location_never_a_private_path() {
+    let source = single();
+    let chart = source.assets.roots[0].files[0].bytes.clone();
+    let asset = |id: &str, relative: &str, bytes: Vec<u8>| Asset {
+        id: id.into(),
+        slot: "songs".into(),
+        relative: relative.into(),
+        media_type: "text/plain; charset=utf-8".into(),
+        bytes,
+    };
+    let mut second = chart.clone();
+    second.extend_from_slice(b"\n");
+    let approved = [
+        asset("first", "first/chart.osu", chart.clone()),
+        asset("second", "second/chart.osu", second),
+    ];
+    for (folder, approved_asset) in ["first", "second"].into_iter().zip(&approved) {
+        let sc = with_chart_path_in(source, Schema::StreamCompanion, folder, "chart.osu");
+        let assets = replay_assets(&approved, &sc).unwrap();
+        assert_eq!(assets.resources.len(), 1);
+        assert_eq!(assets.resources[0].path, format!("{folder}/chart.osu"));
+        // The replayed chart reference resolved (derived work is ready) and
+        // the recorded location serves that asset's bytes.
+        let replay = start(std::slice::from_ref(&sc), &assets);
+        let response = routes::get(replay.address, "/files/beatmap/file");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, approved_asset.bytes);
+    }
+
+    let outside = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(outside.path().join("first")).unwrap();
+    std::fs::write(outside.path().join("first/chart.osu"), SENTINEL).unwrap();
+    let private = outside.path().join("first").to_string_lossy().into_owned();
+    let sc = with_chart_path_in(source, Schema::StreamCompanion, &private, "chart.osu");
+    let error = replay_assets(&approved, &sc).unwrap_err();
+    assert!(error.contains("never file authority"), "{error}");
+    // Without that reference the replay still serves only declared roots.
+    let v2 = with_chart_path(source, &private, "chart.osu");
+    let assets = replay_assets(&approved, &v2).unwrap();
+    assert!(assets.resources.is_empty());
+    let replay = start(std::slice::from_ref(&v2), &assets);
+    let response = routes::get(replay.address, "/files/beatmap/file");
+    assert_ne!(response.status, 200);
+    assert_ne!(response.body, SENTINEL);
 }

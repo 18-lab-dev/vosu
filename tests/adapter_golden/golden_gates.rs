@@ -5,6 +5,7 @@
 use super::{
     Value,
     case_file::excluded_target,
+    envelope::selection_digest,
     fixture::{self, Fixture, Pinned, Provenance},
     golden_cases::{pin, synthetic_dir},
     json,
@@ -47,11 +48,13 @@ fn reseal(root: &Path) {
             })
             .collect()
     };
-    let platform = root.join(PLATFORM);
-    let files = entries(&platform);
-    edit_json(&platform.join("inventory.json"), |v| {
-        v["files"] = json!(files)
-    });
+    for name in ["linux-lazer", PLATFORM] {
+        let platform = root.join(name);
+        let files = entries(&platform);
+        edit_json(&platform.join("inventory.json"), |v| {
+            v["files"] = json!(files)
+        });
+    }
     let files = entries(root);
     edit_json(&root.join("inventory.json"), |v| v["files"] = json!(files));
 }
@@ -87,7 +90,8 @@ fn golden_gates_accept_the_untouched_synthetic_copy() {
     let dir = copy();
     reseal(dir.path());
     let fixture = load(dir.path(), Provenance::Synthetic).unwrap();
-    assert_eq!(fixture.platforms.len(), 1);
+    let names: Vec<_> = fixture.platforms.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["linux-lazer", PLATFORM]);
     assert!(fixture.rules.is_none());
 }
 
@@ -241,10 +245,12 @@ fn relabel(root: &Path, edit: impl Fn(&mut Value)) {
     edit_json(&root.join("manifest.json"), |v| {
         v["provenance"] = json!("captured")
     });
-    edit_json(&root.join(PLATFORM).join("manifest.json"), |v| {
-        v["provenance"] = json!("captured");
-        edit(v);
-    });
+    for name in ["linux-lazer", PLATFORM] {
+        edit_json(&root.join(name).join("manifest.json"), |v| {
+            v["provenance"] = json!("captured");
+            edit(v);
+        });
+    }
     reseal(root);
 }
 
@@ -346,4 +352,35 @@ fn golden_pin_selection_applies_the_pending_marker_rules() {
             .contains("differs")
     );
     assert!(fixture::agree("main", "main").is_err());
+}
+
+/// A platform's production host decides the foreground facts it records:
+/// Windows always has a source (`true`/`false`), Linux never does (`null`).
+/// A `null` on a Windows fixture, or a fact on a Linux one, was not
+/// recorded by that host and is refused rather than replayed.
+#[test]
+fn golden_gates_refuse_foreground_facts_the_platform_never_records() {
+    let v2 = "state-http.get-json-v2";
+    let set = |platform: &'static str, foreground: Value| {
+        move |root: &Path| {
+            let path = root.join(platform).join("cases").join(format!("{v2}.json"));
+            edit_json(&path, |case| {
+                let replay = &mut case["replay"];
+                replay["session"]["foreground"] = foreground.clone();
+                replay["roster"]["sessions"][0]["foreground"] = foreground.clone();
+                let digest = selection_digest(replay).unwrap();
+                replay["digest"] = json!(digest);
+            });
+        }
+    };
+    refused(set(PLATFORM, Value::Null), true, "never reports");
+    refused(set("linux-lazer", json!(true)), true, "never reports");
+    refused(set("linux-lazer", json!(false)), true, "never reports");
+    // The facts each platform actually records load.
+    for (platform, foreground) in [(PLATFORM, json!(true)), ("linux-lazer", Value::Null)] {
+        let dir = copy();
+        set(platform, foreground)(dir.path());
+        reseal(dir.path());
+        load(dir.path(), Provenance::Synthetic).unwrap_or_else(|e| panic!("{platform}: {e}"));
+    }
 }

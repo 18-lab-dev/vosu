@@ -452,15 +452,46 @@ fixture directory exists. X0 deletes the marker in the fixture commit.
 The comparator's own coverage comes from `tests/fixtures/golden-synthetic/`
 and the counterexample tests over it. That tree is written by G0's writer with
 `provenance: "synthetic"` from R0 replays of vosu's corpus source; regenerate
-it with `python tests/adapter_golden/generate_synthetic.py`. A synthetic tree
-is refused under `tests/fixtures/upstream/<pin>/`. A committed capture also
+it with `python tests/adapter_golden/generate_synthetic.py`. It holds a
+`windows-stable` platform and a lazer-shaped `linux-lazer` platform. A
+synthetic tree is refused under `tests/fixtures/upstream/<pin>/`. A committed capture also
 needs a review receipt, distinct source and vosu attestations, and brand
 inventory lines that are exact allowlist entries. Each replay asset file gets
 the declared modification time 2026-01-01T00:00:00Z, and `header-last-modified`
-holds vosu's `Last-Modified` to it. A recorded `vosu.chart` resource reference
-is backed by the one approved asset with its recorded media type; a platform
-with two approved assets of one media type needs a format extension before
-replay.
+holds vosu's `Last-Modified` to it.
+
+Replay inputs follow what the platform's production host records:
+
+- **Resource references.** A recorded `vosu.chart` `/resources/<kind>`
+  reference (`file`, `audio`, `background`) is backed by the approved asset
+  that the osu! plugin would resolve: the asset at the recorded `vosu.osu`
+  `/internal/paths` `current` leaf (`beatmapFile`, `audio` or `background`),
+  joined under the recorded `beatmapFolder` on stable, in the variant's songs
+  slot (`songs` on stable, `files` on lazer). Its approved `media_type` must
+  equal the recorded `type`. Two approved assets of one media type on a
+  platform are therefore told apart by their recorded location, not by type.
+  The recorded string only selects among approved assets: it is never opened,
+  so an absolute or private recorded path matches nothing and the case is
+  refused. A reference with no matching asset is refused, and a recorded path
+  never falls back to file authority.
+- **Foreground.** Core has an OS-foreground source only on Windows
+  (`docs/v2/plugin-abi.md` §6.2). A `windows-*` case records `true`/`false`
+  for every session, and a `linux-*` case records `null`. Any other fact is
+  refused when the fixture loads. Replay takes the source's availability from
+  the recording, never from the machine it runs on. A recorded `null` uses a
+  test-harness foreground source reporting unavailable through the same
+  `ForegroundSource::available` seam as the production host off Windows. A
+  roster mixing known and unknown facts is refused.
+- **Trees.** Tree references (`vosu.skin` `/tree`, `vosu.chart`
+  `/resources/set`) are outside replay scope. No adapter selects one, so no
+  capture envelope can record one, and adapter file routes use declared roots
+  instead (lazer `/files/skin/` is the legacy 404). Replay refuses a recorded
+  tree reference with "adapter selections never include tree refs".
+  `adapter_selections_never_include_tree_refs` fails as soon as an adapter's
+  selectors, or the production composition's dumped selection, could contain
+  one. Tree replay must be added before that change lands.
+- **Derived status.** A recorded `pending` derived status is not a stable
+  input and is refused.
 
 Each capture session runs, on its platform:
 

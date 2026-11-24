@@ -84,6 +84,7 @@ pub fn case(dir: &Path, platform: &str, id: &str, assets: &[Asset]) -> Result<Ca
         .map_err(|e| format!("{at}: {e}"))?;
     let replay_json = serde_json::to_vec(&value["replay"]).map_err(|e| e.to_string())?;
     let replay = Envelope::parse(&replay_json).map_err(|e| format!("{at}: replay: {e}"))?;
+    foreground_facts(platform, &replay).map_err(|e| format!("{at}: replay: {e}"))?;
     Ok(Case {
         id: id.to_owned(),
         family,
@@ -94,6 +95,27 @@ pub fn case(dir: &Path, platform: &str, id: &str, assets: &[Asset]) -> Result<Ca
         replay,
         replay_json,
     })
+}
+
+/// Core reports per-session foreground facts exactly on Windows
+/// (`docs/v2/plugin-abi.md` §6.2): a Windows capture records `true`/`false`
+/// for every session and a Linux capture records `null`. Anything else was
+/// not recorded by that platform's production host, so it is refused
+/// rather than replayed with a source the platform does not have.
+pub fn foreground_facts(platform: &str, replay: &Envelope) -> Result<(), String> {
+    let windows = platform.starts_with("windows-");
+    match replay
+        .roster
+        .iter()
+        .chain(&replay.session)
+        .find(|session| session.foreground.is_some() != windows)
+    {
+        Some(session) => Err(format!(
+            "session {} records foreground {:?}, which a {platform} host never reports",
+            session.ordinal, session.foreground
+        )),
+        None => Ok(()),
+    }
 }
 
 /// `/api/ingame` and the harness endpoint are never golden records, in any

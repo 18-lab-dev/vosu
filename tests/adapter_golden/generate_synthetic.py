@@ -8,9 +8,10 @@ outside `tests/fixtures/upstream/`, and is never pilot or full evidence.
 
 Steps:
   1. run the ignored Rust exporter `synthetic::export_synthetic_capture`,
-     which records R0 replays of R0's corpus source as case sandwiches;
-  2. wrap them in a `vosu-golden-capture-v1` capture whose identity fields
-     say "synthetic";
+     which records R0 replays of R0's corpus source as case sandwiches for
+     `windows-stable` and a lazer-shaped `linux-lazer`;
+  2. wrap each platform in a `vosu-golden-capture-v1` capture whose identity
+     fields say "synthetic";
   3. write the candidate with G0's writer, `golden(..., provenance="synthetic")`;
   4. replace the committed tree with that candidate.
 
@@ -38,7 +39,12 @@ from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION  # noqa: E40
 import parity_golden  # noqa: E402
 
 TARGET = REPO / "tests/fixtures/golden-synthetic"
-PLATFORM = "windows-stable"
+# A synthetic private root per platform; nothing echoes it, so nothing is
+# rewritten.
+PLATFORMS = {
+    "windows-stable": ("stable", {"slot": "songs", "private": "C:\\Synthetic\\osu!\\Songs\\"}),
+    "linux-lazer": ("lazer", {"slot": "files", "private": "/synthetic/osu/files/"}),
+}
 SCENARIO = "synthetic-mechanics"
 CLIENT_VERSION = "synthetic"
 # Never a real daemon: these only keep the attested identities distinct.
@@ -58,13 +64,15 @@ def export(directory: Path) -> dict:
 
 
 def capture(exported: dict, commit: str) -> dict:
+    platform = exported["platform"]
+    variant, root = PLATFORMS[platform]
     return {
         "format": "vosu-golden-capture-v1",
         "source_revision": PINNED_SOURCE_REVISION,
-        "platform": PLATFORM,
+        "platform": platform,
         "scenario_set": SCENARIO,
         "authorization": {
-            "reference": "synthetic-mechanics-no-capture", "platform": PLATFORM,
+            "reference": "synthetic-mechanics-no-capture", "platform": platform,
             "source_revision": PINNED_SOURCE_REVISION, "vosu_commit": commit,
             "client_version": CLIENT_VERSION, "scenario_set": SCENARIO,
         },
@@ -73,10 +81,9 @@ def capture(exported: dict, commit: str) -> dict:
             "vosu": {"commit": commit, "version": PINNED_VOSU_VERSION, "profile": "debug",
                      "features": ["test-harness"], "target": "synthetic-replay",
                      "sha256": VOSU_SHA},
-            "client": {"variant": "stable", "version": CLIENT_VERSION, "sha256": CLIENT_SHA},
+            "client": {"variant": variant, "version": CLIENT_VERSION, "sha256": CLIENT_SHA},
         },
-        # A synthetic private root; nothing echoes it, so nothing is rewritten.
-        "roots": [{"slot": "songs", "private": "C:\\Synthetic\\osu!\\Songs\\"}],
+        "roots": [root],
         "assets": exported["assets"],
         "expected_cases": [case["id"] for case in exported["cases"]],
         "cases": exported["cases"],
@@ -88,11 +95,14 @@ def main() -> int:
                             capture_output=True, text=True).stdout.strip()
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
-        path = directory / "capture.json"
-        path.write_text(json.dumps(capture(export(directory), commit)), encoding="utf-8")
+        paths = []
+        for exported in export(directory)["platforms"]:
+            path = directory / f"capture-{exported['platform']}.json"
+            path.write_text(json.dumps(capture(exported, commit)), encoding="utf-8")
+            paths.append(str(path))
         candidate = directory / "candidate"
         with contextlib.redirect_stdout(io.StringIO()):
-            parity_golden.golden([str(path)], str(candidate), provenance="synthetic")
+            parity_golden.golden(paths, str(candidate), provenance="synthetic")
         if TARGET.exists():
             shutil.rmtree(TARGET)
         shutil.copytree(candidate, TARGET)

@@ -4,6 +4,7 @@
   "provenance": "synthetic",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
   "platforms": [
+    "linux-lazer",
     "windows-stable"
   ]
 }

@@ -38,12 +38,20 @@ pub static SYNTHETIC: LazyLock<Fixture> = LazyLock::new(|| {
     fixture::load(&synthetic_dir(), &pin(), Provenance::Synthetic)
         .unwrap_or_else(|e| panic!("synthetic fixture: {e}"))
 });
-/// One replay of the synthetic platform, shared by the comparator tests.
+/// One replay of the synthetic `windows-stable` platform, shared by the
+/// comparator tests.
 static OBSERVED: LazyLock<Vec<Result<Observed, String>>> =
     LazyLock::new(|| compare::observe(platform()).unwrap_or_else(|e| panic!("{e}")));
 
+pub fn synthetic_platform(name: &str) -> &'static Platform {
+    SYNTHETIC
+        .platforms
+        .iter()
+        .find(|platform| platform.name == name)
+        .unwrap_or_else(|| panic!("no synthetic platform {name}"))
+}
 fn platform() -> &'static Platform {
-    &SYNTHETIC.platforms[0]
+    synthetic_platform("windows-stable")
 }
 fn ledger() -> BTreeMap<String, LedgerRow> {
     let path = repo_root().join("tests/fixtures/upstream/DIVERGENCES.md");
@@ -158,6 +166,62 @@ fn golden_synthetic_fixture_compares_exactly_with_nonzero_coverage() {
         platform.name,
         platform.cases.len()
     );
+}
+
+/// The lazer-shaped `linux-lazer` platform: every recorded foreground fact
+/// is `null`, as a Linux host reports, and replays and compares exactly.
+#[test]
+fn golden_synthetic_linux_lazer_replays_unknown_foreground_exactly() {
+    let platform = synthetic_platform("linux-lazer");
+    let counts = platform.counts();
+    assert!(counts.values().all(|count| *count > 0), "{counts:?}");
+    let mut sessions = 0;
+    for case in &platform.cases {
+        for session in case.replay.roster.iter().chain(&case.replay.session) {
+            assert_eq!(
+                (session.variant.as_str(), session.foreground),
+                ("lazer", None)
+            );
+            sessions += 1;
+        }
+    }
+    assert!(sessions > 0, "no lazer client case");
+    let observed = compare::observe(platform).unwrap_or_else(|e| panic!("{e}"));
+    let report = compare::compare(platform, &observed, &[]);
+    assert_eq!(report.mismatches, Vec::<Mismatch>::new());
+    eprintln!(
+        "adapter_golden synthetic mechanics fixture (not evidence) {}: {} cases {counts:?}",
+        platform.name,
+        platform.cases.len()
+    );
+}
+
+/// Two approved charts share one media type on `windows-stable`. Each
+/// recorded location selects its own chart: the streamCompanion case of
+/// the second chart replays to different, still exact, chart values.
+#[test]
+fn golden_two_assets_of_one_media_type_follow_their_recorded_location() {
+    let platform = platform();
+    let types: Vec<_> = platform
+        .assets
+        .iter()
+        .map(|a| a.media_type.as_str())
+        .collect();
+    assert_eq!(types.len(), 2);
+    assert_eq!(types[0], types[1]);
+    let body = |id: &str| {
+        let case = platform.cases.iter().find(|c| c.id == id).unwrap();
+        let assets = compare::replay_assets(&platform.assets, &case.replay).unwrap();
+        assert_eq!(assets.resources.len(), 1, "{id}");
+        (assets.resources[0].path.clone(), case.expected.body.clone())
+    };
+    let (first, first_body) = body("state-http.get-json-sc");
+    let (second, second_body) = body("state-http.get-json-sc-second-chart");
+    assert_eq!(first, "synthetic/chart.osu");
+    assert_eq!(second, "second/chart.osu");
+    assert_ne!(first_body, second_body);
+    let report = compare::compare(platform, &OBSERVED, &[]);
+    assert_eq!(report.mismatches, Vec::<Mismatch>::new());
 }
 
 #[test]

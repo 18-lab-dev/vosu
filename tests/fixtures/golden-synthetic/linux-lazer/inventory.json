@@ -1,0 +1,92 @@
+{
+  "format": "vosu-golden-inventory-v1",
+  "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
+  "platform": "linux-lazer",
+  "normalization_version": 1,
+  "files": [
+    {
+      "path": "assets.json",
+      "bytes": 479,
+      "sha256": "da37e9283b7100e429f960cfb38e653415700d1b7af025dba96d6e9f42b8d3a7"
+    },
+    {
+      "path": "assets/synthetic-chart",
+      "bytes": 271,
+      "sha256": "d9b6f314cf5d859f3f540e99b594c0903cfeb9cbf5e9b7350ed1f5840bc57bb0"
+    },
+    {
+      "path": "brand-inventory.txt",
+      "bytes": 136,
+      "sha256": "3c16cc2fba024366c9d43d3944b81bfa1d67c927f53f9337e5c3990481292e43"
+    },
+    {
+      "path": "cases/calculation.no-query.json",
+      "bytes": 16714,
+      "sha256": "93d7e38eb6fbd7442917343eec0f7d334e610fa6d67add454353e13505cb6ab2"
+    },
+    {
+      "path": "cases/files.get-beatmap-file.json",
+      "bytes": 17277,
+      "sha256": "ca849713d104395ebc6b9a70516a36d1a1005c783a6a32f7b66381854bf04f33"
+    },
+    {
+      "path": "cases/origin-peer.foreign-origin-json-v2.json",
+      "bytes": 5658,
+      "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
+    },
+    {
+      "path": "cases/path-security.encoded-parent-files-beatmap.json",
+      "bytes": 5848,
+      "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
+    },
+    {
+      "path": "cases/state-http.get-json-sc.json",
+      "bytes": 16266,
+      "sha256": "7cac92d11c41d34e9c496ecc773c827a5853ae4b317e5778acff4220f4ec5242"
+    },
+    {
+      "path": "cases/state-http.get-json-v2.json",
+      "bytes": 22471,
+      "sha256": "643c94abc9f61255efdf48eee7760aa41aad88dbecef804480cec8e8eddc5e70"
+    },
+    {
+      "path": "cases/ws.get-without-upgrade-websocket-v2.json",
+      "bytes": 5751,
+      "sha256": "4ed6f4bce07c0cb76bf9116b0b35047117581442dd2c88ca4b0a7be0de7afc2c"
+    },
+    {
+      "path": "cases/ws.upgrade-websocket-v2.json",
+      "bytes": 22782,
+      "sha256": "0847e19ce3c53667858a660263812caab5c5544e15b8ed759228dec73aebf8bd"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 2615,
+      "sha256": "825752c80c89ec2cf7fa7509ae444861b18067e99de1b4f16a5595ee0f41cfc2"
+    }
+  ],
+  "privacy_scan": {
+    "result": "clean",
+    "text_files": 11,
+    "binary_files": 0,
+    "cbor_text_strings": 1931,
+    "cbor_byte_strings": 0,
+    "cbor_old_brand_strings": 0,
+    "attested_roots": 1,
+    "checks": [
+      "attested private roots",
+      "drive, admin-share and device paths",
+      "profile and private POSIX directories",
+      "capability header",
+      "credential headers",
+      "dump CBOR text strings at any depth including map keys",
+      "old-brand text hidden in dump CBOR"
+    ]
+  },
+  "budget": {
+    "json_bytes": 115997,
+    "json_limit": 8388608,
+    "asset_bytes": 271,
+    "asset_limit": 4194304
+  }
+}
