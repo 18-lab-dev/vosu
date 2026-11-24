@@ -196,12 +196,24 @@ The public command flags are standalone actions:
 -V, --version
 ```
 
-`--help` prints usage and `--version` prints the version. Each public action
-must be the executable's only argument; other arguments start the daemon.
+`vosu logs [-n N] [--follow]` prints the last N daemon log lines (default 50).
+Use `--follow` for live output, and Ctrl-C to stop. It reads the current
+installation/channel's log files directly, including after a crash.
+
+`--help` prints usage and `--version` prints the version. Each public flag
+action must be the executable's only argument; other arguments start the daemon.
 On Linux, run `vosu --setup` as the normal desktop user to probe the compiled
 process-event backends and install their capabilities. Setup requests
 operating-system authentication when needed; do not run the ordinary daemon as
 root.
+
+Graphical launches run in the background with the system tray as their UI;
+**Show logs** opens live logs in a terminal. Windows 11 24H2 and newer do not
+create a console; older Windows may briefly flash one before detaching it.
+Launching `vosu` from an existing terminal retains output, shell waiting,
+exit codes and Ctrl-C. On Linux, **Show logs** uses `xdg-terminal-exec`,
+`$TERMINAL`, or an installed common terminal; without one it opens the log
+file in the default application.
 
 The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation. The analogous `--plugin <directory>` repeatable argument loads an in-process development plugin (`docs/v2/plugin-abi.md`) from a directory holding its own `manifest.toml` and compiled library; like `--tool`, it is a debug-build-only trust override and is refused outright in a release build.
 

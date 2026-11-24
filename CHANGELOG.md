@@ -78,6 +78,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M3
 
+- `vosu logs` and the tray **Show logs** fallback now read the log directory
+  of the running build's release channel, so an alpha build follows its own
+  `prerelease/` logs instead of a normal installation's.
 - Register `vosu.osu.beatmap.import` for session-scoped API and CLI calls with
   bounded local `.osz` validation, cancellable selected-client preparation and
   honest queued/submitted results. Stable still needs game-owned refresh;
@@ -108,6 +111,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M2
 
+- Run graphical daemon launches in the background with a tray **Show logs**
+  action. Add `vosu logs [-n N] [--follow]` for crash-independent file-based
+  log inspection. Windows 11 24H2+ starts without a console; older Windows
+  detaches private daemon consoles. Existing terminal and CLI behavior stays intact.
 - Publish identified osu! sessions to `/vosu.osu` on the 2.0 state bus, plus
   common status, chart, play and skin namespaces and core-owned client facts,
   alongside the unchanged legacy bridge, including when no legacy sink exists.
@@ -132,6 +139,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Store versioned lazer offsets and the embedded generator under
   `<data>/plugins/vosu.osu/`, without migrating the old offsets cache; a version
   not satisfied by embedded offsets regenerates locally on first use.
+- Reduce synchronous plugin-read overhead with revocable host lookup and
+  validated-layout caches, retain Linux PID-generation checks at the native
+  read boundary, and batch lazer's forty visualizer amplitudes in one plan.
+- Finish shutdown cleanup after a background task panics, joining the config
+  and log writers before returning the original error instead of hanging on exit.
 
 ## 1.2.5 - 2026-11-22
 

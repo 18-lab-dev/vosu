@@ -224,13 +224,39 @@ to select an explicitly installed browser executable. Alpha fixtures compare
 all normal-root file names/bytes before and after import, then poison the old
 config and restart at the imported port without consulting it.
 
-Host evidence (2026-11-24): daemon smoke 2/2, API-v1 compatibility 33/33,
-plugin host 8/8 and alpha bootstrap 1/1 passed. The affected-crate all-feature
-nextest run passed 687 tests (3 pre-existing ignored tests); the retained curl
-and required Chromium browser phases passed. All 232 script tests plus 47
-subtests, formatting, workspace Linux/Windows cross-Clippy, pinned actionlint
-1.7.12 and applicable repository checks passed. Native Windows and all four
-live-client combinations below remain **pending**, not inferred from host tests.
+Exit evidence (2026-11-24, after merging `v2/main`):
+
+- **Linux.** The full workspace nextest run passed 2,517 tests (6 skipped).
+  Formatting, workspace and Windows cross-Clippy, every `check-*.py`, and every
+  `scripts/test_*.py` suite passed. So did the tool-host smoke (retained curl
+  phase plus the required Chromium phase) and the dashboard smoke. Listed
+  targets: `api_v1_compat` 33, `daemon_smoke` 2, `plugin_host` 8,
+  `osu_plugin` 8, `state_bus` 6, `prerelease_bootstrap` 1.
+- **Native Windows (`vm-test.py`).** `api_v1_compat` 33/33, `server_compat`,
+  `vosu-core` lib 574/574 and `vosu-osu` lib 196 passed (1 ignored).
+  `daemon_smoke` ran 0 tests because the target is Linux-only. `vosu-sys` lib
+  passed 59 under `vm-test.py`; its two Windows file-symlink tests fail with
+  error 1314 there, because the LIMITED scheduled task lacks
+  `SeCreateSymbolicLinkPrivilege`. At High integrity (the `prepush.py` native
+  context) `vosu-sys` passed 61/61.
+- **Live Windows.** A release `2.0.0-alpha.1` binary ran from an isolated
+  program folder in the VM, against the VM's own test installations. Stable
+  passed 51/51 resource, range, HEAD, 304/416, 307, tree, skin-alias, 410
+  retirement and legacy checks. Its import returned `queued`, added one
+  byte-identical archive to the selected Songs folder, and left all 436
+  existing files unchanged. Lazer passed 33/38; the five misses come from the
+  built-in intro map and built-in skin, which have no background and no
+  indexed skin files. Its import returned `submitted` to the selected
+  executable, and the handoff child was reaped. The game-side import was not
+  observed within 30 s. Concurrent clients kept fixed ids, and one owner's
+  detach did not retire the other's resources. A selected-destination import
+  on a just-identified stable session returned `target_gone`, so that case
+  is unproven. The raw evidence is under
+  `/home/user/gh/vecosystem/evidence/m3-exit/`.
+- **Pending.** Linux lazer and stable/Wine live runs: their isolated
+  installations exist only in the Linux VM, which cannot run beside the
+  Windows VM. Also pending: live source mutation, gameplay traversal, and
+  the M3 D17 decision.
 
 #### Final API-v1 route inventory
 

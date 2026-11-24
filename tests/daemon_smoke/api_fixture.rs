@@ -4,16 +4,18 @@ use super::*;
 #[tokio::test]
 async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let profile = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
+    // The daemon's compile-time path names the real profile directory, which a
+    // nextest archive run mounts at the same path (the test binary itself runs
+    // from an extracted copy).
+    let profile = Path::new(env!("CARGO_BIN_EXE_vosu"))
         .parent()
         .unwrap()
         .to_owned();
-    let status = tokio::time::timeout(
+    let fixture = profile.join("examples/libapi_v1_plugin.so");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let build = tokio::time::timeout(
         Duration::from_secs(600),
-        tokio::process::Command::new("cargo")
+        tokio::process::Command::new(cargo)
             .current_dir(checkout)
             .args([
                 "build",
@@ -31,9 +33,19 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
             .status(),
     )
     .await
-    .expect("fixture build deadline")
-    .unwrap();
-    assert!(status.success());
+    .expect("fixture build deadline");
+    match build {
+        Ok(status) => assert!(status.success()),
+        // A nextest archive run (the prepush container) has no toolchain and a
+        // read-only target dir; its workspace `--examples` build produced the
+        // fixture in that profile directory.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => assert!(
+            fixture.is_file(),
+            "no cargo to build the fixture plugin and no prebuilt {}",
+            fixture.display()
+        ),
+        Err(error) => panic!("fixture build failed to start: {error}"),
+    }
     let root = tempfile::tempdir().unwrap();
     let plugin = root.path().join("plugin");
     fs::create_dir_all(plugin.join("lib")).unwrap();
@@ -50,11 +62,7 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         )
         .unwrap();
     }
-    fs::copy(
-        profile.join("examples/libapi_v1_plugin.so"),
-        plugin.join("lib/libapi_v1_plugin.so"),
-    )
-    .unwrap();
+    fs::copy(&fixture, plugin.join("lib/libapi_v1_plugin.so")).unwrap();
     let target_path = root.path().join("api_v1_target");
     fs::copy("/bin/sh", &target_path).unwrap();
     let target = Command::new(&target_path)

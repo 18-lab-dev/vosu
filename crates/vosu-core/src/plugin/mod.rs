@@ -105,7 +105,7 @@ pub use matcher::{
 pub use read_plan::{
     DispatchThreadScope, ExecuteBytesError, FinishOutcome, MAX_OUTSTANDING_ASYNC_PLANS,
     ModuleResolver, OutstandingPlans, OutstandingPlansError, ReadPlanError, SyncReadPlanError,
-    deliver_sync, execute, execute_bytes, execute_into, on_dispatch_thread,
+    deliver_sync, execute, execute_bytes, execute_into, execute_sync_into, on_dispatch_thread,
 };
 pub use registry::{
     BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development,

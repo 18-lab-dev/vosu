@@ -1,5 +1,6 @@
 use super::*;
 use vosu_osu_model::memory::{ClientRenderState, PlaybackClock};
+mod visual;
 
 impl LazerMemory {
     pub(super) fn set_playback_source(&mut self, replay: bool, spectator: bool) {
@@ -43,9 +44,10 @@ impl LazerMemory {
         )?)?;
         let audio = self.ptr(add(track, component.adjustments)?)?;
         let value = |offset| -> Result<f64, MemoryError> {
-            let source = self.ptr(add(audio, offset)?)?;
-            let result = self.ptr(add(source, aggregate.result)?)?;
-            self.process.read_f64(add(result, bindable.value)?)
+            Ok(f64::from_le_bytes(self.chain(
+                add(audio, offset)?,
+                &[aggregate.result, bindable.value],
+            )?))
         };
         let rate = value(adjustments.frequency)? * value(adjustments.tempo)?;
         if !rate.is_finite() {
@@ -79,10 +81,17 @@ impl LazerMemory {
         if !(0..=64).contains(&count) {
             return Err(corrupt("ruleset config cache", dict, "invalid count"));
         }
+        let prefetched = self.visual_entries(entries, count as usize);
         for i in 0..count as usize {
             let entry = add(entries, 0x10 + i * 0x18)?;
-            let name = self.string_at(entry)?;
-            let fields: &[(i32, &str)] = match name.as_str() {
+            let fallback_name;
+            let name = if let Some(values) = &prefetched {
+                values[i].0.as_str()
+            } else {
+                fallback_name = self.string_at(entry)?;
+                &fallback_name
+            };
+            let fields: &[(i32, &str)] = match name {
                 "mania" => &[(2, "mania.timingBasedNoteColouring")],
                 "osu" => &[
                     (0, "visual.snakingInSliders"),
@@ -98,18 +107,27 @@ impl LazerMemory {
             // Visual toggles belong to the selected ruleset, not whichever cached
             // config was enumerated last. Mania colouring can be retained independently.
             if name != "mania"
-                && !matches!(
-                    (name.as_str(), self.selected_gamemode),
-                    ("osu", 0) | ("taiko", 1)
-                )
+                && !matches!((name, self.selected_gamemode), ("osu", 0) | ("taiko", 1))
             {
                 continue;
             }
-            let config = self.ptr(add(entry, 8)?)?;
+            let config = if let Some(values) = &prefetched {
+                values[i].1
+            } else {
+                self.ptr(add(entry, 8)?)?
+            };
             if config == 0 {
                 continue;
             }
             let store = self.config_store(config)?;
+            if let Some(values) = self.visual_values(&store, fields) {
+                for ((_, path), value) in fields.iter().zip(values) {
+                    if let Some(value) = value {
+                        out.insert((*path).into(), Value::from(value));
+                    }
+                }
+                continue;
+            }
             for (key, path) in fields {
                 if let Some(address) = store.get(key) {
                     out.insert(
@@ -141,8 +159,7 @@ impl LazerMemory {
             (o.triangles_skin, "triangles"),
             (o.retro_skin, "retro"),
         ] {
-            let builtin = self.ptr(add(manager, offset)?)?;
-            let builtin_type = self.ptr(builtin)?;
+            let builtin_type = self.pointer_chain(add(manager, offset)?, &[0])?;
             if ty == builtin_type {
                 return Ok(Some(family));
             }

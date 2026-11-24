@@ -372,3 +372,69 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn signal_task_panic_still_joins_config_and_logger_before_returning_error() {
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let (mut owner, _) = owner(root.path()).await;
+        let config = owner.config.clone();
+        config.update(|current| current.poll_rate = 275.0);
+        // Leave the worker idle, not waiting on a timer that might panic
+        // during runtime drop and accidentally conceal a missing shutdown.
+        config.flush().await.unwrap();
+        *owner.signal_task.get_mut() = Some(tokio::spawn(async {
+            panic!("injected signal shutdown panic");
+        }));
+
+        let error = owner.shutdown().await.unwrap_err();
+        assert!(error.to_string().contains("signal task failed"));
+        assert!(error.to_string().contains("injected signal shutdown panic"));
+        // ConfigStore::shutdown closes the command receiver and awaits its
+        // worker handle. Retain this Arc to rule out ordinary owner drop as
+        // the reason the worker stopped.
+        assert_eq!(
+            config.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(
+            owner.logger.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    })
+    .await
+    .expect("shutdown must finish after a signal task panic");
+}
+
+#[tokio::test]
+async fn plugin_destroy_failure_still_joins_config_and_logger_before_returning_error() {
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let (owner, _) = owner(root.path()).await;
+        let config = owner.config.clone();
+        config.flush().await.unwrap();
+
+        let error = owner
+            .shutdown_with_plugin_destroy(async {
+                Err(io::Error::other("injected plugin destroy failure"))
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("injected plugin destroy failure")
+        );
+        assert!(owner.shutdown_token.is_cancelled());
+        assert_eq!(
+            config.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(
+            owner.logger.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    })
+    .await
+    .expect("shutdown must finish after a plugin destroy failure");
+}

@@ -87,6 +87,7 @@ mod preview_scheme;
 mod projection;
 mod render;
 mod service;
+mod signals;
 #[cfg(feature = "test-harness")]
 mod test_support;
 mod tool_context;
@@ -109,6 +110,8 @@ use lifecycle::*;
 use projection::*;
 use render::*;
 use service::*;
+#[cfg(test)]
+use signals::cancel_on_signal;
 
 #[cfg(test)]
 mod tests {

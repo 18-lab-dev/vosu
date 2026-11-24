@@ -1,11 +1,21 @@
 //! Target-specific filesystem, system, and process integration.
 
 mod channel;
+#[cfg(windows)]
+mod console;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(windows)]
 mod windows;
 pub use channel::BuildChannel;
+#[cfg(windows)]
+pub use console::{detach_private_console, open_log_console};
+
+/// Stable Windows volume/file identity for an open file, including across renames.
+#[cfg(windows)]
+pub fn file_identity(file: &std::fs::File) -> io::Result<(u64, u64)> {
+    windows::file_identity(file)
+}
 
 use std::ffi::OsString;
 #[cfg(not(windows))]
@@ -94,12 +104,6 @@ impl Paths {
         Self::resolve(&SystemPathResolver, channel)
     }
 
-    /// Resolves the native cache root without creating or migrating directories.
-    #[doc(hidden)]
-    pub fn system_cache_root(channel: BuildChannel) -> io::Result<PathBuf> {
-        Self::system(channel).map(|paths| paths.cache)
-    }
-
     pub fn program(&self) -> &Path {
         &self.program
     }
@@ -134,6 +138,11 @@ impl Paths {
 
     pub fn data(&self) -> &Path {
         &self.data
+    }
+
+    /// Data directory passed to a bundled plugin, named by its manifest id.
+    pub fn bundled_plugin_data_dir(&self, plugin_id: &str) -> PathBuf {
+        self.data.join("plugins").join(plugin_id)
     }
 
     pub fn cache(&self) -> &Path {
@@ -546,5 +555,27 @@ mod tests {
             "legacy"
         );
         assert!(!legacy.exists());
+    }
+}
+
+#[cfg(test)]
+mod bundled_plugin_paths {
+    use super::{BuildChannel, Paths};
+    use std::path::PathBuf;
+
+    #[test]
+    fn bundled_plugins_use_data_not_cache_or_launch_root() {
+        let paths = Paths {
+            program: PathBuf::from("program"),
+            launch: PathBuf::from("launch"),
+            config: PathBuf::from("config"),
+            data: PathBuf::from("data"),
+            cache: PathBuf::from("cache"),
+            channel: BuildChannel::Release,
+        };
+        assert_eq!(
+            paths.bundled_plugin_data_dir("vosu.osu"),
+            PathBuf::from("data").join("plugins").join("vosu.osu")
+        );
     }
 }

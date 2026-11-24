@@ -179,3 +179,30 @@ fn backend_probe_uses_nonempty_osu_matcher_prefilter() {
     assert!(hints.iter().any(|hint| hint == b"osu!"));
     assert!(hints.iter().any(|hint| hint == b"osulazer.exe"));
 }
+
+#[test]
+fn logs_arguments_are_strict_and_do_not_start_the_daemon() {
+    for (args, lines, follow, window) in [
+        (vec!["logs"], 50, false, false),
+        (vec!["logs", "--follow", "-n", "5"], 5, true, false),
+        (vec!["logs", "-n", "0", "--window"], 0, false, true),
+        (vec!["logs", "--window", "--follow", "-n", "123"], 123, true, true),
+    ] {
+        assert_eq!(
+            classify_command_invocation(&command_line(&args)),
+            CommandInvocation::Command(CliCommand::Logs { lines, follow, window }),
+        );
+    }
+    for args in [
+        vec!["logs", "-n"], vec!["logs", "-n", "-1"],
+        vec!["logs", "-n", "+1"], vec!["logs", "-n", "five"],
+        vec!["logs", "--follow", "--follow"], vec!["logs", "--version"],
+        vec!["logs", "-n", "1", "-n", "2"], vec!["logs", "--unknown"],
+    ] {
+        assert_eq!(
+            classify_command_invocation(&command_line(&args)),
+            CommandInvocation::InvalidInput,
+            "{args:?}",
+        );
+    }
+}

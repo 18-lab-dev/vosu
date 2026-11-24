@@ -2,6 +2,7 @@ use super::*;
 
 #[path = "api_v1.rs"]
 pub(super) mod api_v1;
+use super::signals::run_signal_cancellation;
 
 /// Process-wide resource owner. Every long-lived production service is retained
 /// here and joined in reverse dependency order.
@@ -62,6 +63,7 @@ impl ProductionRuntime {
         &self,
         destroy: impl Future<Output = io::Result<()>>,
     ) -> io::Result<()> {
+        let mut result = Ok(());
         self.shutdown_token.cancel();
         self.api_v1.shutdown();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
@@ -76,19 +78,23 @@ impl ProductionRuntime {
         // `foreground_changed`), which must not race a plugin instance
         // tearing down under it.
         if let Some(discovery) = self.discovery.lock().await.take() {
-            tokio::task::spawn_blocking(move || discovery.stop())
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("discovery shutdown task failed: {error}"))
-                })?;
+            result = result.and(
+                tokio::task::spawn_blocking(move || discovery.stop())
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("discovery shutdown task failed: {error}"))
+                    }),
+            );
         }
         #[cfg(windows)]
         if let Some(foreground) = self.foreground.lock().await.take() {
-            tokio::task::spawn_blocking(move || foreground.stop())
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("foreground poller shutdown task failed: {error}"))
-                })?;
+            result = result.and(
+                tokio::task::spawn_blocking(move || foreground.stop())
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("foreground poller shutdown task failed: {error}"))
+                    }),
+            );
         }
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
@@ -110,10 +116,12 @@ impl ProductionRuntime {
         if let Some(listener) = dashboard_listener {
             listener.join().await;
         }
+        // Adapter consumers stop before plugin destroy; neither failure may
+        // skip the remaining joins.
         if let Some(adapters) = self.adapters.lock().await.take() {
-            adapters.shutdown().await?;
+            result = result.and(adapters.shutdown().await);
         }
-        destroy.await?;
+        result = result.and(destroy.await);
         self.state_host.lock().await.take();
         if let Some(processor) = self.processor.lock().await.take() {
             processor.shutdown().await;
@@ -125,14 +133,16 @@ impl ProductionRuntime {
             counters.shutdown().await;
         }
         let signal_result = match self.signal_task.lock().await.take() {
-            Some(task) => task
-                .await
-                .map_err(|error| io::Error::other(format!("signal task failed: {error}")))?,
+            Some(task) => task.await.unwrap_or_else(|error| {
+                Err(io::Error::other(format!("signal task failed: {error}")))
+            }),
             None => Ok(()),
         };
-        let config_result = self.config.shutdown().await;
-        let logger_result = self.logger.shutdown().await;
-        signal_result.and(config_result).and(logger_result)
+        // Do not short-circuit cleanup after a task panic: even retained
+        // config Arcs must have their blocking worker joined before runtime drop.
+        result = result.and(signal_result);
+        result = result.and(self.config.shutdown().await);
+        result.and(self.logger.shutdown().await)
     }
 
     async fn compose(&mut self) -> io::Result<()> {
@@ -246,7 +256,7 @@ impl ProductionRuntime {
                 plugins: Arc::clone(&self.plugins),
                 counters: Arc::clone(&counters),
                 files: adapters.files.clone(),
-                logs: self.paths.data().join("logs"),
+                logs: vosu_core::logging::logs_dir(&self.paths),
             }),
             Arc::new(RuntimeUpdater::production(
                 program,
@@ -372,6 +382,7 @@ impl ProductionRuntime {
             let origins = Arc::clone(&self.origins);
             *self.tray.get_mut() = Some(vosu_core::desktop::tray::start(
                 Arc::new(move || format!("{}/", origins.dashboard())),
+                vosu_core::logging::logs_dir(&self.paths),
                 self.shutdown_token.clone(),
             ));
         }
@@ -622,59 +633,6 @@ impl RuntimeHooks for ProductionRuntime {
     }
 }
 
-pub(super) async fn cancel_on_signal(
-    shutdown: CancellationToken,
-    signal: impl Future<Output = io::Result<()>>,
-) -> io::Result<()> {
-    let result = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        result = signal => result,
-    };
-    shutdown.cancel();
-    result
-}
-
-pub(super) async fn run_signal_cancellation(shutdown: CancellationToken) -> io::Result<()> {
-    cancel_on_signal(shutdown, shutdown_signal()).await
-}
-
-#[cfg(unix)]
-pub(super) async fn shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        received = interrupt.recv() => {
-            received.ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "SIGINT stream closed"))
-        }
-        received = terminate.recv() => {
-            received.ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM stream closed"))
-        }
-    }
-}
-
-#[cfg(windows)]
-pub(super) async fn shutdown_signal() -> io::Result<()> {
-    use tokio::signal::windows::ctrl_break;
-
-    let mut break_signal = ctrl_break()?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        received = break_signal.recv() => {
-            received.ok_or_else(|| io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "CTRL_BREAK stream closed",
-            ))
-        }
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(super) async fn shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
-}
-
 pub(super) fn listen_target(config: &Config) -> io::Result<ListenTarget> {
     if !config.server_port.is_finite()
         || config.server_port.fract() != 0.0
@@ -757,10 +715,12 @@ pub async fn run_cli() -> io::Result<()> {
         super::cli::CommandInvocation::InvalidInput => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "vosu command flags must be standalone arguments without values",
+                "invalid command arguments; see vosu --help",
             ));
         }
     }
+    #[cfg(windows)]
+    vosu_sys::platform::detach_private_console();
     let args = StartupArgs::parse(raw_args.clone());
     let startup_flags = StartupFlags {
         update: args.get("update").and_then(StartupValue::as_boolean),
@@ -838,7 +798,7 @@ pub async fn run_cli() -> io::Result<()> {
         }
     }
     let logger = Logger::new(
-        paths.data().join("logs"),
+        vosu_core::logging::logs_dir(&paths),
         LoggerOptions {
             debug_log: config.current().debug_log,
             ..LoggerOptions::default()

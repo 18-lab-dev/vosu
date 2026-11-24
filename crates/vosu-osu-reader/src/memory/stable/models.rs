@@ -228,6 +228,44 @@ impl StableMemory {
         };
         Ok((container, value))
     }
+    pub(super) fn precise_cached(&self) -> Option<GlobalPrecise> {
+        if self.status_container == 0 || self.play_time_container == 0 {
+            return None;
+        }
+        let mut status_pointer = [0; 4];
+        let mut status = [0; 4];
+        let mut time_pointer = [0; 4];
+        let mut time = [0; 4];
+        self.process
+            .read_many(&mut [
+                ReadRequest::new(self.patterns.status_ptr, &mut status_pointer),
+                ReadRequest::new(self.status_container, &mut status),
+                ReadRequest::new(
+                    self.add(self.patterns.play_time_addr, 5).ok()?,
+                    &mut time_pointer,
+                ),
+                ReadRequest::new(self.play_time_container, &mut time),
+            ])
+            .ok()?;
+        // Both holders are refreshed every capture, just like cached_i32_chain.
+        // A changed holder or failed speculative time read uses the scalar
+        // path, preserving status-first errors and selection's suppressed time.
+        if u32::from_le_bytes(status_pointer) as usize != self.status_container
+            || u32::from_le_bytes(time_pointer) as usize != self.play_time_container
+        {
+            return None;
+        }
+        let status = u32::from_le_bytes(status) as i64;
+        Some(GlobalPrecise {
+            status,
+            time: if status == 3 {
+                0.0
+            } else {
+                i32::from_le_bytes(time) as f64
+            },
+        })
+    }
+
     pub(super) fn status_value(&mut self) -> Result<i64, MemoryError> {
         match self.cached_i32_chain(self.patterns.status_ptr, self.status_container, false) {
             Ok((container, value)) => {

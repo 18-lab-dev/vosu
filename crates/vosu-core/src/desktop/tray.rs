@@ -3,19 +3,32 @@ use std::{sync::Arc, time::Duration};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
+#[path = "tray_logs.rs"]
+mod logs;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OpenRequest {
+    Dashboard,
+    Logs,
+}
+
 /// Called on each activation, so listener reloads do not leave a stale URL.
 pub type DashboardUrl = Arc<dyn Fn() -> String + Send + Sync>;
 
 #[derive(Clone)]
 struct Actions {
-    open: mpsc::Sender<()>,
+    open: mpsc::Sender<OpenRequest>,
     quit: CancellationToken,
 }
 
 impl Actions {
     fn open(&self) {
         // Coalesce repeated clicks while a browser launch is pending.
-        let _ = self.open.try_send(());
+        let _ = self.open.try_send(OpenRequest::Dashboard);
+    }
+
+    fn logs(&self) {
+        let _ = self.open.try_send(OpenRequest::Logs);
     }
 
     fn quit(&self) {
@@ -55,7 +68,15 @@ impl Drop for TrayHandle {
 }
 
 /// Start inside a Tokio runtime, after the listener is ready. No desktop is required.
-pub fn start(dashboard_url: DashboardUrl, shutdown: CancellationToken) -> TrayHandle {
+///
+/// `logs_dir` is this daemon's resolved log directory, opened directly when no
+/// terminal can follow it.
+pub fn start(
+    dashboard_url: DashboardUrl,
+    logs_dir: std::path::PathBuf,
+    shutdown: CancellationToken,
+) -> TrayHandle {
+    let logs_dir: Arc<std::path::Path> = logs_dir.into();
     let stop = CancellationToken::new();
     let (open, mut requests) = mpsc::channel(1);
     let opener_stop = stop.clone();
@@ -65,12 +86,17 @@ pub fn start(dashboard_url: DashboardUrl, shutdown: CancellationToken) -> TrayHa
                 biased;
                 _ = opener_stop.cancelled() => break,
                 request = requests.recv() => {
-                    if request.is_none() { break; }
-                    let url = dashboard_url();
+                    let Some(request) = request else { break; };
+                    let url = matches!(request, OpenRequest::Dashboard).then(|| dashboard_url());
+                    let logs_dir = Arc::clone(&logs_dir);
                     // OS launch may block; never run it on a runtime/UI thread.
                     let _ = tokio::task::spawn_blocking(move || {
-                        if let Err(error) = open::that_detached(url) {
-                            tracing::debug!(%error, "Tray dashboard launch unavailable");
+                        if let Some(url) = url {
+                            if let Err(error) = open::that_detached(url) {
+                                tracing::debug!(%error, "Tray dashboard launch unavailable");
+                            }
+                        } else if let Err(error) = logs::show(&logs_dir) {
+                            tracing::warn!(%error, "Tray log launch unavailable");
                         }
                     }).await;
                 }
@@ -128,6 +154,12 @@ mod platform {
                 ksni::menu::StandardItem {
                     label: "Open dashboard".into(),
                     activate: Box::new(|tray: &mut Self| tray.actions.open()),
+                    ..Default::default()
+                }
+                .into(),
+                ksni::menu::StandardItem {
+                    label: "Show logs".into(),
+                    activate: Box::new(|tray: &mut Self| tray.actions.logs()),
                     ..Default::default()
                 }
                 .into(),
@@ -242,9 +274,19 @@ mod platform {
             } else {
                 panic!("Expected Open dashboard");
             }
-            assert!(receiver.try_recv().is_ok());
+            assert_eq!(receiver.try_recv().unwrap(), OpenRequest::Dashboard);
             assert!(receiver.try_recv().is_err());
             if let ksni::MenuItem::Standard(item) = &menu[1] {
+                assert_eq!(item.label, "Show logs");
+                (item.activate)(&mut tray);
+                (item.activate)(&mut tray);
+            } else {
+                panic!("Expected Show logs");
+            }
+            assert_eq!(receiver.try_recv().unwrap(), OpenRequest::Logs);
+            assert!(receiver.try_recv().is_err());
+            if let ksni::MenuItem::Standard(item) = &menu[2] {
+                assert_eq!(item.label, "Quit");
                 (item.activate)(&mut tray);
             }
             assert!(quit.is_cancelled());
@@ -268,7 +310,13 @@ mod platform {
 
     const CALLBACK: u32 = WM_APP + 1;
     const OPEN: usize = 1;
+    const LOGS: usize = 3;
     const QUIT: usize = 2;
+    const MENU: [(usize, &str); 3] = [
+        (OPEN, "Open dashboard"),
+        (LOGS, "Show logs"),
+        (QUIT, "Quit"),
+    ];
     struct State {
         actions: Actions,
         stop: CancellationToken,
@@ -412,8 +460,9 @@ mod platform {
                         WM_RBUTTONUP | WM_CONTEXTMENU => {
                             let menu = CreatePopupMenu();
                             if !menu.is_null() {
-                                AppendMenuW(menu, MF_STRING, OPEN, wide("Open dashboard").as_ptr());
-                                AppendMenuW(menu, MF_STRING, QUIT, wide("Quit").as_ptr());
+                                for (id, label) in MENU {
+                                    AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr());
+                                }
                                 let mut point = POINT::default();
                                 GetCursorPos(&mut point);
                                 SetForegroundWindow(window);
@@ -430,6 +479,7 @@ mod platform {
                                 PostMessageW(window, WM_NULL, 0, 0);
                                 match command as usize {
                                     OPEN => state.actions.open(),
+                                    LOGS => state.actions.logs(),
                                     QUIT => state.actions.quit(),
                                     _ => {}
                                 }
@@ -450,6 +500,20 @@ mod platform {
         #[test]
         fn windows_strings_are_terminated() {
             assert_eq!(wide("vosu"), vec![118, 111, 115, 117, 0]);
+        }
+
+        #[test]
+        fn menu_includes_log_viewer() {
+            assert_eq!(
+                MENU,
+                [
+                    (OPEN, "Open dashboard"),
+                    (LOGS, "Show logs"),
+                    (QUIT, "Quit")
+                ]
+            );
+            assert_ne!(LOGS, OPEN);
+            assert_ne!(LOGS, QUIT);
         }
     }
 }
@@ -476,7 +540,11 @@ mod tests {
         };
         actions.open();
         actions.open();
-        assert!(requests.try_recv().is_ok());
+        assert_eq!(requests.try_recv().unwrap(), OpenRequest::Dashboard);
+        assert!(requests.try_recv().is_err());
+        actions.logs();
+        actions.logs();
+        assert_eq!(requests.try_recv().unwrap(), OpenRequest::Logs);
         assert!(requests.try_recv().is_err());
         actions.quit();
         assert!(quit.is_cancelled());

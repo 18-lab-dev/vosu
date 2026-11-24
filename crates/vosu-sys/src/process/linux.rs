@@ -738,6 +738,17 @@ impl ProcessMemory for LinuxProcessMemory {
         u32::try_from(self.pid).ok()
     }
 
+    fn reads_pin_process_identity(&self) -> bool {
+        // `call` checks generation_matches after every process_vm_readv, even
+        // successful and short reads; read_exact/read_many clear output on
+        // error. A second pre-plan poll cannot strengthen that postcheck.
+        #[cfg(feature = "linux-process-events")]
+        if self.pidfd.is_some() {
+            return true;
+        }
+        self.start_time.is_some()
+    }
+
     fn is_alive(&self) -> bool {
         let Some(pid) = u32::try_from(self.pid).ok() else {
             return false;

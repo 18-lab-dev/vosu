@@ -696,12 +696,14 @@ impl LazerMemory {
 
     pub(super) fn read_gamemode(&self) -> Result<i64, MemoryError> {
         let bindable = self.root(GameRoot::Ruleset)?;
-        let info = self.ptr(add(bindable, 0x20)?)?;
-        self.i32(add(
-            info,
-            self.offsets
-                .osu_game_rulesets_ruleset_info
-                .online_id_k_backing_field,
-        )?)
+        Ok(i32::from_le_bytes(
+            self.chain(
+                add(bindable, 0x20)?,
+                &[self
+                    .offsets
+                    .osu_game_rulesets_ruleset_info
+                    .online_id_k_backing_field],
+            )?,
+        ) as i64)
     }
 }
