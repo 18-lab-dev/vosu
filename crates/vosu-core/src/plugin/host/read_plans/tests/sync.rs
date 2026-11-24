@@ -581,7 +581,9 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
     )
     .expect("creating the nested-sync testkit instance");
 
-    let pid = 500_100_501;
+    // Unique across the read-plan tests: basics.rs's open-retry test owns
+    // 500_100_501, and the session-memory hook registry is process-wide.
+    let pid = 500_100_601;
     set_session_memory_hook_for_tests(pid, Arc::new(AlwaysOkMemory), ProcessBitness::X64);
     host.process_appeared(test_process(pid, "proc-nestedsync"));
 
