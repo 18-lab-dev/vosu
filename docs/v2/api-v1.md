@@ -266,6 +266,9 @@ Every API v1 error response is a JSON body:
 | 502 | `provider_failed` | resource/tree provider failure, malformed reply, invalid indexed-member proof, or source open/read failure |
 | 504 | `provider_timed_out` | resource/tree resolution, listing, lookup or stream-read deadline elapsed |
 
+Resource/tree providers have a five-second deadline **per operation** (resolve,
+list, lookup, and each stream-read reply), not for the whole download.
+
 The 404/410 split on resource and tree ids follows directly from how ids are
 minted (below): verifying the HMAC is what proves an id was ever genuine. An
 id that fails verification (wrong shape, wrong signature, unknown plugin

@@ -6,6 +6,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Add the independent API v1 field/session-event subscription hub, with immutable
   selections, bounded latest-only output, focus baseline resets and demand RAII.
+- Serve published API v1 resources and indexed tree members through bounded,
+  range-aware GET/HEAD responses, with revalidated tree indexes, immutable
+  resource validators, sandbox/nosniff headers and current-reference redirects.
 - Add independent `API_V1_SUBSCRIPTION_DEBOUNCE` configuration and dashboard
   settings, defaulting to 1 ms with a fractional 1–60000 ms range. Legacy V2
   subscription and B1 reader settings retain their own debounce.

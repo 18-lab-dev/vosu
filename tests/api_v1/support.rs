@@ -73,7 +73,7 @@ pub struct Harness {
     pub host: Arc<PluginHost>,
     pub runtime: tokio::runtime::Runtime,
     pub foreground: Arc<plugin::SyntheticForegroundSource>,
-    root: tempfile::TempDir,
+    pub root: tempfile::TempDir,
     next: u64,
 }
 impl Harness {
@@ -260,10 +260,14 @@ impl Server {
             }),
             state: Arc::new(Legacy),
             calculation: Arc::new(Legacy),
-            delegate: Arc::new(Delegate(ApiV1Router::new(
-                h.host.api_state_source(),
-                hub.clone(),
-            ))),
+            delegate: Arc::new(Delegate(
+                ApiV1Router::new(h.host.api_state_source(), hub.clone()).with_resources(Arc::new(
+                    vosu::server::api_v1::resources::ResourceHttp::new(
+                        &h.host,
+                        Duration::from_secs(2),
+                    ),
+                )),
+            )),
         };
         let router = axum::Router::new()
             .fallback(

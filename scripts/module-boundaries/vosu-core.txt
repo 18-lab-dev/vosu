@@ -4,6 +4,7 @@ logging -> config
 plugin -> logging
 plugin -> state
 plugin -> api
+plugin -> resources
 state -> resources
 resource_io -> plugin
 resource_io -> resources
