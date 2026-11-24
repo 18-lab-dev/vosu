@@ -6,21 +6,32 @@ before live captures exist (GOLDEN_CONTRACT.md §9). Every record in it is
 vosu-generated, so it is written with `provenance="synthetic"`, lives
 outside `tests/fixtures/upstream/`, and is never pilot or full evidence.
 
+Route bytes depend on the OS a replay runs on, so each synthetic platform is
+exported, and compared, only on the host OS its name starts with:
+`windows-stable` on Windows and the lazer-shaped `linux-lazer` on Linux.
+
 Steps:
-  1. run the ignored Rust exporter `synthetic::export_synthetic_capture`,
-     which records R0 replays of R0's corpus source as case sandwiches for
-     `windows-stable` and a lazer-shaped `linux-lazer`;
-  2. wrap each platform in a `vosu-golden-capture-v1` capture whose identity
+  1. run the ignored Rust exporter `synthetic::export_synthetic_capture`
+     locally, which records R0 replays of R0's corpus source as case
+     sandwiches for this host's platforms;
+  2. take the other OS's export, written by the same exporter on that OS;
+  3. wrap each platform in a `vosu-golden-capture-v1` capture whose identity
      fields say "synthetic";
-  3. write the candidate with G0's writer, `golden(..., provenance="synthetic")`;
-  4. replace the committed tree with that candidate.
+  4. write the candidate with G0's writer, `golden(..., provenance="synthetic")`;
+  5. replace the committed tree with that candidate.
 
-Run from any directory, after `source scripts/dev-env.sh` if wanted:
+On Linux, export the Windows platform natively in the running Windows VM
+first. Without `VOSU_GOLDEN_SYNTHETIC_EXPORT` the exporter prints its export
+between marker lines, so keep the `vm-test` output and pass it as the foreign
+export:
 
-    python tests/adapter_golden/generate_synthetic.py
+    python scripts/vm-test.py --jobs 16 --test adapter_golden -- --ignored \\
+        --exact synthetic::export_synthetic_capture --nocapture > /tmp/windows-export.log
+    python tests/adapter_golden/generate_synthetic.py --foreign-export /tmp/windows-export.log
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 import hashlib
 import io
@@ -63,6 +74,22 @@ def export(directory: Path) -> dict:
     return json.loads(out.read_text(encoding="utf-8"))
 
 
+EXPORT_BEGIN = "=== vosu-golden-synthetic-export begin ==="
+EXPORT_END = "=== vosu-golden-synthetic-export end ==="
+
+
+def foreign_export(path: Path) -> dict:
+    """An export file, or a test log holding exactly one printed export."""
+    text = path.read_text(encoding="utf-8")
+    if EXPORT_BEGIN not in text:
+        return json.loads(text)
+    _, _, rest = text.partition(EXPORT_BEGIN)
+    body, found, _ = rest.partition(EXPORT_END)
+    if not found or EXPORT_BEGIN in body:
+        raise SystemExit(f"{path}: expected exactly one complete printed export")
+    return json.loads(body)
+
+
 def capture(exported: dict, commit: str) -> dict:
     platform = exported["platform"]
     variant, root = PLATFORMS[platform]
@@ -91,12 +118,28 @@ def capture(exported: dict, commit: str) -> dict:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--foreign-export", required=True, type=Path,
+                        help="the exporter's output from the other host OS")
+    args = parser.parse_args()
     commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], check=True,
                             capture_output=True, text=True).stdout.strip()
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
+        exports = [export(directory), foreign_export(args.foreign_export)]
+        if exports[0]["host"] == exports[1]["host"]:
+            raise SystemExit("--foreign-export must come from the other host OS")
+        platforms = []
+        for exported in exports:
+            for platform in exported["platforms"]:
+                if not platform["platform"].startswith(f"{exported['host']}-"):
+                    raise SystemExit(f"{platform['platform']} was exported on {exported['host']}")
+                platforms.append(platform)
+        if sorted(p["platform"] for p in platforms) != sorted(PLATFORMS):
+            raise SystemExit(f"exports cover {[p['platform'] for p in platforms]}, "
+                             f"not exactly {sorted(PLATFORMS)}")
         paths = []
-        for exported in export(directory)["platforms"]:
+        for exported in platforms:
             path = directory / f"capture-{exported['platform']}.json"
             path.write_text(json.dumps(capture(exported, commit)), encoding="utf-8")
             paths.append(str(path))

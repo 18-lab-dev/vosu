@@ -5,13 +5,18 @@
   "files": [
     {
       "path": "linux-lazer/assets.json",
-      "bytes": 479,
-      "sha256": "da37e9283b7100e429f960cfb38e653415700d1b7af025dba96d6e9f42b8d3a7"
+      "bytes": 898,
+      "sha256": "682be8580a84a7b2eea20aefba3738834faf9bea04d3d689884743b5e06ac214"
     },
     {
       "path": "linux-lazer/assets/synthetic-chart",
       "bytes": 271,
       "sha256": "d9b6f314cf5d859f3f540e99b594c0903cfeb9cbf5e9b7350ed1f5840bc57bb0"
+    },
+    {
+      "path": "linux-lazer/assets/synthetic-second-chart",
+      "bytes": 271,
+      "sha256": "214ef877a4035f11f09c8bd7fd33f1c36fc8536e3248900513e609b8acfbe575"
     },
     {
       "path": "linux-lazer/brand-inventory.txt",
@@ -29,6 +34,21 @@
       "sha256": "ca849713d104395ebc6b9a70516a36d1a1005c783a6a32f7b66381854bf04f33"
     },
     {
+      "path": "linux-lazer/cases/files.head-beatmap-file.json",
+      "bytes": 16985,
+      "sha256": "4f764da1594f7b34f2006852a13479053a18c18636ccda7e638e1ba951808088"
+    },
+    {
+      "path": "linux-lazer/cases/files.if-modified-since-beatmap-file.json",
+      "bytes": 16919,
+      "sha256": "160ff45a9e2c41462beaedb12bcf6919ddb7bd9dfe0f2e8e734a723a87748902"
+    },
+    {
+      "path": "linux-lazer/cases/files.if-none-match-beatmap-file.json",
+      "bytes": 16899,
+      "sha256": "16987c2df39ff73e4f80a8ed4cc07177dceed9e3371ecc082c1b59b43bf8373d"
+    },
+    {
       "path": "linux-lazer/cases/origin-peer.foreign-origin-json-v2.json",
       "bytes": 5658,
       "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
@@ -39,14 +59,34 @@
       "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
     },
     {
+      "path": "linux-lazer/cases/state-http.get-json-sc-second-chart.json",
+      "bytes": 16251,
+      "sha256": "d9994309593e0d7df13fac1e69b5d60a584d663f836a6e7182737c2f1bca2d39"
+    },
+    {
       "path": "linux-lazer/cases/state-http.get-json-sc.json",
       "bytes": 16266,
-      "sha256": "7cac92d11c41d34e9c496ecc773c827a5853ae4b317e5778acff4220f4ec5242"
+      "sha256": "88710ee28dbcfcc613d111549b3a38d6eeeb0e47da3ea9a5229c1af2a60ca4c4"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.get-json-v2-no-client.json",
+      "bytes": 5736,
+      "sha256": "e08b31a148d45644f720697a6f2565b6d7267dd87e82ffc79c6d892f17fd266d"
     },
     {
       "path": "linux-lazer/cases/state-http.get-json-v2.json",
       "bytes": 22471,
       "sha256": "643c94abc9f61255efdf48eee7760aa41aad88dbecef804480cec8e8eddc5e70"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.post-json-v2.json",
+      "bytes": 5711,
+      "sha256": "732563a3b180fca62c4e88e66c1659b8a3e66b365b3b51f96551cc7fe3f5c4ea"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.trailing-slash-json-v2.json",
+      "bytes": 5700,
+      "sha256": "0be939718e861c631e6ccfadbcbc92bcadd738a27fbf1c85c46bfa36e4e4b801"
     },
     {
       "path": "linux-lazer/cases/ws.get-without-upgrade-websocket-v2.json",
@@ -60,13 +100,13 @@
     },
     {
       "path": "linux-lazer/inventory.json",
-      "bytes": 2820,
-      "sha256": "07639766e19c509439708b6897ac693e84191e891f987a734b4fc1a0b396ce12"
+      "bytes": 4223,
+      "sha256": "96125726f804cb89308afd81368065d1b327f6529bc8a8aeae092463a66e9694"
     },
     {
       "path": "linux-lazer/manifest.json",
-      "bytes": 2615,
-      "sha256": "825752c80c89ec2cf7fa7509ae444861b18067e99de1b4f16a5595ee0f41cfc2"
+      "bytes": 3982,
+      "sha256": "8a974a460c6173fc2e4a621f1c5ffcf76654dc6bc2aca68d0e91dc7a51ee565c"
     },
     {
       "path": "manifest.json",
@@ -95,28 +135,28 @@
     },
     {
       "path": "windows-stable/cases/calculation.no-query.json",
-      "bytes": 17297,
-      "sha256": "8140a13f27fc86d6a2dfd54d8bf188e8079687ea8426a2fadb05c7ff6515f1c9"
+      "bytes": 17323,
+      "sha256": "28e7f83c9aef82edb27ddbcba2008ce560434aea6446cb6d9829676cf5b3b7c5"
     },
     {
       "path": "windows-stable/cases/files.get-beatmap-file.json",
-      "bytes": 17860,
-      "sha256": "082c57d4d0d8778009e5839eb2c918023bee042f9294b256d33c952a03cf94f3"
+      "bytes": 17886,
+      "sha256": "2a508d7cdef5ee14aac421c8d3e3fbde58e7036c9b05c1ec0ebfb9adac51fb19"
     },
     {
       "path": "windows-stable/cases/files.head-beatmap-file.json",
-      "bytes": 17568,
-      "sha256": "fd13b406fac8c4bad54659928f267f7c0881dc227d42f5bb1a718fbe045f5b11"
+      "bytes": 17594,
+      "sha256": "90b9d55094c36336811ce22146b6defd76ab05e3188f5414b82f637b2688bcc1"
     },
     {
       "path": "windows-stable/cases/files.if-modified-since-beatmap-file.json",
-      "bytes": 17502,
-      "sha256": "30805aeba72f6a686f083b8c65935fb4bc110a77b6868f0f38c3c17d5f504ef4"
+      "bytes": 17528,
+      "sha256": "8f902ea2a4900626813128a2409568ec1ffa7149a12cec265e75343edd25fff6"
     },
     {
       "path": "windows-stable/cases/files.if-none-match-beatmap-file.json",
-      "bytes": 17482,
-      "sha256": "bb14e7e9dad9710258f13b66a12d6262108eb33999848cb7981c4ade796ecafd"
+      "bytes": 17508,
+      "sha256": "1b825c7b6b8b1a1749ffebb95a8e7cbf276b9371116f9f2641acfef95a0748c0"
     },
     {
       "path": "windows-stable/cases/origin-peer.foreign-origin-json-v2.json",
@@ -130,13 +170,13 @@
     },
     {
       "path": "windows-stable/cases/state-http.get-json-sc-second-chart.json",
-      "bytes": 16799,
-      "sha256": "926c392fd338bf73aecace6f1c309e97a36283786dc6b5165a0106a41d158154"
+      "bytes": 16811,
+      "sha256": "f51a0b5d9fc6162436d10c3bf34cd432b82ec68890b366867b7950a261a7c4c3"
     },
     {
       "path": "windows-stable/cases/state-http.get-json-sc.json",
-      "bytes": 16840,
-      "sha256": "e25b17c92c290f2e32f7e42ab39247232d8dad15038219268bf64cfcd87ed8f1"
+      "bytes": 16852,
+      "sha256": "83ff8eeb040a10b1d4b193ee4c4e6152a5d2ee8bca28d5e1d48459fcc6487c14"
     },
     {
       "path": "windows-stable/cases/state-http.get-json-v2-no-client.json",
@@ -145,8 +185,8 @@
     },
     {
       "path": "windows-stable/cases/state-http.get-json-v2.json",
-      "bytes": 23303,
-      "sha256": "f02d4b7c53dfe9a8d91db5aeb6d9c18e4fb5c00bb44ec468a017ece0ba7e49ca"
+      "bytes": 23355,
+      "sha256": "8729a58d1c373ddb523f66511b2fccec516819fe0aa6636c8b51794e8ff93c1c"
     },
     {
       "path": "windows-stable/cases/state-http.post-json-v2.json",
@@ -165,18 +205,18 @@
     },
     {
       "path": "windows-stable/cases/ws.upgrade-websocket-v2.json",
-      "bytes": 23614,
-      "sha256": "b77539e44431ebe541180b2f2a3786bb672fb903cf7bd67433315a0a9ea8fd24"
+      "bytes": 23666,
+      "sha256": "944c88b2b41d2b03d125c624260de9ea086cfce64d773ca648e43dc159abe53f"
     },
     {
       "path": "windows-stable/inventory.json",
       "bytes": 4226,
-      "sha256": "eb4c309e8dce380ea4cb17398801b7ed453059cfdc7ff16280f6f97797fd2c6f"
+      "sha256": "74bb43226d2d09977f3947aa36869cc77a64d4a3b8e49320dff6ca92160e76d9"
     },
     {
       "path": "windows-stable/manifest.json",
       "bytes": 3991,
-      "sha256": "e1dd7d325443457694244874927a3de52da186383458d2497e438301a0620a97"
+      "sha256": "cea29b7136d5a747d9402c7c62b861fe474edc63b34f19acbe5d0ebc3233d103"
     }
   ]
 }

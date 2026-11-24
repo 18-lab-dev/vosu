@@ -14,7 +14,7 @@
     "sha256": "6ba575b5dd369e931e2c76ebff449a4a3f12b829da6959e931f0d267e5588e45"
   },
   "vosu": {
-    "commit": "e66f5ce8af28d5f6b7a9af845d7805bf0b118f7d",
+    "commit": "fe06e992debeeaefcfe53a70d14c3bcb97d0fbc3",
     "version": "2.0.0-alpha.1",
     "profile": "debug",
     "features": [
@@ -30,9 +30,9 @@
     "files": "/vosu-golden/files/"
   },
   "case_counts": {
-    "state-http": 2,
+    "state-http": 6,
     "ws": 2,
-    "files": 1,
+    "files": 4,
     "path-security": 1,
     "calculation": 1,
     "origin-peer": 1
@@ -51,6 +51,27 @@
       "barrier": "paused",
       "attempts": 1,
       "file": "cases/files.get-beatmap-file.json"
+    },
+    {
+      "id": "files.head-beatmap-file",
+      "family": "files",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/files.head-beatmap-file.json"
+    },
+    {
+      "id": "files.if-modified-since-beatmap-file",
+      "family": "files",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/files.if-modified-since-beatmap-file.json"
+    },
+    {
+      "id": "files.if-none-match-beatmap-file",
+      "family": "files",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/files.if-none-match-beatmap-file.json"
     },
     {
       "id": "origin-peer.foreign-origin-json-v2",
@@ -74,11 +95,39 @@
       "file": "cases/state-http.get-json-sc.json"
     },
     {
+      "id": "state-http.get-json-sc-second-chart",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.get-json-sc-second-chart.json"
+    },
+    {
       "id": "state-http.get-json-v2",
       "family": "state-http",
       "barrier": "paused",
       "attempts": 1,
       "file": "cases/state-http.get-json-v2.json"
+    },
+    {
+      "id": "state-http.get-json-v2-no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.get-json-v2-no-client.json"
+    },
+    {
+      "id": "state-http.post-json-v2",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.post-json-v2.json"
+    },
+    {
+      "id": "state-http.trailing-slash-json-v2",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.trailing-slash-json-v2.json"
     },
     {
       "id": "ws.get-without-upgrade-websocket-v2",

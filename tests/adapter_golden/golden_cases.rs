@@ -16,7 +16,7 @@ use super::{
     fixture::{self, Body, Case, Fixture, Pinned, Platform, Provenance, repo_root},
     json,
     replay::Replay,
-    routes,
+    routes, synthetic,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -38,20 +38,29 @@ pub static SYNTHETIC: LazyLock<Fixture> = LazyLock::new(|| {
     fixture::load(&synthetic_dir(), &pin(), Provenance::Synthetic)
         .unwrap_or_else(|e| panic!("synthetic fixture: {e}"))
 });
-/// One replay of the synthetic `windows-stable` platform, shared by the
+/// One replay of this host's primary synthetic platform, shared by the
 /// comparator tests.
 static OBSERVED: LazyLock<Vec<Result<Observed, String>>> =
     LazyLock::new(|| compare::observe(platform()).unwrap_or_else(|e| panic!("{e}")));
 
-pub fn synthetic_platform(name: &str) -> &'static Platform {
-    SYNTHETIC
+/// The synthetic platforms this host replays: route bytes depend on the
+/// replaying OS, so only platforms named for it compare exactly here.
+fn host_platforms() -> Vec<&'static Platform> {
+    let prefix = format!("{}-", synthetic::host_os());
+    let platforms: Vec<_> = SYNTHETIC
         .platforms
         .iter()
-        .find(|platform| platform.name == name)
-        .unwrap_or_else(|| panic!("no synthetic platform {name}"))
+        .filter(|platform| platform.name.starts_with(&prefix))
+        .collect();
+    assert!(
+        !platforms.is_empty(),
+        "no synthetic platform replays on {}: this OS would have zero comparator coverage",
+        synthetic::host_os()
+    );
+    platforms
 }
 fn platform() -> &'static Platform {
-    synthetic_platform("windows-stable")
+    host_platforms()[0]
 }
 fn ledger() -> BTreeMap<String, LedgerRow> {
     let path = repo_root().join("tests/fixtures/upstream/DIVERGENCES.md");
@@ -131,74 +140,87 @@ fn golden_fixtures_replay_at_the_cargo_pin() {
 #[test]
 fn golden_synthetic_fixture_compares_exactly_with_nonzero_coverage() {
     assert_eq!(SYNTHETIC.provenance, Provenance::Synthetic);
-    let platform = platform();
-    let counts = platform.counts();
-    assert!(counts.values().all(|count| *count > 0), "{counts:?}");
-    let report = compare::compare(platform, &OBSERVED, &[]);
-    assert_eq!(report.mismatches, Vec::<Mismatch>::new());
-    assert!(report.used.is_empty());
-    let normalized = |rule: &str| {
-        platform
+    for platform in host_platforms() {
+        let counts = platform.counts();
+        assert!(counts.values().all(|count| *count > 0), "{counts:?}");
+        let observed = if platform.name == self::platform().name {
+            OBSERVED.clone()
+        } else {
+            compare::observe(platform).unwrap_or_else(|e| panic!("{e}"))
+        };
+        let report = compare::compare(platform, &observed, &[]);
+        assert_eq!(report.mismatches, Vec::<Mismatch>::new());
+        assert!(report.used.is_empty());
+        let normalized = |rule: &str| {
+            platform
+                .cases
+                .iter()
+                .filter(|case| case.normalized.iter().any(|r| r == rule))
+                .count()
+        };
+        // Every §7 header rule the synthetic set can exercise is exercised.
+        assert_eq!(normalized("header-date"), platform.cases.len());
+        assert!(normalized("header-etag") >= 4);
+        assert!(normalized("header-last-modified") >= 4);
+        let conditional: BTreeSet<_> = platform
             .cases
             .iter()
-            .filter(|case| case.normalized.iter().any(|r| r == rule))
-            .count()
-    };
-    // Every §7 header rule the synthetic set can exercise is exercised.
-    assert_eq!(normalized("header-date"), platform.cases.len());
-    assert!(normalized("header-etag") >= 4);
-    assert!(normalized("header-last-modified") >= 4);
-    let conditional: BTreeSet<_> = platform
-        .cases
-        .iter()
-        .filter_map(|case| case.conditional.as_deref())
-        .collect();
-    assert_eq!(conditional, BTreeSet::from(["etag", "last-modified"]));
-    let frames: usize = platform
-        .cases
-        .iter()
-        .filter_map(|case| case.expected.frames.as_ref())
-        .map(Vec::len)
-        .sum();
-    assert!(frames > 0);
-    eprintln!(
-        "adapter_golden synthetic mechanics fixture (not evidence) {}: {} cases {counts:?}",
-        platform.name,
-        platform.cases.len()
-    );
-}
-
-/// The lazer-shaped `linux-lazer` platform: every recorded foreground fact
-/// is `null`, as a Linux host reports, and replays and compares exactly.
-#[test]
-fn golden_synthetic_linux_lazer_replays_unknown_foreground_exactly() {
-    let platform = synthetic_platform("linux-lazer");
-    let counts = platform.counts();
-    assert!(counts.values().all(|count| *count > 0), "{counts:?}");
-    let mut sessions = 0;
-    for case in &platform.cases {
-        for session in case.replay.roster.iter().chain(&case.replay.session) {
-            assert_eq!(
-                (session.variant.as_str(), session.foreground),
-                ("lazer", None)
-            );
-            sessions += 1;
-        }
+            .filter_map(|case| case.conditional.as_deref())
+            .collect();
+        assert_eq!(conditional, BTreeSet::from(["etag", "last-modified"]));
+        let frames: usize = platform
+            .cases
+            .iter()
+            .filter_map(|case| case.expected.frames.as_ref())
+            .map(Vec::len)
+            .sum();
+        assert!(frames > 0);
+        eprintln!(
+            "adapter_golden synthetic mechanics fixture (not evidence) {}: {} cases {counts:?}",
+            platform.name,
+            platform.cases.len()
+        );
     }
-    assert!(sessions > 0, "no lazer client case");
-    let observed = compare::observe(platform).unwrap_or_else(|e| panic!("{e}"));
-    let report = compare::compare(platform, &observed, &[]);
-    assert_eq!(report.mismatches, Vec::<Mismatch>::new());
-    eprintln!(
-        "adapter_golden synthetic mechanics fixture (not evidence) {}: {} cases {counts:?}",
-        platform.name,
-        platform.cases.len()
-    );
 }
 
-/// Two approved charts share one media type on `windows-stable`. Each
-/// recorded location selects its own chart: the streamCompanion case of
-/// the second chart replays to different, still exact, chart values.
+/// Every synthetic platform, whichever OS replays it, records the
+/// foreground facts of its own host: `true`/`false` from a Windows host and
+/// `null` from the lazer-shaped Linux host. Both hold the same case IDs, so
+/// each OS's comparator tests see the same cases.
+#[test]
+fn golden_synthetic_platforms_record_their_host_foreground_facts() {
+    let mut ids = Vec::new();
+    for platform in &SYNTHETIC.platforms {
+        let mut sessions = 0;
+        for case in &platform.cases {
+            for session in case.replay.roster.iter().chain(&case.replay.session) {
+                if platform.name == "linux-lazer" {
+                    assert_eq!(
+                        (session.variant.as_str(), session.foreground),
+                        ("lazer", None)
+                    );
+                } else {
+                    assert!(session.foreground.is_some(), "{}", platform.name);
+                }
+                sessions += 1;
+            }
+        }
+        assert!(sessions > 0, "{}: no client case", platform.name);
+        ids.push(
+            platform
+                .cases
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], ids[1]);
+}
+
+/// Two approved charts share one media type. Each recorded location selects
+/// its own chart: the streamCompanion case of the second chart replays to
+/// different, still exact, chart values.
 #[test]
 fn golden_two_assets_of_one_media_type_follow_their_recorded_location() {
     let platform = platform();
@@ -217,8 +239,10 @@ fn golden_two_assets_of_one_media_type_follow_their_recorded_location() {
     };
     let (first, first_body) = body("state-http.get-json-sc");
     let (second, second_body) = body("state-http.get-json-sc-second-chart");
-    assert_eq!(first, "synthetic/chart.osu");
-    assert_eq!(second, "second/chart.osu");
+    let approved = |id: &str| platform.asset(id).unwrap().relative.clone();
+    assert_eq!(first, approved("synthetic-chart"));
+    assert_eq!(second, approved("synthetic-second-chart"));
+    assert_ne!(first, second);
     assert_ne!(first_body, second_body);
     let report = compare::compare(platform, &OBSERVED, &[]);
     assert_eq!(report.mismatches, Vec::<Mismatch>::new());
@@ -482,7 +506,7 @@ fn golden_rules_refuse_unknown_temporary_overbroad_and_unused_rules() {
         "not a DIVERGENCES.md row",
     );
     rejected(
-        vec![edit("platforms", json!(["linux-lazer"]))],
+        vec![edit("platforms", json!(["windows-lazer"]))],
         "has no fixtures",
     );
     rejected(

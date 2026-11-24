@@ -8,14 +8,17 @@
 //! comparator nonzero coverage before live captures exist. It is never
 //! labelled upstream and never counts as pilot or full evidence.
 //!
-//! Two platforms are exported. `windows-stable` holds two approved charts of
-//! one media type, each selected by its recorded location. `linux-lazer`
-//! reshapes the corpus as a lazer session with the `foreground: null` a
-//! Linux host records, and keeps its chart in the lazer `files` slot.
+//! Route bytes depend on the OS the replay runs on (upstream `game.focused`
+//! is compiled for Windows only), so each synthetic platform is exported,
+//! and compared, only on the host OS its name starts with: `windows-stable`
+//! on Windows and the lazer-shaped `linux-lazer` (every foreground fact
+//! `null`, as a Linux host records) on Linux. Both platforms hold the same
+//! case IDs, including two approved charts of one media type that only
+//! their recorded locations tell apart.
 //!
 //! Regenerate with `python tests/adapter_golden/generate_synthetic.py`,
-//! which runs this ignored exporter, then G0's writer, and replaces the
-//! committed fixture tree.
+//! which runs this ignored exporter for the local OS, takes the other OS's
+//! export, runs G0's writer and replaces the committed fixture tree.
 use super::{
     Value,
     compare::replay_assets,
@@ -37,17 +40,30 @@ const WS_KEY: &str = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==";
 const TEXT: &str = "text/plain; charset=utf-8";
 const LICENSE: &str = "MIT OR Apache-2.0 (vosu-owned test data)";
 
+/// The OS prefix of the synthetic platform names this build replays.
+pub fn host_os() -> &'static str {
+    if cfg!(windows) { "windows" } else { "linux" }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Platform {
     WindowsStable,
     LinuxLazer,
 }
 impl Platform {
+    const ALL: [Self; 2] = [Self::WindowsStable, Self::LinuxLazer];
     fn name(self) -> &'static str {
         match self {
             Self::WindowsStable => "windows-stable",
             Self::LinuxLazer => "linux-lazer",
         }
+    }
+    fn lazer(self) -> bool {
+        self == Self::LinuxLazer
+    }
+    /// The variant's chart slot: lazer resolves charts in `files`.
+    fn slot(self) -> &'static str {
+        if self.lazer() { "files" } else { "songs" }
     }
 }
 
@@ -61,10 +77,19 @@ impl Chart {
     /// The recorded `current` `beatmapFolder` and `beatmapFile`. Lazer
     /// records no folder: the osu! plugin resolves its leaf in `files`.
     fn recorded(self, platform: Platform) -> (Option<&'static str>, &'static str) {
-        match (platform, self) {
-            (Platform::LinuxLazer, _) => (None, "chart.osu"),
-            (Platform::WindowsStable, Chart::First) => (Some("synthetic"), "chart.osu"),
-            (Platform::WindowsStable, Chart::Second) => (Some("second"), "chart.osu"),
+        match (platform.lazer(), self) {
+            (true, Chart::First) => (None, "chart.osu"),
+            (true, Chart::Second) => (None, "second.osu"),
+            (false, Chart::First) => (Some("synthetic"), "chart.osu"),
+            (false, Chart::Second) => (Some("second"), "chart.osu"),
+        }
+    }
+    /// The approved asset's location in the platform's chart slot, which is
+    /// exactly what the recording names.
+    fn relative(self, platform: Platform) -> String {
+        match self.recorded(platform) {
+            (Some(folder), file) => format!("{folder}/{file}"),
+            (None, file) => file.to_owned(),
         }
     }
 }
@@ -113,74 +138,10 @@ fn http(id: &'static str, seed: Seed, schema: &'static str, request: String) -> 
     }
 }
 
-/// One case of every family, shared by both platforms.
-fn common() -> Vec<Def> {
+/// The case set every synthetic platform records.
+fn defs() -> Vec<Def> {
     use Seed::{Client, NoClient};
     vec![
-        http(
-            "origin-peer.foreign-origin-json-v2",
-            NoClient,
-            "v2",
-            request("GET", "/json/v2", &["Origin: http://example.invalid"]),
-        ),
-        http(
-            "path-security.encoded-parent-files-beatmap",
-            NoClient,
-            "v2",
-            request("GET", "/files/beatmap/..%2F..%2Fsentinel.osu", &[]),
-        ),
-        http(
-            "state-http.get-json-v2",
-            Client,
-            "v2",
-            request("GET", "/json/v2", &[]),
-        ),
-        http(
-            "state-http.get-json-sc",
-            Client,
-            "sc",
-            request("GET", "/json/sc", &[]),
-        ),
-        http(
-            "calculation.no-query",
-            Client,
-            "v2",
-            request("GET", "/api/calculate/pp", &[]),
-        ),
-        http(
-            "files.get-beatmap-file",
-            Client,
-            "v2",
-            request("GET", "/files/beatmap/file", &[]),
-        ),
-        Def {
-            steps: Some(Vec::new()),
-            ..http(
-                "ws.get-without-upgrade-websocket-v2",
-                NoClient,
-                "v2",
-                request("GET", "/websocket/v2", &[]),
-            )
-        },
-    ]
-}
-
-fn defs(platform: Platform) -> Vec<Def> {
-    use Seed::{Client, NoClient};
-    let mut defs = common();
-    defs.push(Def {
-        steps: Some(vec![Step::Receive]),
-        ..http(
-            "ws.upgrade-websocket-v2",
-            Client,
-            "v2",
-            upgrade("/websocket/v2"),
-        )
-    });
-    if platform == Platform::LinuxLazer {
-        return defs;
-    }
-    defs.extend([
         http(
             "state-http.get-json-v2-no-client",
             NoClient,
@@ -199,6 +160,39 @@ fn defs(platform: Platform) -> Vec<Def> {
             "v2",
             request("GET", "/json/v2/", &[]),
         ),
+        http(
+            "origin-peer.foreign-origin-json-v2",
+            NoClient,
+            "v2",
+            request("GET", "/json/v2", &["Origin: http://example.invalid"]),
+        ),
+        http(
+            "path-security.encoded-parent-files-beatmap",
+            NoClient,
+            "v2",
+            request("GET", "/files/beatmap/..%2F..%2Fsentinel.osu", &[]),
+        ),
+        Def {
+            steps: Some(Vec::new()),
+            ..http(
+                "ws.get-without-upgrade-websocket-v2",
+                NoClient,
+                "v2",
+                request("GET", "/websocket/v2", &[]),
+            )
+        },
+        http(
+            "state-http.get-json-v2",
+            Client,
+            "v2",
+            request("GET", "/json/v2", &[]),
+        ),
+        http(
+            "state-http.get-json-sc",
+            Client,
+            "sc",
+            request("GET", "/json/sc", &[]),
+        ),
         // The second approved chart has the first one's media type; only
         // its recorded location selects it, and the chart-derived
         // streamCompanion values tell the two apart.
@@ -211,6 +205,18 @@ fn defs(platform: Platform) -> Vec<Def> {
                 request("GET", "/json/sc", &[]),
             )
         },
+        http(
+            "calculation.no-query",
+            Client,
+            "v2",
+            request("GET", "/api/calculate/pp", &[]),
+        ),
+        http(
+            "files.get-beatmap-file",
+            Client,
+            "v2",
+            request("GET", "/files/beatmap/file", &[]),
+        ),
         http(
             "files.head-beatmap-file",
             Client,
@@ -235,13 +241,20 @@ fn defs(platform: Platform) -> Vec<Def> {
                 String::new(),
             )
         },
-    ]);
-    defs
+        Def {
+            steps: Some(vec![Step::Receive]),
+            ..http(
+                "ws.upgrade-websocket-v2",
+                Client,
+                "v2",
+                upgrade("/websocket/v2"),
+            )
+        },
+    ]
 }
 
-/// The approved assets: the corpus chart and, on stable, a second chart of
-/// the same media type with another beat length, both owned by this
-/// repository.
+/// The approved assets: the corpus chart and a second chart of the same
+/// media type with another beat length, both owned by this repository.
 fn assets(platform: Platform, chart: &[u8]) -> Vec<(Asset, &'static str)> {
     let text = std::str::from_utf8(chart).expect("corpus chart text");
     let second = text.replacen("\n0,320,", "\n0,250,", 1);
@@ -249,39 +262,23 @@ fn assets(platform: Platform, chart: &[u8]) -> Vec<(Asset, &'static str)> {
         second, text,
         "the corpus chart has its expected timing point"
     );
-    let asset = |id: &str, slot: &str, relative: &str, bytes: Vec<u8>| Asset {
+    let asset = |id: &str, chart: Chart, bytes: Vec<u8>| Asset {
         id: id.into(),
-        slot: slot.into(),
-        relative: relative.into(),
+        slot: platform.slot().into(),
+        relative: chart.relative(platform),
         media_type: TEXT.into(),
         bytes,
     };
-    match platform {
-        Platform::WindowsStable => vec![
-            (
-                asset(
-                    "synthetic-chart",
-                    "songs",
-                    "synthetic/chart.osu",
-                    chart.to_vec(),
-                ),
-                "adapter_golden synthetic exporter: the state_api_compat stable-play-osu-fl corpus chart",
-            ),
-            (
-                asset(
-                    "synthetic-second-chart",
-                    "songs",
-                    "second/chart.osu",
-                    second.into_bytes(),
-                ),
-                "adapter_golden synthetic exporter: the corpus chart with a 250 ms beat length",
-            ),
-        ],
-        Platform::LinuxLazer => vec![(
-            asset("synthetic-chart", "files", "chart.osu", chart.to_vec()),
+    vec![
+        (
+            asset("synthetic-chart", Chart::First, chart.to_vec()),
             "adapter_golden synthetic exporter: the state_api_compat stable-play-osu-fl corpus chart",
-        )],
-    }
+        ),
+        (
+            asset("synthetic-second-chart", Chart::Second, second.into_bytes()),
+            "adapter_golden synthetic exporter: the corpus chart with a 250 ms beat length",
+        ),
+    ]
 }
 
 /// Records `folder`/`file` as the current chart. A lazer recording carries
@@ -339,10 +336,10 @@ fn seed(platform: Platform, seed: Seed, schema: &str, chart: Chart) -> Envelope 
         };
         let mut paths: CborValue =
             vosu_plugin_api::decode(&STANDARD.decode(encoded).unwrap()).unwrap();
-        reshape_paths(&mut paths, platform == Platform::LinuxLazer, folder, file);
+        reshape_paths(&mut paths, platform.lazer(), folder, file);
         entry["value_cbor_b64"] = json!(STANDARD.encode(vosu_plugin_api::encode(&paths).unwrap()));
     }
-    if platform == Platform::LinuxLazer {
+    if platform.lazer() {
         let lazer = |session: &mut Value| {
             session["variant"] = json!("lazer");
             session["foreground"] = Value::Null;
@@ -425,7 +422,7 @@ fn exchange(replay: &Replay, def: &Def) -> Value {
 fn export(platform: Platform, chart: &[u8]) -> Value {
     let assets = assets(platform, chart);
     let approved: Vec<Asset> = assets.iter().map(|(asset, _)| asset.clone()).collect();
-    let defs = defs(platform);
+    let defs = defs();
     let mut cases = Vec::new();
     // One replay per seed, schema and chart, as the comparator groups cases
     // by envelope, so `header-etag` sees one stable tag per file.
@@ -489,18 +486,31 @@ fn export(platform: Platform, chart: &[u8]) -> Value {
     })
 }
 
+/// Marks the export printed to standard output.
+pub const EXPORT_BEGIN: &str = "=== vosu-golden-synthetic-export begin ===";
+pub const EXPORT_END: &str = "=== vosu-golden-synthetic-export end ===";
+
+/// Exports this host's synthetic platforms to `VOSU_GOLDEN_SYNTHETIC_EXPORT`.
+/// When that is unset, as in a Windows VM `vm-test` run whose staging
+/// directory is removed afterwards, it prints the export as one JSON line
+/// between `EXPORT_BEGIN` and `EXPORT_END` (run with `--nocapture`).
 #[test]
 #[ignore = "writes the synthetic mechanics capture; run through tests/adapter_golden/generate_synthetic.py"]
 fn export_synthetic_capture() {
-    let out = std::env::var_os(EXPORT_ENV).unwrap_or_else(|| panic!("set {EXPORT_ENV}"));
     let chart = source::capture(1).assets.roots[0].files[0].bytes.clone();
-    let platforms: Vec<Value> = [Platform::WindowsStable, Platform::LinuxLazer]
+    let platforms: Vec<Value> = Platform::ALL
         .into_iter()
+        .filter(|platform| platform.name().starts_with(&format!("{}-", host_os())))
         .map(|platform| export(platform, &chart))
         .collect();
-    std::fs::write(
-        out,
-        serde_json::to_vec_pretty(&json!({"platforms": platforms})).unwrap(),
-    )
-    .unwrap();
+    assert!(
+        !platforms.is_empty(),
+        "no synthetic platform for {}",
+        host_os()
+    );
+    let export = json!({"host": host_os(), "platforms": platforms});
+    match std::env::var_os(EXPORT_ENV) {
+        Some(out) => std::fs::write(out, serde_json::to_vec_pretty(&export).unwrap()).unwrap(),
+        None => println!("{EXPORT_BEGIN}\n{export}\n{EXPORT_END}"),
+    }
 }

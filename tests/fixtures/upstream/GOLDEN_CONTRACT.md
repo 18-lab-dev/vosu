@@ -456,10 +456,16 @@ fixture directory exists. X0 deletes the marker in the fixture commit.
 
 The comparator's own coverage comes from `tests/fixtures/golden-synthetic/`
 and the counterexample tests over it. That tree is written by G0's writer with
-`provenance: "synthetic"` from R0 replays of vosu's corpus source; regenerate
-it with `python tests/adapter_golden/generate_synthetic.py`. It holds a
-`windows-stable` platform and a lazer-shaped `linux-lazer` platform. A
-synthetic tree is refused under `tests/fixtures/upstream/<pin>/`. A committed capture also
+`provenance: "synthetic"` from R0 replays of vosu's corpus source. It holds a
+`windows-stable` platform and a lazer-shaped `linux-lazer` platform with the
+same case IDs. Route bytes depend on the replaying OS (upstream `game.focused`
+exists only on Windows), so a synthetic platform's name also names the host OS
+it is exported and compared on: `windows-*` only on Windows and `linux-*` only
+on Linux, and each OS must have at least one. Regenerate the tree with
+`python tests/adapter_golden/generate_synthetic.py --foreign-export <path>`
+after running the exporter natively on the other OS (the script's docstring
+has the `vm-test` step). A synthetic tree is refused under
+`tests/fixtures/upstream/<pin>/`. A committed capture also
 needs a review receipt, distinct source and vosu attestations, and brand
 inventory lines that are exact allowlist entries. Each replay asset file gets
 the declared modification time 2026-01-01T00:00:00Z, and `header-last-modified`

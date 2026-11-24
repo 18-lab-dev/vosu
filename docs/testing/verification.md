@@ -162,8 +162,12 @@ upstream case. Without the marker it fails with "no golden fixtures for pin
 fixtures. X0 deletes the marker in the fixture commit. Until then, report
 adapter goldens as pending. The comparator's nonzero coverage comes from the
 self-tests over `tests/fixtures/golden-synthetic/`. That tree is written by
-G0's writer with `provenance: "synthetic"`, and
-`python tests/adapter_golden/generate_synthetic.py` regenerates it.
+G0's writer with `provenance: "synthetic"`. Each of its platforms compares only
+on the host OS its name starts with (`windows-*` on Windows, `linux-*` on
+Linux), so run `adapter_golden` natively on both, for example with
+`python scripts/vm-test.py --jobs 16 --test adapter_golden`.
+`python tests/adapter_golden/generate_synthetic.py --foreign-export <path>`
+regenerates the tree from both hosts' exports.
 
 Captures run only under a written owner authorization for that session
 (commit and pin, client build/install/profile, scenario, data/media policy,
