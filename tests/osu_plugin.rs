@@ -2,6 +2,8 @@
 #![cfg(feature = "test-harness")]
 #[path = "osu_plugin/support.rs"]
 mod support;
+#[path = "osu_plugin/tournament.rs"]
+mod tournament;
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, mpsc};
@@ -76,11 +78,11 @@ fn stable_session_b1_settings_and_exit() {
 }
 
 #[test]
-fn tournament_and_debug_clients_decline_without_b1() {
+fn debug_clients_decline_without_b1() {
     let harness = Harness::new("test.osu.p6.decline", 0x6a00_0100, 2);
     harness
         .host
-        .process_appeared(Harness::record(harness.pids[0], &["--tournament"]));
+        .process_appeared(Harness::record(harness.pids[0], &["--debug-client-id=2"]));
     harness
         .host
         .process_appeared(Harness::record(harness.pids[1], &["--debug-client-id=1"]));

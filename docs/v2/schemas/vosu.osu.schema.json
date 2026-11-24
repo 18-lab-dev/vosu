@@ -202,6 +202,9 @@
       "required": ["source","failed","playerName","mode","healthBar","statistics","hitErrors","mods","rank","pp","unstableRate"],
       "additionalProperties": false,
       "properties": {
+        "healthRaw": {"type":"object","required":["normal","smooth"],"additionalProperties":false,"properties":{"normal":{"type":"number"},"smooth":{"type":"number"}}},
+        "rawJudgements": {"$ref":"#/$defs/rawJudgements"},
+        "preciseUnstableRate": {"type":"number","minimum":0,"x-sampling-lane":{"lane":"precise","activity":"gameplay"}},
         "source": {"enum":["player","replay","spectator","watching","autoplay",null]},
         "failed": {"type":"boolean"},
         "playerName": {"type":"string"},
@@ -213,7 +216,7 @@
           "properties": {"normal":{"type":"number"},"smooth":{"type":"number"}}
         },
         "statistics": {"$ref":"#/$defs/statistics"},
-        "hitErrors": {"$ref":"#/$defs/hitErrorTriplet"},
+        "hitErrors": {"$ref":"#/$defs/hitErrorTriplet","x-sampling-lane":{"lane":"precise","activity":"gameplay"}},
         "mods": {"$ref":"#/$defs/mods"},
         "rank": {
           "type": "object",
@@ -888,6 +891,7 @@
                 "required": ["ipcId","team","settings","user","beatmap","play"],
                 "additionalProperties": false,
                 "properties": {
+                  "keysOverlay": {"type":["object","null"],"required":["k1","k2","m1","m2"],"additionalProperties":false,"properties":{"k1":{"$ref":"#/$defs/overlayButton"},"k2":{"$ref":"#/$defs/overlayButton"},"m1":{"$ref":"#/$defs/overlayButton"},"m2":{"$ref":"#/$defs/overlayButton"}},"x-sampling-lane":{"lane":"precise","activity":"always"}},
                   "ipcId": {"type":"number"},
                   "team": {"enum":["left","right"]},
                   "settings": {
@@ -922,7 +926,7 @@
         },
         {"type":"null"}
       ],
-      "description": "D6: `null` only on the lazer multi-spectating path (ipcState 11) before the first lobby read lands (matching 1.x, which omits the key entirely until then; the adapters drop the key when this value is null); populated with real data once that read lands; 1.x's default empty object (scoreVisible: false, clients: [], and so on) in every other case. The stable tournament-manager aggregate is deferred: until it lands (M4a or later, `docs/v2/implementation-plan.md`), the osu! plugin takes 1.x's no-manager-found branch unconditionally on stable, and the stable-tournament oracle case is a recorded temporary divergence, not a passing comparison.",
+      "description": "Stable manager aggregate on every stable session, or the default empty aggregate without a manager. Null with tourneyAvailability pending before participating source samples exist; null with missingScore for an unavailable lazer spectator score. Wire omission/error policy belongs to adapters.",
       "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
     },
     "internal": {

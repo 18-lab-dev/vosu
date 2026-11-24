@@ -1,4 +1,5 @@
 //! Latest-only state-bus publication, independent of the interim B1 bridge.
+pub(crate) mod tournament;
 use crate::project::{self, Caches, Projection, Projector, SessionFacts};
 use std::sync::{
     Arc, Mutex,
@@ -67,6 +68,8 @@ pub struct BusPublisher<H: HostServices + Send + Sync + 'static = VtableHostServ
     handle: u64,
     identified: Arc<AtomicBool>,
     foreground: AtomicU8,
+    pub(crate) tournament: std::sync::OnceLock<(Arc<tournament::Tournament>, u64)>,
+    aggregate: Mutex<Option<crate::project::StableTourney>>,
     inner: Mutex<Shared>,
     projections: &'static [Projection],
     pub(crate) resources: std::sync::OnceLock<Arc<crate::resources::publication::Publication>>,
@@ -78,6 +81,8 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             handle,
             identified,
             foreground: AtomicU8::new(encode_foreground(facts.foreground)),
+            tournament: std::sync::OnceLock::new(),
+            aggregate: Mutex::new(None),
             resources: std::sync::OnceLock::new(),
             inner: Mutex::new(Shared {
                 inner: Some(BusPublisherInner {
@@ -108,6 +113,18 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
     }
     pub fn republish_session_fields(&self) {
         self.enqueue(None, true);
+    }
+    pub(crate) fn deactivate(&self) {
+        self.identified.store(false, Ordering::Release);
+    }
+    pub(crate) fn set_tournament(&self, aggregate: crate::project::StableTourney) {
+        let mut current = self.aggregate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current.as_ref().is_some_and(|current| current.revision >= aggregate.revision) {
+            return;
+        }
+        *current = Some(aggregate);
+        drop(current);
+        self.republish_session_fields();
     }
 
     fn enqueue(&self, snapshot: Option<Arc<StateBundleSnapshot>>, refresh: bool) {
@@ -165,6 +182,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
                 if force || reset || inner.retry || resource_changed || !unchanged {
+                    inner.caches.stable_tourney = self.aggregate.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
                     inner.projector.prepare(&snapshot);
                     // Retain the attempted snapshot so a refresh after an unwind
                     // can retry even the first publication.
@@ -275,6 +293,11 @@ impl<H: HostServices + Send + Sync + 'static> SnapshotPublisher<Arc<StateBundleS
         snapshot: Arc<StateBundleSnapshot>,
         _: Delivery,
     ) -> Result<(), StateWorkerError> {
+        if self.identified.load(Ordering::Acquire)
+            && let Some((tournament, handle)) = self.tournament.get()
+        {
+            tournament.observe(*handle, &snapshot);
+        }
         self.enqueue(Some(snapshot), false);
         Ok(())
     }

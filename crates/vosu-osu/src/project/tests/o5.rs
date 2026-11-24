@@ -2,7 +2,7 @@ use super::*;
 use serde_json::{Value, json};
 use vosu_osu_model::states::HitErrorArray;
 use vosu_osu_state::*;
-pub(super) fn sample() -> StateBundleSnapshot {
+pub(crate) fn sample() -> StateBundleSnapshot {
     StateBundleSnapshot {
         source: ClientType::Stable,
         generation: 1,
