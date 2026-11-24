@@ -17,3 +17,5 @@ resource_io -> resources
 plugin -> config
 report -> config
 updater -> desktop
+# catalog has no intra-core edges: persistence uses the existing
+# vosu-core -> vosu-sys crate edge for platform::atomic_replace.

@@ -2,6 +2,16 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M6b
+
+- Add a bounded exact-source credential store in the channel-aware config root,
+  with write-only inputs, redacted presence/errors, serialized durable mutation
+  generations and source-removal purge hooks. Malformed stores are disabled
+  without rewriting; explicit validated replacement repairs them. Persistence
+  follows existing same-directory atomic writes, Unix 0600 temporary/final files
+  and inherited Windows directory ACLs, not a keyring or encrypted secret store.
+  Native Windows ACL/replacement evidence remains pending.
+
 ## Unreleased — 2.0 M6a
 
 - Validate plugin, web-tool and overlay package manifests through the SDK's
