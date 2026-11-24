@@ -22,6 +22,7 @@ pub struct ProductionRouteDelegate {
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
     tools: Option<Arc<dyn RouteExtension>>,
+    catalog: Option<crate::server::catalog_api::CatalogApi>,
     skin_index: Arc<Mutex<files::SkinIndexCache>>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
 }
@@ -33,7 +34,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None, catalog: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None }
     }
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
@@ -41,6 +42,11 @@ impl ProductionRouteDelegate {
     }
     pub fn with_tools(mut self, tools: Arc<dyn RouteExtension>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+    /// M6b H0 dashboard-only catalog management facade.
+    pub fn with_catalog(mut self, catalog: crate::server::catalog_api::CatalogApi) -> Self {
+        self.catalog = Some(catalog);
         self
     }
     pub fn with_api_v1(mut self, router: crate::server::api_v1::router::ApiV1Router) -> Self {
@@ -63,6 +69,10 @@ impl ProductionRouteDelegate {
             },
             Endpoint::ToolManagement => match &self.tools {
                 Some(tools) => Arc::clone(tools).dashboard(request, body).await,
+                None => not_found(),
+            },
+            Endpoint::Catalog => match &self.catalog {
+                Some(catalog) => catalog.handle(request, body).await,
                 None => not_found(),
             },
             Endpoint::State(_) | Endpoint::CalculatePp => {

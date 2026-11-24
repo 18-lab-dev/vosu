@@ -23,6 +23,8 @@ use vosu_core::{
             HandoffFuture, InstallError, InstallLayout, LoadRequest, LoadStatus, PackageTransport,
             PublicPackageTransport, RuntimeHandoff,
         },
+        installed::UninstallService,
+        resolver::BuiltinProviders,
         runtime::{CatalogHost, CatalogRuntime},
         trust::TrustTier,
     },
@@ -137,9 +139,17 @@ impl RuntimeHandoff for RootHandoff {
 }
 
 /// Root owner of the composed catalog services; see the module docs.
+///
+/// H0 adds U0's [`UninstallService`] over the SAME `Arc<InstalledStore>` the
+/// I0 executor commits through; every uninstall/promote passes the runtime's
+/// one `PlanRegistry`, so both share P0's catalog operation gate.
 pub struct CatalogComposition {
     runtime: Arc<CatalogRuntime>,
     handoff: Arc<RootHandoff>,
+    uninstall: Option<Arc<UninstallService>>,
+    builtins: Arc<BuiltinProviders>,
+    restart: Arc<removal::RestartRequired>,
+    cancel: CancellationToken,
 }
 impl CatalogComposition {
     /// Recovery, then the committed graph's load. Call after bundled and
@@ -193,14 +203,41 @@ impl CatalogComposition {
                 );
             }
         }
+        let runtime = Arc::new(runtime);
+        let builtins = Arc::new(builtin_providers()?);
+        let restart = Arc::new(removal::RestartRequired::default());
+        let removal = Arc::new(removal::RootRemoval {
+            handoff: Arc::clone(&handoff),
+            runtime: OnceLock::new(),
+            restart: Arc::clone(&restart),
+        });
+        let _ = removal.runtime.set(Arc::downgrade(&runtime));
+        let uninstall = runtime.installed().map(|store| {
+            Arc::new(UninstallService::new(
+                Arc::clone(store),
+                Arc::clone(&builtins),
+                removal,
+                Handle::current(),
+            ))
+        });
         Ok(Self {
-            runtime: Arc::new(runtime),
+            runtime,
             handoff,
+            uninstall,
+            builtins,
+            restart,
+            cancel: CancellationToken::new(),
         })
     }
 
-    /// Production strict public-only package transport.
+    /// Strict public-only package transport. A `test-harness` build with
+    /// `VOSU_CATALOG_TEST_SOCKET` serves `https://catalog.invalid:<port>`
+    /// packages from that exact loopback listener instead.
     pub fn production_transport() -> Arc<dyn PackageTransport> {
+        #[cfg(feature = "test-harness")]
+        if let Some(transport) = crate::server::catalog_api::harness_transport() {
+            return transport;
+        }
         Arc::new(PublicPackageTransport::new(
             vosu_net::streaming::StreamingClient::production(),
         ))
@@ -222,8 +259,49 @@ impl CatalogComposition {
         &self.runtime
     }
 
-    /// Observer removal, then executor cancellation and join.
+    /// H0's dashboard-only `/api/catalog/*` facade over these services.
+    /// `package_limit` reads the current checked `MAX_PACKAGE_MIB` cap;
+    /// `network` is `crate::server::catalog_api::network()` in production.
+    pub fn api(
+        &self,
+        package_limit: Arc<dyn Fn() -> Option<u64> + Send + Sync>,
+        network: Arc<dyn crate::server::catalog_api::CatalogNetwork>,
+    ) -> crate::server::catalog_api::CatalogApi {
+        let restart = Arc::clone(&self.restart);
+        crate::server::catalog_api::CatalogApi::new(crate::server::catalog_api::CatalogServices {
+            runtime: Arc::clone(&self.runtime),
+            uninstall: self.uninstall.clone(),
+            builtins: Arc::clone(&self.builtins),
+            restart_required: Arc::new(move || restart.list()),
+            package_limit,
+            network,
+            cancel: self.cancel.clone(),
+        })
+    }
+
+    /// Route work is cancelled, the uninstall worker joined, then the
+    /// observer is removed and the executor cancelled and joined.
     pub async fn shutdown(&self) {
+        self.cancel.cancel();
+        if let Some(uninstall) = &self.uninstall {
+            uninstall.shutdown().await;
+        }
         self.runtime.shutdown().await;
     }
 }
+
+/// R0/U0 built-ins: the actual core schemas plus every compiled bundled
+/// manifest's `provides`, never a catalog copy.
+fn builtin_providers() -> io::Result<BuiltinProviders> {
+    let registry = vosu_core::state::schema::SchemaRegistry::with_core()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    let bundled = crate::plugins::BUNDLED
+        .iter()
+        .map(|plugin| vosu_plugin_api::manifest::PackageManifest::parse(plugin.manifest))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    Ok(BuiltinProviders::from_registry(&registry, &bundled))
+}
+
+#[path = "catalog_removal.rs"]
+mod removal;

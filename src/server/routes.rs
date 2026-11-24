@@ -76,6 +76,8 @@ pub enum Endpoint {
     Tools,
     ToolOverlay,
     ToolManagement,
+    /// Dashboard-only `/api/catalog/*` (M6b H0); exact paths in `catalog_api`.
+    Catalog,
     CounterStatic,
     WsV1,
     WsTokens,
@@ -494,6 +496,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::CounterNames
                     | Endpoint::CounterUpdates
                     | Endpoint::ToolManagement
+                    | Endpoint::Catalog
             )
         {
             return not_found_for(&request);
@@ -633,9 +636,11 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
         Ok(None) => {}
     }
-    let tool_put = method == Method::PUT && endpoint == Endpoint::ToolManagement;
+    // PUT (tool autostart) and every DELETE are mutations like POST.
+    let put_or_delete = (method == Method::PUT && endpoint == Endpoint::ToolManagement)
+        || method == Method::DELETE;
     let mutation =
-        if method == Method::POST || tool_put || websocket_upgrade || endpoint == Endpoint::ApiKeys
+        if method == Method::POST || put_or_delete || websocket_upgrade || endpoint == Endpoint::ApiKeys
         {
             MutationAuthorization::from_headers(request.headers())
         } else {
@@ -651,7 +656,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         && endpoint != Endpoint::ToolOverlay
         && grant.is_none()
         && broker_grant.is_none())
-        || tool_put
+        || put_or_delete
         || endpoint == Endpoint::ApiKeys)
         && !trusted_management
     {
@@ -707,7 +712,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         },
         endpoint => {
             let (parts, body) = request.into_parts();
-            let body = if method == Method::POST || tool_put || endpoint == Endpoint::ToolOverlay {
+            let body = if method == Method::POST || put_or_delete || endpoint == Endpoint::ToolOverlay {
                 match to_bytes(body, MAX_POST_BODY).await {
                     Ok(body) => body,
                     Err(_) => {
@@ -830,6 +835,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         }
         _ if (get || post) && (path == "/api/tools" || path.starts_with("/api/tools/")) => {
             Some(ToolManagement)
+        }
+        _ if (get || post || method == Method::DELETE) && path.starts_with("/api/catalog/") => {
+            Some(Catalog)
         }
         "/ws" if get => Some(WsV1),
         "/tokens" if get => Some(WsTokens),

@@ -5,6 +5,7 @@ pub mod api_v1;
 pub mod auth;
 pub(crate) mod broker;
 pub mod catalog;
+pub mod catalog_api;
 pub mod files;
 pub mod ids;
 pub mod origins;

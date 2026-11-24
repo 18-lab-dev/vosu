@@ -881,6 +881,8 @@ async fn command_frames_decode_target_filter_and_shutdown_without_debounce_leak(
 }
 
 include!("server_compat/listener.rs");
+include!("server_compat/catalog.rs");
+include!("server_compat/catalog_plans.rs");
 
 struct SnapshotFixture {
     generation: AtomicU64,

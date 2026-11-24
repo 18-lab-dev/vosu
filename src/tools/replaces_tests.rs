@@ -6,11 +6,6 @@ fn put(root: &Path, id: &str, requires: &str) {
     fs::write(root.join("tool.toml"), format!("manifest_version=1\nid='{id}'\nname='{id}'\nversion='1.0.0'\n[ui]\nroot='web'\n{requires}")).unwrap();
     fs::write(root.join("web/index.html"), id).unwrap();
 }
-fn tool() -> catalog::Tool {
-    serde_json::from_value(json!({"id":"new", "name":"New", "version":"1.0.0",
-        "description":"fixture", "author":"test", "protocol":1, "interfaces":["ui"],
-        "replaces":["old"], "packages":{"any":{"url":"https://example.com/new.zip", "sha256":"00".repeat(32), "size":1}}})).unwrap()
-}
 async fn host(root: &Path) -> Arc<ToolHost> {
     bounded!(ToolHost::new(
         root.join("config"),
@@ -23,7 +18,7 @@ async fn host(root: &Path) -> Arc<ToolHost> {
     ))
     .unwrap()
 }
-async fn fixture(root: &Path) -> (Arc<ToolHost>, catalog::Tool) {
+async fn fixture(root: &Path) -> Arc<ToolHost> {
     put(&root.join("tools/old"), "old", "");
     put(
         &root.join("tools/consumer"),
@@ -52,117 +47,34 @@ async fn fixture(root: &Path) -> (Arc<ToolHost>, catalog::Tool) {
         &json!({"secret":"retain me", "count":42}),
     )
     .unwrap();
-    let mut tool = tool();
-    tool.source = "fixture/source".into();
-    *host.catalog.lock() = catalog::Catalog {
-        catalog_version: 1,
-        tools: vec![tool.clone()],
-        ..catalog::Catalog::default()
-    };
-    (host, tool)
+    host
 }
 
-#[tokio::test]
-async fn offer_requires_same_trusted_source_and_unique_claim() {
-    let root = tempfile::tempdir().unwrap();
-    let (host, mut tool) = bounded!(fixture(root.path()));
-    assert_eq!(host.update_target("old").as_deref(), Some("new"));
-    assert!(
-        host.update_available("old", Some("99.0.0")),
-        "an identity update is not ordered by version"
-    );
-    assert_eq!(
-        host.view(&host.entry("old").unwrap())["update_target"],
-        "new"
-    );
-    host.saved.lock().get_mut("old").unwrap().trusted = false;
-    assert!(host.update_target("old").is_none());
-    assert!(
-        host.prepare_replacement("old", &tool, true)
-            .unwrap_err()
-            .contains("trusted catalog source")
-    );
-    host.saved.lock().get_mut("old").unwrap().trusted = true;
-    tool.source = "other/source".into();
-    *host.catalog.lock() = catalog::Catalog {
-        catalog_version: 1,
-        tools: vec![tool.clone()],
-        ..catalog::Catalog::default()
-    };
-    assert!(host.update_target("old").is_none());
-    assert!(
-        host.replacement_for("old")
-            .err()
-            .unwrap()
-            .contains("different catalog source")
-    );
-    assert!(
-        host.prepare_replacement("old", &tool, true)
-            .unwrap_err()
-            .contains("trusted catalog source")
-    );
-    tool.source = "fixture/source".into();
-    let mut other = tool.clone();
-    other.id = "ambiguous".into();
-    host.catalog.lock().tools = vec![tool, other];
-    assert!(
-        host.replacement_for("old")
-            .err()
-            .unwrap()
-            .contains("ambiguous")
-    );
-    assert!(!host.replacement_journal().exists());
-    assert!(host.data.join("old/tool.toml").exists());
-    bounded!(host.shutdown());
-}
-#[tokio::test]
-async fn refuses_every_existing_target_without_changing_state() {
-    for slot in 0..5 {
-        let root = tempfile::tempdir().unwrap();
-        let (host, tool) = bounded!(fixture(root.path()));
-        let path = match slot {
-            0 => host.data.join("new"),
-            1 => host.tool_data("new"),
-            2 => host.tool_settings("new"),
-            3 => host.cache.join("new"),
-            _ => {
-                host.saved.lock().insert("new".into(), Saved::default());
-                host.data.join("not-a-target")
-            }
-        };
-        if slot < 4 {
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            if slot == 2 {
-                fs::write(&path, "do not overwrite").unwrap();
-            } else {
-                fs::create_dir(&path).unwrap();
-            }
-        }
-        assert!(
-            host.prepare_replacement("old", &tool, true)
-                .unwrap_err()
-                .contains("already exists")
-        );
-        assert!(!host.replacement_journal().exists());
-        assert!(host.data.join("old/tool.toml").exists());
-        assert_eq!(
-            fs::read(host.tool_data("old").join("save")).unwrap(),
-            b"unchanged\0data"
-        );
-        if slot == 2 {
-            assert_eq!(fs::read_to_string(path).unwrap(), "do not overwrite");
-        }
-        bounded!(host.shutdown());
-    }
+/// The durable intent a 1.x catalog rename published before moving anything.
+fn journal(host: &ToolHost) {
+    let mut state = host.saved.lock().get("old").cloned().unwrap();
+    state.replaces.push("old".into());
+    atomic_json(
+        &host.replacement_journal(),
+        &Replacement {
+            old: "old".into(),
+            new: "new".into(),
+            state,
+            data: true,
+            settings: true,
+            cache: true,
+        },
+    )
+    .unwrap();
 }
 
 #[tokio::test]
 async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idempotently() {
     for cut in 0..8 {
         let root = tempfile::tempdir().unwrap();
-        let (original, tool) = bounded!(fixture(root.path()));
+        let original = bounded!(fixture(root.path()));
         put(&original.replacement_stage(), "new", "");
-        original.prepare_replacement("old", &tool, true).unwrap();
+        journal(&original);
         let paths = [
             (original.replacement_stage(), original.data.join("new")),
             (original.tool_data("old"), original.tool_data("new")),
@@ -243,11 +155,6 @@ async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idem
         assert_eq!(
             recovered.view(&recovered.entry("new").unwrap())["required_by"],
             json!(["consumer"])
-        );
-        assert!(
-            bounded!(recovered.uninstall_catalog("new", false))
-                .unwrap_err()
-                .contains("requires")
         );
         bounded!(recovered.shutdown());
     }

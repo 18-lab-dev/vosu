@@ -292,10 +292,18 @@ impl ProductionRuntime {
                 })
                 .await
                 .map_err(io::Error::other)?;
-                ProductionRouteDelegate::new(services)
+                let delegate = ProductionRouteDelegate::new(services)
                     .with_api_keys(Arc::new(api_keys))
                     .with_tools(tools.clone())
-                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()))
+                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
+                let config = Arc::clone(&self.config);
+                match self.catalog.get_mut() {
+                    Some(catalog) => delegate.with_catalog(catalog.api(
+                        Arc::new(move || config.current().max_package_bytes()),
+                        crate::server::catalog_api::network(),
+                    )),
+                    None => delegate,
+                }
             }),
         };
         let mut dashboard_providers = providers.clone();

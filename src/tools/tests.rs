@@ -690,55 +690,6 @@ async fn voluntary_exit_before_readiness_is_not_a_crash() {
 }
 
 #[tokio::test]
-async fn catalog_defaults_and_customized_sources_stay_under_user_control() {
-    let root = tempfile::tempdir().unwrap();
-    let host = bounded!(host(root.path(), Vec::new()));
-    let expected = json!([
-        {"source":"18-lab-dev/vosu-tools","enabled":true},
-        {"source":"18-lab-dev/vosulay","enabled":true},
-        {"source":"18-lab-dev/vosu-overlays","enabled":true}
-    ]);
-    let identities = |view: Value| {
-        view["sources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|source| json!({"source":source["source"],"enabled":source["enabled"]}))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(json!(identities(host.source_view().unwrap())), expected);
-    let path = host.config.join("catalog-sources.json");
-    for customized in [
-        json!([]),
-        json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]),
-        json!([
-            {"source":"18-lab-dev/vosu-tools","enabled":false},
-            {"source":"18-lab-dev/vosulay","enabled":true}
-        ]),
-        json!([
-            {"source":"18-lab-dev/vosulay","enabled":true},
-            {"source":"18-lab-dev/vosu-tools","enabled":true}
-        ]),
-        json!([
-            {"source":"18-lab-dev/vosu-tools","enabled":true},
-            {"source":"owner/custom","enabled":true}
-        ]),
-    ] {
-        atomic_json(&path, &customized).unwrap();
-        let before = fs::read(&path).unwrap();
-        assert_eq!(json!(identities(host.source_view().unwrap())), customized);
-        assert_eq!(fs::read(&path).unwrap(), before);
-    }
-    let removed = json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]);
-    let edited =
-        bounded!(host.save_sources(&serde_json::to_vec(&json!({"sources": removed})).unwrap()))
-            .unwrap();
-    assert_eq!(json!(identities(edited)), removed);
-    assert_eq!(json!(identities(host.source_view().unwrap())), removed);
-    bounded!(host.shutdown());
-}
-
-#[tokio::test]
 async fn organization_defaults_migrate_at_startup_without_expanding_identity_trust() {
     let root = tempfile::tempdir().unwrap();
     let config = root.path().join("config");
@@ -809,24 +760,16 @@ async fn organization_defaults_migrate_at_startup_without_expanding_identity_tru
             Some("shiruviaa/vosu-overlays")
         );
     }
-    let migrated: Value =
+    // Catalog v2 owns sources; the 1.x list and overlay state are M8
+    // migration inputs and are never rewritten by the legacy tool host.
+    let legacy: Value =
         serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap()).unwrap();
-    assert_eq!(migrated[0], sources[0]);
-    for (index, source) in [
-        (1, "18-lab-dev/vosulay"),
-        (2, "18-lab-dev/vosu-tools"),
-        (3, "shiruviaa/vosu-overlays"),
-    ] {
-        assert_eq!(migrated[index]["source"], source);
-        assert_eq!(migrated[index]["enabled"], sources[index]["enabled"]);
-    }
-    for index in 4..7 {
-        assert_eq!(migrated[index], sources[index]);
-    }
+    assert_eq!(legacy, sources);
     let overlay: Value =
         serde_json::from_slice(&fs::read(config.join("overlay-catalog-state.json")).unwrap())
             .unwrap();
     assert_eq!(overlay["overlay"]["source"], "shiruviaa/vosu-overlays");
+    assert!(!config.join("catalog-sources-v3.json").exists());
     bounded!(first.shutdown());
     let paths = [
         "catalog-sources.json",
@@ -839,87 +782,6 @@ async fn organization_defaults_migrate_at_startup_without_expanding_identity_tru
         assert_eq!(fs::read(config.join(name)).unwrap(), bytes);
     }
     bounded!(second.shutdown());
-}
-
-#[tokio::test]
-async fn former_default_lists_migrate_without_readding_explicitly_removed_sources() {
-    for (include_vosulay, edited) in [(false, false), (true, false), (false, true), (true, true)] {
-        let root = tempfile::tempdir().unwrap();
-        let config = root.path().join("config");
-        fs::create_dir_all(&config).unwrap();
-        // Former organization identities are persisted migration fixtures.
-        let mut sources = vec![json!({"source":"shiruviaa/vosu-tools","enabled":true})];
-        if include_vosulay {
-            sources.push(json!({"source":"shiruviaa/vosulay","enabled":true}));
-        }
-        sources.push(json!({"source":"shiruviaa/vosu-overlays","enabled":true}));
-        atomic_json(&config.join("catalog-sources.json"), &sources).unwrap();
-        if edited {
-            atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
-        }
-        let current = bounded!(host(root.path(), Vec::new()));
-        let migrated: Value =
-            serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap())
-                .unwrap();
-        let mut expected = vec![json!({"source":"18-lab-dev/vosu-tools","enabled":true})];
-        if !edited || include_vosulay {
-            expected.push(json!({"source":"18-lab-dev/vosulay","enabled":true}));
-            expected.push(json!({"source":"18-lab-dev/vosu-overlays","enabled":true}));
-        } else {
-            expected.push(json!({"source":"shiruviaa/vosu-overlays","enabled":true}));
-        }
-        assert_eq!(migrated, json!(expected));
-        bounded!(current.shutdown());
-    }
-}
-
-#[tokio::test]
-async fn the_previous_default_list_gains_the_official_overlay_source_once() {
-    let previous = json!([
-        {"source":"18-lab-dev/vosu-tools","enabled":true},
-        {"source":"18-lab-dev/vosulay","enabled":true}
-    ]);
-    let current = json!([
-        {"source":"18-lab-dev/vosu-tools","enabled":true},
-        {"source":"18-lab-dev/vosulay","enabled":true},
-        {"source":"18-lab-dev/vosu-overlays","enabled":true}
-    ]);
-    let read = |config: &std::path::Path| -> Value {
-        serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap()).unwrap()
-    };
-    // A saved 1.2 default list (v2 marker present, as 1.2 writes it) gains the source at startup.
-    let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config");
-    fs::create_dir_all(&config).unwrap();
-    atomic_json(&config.join("catalog-sources.json"), &previous).unwrap();
-    atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
-    let first = bounded!(host(root.path(), Vec::new()));
-    assert_eq!(read(&config), current);
-    bounded!(first.shutdown());
-    // Removing it afterwards is an explicit edit and stays removed across restarts.
-    let second = bounded!(host(root.path(), Vec::new()));
-    bounded!(second.save_sources(&serde_json::to_vec(&json!({"sources": previous})).unwrap()))
-        .unwrap();
-    bounded!(second.shutdown());
-    let third = bounded!(host(root.path(), Vec::new()));
-    assert_eq!(read(&config), previous);
-    bounded!(third.shutdown());
-    // Customized lists, a disabled default included, are left alone.
-    for customized in [
-        json!([
-            {"source":"18-lab-dev/vosu-tools","enabled":true},
-            {"source":"18-lab-dev/vosulay","enabled":false}
-        ]),
-        json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]),
-    ] {
-        let root = tempfile::tempdir().unwrap();
-        let config = root.path().join("config");
-        fs::create_dir_all(&config).unwrap();
-        atomic_json(&config.join("catalog-sources.json"), &customized).unwrap();
-        let host = bounded!(host(root.path(), Vec::new()));
-        assert_eq!(read(&config), customized);
-        bounded!(host.shutdown());
-    }
 }
 
 #[tokio::test]
