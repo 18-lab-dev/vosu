@@ -389,11 +389,13 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
 
     let config_dir = tempfile::tempdir().expect("creating a temp config dir");
     let config_path = config_dir.path().join("vosu.toml");
-    let config = runtime
-        .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
-        .expect("initializing a throwaway ConfigStore");
+    let config = Arc::new(
+        runtime
+            .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
+            .expect("initializing a throwaway ConfigStore"),
+    );
     let storage: Arc<dyn vosu_core::plugin::settings::SettingsStorage> = Arc::new(
-        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&config)),
     );
     let settings = Arc::new(vosu_core::plugin::settings::PluginSettingsService::new(
         storage,
@@ -401,6 +403,8 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
 
     let host =
         vosu_core::plugin::PluginHost::new(logger.clone(), settings, runtime.handle().clone());
+    let _shutdown =
+        vosu_core::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
 
     let manifest = "kind='plugin'\nmanifest_version=1\nid='acme.testkit.host-services'\nname='Host Services Testkit'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
     let loaded = plugin::load_bundled(
@@ -454,8 +458,6 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
         "expected plugin-id-attributed burst log lines, got: {lines:?}"
     );
     drop(lines);
-
-    host.destroy_all(DESTROY_GRACE);
 }
 
 // --- `vosu-core` `test-harness` memory seam (F3) ------------------------
@@ -541,16 +543,20 @@ fn injected_session_memory_answers_a_sync_plan() {
 
     let config_dir = tempfile::tempdir().expect("creating a temp config dir");
     let config_path = config_dir.path().join("vosu.toml");
-    let config = runtime
-        .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
-        .expect("initializing a throwaway ConfigStore");
+    let config = Arc::new(
+        runtime
+            .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
+            .expect("initializing a throwaway ConfigStore"),
+    );
     let storage: Arc<dyn vosu_core::plugin::settings::SettingsStorage> = Arc::new(
-        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&config)),
     );
     let settings = Arc::new(vosu_core::plugin::settings::PluginSettingsService::new(
         storage,
     ));
     let host = vosu_core::plugin::PluginHost::new(logger, settings, runtime.handle().clone());
+    let _shutdown =
+        vosu_core::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
 
     let plugin_id = "acme.testkit.readplan.injected";
     let (events, commands) = vosu_plugin_testkit::read_plan::register(plugin_id);
@@ -645,7 +651,6 @@ fn injected_session_memory_answers_a_sync_plan() {
     }
 
     vosu_core::plugin::test_support::clear_session_memory(pid);
-    host.destroy_all(DESTROY_GRACE);
 }
 
 /// F4 review item 5 / ReviewF4fix's own P2: the previous version of this
@@ -695,16 +700,20 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
 
     let config_dir = tempfile::tempdir().expect("creating a temp config dir");
     let config_path = config_dir.path().join("vosu.toml");
-    let config = runtime
-        .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
-        .expect("initializing a throwaway ConfigStore");
+    let config = Arc::new(
+        runtime
+            .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
+            .expect("initializing a throwaway ConfigStore"),
+    );
     let storage: Arc<dyn vosu_core::plugin::settings::SettingsStorage> = Arc::new(
-        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&config)),
     );
     let settings = Arc::new(vosu_core::plugin::settings::PluginSettingsService::new(
         storage,
     ));
     let host = vosu_core::plugin::PluginHost::new(logger, settings, runtime.handle().clone());
+    let _shutdown =
+        vosu_core::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
 
     let plugin_id = "acme.testkit.scan.injected";
     let (events, commands) = vosu_plugin_testkit::scan::register(plugin_id);
@@ -804,5 +813,4 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     );
 
     vosu_core::plugin::test_support::clear_session_memory(pid);
-    host.destroy_all(DESTROY_GRACE);
 }

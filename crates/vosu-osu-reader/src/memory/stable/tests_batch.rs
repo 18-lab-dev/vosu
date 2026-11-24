@@ -796,3 +796,34 @@ fn ruleset_recovery_drops_every_link_carried_from_the_old_ruleset() {
     );
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn precise_batch_refreshes_holders_and_preserves_selection_fault_fallback() {
+    for (status, poisoned_time, moved_status) in
+        [(0u32, false, false), (3, true, false), (8, false, true)]
+    {
+        let patterns = fixture_patterns();
+        let mut bytes = vec![0; SIZE];
+        let status_address = if moved_status { 0x10100usize } else { 0x10000 };
+        bytes[patterns.status_ptr..patterns.status_ptr + 4]
+            .copy_from_slice(&(status_address as u32).to_le_bytes());
+        bytes[patterns.play_time_addr + 5..patterns.play_time_addr + 9]
+            .copy_from_slice(&0x10010u32.to_le_bytes());
+        bytes[status_address..status_address + 4].copy_from_slice(&status.to_le_bytes());
+        bytes[0x10010..0x10014].copy_from_slice(&123i32.to_le_bytes());
+        let (mut reader, memory) = reader(bytes, poisoned_time.then_some((0x10010, 0x10014)));
+        reader.status_container = 0x10000;
+        reader.play_time_container = 0x10010;
+        let ReadStatus::Ready(value) = reader.global_precise().unwrap() else {
+            panic!("precise fixture must be ready");
+        };
+        assert_eq!(value.status, status as i64);
+        assert_eq!(value.time, if status == 3 { 0.0 } else { 123.0 });
+        assert_eq!(reader.status_container, status_address);
+        if !poisoned_time && !moved_status {
+            assert_eq!(*memory.calls.lock(), 1);
+        } else {
+            assert!(*memory.calls.lock() > 1);
+        }
+    }
+}

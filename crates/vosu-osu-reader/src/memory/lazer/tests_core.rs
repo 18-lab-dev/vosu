@@ -641,7 +641,7 @@ fn audio_amplitudes_match_source_sequential_reads() {
         panic!("not ready")
     };
     assert_eq!((values.len(), values[39]), (40, 39.0));
-    assert_eq!(memory.batches.load(Ordering::Relaxed), 0);
+    assert_eq!(memory.batches.load(Ordering::Relaxed), 1);
 }
 
 #[test]

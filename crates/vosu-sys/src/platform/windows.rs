@@ -33,6 +33,25 @@ pub(super) fn platform_roots(
     ))
 }
 
+/// Stable identity of an open file, including across renames.
+pub(super) fn file_identity(file: &File) -> io::Result<(u64, u64)> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: file owns a live handle; the output points to a correctly sized
+    // writable structure which is read only when the API initializes it.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the successful API call initialized the entire structure.
+    let information = unsafe { information.assume_init() };
+    Ok((
+        u64::from(information.dwVolumeSerialNumber),
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+    ))
+}
+
 struct Stage {
     // Fields drop in declaration order: the exclusive lease must close before
     // TempDir removes its directory, including on an early return or unwind.

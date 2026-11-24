@@ -64,6 +64,7 @@ fn roots_require_host_native_absolute_directories() {
     assert!(SafeRoot::open(file.path()).is_err());
 }
 
+#[cfg(not(windows))]
 #[test]
 fn retained_root_and_child_survive_pathname_replacement() {
     let parent = tempfile::tempdir().unwrap();
@@ -85,6 +86,40 @@ fn retained_root_and_child_survive_pathname_replacement() {
     fs::create_dir(&original).unwrap();
     fs::write(original.join("value"), b"replacement-root").unwrap();
     assert_eq!(read(&root, "value"), "retained-original");
+    fs::rename(moved.join("value"), moved.join("old-value")).unwrap();
+    fs::write(moved.join("value"), b"replacement-child").unwrap();
+    let mut content = String::new();
+    child.file.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "retained-original");
+    assert_eq!(child.metadata.len(), 17);
+    assert_eq!(read(&root, "value"), "replacement-child");
+}
+
+// Windows refuses to rename a directory while any file beneath it is open, so
+// the root is replaced before the retained child is opened. The child is then
+// renamed and replaced inside the moved root, which its share-delete open allows.
+#[cfg(windows)]
+#[test]
+fn retained_root_and_child_survive_pathname_replacement() {
+    let parent = tempfile::tempdir().unwrap();
+    let original = parent.path().join("root");
+    let moved = parent.path().join("moved");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("value"), b"retained-original").unwrap();
+    let root = SafeRoot::open(&original).unwrap();
+    assert!(
+        root.open_child(&SafeRelativePath::parse(".").unwrap())
+            .unwrap()
+            .metadata
+            .is_dir()
+    );
+    fs::rename(&original, &moved).unwrap();
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("value"), b"replacement-root").unwrap();
+    assert_eq!(read(&root, "value"), "retained-original");
+    let mut child = root
+        .open_child(&SafeRelativePath::parse("value").unwrap())
+        .unwrap();
     fs::rename(moved.join("value"), moved.join("old-value")).unwrap();
     fs::write(moved.join("value"), b"replacement-child").unwrap();
     let mut content = String::new();
