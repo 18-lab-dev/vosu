@@ -1,6 +1,6 @@
 //! Linux integration test (M1 phase d2b, unit b): drives
 //! [`DiscoveryService`] with a real [`LinuxSource`] against a real OS
-//! process — a copy of `sleep` renamed so its `comm` matches a testkit
+//! process — a copy of `/bin/sh` renamed so its `comm` matches a testkit
 //! plugin's `comm_hints`/`process_names` — and asserts `SESSION_ATTACHED`/
 //! `SESSION_DETACHED` arrive on the plugin's own event channel
 //! (`vosu_plugin_testkit::session`), through whichever backend
@@ -140,18 +140,17 @@ fn unique_comm() -> String {
     format!("vt{}-{n}", std::process::id() % 10_000_000)
 }
 
-/// Copies `/bin/sleep` (falling back to `/usr/bin/sleep`) to a temp file
-/// named `comm`: the kernel derives a freshly-exec'd process's `comm` from
-/// the basename of the path passed to `execve`, truncated to 15 bytes, so
-/// spawning this copy directly produces a real child process whose `comm`
-/// is exactly `comm` — no `PR_SET_NAME` call needed.
-fn renamed_sleep(dir: &std::path::Path, comm: &str) -> std::path::PathBuf {
-    let source = ["/bin/sleep", "/usr/bin/sleep"]
-        .into_iter()
-        .find(|candidate| std::path::Path::new(candidate).exists())
-        .expect("sleep(1) must exist on this Linux for the test");
+/// Copies `/bin/sh` to a temp file named `comm`: the kernel derives a
+/// freshly-exec'd process's `comm` from the basename of the path passed to
+/// `execve`, truncated to 15 bytes, so spawning this copy directly produces
+/// a real child process whose `comm` is exactly `comm` — no `PR_SET_NAME`
+/// call needed. Not a copy of `sleep`: Ubuntu's uutils coreutils is one
+/// multi-call binary that checks its executable name and exits at once
+/// under any other name, even with `argv[0]` set to `sleep`. The copy runs
+/// `read` on a piped stdin, so it lives until killed.
+fn renamed_shell(dir: &std::path::Path, comm: &str) -> std::path::PathBuf {
     let dest = dir.join(comm);
-    std::fs::copy(source, &dest).expect("copying sleep for a renamed test child");
+    std::fs::copy("/bin/sh", &dest).expect("copying /bin/sh for a renamed test child");
     let mut permissions = std::fs::metadata(&dest).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&dest, permissions).unwrap();
@@ -175,15 +174,16 @@ async fn real_child_process_drives_attach_and_detach() {
 
     let comm = unique_comm();
     let bin_dir = tempfile::tempdir().unwrap();
-    let binary = renamed_sleep(bin_dir.path(), &comm);
+    let binary = renamed_shell(bin_dir.path(), &comm);
 
     let events = create_session_instance(&host, &format!("vosu.testkit.{comm}"), &comm);
 
     let mut child = ChildGuard(
         std::process::Command::new(&binary)
-            .arg("60")
+            .args(["-c", "read _"])
+            .stdin(std::process::Stdio::piped())
             .spawn()
-            .expect("spawning the renamed sleep child"),
+            .expect("spawning the renamed shell child"),
     );
     let pid = child.0.id();
 
