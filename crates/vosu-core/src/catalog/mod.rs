@@ -6,5 +6,6 @@ pub mod game;
 pub mod install;
 pub mod plans;
 pub mod resolver;
+pub mod runtime;
 pub mod sources;
 pub mod trust;

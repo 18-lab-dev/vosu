@@ -213,11 +213,21 @@ pub trait RuntimeHandoff: Send + Sync {
         request: LoadRequest<'a>,
     ) -> HandoffFuture<'a, Result<(), String>>;
     fn rescan_web(&self) -> HandoffFuture<'_, ()>;
+    /// The installed graph durably published a new generation (before any
+    /// load). Composition refreshes generation-pinned consumers such as G0
+    /// game offers here. Must stay synchronous and bounded (no I/O).
+    fn installed_changed(&self) {}
 }
 
 /// Fresh S0 source policy at the load boundary; `None` refuses every load.
 pub trait PolicySource: Send + Sync {
     fn current(&self) -> Option<(SourceGeneration, Vec<SourceRecord>)>;
+    /// A6b.7 daemon-lifetime marker: in-process code of this installed
+    /// plugin id was revoked while running and stays in the address space,
+    /// so every later load is refused until the daemon restarts.
+    fn pending_restart(&self, _plugin: &str) -> bool {
+        false
+    }
 }
 impl<F> PolicySource for F
 where
@@ -266,13 +276,29 @@ impl InstallExecutor {
             runtime,
         }
     }
-    /// Load outcomes of the most recent committed operation.
+    /// Load outcomes of the most recent committed operation, or of
+    /// [`Self::load_committed`] until the next operation commits.
     pub fn load_reports(&self) -> Vec<LoadReport> {
         self.shared
             .reports
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+    /// Startup load of the already committed graph (the store's `open` ran
+    /// recovery first) through the same current-policy handoff as a fresh
+    /// install, dependency-first in record order. Composition calls it once,
+    /// before discovery starts and before any catalog operation can run.
+    pub async fn load_committed(&self) -> Vec<LoadReport> {
+        let layout = self.shared.store.layout().clone();
+        let records = self.shared.store.snapshot().records;
+        let reports = hand_off(&self.shared, &layout, &records).await;
+        self.shared
+            .reports
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone_from(&reports);
+        reports
     }
     /// Await the current operation without cancelling it (its job is
     /// finished, committed or rolled back, when this returns).
@@ -386,6 +412,7 @@ async fn execute(
     })
     .await
     .map_err(|_| InstallError::Worker)??;
+    shared.handoff.installed_changed();
     operation.progress("loading", "");
     let reports = hand_off(shared, &layout, &committed).await;
     *shared
@@ -419,7 +446,8 @@ async fn hand_off(
                     generation: *generation,
                     sources,
                 };
-                let installed = InstalledPolicy::new(artifact.clone(), record.approval.clone());
+                let installed = InstalledPolicy::new(artifact.clone(), record.approval.clone())
+                    .with_pending_restart(shared.policy.pending_restart(&record.id));
                 match policy.authorize_load(&installed) {
                     Err(error) => LoadStatus::Refused(error),
                     Ok(_) if artifact.runtime == Runtime::Process => {

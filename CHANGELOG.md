@@ -4,6 +4,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M6b
 
+- Compose the catalog services once at daemon startup: source/credential and
+  install-journal recovery run before discovery, installed catalog plugins load
+  under current source trust, and catalog game offers follow discovery.
+  Official catalog plugins now register their namespace schemas with official
+  provenance instead of failing as untrusted. Untrusting or removing a source
+  durably clears revoked approvals first and keeps running in-process code
+  "revocation pending restart" until vosu restarts, even after re-trust.
+  Corrupt catalog stores disable their feature without being rewritten.
 - Fetch catalog-v2 release assets through bounded GitHub API, nested-project
   GitLab, Gitea/Forgejo and literal static protocols with exact asset selection,
   initial-origin rejection and request-local credentials. Reconcile credential

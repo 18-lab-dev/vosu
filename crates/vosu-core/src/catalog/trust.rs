@@ -142,6 +142,12 @@ impl InstalledPolicy {
             pending_restart: false,
         }
     }
+    /// Re-applies composition's daemon-lifetime marker to a fresh load-time
+    /// policy. It can only add the refusal; `false` never clears a marker.
+    pub fn with_pending_restart(mut self, pending: bool) -> Self {
+        self.pending_restart |= pending;
+        self
+    }
     pub fn artifact(&self) -> &Artifact {
         &self.artifact
     }
