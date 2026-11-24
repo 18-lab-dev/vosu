@@ -76,6 +76,7 @@ vosu-osu -> vosu-osu-reader
 vosu-osu -> vosu-osu-state
 vosu-osu -> vosu-osu-calc
 vosu-osu -> vosu-surface
+vosu-osu -> vosu-sys
 
 vosu-test-harness -> vosu
 vosu-test-harness -> vosu-core

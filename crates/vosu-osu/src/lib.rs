@@ -28,6 +28,7 @@ pub mod memory;
 pub mod plugin;
 pub mod project;
 pub mod publish;
+pub mod resources;
 pub mod scan;
 pub mod session;
 pub mod settings;
