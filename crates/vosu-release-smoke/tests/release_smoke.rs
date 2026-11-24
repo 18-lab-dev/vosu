@@ -14,6 +14,24 @@ use vosu_proptest::bounded;
 
 use tempfile::TempDir;
 
+/// The test-harness adapter capture endpoint (GOLDEN_CONTRACT.md §5), which
+/// `build.rs` keeps out of every release build.
+const HARNESS_PATH: &str = "/__vosu_test/v1/adapter-capture?schema=v2";
+const HARNESS_HEADER: &str = "x-vosu-test-capture";
+const HARNESS_CAPABILITY_ENV: &str = "VOSU_TEST_ADAPTER_CAPTURE";
+const HARNESS_CAPABILITY: &str = "3e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f";
+
+fn assert_no_test_harness_endpoint(executable: &[u8]) {
+    for marker in ["/__vosu_test/", HARNESS_HEADER, HARNESS_CAPABILITY_ENV] {
+        assert!(
+            !executable
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes()),
+            "release executable contains {marker}"
+        );
+    }
+}
+
 struct ChildGuard(Option<Child>);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
@@ -172,6 +190,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
 
     #[cfg(target_os = "linux")]
     assert_packaged_linux_cli_preflight(&binary);
+    assert_no_test_harness_endpoint(&fs::read(&binary).expect("read release executable"));
 
     let roots = TempDir::new().expect("temporary release roots");
     let static_root = roots.path().join("static");
@@ -214,6 +233,9 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         // for the user's configured TEMP or OneDrive tree.
         .env("TEMP", roots.path().join("runtime-temp-sentinel"))
         .env("OneDrive", roots.path().join("onedrive-sentinel"))
+        // A release build has no harness endpoint to mount, even when offered
+        // a well-formed capability.
+        .env(HARNESS_CAPABILITY_ENV, HARNESS_CAPABILITY)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_process(&mut command);
@@ -251,6 +273,25 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     let asset = bounded!(client.get(format!("{base}/assets/homepage.css")).send()).unwrap();
     assert_eq!(asset.status(), 200);
     assert!(!bounded!(asset.bytes()).unwrap().is_empty());
+
+    let mut replies = Vec::new();
+    for (path, capability) in [
+        ("/__vosu_test/v1/unknown-sibling?schema=v2", None),
+        (HARNESS_PATH, Some(HARNESS_CAPABILITY)),
+        (HARNESS_PATH, None),
+    ] {
+        let mut request = client.get(format!("{base}{path}"));
+        if let Some(capability) = capability {
+            request = request.header(HARNESS_HEADER, capability);
+        }
+        let response = bounded!(request.send()).unwrap();
+        replies.push((response.status(), bounded!(response.bytes()).unwrap()));
+    }
+    assert_eq!(replies[0].0, 404);
+    assert!(
+        replies.iter().all(|reply| reply == &replies[0]),
+        "release build answered the harness endpoint: {replies:?}"
+    );
 
     let state = bounded!(client.get(format!("{base}/json")).send()).unwrap();
     let state_status = state.status();

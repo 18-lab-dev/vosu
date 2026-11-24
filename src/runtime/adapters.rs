@@ -162,3 +162,12 @@ impl WebSocketStateProvider for Adapters {
         self.provider(schema).demand(schema, filters)
     }
 }
+#[cfg(feature = "test-harness")]
+impl crate::server::adapter_capture::endpoint::CaptureSource for Adapters {
+    fn capture(
+        &self,
+        schema: WebSocketSchema,
+    ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
+        self.provider(schema).capture_for_harness()
+    }
+}
