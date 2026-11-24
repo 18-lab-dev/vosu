@@ -38,10 +38,14 @@ const PROJECTIONS: &[Projection] = &[common::project, play::project, settings::p
 #[derive(Default)]
 pub(crate) struct Caches {
     skin: skin::SkinCache,
+    tourney: tourney::AvailabilityCache,
 }
 impl Caches {
     pub(crate) fn take_error(&mut self) -> Option<std::io::Error> {
         self.skin.take_error()
+    }
+    pub(crate) fn take_tourney_unavailable(&mut self) -> bool {
+        self.tourney.take_transition()
     }
 }
 pub(crate) fn project_stateful(
@@ -51,6 +55,7 @@ pub(crate) fn project_stateful(
     sink: &mut dyn ProjectionSink,
 ) {
     caches.skin.project(facts, snapshot, sink);
+    caches.tourney.update(snapshot, facts);
 }
 
 #[derive(Default)]

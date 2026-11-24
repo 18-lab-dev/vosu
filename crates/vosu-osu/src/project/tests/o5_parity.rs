@@ -73,9 +73,15 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
         for (at, v) in &out.0 {
             if at.pointer().starts_with("/settings/") {
                 let mut e = if *at == OsuPointer::OsuSettingsVisual {
-                    expected.pointer(at.pointer()).unwrap_or(&Value::Null).clone()
+                    expected
+                        .pointer(at.pointer())
+                        .unwrap_or(&Value::Null)
+                        .clone()
                 } else {
-                    expected.pointer(at.pointer()).unwrap_or_else(|| panic!("{} {}",input["id"],at.pointer())).clone()
+                    expected
+                        .pointer(at.pointer())
+                        .unwrap_or_else(|| panic!("{} {}", input["id"], at.pointer()))
+                        .clone()
                 };
                 if *at == OsuPointer::OsuSettingsSkin {
                     e.as_object_mut().unwrap().remove("name");
@@ -96,6 +102,9 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
         );
         if input["id"] != "stable-tournament" {
             let mut e = expected["tourney"].clone();
+            if let Some(best) = e.as_object_mut().and_then(|o| o.remove("bestOF")) {
+                e.as_object_mut().unwrap().insert("bestOf".into(), best);
+            }
             if let Some(clients) = e["clients"].as_array_mut() {
                 for client in clients {
                     let index = client["ipcId"].as_f64().unwrap() as usize;

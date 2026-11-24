@@ -156,6 +156,13 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                             vosu_plugin_api::CborValue::Null,
                         );
                     }
+                    if inner.caches.take_tourney_unavailable() {
+                        self.host.log(
+                            LogLevel::Debug,
+                            "tournament projection unavailable: client score is missing",
+                            vosu_plugin_api::CborValue::Null,
+                        );
+                    }
                     let mut accepted = true;
                     if !inner.writer.is_empty() {
                         if let Err(error) = inner.writer.finish_into(&mut inner.out) {

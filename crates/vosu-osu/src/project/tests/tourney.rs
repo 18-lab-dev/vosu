@@ -79,4 +79,51 @@ fn lazer_lobby_populates_clients() {
     });
     assert_eq!(allocs, 0);
     assert!(writer.is_empty());
+    let f = facts(ClientType::Lazer);
+    let mut availability = tourney::AvailabilityCache::default();
+    availability.update(&s, &f);
+    assert!(!availability.take_transition());
+    let score = Arc::make_mut(&mut s.regular)
+        .lazer_multi_spectating
+        .data
+        .as_mut()
+        .unwrap()
+        .spectating_clients[0]
+        .score
+        .take()
+        .unwrap();
+    availability.update(&s, &f);
+    assert!(availability.take_transition());
+    availability.update(&s, &f);
+    assert!(
+        !availability.take_transition(),
+        "one debug log per unavailable transition"
+    );
+    out.0.clear();
+    tourney::project(&s, &f, &mut out);
+    assert!(
+        out.get(OsuPointer::OsuTourney).is_null(),
+        "never publish a partial play"
+    );
+    Arc::make_mut(&mut s.regular)
+        .lazer_multi_spectating
+        .data
+        .as_mut()
+        .unwrap()
+        .spectating_clients[0]
+        .score = Some(score);
+    availability.update(&s, &f);
+    assert!(!availability.take_transition());
+    Arc::make_mut(&mut s.regular)
+        .lazer_multi_spectating
+        .data
+        .as_mut()
+        .unwrap()
+        .spectating_clients[0]
+        .score = None;
+    availability.update(&s, &f);
+    assert!(
+        availability.take_transition(),
+        "a later unavailable transition is logged"
+    );
 }

@@ -6,19 +6,29 @@ use vosu_osu_model::{
 };
 use vosu_osu_state::StateBundleSnapshot;
 pub(super) fn missing_score(snap: &StateBundleSnapshot, facts: &SessionFacts) -> bool {
-    facts.client == ClientType::Lazer && snap.precise.status == 11
-        && snap.regular.lazer_multi_spectating.data.as_ref().is_some_and(|d|
-            d.spectating_clients.iter().any(|c| c.score.is_none()))
+    facts.client == ClientType::Lazer
+        && snap.precise.status == 11
+        && snap
+            .regular
+            .lazer_multi_spectating
+            .data
+            .as_ref()
+            .is_some_and(|d| d.spectating_clients.iter().any(|c| c.score.is_none()))
 }
 #[derive(Default)]
-pub(super) struct AvailabilityCache { unavailable: bool, pending: bool }
+pub(super) struct AvailabilityCache {
+    unavailable: bool,
+    pending: bool,
+}
 impl AvailabilityCache {
     pub(super) fn update(&mut self, snap: &StateBundleSnapshot, facts: &SessionFacts) {
         let unavailable = missing_score(snap, facts);
         self.pending |= unavailable && !self.unavailable;
         self.unavailable = unavailable;
     }
-    pub(super) fn take_transition(&mut self) -> bool { std::mem::take(&mut self.pending) }
+    pub(super) fn take_transition(&mut self) -> bool {
+        std::mem::take(&mut self.pending)
+    }
 }
 
 pub(super) fn project(
