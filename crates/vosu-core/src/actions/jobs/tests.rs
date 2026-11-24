@@ -1,5 +1,5 @@
 use super::*;
-use crate::actions::deadline::DeadlinePolicy;
+use crate::actions::InvocationPolicy;
 use crate::actions::waiters::{JobWait, MAX_WAITERS, MAX_WAITERS_PER_JOB};
 
 fn create(registry: &JobRegistry) -> Arc<JobSnapshot> {
@@ -24,7 +24,7 @@ fn running_capacity_never_evicts_and_terminal_pressure_evicts_oldest() {
     let now = Instant::now();
     let jobs: Vec<_> = (0..MAX_JOBS).map(|_| create(&registry)).collect();
     assert_eq!(create_result(&registry), Err(JobError::TooManyJobs));
-    assert!(registry.get(&jobs[0].id, &Principal::Broker).is_ok());
+    assert!(registry.get(&Principal::Broker, &jobs[0].id).is_ok());
     registry
         .finish_at(&jobs[11].id, TerminalOutcome::Cancelled, now)
         .unwrap();
@@ -44,10 +44,10 @@ fn running_capacity_never_evicts_and_terminal_pressure_evicts_oldest() {
         )
         .unwrap();
     assert_eq!(
-        registry.get(&jobs[11].id, &Principal::Broker),
+        registry.get(&Principal::Broker, &jobs[11].id),
         Err(JobError::UnknownJob)
     );
-    assert!(registry.get(&jobs[3].id, &Principal::Broker).is_ok());
+    assert!(registry.get(&Principal::Broker, &jobs[3].id).is_ok());
     assert_eq!(replacement.state, JobState::Running);
     assert_eq!(registry.inner.lock().entries.len(), MAX_JOBS);
 }
@@ -94,8 +94,8 @@ fn ownership_is_exact_launch_identity_and_broker_is_authoritative() {
     let job = registry
         .create(principal.clone(), "fixture.work".into(), None)
         .unwrap();
-    assert!(registry.get(&job.id, &Principal::Tool(owner)).is_ok());
-    assert_eq!(registry.get(&job.id, &stranger), Err(JobError::UnknownJob));
+    assert!(registry.get(&Principal::Tool(owner), &job.id).is_ok());
+    assert_eq!(registry.get(&stranger, &job.id), Err(JobError::UnknownJob));
     assert_eq!(
         registry.request_cancel(&job.id, &stranger).unwrap_err(),
         JobError::UnknownJob
@@ -107,10 +107,10 @@ fn ownership_is_exact_launch_identity_and_broker_is_authoritative() {
             .unwrap()
             .dispatch
     );
-    assert!(registry.get(&job.id, &principal).is_ok());
+    assert!(registry.get(&principal, &job.id).is_ok());
     let broker_job = create(&registry);
     assert_eq!(
-        registry.get(&broker_job.id, &principal),
+        registry.get(&principal, &broker_job.id),
         Err(JobError::UnknownJob)
     );
 }
@@ -143,7 +143,7 @@ fn cancel_is_advisory_idempotent_and_session_never_retargets() {
     assert_eq!(current.job.result, Some(Value::from(91)));
     assert!(!current.dispatch);
     assert_eq!(
-        registry.get(&other.id, &Principal::Broker).unwrap().state,
+        registry.get(&Principal::Broker, &other.id).unwrap().state,
         JobState::Running
     );
 }
@@ -163,7 +163,7 @@ fn snapshots_are_immutable_and_first_terminal_result_wins() {
             )
             .unwrap()
     );
-    let progress = registry.get(&initial.id, &Principal::Broker).unwrap();
+    let progress = registry.get(&Principal::Broker, &initial.id).unwrap();
     assert_eq!(progress.revision, 1);
     assert_eq!(progress.progress.as_ref().unwrap().fraction, Some(0.42));
     assert!(
@@ -193,7 +193,7 @@ fn snapshots_are_immutable_and_first_terminal_result_wins() {
             )
             .unwrap()
     );
-    let terminal = registry.get(&initial.id, &Principal::Broker).unwrap();
+    let terminal = registry.get(&Principal::Broker, &initial.id).unwrap();
     assert_eq!(terminal.revision, 2);
     assert_eq!(terminal.state, JobState::Failed);
     assert_eq!(terminal.error.as_ref().unwrap().code, "plugin_crashed");
@@ -217,7 +217,7 @@ fn cancelled_failure_has_no_public_error() {
             }),
         )
         .unwrap();
-    let terminal = registry.get(&job.id, &Principal::Broker).unwrap();
+    let terminal = registry.get(&Principal::Broker, &job.id).unwrap();
     assert_eq!(terminal.state, JobState::Cancelled);
     assert_eq!(terminal.error, None);
     assert_eq!(terminal.result, None);
@@ -357,10 +357,13 @@ async fn evicted_waiter_releases_global_count_without_touching_new_job() {
 #[tokio::test]
 async fn deadline_is_terminal_and_late_success_cannot_resurrect() {
     let registry = JobRegistry::new();
-    assert_eq!(DeadlinePolicy::default().timeout, Duration::from_secs(30));
+    assert_eq!(
+        InvocationPolicy::default().deadline,
+        Duration::from_secs(30)
+    );
     let job = create(&registry);
-    let _guard = DeadlinePolicy {
-        timeout: Duration::ZERO,
+    let _guard = InvocationPolicy {
+        deadline: Duration::ZERO,
     }
     .arm(&registry, &job.id)
     .unwrap();
@@ -375,7 +378,7 @@ async fn deadline_is_terminal_and_late_success_cannot_resurrect() {
             .finish(&job.id, TerminalOutcome::Succeeded(Value::from(71)))
             .unwrap()
     );
-    assert_eq!(registry.get(&job.id, &Principal::Broker).unwrap(), terminal);
+    assert_eq!(registry.get(&Principal::Broker, &job.id).unwrap(), terminal);
 }
 
 #[tokio::test]
@@ -383,7 +386,7 @@ async fn deadlines_do_not_keep_registry_alive() {
     let registry = JobRegistry::new();
     let weak = Arc::downgrade(&registry.inner);
     let job = create(&registry);
-    let _guard = DeadlinePolicy::default().arm(&registry, &job.id).unwrap();
+    let _guard = InvocationPolicy::default().arm(&registry, &job.id).unwrap();
     drop(registry);
     assert!(weak.upgrade().is_none());
 }
@@ -413,7 +416,7 @@ fn creation_snapshot_stays_running_after_synchronous_success() {
         .unwrap();
     assert_eq!(initial.state, JobState::Running);
     assert_eq!(initial.revision, 0);
-    let current = registry.get(&initial.id, &Principal::Broker).unwrap();
+    let current = registry.get(&Principal::Broker, &initial.id).unwrap();
     assert_eq!(current.state, JobState::Succeeded);
     assert_eq!(current.revision, 1);
     assert_eq!(current.result, Some(Value::from(83)));
@@ -444,7 +447,7 @@ async fn competing_terminal_results_accept_exactly_one() {
     .await
     .expect("bounded terminal race");
     assert_ne!(first.unwrap(), second.unwrap());
-    let current = registry.get(&job.id, &Principal::Broker).unwrap();
+    let current = registry.get(&Principal::Broker, &job.id).unwrap();
     assert_eq!(current.revision, 1);
     assert!(current.state.is_terminal());
     assert_eq!(

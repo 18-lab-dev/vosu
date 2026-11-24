@@ -17,7 +17,7 @@ pub use invocation::{
 };
 pub use registry::{ActionDescriptor, ActionRegistry, ToolAuthority};
 
-pub use deadline::{DeadlineGuard, DeadlinePolicy};
+pub use deadline::DeadlineGuard;
 pub use jobs::{
     CancellationRequest, JobError, JobFailure, JobOwner, JobProgress, JobRegistry, JobSnapshot,
     JobState, Principal, TerminalOutcome,

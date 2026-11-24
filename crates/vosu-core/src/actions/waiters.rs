@@ -62,6 +62,16 @@ impl Drop for WaiterGuard {
 }
 
 impl JobRegistry {
+    pub async fn wait(
+        &self,
+        principal: &Principal,
+        id: &str,
+        after: u64,
+        wait: Duration,
+    ) -> Result<Arc<JobSnapshot>, JobError> {
+        Ok(self.poll(id, principal, after, wait)?.wait().await)
+    }
+
     /// Snapshot check and reservation share one lock, so progress cannot be lost
     /// between checking `after` and subscribing. Overflow is a normal read.
     pub fn poll(

@@ -113,6 +113,10 @@ pub(super) struct Entry {
     owner: Principal,
     terminal_at: Option<Instant>,
     cancel_requested: bool,
+    invocation: Option<(
+        std::sync::Weak<crate::plugin::PluginHost>,
+        super::InvocationId,
+    )>,
     pub waiters: usize,
     pub created_at: Instant,
     pub changes: watch::Sender<Arc<JobSnapshot>>,
@@ -222,6 +226,7 @@ impl JobRegistry {
                 owner,
                 terminal_at: None,
                 cancel_requested: false,
+                invocation: None,
                 created_at: now,
                 waiters: 0,
                 changes,
@@ -230,7 +235,7 @@ impl JobRegistry {
         Ok(snapshot)
     }
 
-    pub fn get(&self, id: &str, principal: &Principal) -> Result<Arc<JobSnapshot>, JobError> {
+    pub fn get(&self, principal: &Principal, id: &str) -> Result<Arc<JobSnapshot>, JobError> {
         self.get_at(id, principal, Instant::now())
     }
 
@@ -291,6 +296,7 @@ impl JobRegistry {
         snapshot.revision = revision;
         if let Some(outcome) = outcome {
             entry.terminal_at = Some(now);
+            entry.invocation = None;
             match outcome {
                 TerminalOutcome::Succeeded(value) => {
                     snapshot.state = JobState::Succeeded;
@@ -312,7 +318,7 @@ impl JobRegistry {
         Ok(true)
     }
 
-    pub fn request_cancel(
+    pub(crate) fn request_cancel(
         &self,
         id: &str,
         principal: &Principal,
@@ -330,6 +336,47 @@ impl JobRegistry {
             job: Arc::clone(&entry.snapshot),
             dispatch,
         })
+    }
+
+    /// Associates a prepared invocation without retaining the host or the tool
+    /// authority. A cancellation racing preparation is forwarded after unlock.
+    pub fn bind_invocation(
+        &self,
+        id: &str,
+        executor: &super::InvocationExecutor,
+        invocation: super::InvocationId,
+    ) -> Result<(), JobError> {
+        let cancel = {
+            let mut state = self.inner.lock();
+            let entry = state.entries.get_mut(id).ok_or(JobError::UnknownJob)?;
+            if entry.snapshot.state.is_terminal() {
+                return Ok(());
+            }
+            entry.invocation = Some((executor.host.clone(), invocation));
+            entry.cancel_requested
+        };
+        if cancel {
+            executor.cancel(invocation);
+        }
+        Ok(())
+    }
+
+    pub fn cancel(&self, principal: &Principal, id: &str) -> Result<Arc<JobSnapshot>, JobError> {
+        let request = self.request_cancel(id, principal)?;
+        if request.dispatch {
+            let invocation = self
+                .inner
+                .lock()
+                .entries
+                .get(id)
+                .and_then(|entry| entry.invocation.clone());
+            if let Some((host, invocation)) = invocation
+                && let Some(host) = host.upgrade()
+            {
+                host.cancel_action(invocation);
+            }
+        }
+        Ok(request.job)
     }
 
     /// Detach asks for cancellation without changing the captured session id.

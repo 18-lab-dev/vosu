@@ -13,22 +13,96 @@ use crate::plugin::{host::tests::test_host, host_services::PluginHostHandler, re
 const WAIT: Duration = Duration::from_secs(5);
 static EVENTS: LazyLock<Mutex<HashMap<String, mpsc::SyncSender<Message>>>> =
     LazyLock::new(Mutex::default);
+static GATES: LazyLock<Mutex<HashMap<String, mpsc::Receiver<()>>>> = LazyLock::new(Mutex::default);
+
+mod frame_limits;
+mod pressure;
+mod reentrant;
+mod sessions;
 
 mod fixture {
-    use vosu_plugin_api::{Init, Message, Plugin, PluginError, VtableHostServices};
-    pub struct ActionPlugin(std::sync::mpsc::SyncSender<Message>);
+    use vosu_plugin_api::{
+        ActionCall, ActionResult, ActionStatus, CborValue, HostServices, Init, Message, Plugin,
+        PluginError, VtableHostServices, vosu_status,
+    };
+    pub struct ActionPlugin {
+        events: std::sync::mpsc::SyncSender<Message>,
+        gate: Option<std::sync::mpsc::Receiver<()>>,
+        host: VtableHostServices,
+        id: String,
+        parent: Option<u64>,
+    }
     impl Plugin for ActionPlugin {
-        fn create(_: VtableHostServices, init: Init) -> Result<Self, PluginError> {
-            Ok(Self(
-                super::EVENTS
+        fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+            Ok(Self {
+                events: super::EVENTS
                     .lock()
                     .unwrap()
                     .remove(&init.plugin_id)
                     .unwrap(),
-            ))
+                gate: super::GATES.lock().unwrap().remove(&init.plugin_id),
+                id: init.plugin_id,
+                host,
+                parent: None,
+            })
         }
         fn on_message(&mut self, message: Message, _: u64) -> Result<(), PluginError> {
-            self.0.try_send(message).unwrap();
+            let blocked = matches!(&message, Message::TimerFired(t) if t.timer == 999);
+            let response = match &message {
+                Message::ActionInvoke(invoked) => {
+                    let text = match &invoked.args {
+                        CborValue::Text(text) => text.as_str(),
+                        _ => "",
+                    };
+                    if let Some(target) = text
+                        .strip_prefix("call:")
+                        .or_else(|| text.strip_prefix("callback:"))
+                    {
+                        self.parent = Some(invoked.invocation);
+                        let args = if text.starts_with("call:") {
+                            format!("callback:{}.nested.echo", self.id)
+                        } else {
+                            "auto-result".into()
+                        };
+                        Some(Message::ActionCall(ActionCall {
+                            invocation: 77,
+                            action: target.into(),
+                            session: None,
+                            args: CborValue::Text(args),
+                        }))
+                    } else if text == "auto-result" {
+                        Some(Message::ActionResult(ActionResult {
+                            invocation: invoked.invocation,
+                            status: ActionStatus::Ok,
+                            value: Some(CborValue::Text("reentrant result".into())),
+                            code: None,
+                            message: None,
+                        }))
+                    } else {
+                        None
+                    }
+                }
+                Message::ActionResult(result) if result.invocation == 77 => {
+                    self.parent.take().map(|parent| {
+                        Message::ActionResult(ActionResult {
+                            invocation: parent,
+                            ..result.clone()
+                        })
+                    })
+                }
+                _ => None,
+            };
+            self.events.try_send(message).unwrap();
+            if blocked {
+                self.gate
+                    .as_ref()
+                    .expect("test gate")
+                    .recv_timeout(super::WAIT)
+                    .expect("bounded dispatch gate");
+            }
+            if let Some(response) = response {
+                assert_eq!(self.host.send(&response, 0), vosu_status::VOSU_OK);
+            }
             Ok(())
         }
     }
@@ -36,7 +110,18 @@ mod fixture {
 }
 
 fn instance(host: &Arc<PluginHost>, id: u64, name: &str, grants: &str) -> mpsc::Receiver<Message> {
-    let (tx, rx) = mpsc::sync_channel(256);
+    instance_mode(host, id, name, grants, "none", "")
+}
+
+fn instance_mode(
+    host: &Arc<PluginHost>,
+    id: u64,
+    name: &str,
+    grants: &str,
+    mode: &str,
+    matcher: &str,
+) -> mpsc::Receiver<Message> {
+    let (tx, rx) = mpsc::sync_channel(512);
     EVENTS.lock().unwrap().insert(name.into(), tx);
     let manifest = format!(
         r#"
@@ -54,12 +139,13 @@ version = "1.0.0"
 title = "Echo"
 args_schema = "args.json"
 result_schema = "result.json"
-session = "none"
+session = "{mode}"
 cli = true
 [[provides]]
 id = "action:{name}.nested.echo"
 version = "1.0.0"
 {grants}
+{matcher}
 "#
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
@@ -173,9 +259,7 @@ fn actions_invalid_result_timeout_and_loss_are_terminal() {
     let events = instance(&host, 9111, "tests.actions.failure", "");
     let descriptor = host.get("tests.actions.failure.nested.echo").unwrap();
     let (sink, result) = sink();
-    let executor = host.invocation_executor_with_policy(InvocationPolicy {
-        deadline: Duration::from_millis(50),
-    });
+    let executor = host.invocation_executor();
     let id = executor
         .invoke(
             Principal::Broker,
@@ -190,6 +274,9 @@ fn actions_invalid_result_timeout_and_loss_are_terminal() {
     assert!(
         matches!(result.recv_timeout(WAIT).unwrap(), TerminalOutcome::Failed(e) if e.code == "invalid_result")
     );
+    let executor = host.invocation_executor_with_policy(InvocationPolicy {
+        deadline: Duration::from_millis(50),
+    });
     let id = executor
         .invoke(
             Principal::Broker,

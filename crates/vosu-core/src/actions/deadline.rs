@@ -1,22 +1,10 @@
 //! One-shot invocation deadlines; no retention sweep or idle background worker.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::jobs::{JobError, JobFailure, JobRegistry, TerminalOutcome};
 
-#[derive(Debug, Clone, Copy)]
-pub struct DeadlinePolicy {
-    pub timeout: Duration,
-}
-
-impl Default for DeadlinePolicy {
-    fn default() -> Self {
-        Self {
-            timeout: Duration::from_secs(30),
-        }
-    }
-}
+use super::InvocationPolicy;
 
 /// Owned by the invocation slot. Dropping it cancels the timer, not the job.
 /// No join is necessary: the task holds only a weak registry and a watch receiver.
@@ -28,13 +16,13 @@ impl Drop for DeadlineGuard {
     }
 }
 
-impl DeadlinePolicy {
+impl InvocationPolicy {
     /// Call in a Tokio runtime after reserving the invocation, before dispatch.
     /// Expiry is measured from job creation, not from a later HTTP poll/arm.
     pub fn arm(self, registry: &JobRegistry, id: &str) -> Result<DeadlineGuard, JobError> {
         let state = registry.inner.lock();
         let entry = state.entries.get(id).ok_or(JobError::UnknownJob)?;
-        let deadline = tokio::time::Instant::from_std(entry.created_at) + self.timeout;
+        let deadline = tokio::time::Instant::from_std(entry.created_at) + self.deadline;
         let mut changes = entry.changes.subscribe();
         let weak = Arc::downgrade(&registry.inner);
         let id = id.to_owned();

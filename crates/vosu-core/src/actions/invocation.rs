@@ -87,10 +87,21 @@ impl InvocationExecutor {
         {
             return Err(InvocationError::PermissionDenied);
         }
-        self.host
+        let tool_check = match &principal {
+            Principal::Tool(owner) => Some((
+                owner.clone(),
+                Arc::clone(self.tool_authority.as_ref().expect("checked authority")),
+                Arc::clone(&action),
+            )),
+            _ => None,
+        };
+        let mut prepared = self
+            .host
             .upgrade()
             .ok_or(InvocationError::Unavailable)?
-            .prepare_action(principal, action, session, arguments, self.policy)
+            .prepare_action(principal, action, session, arguments, self.policy)?;
+        prepared.tool_check = tool_check;
+        Ok(prepared)
     }
 
     pub fn cancel(&self, invocation: InvocationId) {
@@ -103,15 +114,29 @@ impl InvocationExecutor {
 pub struct PreparedInvocation {
     pub(crate) host: Weak<PluginHost>,
     pub(crate) id: InvocationId,
-    pub(crate) message: Option<vosu_plugin_api::Message>,
+    pub(crate) message: Option<crate::plugin::OwnedMessage>,
     pub(crate) provider: crate::plugin::PluginInstanceId,
     pub(crate) policy: InvocationPolicy,
+    pub(crate) tool_check: Option<(
+        super::JobOwner,
+        Arc<dyn super::ToolAuthority>,
+        Arc<ActionDescriptor>,
+    )>,
 }
 impl PreparedInvocation {
+    pub fn id(&self) -> InvocationId {
+        self.id
+    }
+
     pub fn invoke(
         mut self,
         sink: Arc<dyn InvocationSink>,
     ) -> Result<InvocationId, InvocationError> {
+        if let Some((owner, authority, action)) = &self.tool_check
+            && !authority.authorizes(owner, action)
+        {
+            return Err(InvocationError::PermissionDenied);
+        }
         let host = self.host.upgrade().ok_or(InvocationError::Unavailable)?;
         host.start_action(
             self.id,

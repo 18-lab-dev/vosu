@@ -10,7 +10,7 @@ use vosu_plugin_api::{
     Caller, CallerKind, CborValue, Message, vosu_status,
 };
 
-use super::PluginHost;
+use super::{InstanceSlot, OwnedMessage, PluginHost};
 use crate::actions::{
     ActionDescriptor, ActionRegistry, InvocationError, InvocationExecutor, InvocationId,
     InvocationPolicy, InvocationSink, JobFailure, Principal, TerminalOutcome,
@@ -28,6 +28,7 @@ pub(super) struct PendingInvocation {
     pub sink: Option<Arc<dyn InvocationSink>>,
     pub deadline: Option<tokio::task::JoinHandle<()>>,
     pub cancelled: bool,
+    pub dispatched: bool,
     pub caller: Option<PluginInstanceId>,
 }
 impl Drop for PendingInvocation {
@@ -169,6 +170,13 @@ impl PluginHost {
             .map_err(|_| InvocationError::InvalidArguments)?;
         let args =
             CborValue::serialized(&arguments).map_err(|_| InvocationError::InvalidArguments)?;
+        // Close detach-vs-reserve: lifecycle removes a session under this lock,
+        // then cancels pending invocations after unlocking. Either it observes
+        // this reservation, or this check observes its completed removal.
+        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        if handle.is_some_and(|handle| !sessions.is_identified(handle)) {
+            return Err(InvocationError::InvalidSession);
+        }
         let id = {
             let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
             let registered = state
@@ -179,6 +187,9 @@ impl PluginHost {
                 return Err(InvocationError::UnknownAction);
             }
             if let Principal::Plugin(instance) = principal {
+                if instance == action.provider {
+                    return Err(InvocationError::PermissionDenied);
+                }
                 let capability = format!("action:{}", action.id);
                 if !state.grants.get(&instance).is_some_and(|grants| {
                     grants.iter().any(|g| {
@@ -206,8 +217,7 @@ impl PluginHost {
                 args,
             });
             // The callee id's CBOR width is part of the frame budget.
-            message
-                .encode_payload()
+            let message = OwnedMessage::from_message(&message, 0)
                 .map_err(|_| InvocationError::ArgumentsTooLarge)?;
             state.pending.insert(
                 id,
@@ -217,6 +227,7 @@ impl PluginHost {
                     sink: None,
                     deadline: None,
                     cancelled: false,
+                    dispatched: false,
                     caller: match principal {
                         Principal::Plugin(instance) => Some(instance),
                         _ => None,
@@ -225,12 +236,14 @@ impl PluginHost {
             );
             (id, message)
         };
+        drop(sessions);
         Ok(crate::actions::PreparedInvocation {
             host: self.self_ref.clone(),
             id: id.0,
             message: Some(id.1),
             provider: action.provider,
             policy,
+            tool_check: None,
         })
     }
 
@@ -246,7 +259,7 @@ impl PluginHost {
         &self,
         invocation: InvocationId,
         provider: PluginInstanceId,
-        message: Message,
+        message: OwnedMessage,
         sink: Arc<dyn InvocationSink>,
         policy: InvocationPolicy,
     ) -> Result<(), InvocationError> {
@@ -273,10 +286,31 @@ impl PluginHost {
                 timer.abort();
             }
         }
-        if self.dispatch_to_instance(provider, &message, 0).is_err() {
+        let dispatched = {
+            let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            match instances.get(&provider) {
+                Some(InstanceSlot::Live(entry)) => entry.instance.dispatch(message),
+                _ => Err(crate::plugin::HostError::UnknownInstance),
+            }
+        };
+        if dispatched.is_err() {
             self.finish_action(
                 invocation,
                 failure("plugin_crashed", "Action provider unavailable"),
+            );
+        }
+        let cancel = {
+            let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
+            state.pending.get_mut(&invocation).is_some_and(|pending| {
+                pending.dispatched = true;
+                pending.cancelled
+            })
+        };
+        if cancel {
+            let _ = self.dispatch_to_instance(
+                provider,
+                &Message::ActionCancel(ActionCancel { invocation }),
+                0,
             );
         }
         Ok(())
@@ -292,6 +326,9 @@ impl PluginHost {
                 return;
             }
             pending.cancelled = true;
+            if !pending.dispatched {
+                return;
+            }
             pending.action.provider
         };
         // Advisory only: neither the invocation nor a relay slot is removed.
@@ -408,11 +445,19 @@ impl PluginHost {
                 })
                 .collect();
             ids.into_iter()
-                .filter_map(|id| state.pending.remove(&id))
+                .filter_map(|id| state.pending.remove(&id).map(|pending| (id, pending)))
                 .collect::<Vec<_>>()
         };
-        for entry in pending {
-            if let Some(sink) = &entry.sink {
+        for (id, entry) in pending {
+            if entry.caller == Some(instance) {
+                if entry.action.provider != instance && entry.dispatched {
+                    let _ = self.dispatch_to_instance(
+                        entry.action.provider,
+                        &Message::ActionCancel(ActionCancel { invocation: id }),
+                        0,
+                    );
+                }
+            } else if let Some(sink) = &entry.sink {
                 sink.finish(failure("plugin_crashed", "Action provider unavailable"));
             }
         }
