@@ -5,6 +5,8 @@
 mod actions;
 #[path = "api_v1/import.rs"]
 mod import;
+#[path = "api_v1/resource_lifecycle.rs"]
+mod resource_lifecycle;
 #[path = "api_v1/resource_redirects.rs"]
 mod resource_redirects;
 #[path = "api_v1/resources.rs"]
@@ -19,3 +21,5 @@ mod state;
 mod subscriptions;
 #[path = "api_v1/support.rs"]
 mod support;
+#[path = "api_v1/trees.rs"]
+mod trees;

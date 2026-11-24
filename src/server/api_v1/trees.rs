@@ -47,7 +47,13 @@ impl ResourceHttp {
                 .await
             {
                 Ok(member) => member,
-                Err(error) => return headers::provider_error(error, true),
+                Err(error) => {
+                    return self.recheck_failure(
+                        token,
+                        ReferenceClass::Tree,
+                        headers::provider_error(error, true),
+                    );
+                }
             };
             let validators = match &member.source {
                 ResolvedResource::File(file) => {
@@ -59,7 +65,7 @@ impl ResourceHttp {
                     representation_validators(&bytes, None)
                 }
             };
-            return resources::serve(
+            let response = resources::serve(
                 member.source,
                 member.entry.media_type,
                 validators,
@@ -68,6 +74,7 @@ impl ResourceHttp {
                 request,
             )
             .await;
+            return self.recheck_failure(token, ReferenceClass::Tree, response);
         }
         let index = match self
             .trees
@@ -75,7 +82,13 @@ impl ResourceHttp {
             .await
         {
             Ok(index) => index,
-            Err(error) => return headers::provider_error(error, true),
+            Err(error) => {
+                return self.recheck_failure(
+                    token,
+                    ReferenceClass::Tree,
+                    headers::provider_error(error, true),
+                );
+            }
         };
         let validators = FileValidators {
             etag: index.etag.clone(),

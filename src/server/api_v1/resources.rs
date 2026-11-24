@@ -48,7 +48,13 @@ impl ResourceHttp {
             .await
         {
             Ok(source) => source,
-            Err(error) => return headers::provider_error(error, false),
+            Err(error) => {
+                return self.recheck_failure(
+                    token,
+                    ReferenceClass::Resource,
+                    headers::provider_error(error, false),
+                );
+            }
         };
         let validators = FileValidators {
             etag: format!("\"{}\"", published.identity.id.as_str()),
@@ -57,7 +63,7 @@ impl ResourceHttp {
                 ResolvedResource::Stream(_) => None,
             },
         };
-        serve(
+        let response = serve(
             source,
             published.identity.media_type,
             validators,
@@ -65,7 +71,32 @@ impl ResourceHttp {
             method,
             request,
         )
-        .await
+        .await;
+        self.recheck_failure(token, ReferenceClass::Resource, response)
+    }
+
+    /// A provider can disappear after membership was checked but before its
+    /// reply (or first body chunk). Prefer the now-retired identity's 410 over
+    /// blaming a still-current provider with 502/504. Other live owners retain
+    /// their authority; provider failure alone never retires their reference.
+    pub(super) fn recheck_failure(
+        &self,
+        token: &str,
+        class: ReferenceClass,
+        response: Response,
+    ) -> Response {
+        if matches!(
+            response.status(),
+            StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT
+        ) && let Some(host) = self.host.upgrade()
+            && matches!(
+                host.published_resource(token, class),
+                Err(vosu_core::resources::RegistryError::Gone)
+            )
+        {
+            return headers::missing(class == ReferenceClass::Tree, true);
+        }
+        response
     }
 }
 
