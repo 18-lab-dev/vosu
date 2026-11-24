@@ -1,0 +1,49 @@
+# Mirrors .github/workflows/ci.yml's `validation` job's `ubuntu-latest`
+# runner userspace for the local "test-linux" gate step
+# (scripts/ci-container/run_tests.py), so a failure that only shows up on
+# that distribution's packages (e.g. ubuntu-latest's uutils-coreutils
+# `sleep` refusing to run under a renamed executable name, run 45295358591)
+# is caught locally instead of burning hosted CI minutes.
+#
+# UBUNTU_RELEASE is the one place this gate names the runner's Ubuntu
+# release; bump it here when GitHub's ubuntu-latest moves (today 26.04).
+# scripts/ci-container/run_tests.py tags the built image with this file's
+# content hash, so editing anything below (including this ARG's default)
+# forces a rebuild; an unchanged file reuses the cached image.
+ARG UBUNTU_RELEASE=26.04
+FROM docker.io/library/ubuntu:${UBUNTU_RELEASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The nextest archive replayed here was already built on the host, so
+# nothing in this image compiles the workspace itself -- but some tests
+# shell out to a compiler or interpreter at run time, so this mirrors
+# ci.yml's "Install Linux native dependencies" apt line verbatim (clang
+# libbpf-dev libelf-dev) rather than guessing a runtime-only subset, plus
+# what else those tests need that the hosted runner image preinstalls:
+#   - clang/libbpf-dev/libelf-dev: ci.yml's own line. clang is also a C
+#     compiler `crates/vosu-plugin-api/tests/layout.rs`'s
+#     `c_header_layout_matches_the_table` invokes directly (checks $CC, cc,
+#     clang, gcc) to verify include/vosu_plugin.h against the ABI doc; the
+#     -dev headers cover libbpf-cargo's skeleton codegen if a test ever
+#     rebuilds it, and libelf1t64 (their shared runtime library) is also
+#     the one library the workspace's own Linux test binaries need beyond
+#     what the base image ships (checked with `ldd` against every archived
+#     binary; libc/libgcc_s/libz/libzstd already resolve).
+#   - ca-certificates: TLS roots for any test that opens an HTTPS connection.
+#   - python3: `tests/fixtures/tool-host/service.py`, spawned by
+#     crates/vosu/src/tools/tests.rs's tool-host tests (`tool.toml` names
+#     `python3 service.py` as the service command).
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        ca-certificates \
+        clang \
+        libbpf-dev \
+        libelf-dev \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ubuntu:26.04 already ships a uid-1000 "ubuntu" user; reuse it rather than
+# creating another, which collides on recent base images.
+USER ubuntu
+WORKDIR /home/ubuntu

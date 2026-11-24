@@ -102,7 +102,7 @@ python scripts/land.py [--topic <name>]
 ```
 
 - `prepush.py` refuses a dirty tree. It runs every applicable `ci.yml` check against `HEAD`:
-  - formatting, Linux Clippy and the full workspace tests (unit/integration tests through `cargo nextest run`, doctests through a separate `cargo test --doc`) — a test that runs past `.config/nextest.toml`'s `slow-timeout` bound is killed and reported by name instead of hanging the gate; `cargo doc --workspace --no-deps --all-features --locked` with `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` denies broken intra-doc links;
+  - formatting, Linux Clippy and the full workspace tests (unit/integration tests through `cargo nextest run`, doctests through a separate `cargo test --doc`) — a test that runs past `.config/nextest.toml`'s `slow-timeout` bound is killed and reported by name instead of hanging the gate; `cargo doc --workspace --no-deps --all-features --locked` with `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` denies broken intra-doc links. `cargo nextest run` itself runs inside a container built from `scripts/ci-container/Containerfile` (a local podman image mirroring `ci.yml`'s `ubuntu-latest` validation runner, rebuilt only when that file changes) when `podman` is on PATH, so a failure specific to that distribution's packages (e.g. ubuntu-latest's uutils-coreutils `sleep` refusing a renamed executable, run 45295358591) is caught locally instead of on hosted CI; without `podman` it falls back to a plain host run and records that fallback in the evidence;
   - the repository check scripts and every `scripts/test_*.py` suite;
   - actionlint when workflows changed;
   - Windows MSVC cross-Clippy;
@@ -113,6 +113,7 @@ python scripts/land.py [--topic <name>]
 - `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch. Pass `--base <branch>` (and the matching `prepush.py --base <branch>`) to land onto a branch other than `main`, e.g. `v2/main`.
 - `--skip` is for local iteration only; `land.py` refuses evidence with a skipped or failed required step. Fix the cause and rerun. Do not weaken tests or bypass the gate.
 - When `ci.yml` gains a check, add it to `prepush.py` or `native-ci.ps1` in the same change. `scripts/test_gate_tooling.py` fails until the local gate covers it.
+- `podman` is an optional prerequisite for the fastest, most accurate `test-linux` step; without it the gate still runs, on the host, and says so in its evidence. `scripts/ci-container/run_tests.py` can be run directly (after `source scripts/dev-env.sh` and exporting `CARGO_TARGET_DIR`) to iterate on the container step alone.
 - Hosted cache saves for Cargo downloads and `target` artifacts run only from `main` (caches are branch-scoped and only `main`'s are readable cross-branch); `ci/<topic>` and pull-request runs restore only. A `main` push whose exact SHA already passed `CI required` on its `ci/<topic>` run (checked by `scripts/ci-check-verified.py`) skips its own lint/test steps and, on a cache miss, only rebuilds without testing to refresh the cache.
 
 ## Compatibility and security invariants
