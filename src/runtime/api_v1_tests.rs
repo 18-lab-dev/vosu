@@ -85,3 +85,21 @@ async fn resource_route_uses_production_provider_composition() {
         logger.shutdown().await.unwrap();
     });
 }
+
+#[tokio::test]
+async fn production_resource_startup_requires_a_persistent_valid_secret() {
+    vosu_proptest::bounded!(async {
+        let root = tempfile::tempdir().unwrap();
+        let store = resource_store(root.path().to_path_buf()).await.unwrap();
+        assert!(store.is_persistent());
+        std::fs::write(
+            root.path().join("resource-secret"),
+            b"corrupt-secret-sentinel",
+        )
+        .unwrap();
+        assert!(resource_store(root.path().to_path_buf()).await.is_err());
+        let not_directory = root.path().join("not-a-directory");
+        std::fs::write(&not_directory, b"cannot-create-resource-storage").unwrap();
+        assert!(resource_store(not_directory).await.is_err());
+    });
+}

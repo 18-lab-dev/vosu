@@ -178,7 +178,7 @@ fn resources_lazer_and_stable_use_distinct_roots_and_logical_names() {
     assert_eq!(
         prepared.lookup(SKIN, &skin.key, "pretty.png"),
         Some(ResourceResolved::TreePath {
-            root: "songs".into(),
+            root: "files".into(),
             path: hash.into(),
             entry_path: "Pretty.PNG".into()
         })
@@ -206,7 +206,7 @@ fn resources_skin_exact_then_deterministic_case_fallback_and_rejects_escapes() {
     assert_eq!(
         prepared.lookup(SKIN, &reference.key, "sub\\hit.png"),
         Some(ResourceResolved::TreePath {
-            root: "skin".into(),
+            root: "skins".into(),
             path: "Sub/Hit.PNG".into(),
             entry_path: "Sub/Hit.PNG".into()
         })
@@ -330,7 +330,7 @@ fn resources_skin_exact_beats_folded_alias_and_failed_open_can_recover() {
     assert_eq!(
         prepared.lookup(SKIN, &skin.key, "hit.png"),
         Some(ResourceResolved::TreePath {
-            root: "skin".into(),
+            root: "skins".into(),
             path: "image.png".into(),
             entry_path: "hit.png".into(),
         })
@@ -338,7 +338,7 @@ fn resources_skin_exact_beats_folded_alias_and_failed_open_can_recover() {
     assert_eq!(
         prepared.lookup(SKIN, &skin.key, "Hit.Png"),
         Some(ResourceResolved::TreePath {
-            root: "skin".into(),
+            root: "skins".into(),
             path: "map.osu".into(),
             entry_path: "HIT.PNG".into(),
         })

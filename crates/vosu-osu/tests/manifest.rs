@@ -211,7 +211,8 @@ fn manifest_covers_match_coverage_table() {
             "{field}"
         );
     }
-    assert!(manifest.resource_kinds.is_empty());
+    assert_eq!(manifest.resource_kinds.len(), 5);
+    assert_eq!(manifest.root_slots, ["songs", "skins", "files"]);
 }
 
 #[test]

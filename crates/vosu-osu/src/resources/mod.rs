@@ -1,6 +1,8 @@
 //! osu!-owned resource preparation and lookup. O2 connects these cold selection
 //! changes to publication and ABI dispatch; no capture-tick hooks live here.
 mod identity;
+pub mod legacy_skin;
+pub(crate) mod publication;
 mod resolve;
 mod roots;
 mod set;

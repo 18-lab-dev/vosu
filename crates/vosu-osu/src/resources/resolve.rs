@@ -30,6 +30,7 @@ struct File {
     reference: ResourceRef,
     path: String,
     identity: FileIdentity,
+    root: &'static str,
 }
 
 struct Lease {
@@ -50,10 +51,11 @@ pub struct PreparedResources {
 impl PreparedResources {
     pub(super) fn prepare(selection: Selection) -> Self {
         let mut roots = Vec::with_capacity(2);
-        if let Some(root) = Root::open("songs", selection.roots.songs) {
+        let songs = if selection.lazer { "files" } else { "songs" };
+        if let Some(root) = Root::open(songs, selection.roots.songs) {
             roots.push(root);
         }
-        if let Some(root) = Root::open("skin", selection.roots.skin) {
+        if let Some(root) = Root::open("skins", selection.roots.skin) {
             roots.push(root);
         }
         let mut result = Self {
@@ -63,7 +65,7 @@ impl PreparedResources {
             streams: BTreeMap::new(),
             next_stream: Arc::new(AtomicU64::new(1)),
         };
-        if let Some(root) = result.roots.iter().find(|r| r.name == "songs") {
+        if let Some(root) = result.roots.iter().find(|r| r.name == songs) {
             for (kind, path, name) in [
                 (CHART, selection.chart, selection.chart_name),
                 (AUDIO, selection.audio, selection.audio_name),
@@ -93,16 +95,17 @@ impl PreparedResources {
                         },
                         path,
                         identity,
+                        root: songs,
                     },
                 );
             }
         }
         for (kind, source, root_name) in [
-            (SET, selection.set, "songs"),
+            (SET, selection.set, songs),
             (
                 SKIN,
                 selection.skin,
-                if selection.lazer { "songs" } else { "skin" },
+                if selection.lazer { "files" } else { "skins" },
             ),
         ] {
             let Some(source) = source else {
@@ -154,7 +157,7 @@ impl PreparedResources {
         // This is a blocking resource operation, never a capture-tick or Tokio
         // worker operation. Re-open beneath the retained root and verify that
         // exact object before granting the lease.
-        let root = self.roots.iter().find(|r| r.name == "songs")?;
+        let root = self.roots.iter().find(|r| r.name == file.root)?;
         let opened = SafeRelativePath::parse(&file.path)
             .ok()
             .and_then(|path| root.safe.open_child(&path).ok());

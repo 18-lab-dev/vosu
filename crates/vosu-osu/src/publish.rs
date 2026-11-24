@@ -38,6 +38,7 @@ struct BusPublisherInner {
     refused: Vec<PublicationFailure>,
     caches: Caches,
     retry: bool,
+    resource_revision: u64,
 }
 struct Shared {
     inner: Option<BusPublisherInner>,
@@ -68,6 +69,7 @@ pub struct BusPublisher<H: HostServices + Send + Sync + 'static = VtableHostServ
     foreground: AtomicU8,
     inner: Mutex<Shared>,
     projections: &'static [Projection],
+    pub(crate) resources: std::sync::OnceLock<Arc<crate::resources::publication::Publication>>,
 }
 impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
     pub fn new(host: H, handle: u64, identified: Arc<AtomicBool>, facts: SessionFacts) -> Self {
@@ -76,6 +78,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             handle,
             identified,
             foreground: AtomicU8::new(encode_foreground(facts.foreground)),
+            resources: std::sync::OnceLock::new(),
             inner: Mutex::new(Shared {
                 inner: Some(BusPublisherInner {
                     projector: Projector::default(),
@@ -85,6 +88,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                     refused: Vec::new(),
                     caches: Caches::default(),
                     retry: false,
+                    resource_revision: 0,
                 }),
                 pending: None,
                 refresh: false,
@@ -146,6 +150,11 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                     inner.projector.invalidate();
                     inner.caches = Caches::default();
                 }
+                let resource_reset = self.resources.get().is_some_and(|r| r.observe(&snapshot));
+                let resource_changed = self
+                    .resources
+                    .get()
+                    .is_some_and(|r| r.revision() != inner.resource_revision);
                 inner.facts.foreground = match self.foreground.load(Ordering::Acquire) {
                     1 => Some(false),
                     2 => Some(true),
@@ -155,7 +164,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                     Arc::ptr_eq(&last.regular, &snapshot.regular)
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
-                if force || reset || inner.retry || !unchanged {
+                if force || reset || inner.retry || resource_changed || !unchanged {
                     inner.projector.prepare(&snapshot);
                     // Retain the attempted snapshot so a refresh after an unwind
                     // can retry even the first publication.
@@ -168,6 +177,12 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                         self.projections,
                         &mut inner.caches,
                     );
+                    if let Some(resources) = self.resources.get()
+                        && (resource_changed || reset || inner.retry)
+                    {
+                        inner.resource_revision =
+                            resources.append(&mut inner.writer, resource_reset);
+                    }
                     if let Some(error) = inner.caches.take_error() {
                         self.host.log(
                             LogLevel::Warn,
@@ -285,5 +300,12 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for FanoutPublisher {
     }
 }
 
+impl<H: HostServices + Send + Sync + 'static> crate::resources::publication::RefreshPublication
+    for BusPublisher<H>
+{
+    fn refresh(&self) {
+        self.republish_session_fields();
+    }
+}
 #[cfg(test)]
 mod tests;

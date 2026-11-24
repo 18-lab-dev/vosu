@@ -60,6 +60,7 @@ use crate::memory::PlanProcessMemory;
 use crate::scan::{PlanScanBackend, ScanWaiters};
 use crate::session::{OsuSession, SessionScanLifecycle};
 use crate::settings::OsuSettings;
+mod resources;
 
 /// abi:82's destroy grace: `destroy` shuts every still-live session down
 /// (cancel, then join) within this budget before shutting the plugin's own
@@ -112,6 +113,7 @@ struct PluginState {
     /// this same lock specifically to close the identify/detach race
     /// described on the module doc comment.
     sessions: HashMap<u64, Arc<OsuSession>>,
+    stream_ids: Arc<std::sync::atomic::AtomicU64>,
     /// A detach's off-thread resolver join (never awaited on the dispatch
     /// thread that handled the detach itself — see `handle_detached`),
     /// joined by `destroy` within the grace period, or by a test's
@@ -209,7 +211,10 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         Self {
             host: Arc::new(host),
             platform,
-            state: Arc::new(Mutex::new(PluginState::default())),
+            state: Arc::new(Mutex::new(PluginState {
+                stream_ids: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                ..PluginState::default()
+            })),
             root_resolver,
             scan_waiters: ScanWaiters::new(),
             loader,
@@ -230,6 +235,11 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
     /// tests can drive it directly against a fake `H`.
     pub fn dispatch(&self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
         match message {
+            message @ (Message::ResourceResolve(_)
+            | Message::TreeList(_)
+            | Message::TreeLookup(_)
+            | Message::StreamRead(_)
+            | Message::StreamClose(_)) => self.dispatch_resource(message, correlation_id),
             Message::SessionAttached(attached) => self.handle_attached(&attached),
             Message::SessionDetached(detached) => {
                 self.handle_detached(&detached);
@@ -658,6 +668,18 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         for session in sessions.values() {
             session.cancel();
         }
+        // Resource callbacks borrow the host context. Like version lookups,
+        // never detach a blocked resource worker when our local grace expires;
+        // the host's DestroyTimedOut path retains the whole context instead.
+        for session in sessions.values() {
+            if let Some(resources) = session
+                .publication
+                .get()
+                .and_then(|p| p.bus.resources.get())
+            {
+                resources.join();
+            }
+        }
 
         // Join lookups first, without a timeout: they retain callable host
         // pointers, so returning while one runs could use freed host state.
@@ -681,12 +703,12 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             .take()
         {
             runtime.block_on(async {
+                for join in detach_joins {
+                    let _ = join.await;
+                }
                 let _ = tokio::time::timeout(
                     deadline.saturating_duration_since(Instant::now()),
                     async {
-                        for join in detach_joins {
-                            let _ = join.await;
-                        }
                         for session in sessions.values() {
                             session.join_resolver().await;
                         }
@@ -789,6 +811,12 @@ fn register_session<H, G>(
         }),
     );
     session.configure_publication(Arc::clone(host), runtime_handle);
+    let stream_ids = state
+        .lock()
+        .expect("plugin state mutex poisoned")
+        .stream_ids
+        .clone();
+    resources::configure(&session, host, stream_ids);
     let registered = {
         let mut state = state.lock().expect("plugin state mutex poisoned");
         if state.live_handles.contains(&handle) {
@@ -808,6 +836,12 @@ fn register_session<H, G>(
             false
         }
     };
+    if !registered {
+        runtime_handle.spawn(async move {
+            session.join_resolver().await;
+        });
+        return;
+    }
     if registered && identified.client == ClientType::Lazer {
         let loader = Arc::clone(loader);
         let warn = log_warn(host);

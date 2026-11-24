@@ -369,56 +369,26 @@ fn folder_index(root: Option<&Path>) -> SkinFileIndex {
 }
 
 fn lazer_index(root: Option<&Path>, skin: Option<&CurrentSkin>) -> SkinFileIndex {
-    let mut index = SkinFileIndex::default();
-    let (Some(root), Some(skin)) = (root, skin) else {
-        return index;
-    };
-    if skin.builtin.is_some() {
-        return index;
-    }
-    if let Ok(opened) = SafeRelativePath::parse("").and_then(|child| open_child(root, &child)) {
-        index
-            .stamps
-            .push((String::new(), Stamp::of(&opened.metadata)));
-    }
-    for (path, relative) in &skin.files {
-        if index.entries.len() >= MAX_ENTRIES {
-            index.truncated = true;
-            break;
-        }
-        let path = path.replace('\\', "/");
-        if !valid_relative(&path) {
-            continue;
-        }
-        let Ok(child) = SafeRelativePath::parse(relative) else {
-            continue;
-        };
-        let Ok(opened) = open_child(root, &child) else {
-            index.truncated = true;
-            continue;
-        };
-        if !opened.metadata.is_file() {
-            continue;
-        }
-        let Some(hash) = Path::new(relative)
-            .file_name()
-            .and_then(|p| p.to_str())
-            .filter(|hash| {
-                matches!(hash.len(), 32 | 64) && hash.bytes().all(|b| b.is_ascii_hexdigit())
+    let plugin = vosu_osu::resources::legacy_skin::index(root, skin);
+    let mut index = SkinFileIndex {
+        entries: plugin
+            .entries
+            .into_iter()
+            .map(|entry| SkinEntry {
+                path: entry.path,
+                size: entry.size,
+                modified: None,
+                hash: Some(entry.hash),
             })
-        else {
-            continue;
-        };
-        index
+            .collect(),
+        stamps: plugin
             .stamps
-            .push((relative.clone(), Stamp::of(&opened.metadata)));
-        index.entries.push(SkinEntry {
-            path,
-            size: opened.metadata.len(),
-            modified: None,
-            hash: Some(hash.to_owned()),
-        });
-    }
+            .into_iter()
+            .map(|(path, metadata)| (path, Stamp::of(&metadata)))
+            .collect(),
+        truncated: plugin.truncated,
+        ..SkinFileIndex::default()
+    };
     index.finish();
     index
 }

@@ -444,3 +444,6 @@ fn generation_and_session_reset_invalidate_diff_values() {
     assert_eq!(host.calls.load(Ordering::Relaxed), 3);
     assert_eq!(host.last_batch_len.load(Ordering::Relaxed), 4);
 }
+
+#[path = "resources.rs"]
+mod resources;

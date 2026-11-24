@@ -15,3 +15,5 @@ session -> demand
 session -> project
 session -> publish
 publish -> bridge_b1
+plugin -> resources
+publish -> resources
