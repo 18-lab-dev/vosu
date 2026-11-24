@@ -43,6 +43,16 @@ fn until(predicate: impl Fn() -> bool) {
         std::thread::yield_now();
     }
 }
+/// The host reports opened-handle canonical paths for display, without the
+/// Windows `\\?\` verbatim prefix that `std::fs::canonicalize` adds.
+fn display_canonical(path: &std::path::Path) -> std::path::PathBuf {
+    let canonical = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    if let Some(plain) = canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        return std::path::PathBuf::from(plain);
+    }
+    canonical
+}
 #[test]
 fn selected_context_confines_files_and_preserves_stable_lazer_display_contract() {
     for source in [ClientType::Stable, ClientType::Lazer] {
@@ -73,11 +83,11 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
             );
             assert_eq!(
                 context["songs_dir"],
-                serde_json::json!(songs.canonicalize().unwrap())
+                serde_json::json!(display_canonical(&songs))
             );
             assert_eq!(
                 context["beatmap"]["file"],
-                serde_json::json!(songs.join("chart/map.osu").canonicalize().unwrap())
+                serde_json::json!(display_canonical(&songs.join("chart").join("map.osu")))
             );
             assert_eq!(context["beatmap"]["mode"], "mania");
             assert!(context["skin"]["files"].as_bool().unwrap());
