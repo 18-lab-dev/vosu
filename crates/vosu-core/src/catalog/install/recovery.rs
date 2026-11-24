@@ -7,6 +7,10 @@
 //! state is refused rather than guessed. Recovery runs from
 //! `InstalledStore::open`, before registry discovery/load, and again at the
 //! start of every catalog operation under the operation gate.
+//!
+//! A removal operation (U0 uninstall/autoremove) has no staging tree: its
+//! destination only moves to its backup, so roll-forward deletes the backup
+//! and roll-back moves it back. Durable data/settings are never journal paths.
 use super::{InstallError, InstallLayout, installed};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -23,7 +27,8 @@ const MAX_JOURNAL_BYTES: u64 = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct JournalOperation {
-    pub staging: PathBuf,
+    /// `None` for a removal: the destination only moves to its backup.
+    pub staging: Option<PathBuf>,
     pub destination: PathBuf,
     pub backup: Option<PathBuf>,
 }
@@ -61,9 +66,15 @@ impl Journal {
             && self.next_generation == self.previous_generation.wrapping_add(1)
             && self.operations.len() <= installed::MAX_RECORDS
             && self.operations.iter().all(|operation| {
-                child(&operation.staging, Some(STAGING_PREFIX))
-                    && child(&operation.destination, None)
-                    && operation.staging.parent() == operation.destination.parent()
+                child(&operation.destination, None)
+                    && match &operation.staging {
+                        Some(staging) => {
+                            child(staging, Some(STAGING_PREFIX))
+                                && staging.parent() == operation.destination.parent()
+                        }
+                        // A removal is only ever a move to its own backup.
+                        None => operation.backup.is_some(),
+                    }
                     && operation.backup.as_ref().is_none_or(|backup| {
                         child(backup, Some(BACKUP_PREFIX))
                             && backup.parent() == operation.destination.parent()
@@ -117,14 +128,19 @@ pub(super) fn resolve(
             if let Some(backup) = &operation.backup {
                 remove_tree(backup)?;
             }
-            remove_tree(&operation.staging)?;
+            if let Some(staging) = &operation.staging {
+                remove_tree(staging)?;
+            }
         }
         Resolution::RolledForward
     } else if published == journal.previous_generation {
         for operation in journal.operations.iter().rev() {
-            if !operation.staging.exists() && operation.destination.exists() {
+            if let Some(staging) = &operation.staging
+                && !staging.exists()
+                && operation.destination.exists()
+            {
                 // This operation's new tree is published: move it aside.
-                rename_directory_no_replace(&operation.destination, &operation.staging)
+                rename_directory_no_replace(&operation.destination, staging)
                     .map_err(InstallError::io)?;
             }
             if let Some(backup) = &operation.backup
@@ -135,8 +151,8 @@ pub(super) fn resolve(
                     .map_err(InstallError::io)?;
             }
         }
-        for operation in &journal.operations {
-            remove_tree(&operation.staging)?;
+        for staging in journal.operations.iter().filter_map(|o| o.staging.as_ref()) {
+            remove_tree(staging)?;
         }
         Resolution::RolledBack
     } else {

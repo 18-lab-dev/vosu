@@ -45,6 +45,32 @@ impl CatalogOperation {
     pub fn confirmed(&self) -> Option<&ConfirmedPlan> {
         self.confirmed.as_ref()
     }
+    /// Expose this gated mutation (U0 uninstall) as a catalog polling job with
+    /// the operation's own id, once its synchronous refusals have passed. The
+    /// job is bounded with plan-created jobs; capacity pressure is busy.
+    pub fn track_job(&self, phase: &str) -> Result<ConfirmResponse, PlanError> {
+        let mut state = self.state.lock().expect("catalog registry poisoned");
+        state.expire(Instant::now());
+        if state.jobs.contains_key(&self.id) || state.jobs.len() >= super::MAX_PENDING_PLANS {
+            return Err(PlanError::Busy);
+        }
+        state.jobs.insert(
+            self.id.clone(),
+            (
+                CatalogJob {
+                    id: self.id.clone(),
+                    status: "running".into(),
+                    phase: phase.into(),
+                    tool: String::new(),
+                    error: None,
+                },
+                Instant::now(),
+            ),
+        );
+        Ok(ConfirmResponse {
+            job_id: self.id.clone(),
+        })
+    }
     pub fn progress(&self, phase: &str, tool: &str) {
         let mut state = self.state.lock().expect("catalog registry poisoned");
         if let Some((job, _)) = state.jobs.get_mut(&self.id) {

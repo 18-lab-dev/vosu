@@ -10,25 +10,27 @@
 //! point; (5) backups and then the journal are removed. Any failure resolves
 //! the journal from the published records generation: roll forward after (4),
 //! otherwise roll back every directory. Crash recovery applies the same rule.
+//! `commit_removal` (U0) runs dependency-closure removal through this journal.
 use super::{
     InstallError, InstallLayout,
-    installed::{InstalledDocument, InstalledFor, InstalledRecord, publish_records},
+    installed::{InstalledDocument, InstalledFor, InstalledKind, InstalledRecord, publish_records},
     prepare::Prepared,
     recovery::{self, Journal, JournalOperation},
 };
 use crate::catalog::approvals::Approval;
 use vosu_net::streaming::rename_directory_no_replace;
+use vosu_plugin_api::manifest::PackageKind;
 
 /// Test-only crash/failure injection at each publication boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FaultPoint {
+pub(in crate::catalog) enum FaultPoint {
     JournalPublished,
     BackupMoved(usize),
     DirectoryMoved(usize),
     RecordsPublished,
 }
 #[derive(Debug, Default, Clone, Copy)]
-pub(super) struct Faults {
+pub(in crate::catalog) struct Faults {
     #[cfg(test)]
     pub crash: Option<FaultPoint>,
     #[cfg(test)]
@@ -146,40 +148,98 @@ pub(super) fn commit(
     let operations: Vec<_> = planned
         .into_iter()
         .map(|(item, destination, backup)| JournalOperation {
-            staging: item.staged.keep(),
+            staging: Some(item.staged.keep()),
             destination,
             backup,
         })
         .collect();
     let journal = Journal::new(current.generation, next_generation, operations);
     if let Err(error) = recovery::publish_journal(layout, &journal) {
-        for operation in &journal.operations {
-            let _ = std::fs::remove_dir_all(&operation.staging);
+        for staging in journal.operations.iter().filter_map(|o| o.staging.as_ref()) {
+            let _ = std::fs::remove_dir_all(staging);
         }
         return Err(error);
     }
-    match publish(layout, &journal, &document, faults) {
-        Ok(()) => {}
-        #[cfg(test)]
-        Err(Stop::Crash) => return Err(InstallError::SimulatedCrash),
-        Err(Stop::Failed(error)) => {
-            return match recovery::resolve(layout, &journal) {
-                Ok(recovery::Resolution::RolledForward) => Ok(Committed {
-                    document,
-                    records: committed,
-                }),
-                Ok(recovery::Resolution::RolledBack) => Err(error),
-                Ok(recovery::Resolution::NoJournal) | Err(_) => Err(InstallError::RecoveryRequired),
-            };
-        }
-    }
-    // Committed. Cleanup failure leaves the journal for roll-forward on the
-    // next operation or open; it never un-commits the graph.
-    let _ = recovery::resolve(layout, &journal);
+    publish_journaled(layout, &journal, &document, faults)?;
     Ok(Committed {
         document,
         records: committed,
     })
+}
+
+/// U0 dependency-closure removal through the same journal. Each package tree
+/// moves to a same-root backup in the given (consumers-first) order, then the
+/// records without those packages publish as the commit point; backups are
+/// deleted only after commit. Only package trees under the kind roots are
+/// named: durable data and settings live elsewhere and are never touched.
+pub(in crate::catalog) fn commit_removal(
+    layout: &InstallLayout,
+    current: &InstalledDocument,
+    removals: &[(InstalledKind, String)],
+    faults: Faults,
+) -> Result<InstalledDocument, InstallError> {
+    let next_generation = current
+        .generation
+        .checked_add(1)
+        .ok_or(InstallError::RecordsInvalid)?;
+    let mut document = current.clone();
+    document.generation = next_generation;
+    let mut operations = Vec::with_capacity(removals.len());
+    for (index, (kind, id)) in removals.iter().enumerate() {
+        let before = document.records.len();
+        document
+            .records
+            .retain(|record| !(record.kind == *kind && record.id == *id));
+        if document.records.len() == before {
+            return Err(InstallError::RecordsInvalid);
+        }
+        let kind = PackageKind::from(*kind);
+        let destination = layout.destination(kind, id)?;
+        // A record whose tree is already gone still commits its removal.
+        if std::fs::symlink_metadata(&destination).is_err() {
+            continue;
+        }
+        let backup = layout
+            .root(kind)
+            .join(format!("{}{id}-{index}", recovery::BACKUP_PREFIX));
+        if std::fs::symlink_metadata(&backup).is_ok() {
+            return Err(InstallError::RecoveryRequired);
+        }
+        operations.push(JournalOperation {
+            staging: None,
+            destination,
+            backup: Some(backup),
+        });
+    }
+    let journal = Journal::new(current.generation, next_generation, operations);
+    recovery::publish_journal(layout, &journal)?;
+    publish_journaled(layout, &journal, &document, faults)?;
+    Ok(document)
+}
+
+/// Run a durable journal to its commit point. A failure resolves it from the
+/// published records generation (back before commit, forward after); cleanup
+/// failure after commit leaves the journal for roll-forward on the next
+/// operation or open and never un-commits the graph.
+fn publish_journaled(
+    layout: &InstallLayout,
+    journal: &Journal,
+    document: &InstalledDocument,
+    faults: Faults,
+) -> Result<(), InstallError> {
+    match publish(layout, journal, document, faults) {
+        Ok(()) => {
+            let _ = recovery::resolve(layout, journal);
+            Ok(())
+        }
+        #[cfg(test)]
+        Err(Stop::Crash) => Err(InstallError::SimulatedCrash),
+        Err(Stop::Failed(error)) => match recovery::resolve(layout, journal) {
+            Ok(recovery::Resolution::RolledForward) => Ok(()),
+            Ok(recovery::Resolution::RolledBack) => Err(error),
+            Ok(recovery::Resolution::NoJournal) | Err(_) => Err(InstallError::RecoveryRequired),
+        },
+    }
 }
 
 fn publish(
@@ -195,9 +255,11 @@ fn publish(
                 .map_err(InstallError::io)?;
             faults.at(FaultPoint::BackupMoved(index))?;
         }
-        rename_directory_no_replace(&operation.staging, &operation.destination)
-            .map_err(InstallError::io)?;
-        faults.at(FaultPoint::DirectoryMoved(index))?;
+        if let Some(staging) = &operation.staging {
+            rename_directory_no_replace(staging, &operation.destination)
+                .map_err(InstallError::io)?;
+            faults.at(FaultPoint::DirectoryMoved(index))?;
+        }
     }
     publish_records(layout, document)?;
     faults.at(FaultPoint::RecordsPublished)?;

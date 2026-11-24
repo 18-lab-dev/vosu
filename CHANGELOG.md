@@ -66,6 +66,20 @@ All notable user-visible changes to vosu are documented here. Older sections are
   report "requires M5 process runtime". Native Windows rename/reparse/locked-file
   and crash-recovery evidence remains pending; root composition, routes and the
   legacy catalog-v1 install cutover are not part of this change.
+- Uninstall catalog packages through a core uninstall service. The installed
+  provider graph is rebuilt from the committed packages' current manifests with
+  the resolver's own provider selection; no reference count is stored. Removing
+  a provider that a kept package still requires is refused, and the refusal
+  names every dependent; resolved optional grants are dropped instead.
+  Dependency-only plugins that nothing references any more are removed
+  recursively. Built-ins and requested plugins are never removed automatically.
+  Runtime activity stops before the removal is committed. The whole removal
+  commits or rolls back through the install journal, including recovery after a
+  crash. Data and settings are kept unless the user explicitly chooses to remove
+  the uninstalled package's own data. Explicitly requesting an installed
+  dependency promotes it to requested without downloading it again. Native
+  Windows removal evidence is still pending, and routes and root composition are
+  not part of this change.
 
 ## Unreleased — 2.0 M6a
 

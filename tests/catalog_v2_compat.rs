@@ -3,6 +3,8 @@
     clippy::disallowed_methods,
     reason = "corpus fixtures write only isolated temporary package directories"
 )]
+#[path = "catalog_v2/autoremove.rs"]
+mod autoremove;
 #[path = "catalog_v2/capability.rs"]
 mod capability;
 #[path = "catalog_v2/catalog.rs"]

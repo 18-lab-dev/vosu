@@ -1027,6 +1027,36 @@ resolved optional edges, not every matching provider. Recursive
 dependency-only removal preserves durable settings/data and is one serialized,
 recoverable operation (A6b.7).
 
+**U0 implementation contract (`vosu-core::catalog::installed`).** A
+reference is a resolved edge of the installed graph. The graph is rebuilt for
+every uninstall from each committed package's current manifest, which must
+still match its record's kind, id and version; otherwise the uninstall is
+refused rather than guessed. Edges follow the resolver's rule for kept
+installed consumers: built-in first, then the first installed provider in
+record order, and optional edges only when such a provider exists. A required
+edge to the explicit target does not block removal if another kept installed
+package satisfies the same requirement, because the consumer then selects that
+package. Every dependency-only plugin with no incoming edge is removed in
+recomputed rounds, including one that was already unreferenced. Tools,
+overlays and requested plugins never are. The resolver's 256-node and
+256-required-edge bounds also apply here. Exceeding them refuses the uninstall
+with `resolution-limit`.
+
+`UninstallService` takes the shared catalog operation gate and runs install
+recovery first. Refusals return synchronously with no job and no change: not
+installed from that exact source (404), still required with named dependents
+(409), or a graph that cannot be resolved (409). Otherwise a catalog polling
+job stops the closure's runtime activity, consumers first, and ends the dropped
+optional grants. It then moves each package directory to a same-root backup
+through the install journal and publishes the records without those packages
+as the single commit point. A failure or crash before that point restores
+every directory; after it, recovery removes the backups. Only package
+directories are journaled. Data and settings are removed only for the explicit
+target, and only when the request sets `remove_data`. A file the operating
+system still holds open, such as a loaded DLL on Windows, can make a move fail;
+the whole removal then rolls back. Promoting an explicitly requested installed
+dependency publishes only its `installed_for` record, with a new generation.
+
 ### Game detection
 
 Game plugins carry a process matcher (`docs/v2/plugin-abi.md` owns its
