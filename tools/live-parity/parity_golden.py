@@ -713,7 +713,8 @@ def _platform_files(capture: Any, review_receipt: str | None) -> tuple[str, dict
     if not cases or len(set(ids)) != len(ids):
         raise GoldenError("capture.cases: empty or duplicate case IDs")
     expected_ids = _list(capture["expected_cases"], "capture.expected_cases")
-    if sorted(expected_ids) != sorted(ids) or len(set(expected_ids)) != len(expected_ids):
+    if (not all(isinstance(item, str) for item in expected_ids)
+            or sorted(expected_ids) != sorted(ids) or len(set(expected_ids)) != len(expected_ids)):
         raise GoldenError("capture is incomplete: recorded cases differ from expected_cases")
     cases.sort(key=lambda case: case["id"])
     for case in cases:
