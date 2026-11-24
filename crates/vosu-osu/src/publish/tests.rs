@@ -15,6 +15,7 @@ struct Host {
     last_batch_len: AtomicUsize,
     foreground: AtomicU8,
     status: AtomicUsize,
+    panic_next: AtomicBool,
     entered: Option<mpsc::SyncSender<()>>,
     release: Option<Mutex<mpsc::Receiver<()>>>,
 }
@@ -64,6 +65,10 @@ impl HostServices for TestHost {
                 self.foreground.store(value, Ordering::Relaxed);
             }
         }
+        assert!(
+            !self.panic_next.swap(false, Ordering::AcqRel),
+            "host callback panic"
+        );
         match self.status.load(Ordering::Relaxed) {
             1 => vosu_status::VOSU_ERR_PERMISSION_DENIED,
             2 => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
@@ -280,4 +285,150 @@ fn in_flight_publish_drains_latest_snapshot_and_session_refresh() {
     assert_eq!(inner.facts.foreground, Some(true));
     assert!(shared.pending.is_none());
     assert!(!shared.refresh);
+}
+
+#[test]
+fn projection_panic_restores_buffers_and_retries() {
+    let host = Arc::new(Host::default());
+    let mut bus = publisher(host.clone());
+    fn panicking_projection(
+        s: &StateBundleSnapshot,
+        facts: &SessionFacts,
+        sink: &mut dyn ProjectionSink,
+    ) {
+        projection(s, facts, sink);
+        panic!("projection panic after updating diff cache");
+    }
+    bus.projections = &[panicking_projection];
+    let snapshot = sample(1);
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| publish(
+            &bus,
+            snapshot.clone()
+        )))
+        .is_err()
+    );
+    assert_eq!(host.calls.load(Ordering::Relaxed), 0);
+    bus.projections = &[projection];
+    publish(&bus, snapshot);
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        host.last_batch_len.load(Ordering::Relaxed),
+        4,
+        "unwound diff values must be invalidated"
+    );
+}
+
+#[test]
+fn host_panic_restores_buffers_and_refresh_retries() {
+    let host = Arc::new(Host::default());
+    let bus = publisher(host.clone());
+    host.panic_next.store(true, Ordering::Release);
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| publish(&bus, sample(1))))
+            .is_err()
+    );
+    assert_eq!(host.calls.load(Ordering::Relaxed), 1);
+    // Even the first attempted snapshot survives for a refresh-only retry.
+    bus.republish_session_fields();
+    assert_eq!(host.calls.load(Ordering::Relaxed), 2);
+    assert_eq!(host.last_batch_len.load(Ordering::Relaxed), 4);
+    publish(&bus, sample(2));
+    assert_eq!(host.last.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn in_flight_send_drains_refresh_without_pending_snapshot() {
+    let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
+    let host = Arc::new(Host {
+        entered: Some(entered_tx),
+        release: Some(Mutex::new(release_rx)),
+        ..Host::default()
+    });
+    let bus = Arc::new(publisher(host.clone()));
+    let sending = bus.clone();
+    let worker = std::thread::spawn(move || publish(&sending, sample(1)));
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    bus.set_foreground(Some(true));
+    release_tx.try_send(()).unwrap();
+    worker.join_bounded().unwrap();
+    assert_eq!(host.calls.load(Ordering::Relaxed), 2);
+    assert_eq!(host.foreground.load(Ordering::Relaxed), 2);
+    assert_eq!(host.last.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn encoder_failure_and_host_invalid_argument_log_independently() {
+    let host = Arc::new(Host::default());
+    let mut bus = publisher(host.clone());
+    host.status.store(2, Ordering::Relaxed);
+    publish(&bus, sample(1));
+    assert_eq!(host.logs.load(Ordering::Relaxed), 1);
+    fn oversized(_: &StateBundleSnapshot, _: &SessionFacts, sink: &mut dyn ProjectionSink) {
+        sink.put_cbor(OsuPointer::OsuProfile, &mut |buf| {
+            buf.resize(
+                vosu_plugin_api::VOSU_PUBLISH_BATCH_MAX_BYTES as usize + 1,
+                0,
+            );
+        });
+    }
+    bus.projections = &[oversized];
+    publish(&bus, sample(2));
+    publish(&bus, sample(2));
+    assert_eq!(host.logs.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        host.calls.load(Ordering::Relaxed),
+        1,
+        "encoder failures must not reach the host"
+    );
+    bus.projections = &[projection];
+    publish(&bus, sample(3));
+    assert_eq!(host.logs.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn refusal_and_successful_retry_reuse_warm_buffers() {
+    let host = Arc::new(Host::default());
+    let bus = publisher(host.clone());
+    let snapshot = sample(1);
+    host.status.store(1, Ordering::Relaxed);
+    publish(&bus, snapshot.clone());
+    let (_, allocations) =
+        crate::test_alloc::allocations_during(|| publish(&bus, snapshot.clone()));
+    assert_eq!(
+        allocations, 0,
+        "repeated refusal must not allocate or log twice"
+    );
+    assert_eq!(host.logs.load(Ordering::Relaxed), 1);
+    host.status.store(0, Ordering::Relaxed);
+    let (_, allocations) = crate::test_alloc::allocations_during(|| publish(&bus, snapshot));
+    assert_eq!(allocations, 0);
+    assert_eq!(host.calls.load(Ordering::Relaxed), 3);
+    assert_eq!(
+        host.last_batch_len.load(Ordering::Relaxed),
+        4,
+        "retry must resend the entire invalidated partition"
+    );
+}
+
+#[test]
+fn generation_and_session_reset_invalidate_diff_values() {
+    let host = Arc::new(Host::default());
+    let bus = publisher(host.clone());
+    let snapshot = sample(1);
+    publish(&bus, snapshot.clone());
+    let mut reset = (*snapshot).clone();
+    reset.reset_epoch = 1;
+    publish(&bus, Arc::new(reset.clone()));
+    assert_eq!(
+        host.calls.load(Ordering::Relaxed),
+        2,
+        "unchanged lane Arcs must not hide session resets"
+    );
+    assert_eq!(host.last_batch_len.load(Ordering::Relaxed), 4);
+    reset.generation = 2;
+    publish(&bus, Arc::new(reset));
+    assert_eq!(host.calls.load(Ordering::Relaxed), 3);
+    assert_eq!(host.last_batch_len.load(Ordering::Relaxed), 4);
 }

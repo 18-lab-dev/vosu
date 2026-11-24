@@ -22,6 +22,24 @@ pub type Projection = fn(&StateBundleSnapshot, &SessionFacts, &mut dyn Projectio
 const PROJECTIONS: &[Projection] = &[];
 
 #[derive(Default)]
+pub(crate) struct Caches {}
+
+impl Caches {
+    pub(crate) fn take_error(&mut self) -> Option<std::io::Error> {
+        None
+    }
+}
+
+pub(crate) fn project_stateful(
+    _caches: &mut Caches,
+    _facts: &SessionFacts,
+    _snapshot: &StateBundleSnapshot,
+    _sink: &mut dyn ProjectionSink,
+) {
+    // Stateful projections add one line here.
+}
+
+#[derive(Default)]
 pub struct Projector {
     pub(crate) last_snapshot: Option<Arc<StateBundleSnapshot>>,
     last: LastValues,
@@ -43,11 +61,13 @@ impl Projector {
         facts: &SessionFacts,
         writer: &mut PublishBatchWriter,
         projections: &[Projection],
+        caches: &mut Caches,
     ) {
         let mut sink = DiffSink::new(&mut self.last, writer);
         for project in projections {
             project(snap, facts, &mut sink);
         }
+        project_stateful(caches, facts, snap, &mut sink);
     }
     pub(crate) fn invalidate(&mut self) {
         self.last.invalidate();

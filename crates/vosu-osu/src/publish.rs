@@ -1,5 +1,5 @@
 //! Latest-only state-bus publication, independent of the interim B1 bridge.
-use crate::project::{self, Projection, Projector, SessionFacts};
+use crate::project::{self, Caches, Projection, Projector, SessionFacts};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU8, Ordering},
@@ -8,18 +8,41 @@ use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot, StateWork
 use vosu_plugin_api::PublishBatchWriter;
 use vosu_plugin_api::{HostServices, LogLevel, VtableHostServices, vosu_opcode, vosu_status};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PublicationFailure {
+    Encoder,
+    Host(vosu_status),
+}
 struct BusPublisherInner {
     projector: Projector,
     writer: PublishBatchWriter,
     out: Vec<u8>,
     facts: SessionFacts,
-    refused: Vec<vosu_status>,
+    refused: Vec<PublicationFailure>,
+    caches: Caches,
     retry: bool,
 }
 struct Shared {
     inner: Option<BusPublisherInner>,
     pending: Option<Arc<StateBundleSnapshot>>,
     refresh: bool,
+}
+
+/// Restores ownership after a caught projection or host-callback panic.
+struct RestoreInner<'a> {
+    shared: &'a Mutex<Shared>,
+    inner: Option<BusPublisherInner>,
+}
+impl Drop for RestoreInner<'_> {
+    fn drop(&mut self) {
+        if let Some(mut inner) = self.inner.take() {
+            inner.projector.invalidate();
+            inner.caches = Caches::default();
+            inner.retry = true;
+            let mut shared = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+            shared.inner = Some(inner);
+        }
+    }
 }
 pub struct BusPublisher<H: HostServices + Send + Sync + 'static = VtableHostServices> {
     host: H,
@@ -43,6 +66,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                     out: Vec::new(),
                     facts,
                     refused: Vec::new(),
+                    caches: Caches::default(),
                     retry: false,
                 }),
                 pending: None,
@@ -70,7 +94,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
         }
         // Lock order: only this short mailbox mutex. No lock is held during
         // projection or host callbacks, which may synchronously re-enter us.
-        let (mut inner, mut current, mut force) = {
+        let (inner, mut current, mut force) = {
             let mut shared = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(snapshot) = snapshot {
                 shared.pending = Some(snapshot);
@@ -86,8 +110,24 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             let force = std::mem::take(&mut shared.refresh);
             (inner, current, force)
         };
+        let mut owner = RestoreInner {
+            shared: &self.inner,
+            inner: Some(inner),
+        };
         loop {
             if let Some(snapshot) = current.take() {
+                let inner = owner
+                    .inner
+                    .as_mut()
+                    .expect("active publisher owns its buffers");
+                let reset = inner.projector.last_snapshot.as_ref().is_some_and(|last| {
+                    last.generation != snapshot.generation
+                        || last.reset_epoch != snapshot.reset_epoch
+                });
+                if reset {
+                    inner.projector.invalidate();
+                    inner.caches = Caches::default();
+                }
                 inner.facts.foreground = match self.foreground.load(Ordering::Acquire) {
                     1 => Some(false),
                     2 => Some(true),
@@ -97,21 +137,32 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                     Arc::ptr_eq(&last.regular, &snapshot.regular)
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
-                if force || inner.retry || !unchanged {
+                if force || reset || inner.retry || !unchanged {
+                    // Retain the attempted snapshot so a refresh after an unwind
+                    // can retry even the first publication.
+                    inner.projector.last_snapshot = Some(snapshot.clone());
                     inner.writer.begin(self.handle);
                     inner.projector.project_into(
                         &snapshot,
                         &inner.facts,
                         &mut inner.writer,
                         self.projections,
+                        &mut inner.caches,
                     );
+                    if let Some(error) = inner.caches.take_error() {
+                        self.host.log(
+                            LogLevel::Warn,
+                            &format!("state projection IO failed: {error}"),
+                            vosu_plugin_api::CborValue::Null,
+                        );
+                    }
                     let mut accepted = true;
                     if !inner.writer.is_empty() {
                         if let Err(error) = inner.writer.finish_into(&mut inner.out) {
                             accepted = false;
                             self.log_refusal(
-                                &mut inner,
-                                vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+                                inner,
+                                PublicationFailure::Encoder,
                                 &error.to_string(),
                             );
                         } else {
@@ -123,7 +174,11 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                             );
                             if status != vosu_status::VOSU_OK {
                                 accepted = false;
-                                self.log_refusal(&mut inner, status, "host refused state batch");
+                                self.log_refusal(
+                                    inner,
+                                    PublicationFailure::Host(status),
+                                    "host refused state batch",
+                                );
                             }
                         }
                     }
@@ -136,22 +191,29 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             }
             let mut shared = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if shared.pending.is_none() && !shared.refresh {
-                shared.inner = Some(inner);
+                shared.inner = owner.inner.take();
                 return;
             }
-            current = shared
-                .pending
-                .take()
-                .or_else(|| inner.projector.last_snapshot.clone());
+            current = shared.pending.take().or_else(|| {
+                owner
+                    .inner
+                    .as_ref()
+                    .and_then(|inner| inner.projector.last_snapshot.clone())
+            });
             force = std::mem::take(&mut shared.refresh);
         }
     }
-    fn log_refusal(&self, inner: &mut BusPublisherInner, status: vosu_status, reason: &str) {
-        if !inner.refused.contains(&status) {
-            inner.refused.push(status);
+    fn log_refusal(
+        &self,
+        inner: &mut BusPublisherInner,
+        failure: PublicationFailure,
+        reason: &str,
+    ) {
+        if !inner.refused.contains(&failure) {
+            inner.refused.push(failure);
             self.host.log(
                 LogLevel::Warn,
-                &format!("state publication refused ({status:?}): {reason}"),
+                &format!("state publication failed ({failure:?}): {reason}"),
                 vosu_plugin_api::CborValue::Null,
             );
         }
