@@ -187,10 +187,7 @@ fn exact_endpoint_classification_rejects_near_misses() {
         Endpoint::classify("/websocket/v2/precise"),
         Some(Endpoint::V2Precise)
     );
-    assert_eq!(
-        Endpoint::classify("/websocket/v2/subscribe"),
-        Some(Endpoint::V2Subscribe)
-    );
+    assert_eq!(Endpoint::classify("/websocket/v2/subscribe"), None);
     assert_eq!(
         Endpoint::classify("/websocket/commands"),
         Some(Endpoint::Commands)
@@ -207,7 +204,6 @@ fn handshake_gate_matrix_never_upgrades_denied_or_unknown_requests() {
         ("/tokens", Endpoint::StreamCompanion),
         ("/websocket/v2", Endpoint::V2),
         ("/websocket/v2/precise", Endpoint::V2Precise),
-        ("/websocket/v2/subscribe", Endpoint::V2Subscribe),
         ("/websocket/commands", Endpoint::Commands),
     ];
     for (path, endpoint) in endpoints {
@@ -242,7 +238,7 @@ fn handshake_gate_matrix_never_upgrades_denied_or_unknown_requests() {
 }
 
 #[tokio::test]
-async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
+async fn real_axum_handshake_returns_101_only_for_exact_five_paths() {
     use axum::{Router, body::Body, http::StatusCode};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -306,7 +302,6 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         "/tokens",
         "/websocket/v2",
         "/websocket/v2/precise",
-        "/websocket/v2/subscribe",
         "/websocket/commands",
     ] {
         assert_eq!(
@@ -315,6 +310,7 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         );
     }
     for path in [
+        "/websocket/v2/subscribe",
         "/ws/",
         "/websocket/v2/precise/",
         "/websocket/v2/subscribe/",
@@ -1162,7 +1158,7 @@ async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
     assert!(!connection.client.send_data(frame, 3, false));
     assert_eq!(
         connection.client.state.load(Ordering::Acquire),
-        CLIENT_OPEN,
-        "a refused frame leaves the client writable"
+        CLIENT_CLOSED,
+        "receiver loss synchronously closes the client and releases demand"
     );
 }

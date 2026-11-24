@@ -19,16 +19,18 @@ async fn slow_plugin_destruction_preserves_legacy_websocket_going_away() {
         });
         drop((overlay, dashboard));
         owner.compose().await.unwrap();
-        let (mut socket, _) = tokio_tungstenite::connect_async(format!(
-            "ws://127.0.0.1:{overlay_port}/websocket/v2/subscribe"
+        let (mut socket, response) = tokio_tungstenite::connect_async(format!(
+            "ws://127.0.0.1:{overlay_port}/websocket/commands"
         ))
         .await
         .unwrap();
-        socket
-            .send(Message::Text("[\"/state\"]".into()))
-            .await
-            .unwrap();
-        assert!(socket.next().await.unwrap().unwrap().is_text());
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SWITCHING_PROTOCOLS
+        );
+        while owner.hubs.lock().await.as_ref().unwrap().v1.client_count() == 0 {
+            tokio::task::yield_now().await;
+        }
         let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = tokio::sync::oneshot::channel();
         let plugins = Arc::clone(&owner.plugins);

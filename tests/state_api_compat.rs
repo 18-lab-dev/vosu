@@ -1,11 +1,5 @@
 use serde_json::Value;
-use std::{collections::BTreeSet, fs, sync::Arc};
-use tokio::sync::watch;
-use vosu::api::{self, ApiError, CombinedSnapshot};
-use vosu::server::v2_subscription::{
-    V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
-};
-use vosu_proptest::bounded;
+use std::{collections::BTreeSet, fs};
 #[path = "state_api_compat/oracle.rs"]
 mod oracle;
 use oracle::*;
@@ -168,103 +162,5 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                 case.id
             );
         }
-    }
-}
-
-struct ParitySnapshot {
-    snapshot: Arc<CombinedSnapshot>,
-}
-
-impl V2SubscriptionSnapshot for ParitySnapshot {
-    fn revision(&self) -> u64 {
-        self.snapshot.manager().revision()
-    }
-
-    fn document(&self, pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
-        match vosu::runtime::ProductionSnapshotEncoder::subscription_document(
-            &self.snapshot,
-            pointers,
-        ) {
-            Ok(value) => Ok(Some(value)),
-            Err(ApiError::NotReady) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-}
-
-struct ParityProvider {
-    snapshot: Arc<CombinedSnapshot>,
-    publication: watch::Sender<u64>,
-}
-
-impl ParityProvider {
-    fn new(snapshot: CombinedSnapshot) -> Arc<Self> {
-        let revision = snapshot.manager().revision();
-        let (publication, _) = watch::channel(revision);
-        Arc::new(Self {
-            snapshot: Arc::new(snapshot),
-            publication,
-        })
-    }
-}
-
-impl V2SubscriptionProvider for ParityProvider {
-    fn subscribe(&self) -> watch::Receiver<u64> {
-        self.publication.subscribe()
-    }
-
-    fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
-        Arc::new(ParitySnapshot {
-            snapshot: Arc::clone(&self.snapshot),
-        })
-    }
-}
-
-#[tokio::test]
-async fn v2_subscription_emitted_values_match_parsed_v2_wire_values() {
-    let root = fixture_root();
-    let inventory: Inventory = serde_json::from_slice(
-        &fs::read(root.join("inventory.json")).expect("inventory must exist"),
-    )
-    .expect("inventory must be valid");
-
-    for case in inventory.cases {
-        let input: Input = serde_json::from_slice(
-            &fs::read(root.join(&case.input)).expect("input fixture must exist"),
-        )
-        .expect("input fixture must be valid");
-        let snapshot = manager(&input);
-        let expected = match api::v2::encode(&snapshot) {
-            Ok(bytes) => Some(
-                serde_json::from_slice::<Value>(&bytes).expect("encoded v2 must be valid JSON"),
-            ),
-            Err(ApiError::NotReady) => None,
-            Err(error) => panic!("v2 encoding failed for {}: {error}", case.id),
-        };
-        let provider = ParityProvider::new(snapshot);
-        let hub = V2SubscriptionHub::new(provider, std::time::Duration::ZERO);
-        let runner = tokio::spawn({
-            let hub = hub.clone();
-            async move { bounded!(hub.run()) }
-        });
-        let (connection, mut receiver) = hub.connect();
-        connection.subscribe(vec![String::new()]).unwrap();
-        let frame = match bounded!(receiver.recv()).unwrap() {
-            V2SubscriptionOutbound::Text(bytes) => {
-                serde_json::from_slice::<Value>(&bytes).expect("subscription frame must be valid")
-            }
-            frame => panic!("unexpected subscription frame for {}: {frame:?}", case.id),
-        };
-        match expected {
-            Some(expected) => assert_eq!(
-                frame.pointer("/2/0/1"),
-                Some(&expected),
-                "subscription emitted-value parity failed for {}",
-                case.id
-            ),
-            None => assert_eq!(frame, serde_json::json!([0, 1, []])),
-        }
-        hub.shutdown();
-        bounded!(runner).unwrap();
     }
 }

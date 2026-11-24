@@ -7,6 +7,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add unmounted bus-backed HTTP/WS providers with shared latest-only encoding
   caches and per-connection selector demand. Remove idle hub polling and release
   sampling demand on disconnect, receiver loss, filter replacement and shutdown.
+- Remove the selected-v2 subscription feed, legacy skin metadata index and four
+  extension-only config flags. API v1 subscriptions retain their own debounce;
+  real selector demand owns collection. Keep bounded validated removed-route
+  attribution for the future D20 notice, and preserve unrelated unknown config.
 - Share the pure chart calculation engine from `vosu-osu-calc`, independently of state orchestration.
 - Derive streamCompanion strains, breaks, timing and kiai facts from authorized chart resources with bounded latest-only, joined workers; preserve the upstream empty `mapKiaiPoints` wire quirk.
 
@@ -37,6 +41,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add opaque declared-root file/directory operations and capability-checked
   chart-resource readers for bundled adapters, reusing M3 confinement and stream
   leases without changing API v1 resource membership or legacy routes.
+- Add requester-injected upstream file/calculation providers for the M4a atomic
+  cutover: retained declared-root reads, stable case/directory lookup, lazer
+  legacy skin 404 and root-confined legacy calculation without changing its engine.
+  Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
+  truncation marker. Production mounting remains with I0.
 
 ## Unreleased — 2.0 M3
 

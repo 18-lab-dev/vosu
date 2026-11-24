@@ -286,30 +286,13 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
         gameplay_precise: true,
     };
     sink.inputs.send_replace(B1Inputs {
-        enable_key_overlay: false,
-        enable_mania_key_hit_errors: true,
-        enable_hit_offsets: true,
-        v2_subscription_debounce: 43.0,
         demand: next_demand,
     });
-    tokio::time::timeout(Duration::from_millis(500), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
     tokio::time::timeout(Duration::from_millis(500), demand.changed())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        *reader.borrow_and_update(),
-        ReaderSettings {
-            enable_key_overlay: false,
-            enable_mania_key_hit_errors: true,
-            enable_hit_offsets: true,
-            v2_subscription_debounce: 43.0,
-            ..ReaderSettings::default()
-        }
-    );
+    assert_eq!(*reader.borrow_and_update(), ReaderSettings::default());
     assert_eq!(*demand.borrow_and_update(), next_demand);
     session.osu_settings.send_replace(OsuSettings {
         calculate_pp: false,
@@ -330,10 +313,7 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
             precise_data_poll_rate: 37.0,
             show_mp_commands: true,
             read_mania_scroll_speed: false,
-            enable_key_overlay: false,
-            enable_mania_key_hit_errors: true,
-            enable_hit_offsets: true,
-            v2_subscription_debounce: 43.0,
+            collect_hit_errors: false,
         }
     );
     assert_eq!(*demand.borrow(), next_demand);
@@ -343,14 +323,13 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
     };
     sink.inputs.send_modify(|inputs| {
         inputs.demand = final_demand;
-        inputs.enable_key_overlay = true;
     });
     tokio::time::timeout(Duration::from_millis(500), demand.changed())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(*demand.borrow_and_update(), final_demand);
-    assert!(reader.borrow().enable_key_overlay);
+    assert!(!reader.borrow().collect_hit_errors);
     assert_eq!(reader.borrow().poll_rate, 731.0);
     session.cancel();
     tokio::time::timeout(Duration::from_secs(5), session.join_resolver())
@@ -366,7 +345,7 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directions() {
+async fn extended_error_collection_follows_bus_demand_and_releases_on_unsubscribe() {
     let session = capture_session(61103, ClientType::Stable);
     let (sink, mut events) = sink();
     session
@@ -382,46 +361,20 @@ async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directio
     .await
     .unwrap();
     let (mut reader, _) = session.capture_controls.borrow().as_ref().unwrap().clone();
-    assert!(!reader.borrow_and_update().enable_hit_offsets);
-    assert!(!reader.borrow().enable_mania_key_hit_errors);
+    assert!(!reader.borrow_and_update().collect_hit_errors);
     let publication = session.publication.get().unwrap();
     publication.demand.set_bus_collection(false, true, true);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
         .unwrap()
         .unwrap();
-    assert!(reader.borrow_and_update().enable_hit_offsets);
-    assert!(reader.borrow().enable_mania_key_hit_errors);
+    assert!(reader.borrow_and_update().collect_hit_errors);
     publication.demand.set_bus(false, false);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
         .unwrap()
         .unwrap();
-    assert!(!reader.borrow_and_update().enable_hit_offsets);
-    assert!(!reader.borrow().enable_mania_key_hit_errors);
-    sink.inputs.send_modify(|inputs| {
-        inputs.enable_hit_offsets = true;
-        inputs.enable_mania_key_hit_errors = true;
-    });
-    tokio::time::timeout(Duration::from_secs(5), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(reader.borrow_and_update().enable_hit_offsets);
-    assert!(reader.borrow().enable_mania_key_hit_errors);
-    publication.demand.set_bus_collection(false, true, true);
-    tokio::time::timeout(Duration::from_secs(5), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
-    reader.borrow_and_update();
-    publication.demand.set_bus(false, false);
-    tokio::time::timeout(Duration::from_secs(5), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(reader.borrow_and_update().enable_hit_offsets);
-    assert!(reader.borrow().enable_mania_key_hit_errors);
+    assert!(!reader.borrow_and_update().collect_hit_errors);
     session.cancel();
     tokio::time::timeout(Duration::from_secs(5), session.join_resolver())
         .await

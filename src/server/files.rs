@@ -16,7 +16,7 @@ mod validators;
 pub use skin::{SkinFileIndex, SkinIndexCache};
 pub use validators::{FileValidators, representation_validators};
 
-pub use directory::{build_directory_index, encode_path_segment, html_escape};
+pub use directory::{build_directory_index, directory_index, encode_path_segment, html_escape};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MissingKind {
@@ -343,15 +343,29 @@ pub fn plan_file_response(
     target: &FileTarget,
     range_header: Option<&str>,
 ) -> Result<FileResponsePlan, RangeError> {
-    let range = parse_range(range_header, target.length)?;
+    plan_response(
+        target.length,
+        target.content_type,
+        target.range_eligible,
+        range_header,
+    )
+}
+
+pub fn plan_response(
+    length: u64,
+    content_type: &'static str,
+    range_eligible: bool,
+    range_header: Option<&str>,
+) -> Result<FileResponsePlan, RangeError> {
+    let range = parse_range(range_header, length)?;
     match range {
         ByteRange::Full => Ok(FileResponsePlan {
             status: 200,
             offset: 0,
-            content_length: target.length,
-            accept_ranges: target.range_eligible.then_some("bytes"),
+            content_length: length,
+            accept_ranges: range_eligible.then_some("bytes"),
             content_range: None,
-            content_type: target.content_type,
+            content_type,
         }),
         ByteRange::Partial {
             start,
@@ -361,8 +375,8 @@ pub fn plan_file_response(
             offset: start,
             content_length: end_inclusive - start + 1,
             accept_ranges: Some("bytes"),
-            content_range: Some(format!("bytes {start}-{end_inclusive}/{}", target.length)),
-            content_type: target.content_type,
+            content_range: Some(format!("bytes {start}-{end_inclusive}/{length}")),
+            content_type,
         }),
     }
 }

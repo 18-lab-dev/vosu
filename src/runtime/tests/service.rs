@@ -116,10 +116,8 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "START_AT_LOGIN",
         "CALCULATE_PP",
         "READ_MANIA_SCROLL_SPEED",
-        "ENABLE_KEY_OVERLAY",
         "POLL_RATE",
         "PRECISE_DATA_POLL_RATE",
-        "V2_SUBSCRIPTION_DEBOUNCE",
         "API_V1_SUBSCRIPTION_DEBOUNCE",
         "SERVER_IP",
         "SERVER_PORT",
@@ -157,13 +155,9 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         ));
         assert!(settings.contains("Updates are managed by your Linux package manager"));
     }
-    assert!(settings.contains("V2 subscription debounce"));
-    assert!(settings.contains(
-        "Wait at least this long between updates sent to overlays that request selected V2 fields."
-    ));
-    assert!(settings.contains(
-        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
-    ));
+    for key in ["ENABLE_KEY_OVERLAY", "ENABLE_MANIA_KEY_HIT_ERRORS", "ENABLE_HIT_OFFSETS", "V2_SUBSCRIPTION_DEBOUNCE"] {
+        assert!(!settings.contains(key), "{key}");
+    }
     assert!(settings.contains(
         r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
     ));
@@ -172,7 +166,6 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     ));
     let distinct = render_runtime_settings(&Config {
         api_v1_subscription_debounce: 7.375,
-        v2_subscription_debounce: 19.25,
         ..Config::default()
     });
     assert!(distinct.contains(
@@ -299,7 +292,6 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let current = store.current();
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
-    assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(
         listen_target(&current).unwrap(),
@@ -314,7 +306,6 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let current = reloaded.current();
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
-    assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(current.server_port, 24_890.0);
     bounded!(reloaded.shutdown()).unwrap();
@@ -422,7 +413,7 @@ fn settings_save_accepts_finite_json_numbers_and_ignores_invalid_or_nonfinite_va
 
     assert_eq!(config.poll_rate, 144.5);
     assert_eq!(config.precise_data_poll_rate, 8.0);
-    assert_eq!(config.v2_subscription_debounce, 0.25);
+    assert_eq!(config.api_v1_subscription_debounce, 1.0);
     assert_eq!(config.server_port, 24_060.0);
 
     let unchanged = config.clone();

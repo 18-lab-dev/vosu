@@ -187,11 +187,7 @@ impl ProductionRuntime {
         });
         let relays = Arc::new(WebSocketRelaySink::new());
         let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
-        let hubs = WebSocketHubs::start(
-            self.snapshots.clone(),
-            self.snapshots.clone(),
-            duration_from_millis_saturating(config.v2_subscription_debounce),
-        );
+        let hubs = WebSocketHubs::start(self.snapshots.clone());
         let dashboard_lifecycle = Arc::new(arc_swap::ArcSwapOption::empty());
         let services = ProductionServices::with_native_report_probe(
             PageService,
@@ -233,7 +229,6 @@ impl ProductionRuntime {
                 v2: hubs.v2.clone(),
                 precise: hubs.v2_precise.clone(),
                 commands: hubs.v1.clone(),
-                subscriptions: hubs.v2_subscription.clone(),
                 processor: processor.clone(),
                 relays: relays.clone(),
             },
@@ -353,7 +348,7 @@ impl ProductionRuntime {
         *self.dashboard_listener.get_mut() = Some(dashboard_listener);
         let bridge = bridge_b1::LegacyBridge::new(
             self.config.subscribe_current(),
-            hubs.v2_subscription.demand(),
+            watch::channel(Default::default()).1,
             self.snapshots.clone(),
             self.logger.clone(),
         );
@@ -578,13 +573,6 @@ impl RuntimeHooks for ProductionRuntime {
                                 poll_duration(effective.poll_rate),
                                 poll_duration(effective.precise_data_poll_rate),
                             );
-                            if let Some(hubs) = self.hubs.lock().await.as_ref() {
-                                hubs.v2_subscription.set_debounce(
-                                    duration_from_millis_saturating(
-                                        effective.v2_subscription_debounce,
-                                    ),
-                                );
-                            }
                             match listen_target(&effective) {
                                 Ok(target) => {
                                     let mut listener = self.listener.lock().await;
@@ -909,9 +897,9 @@ pub async fn run_cli() -> io::Result<()> {
         Arc::new(ManagerSnapshot::not_ready(
             0,
             ApiRuntimeSettings {
-                enable_key_overlay: current.enable_key_overlay,
-                enable_mania_key_hit_errors: current.enable_mania_key_hit_errors,
-                enable_hit_offsets: current.enable_hit_offsets,
+                enable_key_overlay: true,
+                enable_mania_key_hit_errors: false,
+                enable_hit_offsets: false,
             },
         )),
         Arc::new(ProductionSnapshotEncoder),

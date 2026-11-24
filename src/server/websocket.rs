@@ -40,7 +40,6 @@ pub enum Endpoint {
     StreamCompanion,
     V2,
     V2Precise,
-    V2Subscribe,
     Commands,
 }
 
@@ -53,7 +52,6 @@ impl Endpoint {
             "/tokens" => Some(Self::StreamCompanion),
             "/websocket/v2" => Some(Self::V2),
             "/websocket/v2/precise" => Some(Self::V2Precise),
-            "/websocket/v2/subscribe" => Some(Self::V2Subscribe),
             "/websocket/commands" => Some(Self::Commands),
             _ => None,
         }
@@ -65,7 +63,6 @@ impl Endpoint {
             Self::StreamCompanion => Some(Schema::StreamCompanion),
             Self::V2 => Some(Schema::V2),
             Self::V2Precise => Some(Schema::V2Precise),
-            Self::V2Subscribe => None,
             Self::Commands => None,
         }
     }

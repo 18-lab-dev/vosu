@@ -2,7 +2,11 @@
     clippy::disallowed_methods,
     reason = "test fixtures write scratch files and sleep"
 )]
+#[path = "server_compat/removals.rs"]
+mod removals;
 
+#[path = "server_compat/declared_roots.rs"]
+mod declared_roots;
 use std::{
     future::Future,
     io::{self, Write},
@@ -531,21 +535,6 @@ fn authorization_matrix_requires_both_peer_and_authoritative_header() {
                 }
             )
             .allowed()
-    );
-}
-
-#[tokio::test]
-async fn rejected_origin_is_403_not_found_and_never_reaches_upgrade() {
-    let response = bounded!(dispatch(
-        Method::GET,
-        "/websocket/v2/subscribe",
-        Some("http://evil.invalid"),
-        Body::empty(),
-    ));
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        bounded!(to_bytes(response.into_body(), 1024)).unwrap(),
-        "Not Found"
     );
 }
 

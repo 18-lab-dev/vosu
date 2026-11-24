@@ -56,14 +56,18 @@ pub(super) fn initialize_file(
         .flatten()
     {
         for binding in env_binding_order(content) {
-            if !is_known(&binding) && !deprecated.contains(&binding) {
+            if super::document::RETIRED_BINDINGS.contains(&binding.as_str())
+                && !deprecated.contains(&binding)
+            {
                 deprecated.push(binding);
             }
         }
     }
     if let Some(values) = toml_table.as_ref() {
         for binding in values.keys() {
-            if !is_known(binding) && !deprecated.contains(binding) {
+            if super::document::RETIRED_BINDINGS.contains(&binding.as_str())
+                && !deprecated.contains(binding)
+            {
                 deprecated.push(binding.clone());
             }
         }
@@ -172,6 +176,11 @@ pub(super) fn legacy_table(values: &HashMap<String, String>) -> toml::Table {
             ConfigDefault::String(_) => toml::Value::String(raw.clone()),
         };
         table.insert(item.binding.to_owned(), value);
+    }
+    for (binding, value) in values {
+        if !is_known(binding) && !super::document::RETIRED_BINDINGS.contains(&binding.as_str()) {
+            table.insert(binding.clone(), toml::Value::String(value.clone()));
+        }
     }
     table
 }

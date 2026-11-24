@@ -57,7 +57,6 @@ use crate::{
             SnapshotStateProvider, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
             WebSocketRelaySink,
         },
-        v2_subscription::{V2SubscriptionHub, V2SubscriptionProvider, V2SubscriptionSnapshot},
         websocket::{
             Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,
@@ -83,7 +82,7 @@ use vosu_core::{
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
-use vosu_osu_state::{StateBundleSnapshot, StateWorkerError, duration_from_millis_saturating};
+use vosu_osu_state::{StateBundleSnapshot, StateWorkerError};
 
 pub(crate) mod bridge_b1;
 mod cli;
@@ -125,7 +124,7 @@ use vosu_osu_state::{Delivery, SnapshotPublisher};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, atomic::Ordering};
+    use std::sync::atomic::Ordering;
 
     use tokio::sync::mpsc;
 
@@ -138,7 +137,6 @@ mod tests {
     use vosu_adapter_support::filtered::*;
     include!("runtime/tests/projection_reference.rs");
     include!("runtime/tests/projection.rs");
-    include!("runtime/tests/subscription_projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/lifecycle.rs");

@@ -1,7 +1,9 @@
 //! Pinned upstream v2 projections over authorized coherent surface captures.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod calculate;
 pub mod dto;
+pub mod files;
 mod paths;
 pub mod precise;
 pub mod provider;

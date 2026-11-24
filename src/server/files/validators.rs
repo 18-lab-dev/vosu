@@ -2,6 +2,7 @@ use super::FileTarget;
 use axum::http::{HeaderMap, HeaderValue, header};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct FileValidators {
@@ -45,6 +46,27 @@ impl FileValidators {
         Self {
             etag,
             modified: target.modified,
+        }
+    }
+
+    pub fn for_surface(file: &vosu_surface::files::OpenedFile, name: &str, lazer: bool) -> Self {
+        let hash = lazer
+            .then(|| Path::new(name).file_name().and_then(|s| s.to_str()))
+            .flatten()
+            .filter(|hash| {
+                matches!(hash.len(), 32 | 64) && hash.bytes().all(|b| b.is_ascii_hexdigit())
+            });
+        let etag = hash.map_or_else(
+            || {
+                let mut digest = Sha256::new();
+                digest.update(&file.metadata.identity);
+                quoted_hash("file-", digest.finalize())
+            },
+            |hash| format!("\"{hash}\""),
+        );
+        Self {
+            etag,
+            modified: file.metadata.modified,
         }
     }
 

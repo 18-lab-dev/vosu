@@ -64,9 +64,13 @@ pub(super) fn persist_current(
     replacer: &dyn AtomicReplace,
     current_hash: &mut [u8; 32],
 ) -> io::Result<()> {
-    let bytes = ConfigDocument::new((*current.load_full()).clone())
-        .serialize()
-        .into_bytes();
+    let mut document = match super::migration::read_authoritative(path)? {
+        Some(content) => ConfigDocument::parse(&content)
+            .unwrap_or_else(|_| ConfigDocument::new((*current.load_full()).clone())),
+        None => ConfigDocument::new((*current.load_full()).clone()),
+    };
+    *document.config_mut() = (*current.load_full()).clone();
+    let bytes = document.serialize().into_bytes();
     atomic_write(path, &bytes, replacer)?;
     *current_hash = hash_bytes(&bytes);
     Ok(())

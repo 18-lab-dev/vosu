@@ -336,14 +336,10 @@ pub(super) fn apply_config_values(
     boolean!("START_AT_LOGIN", start_at_login);
     boolean!("DEBUG_LOG", debug_log);
     boolean!("CALCULATE_PP", calculate_pp);
-    boolean!("ENABLE_KEY_OVERLAY", enable_key_overlay);
-    boolean!("ENABLE_MANIA_KEY_HIT_ERRORS", enable_mania_key_hit_errors);
-    boolean!("ENABLE_HIT_OFFSETS", enable_hit_offsets);
     boolean!("SHOW_MP_COMMANDS", show_mp_commands);
     boolean!("READ_MANIA_SCROLL_SPEED", read_mania_scroll_speed);
     number!("POLL_RATE", poll_rate);
     number!("PRECISE_DATA_POLL_RATE", precise_data_poll_rate);
-    number!("V2_SUBSCRIPTION_DEBOUNCE", v2_subscription_debounce);
     number!("API_V1_SUBSCRIPTION_DEBOUNCE", api_v1_subscription_debounce);
     number!("SERVER_PORT", server_port);
     number!("DASHBOARD_PORT", dashboard_port);

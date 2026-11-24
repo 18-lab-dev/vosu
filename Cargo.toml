@@ -79,6 +79,7 @@ test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/tes
 # Diagnostic-only; never included in packaged release feature sets.
 read-plan-profile = ["vosu-plugin-api/read-plan-profile"]
 [dependencies]
+vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
 arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
 bytes = "=1.12.1"
@@ -133,7 +134,6 @@ libc = "=0.2.186"
 
 [dev-dependencies]
 ciborium = "=0.2.2"
-vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
 vosu-adapter-gosumemory = { path = "crates/vosu-adapter-gosumemory" }
 vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion" }
 criterion = "0.7.0"

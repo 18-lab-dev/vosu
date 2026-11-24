@@ -158,21 +158,21 @@ impl KeyOverlayUpdates {
     fn current(&self) -> bool {
         match self {
             Self::Direct(value) => *value.borrow(),
-            Self::Config(value) => value.borrow().enable_key_overlay,
+            Self::Config(_) => true,
         }
     }
 
     fn mania_key_hit_errors(&self) -> bool {
         match self {
             Self::Direct(_) => false,
-            Self::Config(value) => value.borrow().enable_mania_key_hit_errors,
+            Self::Config(value) => value.borrow().collect_hit_errors,
         }
     }
 
     fn hit_offsets(&self) -> bool {
         match self {
             Self::Direct(_) => false,
-            Self::Config(value) => value.borrow().enable_hit_offsets,
+            Self::Config(value) => value.borrow().collect_hit_errors,
         }
     }
 }

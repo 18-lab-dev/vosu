@@ -54,3 +54,24 @@ impl SubscriptionRequestError {
 pub fn parse_subscription_request(data: &[u8]) -> Result<Vec<String>, SubscriptionRequestError> {
     serde_json::from_slice(data).map_err(|_| SubscriptionRequestError::InvalidRequest)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+    use vosu_proptest::bounded;
+
+    fn compile_pointers(pointers: Vec<String>) -> Result<Selection, SubscriptionRequestError> {
+        Selection::compile(pointers)
+    }
+
+    include!("tests_frames.rs");
+    mod pointer {
+        include!("tests_pointer.rs");
+    }
+    mod wire {
+        include!("tests_wire.rs");
+    }
+}

@@ -41,25 +41,9 @@ pub enum B1Event {
         key: B1SessionKey,
     },
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct B1Inputs {
-    pub enable_key_overlay: bool,
-    pub enable_mania_key_hit_errors: bool,
-    pub enable_hit_offsets: bool,
-    pub v2_subscription_debounce: f64,
     pub demand: SubscriptionDemand,
-}
-impl Default for B1Inputs {
-    fn default() -> Self {
-        let reader = ReaderSettings::default();
-        Self {
-            enable_key_overlay: reader.enable_key_overlay,
-            enable_mania_key_hit_errors: reader.enable_mania_key_hit_errors,
-            enable_hit_offsets: reader.enable_hit_offsets,
-            v2_subscription_debounce: reader.v2_subscription_debounce,
-            demand: SubscriptionDemand::default(),
-        }
-    }
 }
 impl B1Inputs {
     pub fn reader_settings(self, osu: OsuSettings) -> ReaderSettings {
@@ -69,10 +53,7 @@ impl B1Inputs {
             precise_data_poll_rate: osu.precise_data_poll_rate,
             show_mp_commands: osu.show_mp_commands,
             read_mania_scroll_speed: osu.read_mania_scroll_speed,
-            enable_key_overlay: self.enable_key_overlay,
-            enable_mania_key_hit_errors: self.enable_mania_key_hit_errors,
-            enable_hit_offsets: self.enable_hit_offsets,
-            v2_subscription_debounce: self.v2_subscription_debounce,
+            collect_hit_errors: false,
         }
     }
 }

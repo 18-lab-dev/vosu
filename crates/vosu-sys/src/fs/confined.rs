@@ -130,6 +130,13 @@ pub struct SafeChild {
     pub metadata: fs::Metadata,
 }
 
+impl SafeChild {
+    /// Final spelling of this retained object, never an instruction to reopen it.
+    pub fn canonical_path(&self) -> Result<PathBuf, SafePathError> {
+        native::root_path(&self.file)
+    }
+}
+
 /// Percent-decode a request path exactly once. `+` remains a literal plus because
 /// this is a URL path, not form data.
 pub fn decode_request_path(encoded: &str) -> Result<String, SafePathError> {

@@ -78,9 +78,9 @@ pub async fn start_test_production_composition(
         Arc::new(ManagerSnapshot::not_ready(
             0,
             ApiRuntimeSettings {
-                enable_key_overlay: config.enable_key_overlay,
-                enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-                enable_hit_offsets: config.enable_hit_offsets,
+                enable_key_overlay: true,
+                enable_mania_key_hit_errors: false,
+                enable_hit_offsets: false,
             },
         )),
         Arc::new(ProductionSnapshotEncoder),
@@ -94,7 +94,7 @@ pub async fn start_test_production_composition(
     });
     let relays = Arc::new(WebSocketRelaySink::new());
     let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
-    let hubs = WebSocketHubs::start(snapshots.clone(), snapshots.clone(), Duration::ZERO);
+    let hubs = WebSocketHubs::start(snapshots.clone());
     let endpoints = options
         .network
         .endpoints()
@@ -141,7 +141,6 @@ pub async fn start_test_production_composition(
             v2: hubs.v2.clone(),
             precise: hubs.v2_precise.clone(),
             commands: hubs.v1.clone(),
-            subscriptions: hubs.v2_subscription.clone(),
             processor: processor.clone(),
             relays: relays.clone(),
         },

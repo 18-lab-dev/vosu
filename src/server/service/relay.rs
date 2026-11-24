@@ -216,7 +216,6 @@ pub struct WebSocketEndpoints {
     pub v2: WebSocketHub,
     pub precise: WebSocketHub,
     pub commands: WebSocketHub,
-    pub subscriptions: V2SubscriptionHub,
     pub processor: Arc<CommandProcessor>,
     pub relays: Arc<WebSocketRelaySink>,
 }
