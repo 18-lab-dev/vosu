@@ -47,17 +47,26 @@ impl CredentialInput {
         if body.len() > MAX_MUTATION_BYTES {
             return Err(CredentialError::InvalidInput);
         }
-        let input: Self = serde_json::from_slice(body).map_err(|_| CredentialError::InvalidInput)?;
+        let input: Self =
+            serde_json::from_slice(body).map_err(|_| CredentialError::InvalidInput)?;
         input.validate()?;
         Ok(input)
     }
 
     pub(super) fn validate(&self) -> Result<(), CredentialError> {
         let valid = match self {
-            Self::Token { token } => field(token) && token.bytes().all(|b| (0x21..=0x7e).contains(&b)),
-            Self::Basic { username, password } => field(username) && !username.contains(':') && field(password),
+            Self::Token { token } => {
+                field(token) && token.bytes().all(|b| (0x21..=0x7e).contains(&b))
+            }
+            Self::Basic { username, password } => {
+                field(username) && !username.contains(':') && field(password)
+            }
         };
-        if valid { Ok(()) } else { Err(CredentialError::InvalidInput) }
+        if valid {
+            Ok(())
+        } else {
+            Err(CredentialError::InvalidInput)
+        }
     }
 
     pub(super) fn matches_source(&self, source: &str) -> bool {
