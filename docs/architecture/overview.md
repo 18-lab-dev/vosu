@@ -155,6 +155,11 @@ On Windows, core samples the foreground owner once every 100 ms and caches it be
 
 `vosu-sys::process::ProcessMemory` is the native all-or-error syscall boundary. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
 
+Resolver version discovery, generated-offset parsing and cache installation run
+on Tokio's blocking pool. The embedded generator uses a blocking-pool bridge
+for filesystem operations, JSON merging and temporary-directory cleanup on every
+exit path; its child processes remain asynchronous and cancellation-aware.
+
 `src/memory.rs::MemoryReader` is the client-decoding boundary. Stable and lazer implementations translate client-specific pointers and sentinels into typed raw snapshots and `ReadStatus`. Regular and precise reader instances are independent because their blocking capture threads cannot share mutable pointer caches. `ReaderSynchronization` copies only the small address state needed by lazer precise capture; stable leaves it empty.
 
 ### Regular and precise state

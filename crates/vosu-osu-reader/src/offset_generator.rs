@@ -295,90 +295,99 @@ impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
         cancel: &'a CancellationToken,
     ) -> crate::memory::lazer_loader::GenerationFuture<'a> {
         Box::pin(async move {
-            if cancel.is_cancelled() {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
-            }
             let root = executable_root.to_path_buf();
-            let discovered = crate::memory::lazer_version::discover_from_root(&root)
-                .map_err(io::Error::other)?;
-            if discovered != version {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "client version changed before generation",
-                ));
-            }
-            let assembly = [root.clone(), root.join("usr/bin"), root.join("bin")]
-                .into_iter()
-                .find(|p| p.join("osu!.dll").is_file() || p.join("osu.Game.dll").is_file())
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "could not locate osu!lazer managed assemblies",
-                    )
-                })?;
-            let payload = tokio::task::spawn_blocking({
-                let cache = self.cache_root.clone();
-                let extraction_cancel = cancel.clone();
-                move || extract_bundle(&cache, &extraction_cancel)
+            let version = version.to_owned();
+            let cancel = cancel.child_token();
+            let _cancel_on_drop = cancel.clone().drop_guard();
+            let cache = self.cache_root.clone();
+            let runtime = tokio::runtime::Handle::current();
+            // Keep filesystem work, JSON merging, and temporary-directory
+            // destruction off async workers, including every error/cancel path.
+            // Child processes still use cancellation-aware asynchronous output.
+            tokio::task::spawn_blocking(move || {
+                runtime.block_on(generate_offsets(cache, root, version, cancel))
             })
             .await
-            .map_err(io::Error::other)??;
-            let work = tempfile::Builder::new()
-                .prefix(".generation-")
-                .tempdir_in(payload.parent().expect("payload has cache parent"))?;
-            let staged = tokio::task::spawn_blocking({
-                let payload = payload.clone();
-                let assembly = assembly.clone();
-                let work = work.path().to_path_buf();
-                move || client_runtime::stage(&payload, &assembly, &work)
-            })
-            .await
-            .map_err(io::Error::other)??;
-            let template = work.path().join("template.json");
-            let generated = work.path().join("offsets.json");
-            let asset = crate::assets::DaemonAssets::get("offsets.json")
-                .ok_or_else(|| io::Error::other("embedded offsets template is missing"))?;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the template is generator input in a disposable work directory; the generated offsets are validated before atomic installation"
-            )]
-            fs::write(&template, asset.data.as_ref())?;
-            let mut cmd = generator_command(&staged.join(GENERATOR));
-            cmd.args(["--assemblies-only", "--assembly-dir"])
-                .arg(&assembly)
-                .args(["--template"])
-                .arg(&template)
-                .args(["--output"])
-                .arg(&generated);
-            let result = output(&mut cmd, cancel).await?;
-            if !result.status.success() {
-                return Err(io::Error::other(format!(
-                    "assembly-only offset generator failed: {}",
-                    String::from_utf8_lossy(&result.stderr).trim()
-                )));
-            }
-            let mut sig = generator_command(&staged.join(TARGET_HOST));
-            sig.args(["--game-base-signature", "--assembly-dir"])
-                .arg(&assembly);
-            let signature = output(&mut sig, cancel).await?;
-            if !signature.status.success() {
-                return Err(io::Error::other(format!(
-                    "owned target could not derive GameBaseVtable: {}",
-                    String::from_utf8_lossy(&signature.stderr).trim()
-                )));
-            }
-            let bytes = merge_game_base_vtable(&fs::read(generated)?, &signature.stdout)?;
-            let after = crate::memory::lazer_version::discover_from_root(&root)
-                .map_err(io::Error::other)?;
-            if after != version {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "client version changed during generation",
-                ));
-            }
-            Ok(Bytes::from(bytes))
+            .map_err(io::Error::other)?
         })
     }
+}
+
+// Polled only by the blocking-pool bridge above, not by an async worker.
+async fn generate_offsets(
+    cache: PathBuf,
+    root: PathBuf,
+    version: String,
+    cancel: CancellationToken,
+) -> io::Result<Bytes> {
+    if cancel.is_cancelled() {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+    }
+    let discovered =
+        crate::memory::lazer_version::discover_from_root(&root).map_err(io::Error::other)?;
+    if discovered != version {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "client version changed before generation",
+        ));
+    }
+    let assembly = [root.clone(), root.join("usr/bin"), root.join("bin")]
+        .into_iter()
+        .find(|p| p.join("osu!.dll").is_file() || p.join("osu.Game.dll").is_file())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "could not locate osu!lazer managed assemblies",
+            )
+        })?;
+    let payload = extract_bundle(&cache, &cancel)?;
+    let work = tempfile::Builder::new()
+        .prefix(".generation-")
+        .tempdir_in(payload.parent().expect("payload has cache parent"))?;
+    let staged = client_runtime::stage(&payload, &assembly, work.path())?;
+    let template = work.path().join("template.json");
+    let generated = work.path().join("offsets.json");
+    let asset = crate::assets::DaemonAssets::get("offsets.json")
+        .ok_or_else(|| io::Error::other("embedded offsets template is missing"))?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the template is generator input in a disposable work directory; the generated offsets are validated before atomic installation"
+    )]
+    fs::write(&template, asset.data.as_ref())?;
+    let mut cmd = generator_command(&staged.join(GENERATOR));
+    cmd.args(["--assemblies-only", "--assembly-dir"])
+        .arg(&assembly)
+        .args(["--template"])
+        .arg(&template)
+        .args(["--output"])
+        .arg(&generated);
+    let result = output(&mut cmd, &cancel).await?;
+    if !result.status.success() {
+        return Err(io::Error::other(format!(
+            "assembly-only offset generator failed: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        )));
+    }
+    let mut sig = generator_command(&staged.join(TARGET_HOST));
+    sig.args(["--game-base-signature", "--assembly-dir"])
+        .arg(&assembly);
+    let signature = output(&mut sig, &cancel).await?;
+    if !signature.status.success() {
+        return Err(io::Error::other(format!(
+            "owned target could not derive GameBaseVtable: {}",
+            String::from_utf8_lossy(&signature.stderr).trim()
+        )));
+    }
+    let bytes = merge_game_base_vtable(&fs::read(generated)?, &signature.stdout)?;
+    let after =
+        crate::memory::lazer_version::discover_from_root(&root).map_err(io::Error::other)?;
+    if after != version {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "client version changed during generation",
+        ));
+    }
+    Ok(Bytes::from(bytes))
 }
 
 fn merge_game_base_vtable(generated: &[u8], signature: &[u8]) -> io::Result<Vec<u8>> {
