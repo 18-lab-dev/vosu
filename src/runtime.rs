@@ -30,14 +30,9 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use vosu_osu_model::default_calculated_mods;
-use vosu_osu_model::enums::{ClientType, GameState};
-use vosu_osu_reader::memory::{
-    ReaderSynchronization, SynchronizedMemoryReader,
-    lazer::{LazerMemory, LazerPattern},
-    lazer_loader::LazerOffsetLoader,
-    stable::{StableMemory, StablePatterns},
-};
+use vosu_osu::capture::poll_duration;
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_reader::memory::{ReaderSynchronization, lazer_loader::LazerOffsetLoader};
 use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
@@ -93,9 +88,8 @@ use vosu_core::{
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 use vosu_osu_state::{
-    Delivery, PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
-    SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot, StateWorkerError,
-    StateWorkerHandle, duration_from_millis_saturating, spawn_state_worker,
+    Delivery, SnapshotPublisher, StateBundleSnapshot, StateWorkerError,
+    duration_from_millis_saturating,
 };
 
 mod cli;
@@ -130,6 +124,7 @@ use projection::*;
 use render::*;
 use service::*;
 use vosu_osu_reader::offset_generator::EmbeddedOffsetGenerator;
+#[cfg(test)]
 use worker::*;
 
 #[cfg(test)]
@@ -145,7 +140,6 @@ mod tests {
 
     include!("runtime/tests/cli.rs");
     include!("runtime/tests/worker.rs");
-    include!("runtime/tests/prop_worker.rs");
     include!("runtime/tests/projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");

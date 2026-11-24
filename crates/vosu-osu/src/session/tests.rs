@@ -97,6 +97,7 @@ fn session_with(client: ClientType, memory: Arc<FakeMemory>) -> Arc<OsuSession> 
         PathBuf::new(),
         PathBuf::new(),
         test_settings(),
+        None,
     )
 }
 
@@ -213,3 +214,5 @@ fn install_lazer_offsets_publishes_exactly_once() {
     // is refused: the first installed value wins.
     assert!(!session.install_lazer_offsets(Arc::new(LazerOffsets::embedded().unwrap())));
 }
+
+mod capture;

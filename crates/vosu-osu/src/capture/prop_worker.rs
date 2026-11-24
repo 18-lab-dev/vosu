@@ -3,6 +3,9 @@
 // after a selection change; these generate random sequences of snapshot
 // pairs rather than the single scenario the unit tests above assert.
 
+use super::tests::state_bundle;
+use super::*;
+
 use proptest::prelude::*;
 
 use vosu_osu_state::RegularState;
@@ -52,7 +55,11 @@ fn prop_build_snapshot(
 }
 
 fn prop_client_type(lazer: bool) -> ClientType {
-    if lazer { ClientType::Lazer } else { ClientType::Stable }
+    if lazer {
+        ClientType::Lazer
+    } else {
+        ClientType::Stable
+    }
 }
 
 proptest! {

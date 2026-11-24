@@ -2,3 +2,11 @@ plugin -> classify
 plugin -> memory
 plugin -> scan
 plugin -> session
+bridge_b1 -> capture
+bridge_b1 -> settings
+plugin -> bridge_b1
+plugin -> settings
+session -> bridge_b1
+session -> capture
+session -> settings
+session -> scan

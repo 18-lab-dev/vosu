@@ -32,3 +32,5 @@ vosu-surface = { path = "../vosu-surface" }
 
 [dev-dependencies]
 tempfile = "3.26.0"
+proptest = "1.12"
+vosu-proptest = { path = "../vosu-proptest" }

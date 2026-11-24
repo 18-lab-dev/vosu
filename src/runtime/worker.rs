@@ -1,4 +1,8 @@
 use super::*;
+use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Publisher, B1SessionKey};
+use vosu_osu::capture::{
+    CaptureTarget, create_state_worker, equivalent_state_snapshots, initialize_state_worker,
+};
 
 /// Exactly five state publication loops. Connections are owned by their hubs;
 /// shutdown cancels every loop and joins it before the provider can be dropped.
@@ -328,27 +332,14 @@ impl StatePublicationQueue {
     }
 }
 
-#[derive(Default)]
-struct PublishedStates {
-    api: Option<Arc<StateBundleSnapshot>>,
-    live: Option<Arc<StateBundleSnapshot>>,
-}
-
-pub(super) struct StatePublicationSink {
-    pid: u32,
-    generation: u64,
-    publications: Arc<StatePublicationQueue>,
-    last: Mutex<PublishedStates>,
-}
+pub(super) struct StatePublicationSink(B1Publisher);
 
 impl StatePublicationSink {
     pub(super) fn new(pid: u32, generation: u64, publications: Arc<StatePublicationQueue>) -> Self {
-        Self {
-            pid,
-            generation,
+        Self(B1Publisher::new(
+            B1SessionKey { pid, generation },
             publications,
-            last: Mutex::new(PublishedStates::default()),
-        }
+        ))
     }
 }
 
@@ -358,66 +349,24 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
         snapshot: Arc<StateBundleSnapshot>,
         delivery: Delivery,
     ) -> Result<(), StateWorkerError> {
-        let mut last = self
-            .last
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let api = api_state(last.api.as_ref(), &snapshot, delivery);
-        let unchanged = |previous: &Option<Arc<StateBundleSnapshot>>, next| {
-            previous
-                .as_ref()
-                .is_some_and(|previous| equivalent_state_snapshots(previous, next))
-        };
-        if unchanged(&last.live, &snapshot) && unchanged(&last.api, &api) {
-            return Ok(());
-        }
-        self.publications.publish(StatePublication {
-            pid: self.pid,
-            generation: self.generation,
-            api: Arc::clone(&api),
-            live: Arc::clone(&snapshot),
-        })?;
-        last.api = Some(api);
-        last.live = Some(snapshot);
-        Ok(())
+        self.0.publish(snapshot, delivery)
     }
 }
 
-/// Selects the API-visible state for a publication.
-///
-/// API consumers keep the regular component of the last API-cadence capture,
-/// except that selection changes are promoted before notifying live subscribers.
-/// This keeps current-file routes and API checksums on the subscription's selection.
-/// Generation and reset-epoch changes are also promoted immediately so regular
-/// transitions and their precise resets stay atomic.
-pub(super) fn api_state(
-    previous: Option<&Arc<StateBundleSnapshot>>,
-    live: &Arc<StateBundleSnapshot>,
-    delivery: Delivery,
-) -> Arc<StateBundleSnapshot> {
-    let Some(previous) = previous.filter(|previous| {
-        previous.source == live.source
-            && previous.generation == live.generation
-            && previous.reset_epoch == live.reset_epoch
-            && (Arc::ptr_eq(&previous.regular, &live.regular)
-                || (previous.regular.menu.checksum == live.regular.menu.checksum
-                    && previous.regular.menu.filename == live.regular.menu.filename
-                    && previous.regular.menu.folder == live.regular.menu.folder
-                    && previous.regular.menu.audio_filename == live.regular.menu.audio_filename
-                    && previous.regular.menu.background_filename
-                        == live.regular.menu.background_filename
-                    && previous.regular.global.songs_folder == live.regular.global.songs_folder))
-    }) else {
-        return Arc::clone(live);
-    };
-    match delivery {
-        Delivery::All => Arc::clone(live),
-        Delivery::Precise if Arc::ptr_eq(&previous.regular, &live.regular) => Arc::clone(live),
-        Delivery::Precise => Arc::new(StateBundleSnapshot {
-            regular: Arc::clone(&previous.regular),
-            ..StateBundleSnapshot::clone(live)
-        }),
-        Delivery::Live => Arc::clone(previous),
+impl vosu_surface::LegacySink<B1Event, B1Inputs> for StatePublicationQueue {
+    fn send(&self, event: B1Event) {
+        if let B1Event::Publish { key, api, live } = event {
+            let _ = self.publish(StatePublication {
+                pid: key.pid,
+                generation: key.generation,
+                api,
+                live,
+            });
+        }
+    }
+
+    fn inputs(&self) -> watch::Receiver<B1Inputs> {
+        watch::channel(B1Inputs::default()).1
     }
 }
 
@@ -608,14 +557,6 @@ fn reader_settings_from(config: &vosu_core::config::Config) -> vosu_osu_state::R
     }
 }
 
-fn equivalent_state_snapshots(current: &StateBundleSnapshot, next: &StateBundleSnapshot) -> bool {
-    current.source == next.source
-        && current.generation == next.generation
-        && current.reset_epoch == next.reset_epoch
-        && Arc::ptr_eq(&current.regular, &next.regular)
-        && Arc::ptr_eq(&current.precise, &next.precise)
-}
-
 pub(super) fn update_state_publication(
     states: &mut BTreeMap<u32, Arc<StateBundleSnapshot>>,
     state_revisions: &mut BTreeMap<u32, u64>,
@@ -633,46 +574,6 @@ pub(super) fn update_state_publication(
     *revision = revision.saturating_add(1);
 }
 
-pub(super) fn poll_duration(milliseconds: f64) -> Duration {
-    if milliseconds.is_finite() && milliseconds > 0.0 {
-        Duration::try_from_secs_f64(milliseconds.min(ConfigDocument::MAX_INTERVAL_MS) / 1_000.0)
-            .unwrap_or(Duration::from_millis(1))
-    } else {
-        Duration::from_millis(1)
-    }
-}
-
-pub(super) async fn initialize_state_worker<T, F, Fut, L>(
-    cancel: &CancellationToken,
-    retry_delay: Duration,
-    mut initialize: F,
-    mut log_permission_denied: L,
-) -> Option<T>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Option<T>, StateWorkerError>>,
-    L: FnMut(&StateWorkerError),
-{
-    loop {
-        if cancel.is_cancelled() {
-            return None;
-        }
-        match initialize().await {
-            Ok(Some(worker)) => return Some(worker),
-            Err(error @ StateWorkerError::MemoryPermissionDenied { .. }) => {
-                log_permission_denied(&error);
-                return None;
-            }
-            Ok(None) | Err(_) => {
-                tokio::select! {
-                    _ = cancel.cancelled() => return None,
-                    _ = tokio::time::sleep(retry_delay) => {}
-                }
-            }
-        }
-    }
-}
-
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
     reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
@@ -681,6 +582,16 @@ pub(super) async fn run_instance_state_worker(
     logger: Logger,
     cancel: CancellationToken,
 ) {
+    let target = CaptureTarget {
+        pid: entry.pid,
+        generation: entry.generation,
+        client: entry.client,
+        process: entry.instance.process().clone(),
+        root: entry.instance.root().to_path_buf(),
+        settings: entry.settings.clone(),
+        is_tournament_manager: entry.instance.is_tournament_manager(),
+        lazer_offsets: entry.instance.lazer_offsets(),
+    };
     let publisher = Arc::new(StatePublicationSink::new(
         entry.pid,
         entry.generation,
@@ -691,13 +602,13 @@ pub(super) async fn run_instance_state_worker(
         &cancel,
         Duration::from_secs(1),
         || {
-            let entry = entry.clone();
+            let target = target.clone();
             let reader_settings = reader_settings.clone();
             let demand = subscription_demand.clone();
-            let publisher = Arc::clone(&publisher);
+            let publisher: Arc<dyn SnapshotPublisher<Arc<StateBundleSnapshot>>> = publisher.clone();
             let synchronization = Arc::clone(&synchronization);
             async move {
-                create_state_worker(&entry, reader_settings, demand, publisher, synchronization)
+                create_state_worker(&target, reader_settings, demand, publisher, synchronization)
                     .await
             }
         },
@@ -714,160 +625,6 @@ pub(super) async fn run_instance_state_worker(
     };
     cancel.cancelled().await;
     let _ = worker.shutdown().await;
-}
-
-pub(super) enum PreparedReaders {
-    Stable(Box<(StableMemory, StableMemory)>),
-    Lazer(Box<(LazerMemory, LazerMemory)>),
-}
-
-pub(super) async fn create_state_worker(
-    entry: &InstanceGeneration,
-    reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
-    subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
-    publisher: Arc<StatePublicationSink>,
-    synchronization: Arc<Mutex<ReaderSynchronization>>,
-) -> Result<Option<StateWorkerHandle>, StateWorkerError> {
-    let process = entry.instance.process().clone();
-    let client = entry.client;
-    let offsets = entry.instance.lazer_offsets();
-    let readers = tokio::task::spawn_blocking(
-        move || -> Result<Option<PreparedReaders>, StateWorkerError> {
-            match client {
-                ClientType::Stable => {
-                    let patterns =
-                        match StablePatterns::resolve(&process).map_err(StateWorkerError::from)? {
-                            vosu_sys::process::ReadStatus::Ready(patterns) => patterns,
-                            vosu_sys::process::ReadStatus::NotReady
-                            | vosu_sys::process::ReadStatus::Unchanged
-                            | vosu_sys::process::ReadStatus::Unsupported(_) => return Ok(None),
-                        };
-                    Ok(Some(PreparedReaders::Stable(Box::new((
-                        StableMemory::new(process.clone(), patterns),
-                        StableMemory::new(process, patterns),
-                    )))))
-                }
-                ClientType::Lazer => {
-                    let Some(offsets) = offsets else {
-                        return Ok(None);
-                    };
-                    let pattern = LazerPattern::source_default();
-                    let mut regular =
-                        LazerMemory::new(process.clone(), Arc::clone(&offsets), pattern.clone());
-                    if !regular
-                        .resolve_game_base()
-                        .map_err(StateWorkerError::from)?
-                    {
-                        return Ok(None);
-                    }
-                    Ok(Some(PreparedReaders::Lazer(Box::new((
-                        regular,
-                        LazerMemory::new(process, offsets, pattern),
-                    )))))
-                }
-            }
-        },
-    )
-    .await
-    .map_err(|error| {
-        StateWorkerError::Capture(format!("reader preparation task failed: {error}"))
-    })??;
-    let Some(readers) = readers else {
-        return Ok(None);
-    };
-    let intervals = PollIntervalUpdates::Config {
-        config: reader_settings.clone(),
-        demand: subscription_demand,
-    };
-    let worker = match readers {
-        PreparedReaders::Stable(readers) => {
-            let (regular, precise) = *readers;
-            finish_state_worker(
-                entry,
-                reader_settings,
-                intervals,
-                publisher,
-                synchronization,
-                regular,
-                precise,
-            )?
-        }
-        PreparedReaders::Lazer(readers) => {
-            let (regular, precise) = *readers;
-            finish_state_worker(
-                entry,
-                reader_settings,
-                intervals,
-                publisher,
-                synchronization,
-                regular,
-                precise,
-            )?
-        }
-    };
-    Ok(Some(worker))
-}
-
-pub(super) fn finish_state_worker<R, Q>(
-    entry: &InstanceGeneration,
-    reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
-    intervals: PollIntervalUpdates,
-    publisher: Arc<StatePublicationSink>,
-    synchronization: Arc<Mutex<ReaderSynchronization>>,
-    regular_memory: R,
-    precise_memory: Q,
-) -> Result<StateWorkerHandle, StateWorkerError>
-where
-    R: SynchronizedMemoryReader + 'static,
-    Q: SynchronizedMemoryReader + 'static,
-{
-    let current = *reader_settings.borrow();
-    let calculation = Arc::new(vosu_osu_state::state_backend::LiveStateCalculationBackend::new());
-    let mut bundle = StateBundle::new_with_root(
-        entry.client,
-        entry.generation,
-        entry.instance.root().to_path_buf(),
-        calculation,
-    );
-    bundle.set_roles(
-        entry.instance.is_tournament_manager(),
-        entry.settings.tournament_spectator,
-    );
-    bundle.set_calculate_pp(current.calculate_pp);
-    bundle.set_capture_config(current.read_mania_scroll_speed, current.show_mp_commands);
-    bundle.set_config_updates(reader_settings.clone());
-    publisher.publish(bundle.snapshot(), Delivery::All)?;
-
-    let initial_context = ReadContext {
-        source: entry.client,
-        instance_generation: entry.generation,
-        reset_epoch: 0,
-        status: GameState::Menu.value() as i64,
-        play_time: 0.0,
-        mode: 0,
-        mods: default_calculated_mods(),
-        committed_hit_error_index: 0,
-        accepted_precise_sequence: 0,
-        latest_precise_global_sequence: 0,
-    };
-    let capture = RegularCapturePlan {
-        read_mania_scroll_speed: current.read_mania_scroll_speed,
-        show_mp_commands: current.show_mp_commands,
-        ..RegularCapturePlan::default()
-    };
-    let regular =
-        SourceRegularReader::new(entry.client, regular_memory, Arc::clone(&synchronization));
-    let precise = SourcePreciseReader::new(precise_memory, reader_settings.clone());
-    Ok(spawn_state_worker(
-        regular,
-        precise,
-        bundle,
-        publisher,
-        initial_context,
-        capture,
-        intervals,
-        synchronization,
-    ))
 }
 
 pub(super) fn build_manager_snapshot(

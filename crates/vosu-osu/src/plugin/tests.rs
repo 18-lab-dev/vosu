@@ -752,3 +752,5 @@ fn register_session_refuses_a_handle_that_is_not_live() {
         "a handle missing from live_handles must never get a session registered"
     );
 }
+
+mod capture;

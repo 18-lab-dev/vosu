@@ -150,7 +150,7 @@ where
     R: RegularSnapshotReader,
     Q: PreciseSnapshotReader,
     T: SnapshotTransition,
-    P: SnapshotPublisher<T::Publication>,
+    P: SnapshotPublisher<T::Publication> + ?Sized,
 {
     spawn_state_worker_with_clock(
         regular_reader,
@@ -184,7 +184,7 @@ where
     R: RegularSnapshotReader,
     Q: PreciseSnapshotReader,
     T: SnapshotTransition,
-    P: SnapshotPublisher<T::Publication>,
+    P: SnapshotPublisher<T::Publication> + ?Sized,
 {
     let (permit_tx, permit_rx) = std::sync::mpsc::sync_channel::<RegularPermit>(1);
     let (regular_tx, mut regular_rx) = mpsc::channel(1);

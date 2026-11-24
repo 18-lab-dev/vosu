@@ -6,8 +6,8 @@
 //! plugin's own 2-worker Tokio runtime (DG): every identified session gets
 //! a `ProcessHandle` backed by P3's `PlanProcessMemory`/`PlanScanBackend`,
 //! and a lazer session's offset resolver is started on that runtime, never
-//! inline on a dispatch thread. The session map, reader threads, and B1
-//! capture wiring beyond that are P5.
+//! inline on a dispatch thread. P5 adds session-owned capture workers and
+//! the interim B1 publication/control bridge.
 //!
 //! Generic over `H: HostServices` (default [`VtableHostServices`]) and `G:
 //! OffsetGenerator` (default [`EmbeddedOffsetGenerator`]), exactly like
@@ -51,13 +51,15 @@ use vosu_plugin_api::{
     SessionAttached, SessionDecline, SessionDetached, TimerFired, VtableHostServices, vosu_status,
 };
 
+use crate::bridge_b1::{B1Event, B1Inputs};
 use crate::classify::{
     self, AttachDecision, AttachFacts, Identified, PendingIdentify, Platform, RootResolver,
     to_process_bitness,
 };
 use crate::memory::PlanProcessMemory;
 use crate::scan::{PlanScanBackend, ScanWaiters};
-use crate::session::OsuSession;
+use crate::session::{OsuSession, SessionScanLifecycle};
+use crate::settings::OsuSettings;
 
 /// abi:82's destroy grace: `destroy` shuts every still-live session down
 /// (cancel, then join) within this budget before shutting the plugin's own
@@ -107,6 +109,8 @@ struct PluginState {
     /// joined by `destroy` within the grace period, or by a test's
     /// [`OsuPlugin::join_background_session_detaches`].
     session_detach_joins: Vec<tokio::task::JoinHandle<()>>,
+    settings: OsuSettings,
+    missing_sink_logged: bool,
 }
 
 pub struct OsuPlugin<
@@ -222,11 +226,25 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                 self.scan_waiters.deliver(correlation_id, result);
                 Ok(())
             }
+            Message::SettingsChanged(changed) => self.update_settings(&changed.values),
             // Every other opcode this concurrent dispatch call could see has
-            // no plugin-side action yet (later unit: P3 read-plan replies;
-            // P5's capture/B1 wiring beyond attach/detach/settle).
+            // has no plugin-side action in the current milestone.
             _ => Ok(()),
         }
+    }
+
+    fn update_settings(&self, values: &CborValue) -> Result<(), PluginError> {
+        let settings =
+            OsuSettings::from_cbor(values).map_err(|_| vosu_status::VOSU_ERR_INVALID_ARGUMENT)?;
+        let sessions = {
+            let mut state = self.state.lock().expect("plugin state mutex poisoned");
+            state.settings = settings;
+            state.sessions.values().cloned().collect::<Vec<_>>()
+        };
+        for session in sessions {
+            session.osu_settings.send_replace(settings);
+        }
+        Ok(())
     }
 
     fn handle_attached(&self, message: &SessionAttached) -> Result<(), PluginError> {
@@ -509,9 +527,13 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         let runtime = self.runtime.lock().expect("plugin runtime mutex poisoned");
         if let Some(runtime) = runtime.as_ref() {
             runtime.block_on(async {
-                for join in joins {
-                    let _ = join.await;
-                }
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    for join in joins {
+                        let _ = join.await;
+                    }
+                })
+                .await
+                .expect("session detach join deadline");
             });
         }
     }
@@ -646,10 +668,12 @@ fn register_session<H, G>(
         identified.pid,
         bitness,
     ));
-    let scans: Arc<dyn ScanBackend> = Arc::new(PlanScanBackend::new(
+    let alive = memory.alive_flag();
+    let scans: Arc<dyn ScanBackend> = Arc::new(PlanScanBackend::with_shared(
         (**host).clone(),
         handle,
         Arc::clone(scan_waiters),
+        Arc::clone(&alive),
     ));
     let process = ProcessHandle::with_scan_backend(memory, bitness, scans);
     let session = OsuSession::new(
@@ -661,10 +685,15 @@ fn register_session<H, G>(
         identified.root.clone(),
         identified.executable_root.clone(),
         identified.settings.clone(),
+        Some(SessionScanLifecycle {
+            waiters: Arc::clone(scan_waiters),
+            alive,
+        }),
     );
     let registered = {
         let mut state = state.lock().expect("plugin state mutex poisoned");
         if state.live_handles.contains(&handle) {
+            session.osu_settings.send_replace(state.settings);
             state.sessions.insert(handle, Arc::clone(&session));
             true
         } else {
@@ -677,6 +706,32 @@ fn register_session<H, G>(
         runtime_handle.spawn(async move {
             session.start_lazer_resolver(loader, warn).await;
         });
+    }
+    if registered {
+        if let Some(sink) = vosu_surface::current::<B1Event, B1Inputs>() {
+            let warn = log_warn(host);
+            let session = {
+                let state = state.lock().expect("plugin state mutex poisoned");
+                state.sessions.get(&handle).cloned()
+            };
+            if let Some(session) = session {
+                runtime_handle.spawn(async move {
+                    session.start_capture(sink, warn).await;
+                });
+            }
+        } else {
+            let log = {
+                let mut state = state.lock().expect("plugin state mutex poisoned");
+                !std::mem::replace(&mut state.missing_sink_logged, true)
+            };
+            if log {
+                let _ = host.log(
+                    LogLevel::Info,
+                    "Bridge B1 is not installed; osu! capture is disabled",
+                    CborValue::Map(Vec::new()),
+                );
+            }
+        }
     }
 }
 
@@ -756,7 +811,9 @@ fn resolve_lazer_version_with(
 
 impl ConcurrentPlugin for OsuPlugin<VtableHostServices> {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
-        Ok(Self::new(host, current_platform(), init.data_dir))
+        let plugin = Self::new(host, current_platform(), init.data_dir);
+        plugin.update_settings(&init.settings)?;
+        Ok(plugin)
     }
 
     fn on_message(&self, message: Message, correlation_id: u64) -> Result<(), PluginError> {

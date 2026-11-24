@@ -12,12 +12,15 @@
 //! plugin's own 2-worker Tokio runtime (DG): every identified session gets
 //! a `ProcessHandle`, and a lazer session's offset resolver is started on
 //! that runtime (DH: cached under `data_dir`), never inline on a dispatch
-//! thread. Reader threads and B1 capture wiring are P5; this crate is not
+//! thread. P5 shares capture with the legacy supervisor and owns the B1
+//! publication/control bridge and session reader threads. This crate is not
 //! yet registered in `src/plugins.rs`'s `BUNDLED` array (unit C3).
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
+pub mod bridge_b1;
+pub mod capture;
 pub mod classify;
 pub mod memory;
 pub mod plugin;

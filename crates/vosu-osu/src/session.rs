@@ -32,7 +32,25 @@ use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_osu_reader::memory::lazer_version::process_executable_root;
 use vosu_osu_reader::process::ProcessHandle;
 
+use crate::scan::ScanWaiters;
+use crate::settings::OsuSettings;
+use std::sync::atomic::AtomicBool;
+
+mod capture;
+
 type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>;
+
+/// A session's scan-admission cancellation, sharing the reader's liveness.
+pub struct SessionScanLifecycle {
+    pub(crate) waiters: Arc<ScanWaiters>,
+    pub(crate) alive: Arc<AtomicBool>,
+}
+
+impl SessionScanLifecycle {
+    pub(crate) fn cancel(&self, handle: u64) {
+        self.waiters.cancel_session(handle, &self.alive);
+    }
+}
 
 /// One attached osu! process generation. Always carries a `ProcessHandle`
 /// (built by `plugin.rs::register_session` for both stable and lazer
@@ -48,8 +66,11 @@ pub struct OsuSession {
     pub executable_root: PathBuf,
     pub settings: InstanceSettings,
     lifecycle: CancellationToken,
+    scans: Option<SessionScanLifecycle>,
     lazer_offsets: ArcSwapOption<LazerOffsets>,
     resolver: tokio::sync::Mutex<Option<LazerResolverHandle>>,
+    capture: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    pub(crate) osu_settings: tokio::sync::watch::Sender<OsuSettings>,
 }
 
 impl OsuSession {
@@ -67,6 +88,7 @@ impl OsuSession {
         root: PathBuf,
         executable_root: PathBuf,
         settings: InstanceSettings,
+        scans: Option<SessionScanLifecycle>,
     ) -> Arc<Self> {
         Arc::new(Self {
             handle,
@@ -78,8 +100,11 @@ impl OsuSession {
             executable_root,
             settings,
             lifecycle: CancellationToken::new(),
+            scans,
             lazer_offsets: ArcSwapOption::empty(),
             resolver: tokio::sync::Mutex::new(None),
+            capture: tokio::sync::Mutex::new(None),
+            osu_settings: tokio::sync::watch::channel(OsuSettings::default()).0,
         })
     }
 
@@ -100,6 +125,9 @@ impl OsuSession {
     /// [`Self::join_resolver`].
     pub fn cancel(&self) {
         self.lifecycle.cancel();
+        if let Some(scans) = &self.scans {
+            scans.cancel(self.handle);
+        }
     }
 
     /// Starts at most one pending offset resolver for this session
@@ -128,8 +156,9 @@ impl OsuSession {
         true
     }
 
-    /// Cancels (idempotent) and awaits this session's resolver task, if
-    /// one was ever started. Bounded in practice by the resolver's own
+    /// Cancels (idempotent) and joins capture before the resolver, if either
+    /// was started. Capture emits Detached only after all readers have joined.
+    /// The resolver join is Bounded in practice by the resolver's own
     /// `tokio::select!` on every retry/backoff reacting to cancellation
     /// promptly; a caller that needs a hard deadline regardless (as
     /// `OsuPlugin::destroy`'s 5 s grace, abi:82, does) wraps the call in
@@ -137,11 +166,18 @@ impl OsuSession {
     /// directly — only from a task `plugin.rs` spawned on its own runtime
     /// (detach) or from `destroy` itself, which is expected to join.
     pub async fn join_resolver(&self) {
-        self.lifecycle.cancel();
+        self.cancel();
+        if let Some(task) = self.capture.lock().await.take() {
+            let _ = task.await;
+        }
         let task = self.resolver.lock().await.take();
         if let Some(task) = task {
             let _ = task.await;
         }
+    }
+    #[cfg(test)]
+    pub(crate) fn capture_is_some(&self) -> bool {
+        self.capture.blocking_lock().is_some()
     }
 
     /// Test-only: whether a resolver task is currently recorded (started
