@@ -55,7 +55,10 @@ pub struct Installed(());
 
 impl Drop for Installed {
     fn drop(&mut self) {
-        *SLOT.lock().unwrap() = None;
+        // Take the sink out first so its own `Drop` runs without the slot
+        // lock held; a sink whose drop called `current()` would deadlock.
+        let previous = SLOT.lock().unwrap().take();
+        drop(previous);
     }
 }
 
