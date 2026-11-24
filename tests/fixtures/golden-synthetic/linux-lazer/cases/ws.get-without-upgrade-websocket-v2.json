@@ -1,0 +1,269 @@
+{
+  "format": "vosu-golden-case-v1",
+  "id": "ws.get-without-upgrade-websocket-v2",
+  "family": "ws",
+  "barrier": "no-client",
+  "conditional": null,
+  "attempts": 1,
+  "normalized": [
+    "header-date"
+  ],
+  "request": {
+    "text": "GET /websocket/v2 HTTP/1.1\r\nHost: 127.0.0.1:24050\r\nConnection: close\r\n\r\n"
+  },
+  "expected": {
+    "status": 400,
+    "headers": [
+      [
+        "access-control-allow-headers",
+        "Origin, X-Requested-With, Content-Type, Accept"
+      ],
+      [
+        "access-control-allow-methods",
+        "POST, GET, PUT, DELETE, OPTIONS"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "access-control-allow-private-network",
+        "true"
+      ],
+      [
+        "connection",
+        "close"
+      ],
+      [
+        "content-length",
+        "43"
+      ],
+      [
+        "content-type",
+        "text/plain; charset=utf-8"
+      ],
+      [
+        "date",
+        "<golden:date>"
+      ]
+    ],
+    "body": {
+      "text": "Connection header did not include 'upgrade'"
+    },
+    "frames": []
+  },
+  "replay": {
+    "format": "vosu-adapter-capture-v1",
+    "schema": "v2",
+    "provider_generation": 1,
+    "session": null,
+    "focus_revision": 0,
+    "roster": {
+      "revision": 0,
+      "sessions": []
+    },
+    "bus_revision": 0,
+    "namespace_revisions": [
+      [
+        "vosu.osu",
+        0
+      ],
+      [
+        "vosu.skin",
+        0
+      ]
+    ],
+    "entries": [
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/paused",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/playTime",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/server",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/session/state",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/rankedPlay",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/settings",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/profile",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/beatmap",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/failed",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/playerName",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/mode",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/score",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/accuracyPercent",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/healthRaw",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/judgements",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/statistics",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/hitErrors/all",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/combo",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/mods",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/rank",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/pp",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/unstableRate",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/leaderboard",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/performance",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/result",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/internal/paths",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourney",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourneyAvailability",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/room",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.skin",
+        "pointer": "/name",
+        "value_cbor_b64": null,
+        "error": null
+      }
+    ],
+    "derived": {
+      "revision": 0,
+      "status": "none"
+    },
+    "http": {
+      "kind": "not_ready",
+      "status": 500,
+      "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+    },
+    "digest": "sha256:1aeab90f7489ac2b1ae2af38803164bc17406488713e4ebd03423a41da557df2"
+  }
+}

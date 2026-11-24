@@ -14,7 +14,7 @@
     "sha256": "6ba575b5dd369e931e2c76ebff449a4a3f12b829da6959e931f0d267e5588e45"
   },
   "vosu": {
-    "commit": "9fb7deb2ac598c962630d6aea7f5e01da6a30fdf",
+    "commit": "e66f5ce8af28d5f6b7a9af845d7805bf0b118f7d",
     "version": "2.0.0-alpha.1",
     "profile": "debug",
     "features": [
@@ -30,7 +30,7 @@
     "songs": "C:\\vosu-golden\\songs\\"
   },
   "case_counts": {
-    "state-http": 5,
+    "state-http": 6,
     "ws": 2,
     "files": 4,
     "path-security": 1,
@@ -93,6 +93,13 @@
       "barrier": "paused",
       "attempts": 1,
       "file": "cases/state-http.get-json-sc.json"
+    },
+    {
+      "id": "state-http.get-json-sc-second-chart",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.get-json-sc-second-chart.json"
     },
     {
       "id": "state-http.get-json-v2",

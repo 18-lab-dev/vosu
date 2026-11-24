@@ -348,6 +348,16 @@ pub fn reference_position(ns: &str, pointer: &str) -> bool {
         || (ns == "vosu.skin" && tokens == ["tree"])
 }
 
+/// The positions the osu! plugin fills with a tree reference. No adapter
+/// selects one (`replay_cases::adapter_selections_never_include_tree_refs`),
+/// so replay refuses a recorded tree reference instead of serving trees.
+pub const TREE_POSITIONS: [(&str, &str); 2] =
+    [("vosu.skin", "/tree"), ("vosu.chart", "/resources/set")];
+
+pub fn tree_position(ns: &str, pointer: &str) -> bool {
+    TREE_POSITIONS.contains(&(ns, pointer))
+}
+
 const REFERENCE_PREFIXES: [&str; 2] = ["/api/v1/resources/", "/api/v1/trees/"];
 
 /// Whether `value` holds a host reference projection (`url` naming a host

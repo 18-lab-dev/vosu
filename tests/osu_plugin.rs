@@ -359,6 +359,81 @@ fn focus_foreground_sets_session_focused() {
     assert_dispatches_ok();
 }
 
+/// Core has an OS-foreground source only on Windows (`docs/v2/plugin-abi.md`
+/// §6.2; `docs/v2/adapter-surfaces.md`: "Linux omits this wire field"). A
+/// host built like production's reports the fact as absent elsewhere, never
+/// as `false`: in `FOCUS_CHANGED`, in the identified roster and in
+/// `vosu.osu` `/session/focused`. On Windows no poller runs here, so no
+/// process owns the foreground and the fact is `false`.
+#[test]
+fn production_host_reports_foreground_only_where_core_has_a_source() {
+    use vosu_plugin_api::Selector;
+    use vosu_plugin_testkit::subscriber::{SubscribeCommand, SubscriberEvent};
+    let expected = cfg!(windows).then_some(false);
+    let harness = Harness::production("vosu.osu", 0x6a00_0e00, 1);
+    let pid = harness.pids[0];
+    let (events, commands) = harness.subscriber("test.osu.foreground");
+    commands
+        .try_send(SubscribeCommand {
+            session: None,
+            selectors: vec![Selector {
+                ns: "vosu.sessions".into(),
+                pointer: String::new(),
+            }],
+        })
+        .unwrap();
+    harness.host.process_appeared(Harness::record(pid, &[]));
+    let deadline = Instant::now() + WAIT;
+    let handle = loop {
+        if let SubscriberEvent::Attached(attached) = events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            break attached.handle;
+        }
+    };
+    commands
+        .try_send(SubscribeCommand {
+            session: Some(handle),
+            selectors: vec![Selector {
+                ns: "vosu.client".into(),
+                pointer: "/focused".into(),
+            }],
+        })
+        .unwrap();
+    let focus = loop {
+        if let SubscriberEvent::Focus(focus) = events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+            && focus.handle == handle
+        {
+            break focus;
+        }
+    };
+    assert_eq!(focus.foreground, expected, "FOCUS_CHANGED foreground");
+
+    let focused =
+        || namespace(&harness, handle, "vosu.osu").map(|value| value["session"]["focused"].clone());
+    eventually(|| focused().is_some());
+    assert_eq!(
+        focused().unwrap(),
+        expected.map_or(serde_json::Value::Null, serde_json::Value::Bool),
+        "vosu.osu /session/focused"
+    );
+
+    let requester = harness
+        .host
+        .surface_requester(vosu_core::plugin::PluginInstanceId::new(1))
+        .unwrap();
+    let capture = requester
+        .capture(vosu_surface::state::SessionTarget::Focused, &[])
+        .unwrap();
+    assert_eq!(capture.session.as_ref().unwrap().foreground, expected);
+    assert_eq!(capture.roster.sessions.len(), 1);
+    assert_eq!(capture.roster.sessions[0].foreground, expected, "roster");
+    assert_dispatches_ok();
+}
+
 #[test]
 fn bus_error_selection_controls_collection_without_extension_flags() {
     use vosu_plugin_api::Selector;

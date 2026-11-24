@@ -1,0 +1,24 @@
+osu file format v14
+
+[General]
+Mode:0
+
+[Metadata]
+Title:
+Artist:
+Creator:
+Version:
+
+[Difficulty]
+HPDrainRate:0
+CircleSize:0
+OverallDifficulty:0
+ApproachRate:0
+SliderMultiplier:1
+SliderTickRate:1
+
+[TimingPoints]
+0,320,4,2,0,100,1,0
+
+[HitObjects]
+256,192,10000,1,0,0:0:0:0:

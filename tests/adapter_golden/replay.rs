@@ -19,7 +19,7 @@ use super::{
     assets::{Materialized, ReplayAssets},
     envelope::{
         Envelope, RecordedEntry, RecordedSession, contains_reference, increasing,
-        reference_position, tokens,
+        reference_position, tokens, tree_position,
     },
 };
 use std::{
@@ -158,7 +158,15 @@ impl Replay {
             .enable_all()
             .build()
             .map_err(|e| format!("replay runtime: {e}"))?;
-        let synthetic = Arc::new(SyntheticForegroundSource::new(None));
+        // A recorded `null` foreground is what a host without an
+        // OS-foreground source reports (`available()` false, as production
+        // off Windows); a recorded `true`/`false` needs one. The recording
+        // decides, never the platform this replay runs on.
+        let synthetic = Arc::new(if recorded.foreground_available() {
+            SyntheticForegroundSource::new(None)
+        } else {
+            SyntheticForegroundSource::unavailable()
+        });
         let root = dirs.path().to_path_buf();
         let started = runtime.block_on(compose(root, synthetic.clone()));
         let created = game::SETUP.lock().unwrap().take().is_none();
@@ -407,9 +415,17 @@ impl Recorded {
                     session.owner, session.owner_instance
                 ));
             }
-            if session.foreground.is_none() {
-                return Err(format!("roster session {index} has no foreground fact"));
-            }
+        }
+        if self
+            .roster
+            .windows(2)
+            .any(|pair| pair[0].foreground.is_some() != pair[1].foreground.is_some())
+        {
+            return Err(
+                "roster foreground facts are partly unknown; one host source cannot \
+                 report both"
+                    .into(),
+            );
         }
         if !increasing(&self.roster) {
             return Err("roster generations do not follow roster order".into());
@@ -434,6 +450,12 @@ impl Recorded {
         }
     }
 
+    /// Whether the recording host had an OS-foreground source. An empty
+    /// roster records no fact either way; the source is then irrelevant.
+    fn foreground_available(&self) -> bool {
+        self.roster.first().is_none_or(|s| s.foreground.is_some())
+    }
+
     /// The batch for the selected session: every recorded value, a resource
     /// reference for each replay resource, and nothing below a published
     /// ancestor (the host rejects overlapping pointers in one batch).
@@ -449,6 +471,14 @@ impl Recorded {
                 .transpose()
                 .map_err(|e| format!("{at}: {e}"))?;
             if reference_position(&entry.ns, &entry.pointer) {
+                if tree_position(&entry.ns, &entry.pointer)
+                    && matches!(value, Some(CborValue::Map(_)))
+                {
+                    return Err(format!(
+                        "{at}: adapter selections never include tree refs; extend replay if \
+                         an adapter starts selecting one"
+                    ));
+                }
                 let asset = (entry.ns == "vosu.chart")
                     .then(|| assets.resource(&path[1]))
                     .flatten();

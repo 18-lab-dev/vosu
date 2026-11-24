@@ -8,6 +8,11 @@
 //! comparator nonzero coverage before live captures exist. It is never
 //! labelled upstream and never counts as pilot or full evidence.
 //!
+//! Two platforms are exported. `windows-stable` holds two approved charts of
+//! one media type, each selected by its recorded location. `linux-lazer`
+//! reshapes the corpus as a lazer session with the `foreground: null` a
+//! Linux host records, and keeps its chart in the lazer `files` slot.
+//!
 //! Regenerate with `python tests/adapter_golden/generate_synthetic.py`,
 //! which runs this ignored exporter, then G0's writer, and replaces the
 //! committed fixture tree.
@@ -29,17 +34,48 @@ use vosu_plugin_api::CborValue;
 pub const EXPORT_ENV: &str = "VOSU_GOLDEN_SYNTHETIC_EXPORT";
 const HOST: &str = "Host: 127.0.0.1:24050";
 const WS_KEY: &str = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==";
-/// Where the synthetic chart sits inside the replay `songs` root, and the
-/// recorded relative chart location that names it.
-const FOLDER: &str = "synthetic";
-const FILE: &str = "chart.osu";
+const TEXT: &str = "text/plain; charset=utf-8";
+const LICENSE: &str = "MIT OR Apache-2.0 (vosu-owned test data)";
 
-/// One synthetic case: an ID, the replay seed and schema, the request and,
-/// for `ws`, the frame sequence.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    WindowsStable,
+    LinuxLazer,
+}
+impl Platform {
+    fn name(self) -> &'static str {
+        match self {
+            Self::WindowsStable => "windows-stable",
+            Self::LinuxLazer => "linux-lazer",
+        }
+    }
+}
+
+/// Which approved chart a case's recording selects.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Chart {
+    First,
+    Second,
+}
+impl Chart {
+    /// The recorded `current` `beatmapFolder` and `beatmapFile`. Lazer
+    /// records no folder: the osu! plugin resolves its leaf in `files`.
+    fn recorded(self, platform: Platform) -> (Option<&'static str>, &'static str) {
+        match (platform, self) {
+            (Platform::LinuxLazer, _) => (None, "chart.osu"),
+            (Platform::WindowsStable, Chart::First) => (Some("synthetic"), "chart.osu"),
+            (Platform::WindowsStable, Chart::Second) => (Some("second"), "chart.osu"),
+        }
+    }
+}
+
+/// One synthetic case: an ID, the replay seed, schema and chart, the
+/// request and, for `ws`, the frame sequence.
 struct Def {
     id: &'static str,
     seed: Seed,
     schema: &'static str,
+    chart: Chart,
     conditional: Option<&'static str>,
     request: String,
     steps: Option<Vec<Step>>,
@@ -65,35 +101,22 @@ fn upgrade(target: &str) -> String {
     )
 }
 
-fn defs() -> Vec<Def> {
-    let http = |id, seed, schema, request| Def {
+fn http(id: &'static str, seed: Seed, schema: &'static str, request: String) -> Def {
+    Def {
         id,
         seed,
         schema,
+        chart: Chart::First,
         conditional: None,
         request,
         steps: None,
-    };
+    }
+}
+
+/// One case of every family, shared by both platforms.
+fn common() -> Vec<Def> {
     use Seed::{Client, NoClient};
     vec![
-        http(
-            "state-http.get-json-v2-no-client",
-            NoClient,
-            "v2",
-            request("GET", "/json/v2", &[]),
-        ),
-        http(
-            "state-http.post-json-v2",
-            NoClient,
-            "v2",
-            request("POST", "/json/v2", &["Content-Length: 0"]),
-        ),
-        http(
-            "state-http.trailing-slash-json-v2",
-            NoClient,
-            "v2",
-            request("GET", "/json/v2/", &[]),
-        ),
         http(
             "origin-peer.foreign-origin-json-v2",
             NoClient,
@@ -106,15 +129,6 @@ fn defs() -> Vec<Def> {
             "v2",
             request("GET", "/files/beatmap/..%2F..%2Fsentinel.osu", &[]),
         ),
-        Def {
-            steps: Some(Vec::new()),
-            ..http(
-                "ws.get-without-upgrade-websocket-v2",
-                NoClient,
-                "v2",
-                request("GET", "/websocket/v2", &[]),
-            )
-        },
         http(
             "state-http.get-json-v2",
             Client,
@@ -139,6 +153,64 @@ fn defs() -> Vec<Def> {
             "v2",
             request("GET", "/files/beatmap/file", &[]),
         ),
+        Def {
+            steps: Some(Vec::new()),
+            ..http(
+                "ws.get-without-upgrade-websocket-v2",
+                NoClient,
+                "v2",
+                request("GET", "/websocket/v2", &[]),
+            )
+        },
+    ]
+}
+
+fn defs(platform: Platform) -> Vec<Def> {
+    use Seed::{Client, NoClient};
+    let mut defs = common();
+    defs.push(Def {
+        steps: Some(vec![Step::Receive]),
+        ..http(
+            "ws.upgrade-websocket-v2",
+            Client,
+            "v2",
+            upgrade("/websocket/v2"),
+        )
+    });
+    if platform == Platform::LinuxLazer {
+        return defs;
+    }
+    defs.extend([
+        http(
+            "state-http.get-json-v2-no-client",
+            NoClient,
+            "v2",
+            request("GET", "/json/v2", &[]),
+        ),
+        http(
+            "state-http.post-json-v2",
+            NoClient,
+            "v2",
+            request("POST", "/json/v2", &["Content-Length: 0"]),
+        ),
+        http(
+            "state-http.trailing-slash-json-v2",
+            NoClient,
+            "v2",
+            request("GET", "/json/v2/", &[]),
+        ),
+        // The second approved chart has the first one's media type; only
+        // its recorded location selects it, and the chart-derived
+        // streamCompanion values tell the two apart.
+        Def {
+            chart: Chart::Second,
+            ..http(
+                "state-http.get-json-sc-second-chart",
+                Client,
+                "sc",
+                request("GET", "/json/sc", &[]),
+            )
+        },
         http(
             "files.head-beatmap-file",
             Client,
@@ -163,39 +235,101 @@ fn defs() -> Vec<Def> {
                 String::new(),
             )
         },
-        Def {
-            steps: Some(vec![Step::Receive]),
-            ..http(
-                "ws.upgrade-websocket-v2",
-                Client,
-                "v2",
-                upgrade("/websocket/v2"),
-            )
-        },
-    ]
+    ]);
+    defs
 }
 
-/// The synthetic chart: the corpus chart, owned by this repository.
-fn chart_asset() -> Asset {
-    let chart = source::capture(1);
-    Asset {
-        id: "synthetic-chart".into(),
-        slot: "songs".into(),
-        relative: format!("{FOLDER}/{FILE}"),
-        media_type: "text/plain; charset=utf-8".into(),
-        bytes: chart.assets.roots[0].files[0].bytes.clone(),
+/// The approved assets: the corpus chart and, on stable, a second chart of
+/// the same media type with another beat length, both owned by this
+/// repository.
+fn assets(platform: Platform, chart: &[u8]) -> Vec<(Asset, &'static str)> {
+    let text = std::str::from_utf8(chart).expect("corpus chart text");
+    let second = text.replacen("\n0,320,", "\n0,250,", 1);
+    assert_ne!(
+        second, text,
+        "the corpus chart has its expected timing point"
+    );
+    let asset = |id: &str, slot: &str, relative: &str, bytes: Vec<u8>| Asset {
+        id: id.into(),
+        slot: slot.into(),
+        relative: relative.into(),
+        media_type: TEXT.into(),
+        bytes,
+    };
+    match platform {
+        Platform::WindowsStable => vec![
+            (
+                asset(
+                    "synthetic-chart",
+                    "songs",
+                    "synthetic/chart.osu",
+                    chart.to_vec(),
+                ),
+                "adapter_golden synthetic exporter: the state_api_compat stable-play-osu-fl corpus chart",
+            ),
+            (
+                asset(
+                    "synthetic-second-chart",
+                    "songs",
+                    "second/chart.osu",
+                    second.into_bytes(),
+                ),
+                "adapter_golden synthetic exporter: the corpus chart with a 250 ms beat length",
+            ),
+        ],
+        Platform::LinuxLazer => vec![(
+            asset("synthetic-chart", "files", "chart.osu", chart.to_vec()),
+            "adapter_golden synthetic exporter: the state_api_compat stable-play-osu-fl corpus chart",
+        )],
     }
 }
 
-/// A corpus envelope whose recorded current chart location is the relative
-/// `synthetic/chart.osu`, resealed as a forged dump would be.
-fn seed(seed: Seed, schema: &str) -> Envelope {
+/// Records `folder`/`file` as the current chart. A lazer recording carries
+/// the `lazer` roots instead of the `stable` ones (left unknown here, so no
+/// path is echoed) and no stable skin folder.
+fn reshape_paths(value: &mut CborValue, lazer: bool, folder: Option<&str>, file: &str) {
+    let CborValue::Map(fields) = value else {
+        panic!("paths map")
+    };
+    for (key, field) in fields.iter_mut() {
+        match key.as_text() {
+            Some("stable" | "skinFolder") if lazer => *field = CborValue::Null,
+            Some("lazer") if lazer => {
+                *field = CborValue::Map(vec![
+                    (CborValue::Text("data".into()), CborValue::Null),
+                    (CborValue::Text("files".into()), CborValue::Null),
+                ]);
+            }
+            Some("current") => {
+                let CborValue::Map(current) = field else {
+                    panic!("current map")
+                };
+                for (name, slot) in current.iter_mut() {
+                    match name.as_text() {
+                        Some("beatmapFolder") => {
+                            *slot = folder.map_or(CborValue::Null, |f| CborValue::Text(f.into()));
+                        }
+                        Some("beatmapFile") => *slot = CborValue::Text(file.into()),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A corpus envelope recording `chart`'s location, resealed as a forged dump
+/// would be. A `linux-lazer` seed is a lazer session whose host had no
+/// OS-foreground source, so every foreground fact is `null`.
+fn seed(platform: Platform, seed: Seed, schema: &str, chart: Chart) -> Envelope {
     let source = source::capture(usize::from(seed == Seed::Client));
     let index = ["v1", "sc", "v2", "v2-precise"]
         .iter()
         .position(|name| *name == schema)
         .expect("known schema");
     let mut value: Value = serde_json::from_slice(&source.envelopes[index]).unwrap();
+    let (folder, file) = chart.recorded(platform);
     for entry in value["entries"].as_array_mut().unwrap() {
         if entry["ns"] != "vosu.osu" || entry["pointer"] != "/internal/paths" {
             continue;
@@ -203,27 +337,24 @@ fn seed(seed: Seed, schema: &str) -> Envelope {
         let Some(encoded) = entry["value_cbor_b64"].as_str() else {
             continue;
         };
-        let bytes = STANDARD.decode(encoded).unwrap();
-        let mut paths: CborValue = vosu_plugin_api::decode(&bytes).unwrap();
-        let CborValue::Map(fields) = &mut paths else {
-            panic!("paths map")
-        };
-        for (key, current) in fields.iter_mut() {
-            if key.as_text() != Some("current") {
-                continue;
-            }
-            let CborValue::Map(current) = current else {
-                panic!("current map")
-            };
-            for (name, slot) in current.iter_mut() {
-                match name.as_text() {
-                    Some("beatmapFolder") => *slot = CborValue::Text(FOLDER.into()),
-                    Some("beatmapFile") => *slot = CborValue::Text(FILE.into()),
-                    _ => {}
-                }
-            }
-        }
+        let mut paths: CborValue =
+            vosu_plugin_api::decode(&STANDARD.decode(encoded).unwrap()).unwrap();
+        reshape_paths(&mut paths, platform == Platform::LinuxLazer, folder, file);
         entry["value_cbor_b64"] = json!(STANDARD.encode(vosu_plugin_api::encode(&paths).unwrap()));
+    }
+    if platform == Platform::LinuxLazer {
+        let lazer = |session: &mut Value| {
+            session["variant"] = json!("lazer");
+            session["foreground"] = Value::Null;
+        };
+        value["roster"]["sessions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .for_each(lazer);
+        if !value["session"].is_null() {
+            lazer(&mut value["session"]);
+        }
     }
     value["digest"] = json!(selection_digest(&value).unwrap());
     Envelope::parse(&serde_json::to_vec(&value).unwrap()).unwrap()
@@ -291,31 +422,29 @@ fn exchange(replay: &Replay, def: &Def) -> Value {
     }
 }
 
-#[test]
-#[ignore = "writes the synthetic mechanics capture; run through tests/adapter_golden/generate_synthetic.py"]
-fn export_synthetic_capture() {
-    let out = std::env::var_os(EXPORT_ENV).unwrap_or_else(|| panic!("set {EXPORT_ENV}"));
-    let chart = chart_asset();
+fn export(platform: Platform, chart: &[u8]) -> Value {
+    let assets = assets(platform, chart);
+    let approved: Vec<Asset> = assets.iter().map(|(asset, _)| asset.clone()).collect();
+    let defs = defs(platform);
     let mut cases = Vec::new();
-    let defs = defs();
-    // One replay per seed and schema, as the comparator groups cases by
-    // envelope, so `header-etag` sees one stable tag per file.
-    let mut groups: Vec<(Seed, &str)> = Vec::new();
+    // One replay per seed, schema and chart, as the comparator groups cases
+    // by envelope, so `header-etag` sees one stable tag per file.
+    let mut groups: Vec<(Seed, &str, Chart)> = Vec::new();
     for def in &defs {
-        if !groups.contains(&(def.seed, def.schema)) {
-            groups.push((def.seed, def.schema));
+        if !groups.contains(&(def.seed, def.schema, def.chart)) {
+            groups.push((def.seed, def.schema, def.chart));
         }
     }
-    for (seed_kind, schema_name) in groups {
+    for (seed_kind, schema_name, chart_kind) in groups {
         let schema = schema_from_query(schema_name).expect("schema");
-        let seeded = seed(seed_kind, schema_name);
-        let assets = replay_assets(std::slice::from_ref(&chart), &seeded).unwrap();
-        let replay = Replay::start(std::slice::from_ref(&seeded), &assets).unwrap();
+        let seeded = seed(platform, seed_kind, schema_name, chart_kind);
+        let replay_assets = replay_assets(&approved, &seeded).unwrap();
+        let replay = Replay::start(std::slice::from_ref(&seeded), &replay_assets).unwrap();
         // The dump a live harness endpoint would serve for this replay.
         let dump: Value = serde_json::from_slice(&replay.dump_bytes(schema).unwrap()).unwrap();
         for def in defs
             .iter()
-            .filter(|d| (d.seed, d.schema) == (seed_kind, schema_name))
+            .filter(|d| (d.seed, d.schema, d.chart) == (seed_kind, schema_name, chart_kind))
         {
             let records: Vec<Value> = (0..3).map(|_| exchange(&replay, def)).collect();
             let family = def.id.split('.').next().unwrap();
@@ -344,18 +473,34 @@ fn export_synthetic_capture() {
         }
     }
     cases.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-    let export = json!({
+    json!({
+        "platform": platform.name(),
         "cases": cases,
-        "assets": [{
-            "id": chart.id,
-            "slot": chart.slot,
-            "relative": chart.relative,
-            "media_type": chart.media_type,
-            "generator": "adapter_golden synthetic exporter: the state_api_compat stable-play-osu-fl corpus chart",
-            "license": "MIT OR Apache-2.0 (vosu-owned test data)",
-            "sha256": super::fixture::sha256(&chart.bytes),
-            "b64": STANDARD.encode(&chart.bytes),
-        }],
-    });
-    std::fs::write(out, serde_json::to_vec_pretty(&export).unwrap()).unwrap();
+        "assets": assets.iter().map(|(asset, generator)| json!({
+            "id": asset.id,
+            "slot": asset.slot,
+            "relative": asset.relative,
+            "media_type": asset.media_type,
+            "generator": generator,
+            "license": LICENSE,
+            "sha256": super::fixture::sha256(&asset.bytes),
+            "b64": STANDARD.encode(&asset.bytes),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+#[test]
+#[ignore = "writes the synthetic mechanics capture; run through tests/adapter_golden/generate_synthetic.py"]
+fn export_synthetic_capture() {
+    let out = std::env::var_os(EXPORT_ENV).unwrap_or_else(|| panic!("set {EXPORT_ENV}"));
+    let chart = source::capture(1).assets.roots[0].files[0].bytes.clone();
+    let platforms: Vec<Value> = [Platform::WindowsStable, Platform::LinuxLazer]
+        .into_iter()
+        .map(|platform| export(platform, &chart))
+        .collect();
+    std::fs::write(
+        out,
+        serde_json::to_vec_pretty(&json!({"platforms": platforms})).unwrap(),
+    )
+    .unwrap();
 }

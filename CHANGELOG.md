@@ -20,6 +20,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
   cancels old work, and nothing is parsed while no client reads.
 - Announce a session to `vosu.sessions` watchers only once its bus state is
   open, so their immediate subscription is never refused.
+- Off Windows, where core has no OS-foreground source, report the foreground
+  fact as unknown again instead of `false`: plugins' `FOCUS_CHANGED` omits
+  `foreground` and identified-roster sessions carry `foreground: null`, as the
+  plugin ABI documents. Adapter wire output is unchanged; `game.focused` was
+  already omitted off Windows.
 
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
