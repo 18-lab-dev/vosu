@@ -10,16 +10,13 @@
 //! exit item).
 //!
 //! An instance is registered under [`InstanceSlot::Creating`] before the
-//! plugin's own `create` runs, not only once it returns successfully: a
-//! plugin can call `TIMER_SET` (or trigger a B2 settings change) from
-//! inside its own `create`, and that timer can fire, or that change can
-//! arrive, before `create` returns and the real [`PluginInstance`] exists
-//! to deliver to. Without this placeholder, such a delivery would find no
-//! instance at all and be discarded for good (a timer's one-shot slot is
-//! already freed by the time it fires, so the plugin would then wait
-//! forever for a `TIMER_FIRED` that never comes). Every delivery that
-//! arrives while `Creating` is queued in its own `pending` list instead,
-//! and replayed, in order, once the real instance takes its place.
+//! plugin's own `create` runs: a `TIMER_SET`/B2 settings-change delivery
+//! can arrive from inside `create` itself, before the real
+//! [`PluginInstance`] exists — without this placeholder it would find no
+//! instance and be lost for good (a one-shot timer's slot frees once it
+//! fires, so the plugin would wait forever for a `TIMER_FIRED` that never
+//! comes). `Creating` instead queues every such delivery in `pending`,
+//! replayed in order once the real instance takes its place.
 //!
 //! Session lifecycle (§6.2, [`super::session::SessionRegistry`]) and the
 //! Focus rule (`docs/v2/api-v1.md`, [`super::focus::FocusTracker`]) route
@@ -909,10 +906,7 @@ impl PluginHostHandler for PluginHost {
                 self.handle_scan_request(instance, correlation_id, request)
             }
             other => {
-                // State reads (`STATE_SUBSCRIBE`), resource/tree/stream
-                // operations, and action calls are later milestones:
-                // logged, not acted on, exactly as the former
-                // `LoggingHandler` did for every opcode.
+                // State/resource/tree/stream/action ops: later milestones, logged only.
                 tracing::debug!(
                     ?instance,
                     opcode = ?other.opcode(),
@@ -921,6 +915,15 @@ impl PluginHostHandler for PluginHost {
                 vosu_status::VOSU_OK
             }
         }
+    }
+
+    fn handle_read_plan_sync(
+        &self,
+        instance: PluginInstanceId,
+        payload: &[u8],
+        flags: u32,
+    ) -> Option<vosu_status> {
+        Some(self.handle_read_plan_submit_raw(instance, payload, flags))
     }
 }
 

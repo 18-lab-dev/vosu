@@ -138,6 +138,39 @@ impl OwnedMessage {
     }
 }
 
+/// [`OwnedMessage::call`]'s zero-allocation counterpart (D17): delivers
+/// `payload` as one `vosu_message` directly through `vtable`'s own
+/// `dispatch`, with no [`OwnedMessage`]/owned-`Vec<u8>` copy at all —
+/// `payload` stays borrowed for this call's whole duration. For
+/// `host/read_plans.rs`'s own `VOSU_READ_PLAN_SYNC` fast path, whose
+/// result `read_plan::execute_into` already wrote straight into a
+/// caller-owned, reusable buffer.
+pub(crate) fn dispatch_raw(
+    vtable: &vosu_plugin_vtable,
+    ctx: PluginCtx,
+    opcode: u32,
+    flags: u32,
+    correlation_id: u64,
+    payload: &[u8],
+) -> vosu_status {
+    let message = vosu_message {
+        opcode,
+        flags,
+        correlation_id,
+        payload: vosu_bytes {
+            data: payload.as_ptr(),
+            len: payload.len() as u32,
+        },
+    };
+    let dispatch = vtable
+        .dispatch
+        .expect("the registry's check_descriptor verifies dispatch is Some before load");
+    // SAFETY: `ctx.0` is this instance's live `plugin_ctx`; `message`'s
+    // `payload` points at `payload`, which outlives this call.
+    let raw = unsafe { dispatch(ctx.raw(), &message as *const vosu_message) };
+    vosu_status::try_from(raw).unwrap_or(vosu_status::VOSU_ERR_BACKEND)
+}
+
 /// One dispatch call plus everything needed to run it and report its
 /// status back to whoever is waiting on it.
 pub(crate) struct Job {

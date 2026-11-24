@@ -59,6 +59,7 @@
 //! `VOSU_ERR_TARGET_GONE`; a live one this host simply failed to open is
 //! `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`, P2-8).
 
+use std::cell::RefCell;
 #[cfg(any(test, feature = "test-harness"))]
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -66,10 +67,13 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
-use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_status};
+use vosu_plugin_api::{
+    Message, ReadPlanCancel, ReadPlanSubmit, read_flat_header, vosu_opcode,
+    vosu_read_plan_submit_header, vosu_status,
+};
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
-use super::super::dispatch::OwnedMessage;
+use super::super::dispatch::{OwnedMessage, dispatch_raw};
 use super::super::host_services::PluginInstanceId;
 use super::super::read_plan::{
     self, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
@@ -105,6 +109,18 @@ pub(super) fn new_background_pool() -> ScanWorkerPool {
 /// `VOSU_READ_PLAN_SYNC` submitter — or, for an async plan, a worker
 /// thread — indefinitely.
 pub(super) const READ_PLAN_DEADLINE: Duration = Duration::from_secs(2);
+
+thread_local! {
+    /// Reused per-reader-thread scratch buffer for
+    /// [`PluginHost::handle_read_plan_submit_raw`]'s own
+    /// [`read_plan::execute_into`] call (D17): a `VOSU_READ_PLAN_SYNC`
+    /// submission runs reentrant on the plugin's own submitting thread, so
+    /// this buffer stays warm (steady-state capacity) for that one thread
+    /// across repeated same-shaped plans, mirroring
+    /// `vosu_plugin_api::sdk::plan_memory::SyncReadBuffers`'s own
+    /// plugin-side buffer.
+    static SYNC_RESULT_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
 
 /// One session's cached, already-opened live-process handle plus its
 /// bitness: opening a process handle is comparatively expensive, so it is
@@ -715,6 +731,99 @@ impl PluginHost {
         if let Ok(owned) = OwnedMessage::from_message(&Message::ReadPlanResult(result), 0) {
             let _ = owned.call(&vtable, ctx);
         }
+        vosu_status::VOSU_OK
+    }
+
+    /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set, taken
+    /// directly off the still-raw, not-yet-decoded payload
+    /// ([`super::super::host_services::PluginHostHandler::handle_read_plan_sync`]'s
+    /// own doc comment, D17): reads only `payload`'s
+    /// `vosu_read_plan_submit_header` (a `Copy` struct, no allocation) to
+    /// resolve the session, then runs [`read_plan::execute_into`]
+    /// straight against `payload` into [`SYNC_RESULT_BUF`]'s per-thread,
+    /// reused buffer — never building an owned `ReadPlanSubmit` or
+    /// `ReadPlanResult` at all — and delivers that buffer's bytes with
+    /// [`deliver_sync_result_raw`], which skips [`OwnedMessage`]'s own
+    /// owned-`Vec<u8>` copy too. Mirrors [`Self::deliver_read_plan_sync`]'s
+    /// session resolution and dispatch-thread refusal exactly; the two
+    /// stay as separate functions because this one never has a decoded
+    /// [`ReadPlanSubmit`] to share.
+    pub(super) fn handle_read_plan_submit_raw(
+        &self,
+        instance: PluginInstanceId,
+        payload: &[u8],
+        flags: u32,
+    ) -> vosu_status {
+        let Some(plugin_id) = self.plugin_id_of(instance) else {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        };
+        if read_plan::on_dispatch_thread() {
+            return SyncReadPlanError::OnDispatchThread.into();
+        }
+        let header: vosu_read_plan_submit_header = match read_flat_header(payload) {
+            Ok(header) => header,
+            Err(_) => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+        };
+        let handle = SessionHandle(header.handle);
+        let pid = match self.resolve_owned_session(&plugin_id, handle) {
+            Ok(pid) => pid,
+            Err(status) => return status,
+        };
+        let memory = match self.session_memory(handle, pid) {
+            Ok(memory) => memory,
+            Err(error) => return error.into(),
+        };
+        let modules = CachingModuleResolver {
+            memory: Arc::clone(&memory),
+        };
+        let deadline = Instant::now() + self.read_plan_deadline();
+        SYNC_RESULT_BUF.with(|buf| {
+            let mut buf = buf.borrow_mut();
+            if let Err(error) = read_plan::execute_into(
+                payload,
+                flags,
+                memory.process.as_ref(),
+                memory.bitness,
+                &modules,
+                deadline,
+                &mut buf,
+            ) {
+                return vosu_status::from(error);
+            }
+            self.deliver_sync_result_raw(instance, &buf)
+        })
+    }
+
+    /// [`Self::deliver_sync_result`]'s zero-allocation counterpart (D17):
+    /// delivers `payload` — already the flat `VOSU_OP_READ_PLAN_RESULT`
+    /// bytes [`read_plan::execute_into`] wrote — through
+    /// [`super::super::dispatch::dispatch_raw`] instead of
+    /// [`OwnedMessage::from_message`]/[`OwnedMessage::call`], so no
+    /// `Message`/owned-`Vec<u8>` copy of it is ever made. Same
+    /// never-hold-`self.instances`-across-the-call reasoning as
+    /// `deliver_sync_result`.
+    fn deliver_sync_result_raw(&self, instance: PluginInstanceId, payload: &[u8]) -> vosu_status {
+        let target = self
+            .instances
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&instance)
+            .and_then(|slot| match slot {
+                InstanceSlot::Live(entry) => Some(entry.instance.ctx_and_vtable()),
+                InstanceSlot::Creating { .. } | InstanceSlot::Destroying { .. } => None,
+            });
+        let Some((vtable, ctx)) = target else {
+            // P3: see `deliver_sync_result`'s identical race.
+            return vosu_status::VOSU_ERR_NOT_READY;
+        };
+        dispatch_raw(
+            &vtable,
+            ctx,
+            vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32,
+            0,
+            0,
+            payload,
+        );
         vosu_status::VOSU_OK
     }
 

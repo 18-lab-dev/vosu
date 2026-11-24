@@ -88,6 +88,26 @@ fn commands_registry() -> &'static CommandsRegistry {
     &REGISTRY
 }
 
+fn host_services_registry() -> &'static Mutex<HashMap<String, VtableHostServices>> {
+    static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, VtableHostServices>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    &REGISTRY
+}
+
+/// The [`VtableHostServices`] [`ReadPlanPlugin::create`] stored for
+/// `plugin_id`, so a test can call [`PlanMemory::read_flat`] directly from
+/// its own thread instead of through this plugin's background reader
+/// thread — e.g. to control allocation tracking (a `thread_local`
+/// mechanism) on that one thread itself rather than on a thread the
+/// plugin owns and the test cannot otherwise instrument. Panics if
+/// `plugin_id`'s instance has not finished `create` yet.
+pub fn host_services(plugin_id: &str) -> VtableHostServices {
+    *host_services_registry()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .get(plugin_id)
+        .unwrap_or_else(|| panic!("no host services registered for {plugin_id:?} yet"))
+}
 fn config_registry() -> &'static Mutex<HashMap<String, ReadPlanPluginConfig>> {
     static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, ReadPlanPluginConfig>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -163,6 +183,10 @@ impl Plugin for ReadPlanPlugin {
             .get(&init.plugin_id)
             .cloned()
             .unwrap_or_default();
+        host_services_registry()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(init.plugin_id.clone(), host);
 
         let reader_host = host;
         let reader_events = events.clone();

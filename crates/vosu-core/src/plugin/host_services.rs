@@ -6,8 +6,8 @@ use std::ffi::c_void;
 use std::sync::Arc;
 
 use vosu_plugin_api::{
-    Message, VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, vosu_host_services, vosu_message,
-    vosu_opcode, vosu_status,
+    Message, VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_READ_PLAN_SYNC, vosu_host_services,
+    vosu_message, vosu_opcode, vosu_status,
 };
 
 /// Instance-scoped id a [`PluginHostHandler`] receives with every message,
@@ -34,6 +34,24 @@ pub trait PluginHostHandler: Send + Sync {
         message: Message,
         correlation_id: u64,
     ) -> vosu_status;
+
+    /// Fast path for `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC`
+    /// set (D5): `payload`/`flags` are still raw, undecoded bytes.
+    /// `decode_and_handle` tries this before `Message::decode` so a
+    /// steady-state synchronous read plan allocates nothing on the host
+    /// side either (D17; `crate::plugin::read_plan::execute_into`'s own
+    /// doc comment). `None` falls back to the ordinary decode-and-`handle`
+    /// path, for a handler (e.g. a test double) with no faster path of
+    /// its own.
+    fn handle_read_plan_sync(
+        &self,
+        instance: PluginInstanceId,
+        payload: &[u8],
+        flags: u32,
+    ) -> Option<vosu_status> {
+        let _ = (instance, payload, flags);
+        None
+    }
 }
 
 /// `host_ctx` passed to `create`: outlives the instance exactly as
@@ -96,6 +114,14 @@ fn decode_and_handle(ctx: &HostContext, raw: &vosu_message) -> vosu_status {
     let Ok(opcode) = vosu_opcode::try_from(raw.opcode) else {
         return vosu_status::VOSU_ERR_UNSUPPORTED;
     };
+    if opcode == vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT
+        && raw.flags & VOSU_READ_PLAN_SYNC != 0
+        && let Some(status) = ctx
+            .handler
+            .handle_read_plan_sync(ctx.instance, payload, raw.flags)
+    {
+        return status;
+    }
     match Message::decode(opcode, raw.flags, payload) {
         Ok(message) => ctx
             .handler
