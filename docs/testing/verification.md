@@ -172,6 +172,86 @@ Report the evidence items listed in the contract's exit section; name the
 private evidence location by label only. Main reviews each candidate before a
 separate fixture commit, and nothing is uploaded or published.
 
+### O0 pilot run (`golden-capture`)
+
+`golden-capture` builds `cargo build --locked --features test-harness` (Windows:
+`--no-default-features --features test-harness`) from a clean committed tree
+and refuses a modified tracked tree. It also refuses an executable without the
+harness endpoint, which rules out every release or featureless build. It
+launches and owns both daemons, each on its own loopback port with isolated
+roots, and passes the vosu daemon a fresh `VOSU_TEST_ADAPTER_CAPTURE`
+capability. It checks that the endpoint answers only with that capability. It
+then prepares the run-owned path-security layout and launches the client.
+Operator prompts go to stderr, one per barrier, in the order menu → play →
+paused → result → no-client (close the client). At each barrier every
+golden-role route-matrix case runs as two sandwiches: upstream twice, then
+vosu dump → route → dump. A case gets at most three whole-case attempts.
+Every daemon and client process and every file the run created is removed
+before the command returns. Outputs are written once and never replaced,
+both mode 0600:
+
+- `--out`: the `vosu-golden-capture-v1` capture that `golden` reads. It is
+  written only for a complete run.
+- `<out>.transcript.json`: raw records of every attempt, the build, launch and
+  barrier attestations and the cleanup result. A failed run writes only this
+  file.
+
+A run whose evidence would contain the capability writes nothing.
+
+The run configuration adds a `golden` block (`config-schema` prints its
+schema):
+
+```json
+"golden": {
+  "authorization": {"reference": "<owner authorization id>", "platform": "windows-lazer",
+                    "source_revision": "<pin>", "vosu_commit": "<40-hex HEAD>",
+                    "client_version": "<client_expected_version>",
+                    "scenario_set": "m4b-dry-run-v1"},
+  "capture_root": "C:\\vosu-capture\\m4b-pilot-<utc>",
+  "capture_slot": "osu!",
+  "route_roots": {},
+  "other_roots": {"files": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
+  "inside_files": {},
+  "fixture_values": {"calc_relative": "<relative chart under files>",
+                     "calc_absolute_inside": "<absolute chart under files>"},
+  "sentinel_chart": "<generated vosu-owned .osu to copy outside the roots>",
+  "assets": [{"id": "<asset id>", "relative": "<path under capture_root>",
+              "media_type": "<type>", "generator": "<generator>", "license": "<license>"}]
+}
+```
+
+Every root the client declares must lie inside `capture_root`, which is
+task-owned. For lazer, point the task-owned test profile's data directory
+inside it. The lazer files slot belongs in `other_roots`: a lazer client has
+no root for the legacy file routes, so those path cases are excluded and
+listed in the transcript. Every other golden case must run. A missing fixture
+value or root fails the run before anything is sent. The authorization must
+name exactly this platform, pin, commit, client version and scenario set,
+or the run is refused before the build.
+
+1. **Mandatory dry run first.** Use a config whose
+   `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and
+   three cases. Then run `golden` on it into a scratch candidate directory, in
+   the VM, before the full pilot. This catches integration gaps cheaply.
+   Discard the dry-run outputs once reviewed; they are not pilot evidence.
+
+   ```powershell
+   python tools\live-parity\run.py check-config --config $env:DRY_RUN_CONFIG
+   python tools\live-parity\run.py golden-capture --config $env:DRY_RUN_CONFIG --scenario-set m4b-dry-run-v1 --out $env:DRY_RUN_CAPTURE
+   python tools\live-parity\run.py golden --capture $env:DRY_RUN_CAPTURE --candidate-dir $env:DRY_RUN_CANDIDATE
+   ```
+
+2. **Pilot.** Use the same config with `authorization.scenario_set` set to
+   `m4b-full-v1`, and a new `--out`:
+
+   ```powershell
+   python tools\live-parity\run.py golden-capture --config $env:PARITY_CONFIG --scenario-set m4b-full-v1 --out $env:PRIVATE_CAPTURE
+   ```
+
+   Then run `golden`, `adapter_golden` and the brand check as listed above.
+   Report the transcript's barrier log, retried cases, exclusions and cleanup
+   result alongside the contract's evidence items.
+
 ## M3 API, resources and actions
 
 A3 freezes the following exit commands for implementation/integration owners.
