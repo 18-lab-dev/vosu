@@ -46,6 +46,47 @@ fn toml_config(port: u16, static_root: &Path) -> String {
     )
 }
 
+/// The release's own version. The release workflow validates the tag against
+/// this root manifest and builds the packaged executable from the same tree.
+fn release_version() -> String {
+    let manifest: toml::Table =
+        toml::from_str(include_str!("../../../Cargo.toml")).expect("root Cargo manifest");
+    manifest["package"]["version"]
+        .as_str()
+        .expect("root package version")
+        .to_owned()
+}
+
+fn config_files(directory: &Path) -> Vec<(&'static str, Option<Vec<u8>>)> {
+    ["vosu.toml", "vosu.env", "tosu.env"]
+        .into_iter()
+        .map(|name| (name, fs::read(directory.join(name)).ok()))
+        .collect()
+}
+
+async fn wait_for_seeded_counter(client: &reqwest::Client, base: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let response = bounded!(
+            client
+                .get(format!("{base}/api/counters/search/seeded"))
+                .send()
+        )
+        .expect("search counters");
+        if bounded!(response.text())
+            .unwrap()
+            .contains("Seeded Counter")
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "static path reload never exposed the seeded counter"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -93,6 +134,20 @@ fn request_graceful_shutdown(child: &Child) {
 
 #[cfg(target_os = "linux")]
 fn assert_packaged_linux_cli_preflight(binary: &Path) {
+    let version = Command::new(binary)
+        .arg("--version")
+        .output()
+        .expect("run packaged Linux release --version");
+    assert!(
+        version.status.success(),
+        "--version failed with {}",
+        version.status
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout),
+        format!("vosu {}\n", release_version()),
+        "packaged executable is not this release's version"
+    );
     let help = Command::new(binary)
         .arg("--help")
         .output()
@@ -202,6 +257,10 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
     fs::write(config_dir.join("vosu.env"), legacy_config(1, &static_root)).unwrap();
     fs::write(config_dir.join("tosu.env"), legacy_config(2, &static_root)).unwrap();
+    // A prerelease build must keep these normal-root files byte-identical.
+    let prerelease = release_version().contains('-');
+    let normal_dir = config_dir.clone();
+    let normal_files = config_files(&normal_dir);
 
     let mut command = Command::new(&binary);
     command
@@ -239,6 +298,32 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .split('"')
         .next()
         .unwrap();
+    // A prerelease runs on its own `prerelease/` roots: it imports the 1.x
+    // config once, read-only, resetting the copied static path to its isolated
+    // default, and never writes the normal tree.
+    let (config_dir, config_path) = if prerelease {
+        let alpha_dir = normal_dir.join("prerelease");
+        let alpha_path = alpha_dir.join("vosu.toml");
+        let imported: toml::Table = toml::from_str(
+            &fs::read_to_string(&alpha_path).expect("prerelease imports the 1.x config"),
+        )
+        .expect("imported prerelease TOML");
+        assert_ne!(
+            imported
+                .get("STATIC_FOLDER_PATH")
+                .and_then(toml::Value::as_str),
+            Some(static_root.to_string_lossy().as_ref()),
+            "imported static path must reset to the isolated default"
+        );
+        assert_eq!(
+            config_files(&normal_dir),
+            normal_files,
+            "prerelease import wrote the normal config root"
+        );
+        (alpha_dir, alpha_path)
+    } else {
+        (config_dir, config_path)
+    };
     let canonical: toml::Table =
         toml::from_str(&fs::read_to_string(&config_path).expect("read canonical packaged config"))
             .expect("packaged daemon canonicalizes current TOML");
@@ -263,6 +348,12 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
             bounded!(state.text()).unwrap(),
             r#"{"error":"osu is not ready/running"}"#
         );
+    }
+
+    if prerelease {
+        // An explicit path in the prerelease's own config stays user-controlled.
+        fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
+        bounded!(wait_for_seeded_counter(&client, &base));
     }
 
     let counters = bounded!(
@@ -378,6 +469,21 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
             "release daemon failed to drain after native interrupt"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    if prerelease {
+        assert_eq!(
+            config_files(&normal_dir),
+            normal_files,
+            "prerelease wrote the normal config root"
+        );
+        #[cfg(unix)]
+        {
+            assert!(roots.path().join("data/vosu/prerelease/static").is_dir());
+            assert!(!roots.path().join("data/vosu/static").exists());
+        }
+    } else {
+        assert!(!normal_dir.join("prerelease").exists());
     }
 
     #[cfg(unix)]
