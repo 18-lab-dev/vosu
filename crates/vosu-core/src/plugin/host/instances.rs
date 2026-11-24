@@ -231,6 +231,24 @@ impl PluginHost {
                 instance,
                 plugin_id,
                 settings_schema: schema,
+                capabilities: plugin
+                    .manifest()
+                    .provides
+                    .iter()
+                    .filter(|provided| !provided.id.starts_with("action:"))
+                    .map(|provided| super::capabilities::ProvidedCapability {
+                        id: provided.id.clone(),
+                        version: if provided.id.starts_with("game:") {
+                            // Game capabilities are unversioned presence markers.
+                            semver::Version::new(0, 0, 0)
+                        } else {
+                            provided
+                                .version
+                                .parse()
+                                .expect("validated capability version")
+                        },
+                    })
+                    .collect(),
                 outstanding_plans: Arc::new(OutstandingPlans::new()),
                 outstanding_scans: OutstandingScans::new(),
                 publisher: Arc::new(super::state::Publisher {

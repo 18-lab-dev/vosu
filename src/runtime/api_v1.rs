@@ -6,9 +6,27 @@ use vosu_core::{config::Config, plugin::PluginHost};
 pub(super) struct ApiV1Service {
     pub(super) router: ApiV1Router,
     hub: ApiV1SubscriptionHub,
+    jobs: vosu_core::actions::JobRegistry,
 }
 
 impl ApiV1Service {
+    pub(super) fn action_router(
+        &self,
+        host: &Arc<PluginHost>,
+        tools: Arc<crate::tools::ToolHost>,
+    ) -> ApiV1Router {
+        tools.set_action_providers(
+            host.clone(),
+            Arc::new(InstalledProviders(Arc::downgrade(host))),
+        );
+        let actions = crate::server::api_v1::actions::ActionRoutes::new(
+            host.clone(),
+            host.invocation_executor(),
+            self.jobs.clone(),
+            tools,
+        );
+        self.router.clone().with_actions(actions)
+    }
     pub(super) fn new(host: &Arc<PluginHost>, config: &Config) -> Self {
         let source = host.api_state_source();
         let hub = ApiV1SubscriptionHub::new(
@@ -18,6 +36,7 @@ impl ApiV1Service {
         Self {
             router: ApiV1Router::new(source, hub.clone()),
             hub,
+            jobs: vosu_core::actions::JobRegistry::new(),
         }
     }
 
@@ -29,5 +48,12 @@ impl ApiV1Service {
     // Called after listeners stop accepting and before plugin destruction.
     pub(super) fn shutdown(&self) {
         self.hub.shutdown();
+    }
+}
+
+struct InstalledProviders(std::sync::Weak<PluginHost>);
+impl crate::tools::capabilities::InstalledCapabilities for InstalledProviders {
+    fn version(&self, capability: &str) -> Option<semver::Version> {
+        self.0.upgrade()?.installed_capability_version(capability)
     }
 }

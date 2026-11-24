@@ -278,7 +278,7 @@ impl ProductionRuntime {
                 ProductionRouteDelegate::new(services)
                     .with_api_keys(Arc::new(api_keys))
                     .with_tools(tools.clone())
-                    .with_api_v1(self.api_v1.router.clone())
+                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()))
             }),
         };
         let mut dashboard_providers = providers.clone();

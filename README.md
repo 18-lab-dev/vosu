@@ -602,6 +602,16 @@ but retain peer/Origin checks, and are not served by the dashboard listener.
 The existing 1.x routes and `/websocket/v2/subscribe` remain available during
 the transition. See the [API v1 specification](docs/v2/api-v1.md).
 
+Plugin actions use `POST /api/v1/sessions/{id|active}/actions/{action}` or
+`POST /api/v1/actions/{action}`, according to the action's declared session mode.
+Send `{"arguments": ...}` and optionally `?wait=0..30000`; running jobs return
+202 with a `/api/v1/jobs/{id}` Location. That route supports GET (including
+`?after=<revision>&wait=<ms>`) and advisory DELETE cancellation. These routes
+require a live tool launch token with the action capability, or the loopback
+broker credential for CLI-exposed actions; API keys grant no action authority.
+Tool jobs remain private to the exact launch session. All action/job responses
+are no-store, and credentials never bypass peer or same-origin checks.
+
 ### Renderer state (v2)
 
 Tools following the current map can subscribe to these additive fields through

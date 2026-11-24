@@ -17,6 +17,7 @@ use vosu_core::api::{ApiStateSource, SessionTarget};
 pub struct ApiV1Router {
     source: ApiStateSource,
     hub: ApiV1SubscriptionHub,
+    actions: Option<super::actions::ActionRoutes>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -25,10 +26,33 @@ enum Route<'a> {
     Session(&'a str),
     State(&'a str, Option<&'a str>),
     Subscribe(Option<&'a str>),
+    Action(Option<&'a str>, &'a str),
+    Job(&'a str),
 }
 
 fn classify(path: &str) -> Option<Route<'_>> {
     let path = path.strip_prefix("/api/v1/")?;
+    let mut action_segments = path.split('/');
+    match (
+        action_segments.next(),
+        action_segments.next(),
+        action_segments.next(),
+        action_segments.next(),
+        action_segments.next(),
+    ) {
+        (Some("actions"), Some(action), None, None, None) if !action.is_empty() => {
+            return Some(Route::Action(None, action));
+        }
+        (Some("jobs"), Some(id), None, None, None) if !id.is_empty() => {
+            return Some(Route::Job(id));
+        }
+        (Some("sessions"), Some(id), Some("actions"), Some(action), None)
+            if !id.is_empty() && !action.is_empty() =>
+        {
+            return Some(Route::Action(Some(id), action));
+        }
+        _ => {}
+    }
     let mut segments = path.split('/');
     if segments.next()? != "sessions" {
         return None;
@@ -53,34 +77,54 @@ fn classify(path: &str) -> Option<Route<'_>> {
 
 impl ApiV1Router {
     pub fn new(source: ApiStateSource, hub: ApiV1SubscriptionHub) -> Self {
-        Self { source, hub }
+        Self {
+            source,
+            hub,
+            actions: None,
+        }
+    }
+
+    pub fn with_actions(mut self, actions: super::actions::ActionRoutes) -> Self {
+        self.actions = Some(actions);
+        self
     }
 
     pub async fn handle(&self, request: Request) -> Response {
-        let Some(route) = classify(request.uri().path()) else {
+        let uri = request.uri().clone();
+        let Some(route) = classify(uri.path()) else {
             return error(
                 StatusCode::NOT_FOUND,
                 "invalid_request",
                 "Unknown API route",
             );
         };
+        let methods = match route {
+            Route::Action(..) => "POST",
+            Route::Job(_) => "GET, DELETE",
+            _ => "GET",
+        };
         if request.method() == Method::OPTIONS {
             return Response::builder()
                 .status(StatusCode::NO_CONTENT)
-                .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET")
+                .header(header::ACCESS_CONTROL_ALLOW_METHODS, methods)
                 .header(header::CACHE_CONTROL, "no-store")
                 .body(Body::empty())
                 .expect("valid preflight");
         }
-        if request.method() != Method::GET {
+        let method_allowed = match route {
+            Route::Action(..) => request.method() == Method::POST,
+            Route::Job(_) => matches!(*request.method(), Method::GET | Method::DELETE),
+            _ => request.method() == Method::GET,
+        };
+        if !method_allowed {
             let mut response = error(
                 StatusCode::METHOD_NOT_ALLOWED,
                 "method_not_allowed",
-                "Expected GET",
+                "Method not allowed",
             );
             response
                 .headers_mut()
-                .insert(header::ALLOW, axum::http::HeaderValue::from_static("GET"));
+                .insert(header::ALLOW, axum::http::HeaderValue::from_static(methods));
             return response;
         }
         // Only these two exact route shapes may upgrade. A request to a read
@@ -103,6 +147,25 @@ impl ApiV1Router {
             );
         }
         match route {
+            Route::Action(session, action) => match &self.actions {
+                Some(actions) => actions.create(&self.source, request, session, action).await,
+                None => error(
+                    StatusCode::UNAUTHORIZED,
+                    "unauthorized",
+                    "Action credential required",
+                ),
+            },
+            Route::Job(id) => match &self.actions {
+                Some(actions) => match decode_segment(id) {
+                    Ok(id) => actions.job(request, &id).await,
+                    Err(()) => error(StatusCode::NOT_FOUND, "unknown_job", "Unknown job"),
+                },
+                None => error(
+                    StatusCode::UNAUTHORIZED,
+                    "unauthorized",
+                    "Action credential required",
+                ),
+            },
             Route::Sessions => http::sessions(&self.source),
             Route::Session(id) => match target(id) {
                 Ok(target) => http::summary(&self.source, &target),
@@ -194,7 +257,7 @@ impl ApiV1Router {
     }
 }
 
-fn target(id: &str) -> Result<SessionTarget, ()> {
+pub(super) fn target(id: &str) -> Result<SessionTarget, ()> {
     let id = decode_segment(id)?;
     Ok(if id == "active" {
         SessionTarget::Active

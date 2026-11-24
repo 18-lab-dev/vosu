@@ -203,3 +203,13 @@ impl ToolAuthority for ToolHost {
         })
     }
 }
+
+impl crate::server::api_v1::actions::ActionAuthority for ToolHost {
+    fn authenticate_action_session(&self, token: &str) -> Option<Principal> {
+        ToolHost::authenticate_action_session(self, token).ok()
+    }
+
+    fn authorize_action_session(&self, token: &str, action: &str) -> Option<Principal> {
+        ToolHost::authorize_action_session(self, token, action).ok()
+    }
+}

@@ -40,3 +40,17 @@ pub(super) fn json(status: StatusCode, body: Vec<u8>) -> Response {
         .body(Body::from(body))
         .expect("valid API response")
 }
+
+#[derive(Debug)]
+pub(super) struct RequestFailure(pub StatusCode, pub &'static str, pub &'static str);
+impl axum::response::IntoResponse for RequestFailure {
+    fn into_response(self) -> Response {
+        error(self.0, self.1, self.2)
+    }
+}
+#[cfg(test)]
+impl RequestFailure {
+    pub fn status(&self) -> StatusCode {
+        self.0
+    }
+}

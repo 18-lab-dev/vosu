@@ -82,6 +82,7 @@ struct InstanceEntry {
     /// doc comment).
     outstanding_scans: Arc<OutstandingScans>,
     publisher: Arc<state::Publisher>,
+    capabilities: Vec<capabilities::ProvidedCapability>,
 }
 
 /// One `instances` map slot's lifecycle state. Every state keeps
@@ -879,6 +880,7 @@ impl SettingsSchemaSource for PluginHost {
 mod action_delivery;
 mod actions;
 mod api;
+mod capabilities;
 mod instances;
 mod lifecycle;
 pub(super) mod read_plans;
