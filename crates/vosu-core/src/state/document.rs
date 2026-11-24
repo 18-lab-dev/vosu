@@ -77,7 +77,7 @@ impl SessionState {
         &self.namespaces
     }
 
-    /// The whole document's API v1 JSON projection ([`Audience::Api`],
+    /// The whole document's API v1 JSON projection ([`super::Audience::Api`],
     /// `internal` always stripped), encoded once and cached (D2, D13).
     pub fn api_json(&self, reg: &super::schema::SchemaRegistry) -> &bytes::Bytes {
         self.api_encoding.json.get_or_init(|| {
