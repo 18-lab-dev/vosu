@@ -107,6 +107,14 @@ impl ConfigDocument {
             self.config.v2_subscription_debounce = 1.0;
         }
 
+        if self.config.api_v1_subscription_debounce < 1.0 {
+            warnings.push(format!(
+                "Config %API_V1_SUBSCRIPTION_DEBOUNCE% value %{}% is below the minimum %1%, clamping.",
+                format_number(self.config.api_v1_subscription_debounce)
+            ));
+            self.config.api_v1_subscription_debounce = 1.0;
+        }
+
         for (name, interval) in [
             ("POLL_RATE", &mut self.config.poll_rate),
             (
@@ -116,6 +124,10 @@ impl ConfigDocument {
             (
                 "V2_SUBSCRIPTION_DEBOUNCE",
                 &mut self.config.v2_subscription_debounce,
+            ),
+            (
+                "API_V1_SUBSCRIPTION_DEBOUNCE",
+                &mut self.config.api_v1_subscription_debounce,
             ),
         ] {
             if !interval.is_finite() || *interval > Self::MAX_INTERVAL_MS {
@@ -172,6 +184,9 @@ impl ConfigDocument {
             ConfigKey::PollRate => self.config.poll_rate = value,
             ConfigKey::PreciseDataPollRate => self.config.precise_data_poll_rate = value,
             ConfigKey::V2SubscriptionDebounce => self.config.v2_subscription_debounce = value,
+            ConfigKey::ApiV1SubscriptionDebounce => {
+                self.config.api_v1_subscription_debounce = value
+            }
             ConfigKey::ServerPort => self.config.server_port = value,
             ConfigKey::DashboardPort => self.config.dashboard_port = value,
             _ => unreachable!("schema number key has number storage"),
@@ -205,6 +220,9 @@ impl ConfigDocument {
             "POLL_RATE" => toml::Value::Float(self.config.poll_rate),
             "PRECISE_DATA_POLL_RATE" => toml::Value::Float(self.config.precise_data_poll_rate),
             "V2_SUBSCRIPTION_DEBOUNCE" => toml::Value::Float(self.config.v2_subscription_debounce),
+            "API_V1_SUBSCRIPTION_DEBOUNCE" => {
+                toml::Value::Float(self.config.api_v1_subscription_debounce)
+            }
             "SHOW_MP_COMMANDS" => toml::Value::Boolean(self.config.show_mp_commands),
             "READ_MANIA_SCROLL_SPEED" => toml::Value::Boolean(self.config.read_mania_scroll_speed),
             "SERVER_IP" => toml::Value::String(self.config.server_ip.clone()),

@@ -85,6 +85,7 @@ ENABLE_HIT_OFFSETS = false
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
 V2_SUBSCRIPTION_DEBOUNCE = 1.0
+API_V1_SUBSCRIPTION_DEBOUNCE = 1.0
 
 SERVER_IP = \"127.0.0.1\"
 SERVER_PORT = 24050.0
@@ -118,6 +119,7 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "POLL_RATE",
             "PRECISE_DATA_POLL_RATE",
             "V2_SUBSCRIPTION_DEBOUNCE",
+            "API_V1_SUBSCRIPTION_DEBOUNCE",
             "SHOW_MP_COMMANDS",
             "READ_MANIA_SCROLL_SPEED",
             "SERVER_IP",

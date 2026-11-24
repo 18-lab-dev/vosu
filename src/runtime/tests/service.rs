@@ -120,6 +120,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "POLL_RATE",
         "PRECISE_DATA_POLL_RATE",
         "V2_SUBSCRIPTION_DEBOUNCE",
+        "API_V1_SUBSCRIPTION_DEBOUNCE",
         "SERVER_IP",
         "SERVER_PORT",
         "DASHBOARD_IP",
@@ -164,7 +165,18 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
     ));
     assert!(settings.contains(
+        r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
+    ));
+    assert!(settings.contains(
         r#"data-id="PRECISE_DATA_POLL_RATE" type="number" value="10" min="1" max="60000" step="any" required"#
+    ));
+    let distinct = render_runtime_settings(&Config {
+        api_v1_subscription_debounce: 7.375,
+        v2_subscription_debounce: 19.25,
+        ..Config::default()
+    });
+    assert!(distinct.contains(
+        r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="7.375" min="1" max="60000" step="any" required"#
     ));
 }
 
@@ -277,6 +289,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
             "POLL_RATE": " 175.5 ",
             "PRECISE_DATA_POLL_RATE": "\t12.25\n",
             "V2_SUBSCRIPTION_DEBOUNCE": " 1.125 ",
+            "API_V1_SUBSCRIPTION_DEBOUNCE": " 7.375 ",
             "SERVER_PORT": " 24890 ",
             "DASHBOARD_PORT": " 24891 ", "_network_action": "apply"
         })))
@@ -287,6 +300,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
     assert_eq!(current.v2_subscription_debounce, 1.125);
+    assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(
         listen_target(&current).unwrap(),
         ListenTarget::new("127.0.0.1", 24_890)
@@ -301,6 +315,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
     assert_eq!(current.v2_subscription_debounce, 1.125);
+    assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(current.server_port, 24_890.0);
     bounded!(reloaded.shutdown()).unwrap();
 }
@@ -358,12 +373,14 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
         ("PRECISE_DATA_POLL_RATE", serde_json::json!(0.5)),
         ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0)),
         ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0.5)),
+        ("API_V1_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0)),
+        ("API_V1_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0.5)),
         ("SERVER_PORT", serde_json::json!(0)),
         ("SERVER_PORT", serde_json::json!(65_536)),
         ("SERVER_PORT", serde_json::json!("24050.5")),
         ("DASHBOARD_PORT", serde_json::json!("24051.5")),
     ];
-    let unbounded = ["POLL_RATE", "PRECISE_DATA_POLL_RATE", "V2_SUBSCRIPTION_DEBOUNCE", "SERVER_PORT", "DASHBOARD_PORT"]
+    let unbounded = ["POLL_RATE", "PRECISE_DATA_POLL_RATE", "V2_SUBSCRIPTION_DEBOUNCE", "API_V1_SUBSCRIPTION_DEBOUNCE", "SERVER_PORT", "DASHBOARD_PORT"]
         .into_iter()
         .flat_map(|key| {
             [

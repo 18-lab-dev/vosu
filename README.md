@@ -436,6 +436,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `POLL_RATE` | `150` | Regular state interval in milliseconds; range `100`–`60000`. |
 | `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; range `1`–`60000`. |
 | `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Fast selected-field reader interval and minimum interval between subscription frames, in milliseconds; range `1`–`60000`, fractional values supported. Slow selectors do not accelerate readers. |
+| `API_V1_SUBSCRIPTION_DEBOUNCE` | `1` | API v1 subscription minimum interval, independent of selected-field V2 subscriptions; range `1`–`60000` milliseconds, fractional values supported. |
 | `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
 | `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
 | `SERVER_IP` | `127.0.0.1` | Overlay/data listener hostname or address (unchanged overlay origin). |
@@ -649,7 +650,7 @@ while keeping `skin.folder:null` for lazer.
 
 - `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
-- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and both `SERVER_PORT` and `DASHBOARD_PORT` whole numbers 1–65535. Network fields require `_network_action: "apply"` and then `_network_action: "confirm"` from the new origin before the 30-second server timeout.
+- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` and `API_V1_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and both `SERVER_PORT` and `DASHBOARD_PORT` whole numbers 1–65535. Network fields require `_network_action: "apply"` and then `_network_action: "confirm"` from the new origin before the 30-second server timeout.
 - `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement. A release whose major version exceeds the running build's returns `{"status":"majorAvailable","version":"...","releaseUrl":"..."}` and installs nothing unless the request body is `{"consent":true}`.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.

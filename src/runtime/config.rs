@@ -142,6 +142,11 @@ impl ConfigUpdateService for RuntimeConfig {
                     1.0,
                     ConfigDocument::MAX_INTERVAL_MS,
                 ),
+                (
+                    "API_V1_SUBSCRIPTION_DEBOUNCE",
+                    1.0,
+                    ConfigDocument::MAX_INTERVAL_MS,
+                ),
                 ("SERVER_PORT", 1.0, 65_535.0),
                 ("DASHBOARD_PORT", 1.0, 65_535.0),
             ] {
@@ -323,6 +328,7 @@ pub(super) fn apply_config_values(
     number!("POLL_RATE", poll_rate);
     number!("PRECISE_DATA_POLL_RATE", precise_data_poll_rate);
     number!("V2_SUBSCRIPTION_DEBOUNCE", v2_subscription_debounce);
+    number!("API_V1_SUBSCRIPTION_DEBOUNCE", api_v1_subscription_debounce);
     number!("SERVER_PORT", server_port);
     number!("DASHBOARD_PORT", dashboard_port);
     string!("DASHBOARD_IP", dashboard_ip);

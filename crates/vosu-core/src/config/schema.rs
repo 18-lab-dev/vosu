@@ -16,6 +16,7 @@ pub struct Config {
     pub poll_rate: f64,
     pub precise_data_poll_rate: f64,
     pub v2_subscription_debounce: f64,
+    pub api_v1_subscription_debounce: f64,
     pub show_mp_commands: bool,
     pub read_mania_scroll_speed: bool,
     pub server_ip: String,
@@ -40,6 +41,7 @@ impl Default for Config {
             poll_rate: 150.0,
             precise_data_poll_rate: 10.0,
             v2_subscription_debounce: 1.0,
+            api_v1_subscription_debounce: 1.0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
             server_ip: "127.0.0.1".to_owned(),
@@ -65,6 +67,7 @@ pub enum ConfigKey {
     PollRate,
     PreciseDataPollRate,
     V2SubscriptionDebounce,
+    ApiV1SubscriptionDebounce,
     ShowMpCommands,
     ReadManiaScrollSpeed,
     ServerIp,
@@ -109,7 +112,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 19] = [
+const SCHEMA_ITEMS: [ConfigItem; 20] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -173,6 +176,12 @@ const SCHEMA_ITEMS: [ConfigItem; 19] = [
     item(
         ConfigKey::V2SubscriptionDebounce,
         "V2_SUBSCRIPTION_DEBOUNCE",
+        ConfigDefault::Number(1.0),
+        Some(1.0),
+    ),
+    item(
+        ConfigKey::ApiV1SubscriptionDebounce,
+        "API_V1_SUBSCRIPTION_DEBOUNCE",
         ConfigDefault::Number(1.0),
         Some(1.0),
     ),
@@ -246,7 +255,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 19] = [
+pub const BINDING_ORDER: [&str; 20] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -260,6 +269,7 @@ pub const BINDING_ORDER: [&str; 19] = [
     "POLL_RATE",
     "PRECISE_DATA_POLL_RATE",
     "V2_SUBSCRIPTION_DEBOUNCE",
+    "API_V1_SUBSCRIPTION_DEBOUNCE",
     "SERVER_IP",
     "SERVER_PORT",
     "DASHBOARD_IP",
@@ -273,6 +283,6 @@ pub const NEWLINE_INSERTIONS: [&str; 5] = [
     "START_AT_LOGIN",
     "READ_MANIA_SCROLL_SPEED",
     "ENABLE_KEY_OVERLAY",
-    "V2_SUBSCRIPTION_DEBOUNCE",
+    "API_V1_SUBSCRIPTION_DEBOUNCE",
     "ALLOWED_IPS",
 ];

@@ -4,6 +4,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M3
 
+- Add independent `API_V1_SUBSCRIPTION_DEBOUNCE` configuration and dashboard
+  settings, defaulting to 1 ms with a fractional 1–60000 ms range. Legacy V2
+  subscription and B1 reader settings retain their own debounce.
 - Resolve storage roots and CLI/daemon broker paths from the executable's
   release channel before creating directories. Prerelease versions isolate
   config, data, cache and broker files under `prerelease/` and never migrate

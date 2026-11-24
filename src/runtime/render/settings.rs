@@ -169,6 +169,13 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 config.v2_subscription_debounce,
                 1.0,
             ),
+            interval(
+                "API_V1_SUBSCRIPTION_DEBOUNCE",
+                "API v1 subscription debounce",
+                "Wait at least this long between API v1 subscription updates, independently of selected V2 fields.",
+                config.api_v1_subscription_debounce,
+                1.0,
+            ),
         ],
     );
     let server = settings_group(

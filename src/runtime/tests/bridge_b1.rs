@@ -295,6 +295,7 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     next.enable_mania_key_hit_errors = !next.enable_mania_key_hit_errors;
     next.enable_hit_offsets = !next.enable_hit_offsets;
     next.v2_subscription_debounce = 73.0;
+    next.api_v1_subscription_debounce = 31.25;
     config.send(Arc::new(next.clone())).unwrap();
     tokio::time::timeout(Duration::from_secs(2), async {
         while inputs.borrow_and_update().enable_key_overlay != next.enable_key_overlay { inputs.changed().await.unwrap(); }

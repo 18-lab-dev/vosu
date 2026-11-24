@@ -26,6 +26,7 @@ const EXPECTED_DEFAULT: &str = concat!(
     "POLL_RATE = 150.0\n",
     "PRECISE_DATA_POLL_RATE = 10.0\n",
     "V2_SUBSCRIPTION_DEBOUNCE = 1.0\n",
+    "API_V1_SUBSCRIPTION_DEBOUNCE = 1.0\n",
     "\n",
     "SERVER_IP = \"127.0.0.1\"\n",
     "SERVER_PORT = 24050.0\n",
@@ -238,4 +239,79 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
             .all(|binding| persisted.contains_key(*binding))
     );
     bounded!(store.shutdown()).unwrap();
+}
+
+#[test]
+fn api_v1_debounce_defaults_round_trips_and_refreshes_independently() {
+    let mut document = ConfigDocument::parse("V2_SUBSCRIPTION_DEBOUNCE = 17.25\n").unwrap();
+    assert_eq!(document.config().api_v1_subscription_debounce, 1.0);
+    document
+        .refresh("API_V1_SUBSCRIPTION_DEBOUNCE = 3.125\n")
+        .unwrap();
+    assert_eq!(document.config().api_v1_subscription_debounce, 3.125);
+    assert_eq!(document.config().v2_subscription_debounce, 17.25);
+    let reloaded = ConfigDocument::parse(&document.serialize()).unwrap();
+    assert_eq!(reloaded, document);
+    document
+        .refresh("V2_SUBSCRIPTION_DEBOUNCE = 29.5\n")
+        .unwrap();
+    assert_eq!(document.config().api_v1_subscription_debounce, 3.125);
+    assert_eq!(document.config().v2_subscription_debounce, 29.5);
+}
+
+#[test]
+fn api_v1_debounce_disk_bounds_and_invalid_types_follow_interval_policy() {
+    for (input, expected) in [
+        ("0.5", 1.0),
+        ("-9", 1.0),
+        ("1.125", 1.125),
+        ("60000", 60_000.0),
+        ("1e100", 60_000.0),
+        ("nan", 1.0),
+        ("inf", 1.0),
+        ("\"wrong-type\"", 1.0),
+        ("true", 1.0),
+    ] {
+        let document = ConfigDocument::parse(&format!(
+            "API_V1_SUBSCRIPTION_DEBOUNCE = {input}\nV2_SUBSCRIPTION_DEBOUNCE = 43.5\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            document.config().api_v1_subscription_debounce,
+            expected,
+            "{input}"
+        );
+        assert_eq!(document.config().v2_subscription_debounce, 43.5, "{input}");
+    }
+}
+
+#[tokio::test]
+async fn api_v1_debounce_changes_publish_and_persist_without_changing_legacy_debounce() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("vosu.toml");
+    let store = bounded!(ConfigStore::initialize(&path)).unwrap();
+    let mut changes = store.subscribe();
+    assert!(store.update(|config| {
+        config.v2_subscription_debounce = 17.25;
+        config.api_v1_subscription_debounce = 3.125;
+    }));
+    let first = bounded!(changes.recv()).unwrap();
+    assert_eq!(first.new.v2_subscription_debounce, 17.25);
+    assert_eq!(first.new.api_v1_subscription_debounce, 3.125);
+
+    assert!(store.update(|config| config.api_v1_subscription_debounce = 7.375));
+    let api_changed = bounded!(changes.recv()).unwrap();
+    assert_eq!(api_changed.old.api_v1_subscription_debounce, 3.125);
+    assert_eq!(api_changed.new.api_v1_subscription_debounce, 7.375);
+    assert_eq!(api_changed.new.v2_subscription_debounce, 17.25);
+
+    assert!(store.update(|config| config.v2_subscription_debounce = 29.5));
+    let legacy_changed = bounded!(changes.recv()).unwrap();
+    assert_eq!(legacy_changed.new.api_v1_subscription_debounce, 7.375);
+    assert_eq!(legacy_changed.new.v2_subscription_debounce, 29.5);
+    bounded!(store.shutdown()).unwrap();
+    let reloaded = bounded!(ConfigStore::initialize(&path)).unwrap();
+    assert_eq!(reloaded.current().api_v1_subscription_debounce, 7.375);
+    assert_eq!(reloaded.current().v2_subscription_debounce, 29.5);
+    bounded!(reloaded.shutdown()).unwrap();
 }
