@@ -20,6 +20,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Resolve catalog capability graphs with bounded deterministic ranked backtracking,
   retained installed consumers, one version per plugin, dependency-first output,
   and optional grants that never initiate installation.
+- Detect unknown catalog forges through bounded unauthenticated origin-pinned
+  probes; cache success for the source lifetime and retry failures only on
+  refresh or relevant edits. Publish generation-checked SDK-validated candidate
+  snapshots without discarding alternatives or reusing failed-source entries.
 
 ## Unreleased — 2.0 M6a
 

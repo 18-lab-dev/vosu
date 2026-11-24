@@ -44,17 +44,38 @@ pub enum SourceStoreError {
     #[error("fixed official source policy cannot be changed")]
     OfficialPolicy,
 }
-struct State {
-    records: Vec<SourceRecord>,
-    generation: SourceGeneration,
-    available: bool,
+pub(super) struct State {
+    pub(super) records: Vec<SourceRecord>,
+    pub(super) generation: SourceGeneration,
+    pub(super) available: bool,
+    pub(super) detections: std::collections::HashMap<
+        SourceIdentity,
+        Result<super::Forge, super::detect::DetectionError>,
+    >,
+    pub(super) candidates: Option<Arc<super::snapshot::CandidateSnapshot>>,
+}
+impl State {
+    fn reconcile_runtime(&mut self, records: &[SourceRecord]) {
+        self.detections.retain(|identity, result| {
+            records.iter().any(|record| {
+                record.identity == *identity
+                    && (result.is_ok()
+                        || self.records.iter().any(|previous| {
+                            previous.identity == *identity
+                                && previous.private_network == record.private_network
+                                && previous.enabled == record.enabled
+                        }))
+            })
+        });
+        self.candidates = None;
+    }
 }
 pub struct SourceStore {
     root: PathBuf,
     lifecycle: Arc<dyn SourceLifecycle>,
     // Operation authority is separate from state: no state mutex spans disk or callbacks.
     operation: Mutex<()>,
-    state: Mutex<State>,
+    pub(super) state: Mutex<State>,
 }
 impl SourceStore {
     pub fn open(
@@ -69,6 +90,8 @@ impl SourceStore {
                 records: Vec::new(),
                 generation: SourceGeneration(0),
                 available: false,
+                detections: std::collections::HashMap::new(),
+                candidates: None,
             }),
         };
         store.recover()?;
@@ -104,6 +127,7 @@ impl SourceStore {
             .state
             .lock()
             .map_err(|_| SourceStoreError::Unavailable)?;
+        state.reconcile_runtime(&records);
         state.records = records;
         state.generation.0 += 1;
         state.available = true;
@@ -191,6 +215,7 @@ impl SourceStore {
         if !state.available {
             return Err(SourceStoreError::RecoveryRequired);
         }
+        state.candidates = None;
         state.generation.0 += 1;
         Ok(state.generation)
     }
@@ -228,6 +253,7 @@ impl SourceStore {
             .state
             .lock()
             .map_err(|_| SourceStoreError::Unavailable)?;
+        state.reconcile_runtime(&records);
         state.records = records;
         state.generation.0 += 1;
         state.available = true;
