@@ -55,6 +55,10 @@ pub trait GenerationIdentity: Send + Sync + 'static {
     fn lifecycle_token(&self) -> CancellationToken;
     fn lazer_offsets(&self) -> Option<Arc<LazerOffsets>>;
     fn install_lazer_offsets(&self, offsets: Arc<LazerOffsets>) -> bool;
+    /// The installation root the client's executable was launched from:
+    /// `osu!.deps.json` lives here (`lazer_version::discover_from_root`),
+    /// and the generator reads the managed assemblies under it.
+    fn executable_root(&self) -> Result<PathBuf, LazerLoadError>;
 }
 
 pub type GenerationFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Bytes>> + Send + 'a>>;
@@ -62,7 +66,7 @@ pub type GenerationFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Bytes>> +
 pub trait OffsetGenerator: Send + Sync {
     fn generate<'a>(
         &'a self,
-        pid: u32,
+        executable_root: &'a Path,
         version: &'a str,
         cancel: &'a CancellationToken,
     ) -> GenerationFuture<'a>;
@@ -93,7 +97,7 @@ impl<G: OffsetGenerator> LazerOffsetLoader<G> {
 
     pub async fn resolve(
         &self,
-        pid: u32,
+        executable_root: &Path,
         version: &str,
         cancel: &CancellationToken,
     ) -> Result<Arc<LazerOffsets>, LazerLoadError> {
@@ -113,7 +117,7 @@ impl<G: OffsetGenerator> LazerOffsetLoader<G> {
 
         let generated = tokio::select! {
             () = cancel.cancelled() => return Err(LazerLoadError::Cancelled),
-            result = self.generator.generate(pid, version, cancel) => result,
+            result = self.generator.generate(executable_root, version, cancel) => result,
         }
         .map_err(|error| {
             if error.kind() == io::ErrorKind::Interrupted || cancel.is_cancelled() {
@@ -310,20 +314,15 @@ where
                     if !instance.is_alive() {
                         return Err(LazerLoadError::Cancelled);
                     }
-                    let pid = instance.process_id().ok_or_else(|| {
-                        LazerLoadError::Unavailable(
-                            "unknown".into(),
-                            "target PID unavailable".into(),
-                        )
-                    })?;
+                    let root = instance.executable_root()?;
                     let version =
-                        super::lazer_version::discover_for_process(pid).map_err(|error| {
+                        super::lazer_version::discover_from_root(&root).map_err(|error| {
                             LazerLoadError::Unavailable(
                                 "unknown".into(),
                                 format!("version discovery failed: {error}"),
                             )
                         })?;
-                    loader.resolve(pid, &version, &attempt_cancel).await
+                    loader.resolve(&root, &version, &attempt_cancel).await
                 }
             }
         },
@@ -359,7 +358,7 @@ mod tests {
 
     struct FakeGenerator {
         result: Mutex<Bytes>,
-        calls: Mutex<Vec<(u32, String)>>,
+        calls: Mutex<Vec<(PathBuf, String)>>,
         started: Notify,
         barrier: Option<Barrier>,
     }
@@ -378,12 +377,15 @@ mod tests {
     impl OffsetGenerator for FakeGenerator {
         fn generate<'a>(
             &'a self,
-            pid: u32,
+            executable_root: &'a Path,
             version: &'a str,
             _: &'a CancellationToken,
         ) -> GenerationFuture<'a> {
             Box::pin(async move {
-                self.calls.lock().await.push((pid, version.to_owned()));
+                self.calls
+                    .lock()
+                    .await
+                    .push((executable_root.to_path_buf(), version.to_owned()));
                 self.started.notify_one();
                 if let Some(barrier) = &self.barrier {
                     barrier.wait().await;
@@ -415,7 +417,7 @@ mod tests {
         let cancel = CancellationToken::new();
         assert_eq!(
             loader
-                .resolve(4242, version, &cancel)
+                .resolve(Path::new("4242"), version, &cancel)
                 .await
                 .unwrap()
                 .osu_version,
@@ -424,7 +426,7 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), generated);
         assert_eq!(
             loader
-                .resolve(99, version, &cancel)
+                .resolve(Path::new("99"), version, &cancel)
                 .await
                 .unwrap()
                 .osu_version,
@@ -432,7 +434,7 @@ mod tests {
         );
         assert_eq!(
             *loader.generator.calls.lock().await,
-            vec![(4242, version.to_owned())]
+            vec![(PathBuf::from("4242"), version.to_owned())]
         );
     }
 
@@ -448,7 +450,7 @@ mod tests {
                 LazerOffsetLoader::new(FakeGenerator::new(output), dir.path().into(), Bytes::new());
             assert!(
                 loader
-                    .resolve(1, version, &CancellationToken::new())
+                    .resolve(Path::new("1"), version, &CancellationToken::new())
                     .await
                     .is_err()
             );
@@ -466,8 +468,8 @@ mod tests {
         let loader = LazerOffsetLoader::new(generator, dir.path().into(), Bytes::new());
         let cancel = CancellationToken::new();
         let (a, b) = tokio::join!(
-            loader.resolve(1, version, &cancel),
-            loader.resolve(2, version, &cancel)
+            loader.resolve(Path::new("1"), version, &cancel),
+            loader.resolve(Path::new("2"), version, &cancel)
         );
         assert_eq!(a.unwrap().osu_version, version);
         assert_eq!(b.unwrap().osu_version, version);
@@ -495,12 +497,18 @@ mod tests {
             fixture("2026.1.0"),
         );
         let cancel = CancellationToken::new();
-        loader.resolve(5, version, &cancel).await.unwrap();
-        loader.resolve(6, version, &cancel).await.unwrap();
+        loader
+            .resolve(Path::new("5"), version, &cancel)
+            .await
+            .unwrap();
+        loader
+            .resolve(Path::new("6"), version, &cancel)
+            .await
+            .unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), generated);
         assert_eq!(
             *loader.generator.calls.lock().await,
-            vec![(5, version.to_owned())],
+            vec![(PathBuf::from("5"), version.to_owned())],
             "a complete cache must be reused after regeneration"
         );
     }
@@ -516,7 +524,7 @@ mod tests {
         );
         let _hold = loader.generator.result.lock().await;
         let cancel = CancellationToken::new();
-        let (result, ()) = tokio::join!(loader.resolve(7, version, &cancel), async {
+        let (result, ()) = tokio::join!(loader.resolve(Path::new("7"), version, &cancel), async {
             loader.generator.started.notified().await;
             cancel.cancel();
         });

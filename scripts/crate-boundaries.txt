@@ -41,6 +41,7 @@ vosu-osu-calc -> vosu-pp
 
 vosu-osu-reader -> vosu-osu-model
 vosu-osu-reader -> vosu-sys
+vosu-osu-reader -> vosu-proptest
 
 vosu-osu-state -> vosu-osu-reader
 vosu-osu-state -> vosu-osu-calc

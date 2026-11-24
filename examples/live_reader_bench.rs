@@ -4,6 +4,7 @@ use std::{
     error::Error,
     hint::black_box,
     io,
+    path::Path,
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -79,7 +80,7 @@ struct CacheOnly;
 impl OffsetGenerator for CacheOnly {
     fn generate<'a>(
         &'a self,
-        _: u32,
+        _: &'a Path,
         _: &'a str,
         _: &'a CancellationToken,
     ) -> GenerationFuture<'a> {
@@ -315,7 +316,8 @@ fn execute() -> Result<()> {
             )
         }
         ClientType::Lazer => {
-            let version = lazer_version::discover_for_process(args.pid)?;
+            let executable_root = lazer_version::process_executable_root(args.pid)?;
+            let version = lazer_version::discover_from_root(&executable_root)?;
             let cache = vosu_sys::platform::Paths::system_cache_root()?.join("offsets");
             let asset = vosu::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| fail("embedded offsets missing"))?;
@@ -329,7 +331,7 @@ fn execute() -> Result<()> {
                 .enable_all()
                 .build()?;
             let offsets = rt
-                .block_on(loader.resolve(args.pid, &version, &CancellationToken::new()))
+                .block_on(loader.resolve(&executable_root, &version, &CancellationToken::new()))
                 .map_err(|error| fail(format!("{error}; checked {}", path.display())))?;
             let pattern = LazerPattern::source_default();
             let mut regular = LazerMemory::new(process.clone(), offsets.clone(), pattern.clone());

@@ -409,7 +409,7 @@ struct OfflineGenerator;
 impl vosu_osu_reader::memory::lazer_loader::OffsetGenerator for OfflineGenerator {
     fn generate<'a>(
         &'a self,
-        _: u32,
+        _: &'a std::path::Path,
         _: &'a str,
         _: &'a tokio_util::sync::CancellationToken,
     ) -> vosu_osu_reader::memory::lazer_loader::GenerationFuture<'a> {

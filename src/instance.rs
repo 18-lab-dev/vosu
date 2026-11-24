@@ -267,6 +267,11 @@ impl GenerationIdentity for Instance {
     fn install_lazer_offsets(&self, offsets: Arc<LazerOffsets>) -> bool {
         Instance::install_lazer_offsets(self, offsets)
     }
+
+    fn executable_root(&self) -> Result<PathBuf, LazerLoadError> {
+        vosu_osu_reader::memory::lazer_version::process_executable_root(self.pid)
+            .map_err(|error| LazerLoadError::Unavailable("unknown".into(), error.to_string()))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

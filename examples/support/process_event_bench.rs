@@ -120,7 +120,7 @@ struct DisabledGenerator;
 impl OffsetGenerator for DisabledGenerator {
     fn generate<'a>(
         &'a self,
-        _pid: u32,
+        _executable_root: &'a std::path::Path,
         _version: &'a str,
         _cancel: &'a tokio_util::sync::CancellationToken,
     ) -> GenerationFuture<'a> {

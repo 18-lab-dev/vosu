@@ -290,7 +290,7 @@ impl EmbeddedOffsetGenerator {
 impl vosu_osu_reader::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
     fn generate<'a>(
         &'a self,
-        pid: u32,
+        executable_root: &'a Path,
         version: &'a str,
         cancel: &'a CancellationToken,
     ) -> vosu_osu_reader::memory::lazer_loader::GenerationFuture<'a> {
@@ -298,8 +298,7 @@ impl vosu_osu_reader::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGe
             if cancel.is_cancelled() {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
             }
-            let root = vosu_osu_reader::memory::lazer_version::process_executable_root(pid)
-                .map_err(io::Error::other)?;
+            let root = executable_root.to_path_buf();
             let discovered = vosu_osu_reader::memory::lazer_version::discover_from_root(&root)
                 .map_err(io::Error::other)?;
             if discovered != version {

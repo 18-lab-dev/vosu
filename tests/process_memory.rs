@@ -534,18 +534,21 @@ fn lazer_public_screens_spectating_ranked_bounds_and_unsupported_tourney_are_obs
 #[derive(Clone, Default)]
 struct FakeGenerator {
     responses: Arc<Mutex<VecDeque<Result<Bytes, String>>>>,
-    calls: Arc<Mutex<Vec<(u32, String)>>>,
+    calls: Arc<Mutex<Vec<(std::path::PathBuf, String)>>>,
 }
 
 impl OffsetGenerator for FakeGenerator {
     fn generate<'a>(
         &'a self,
-        pid: u32,
+        executable_root: &'a std::path::Path,
         version: &'a str,
         _: &'a CancellationToken,
     ) -> GenerationFuture<'a> {
         Box::pin(async move {
-            self.calls.lock().await.push((pid, version.to_owned()));
+            self.calls
+                .lock()
+                .await
+                .push((executable_root.to_path_buf(), version.to_owned()));
             self.responses
                 .lock()
                 .await
@@ -575,7 +578,11 @@ async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generatio
     let loader = LazerOffsetLoader::new(generator.clone(), cache.path().into(), embedded.clone());
     assert_eq!(
         loader
-            .resolve(11, &embedded_version, &CancellationToken::new())
+            .resolve(
+                std::path::Path::new("11"),
+                &embedded_version,
+                &CancellationToken::new()
+            )
             .await
             .unwrap()
             .osu_version,
@@ -591,7 +598,11 @@ async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generatio
     .unwrap();
     assert_eq!(
         loader
-            .resolve(12, cached_version, &CancellationToken::new())
+            .resolve(
+                std::path::Path::new("12"),
+                cached_version,
+                &CancellationToken::new()
+            )
             .await
             .unwrap()
             .osu_version,
@@ -607,13 +618,17 @@ async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generatio
         .await
         .push_back(Ok(generated.clone()));
     let result = loader
-        .resolve(99, generated_version, &CancellationToken::new())
+        .resolve(
+            std::path::Path::new("99"),
+            generated_version,
+            &CancellationToken::new(),
+        )
         .await
         .unwrap();
     assert_eq!(result.osu_version, generated_version);
     assert_eq!(
         *generator.calls.lock().await,
-        vec![(99, generated_version.to_owned())]
+        vec![(std::path::PathBuf::from("99"), generated_version.to_owned())]
     );
     assert_eq!(
         std::fs::read(loader.cache_path(generated_version).unwrap()).unwrap(),

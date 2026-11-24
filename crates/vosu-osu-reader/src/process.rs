@@ -22,11 +22,25 @@ const MAX_MANAGED_COLLECTION_LENGTH: usize = 1_000_000;
 const DOTNET_UNIX_EPOCH_TICKS: u64 = 621_355_968_000_000_000;
 const DOTNET_TICKS_PER_SECOND: u64 = 10_000_000;
 
+/// Injectable AOB-scan backend: when set on a [`ProcessHandle`], every
+/// `scan_*` method routes through it instead of `vosu-sys`'s generic region
+/// walk. `scan_all`/`scan_batch` must return results in the region walk's
+/// own order (ascending region, then ascending offset within a region; at
+/// most one hit per pattern for `scan_batch`) so callers observe identical
+/// behavior regardless of backend (`prop_scan_backend_matches_region_walk`).
+pub trait ScanBackend: Send + Sync {
+    /// Every match, in ascending region order then ascending offset.
+    fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError>;
+    /// At most one hit per pattern, in the region walk's own order.
+    fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError>;
+}
+
 /// RAII owner for a process-memory backend and the target's pointer width.
 #[derive(Clone)]
 pub struct ProcessHandle {
     memory: Arc<dyn ProcessMemory>,
     bitness: ProcessBitness,
+    scans: Option<Arc<dyn ScanBackend>>,
 }
 
 impl fmt::Debug for ProcessHandle {
@@ -42,7 +56,26 @@ impl fmt::Debug for ProcessHandle {
 impl ProcessHandle {
     #[must_use]
     pub fn new(memory: Arc<dyn ProcessMemory>, bitness: ProcessBitness) -> Self {
-        Self { memory, bitness }
+        Self {
+            memory,
+            bitness,
+            scans: None,
+        }
+    }
+
+    /// Like [`Self::new`], but every `scan_*` method routes through `scans`
+    /// instead of walking `memory`'s readable regions directly.
+    #[must_use]
+    pub fn with_scan_backend(
+        memory: Arc<dyn ProcessMemory>,
+        bitness: ProcessBitness,
+        scans: Arc<dyn ScanBackend>,
+    ) -> Self {
+        Self {
+            memory,
+            bitness,
+            scans: Some(scans),
+        }
     }
 
     #[must_use]
@@ -516,30 +549,52 @@ impl ProcessHandle {
 
     /// Returns the first match in region order, then ascending offset order
     /// (`vosu_sys::process::scanner`'s generic primitive over this
-    /// handle's own `ProcessMemory` backend).
+    /// handle's own `ProcessMemory` backend, or the injected `ScanBackend`
+    /// when one was given to [`Self::with_scan_backend`]).
     pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
-        self.memory.scan_first(pattern)
+        match &self.scans {
+            Some(backend) => Ok(backend.scan_all(pattern)?.into_iter().next()),
+            None => self.memory.scan_first(pattern),
+        }
     }
 
     /// Scans candidates in address order and stops at the first candidate
-    /// accepted by `validate`, without materializing every signature match.
+    /// accepted by `validate`, without materializing every signature match
+    /// (unless a `ScanBackend` is injected, which must already produce
+    /// every match to answer `scan_all`).
     pub fn scan_first_valid(
         &self,
         pattern: &Pattern,
-        validate: impl FnMut(usize) -> Result<bool, MemoryError>,
+        mut validate: impl FnMut(usize) -> Result<bool, MemoryError>,
     ) -> Result<Option<usize>, MemoryError> {
-        self.memory.scan_first_valid(pattern, validate)
+        match &self.scans {
+            Some(backend) => {
+                for candidate in backend.scan_all(pattern)? {
+                    if validate(candidate)? {
+                        return Ok(Some(candidate));
+                    }
+                }
+                Ok(None)
+            }
+            None => self.memory.scan_first_valid(pattern, validate),
+        }
     }
 
     /// Returns every match in region order, then ascending offset order.
     pub fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
-        self.memory.scan_all(pattern)
+        match &self.scans {
+            Some(backend) => backend.scan_all(pattern),
+            None => self.memory.scan_all(pattern),
+        }
     }
 
     /// Finds at most one match per pattern. Regions are traversed first and
     /// unresolved patterns are emitted in caller-index order within a region.
     pub fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
-        self.memory.scan_batch(patterns)
+        match &self.scans {
+            Some(backend) => backend.scan_batch(patterns),
+            None => self.memory.scan_batch(patterns),
+        }
     }
 }
 
@@ -603,3 +658,5 @@ fn corrupt(context: &'static str, address: usize, message: &'static str) -> Memo
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_prop;

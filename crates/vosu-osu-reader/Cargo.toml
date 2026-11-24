@@ -32,3 +32,7 @@ vosu-sys = { path = "../vosu-sys" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "=0.2.186"
+
+[dev-dependencies]
+proptest = "1.12"
+vosu-proptest = { path = "../vosu-proptest" }
