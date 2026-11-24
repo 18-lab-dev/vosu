@@ -317,12 +317,14 @@ pub(super) fn runtime_test_paths(root: &Path) -> Paths {
     let launch = root.join("launch");
     fs::create_dir_all(&program).unwrap();
     fs::create_dir_all(&launch).unwrap();
-    Paths::resolve(&RuntimeTestPathResolver {
+    let paths = Paths::resolve(&RuntimeTestPathResolver {
         executable: program.join("vosu"),
         launch,
         root: root.to_owned(),
-    })
-    .unwrap()
+    }, vosu_sys::platform::BuildChannel::Release)
+    .unwrap();
+    paths.initialize().unwrap();
+    paths
 }
 
 #[test]

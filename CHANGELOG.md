@@ -2,6 +2,14 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M3
+
+- Resolve storage roots and CLI/daemon broker paths from the executable's
+  release channel before creating directories. Prerelease versions isolate
+  config, data, cache and broker files under `prerelease/` and never migrate
+  normal legacy roots. Explicit static-directory overrides remain user-controlled;
+  automatic read-only settings import and alpha activation follow separately.
+
 ## Unreleased — 2.0 M2
 
 - Publish identified osu! sessions to `/vosu.osu` on the 2.0 state bus, plus

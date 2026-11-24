@@ -49,10 +49,17 @@ fn daemon_cache_root() -> io::Result<std::path::PathBuf> {
         } else {
             directory
         };
-        Ok(daemon.join(".cache"))
+        Ok(
+            vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
+                .map_err(io::Error::other)?
+                .root(daemon.join(".cache")),
+        )
     }
     #[cfg(not(windows))]
-    vosu_sys::platform::Paths::system_cache_root()
+    vosu_sys::platform::Paths::system_cache_root(
+        vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
+            .map_err(io::Error::other)?,
+    )
 }
 struct Args {
     pid: u32,

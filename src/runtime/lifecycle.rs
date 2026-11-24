@@ -781,7 +781,10 @@ pub async fn run_cli() -> io::Result<()> {
         launch: env::current_dir()?,
         environment: &environment,
     };
-    let paths = Paths::resolve(&resolver)?;
+    let channel = vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
+        .map_err(io::Error::other)?;
+    let paths = Paths::resolve(&resolver, channel)?;
+    paths.initialize()?;
     let role = dispatch_startup_role(raw_args, &NativePlatform)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let ordinary_role = matches!(role, StartupDispatch::Ordinary { .. });

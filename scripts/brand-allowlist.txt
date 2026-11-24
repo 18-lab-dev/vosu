@@ -39,7 +39,8 @@ crates/vosu-pp/rosu-pp-api/** 25 provenance pinned upstream rosu-pp-api fork; re
 crates/vosu-pp/src/source_map.rs 1 upstream facade doc comment maps vosu source to its upstream tosu source path
 crates/vosu-pp/THIRD_PARTY_LICENSES.txt 2 third-party-catalog third-party license catalog crediting the upstream tosu-derived calculator wrapper
 crates/vosu-release-smoke/tests/release_smoke.rs 3 migration release smoke test exercises the one-time tosu.env migration fixture
-crates/vosu-sys/src/platform.rs 3 migration one-time migration of the legacy per-platform tosu config/data/cache roots
+crates/vosu-sys/src/platform.rs 2 migration one-time migration of the legacy per-platform tosu config/data/cache roots
+crates/vosu-sys/src/platform/channel/tests.rs 1 fixture prerelease initialization must not migrate legacy tosu config roots
 assets/branding/vosu-social-preview.svg 2 upstream social-preview copy describing tosu-compatible APIs as the product's upstream compatibility target
 assets/server/homepage.js 1 upstream dashboard search-empty-state copy names tosu as an example compatible client
 crates/vosu-osu-calc/src/lib.rs 2 upstream doc comment mapping calculation helpers to their upstream tosu source paths

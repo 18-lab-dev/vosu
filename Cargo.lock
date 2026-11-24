@@ -3791,6 +3791,7 @@ dependencies = [
  "libc",
  "memchr",
  "parking_lot",
+ "semver",
  "tempfile",
  "thiserror",
  "tokio",

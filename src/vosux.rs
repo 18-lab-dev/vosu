@@ -126,22 +126,11 @@ fn unavailable(_: impl std::fmt::Display) -> Failure {
     (69, "vosu is not running; start vosu first".into())
 }
 fn broker_path() -> std::io::Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    let root = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|s| !s.is_empty())
-        .map(|s| PathBuf::from(s).join("vosu"))
-        .or_else(|| {
-            std::env::var_os("XDG_CONFIG_HOME")
-                .filter(|s| !s.is_empty())
-                .map(|s| PathBuf::from(s).join("vosu"))
-        })
-        .or_else(|| std::env::var_os("HOME").map(|s| PathBuf::from(s).join(".config/vosu")));
-    #[cfg(windows)]
-    let root = std::env::var_os("LOCALAPPDATA").map(|s| PathBuf::from(s).join("vosu"));
-    let root = root
-        .filter(|p| p.is_absolute())
-        .ok_or_else(|| std::io::Error::other("broker directory unavailable"))?;
-    Ok(root.join("broker.json"))
+    vosu_sys::platform::Paths::system(
+        vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
+            .map_err(std::io::Error::other)?,
+    )?
+    .broker_path()
 }
 #[derive(Deserialize)]
 struct Broker {

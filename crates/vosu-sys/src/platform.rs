@@ -1,9 +1,11 @@
 //! Target-specific filesystem, system, and process integration.
 
+mod channel;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(windows)]
 mod windows;
+pub use channel::BuildChannel;
 
 use std::ffi::OsString;
 #[cfg(not(windows))]
@@ -39,9 +41,8 @@ impl PathResolver for SystemPathResolver {
 
 /// Resolved application roots.
 ///
-/// Construction creates the config, data, and cache roots, but deliberately
-/// does not create a static directory. The latter is created only when
-/// [`Paths::static_path`] is requested.
+/// Resolution is pure. Call [`Paths::initialize`] explicitly to create roots
+/// and, for release builds only, migrate legacy directories.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Paths {
     program: PathBuf,
@@ -49,10 +50,11 @@ pub struct Paths {
     config: PathBuf,
     data: PathBuf,
     cache: PathBuf,
+    channel: BuildChannel,
 }
 
 impl Paths {
-    pub fn resolve(resolver: &impl PathResolver) -> io::Result<Self> {
+    pub fn resolve(resolver: &impl PathResolver, channel: BuildChannel) -> io::Result<Self> {
         let executable = resolver.current_exe()?;
         let program = executable.parent().map(Path::to_path_buf).ok_or_else(|| {
             io::Error::new(
@@ -62,40 +64,40 @@ impl Paths {
         })?;
         let launch = resolver.launch_dir()?;
         let (config, data, cache) = platform_roots(resolver, &program)?;
-        // The sibling `tosu` roots are one-time migration inputs from pre-rename installs.
-        #[cfg(target_os = "linux")]
-        for target in [&config, &data, &cache] {
-            migrate_legacy_directory(&target.with_file_name("tosu"), target)?;
-        }
-
-        for directory in [&config, &data, &cache] {
-            std::fs::create_dir_all(directory)?;
-        }
-        #[cfg(windows)]
-        windows::cleanup_stale_replacements(&config);
-
         Ok(Self {
             program,
             launch,
-            config,
-            data,
-            cache,
+            config: channel.root(config),
+            data: channel.root(data),
+            cache: channel.root(cache),
+            channel,
         })
     }
 
-    pub fn system() -> io::Result<Self> {
-        Self::resolve(&SystemPathResolver)
+    /// Creates selected roots; prerelease initialization never migrates normal state.
+    pub fn initialize(&self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        if self.channel == BuildChannel::Release {
+            for target in [&self.config, &self.data, &self.cache] {
+                migrate_legacy_directory(&target.with_file_name("tosu"), target)?;
+            }
+        }
+        for directory in [&self.config, &self.data, &self.cache] {
+            std::fs::create_dir_all(directory)?;
+        }
+        #[cfg(windows)]
+        windows::cleanup_stale_replacements(&self.config);
+        Ok(())
+    }
+
+    pub fn system(channel: BuildChannel) -> io::Result<Self> {
+        Self::resolve(&SystemPathResolver, channel)
     }
 
     /// Resolves the native cache root without creating or migrating directories.
     #[doc(hidden)]
-    pub fn system_cache_root() -> io::Result<PathBuf> {
-        let resolver = SystemPathResolver;
-        let executable = resolver.current_exe()?;
-        let program = executable
-            .parent()
-            .ok_or_else(|| io::Error::other("current executable has no parent"))?;
-        platform_roots(&resolver, program).map(|(_, _, cache)| cache)
+    pub fn system_cache_root(channel: BuildChannel) -> io::Result<PathBuf> {
+        Self::system(channel).map(|paths| paths.cache)
     }
 
     pub fn program(&self) -> &Path {
@@ -115,14 +117,14 @@ impl Paths {
         self.broker_path_with(&SystemPathResolver)
     }
 
-    fn broker_path_with(&self, resolver: &impl PathResolver) -> io::Result<PathBuf> {
+    pub fn broker_path_with(&self, resolver: &impl PathResolver) -> io::Result<PathBuf> {
         #[cfg(target_os = "linux")]
         let root = nonempty_env(resolver, "XDG_RUNTIME_DIR")
-            .map(|root| root.join("vosu"))
+            .map(|root| self.channel.root(root.join("vosu")))
             .unwrap_or_else(|| self.config.clone());
         #[cfg(windows)]
         let root = nonempty_env(resolver, "LOCALAPPDATA")
-            .map(|root| root.join("vosu"))
+            .map(|root| self.channel.root(root.join("vosu")))
             .ok_or_else(|| io::Error::other("LOCALAPPDATA is unavailable"))?;
         if !root.is_absolute() {
             return Err(io::Error::other("broker directory must be absolute"));
@@ -340,7 +342,7 @@ fn migrate_legacy_directory(legacy: &Path, target: &Path) -> io::Result<()> {
 }
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{PathResolver, Paths, cap_sys_ptrace_warning_for};
+    use super::{BuildChannel, PathResolver, Paths, cap_sys_ptrace_warning_for};
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::io;
@@ -429,7 +431,9 @@ mod tests {
             .with_env("XDG_DATA_HOME", temp.path().join("xdg-data"))
             .with_env("XDG_CACHE_HOME", temp.path().join("xdg-cache"));
 
-        let paths = Paths::resolve(&resolver).expect("resolve injected paths");
+        let paths =
+            Paths::resolve(&resolver, BuildChannel::Release).expect("resolve injected paths");
+        paths.initialize().unwrap();
 
         assert_eq!(paths.program(), program);
         assert_eq!(paths.launch(), launch);
@@ -447,7 +451,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let resolver = InjectedResolver::new(temp.path().join("vosu"), temp.path().to_path_buf())
             .with_env("HOME", temp.path().to_path_buf());
-        let mut paths = Paths::resolve(&resolver).unwrap();
+        let mut paths = Paths::resolve(&resolver, BuildChannel::Release).unwrap();
         let fallback = paths.config.join("broker.json");
         assert_eq!(paths.broker_path_with(&resolver).unwrap(), fallback);
         let empty = resolver.clone().with_env("XDG_RUNTIME_DIR", PathBuf::new());
@@ -480,7 +484,8 @@ mod tests {
                 .with_env("XDG_DATA_HOME", "")
                 .with_env("XDG_CACHE_HOME", "");
 
-        let paths = Paths::resolve(&resolver).expect("resolve fallback paths");
+        let paths =
+            Paths::resolve(&resolver, BuildChannel::Release).expect("resolve fallback paths");
 
         assert_eq!(paths.config(), home.join(".config/vosu"));
         assert_eq!(paths.data(), home.join(".local/share/vosu"));
@@ -527,8 +532,9 @@ mod tests {
             .with_env("XDG_DATA_HOME", temp.path().join("data"))
             .with_env("XDG_CACHE_HOME", temp.path().join("cache"));
 
-        Paths::resolve(&resolver).expect("migrate legacy roots");
-        Paths::resolve(&resolver).expect("repeat migration");
+        let paths = Paths::resolve(&resolver, BuildChannel::Release).unwrap();
+        paths.initialize().expect("migrate legacy roots");
+        paths.initialize().expect("repeat migration");
 
         assert_eq!(
             std::fs::read_to_string(current.join("shared.txt")).expect("read winning state"),
