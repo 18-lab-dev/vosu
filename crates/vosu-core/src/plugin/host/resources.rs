@@ -60,6 +60,9 @@ impl RootCapability {
     }
 }
 
+mod surface;
+mod surface_files;
+
 struct Owner {
     slots: HashSet<String>,
     roots: HashMap<(Option<u64>, String), RootCapability>,

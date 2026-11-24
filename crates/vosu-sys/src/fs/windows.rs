@@ -157,6 +157,21 @@ fn windows_path_is_within(root: &Path, child: &Path) -> bool {
     child.starts_with(&root)
 }
 
+pub(super) fn root_path(file: &fs::File) -> Result<PathBuf, SafePathError> {
+    Ok(final_path(file)?)
+}
+pub(super) fn strip_root<'a>(root: &Path, child: &'a Path) -> Option<&'a Path> {
+    let text = child.to_str()?;
+    let child = Path::new(text.strip_prefix(r"\\?\").unwrap_or(text));
+    if !windows_path_is_within(root, child) {
+        return None;
+    }
+    let mut components = child.components();
+    for _ in root.components() {
+        components.next()?;
+    }
+    Some(components.as_path())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

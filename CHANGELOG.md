@@ -12,6 +12,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add coherent, demand-free bundled adapter captures with identified session
   rosters, per-namespace revisions and independent foreground observations;
   add atomic route/feed registration and RAII demand/registration cleanup.
+- Add opaque declared-root file/directory operations and capability-checked
+  chart-resource readers for bundled adapters, reusing M3 confinement and stream
+  leases without changing API v1 resource membership or legacy routes.
 
 ## Unreleased — 2.0 M3
 
