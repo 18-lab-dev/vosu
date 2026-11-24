@@ -238,6 +238,12 @@ impl PluginHost {
         Ok(root)
     }
 
+    /// Identity/provider check without copying a plugin identifier.
+    pub fn resource_provider_matches(&self, instance: PluginInstanceId, plugin: &str) -> bool {
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        matches!(instances.get(&instance), Some(InstanceSlot::Live(entry)) if entry.plugin_id == plugin)
+    }
+
     pub fn resource_owner(
         &self,
         instance: PluginInstanceId,
@@ -279,6 +285,17 @@ impl PluginHost {
             generation,
         } = owner;
         let message = request.message(owner)?;
+        let close_slot = if matches!(
+            message,
+            Message::ResourceResolve(_) | Message::TreeLookup(_)
+        ) {
+            Some(
+                self.reserve_outbox(instance)
+                    .map_err(|_| ResourceRequestError::Busy)?,
+            )
+        } else {
+            None
+        };
         let (id, receiver) = {
             let mut state = self
                 .resource_authority(instance, Some(handle))
@@ -291,8 +308,21 @@ impl PluginHost {
             if current != generation {
                 return Err(ResourceRequestError::Cancelled);
             }
+            if let Message::StreamRead(read) = &message
+                && !state.requests.read_allowed(owner, read.stream)
+            {
+                return Err(ResourceRequestError::Cancelled);
+            }
             let reserved = state.requests.reserve(instance, generation, &message)?;
             state.requests.scope(reserved.0, handle);
+            if let Some(slot) = close_slot {
+                state.requests.arm_stream(
+                    reserved.0,
+                    owner,
+                    self.resource_requests(deadline),
+                    slot,
+                );
+            }
             reserved
         };
         let _guard = RequestGuard {
@@ -357,6 +387,21 @@ impl PluginHost {
         id: u64,
         reply: ResourceReply,
     ) -> vosu_status {
+        let stream = match &reply {
+            ResourceReply::Resolved(
+                vosu_plugin_api::ResourceResolved::Stream { stream, .. }
+                | vosu_plugin_api::ResourceResolved::TreeStream { stream, .. },
+            ) => Some(*stream),
+            _ => None,
+        };
+        // Reserve outside resource_state (lock order instances -> resources).
+        let late_close = match stream {
+            Some(stream) => self
+                .reserve_outbox(instance)
+                .map(|slot| (stream, slot))
+                .ok(),
+            None => None,
+        };
         let mut state = self
             .resource_state
             .lock()
@@ -365,7 +410,22 @@ impl PluginHost {
             return vosu_status::VOSU_ERR_CANCELLED;
         };
         let generation = owner.generation;
-        match state.requests.complete(instance, generation, id, reply) {
+        let result = state.requests.complete(instance, generation, id, reply);
+        let close = late_close.filter(|(stream, _)| {
+            result.is_err()
+                && result != Err(ResourceRequestError::Busy)
+                && !state.requests.stream_is_live(instance, *stream)
+        });
+        drop(state);
+        if let Some((stream, slot)) = close {
+            let message = super::OwnedMessage::from_message(
+                &Message::StreamClose(vosu_plugin_api::StreamClose { stream }),
+                0,
+            )
+            .expect("encoding stream close");
+            drop(slot.send(message));
+        }
+        match result {
             Ok(()) => vosu_status::VOSU_OK,
             Err(ResourceRequestError::InvalidReply) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
             Err(_) => vosu_status::VOSU_ERR_CANCELLED,
@@ -397,3 +457,10 @@ impl PluginHost {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod byte_tests;
+#[cfg(test)]
+mod resolve;
+#[cfg(test)]
+mod stream;

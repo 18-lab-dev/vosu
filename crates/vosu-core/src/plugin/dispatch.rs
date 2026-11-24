@@ -292,11 +292,8 @@ impl WorkerPool {
         for _ in 0..worker_count.max(1) {
             let queue = Arc::clone(&queue);
             workers.push(std::thread::spawn(move || {
-                loop {
-                    match queue.recv() {
-                        Some(job) => run_job(job),
-                        None => break,
-                    }
+                while let Some(job) = queue.recv() {
+                    run_job(job);
                 }
             }));
         }

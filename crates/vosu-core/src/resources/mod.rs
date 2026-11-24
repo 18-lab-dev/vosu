@@ -1,8 +1,8 @@
 //! Publish-time identities and bounded membership; never opens resource bytes.
 //!
-//! Composition owns synchronization: acquire the state transaction lock before the
-//! resource registry lock, prepare and commit both while held, then notify after
-//! unlocking. No method here calls plugins, acquires other locks, or starts jobs.
+//! Composition acquires the state transaction lock before the resource registry
+//! lock, prepares and commits both while held, then notifies after unlocking.
+//! No method here calls plugins, acquires other locks, or starts jobs.
 mod id;
 mod registry;
 mod secret;

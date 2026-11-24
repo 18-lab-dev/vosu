@@ -21,6 +21,7 @@ pub mod desktop;
 pub mod logging;
 pub mod plugin;
 pub mod report;
+pub mod resource_io;
 pub mod resources;
 pub mod state;
 pub mod updater;

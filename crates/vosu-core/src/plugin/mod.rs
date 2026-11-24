@@ -65,7 +65,9 @@ mod matcher;
 pub mod outbox;
 mod read_plan;
 mod registry;
+pub(crate) mod resource_lease;
 mod scan;
+pub use resource_lease::StreamLease;
 mod session;
 pub mod settings;
 #[cfg(any(test, feature = "test-harness"))]
