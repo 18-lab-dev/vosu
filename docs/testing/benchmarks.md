@@ -71,50 +71,198 @@ bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 
 ## M3 D17 contract
 
-A3 freezes these `api_v1_bench` cases for X1. This is an acceptance contract,
-not measured evidence or a claim that the target is already implemented:
+**No D17 pass is claimed.** X1 implementation `4f0c6654cb` (base
+`fde820d`) was measured on the shared Linux workstation, pinned to logical CPU
+0, **non-exclusive**: SMT sibling 16 remained available to other work. Builds
+used `taskset -c 0-7,16-23 nice -n 10`; measurements used CPU 0 and `nice -n 10`.
+The Windows VM's CPUs were not used. Native Windows and live idle/subscribed
+CPU observations are not established by these synthetic Linux results.
 
-| Exact case | Production work |
+The configured Rust 1.96.1 release/bench profile uses thin LTO and one codegen
+unit. Root defaults were used, without the release-forbidden `test-harness`
+feature. Dev-only `bench-harness` exposes deterministic foreground injection
+and the four plugin fixture modules. The command
+`cargo tree -e features -p vosu --no-default-features --features linux-process-events --edges normal`
+reported no `bench-harness` or `vosu-plugin-testkit` in the normal daemon graph
+(full output: `/tmp/m3-x1-normal-features.txt`).
+
+### New API work: hot publication, reads and delivery
+
+The following are Criterion medians [95% confidence intervals], in **µs**.
+These short provisional runs used 50 ms warmup, 100 ms measurement and ten
+samples. All twelve named cases ran successfully through the acceptance filter.
+
+| Exact case | Median [95% CI], µs |
 |---|---|
-| `api_v1/idle_no_clients` | Publication with no API clients; allocations, clocks and wakeups |
-| `api_v1/http_current_read` | Current API-audience read with no demand |
-| `api_v1/subscribe_regular` | Changed regular-lane selection and frame |
-| `api_v1/subscribe_precise` | Changed precise-lane selection and frame |
-| `api_v1/subscribe_slow_consumer` | Real latest-only bounded mailbox replacement |
-| `api_v1/active_rebind` | Focus transition and fresh initial frame |
-| `api_v1/reference_publish_unchanged` | Unchanged reference publication/identity reuse |
-| `api_v1/reference_publish_changed` | Changed reference transaction/membership |
-| `api_v1/resource_cached_range` | Cached file resolution and validated byte range |
-| `api_v1/stream_range` | Leased stream range and close |
-| `api_v1/job_progress_poll` | Progress revision and event-driven job waiter |
-| `api_v1/end_to_end` | Snapshot projection → atomic commit → actual API frame encoding |
+| `api_v1/idle_no_clients` | 1.270 [1.268, 1.286] |
+| `api_v1/http_current_read` | 0.960 [0.958, 0.960] |
+| `api_v1/subscribe_regular` | 7.857 [6.017, 7.995] |
+| `api_v1/subscribe_precise` | 8.436 [8.420, 8.459] |
+| `api_v1/subscribe_slow_consumer` | 64.023 [63.297, 80.502] |
+| `api_v1/active_rebind` | 25.940 [25.724, 26.303] |
+| `api_v1/reference_publish_unchanged` | 2.526 [2.509, 2.574] |
+| `api_v1/reference_publish_changed` | 2.540 [2.532, 2.546] |
+| `api_v1/resource_cached_range` | 20.926 [20.859, 27.723] |
+| `api_v1/stream_range` | 23.458 [23.381, 23.779] |
+| `api_v1/job_progress_poll` | 0.630 [0.626, 0.631] |
+| `api_v1/end_to_end` | 13.730 [13.701, 13.773] |
+
+Fixtures use distinct live session/plugin identities and nonzero scores. The
+regular and precise cases use the real core source and API hub, consuming
+actual encoded frames; precise selects `/vosu.osu/beatmap/time/live`. A slow
+iteration holds its previous frame in flight across sixteen commits before
+acknowledging and receiving again. Active rebinding includes the fresh initial
+frame. Reference cases call core's `commit_from_instance` with pre-encoded
+references and alternating content IDs, without any roots, files or resolver;
+they do not depend on the osu! production publisher's O2 wiring. Cached file
+and stream cases consume a six-byte range through the resource router and body.
+Job progress reserves a real waiting poll, publishes progress, awaits its
+notification and serializes the resulting snapshot. The end-to-end case uses
+`BusPublisher` projection, host ABI commit and actual API frame delivery.
+`state_bus_bench` also exposes that path as `end_to_end/api_frame`.
+
+### Cold resource identity IO (not a hot commit average)
+
+`resource_identity_cold_io/stable_chart`: **14.105 [14.056, 14.764] µs**.
+Each operation submits a fresh selection to the production `ResourceWorker`,
+opens the retained root/child and recomputes the mutable-file metadata identity.
+The fixture is the 36-byte `tests/fixtures/api-v1-plugin/fixture.osu`. This is
+cold *worker/open/identity* work; OS page caches were not flushed, and this tiny
+fixture does not characterize bulk-byte hashing or large immutable snapshots.
+No such IO is hidden in the reference commit numbers above.
+
+### Like-for-like milestone and cumulative comparisons
+
+All pairs used `scripts/bench-compare.py --no-reserve --cpu 0 --rounds 2
+--warmup 0.05 --measurement 0.1 --samples 10`. Every label/round has an
+independent Criterion home. Independent targets were `m3-x1`,
+`m3-x1-m2-exact` and `m3-x1-prem0` beneath
+`/home/user/.cache/vosu-targets/`; no cross-revision Cargo target was shared.
+
+Historical production sources are M2 `80a1f82` and pre-M0 `3a91ff9`.
+`/home/user/checkouts/m2-l1` had advanced to `a3732be`, so the reported M2
+comparisons instead use the isolated `m3-x1-m2-exact` checkout at exactly the
+requested revision. The discarded advanced-source trial is not in these tables.
+Benchmark-only adapters are retained as local commits `1453e77ac6` (M2) and
+`dd5d524d47` (pre-M0); neither changes production sources.
+
+The first table retains the existing identical hot-path fixtures. Entries are
+medians of round medians [bootstrap 95% intervals], **µs**. Two short busy-host
+rounds produce weak intervals; apparent improvements are not a performance claim.
+
+| Common case | Pre-M0 | M2 | M3 | M3 vs M2 / pre-M0 |
+|---|---|---|---|---|
+| `publication/unfiltered_clients/1` | 2059.958 [2057.320, 2062.597] | 2058.634 [2055.279, 2061.988] | 2058.268 [2054.745, 2061.792] | -0.02% / -0.08% |
+| `publication/unfiltered_clients/100` | 2076.799 [2065.105, 2088.493] | 2069.025 [2064.789, 2073.262] | 2068.291 [2064.411, 2072.171] | -0.04% / -0.41% |
+| `publication/unfiltered_clients/1000` | 2164.887 [2142.909, 2186.866] | 2110.244 [2060.039, 2160.450] | 2117.121 [2081.281, 2152.962] | +0.33% / -2.21% |
+| `serializers_cold/stream_companion` | 1.614 [1.501, 1.728] | 1.341 [1.216, 1.466] | 1.259 [1.206, 1.312] | -6.13% / -22.02% |
+| `serializers_cold/v1` | 1.009 [0.905, 1.112] | 1.352 [1.194, 1.510] | 0.919 [0.877, 0.962] | -32.01% / -8.83% |
+| `serializers_cold/v2` | 3.169 [2.840, 3.499] | 2.601 [2.275, 2.927] | 2.383 [2.260, 2.507] | -8.36% / -24.79% |
+| `serializers_cold/v2_precise` | 1.061 [0.989, 1.133] | 0.887 [0.799, 0.975] | 0.828 [0.797, 0.859] | -6.62% / -21.95% |
+
+Only common `state_bus_bench` cases are paired; no pre-M0 bus or historical
+API-v1 case was invented.
+
+| Common case | M2, µs [95% CI] | M3, µs [95% CI] | M3 vs M2 |
+|---|---|---|---|
+| `end_to_end/bus` | 25.152 [20.254, 30.051] | 30.621 [30.480, 30.762] | +21.74% |
+| `end_to_end/bus_precise` | 19.012 [15.004, 23.020] | 17.669 [14.310, 21.027] | -7.07% |
+| `end_to_end/legacy` | 1.947 [1.640, 2.254] | 1.382 [1.354, 1.410] | -29.02% |
+
+**Unresolved provisional finding:** `end_to_end/bus` is +21.74%, with
+non-overlapping recorded intervals. Shared-host noise is not grounds to erase
+this result or declare a pass; the official quiet run must resolve it.
+The existing M1 PlanMemory daemon-CPU finding and M2 performance status below
+remain open and are not superseded by these measurements.
+
+For new API work, a common semantic workload selects the same score 12345 from
+an active stable snapshot (regular and precise status 2), then encodes exactly
+`{"value":12345}`; both harnesses assert those bytes. Historical builds use
+`ProductionSnapshotEncoder::subscription_document` with `/play/score`; M3 uses
+the immutable API source with `/vosu.play/score`. This measures selected-read
+and serialization work, **not** HTTP transport or publication. The adapter's
+only source differences are the imports needed by each historical layout.
+
+| Equivalent selected-read case | Pre-M0, µs [95% CI] | M2 | M3 | M3 vs M2 / pre-M0 |
+|---|---|---|---|---|
+| `selection_equivalent/score_read` | 3.589 [3.367, 3.810] | 3.162 [2.600, 3.724] | 0.213 [0.204, 0.221] | -93.28% / -94.07% |
+
+### Cost invariants and reproduction
+
+The real host publication path allocates **672 times per 32 commits** both
+without and with an idle API hub: **zero incremental hub allocations** (not
+zero total commit allocations). Tests also assert zero new idle API tasks,
+zero unobserved API notification revisions and no subscription demand. A real
+connection is the positive control for the task counter. With no API producer
+task/timer, there are no API timer-driven clock reads; this is not a global
+daemon clock-call count. A separate test holds a real frame in flight across
+1024 commits, rejects a queued second frame and receives the distinct latest
+score after acknowledgment. Reference tests distinguish stable and changed IDs
+with no filesystem/resolver available. Every new test wait is bounded.
 
 ```sh
+cargo test --locked -p vosu --features test-harness \
+  --test performance_invariants --test runtime_wakeups api_v1 -- --nocapture
 cargo bench --locked -p vosu --bench api_v1_bench -- '^api_v1/'
 cargo bench --locked -p vosu --bench state_bus_bench -- 'end_to_end'
 cargo bench --locked -p vosu --bench hot_paths -- 'publication|serializers'
 ```
 
-Pass one regex argument, record matched names/nonzero cases, exact commits/
-binaries/features/profiles/targets, independent target and Criterion directories,
-fixture contents and CPU pinning/exclusivity. Pair comparable M2/M3 and pre-M0/M3
-paths, interleave five rounds through `scripts/bench-compare.py`, reporting
-medians and 95% intervals, milestone and cumulative deltas. For new API work
-build a common harness against equivalent old selection/serialization with the
-same fixture; never filter an M2 binary for a nonexistent API-v1 case.
-Report non-exclusive shared-workstation runs as such, not official exclusive
-D17 evidence. Official evidence uses the approved pinned/exclusive workflow.
+Provisional raw Criterion homes are
+`/home/user/.cache/vosu-criterion/m3-x1-api-accepted` (twelve API cases) and
+`m3-x1-api-evidence` (cold IO) under that same parent. Paired `summary.json`
+files and per-round logs are in `m3-x1-hot-exact`, `m3-x1-bus-exact` and
+`m3-x1-selection-exact` there. Each JSON records exact binaries and
+`"exclusive": false`. The three acceptance commands passed with the short
+Criterion timing options above. Linux/Windows cross-Clippy, formatting, 1252
+nextest tests (3 skipped), and applicable source/boundary checks passed.
 
-Measure cold immutable resource snapshot/hash/filesystem cost separately from
-warmed commit/capture work. Allocation, wakeup and clock counts must cover the
-production no-client and slow-consumer paths, not disconnected helpers. Pair
-live idle and subscribed daemon CPU/capture measurements as well as synthetic
-benchmarks; record native Windows observations where available. The exit is no
-regression over 10% with non-overlapping 95% intervals per milestone and
-cumulatively on comparable paths; failures need correction and remeasurement,
-not a renamed baseline. Preserve the open M1 PlanMemory daemon-CPU finding and
-M2 performance status; tests alone cannot establish a D17 pass.
+### Official quiet-window commands (not run here)
 
+First rebuild each retained checkout with its independent target named above,
+using `taskset -c 0-7,16-23 nice -n 10 cargo bench --locked -p vosu --bench ... --no-run`.
+The exact retained binaries are set below. Run the comparisons only in the
+approved quiet window: **omit `--no-reserve`**, so the established runner reserves
+the physical core and records `exclusive: true`. The repeated M3-only label is
+a reproducibility control for new cases, not a fabricated historical baseline.
+Use a new output directory on every invocation.
+
+```sh
+T=/home/user/.cache/vosu-targets
+P0="$T/m3-x1-prem0/release/deps"
+M2="$T/m3-x1-m2-exact/release/deps"
+M3="$T/m3-x1/release/deps"
+BENCH_CPU=0
+OUT=/home/user/.cache/vosu-criterion/m3-official-$(date +%Y%m%d-%H%M%S)
+PRE_HOT="$P0/hot_paths-e79c7b2ab73c306c"
+M2_HOT="$M2/hot_paths-34cc5803d3cae8b6"
+M3_HOT="$M3/hot_paths-400d5cc2ce187904"
+M2_BUS="$M2/state_bus_bench-83994cd16dfb1cbc"
+M3_BUS="$M3/state_bus_bench-8b20e9d1f303d96f"
+PRE_SELECT="$P0/api_selection_bench-3e064ffb3ceac248"
+M2_SELECT="$M2/api_selection_bench-6cbc05ee45cef411"
+M3_API="$M3/api_v1_bench-268f9f7916968fb5"
+sudo python scripts/bench-compare.py --cpu "$BENCH_CPU" --rounds 5 \
+  --binary "prem0=$PRE_HOT" --binary "m2=$M2_HOT" --binary "m3=$M3_HOT" \
+  --filter 'publication|serializers' --output "$OUT/hot"
+sudo python scripts/bench-compare.py --cpu "$BENCH_CPU" --rounds 5 \
+  --binary "m2=$M2_BUS" --binary "m3=$M3_BUS" \
+  --filter '^end_to_end/(bus|bus_precise|legacy)$' --output "$OUT/bus"
+sudo python scripts/bench-compare.py --cpu "$BENCH_CPU" --rounds 5 \
+  --binary "prem0=$PRE_SELECT" --binary "m2=$M2_SELECT" --binary "m3=$M3_API" \
+  --filter '^selection_equivalent/score_read$' --output "$OUT/selection"
+sudo python scripts/bench-compare.py --cpu "$BENCH_CPU" --rounds 5 \
+  --binary "m3=$M3_API" --binary "m3-repeat=$M3_API" \
+  --filter '^api_v1/' --output "$OUT/api"
+sudo python scripts/bench-compare.py --cpu "$BENCH_CPU" --rounds 5 \
+  --binary "m3=$M3_API" --binary "m3-repeat=$M3_API" \
+  --filter '^resource_identity_cold_io/' --output "$OUT/cold-io"
+```
+
+The runner defaults to 3 s warmup, 10 s measurement and 100 samples. Pair the
+live idle/subscribed daemon observations separately; these synthetic cases do
+not replace them. D17 still requires resolving >10% non-overlapping regressions
+per milestone and cumulatively, plus the outstanding live/native evidence.
 
 ## Performance changes for M2
 
