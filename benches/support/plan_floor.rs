@@ -167,7 +167,7 @@ pub(super) fn bench(c: &mut Criterion) {
     // Encoding and synchronous-slot setup, with no execution or result delivery.
     struct RejectSubmit;
     impl HostServices for RejectSubmit {
-        fn send(&self, _: &Message) -> vosu_status {
+        fn send(&self, _: &Message, _: u64) -> vosu_status {
             vosu_status::VOSU_ERR_INVALID_ARGUMENT
         }
         fn send_flat(&self, _: vosu_opcode, _: u32, _: u64, payload: &[u8]) -> vosu_status {
