@@ -285,8 +285,8 @@ fn wait_for_start(started: &Arc<(Mutex<bool>, Condvar)>) {
     drop(guard);
 }
 
-/// P3: `deliver_sync_result`'s own `instances` lookup finding no `Live`
-/// entry (the instance tore down while this `VOSU_READ_PLAN_SYNC`
+/// P3: `deliver_sync_result_raw`'s own `instances` lookup finding no
+/// `Live` entry (the instance tore down while this `VOSU_READ_PLAN_SYNC`
 /// submission was still blocked on its own gated read, on a thread other
 /// than the one `destroy_all` runs on) answers `VOSU_ERR_NOT_READY` — the
 /// submission genuinely ran to completion, but nothing was left to
@@ -329,8 +329,8 @@ fn sync_on_a_torn_down_instance_answers_not_ready() {
     wait_for_start(&started);
 
     // Tear the instance down while its SYNC submission is still blocked
-    // inside the gated read: `deliver_sync_result`'s own lookup (run once
-    // `execute_sync` finally returns) must then find no `Live` entry.
+    // inside the gated read: `deliver_sync_result_raw`'s own lookup (run
+    // once `execute_into` finally returns) must then find no `Live` entry.
     host.destroy_all(Duration::from_secs(5));
 
     let (lock, cv) = &*gate;

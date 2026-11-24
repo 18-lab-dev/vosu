@@ -73,7 +73,7 @@ use vosu_plugin_api::{
 };
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
-use super::super::dispatch::{OwnedMessage, dispatch_raw};
+use super::super::dispatch::dispatch_raw;
 use super::super::host_services::PluginInstanceId;
 use super::super::read_plan::{
     self, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
@@ -611,34 +611,38 @@ impl PluginHost {
         }
     }
 
-    /// `VOSU_OP_READ_PLAN_SUBMIT` (§6.3), `VOSU_READ_PLAN_SYNC` included
-    /// (D5). Called from [`super::PluginHostHandler::handle`].
+    /// `VOSU_OP_READ_PLAN_SUBMIT` without `VOSU_READ_PLAN_SYNC` set (an
+    /// async plan). A `VOSU_READ_PLAN_SYNC` submission never reaches this
+    /// function at all: `decode_and_handle` (`host_services.rs`)
+    /// intercepts it directly off the still-raw payload, before
+    /// `Message::decode` ever runs, and this `PluginHost`'s own
+    /// `handle_read_plan_sync` always answers that interception
+    /// ([`Self::handle_read_plan_submit_raw`]) rather than falling
+    /// through — so by the time `decode` does run for a
+    /// `VOSU_OP_READ_PLAN_SUBMIT`, `raw.flags` is already known not to
+    /// carry `VOSU_READ_PLAN_SYNC`, and `decode`'s own `sync = flags &
+    /// VOSU_READ_PLAN_SYNC != 0` (`message.rs`) computes `false` from
+    /// that same `raw.flags`. Called from
+    /// [`super::PluginHostHandler::handle`].
     pub(super) fn handle_read_plan_submit(
         &self,
         instance: PluginInstanceId,
         submit: ReadPlanSubmit,
     ) -> vosu_status {
+        debug_assert!(
+            !submit.sync,
+            "a VOSU_READ_PLAN_SYNC submission is always intercepted by \
+             handle_read_plan_sync before Message::decode runs"
+        );
         let Some(plugin_id) = self.plugin_id_of(instance) else {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         };
-        if submit.sync && read_plan::on_dispatch_thread() {
-            // Checked up front, before touching the session at all:
-            // `read_plan::deliver_sync` re-checks this itself once this
-            // call reaches it below, but a submission from the host's own
-            // dispatch thread is refused regardless of whether the named
-            // session or process even exists (D5, §4).
-            return SyncReadPlanError::OnDispatchThread.into();
-        }
         let handle = SessionHandle(submit.handle);
         let pid = match self.resolve_owned_session(&plugin_id, handle) {
             Ok(pid) => pid,
             Err(status) => return status,
         };
-        if submit.sync {
-            self.deliver_read_plan_sync(instance, handle, pid, submit)
-        } else {
-            self.submit_read_plan_async(instance, handle, pid, submit)
-        }
+        self.submit_read_plan_async(instance, handle, pid, submit)
     }
 
     /// `VOSU_OP_READ_PLAN_CANCEL` (§6.3): a silent no-op for an id this
@@ -668,72 +672,6 @@ impl PluginHost {
         vosu_status::VOSU_OK
     }
 
-    fn deliver_read_plan_sync(
-        &self,
-        instance: PluginInstanceId,
-        handle: SessionHandle,
-        pid: u32,
-        submit: ReadPlanSubmit,
-    ) -> vosu_status {
-        let memory = match self.session_memory(handle, pid) {
-            Ok(memory) => memory,
-            Err(error) => return error.into(),
-        };
-        let modules = CachingModuleResolver {
-            memory: Arc::clone(&memory),
-        };
-        let deadline = Instant::now() + self.read_plan_deadline();
-        let result = match read_plan::deliver_sync(
-            &submit,
-            memory.process.as_ref(),
-            memory.bitness,
-            &modules,
-            deadline,
-        ) {
-            Ok(result) => result,
-            Err(error) => return error.into(),
-        };
-        self.deliver_sync_result(instance, result)
-    }
-
-    /// The §4 SYNC exception itself: delivers `VOSU_OP_READ_PLAN_RESULT`
-    /// through a direct, non-queued plugin call
-    /// ([`super::super::instance::PluginInstance::ctx_and_vtable`] plus
-    /// [`OwnedMessage::call`]) on the calling (submitting) thread, before
-    /// this call — and so `send` — returns. Never holds `self.instances`
-    /// across that call: the plugin's own `dispatch` may call back into
-    /// this host reentrant (e.g. `LOG_RECORD`), which a lock still held
-    /// here would deadlock against.
-    fn deliver_sync_result(
-        &self,
-        instance: PluginInstanceId,
-        result: vosu_plugin_api::ReadPlanResult,
-    ) -> vosu_status {
-        let target = self
-            .instances
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .get(&instance)
-            .and_then(|slot| match slot {
-                InstanceSlot::Live(entry) => Some(entry.instance.ctx_and_vtable()),
-                InstanceSlot::Creating { .. } | InstanceSlot::Destroying { .. } => None,
-            });
-        let Some((vtable, ctx)) = target else {
-            // P3: the instance tore down between this submission
-            // arriving and its result finishing executing. The
-            // submission itself genuinely ran to completion, but
-            // `VOSU_OK` here would tell the plugin's own SDK the result
-            // was delivered when nothing was: `VOSU_ERR_NOT_READY`
-            // instead reports "no result" accurately (the SDK's own
-            // `NoResult` case this leg of the race used to hide).
-            return vosu_status::VOSU_ERR_NOT_READY;
-        };
-        if let Ok(owned) = OwnedMessage::from_message(&Message::ReadPlanResult(result), 0) {
-            let _ = owned.call(&vtable, ctx);
-        }
-        vosu_status::VOSU_OK
-    }
-
     /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set, taken
     /// directly off the still-raw, not-yet-decoded payload
     /// ([`super::super::host_services::PluginHostHandler::handle_read_plan_sync`]'s
@@ -744,10 +682,11 @@ impl PluginHost {
     /// reused buffer — never building an owned `ReadPlanSubmit` or
     /// `ReadPlanResult` at all — and delivers that buffer's bytes with
     /// [`deliver_sync_result_raw`], which skips [`OwnedMessage`]'s own
-    /// owned-`Vec<u8>` copy too. Mirrors [`Self::deliver_read_plan_sync`]'s
-    /// session resolution and dispatch-thread refusal exactly; the two
-    /// stay as separate functions because this one never has a decoded
-    /// [`ReadPlanSubmit`] to share.
+    /// owned-`Vec<u8>` copy too. `handle_read_plan_submit`'s own doc
+    /// comment explains why this is the only function that ever handles
+    /// `VOSU_READ_PLAN_SYNC`: `decode_and_handle` intercepts it here,
+    /// before `Message::decode` ever runs, so a decoded `ReadPlanSubmit`
+    /// is never synchronous.
     pub(super) fn handle_read_plan_submit_raw(
         &self,
         instance: PluginInstanceId,
@@ -794,14 +733,15 @@ impl PluginHost {
         })
     }
 
-    /// [`Self::deliver_sync_result`]'s zero-allocation counterpart (D17):
-    /// delivers `payload` — already the flat `VOSU_OP_READ_PLAN_RESULT`
-    /// bytes [`read_plan::execute_into`] wrote — through
-    /// [`super::super::dispatch::dispatch_raw`] instead of
-    /// [`OwnedMessage::from_message`]/[`OwnedMessage::call`], so no
-    /// `Message`/owned-`Vec<u8>` copy of it is ever made. Same
-    /// never-hold-`self.instances`-across-the-call reasoning as
-    /// `deliver_sync_result`.
+    /// The §4 SYNC exception itself (D17): delivers `payload` — already
+    /// the flat `VOSU_OP_READ_PLAN_RESULT` bytes [`read_plan::execute_into`]
+    /// wrote — through a direct, non-queued plugin call
+    /// ([`super::super::dispatch::dispatch_raw`]) on the calling
+    /// (submitting) thread, before this call — and so `send` — returns.
+    /// No `Message`/owned-`Vec<u8>` copy of it is ever made. Never holds
+    /// `self.instances` across that call: the plugin's own `dispatch` may
+    /// call back into this host reentrant (e.g. `LOG_RECORD`), which a
+    /// lock still held here would deadlock against.
     fn deliver_sync_result_raw(&self, instance: PluginInstanceId, payload: &[u8]) -> vosu_status {
         let target = self
             .instances
@@ -813,7 +753,12 @@ impl PluginHost {
                 InstanceSlot::Creating { .. } | InstanceSlot::Destroying { .. } => None,
             });
         let Some((vtable, ctx)) = target else {
-            // P3: see `deliver_sync_result`'s identical race.
+            // P3: the instance tore down between this submission
+            // arriving and its result finishing executing. The
+            // submission itself genuinely ran to completion, but
+            // `VOSU_OK` here would tell the plugin's own SDK the result
+            // was delivered when nothing was: `VOSU_ERR_NOT_READY`
+            // instead reports "no result" accurately.
             return vosu_status::VOSU_ERR_NOT_READY;
         };
         dispatch_raw(
