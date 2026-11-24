@@ -50,9 +50,11 @@ fn client_namespace() -> StateValue {
 
 fn session() -> (SchemaRegistry, SessionState) {
     let mut reg = SchemaRegistry::with_core().unwrap();
-    reg.register(
+    reg.register_versioned(
         "vosu.osu",
         "vosu.osu",
+        &semver::Version::new(1, 2, 0),
+        vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
         include_str!("../../../../../docs/v2/schemas/vosu.osu.schema.json"),
     )
     .unwrap();

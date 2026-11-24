@@ -37,14 +37,14 @@ fn concurrent_regular_precise_batches_are_atomic_on_both_read_paths() {
     let mut h = Harness::new();
     let id = "test.k8.concurrent";
     let (handle, _) = h.publisher(id, 880_001);
-    let observer = h.subscriber("test.k8.concurrent.reader", "");
+    let observer = h.subscriber("test.k8.readers.concurrent", "");
     assert_eq!(observer.learn().handle, handle);
     observer.subscribe(Some(handle), vec![select_ns(id, "")]);
     pair_check(&observer.update());
     let surface = h.host.surface_host();
     let mut subscription = surface
         .subscribe(
-            "test.k8.concurrent.reader",
+            "test.k8.readers.concurrent",
             SessionTarget::Focused,
             vec![select_ns(id, "")],
         )
@@ -112,7 +112,7 @@ fn concurrent_regular_precise_batches_are_atomic_on_both_read_paths() {
     }
     assert!(pair_check(&[surface
         .read(
-            "test.k8.concurrent.reader",
+            "test.k8.readers.concurrent",
             SessionTarget::Focused,
             &select_ns(id, "")
         )
@@ -349,7 +349,7 @@ fn identification_after_five_seconds_opens_the_bus_only_then() {
         delayed::vosu_plugin_vtable,
         None,
     );
-    let observer = h.subscriber("test.k8.late.reader", "");
+    let observer = h.subscriber("test.k8.readers.late", "");
     observer.subscribe(
         None,
         vec![vosu_plugin_api::Selector {
@@ -413,7 +413,7 @@ fn reused_pid_closes_old_bus_before_opening_a_fresh_generation() {
     let mut h = Harness::new();
     let id = "test.k8.reuse";
     let (old, events) = h.publisher(id, 880_006);
-    let observer = h.subscriber("test.k8.reuse.reader", "");
+    let observer = h.subscriber("test.k8.readers.reuse", "");
     let first = observer.learn();
     assert_eq!(
         publish(id, old, &[("/old", PublishValueRef::U64(99))]),

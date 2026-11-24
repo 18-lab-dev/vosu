@@ -156,7 +156,7 @@ pub fn load(
     text += grants;
     let loaded = plugin::load_bundled(
         &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
-        &vosu_core::plugin::ValidationSnapshot::default(),
+        &h.host.validation_snapshot(),
         &[plugin::BundledPlugin {
             manifest: &text,
             settings_schema: None,

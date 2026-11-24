@@ -404,7 +404,17 @@ impl Harness {
             // namespace. These B1 lifecycle fixtures retain common coverage.
             // Real-id schema registration is also covered by tests/state_bus.rs
             // (K8) and real_manifest_registers_its_namespace_schema.
-            manifest.remove("provides");
+            manifest
+                .get_mut("provides")
+                .unwrap()
+                .as_array_mut()
+                .unwrap()
+                .retain(|capability| {
+                    capability
+                        .get("id")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|id| id.starts_with("game:"))
+                });
             manifest.remove("actions");
             &[][..]
         };

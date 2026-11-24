@@ -122,14 +122,27 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
     assert_eq!(identified["game"], "fixture");
     assert_eq!(identified["variant"], "synthetic");
     let id = identified["session"].as_str().unwrap();
-    let state: serde_json::Value = client
-        .get(format!("{base}/api/v1/sessions/{id}/state"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let state: serde_json::Value = client
+                .get(format!("{base}/api/v1/sessions/{id}/state"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if ["file", "stream"]
+                .iter()
+                .all(|kind| state["test.api.fixture"]["resources"][kind]["url"].is_string())
+            {
+                break state;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("fixture resource publication deadline");
     for (kind, expected) in [
         (
             "file",

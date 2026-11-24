@@ -109,7 +109,7 @@ impl Harness {
         let schemas: Vec<_> = schema.into_iter().map(|(_, text)| text).collect();
         let loaded = plugin::load_bundled(
             &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
-            &vosu_core::plugin::ValidationSnapshot::default(),
+            &self.host.validation_snapshot(),
             &[plugin::BundledPlugin {
                 manifest,
                 settings_schema: None,

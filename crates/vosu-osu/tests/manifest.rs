@@ -227,9 +227,11 @@ fn provides_version_equals_schema_version() {
         .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
         .unwrap();
     let schema: serde_json::Value = serde_json::from_str(vosu_osu::OSU_NAMESPACE_SCHEMA).unwrap();
-    assert_eq!(manifest.provides.len(), 2);
-    assert_eq!(manifest.provides[1].id, "action:vosu.osu.beatmap.import");
-    assert_eq!(manifest.provides[1].version, "1.0.0");
+    assert_eq!(manifest.provides.len(), 3);
+    assert_eq!(manifest.provides[0].id, "game:osu");
+    assert_eq!(manifest.provides[0].version, "*");
+    assert_eq!(manifest.provides[2].id, "action:vosu.osu.beatmap.import");
+    assert_eq!(manifest.provides[2].version, "1.0.0");
     assert_eq!(manifest.actions.len(), 1);
     assert_eq!(manifest.actions[0].name, "beatmap.import");
     assert!(manifest.actions[0].cli);
@@ -237,7 +239,7 @@ fn provides_version_equals_schema_version() {
         manifest.actions[0].session,
         vosu_plugin_api::ActionSessionMode::Required
     );
-    let provider = &manifest.provides[0];
+    let provider = &manifest.provides[1];
     assert_eq!(provider.id, "field:vosu.osu");
     assert_eq!(provider.version, schema["version"].as_str().unwrap());
     assert_eq!(

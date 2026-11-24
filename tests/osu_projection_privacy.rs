@@ -122,7 +122,13 @@ fn grant(cap: &str) -> InternalGrant {
 fn actual_osu_paths_are_visible_only_to_explicit_internal_grant() {
     let mut registry = SchemaRegistry::with_core().unwrap();
     registry
-        .register("vosu.osu", "vosu.osu", vosu_osu::OSU_NAMESPACE_SCHEMA)
+        .register_versioned(
+            "vosu.osu",
+            "vosu.osu",
+            &semver::Version::new(1, 2, 0),
+            vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
+            vosu_osu::OSU_NAMESPACE_SCHEMA,
+        )
         .unwrap();
     for client in [ClientType::Stable, ClientType::Lazer] {
         let facts = SessionFacts {
