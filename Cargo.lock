@@ -3718,6 +3718,8 @@ dependencies = [
  "regex",
  "semver",
  "serde",
+ "serde_json",
+ "thiserror",
  "toml",
  "url",
  "vosu-proptest",

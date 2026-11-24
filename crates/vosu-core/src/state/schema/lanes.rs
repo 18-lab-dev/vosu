@@ -3,8 +3,6 @@
 //! (`crates/vosu-osu-state/src/context.rs:215-235`), generalized to a
 //! path-keyed table the walker fills from `x-sampling-lane` annotations.
 
-use std::sync::Arc;
-
 /// Union of every sampling lane a subscription selector can demand.
 /// `effective_always` fields raise demand regardless of game status;
 /// `effective_gameplay` fields raise it only in `play`/`pause` (MC).
@@ -36,39 +34,4 @@ impl LaneBits {
             self.precise_always || (self.precise_gameplay && in_play),
         )
     }
-
-    /// Parses one `x-sampling-lane` annotation's `lane`/`activity` pair
-    /// (ss:401-411). `None` for any value outside the declared enums.
-    pub(super) fn from_annotation(lane: &str, activity: &str) -> Option<Self> {
-        let (regular, precise) = match lane {
-            "regular" => (true, false),
-            "precise" => (false, true),
-            "both" => (true, true),
-            _ => return None,
-        };
-        let mut bits = Self::default();
-        match activity {
-            "always" => {
-                bits.regular_always = regular;
-                bits.precise_always = precise;
-            }
-            "gameplay" => {
-                bits.regular_gameplay = regular;
-                bits.precise_gameplay = precise;
-            }
-            _ => return None,
-        }
-        Some(bits)
-    }
-}
-
-/// Whether an annotated schema `path` and a query `selector` are
-/// prefix-compatible in either direction (MJ, 1.x's `overlaps`,
-/// `src/server/v2_subscription.rs:269`): one is a prefix of the other once
-/// an array `items` wildcard (`"*"`) on either side matches any single
-/// token. An empty `selector` (the namespace root) overlaps every path.
-pub(super) fn paths_overlap(path: &[Arc<str>], selector: &[&str]) -> bool {
-    path.iter()
-        .zip(selector.iter())
-        .all(|(p, s)| p.as_ref() == "*" || *s == "*" || p.as_ref() == *s)
 }

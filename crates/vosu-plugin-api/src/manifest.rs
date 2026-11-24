@@ -28,6 +28,7 @@ use crate::capability::{
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
 mod actions;
+pub mod schema;
 pub use actions::{ActionDeclaration, ActionSessionMode, validate_actions};
 mod shared;
 mod package;

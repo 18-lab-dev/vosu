@@ -1,23 +1,15 @@
-//! Core schema registry, lane walker, and `x-visibility` rule (S6, S7, S12;
-//! plan:574-579, D7, D13; ss:297-311, ss:386-442).
+//! Runtime namespace registry and demand conversion.
 //!
-//! Embeds `docs/v2/schemas/*.schema.json` with `include_str!`
-//! ([`embedded`]) — the schema documents are the single source of truth;
-//! this crate never re-validates a publish against them at runtime with a
-//! general JSON Schema evaluator (D13: no `jsonschema` production
-//! dependency, dev-only per X1). It instead compiles, at load time, the two
-//! things a namespace schema needs: the per-field sampling-lane table (the
-//! hand-written walker, [`walker`], generalizing `V2SubscriptionHub`'s fixed
-//! classifier, `src/server/v2_subscription.rs:267-326`) and the
-//! `x-visibility: "plugins"` carve-out ([`visibility`]), accepted only at
-//! `vosu.osu`'s top-level `/internal` key.
+//! The SDK's `manifest::schema` compiler owns the entire D7 structural,
+//! reference, lane and visibility profile. Core embeds schema bytes and owns
+//! registration lifetime, grants and atomic replacement; it never walks a
+//! namespace document independently or validates published values at runtime.
+//! See state-schema.md Sampling lanes for the approved Q1–Q3 profile.
 
 mod embedded;
 mod lanes;
 #[cfg(test)]
 mod tests;
-mod visibility;
-mod walker;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -58,7 +50,7 @@ pub struct NamespaceSchema {
     pub version: semver::Version,
     pub owner: SchemaOwner,
     pub required_top_level: Vec<Arc<str>>,
-    lanes: Vec<(Vec<Arc<str>>, LaneBits)>,
+    lanes: Vec<vosu_plugin_api::manifest::schema::LaneRecord>,
     /// `x-visibility` pointers, e.g. `[Pointer::parse("/internal")]` for
     /// `vosu.osu`; empty for every other namespace in this freeze.
     hidden: Vec<Pointer>,
@@ -67,10 +59,13 @@ pub struct NamespaceSchema {
 impl NamespaceSchema {
     /// Union of every annotated path's lanes that overlaps `tokens` (MJ).
     fn lanes_for(&self, tokens: &[&str]) -> LaneBits {
-        self.lanes
-            .iter()
-            .filter(|(path, _)| lanes::paths_overlap(path, tokens))
-            .fold(LaneBits::default(), |acc, (_, bits)| acc.union(*bits))
+        let bits = vosu_plugin_api::manifest::schema::demand(&self.lanes, tokens);
+        LaneBits {
+            regular_always: bits.regular_always,
+            precise_always: bits.precise_always,
+            regular_gameplay: bits.regular_gameplay,
+            precise_gameplay: bits.precise_gameplay,
+        }
     }
 }
 
@@ -100,6 +95,29 @@ pub enum SchemaError {
     InvalidLane(String),
     #[error("invalid schema JSON: {0}")]
     Json(String),
+    #[error(transparent)]
+    Compile(vosu_plugin_api::manifest::schema::SchemaError),
+}
+
+impl From<vosu_plugin_api::manifest::schema::SchemaError> for SchemaError {
+    fn from(error: vosu_plugin_api::manifest::schema::SchemaError) -> Self {
+        use vosu_plugin_api::manifest::schema::SchemaError as E;
+        match error {
+            E::TooLarge => Self::TooLarge,
+            E::TooDeep => Self::TooDeep,
+            E::TooManyNodes => Self::TooManyNodes,
+            E::ForeignRef(r) => Self::ForeignRef(r),
+            E::UnresolvedRef(r) => Self::UnresolvedRef(r),
+            E::CyclicRef(r) => Self::CyclicRef(r),
+            E::VisibilityNotAllowed { namespace, at } => {
+                Self::VisibilityNotAllowed { namespace, at }
+            }
+            E::TitleMismatch { title, provides } => Self::TitleMismatch { title, provides },
+            E::InvalidLane(at) => Self::InvalidLane(at),
+            E::Json(message) => Self::Json(message),
+            other => Self::Compile(other),
+        }
+    }
 }
 
 /// Loaded core namespace schemas plus each live plugin's own namespace.
@@ -142,6 +160,9 @@ impl SchemaRegistry {
     /// second plugin (or the same plugin under another id) could silently
     /// replace another provider's namespace. Re-registering under the same
     /// owner (a plugin reloading its own schema) is allowed.
+    ///
+    /// Transitional V4 deletion target: the host registration caller must move
+    /// to `register_versioned`, then this unversioned seam becomes test-only.
     pub fn register(
         &mut self,
         provider: &str,
@@ -158,6 +179,28 @@ impl SchemaRegistry {
             return Err(SchemaError::NamespaceConflict(provides_id.to_string()));
         }
         self.load(provides_id, owner, text)
+    }
+
+    /// Registers bytes against the owning provide revision and authenticated
+    /// source provenance. No privilege is derived from `provider` or `title`.
+    pub fn register_versioned(
+        &mut self,
+        provider: &str,
+        provides_id: &str,
+        expected_version: &semver::Version,
+        provenance: vosu_plugin_api::manifest::schema::SchemaProvenance,
+        text: &str,
+    ) -> Result<Arc<NamespaceSchema>, SchemaError> {
+        if CORE_NAMESPACES.contains(&provides_id) || provides_id == SESSIONS_NAMESPACE {
+            return Err(SchemaError::ReservedNamespace(provides_id.to_string()));
+        }
+        let owner = SchemaOwner::Plugin(Arc::from(provider));
+        if let Some(existing) = self.namespaces.get(provides_id)
+            && existing.owner != owner
+        {
+            return Err(SchemaError::NamespaceConflict(provides_id.to_string()));
+        }
+        self.load_versioned(provides_id, owner, Some(expected_version), provenance, text)
     }
 
     /// Drops every namespace schema owned by `provider` (a development
@@ -200,14 +243,50 @@ impl SchemaRegistry {
         owner: SchemaOwner,
         text: &str,
     ) -> Result<Arc<NamespaceSchema>, SchemaError> {
-        let walked = walker::walk(namespace, &owner, text, &self.common_defs)?;
+        let provenance = vosu_plugin_api::manifest::schema::SchemaProvenance::Untrusted;
+        self.load_versioned(namespace, owner, None, provenance, text)
+    }
+
+    fn load_versioned(
+        &mut self,
+        namespace: &str,
+        owner: SchemaOwner,
+        expected_version: Option<&semver::Version>,
+        provenance: vosu_plugin_api::manifest::schema::SchemaProvenance,
+        text: &str,
+    ) -> Result<Arc<NamespaceSchema>, SchemaError> {
+        let version;
+        let expected_version = if let Some(expected) = expected_version {
+            expected
+        } else {
+            let root: Value =
+                serde_json::from_str(text).map_err(|e| SchemaError::Json(e.to_string()))?;
+            version = root
+                .get("version")
+                .and_then(Value::as_str)
+                .ok_or_else(|| SchemaError::Json("missing /version".into()))?
+                .parse()
+                .map_err(|e: semver::Error| SchemaError::Json(e.to_string()))?;
+            &version
+        };
+        let walked = vosu_plugin_api::manifest::schema::compile(
+            namespace,
+            expected_version,
+            provenance,
+            text,
+            &self.common_defs,
+        )?;
+        let (_, version, lanes, required_top_level, hidden) = walked.into_parts();
         let schema = Arc::new(NamespaceSchema {
             namespace: Arc::from(namespace),
-            version: walked.version,
+            version,
             owner,
-            required_top_level: walked.required_top_level,
-            lanes: walked.lanes,
-            hidden: walked.hidden,
+            required_top_level: required_top_level.into_iter().map(Arc::from).collect(),
+            lanes,
+            hidden: hidden
+                .iter()
+                .map(|pointer| Pointer::parse(pointer).expect("compiler returns valid pointers"))
+                .collect(),
         });
         self.namespaces
             .insert(Arc::from(namespace), Arc::clone(&schema));

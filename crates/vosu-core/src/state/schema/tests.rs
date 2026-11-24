@@ -4,6 +4,67 @@ use serde_json::{Value, json};
 
 use super::*;
 
+// Preserve the original K1 regression corpus through the SDK compiler.
+mod walker {
+    use super::*;
+    pub struct Walked {
+        pub lanes: Vec<(Vec<Arc<str>>, LaneBits)>,
+        pub required_top_level: Vec<Arc<str>>,
+        pub hidden: Vec<Pointer>,
+    }
+    pub fn walk(
+        namespace: &str,
+        owner: &SchemaOwner,
+        text: &str,
+        common: &Value,
+    ) -> Result<Walked, SchemaError> {
+        use vosu_plugin_api::manifest::schema::{self, SchemaProvenance};
+        let root: Value =
+            serde_json::from_str(text).map_err(|e| SchemaError::Json(e.to_string()))?;
+        let version = root["version"].as_str().unwrap_or("1.0.0").parse().unwrap();
+        let provenance = if *owner == SchemaOwner::Core {
+            SchemaProvenance::TrustedOfficial
+        } else {
+            SchemaProvenance::Untrusted
+        };
+        let compiled = schema::compile(namespace, &version, provenance, text, common)?;
+        Ok(Walked {
+            required_top_level: compiled
+                .required_top_level()
+                .iter()
+                .map(|s| Arc::from(s.as_str()))
+                .collect(),
+            hidden: compiled
+                .hidden()
+                .iter()
+                .map(|s| Pointer::parse(s).unwrap())
+                .collect(),
+            lanes: compiled
+                .lanes()
+                .iter()
+                .map(|row| {
+                    let pointer = Pointer::parse(&row.pointer).unwrap();
+                    let path = pointer
+                        .tokens()
+                        .iter()
+                        .map(|s| Arc::from(s.as_ref()))
+                        .collect();
+                    let bits = schema::demand(std::slice::from_ref(row), &[]);
+                    (
+                        path,
+                        LaneBits {
+                            regular_always: bits.regular_always,
+                            precise_always: bits.precise_always,
+                            regular_gameplay: bits.regular_gameplay,
+                            precise_gameplay: bits.precise_gameplay,
+                        },
+                    )
+                })
+                .collect(),
+        })
+    }
+}
+
 const OSU: &str = embedded::VOSU_OSU;
 const CLIENT: &str = embedded::VOSU_CLIENT;
 const COMMON: &str = embedded::COMMON_DEFS;
@@ -24,7 +85,15 @@ fn plugin(id: &str) -> SchemaOwner {
 fn with_osu() -> SchemaRegistry {
     let mut registry = SchemaRegistry::with_core().unwrap();
     assert!(registry.get("vosu.osu").is_none());
-    registry.register("vosu.osu", "vosu.osu", OSU).unwrap();
+    registry
+        .register_versioned(
+            "vosu.osu",
+            "vosu.osu",
+            &"1.2.0".parse().unwrap(),
+            vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
+            OSU,
+        )
+        .unwrap();
     registry
 }
 
@@ -402,7 +471,7 @@ fn x_visibility_owner_gated_not_just_title() {
     ));
     // The eligible owners both succeed.
     assert!(walker::walk("vosu.osu", &core(), OSU, &common_defs).is_ok());
-    assert!(walker::walk("vosu.osu", &plugin("vosu.osu"), OSU, &common_defs).is_ok());
+    assert!(walker::walk("vosu.osu", &plugin("vosu.osu"), OSU, &common_defs).is_err());
 }
 
 #[test]
