@@ -12,8 +12,8 @@ pub mod registry;
 pub mod waiters;
 
 pub use invocation::{
-    InvocationError, InvocationExecutor, InvocationId, InvocationPolicy, InvocationResult,
-    InvocationSink, JobSink, PreparedInvocation, SessionId,
+    InvocationError, InvocationExecutor, InvocationHost, InvocationId, InvocationPolicy,
+    InvocationResult, InvocationSink, JobSink, PreparedInvocation, SessionId,
 };
 pub use registry::{ActionDescriptor, ActionRegistry, ToolAuthority};
 

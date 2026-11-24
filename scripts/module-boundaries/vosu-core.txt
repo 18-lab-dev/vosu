@@ -1,5 +1,8 @@
 api -> state
-actions -> plugin
+actions -> action_schema
+actions -> identity
+plugin -> action_schema
+plugin -> identity
 plugin -> actions
 app -> config
 logging -> config

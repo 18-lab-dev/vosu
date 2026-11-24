@@ -4,7 +4,7 @@ use std::sync::Arc;
 use semver::Version;
 use vosu_plugin_api::ActionSessionMode;
 
-use crate::plugin::{PluginInstanceId, action_schema::CompiledActionSchema};
+use crate::{action_schema::CompiledActionSchema, identity::PluginInstanceId};
 
 #[derive(Clone, Debug)]
 pub struct ActionDescriptor {

@@ -2,6 +2,7 @@
 //! (`vosu_host_services::send`) into host-owned Rust code
 //! (`docs/v2/plugin-abi.md` §1, §3, §5).
 
+use crate::identity::PluginInstanceId;
 use std::ffi::c_void;
 use std::sync::Arc;
 
@@ -9,7 +10,6 @@ use vosu_plugin_api::{
     Message, VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_READ_PLAN_SYNC, vosu_host_services,
     vosu_message, vosu_opcode, vosu_status,
 };
-
 
 /// Routes every plugin -> host `send` call into host-owned Rust code: the
 /// host-side analog of `vosu_plugin_api::HostServices` on the plugin side.

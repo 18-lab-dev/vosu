@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 use vosu_plugin_api::{Message, ResourceResolved, StreamChunk, VOSU_STREAM_CHUNK_MAX_BYTES};
 
-use super::super::host_services::PluginInstanceId;
 use super::PluginHost;
+use crate::identity::PluginInstanceId;
 use std::sync::Weak;
 use std::time::Duration;
 

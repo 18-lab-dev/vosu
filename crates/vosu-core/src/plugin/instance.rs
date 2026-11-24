@@ -12,8 +12,9 @@ use vosu_plugin_api::{vosu_bytes, vosu_plugin_vtable, vosu_status};
 
 use super::dispatch::{InFlightTracker, Job, OwnedMessage, PluginCtx, SerialWorker, WorkerPool};
 use super::error::HostError;
-use super::host_services::{self, HostContext, PluginHostHandler, PluginInstanceId};
+use super::host_services::{self, HostContext, PluginHostHandler};
 use super::registry::LoadedPlugin;
+use crate::identity::PluginInstanceId;
 
 /// Bound for a serial instance's own dispatch queue (`AGENTS.md`: no
 /// unbounded channels); the shared `concurrent_dispatch` pool's queue is

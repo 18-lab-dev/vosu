@@ -2,7 +2,7 @@
 //! Publication snapshots authority and releases both global mutexes before
 //! committing. No plugin callback runs under these locks.
 use super::{InstanceSlot, PluginHost};
-use crate::plugin::{host_services::PluginInstanceId, session::SessionHandle};
+use crate::plugin::{PluginInstanceId, session::SessionHandle};
 use crate::state::{ClientFacts, SessionKey};
 use vosu_plugin_api::{
     PublishFieldRef, decode_publish_batch_ref, decode_publish_field_ref, vosu_opcode, vosu_status,

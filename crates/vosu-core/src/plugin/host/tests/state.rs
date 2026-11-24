@@ -3,10 +3,8 @@ use super::helpers::{
     test_process,
 };
 use crate::plugin::{
-    dispatch::WorkerPool,
-    focus::SyntheticForegroundSource,
-    host_services::{PluginHostHandler, PluginInstanceId},
-    registry,
+    PluginInstanceId, dispatch::WorkerPool, focus::SyntheticForegroundSource,
+    host_services::PluginHostHandler, registry,
 };
 use crate::state::{Pointer, SessionKey, StateValue};
 use std::sync::Arc;

@@ -15,9 +15,7 @@ use crate::actions::{
     ActionDescriptor, ActionRegistry, InvocationError, InvocationExecutor, InvocationId,
     InvocationPolicy, InvocationSink, JobFailure, Principal, TerminalOutcome,
 };
-use crate::plugin::{
-    host_services::PluginInstanceId, registry::LoadedPlugin, session::SessionHandle,
-};
+use crate::plugin::{PluginInstanceId, registry::LoadedPlugin, session::SessionHandle};
 
 pub(super) const MAX_INVOCATIONS: usize = 2048;
 pub(super) const MAX_RELAYS: usize = 64;
@@ -39,13 +37,19 @@ impl Drop for PendingInvocation {
     }
 }
 
+pub(super) struct ActionGrant {
+    action: String,
+    version: semver::VersionReq,
+}
+
 #[derive(Default)]
 pub(super) struct ActionState {
     pub descriptors: HashMap<String, Arc<ActionDescriptor>>,
-    pub grants: HashMap<PluginInstanceId, Vec<vosu_plugin_api::Capability>>,
+    pub grants: HashMap<PluginInstanceId, Vec<ActionGrant>>,
     pub pending: HashMap<InvocationId, PendingInvocation>,
     pub relays: HashMap<(PluginInstanceId, u64), Option<InvocationId>>,
     pub next_id: u64,
+    pub policy: InvocationPolicy,
 }
 
 impl ActionRegistry for PluginHost {
@@ -61,7 +65,22 @@ impl ActionRegistry for PluginHost {
 
 impl PluginHost {
     pub fn invocation_executor(&self) -> InvocationExecutor {
-        self.invocation_executor_with_policy(InvocationPolicy::default())
+        self.invocation_executor_with_policy(self.action_policy())
+    }
+
+    pub(super) fn action_policy(&self) -> InvocationPolicy {
+        self.action_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .policy
+    }
+
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn set_invocation_policy_for_tests(&self, policy: InvocationPolicy) {
+        self.action_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .policy = policy;
     }
 
     /// One policy for both jobs and relays; tests may inject a short deadline.
@@ -82,7 +101,16 @@ impl PluginHost {
                 .requires
                 .iter()
                 .chain(&manifest.optional)
-                .cloned()
+                .filter_map(|capability| {
+                    capability
+                        .id
+                        .strip_prefix("action:")
+                        .map(|action| ActionGrant {
+                            action: action.into(),
+                            version: semver::VersionReq::parse(&capability.version)
+                                .expect("validated requirement"),
+                        })
+                })
                 .collect(),
         );
         for declaration in &manifest.actions {
@@ -190,13 +218,10 @@ impl PluginHost {
                 if instance == action.provider {
                     return Err(InvocationError::PermissionDenied);
                 }
-                let capability = format!("action:{}", action.id);
                 if !state.grants.get(&instance).is_some_and(|grants| {
-                    grants.iter().any(|g| {
-                        g.id == capability
-                            && semver::VersionReq::parse(&g.version)
-                                .is_ok_and(|v| v.matches(&action.version))
-                    })
+                    grants
+                        .iter()
+                        .any(|g| g.action == action.id && g.version.matches(&action.version))
                 }) {
                     return Err(InvocationError::PermissionDenied);
                 }
@@ -240,7 +265,7 @@ impl PluginHost {
         Ok(crate::actions::PreparedInvocation {
             host: self.self_ref.clone(),
             id: id.0,
-            message: Some(id.1),
+            message: Some(id.1.payload),
             provider: action.provider,
             policy,
             tool_check: None,
@@ -487,3 +512,5 @@ pub(super) fn failure(code: &str, message: &str) -> TerminalOutcome {
 
 #[cfg(test)]
 mod tests;
+
+mod host_boundary;

@@ -71,13 +71,13 @@ use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_opcode, vosu
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
 use super::super::dispatch::dispatch_raw;
-use super::super::host_services::PluginInstanceId;
 use super::super::read_plan::{
     self, DispatchThreadScope, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
 };
 use super::super::scan::ScanWorkerPool;
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
+use crate::identity::PluginInstanceId;
 
 /// Worker threads the shared background pool runs (production default):
 /// comparatively cheap, deadline-bounded work (a read plan's handful of

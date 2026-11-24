@@ -774,7 +774,7 @@ no cookie/raw token; composition authenticates and core rechecks authority.
 `InvocationPolicy` owns `deadline: Duration` (default 30 s).
 `ACTION_CALL` targets another plugin's declared action; reentrancy safety means a callee can call back into its caller during dispatch, not permission for self-calls.
 
-F3 foundation: `vosu_core::plugin::action_schema` implements the A3 profile
+F3 foundation: `vosu_core::action_schema` implements the A3 profile
 and centralized schema/value/work limits without a runtime schema-engine
 dependency. `LoadedPlugin::compiled_action_schemas()` retains compiled assets
 by exact manifest path; both bundled and development loading reject malformed

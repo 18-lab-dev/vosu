@@ -51,7 +51,6 @@
 //! events (§6.2, §6.12). Resource/tree/stream operations and action calls remain
 //! out of scope until their respective milestones.
 
-pub mod action_schema;
 mod discovery;
 mod dispatch;
 mod dispatch_queue;
@@ -73,6 +72,7 @@ pub mod settings;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod test_support;
 pub mod timers;
+pub use crate::identity::PluginInstanceId;
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub use discovery::LinuxSource;
 #[cfg(target_os = "linux")]
@@ -95,7 +95,7 @@ pub use host::resource_requests::{
 };
 pub use host::resources::RootCapability;
 pub use host::{PluginHost, ProcessRecord};
-pub use host_services::{PluginHostHandler, PluginInstanceId};
+pub use host_services::PluginHostHandler;
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{
     CandidateProcess, CompiledMatcher, MatchOutcome, MatchPlatform, MatcherEngine, MatcherError,

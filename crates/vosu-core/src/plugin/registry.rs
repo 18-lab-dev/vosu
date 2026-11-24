@@ -47,7 +47,7 @@ pub struct LoadedPlugin {
     namespace_schemas: Vec<String>,
     action_schemas: std::collections::BTreeMap<String, String>,
     compiled_action_schemas:
-        std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>>,
+        std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>>,
     // Shared, not just held: unloading while an instance's `plugin_ctx`
     // still points into the library would be immediate undefined behavior
     // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
@@ -86,7 +86,7 @@ impl LoadedPlugin {
     /// Compiled once during load, keyed by the exact manifest asset path.
     pub fn compiled_action_schemas(
         &self,
-    ) -> &std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>> {
+    ) -> &std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>> {
         &self.compiled_action_schemas
     }
 
@@ -180,7 +180,7 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                     )
                     .into());
                 }
-                if text.len() > super::action_schema::MAX_SCHEMA_BYTES {
+                if text.len() > crate::action_schema::MAX_SCHEMA_BYTES {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "action schema byte budget exceeded",
@@ -263,7 +263,7 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
             .into());
         }
         use std::io::Read as _;
-        let limit = super::action_schema::MAX_SCHEMA_BYTES;
+        let limit = crate::action_schema::MAX_SCHEMA_BYTES;
         let mut text = String::new();
         std::fs::File::open(path)?
             .take((limit + 1) as u64)
@@ -367,13 +367,13 @@ fn load_action_schemas(
 fn compile_action_schemas(
     schemas: &std::collections::BTreeMap<String, String>,
 ) -> Result<
-    std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>>,
+    std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>>,
     HostError,
 > {
     schemas
         .iter()
         .map(|(path, text)| {
-            super::action_schema::CompiledActionSchema::compile(text)
+            crate::action_schema::CompiledActionSchema::compile(text)
                 .map(|schema| (path.clone(), Arc::new(schema)))
                 .map_err(|error| {
                     HostError::Io(std::io::Error::new(

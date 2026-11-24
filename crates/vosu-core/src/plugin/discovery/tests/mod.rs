@@ -21,9 +21,9 @@ use vosu_plugin_api::{Bitness, FocusChanged, SessionAttached, SessionDetached};
 use vosu_plugin_testkit::session::{self, SessionEvent, SessionPluginConfig};
 
 use super::*;
+use crate::identity::PluginInstanceId;
 use crate::logging::{ConsoleSink, Logger, LoggerOptions};
 use crate::plugin::focus;
-use crate::plugin::host_services::PluginInstanceId;
 use crate::plugin::registry;
 use crate::plugin::settings::{PluginSettingsService, SettingsError, SettingsStorage};
 

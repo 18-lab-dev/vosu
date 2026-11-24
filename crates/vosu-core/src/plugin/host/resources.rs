@@ -11,12 +11,12 @@ use std::time::Duration;
 use vosu_plugin_api::{Message, RootDeclare, vosu_status};
 use vosu_sys::fs::{SafeChild, SafeRelativePath, SafeRoot};
 
-use super::super::host_services::PluginInstanceId;
 use super::super::session::SessionHandle;
 use super::resource_requests::{
     Requests, ResourceOwner, ResourceReply, ResourceRequest, ResourceRequestError, ResourceRequests,
 };
 use super::{InstanceSlot, PluginHost};
+use crate::identity::PluginInstanceId;
 
 /// Retained authority, not a filesystem path. Cached users must check validity.
 #[derive(Clone, Debug)]

@@ -16,6 +16,7 @@ static EVENTS: LazyLock<Mutex<HashMap<String, mpsc::SyncSender<Message>>>> =
 static GATES: LazyLock<Mutex<HashMap<String, mpsc::Receiver<()>>>> = LazyLock::new(Mutex::default);
 
 mod frame_limits;
+mod loss;
 mod pressure;
 mod reentrant;
 mod sessions;

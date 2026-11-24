@@ -1,8 +1,6 @@
 use super::helpers::{RECV_TIMEOUT, session_manifest, test_host, test_process};
 use crate::plugin::{
-    dispatch::WorkerPool,
-    host_services::{PluginHostHandler, PluginInstanceId},
-    registry,
+    PluginInstanceId, dispatch::WorkerPool, host_services::PluginHostHandler, registry,
 };
 use std::sync::{
     Arc,

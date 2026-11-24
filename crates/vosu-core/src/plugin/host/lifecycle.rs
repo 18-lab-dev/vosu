@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 use vosu_plugin_api::DetachReason;
 
 use super::super::error::HostError;
-use super::super::host_services::PluginInstanceId;
 use super::super::matcher::Prefilter;
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
+use crate::identity::PluginInstanceId;
 
 impl PluginHost {
     /// Rate-limited window `Self::log_dispatch_dropped` enforces

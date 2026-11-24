@@ -16,7 +16,7 @@ use vosu_plugin_api::{Init, Message, encode, vosu_status};
 
 use super::super::dispatch::{OwnedMessage, WorkerPool};
 use super::super::error::HostError;
-use super::super::host_services::{PluginHostHandler, PluginInstanceId};
+use super::super::host_services::PluginHostHandler;
 use super::super::instance::PluginInstance;
 use super::super::read_plan::OutstandingPlans;
 use super::super::registry::LoadedPlugin;
@@ -25,6 +25,7 @@ use super::super::settings::ConfigSettingsBridgeB2;
 use super::{
     InstanceEntry, InstanceSlot, PendingDelivery, PluginHost, SHUTDOWN_RACE_DESTROY_GRACE,
 };
+use crate::identity::PluginInstanceId;
 
 impl PluginHost {
     /// Creates and registers one plugin instance: resolves `plugin_id`'s

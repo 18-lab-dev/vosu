@@ -16,7 +16,7 @@ use vosu_plugin_api::{CborValue, LogLevel as PluginLogLevel, LogRecord};
 
 use crate::logging::{LogLevel as DaemonLogLevel, Logger};
 
-use super::host_services::PluginInstanceId;
+use crate::identity::PluginInstanceId;
 
 /// §6.10's per-instance rate limit: records past this many in the current
 /// one-second window are dropped and counted instead of written.

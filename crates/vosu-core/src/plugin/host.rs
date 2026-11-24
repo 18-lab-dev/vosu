@@ -42,7 +42,7 @@ use vosu_plugin_api::{
 
 use super::dispatch::OwnedMessage;
 use super::focus::{FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource};
-use super::host_services::{PluginHostHandler, PluginInstanceId};
+use super::host_services::PluginHostHandler;
 use super::instance::PluginInstance;
 use super::logging::PluginLogRouter;
 use super::matcher::{CandidateProcess, MatcherEngine, host_platform};
@@ -54,6 +54,7 @@ use super::settings::{
 };
 use super::timers::TimerDelivery;
 use super::timers::TimerRegistry;
+use crate::identity::PluginInstanceId;
 use crate::logging::Logger;
 use crate::state::StateRuntime;
 

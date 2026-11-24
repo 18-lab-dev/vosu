@@ -18,7 +18,7 @@ use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use vosu_plugin_api::vosu_status;
 
-use super::host_services::PluginInstanceId;
+use crate::identity::PluginInstanceId;
 
 /// §6.11: "a one-shot fire after the host's minimum granularity", and the
 /// floor a periodic `interval_ms` is clamped up to, so a plugin cannot

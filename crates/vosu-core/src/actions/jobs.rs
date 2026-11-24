@@ -41,7 +41,7 @@ impl JobOwner {
 pub enum Principal {
     Broker,
     Tool(JobOwner),
-    Plugin(crate::plugin::PluginInstanceId),
+    Plugin(crate::identity::PluginInstanceId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -114,7 +114,7 @@ pub(super) struct Entry {
     terminal_at: Option<Instant>,
     cancel_requested: bool,
     invocation: Option<(
-        std::sync::Weak<crate::plugin::PluginHost>,
+        std::sync::Weak<dyn super::InvocationHost>,
         super::InvocationId,
     )>,
     pub waiters: usize,

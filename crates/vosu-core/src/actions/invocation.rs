@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use super::{ActionDescriptor, JobProgress, JobRegistry, Principal, TerminalOutcome};
-use crate::plugin::PluginHost;
+use crate::identity::PluginInstanceId;
 use serde_json::Value;
 use vosu_plugin_api::ActionProgress;
 
@@ -46,9 +46,32 @@ pub trait InvocationSink: Send + Sync {
     fn finish(&self, result: InvocationResult);
 }
 
+/// Host boundary implemented by the plugin runtime. The domain retains only a
+/// weak trait object; callbacks and cancellation always run after domain unlock.
+pub trait InvocationHost: Send + Sync {
+    fn prepare_action(
+        &self,
+        principal: Principal,
+        action: Arc<ActionDescriptor>,
+        session: Option<SessionId>,
+        arguments: Value,
+        policy: InvocationPolicy,
+    ) -> Result<PreparedInvocation, InvocationError>;
+    fn start_action(
+        &self,
+        invocation: InvocationId,
+        provider: PluginInstanceId,
+        payload: Vec<u8>,
+        sink: Arc<dyn InvocationSink>,
+        policy: InvocationPolicy,
+    ) -> Result<(), InvocationError>;
+    fn cancel_action(&self, invocation: InvocationId);
+    fn discard_prepared_action(&self, invocation: InvocationId);
+}
+
 #[derive(Clone)]
 pub struct InvocationExecutor {
-    pub(crate) host: Weak<PluginHost>,
+    pub(crate) host: Weak<dyn InvocationHost>,
     pub(crate) policy: InvocationPolicy,
     pub(crate) tool_authority: Option<Arc<dyn super::ToolAuthority>>,
 }
@@ -112,10 +135,10 @@ impl InvocationExecutor {
 }
 
 pub struct PreparedInvocation {
-    pub(crate) host: Weak<PluginHost>,
+    pub(crate) host: Weak<dyn InvocationHost>,
     pub(crate) id: InvocationId,
-    pub(crate) message: Option<crate::plugin::OwnedMessage>,
-    pub(crate) provider: crate::plugin::PluginInstanceId,
+    pub(crate) message: Option<Vec<u8>>,
+    pub(crate) provider: PluginInstanceId,
     pub(crate) policy: InvocationPolicy,
     pub(crate) tool_check: Option<(
         super::JobOwner,

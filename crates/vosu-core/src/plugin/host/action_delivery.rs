@@ -11,12 +11,9 @@ use super::{
     PluginHost,
     actions::{MAX_RELAYS, failure},
 };
-use crate::actions::{
-    ActionRegistry, InvocationPolicy, InvocationSink, Principal, TerminalOutcome,
-};
+use crate::actions::{ActionRegistry, InvocationSink, Principal, TerminalOutcome};
 use crate::plugin::{
-    dispatch::OwnedMessage, host_services::PluginInstanceId, outbox::OutboxSlot,
-    session::SessionHandle,
+    PluginInstanceId, dispatch::OwnedMessage, outbox::OutboxSlot, session::SessionHandle,
 };
 
 struct RelaySink {
@@ -154,7 +151,7 @@ impl PluginHost {
                 action,
                 session,
                 args,
-                InvocationPolicy::default(),
+                self.action_policy(),
             )?
             .invoke(sink.clone())
         })();

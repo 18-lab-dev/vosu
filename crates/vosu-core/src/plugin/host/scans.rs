@@ -56,10 +56,10 @@ use std::sync::Arc;
 
 use vosu_plugin_api::{Message, ScanRequest, vosu_status};
 
-use super::super::host_services::PluginInstanceId;
 use super::super::scan::{self, ModuleRegion, ModuleRegions, OutstandingScans};
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
+use crate::identity::PluginInstanceId;
 
 #[cfg(target_os = "linux")]
 fn build_module_regions_real(pid: u32) -> Option<Arc<dyn ModuleRegions + Send + Sync>> {

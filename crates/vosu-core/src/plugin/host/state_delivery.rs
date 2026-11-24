@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use super::{InstanceSlot, PluginHost};
 use crate::plugin::{
+    PluginInstanceId,
     dispatch::{OwnedMessage, PluginCtx},
-    host_services::PluginInstanceId,
     session::SessionHandle,
 };
 use crate::state::{
