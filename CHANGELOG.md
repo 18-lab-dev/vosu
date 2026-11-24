@@ -4,6 +4,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M3
 
+- Add the independent API v1 field/session-event subscription hub, with immutable
+  selections, bounded latest-only output, focus baseline resets and demand RAII.
 - Add independent `API_V1_SUBSCRIPTION_DEBOUNCE` configuration and dashboard
   settings, defaulting to 1 ms with a fractional 1–60000 ms range. Legacy V2
   subscription and B1 reader settings retain their own debounce.

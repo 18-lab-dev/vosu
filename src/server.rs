@@ -1,6 +1,7 @@
 //! Reloadable HTTP and WebSocket service.
 
 pub mod api_keys;
+pub mod api_v1;
 pub mod auth;
 pub(crate) mod broker;
 pub mod catalog;
