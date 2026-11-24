@@ -1453,18 +1453,39 @@ Exit evidence (2026-11-24, on the merged head):
 - **Native Windows (`vm-test.py`, which always passes `--all-features`).**
   `server_compat` 27/27, `state_api_compat` 7/7 (including the stable
   tournament aggregate, the extension-absence proofs and the byte-for-byte
-  oracle replay), `vosu-core` lib `state_subscribe` 17/17, `vosu-osu` lib 203
-  (1 ignored) and `api_v1_compat` 33/33 passed. The full `vosu-core` lib
-  passed 592 of 594. One failure is
-  `surface_calculation_rejects_canonical_non_osu_alias`: it creates a file
-  symlink, which needs `SeCreateSymbolicLinkPrivilege`, and `vm-test.py`'s
-  LIMITED task does not hold it (error 1314). The `prepush.py` native phase
-  runs at High integrity. The other failure was a single 5 s attach timeout in
-  `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`. It
-  passed alone and in 8 further full-lib `vm-stress.py` iterations; those
-  iterations failed only the symlink case. A 12-iteration `plugin::` stress
-  run also saw `destroy_cancels_every_timer_of_an_instance_and_none_fire_again`
-  fail once. That test predates M4a.
+  oracle replay), `vosu-core` lib `state_subscribe` 17/17 and
+  `api_v1_compat` 33/33 passed. A per-package sweep (`34691a0` plus the
+  allocation fix; `vosu` rerun on `c1a8596`) passed every package except the
+  symlink cases below: `vosu` 556 across all 28 test binaries
+  (1 ignored; `daemon_smoke` is Linux-only and runs 0), `vosu-osu` 211,
+  `vosu-osu-reader` 188, `vosu-plugin-api` 147, `vosu-osu-state` 104,
+  `vosu-rosu-pp-api` 207, `vosu-rosu-map` 83, `vosu-pp` 72, `vosu-osu-calc` 38,
+  `vosu-net` 28, `vosu-osu-model` 24, the three adapters 12/19/22 and
+  `vosu-adapter-support` 9.
+  - Four tests create file symlinks or reparse points, which need
+    `SeCreateSymbolicLinkPrivilege`; `vm-test.py`'s LIMITED task lacks it
+    (error 1314): `vosu-core`'s `surface_calculation_rejects_canonical_non_osu_alias`,
+    `vosu-sys`'s two file-symlink cases and `vosu-adapter-upstream`'s
+    `windows_reparse_files_and_directories_cannot_escape_declared_routes`.
+    The `prepush.py` native phase runs them at High integrity.
+  - Native runs exposed and the exit fixed three test defects. A
+    tool-context expectation mixed path separators and expected the `\\?\`
+    prefix of `std::fs::canonicalize`. `runtime_wakeups`' positive control
+    expected over 10 cadence wakes in 100 ms, but the 1 ms interval fires at
+    the ~15.6 ms Windows timer resolution (15 wakes in 250 ms natively, 116 on
+    Linux); instrumented idle phases saw 0 wakes. The adapter cost
+    invariants raced the osu! resource worker's first asynchronous
+    references commit through the publisher mailbox (measured: 42
+    allocations per steady commit, 54 when one absorbed it, 14 when the
+    worker held the mailbox). `Publication` now records its applied epoch,
+    and the bench fixture waits for that commit before measuring.
+  - Stress (`vm-stress.py`): `performance_invariants` adapter cases 0/15
+    failures and `runtime_wakeups` 0/15 after the fixes;
+    `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`
+    0/12 alone and 0/10 in parallel `plugin::` runs. Its single earlier 5 s
+    timeout did not reproduce, so its bound is unchanged.
+    `destroy_cancels_every_timer_of_an_instance_and_none_fire_again`, which
+    predates M4a, failed once in an earlier 12-iteration `plugin::` run.
 
 Not part of this exit:
 
