@@ -110,6 +110,13 @@ impl Publisher {
             .expect("resource owner")
             .request(message, correlation)
     }
+    /// Stream-ownership routing, as the production plugin's `dispatch_resource`.
+    pub fn owns_stream(&self, stream: u64) -> bool {
+        self.bus
+            .resources
+            .get()
+            .is_some_and(|resources| resources.owns_stream(stream))
+    }
 }
 impl Drop for Publisher {
     fn drop(&mut self) {

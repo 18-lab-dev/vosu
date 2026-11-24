@@ -107,12 +107,34 @@ impl vosu_plugin_api::Plugin for Game {
                     .request(message, correlation)
                     .map_err(PluginError)?;
             }
+            message @ (Message::StreamRead(_) | Message::StreamClose(_)) => {
+                let stream = match &message {
+                    Message::StreamRead(r) => r.stream,
+                    Message::StreamClose(r) => r.stream,
+                    _ => unreachable!(),
+                };
+                route_stream(&self.setup.publishers, stream)
+                    .and_then(|publisher| publisher.request(message, correlation))
+                    .map_err(PluginError)?;
+            }
             _ => {}
         }
         Ok(())
     }
 }
 vosu_plugin_api::export_plugin!(bundled Game);
+
+/// Production stream routing (vosu-osu `plugin/resources.rs`): only the owning
+/// session's resource worker serves a stream; an unowned stream is TARGET_GONE.
+fn route_stream(publishers: &Publishers, stream: u64) -> Result<Arc<Publisher>, vosu_status> {
+    publishers
+        .lock()
+        .unwrap()
+        .values()
+        .find(|publisher| publisher.owns_stream(stream))
+        .cloned()
+        .ok_or(vosu_status::VOSU_ERR_TARGET_GONE)
+}
 
 pub struct Fixture {
     pub h: host::Harness,
@@ -274,6 +296,10 @@ impl Fixture {
             self.h.host.foreground_changed();
         }
         publisher
+    }
+    /// The publisher the plugin would route `stream` to, or the production error.
+    pub fn stream_owner(&self, stream: u64) -> Result<Arc<Publisher>, vosu_status> {
+        route_stream(&self.publishers, stream)
     }
     pub fn encode(&self, schema: &str) -> Vec<u8> {
         let (index, route) = match schema {
