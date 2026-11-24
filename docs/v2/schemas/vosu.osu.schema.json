@@ -837,7 +837,7 @@
           "required": ["stage", "currentRound", "starRating", "damageMultiplier", "activeUserId", "winningUserId", "users"],
           "additionalProperties": false,
           "properties": {
-            "stage": { "type": "string" },
+            "stage": { "type": "integer" },
             "currentRound": { "type": "integer" },
             "starRating": { "type": "number" },
             "damageMultiplier": { "type": "number" },
