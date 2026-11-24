@@ -299,11 +299,11 @@ explicit `ValidationContext` and returns host support separately.
 `ValidationError` carries a stable rule id and document pointer.
 Ordered declaration vectors remain ordered for mirror comparison.
 
-V2's namespace compiler accepts caller-supplied bytes, expected namespace
+The SDK namespace compiler accepts caller-supplied bytes, expected namespace
 and provide version, trusted common-definition bytes and explicit schema
 provenance. Its output contains namespace/version, canonical
 `(pointer,lane,activity)` contributions, required top-level fields and
-visibility metadata. V3's comparison accepts a validated package, catalog
+visibility metadata. The catalog comparison accepts a validated package, catalog
 entry and loaded schema metadata, and fails if schema bytes/metadata are
 absent; catalog-only checks never attest package equivalence. It compares
 all genuinely mirrored metadata, including requirement order, but not
@@ -348,6 +348,12 @@ cargo test --locked -p vosu-plugin-api catalog_schema
 Ecosystem packaging scripts may consume these committed files without running
 vosu; full publisher/install validation must still use the SDK and actual
 schema assets. No external ecosystem repository is changed by these schemas.
+
+The integrated M6a corpus records 266 paired rejection controls and 38 literal
+semver truth rows. See [outcome and evidence](../testing/verification.md#m6a-outcome-and-evidence)
+for observed Linux commands, the consumer migration ledger and native Windows
+commands explicitly marked **pending**. Structural parity does not establish
+native filesystem behavior, complete package equality or an installation gate.
 
 ### `kind = "plugin"`
 

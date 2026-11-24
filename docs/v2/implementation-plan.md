@@ -1380,12 +1380,11 @@ the bounded `[[provides]] schema` profile and the catalog's mirrored schema
 version and lane table (D7); the `comm_hints` matcher field (D18);
 committed JSON Schemas for both documents under `docs/v2/schemas/` so
 ecosystem packaging scripts can validate without vosu. Validation lives in
-`vosu-plugin-api` so plugin authors and core use one implementation. M2's
-K0 parses only the `[[provides]]`/`[[requires]]`/`[[optional]]` subset core
-itself consumes, and K1's lane walker applies D7's bounds only to the
-schemas it walks; this milestone is where both become the full catalog
-rule set, the semver-requirement resolution corpus, and the catalog's own
-schema mirror (R14, R15).
+`vosu-plugin-api` so plugin authors and core use one implementation. The
+integrated implementation extends M2 K0's capability grammar and F2's action
+declarations, extracts K1's pure D7 compiler below core, and replaces T0's
+independent v2 document/requirement rules. Core retains schema registration,
+grants and demand; the tool host retains exact live launch-session authority.
 
 M6a's Q1–Q7 contract completion was approved on 2026-11-24:
 the [shared validation contract](catalog-v2.md#m6a-validation-contract-approved-2026-11-24)
@@ -1393,7 +1392,7 @@ records strict collection/shape policy, resolution `1..=16384`, game/matcher
 equivalence and authoritative field revisions. [Sampling lanes](state-schema.md#sampling-lanes)
 freezes wildcard/ref-sibling/full-document/provenance/work-bound semantics;
 [process matching](plugin-abi.md#61-process-matching) freezes portable hint
-validation. These are normative inputs, not an M6a-complete claim.
+validation.
 M6b consumes the SDK's pure requirement/candidate-conjunction predicates;
 it must not add a parallel capability/version parser.
 
@@ -1402,6 +1401,33 @@ Exit: `cargo test --locked -p vosu-plugin-api manifest` and a corpus test
 in catalog-v2.md, including reserved names, id prefix rules,
 `provides`/`[[actions]]` pairing, and D7's size, depth, `$ref`, and
 namespace limits.
+
+#### M6a outcome (2026-11-24; native Windows pending)
+
+V0–V6 are integrated at `7ea4958`. The exit corpus contains **266 paired
+rejection controls** and **38 literal semver truth rows**. The SDK `manifest`
+filter passed 62 tests; `catalog_v2_compat` contains 22 tests, or 23 with
+`test-harness`/all features. The integrated Linux workspace run passed
+2,556 tests with 6 skipped. Exact commands, attribution, the migration ledger
+and remaining evidence are in [verification](../testing/verification.md#m6a-outcome-and-evidence).
+
+All plugin, v2 tool and v2 overlay production loaders consume SDK validation
+with explicit running-version and registration context. The former K0 subset
+deferral and T0 minimal v2 parser are no longer implementation boundaries.
+Offline Draft 2020-12 schemas cover document structure, not source trust,
+semver resolution or asset-backed equality; use the SDK with schema bytes for
+complete mirror comparison.
+
+**Not a milestone-complete or release claim:** native Windows manifest and
+real consumer/path evidence remains **pending**; cross-Clippy does not replace
+it. No new compiler/load-time performance measurements were taken, and the
+functional results do not establish a performance pass or supersede inherited
+M1/M2/M3 findings. M6b still owns fetching, credentials, trust, source/provider
+selection, graph orchestration and installation; it must reuse the SDK
+predicates and verify package mirrors before install commit. M7 still owns
+final legacy tool-host removal and first-start migration. `metadata.txt`
+remains supported read-only overlay input, and `tool.toml` remains only the
+explicit M3→M7 exception. No release or push is authorized here.
 
 ### M6b: sources, credentials, resolver, private sources
 

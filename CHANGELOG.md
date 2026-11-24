@@ -14,6 +14,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Reject the reserved `vosu.sessions` namespace in every capability class.
   Malformed namespace-schema references report `D7.ref`, distinct from malformed
   catalog mirror pointers.
+- Add strict SDK catalog-v2 validation and asset-backed manifest/catalog mirror
+  comparison, sharing namespace-schema extraction with core. Validation performs
+  no fetch or installation; source/trust/resolver work remains M6b-owned.
+- Commit offline Draft 2020-12 manifest and catalog packaging schemas with
+  TOML-to-JSON parity controls. Structural checks complement, not replace, SDK
+  semantic/context validation. Native Windows M6a evidence remains pending.
 
 ## Unreleased — 2.0 M3
 
