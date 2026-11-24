@@ -62,6 +62,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             tools: AsyncMutex::new(None),
             dev_tools: vec![],
             dev_plugins: vec![],
+            api_v1: api_v1::ApiV1Service::new(&plugins, &current),
             plugins,
             state_host: AsyncMutex::new(None),
             plugin_settings_watch: AsyncMutex::new(None),

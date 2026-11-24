@@ -573,6 +573,24 @@ Maintainer workflow, evidence interpretation, troubleshooting, and maintenance t
 
 All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu, `1` taiko, `2` catch, `3` mania), `ar`, `cs`, `hp`, `od`, `clockRate`, `passedObjects`, `combo`, `nMisses`, `n100`, `n300`, `n50`, `nGeki`, `nKatu`, `mods` (legacy bits or a JSON mod object/array), `acc`, `sliderEndHits`, `smallTickHits`, `largeTickHits`, and `hitresultPriority`.
 
+### Public session state (API v1, 2.0 prerelease)
+
+The overlay listener serves `GET /api/v1/sessions`, session summaries at
+`/api/v1/sessions/{id|active}`, and merged namespace state at
+`/api/v1/sessions/{id|active}/state[/{namespace}]`. State reads accept
+`?pointer=<RFC 6901 pointer>` and create no sampling demand. Every read is
+`Cache-Control: no-store`; only identified sessions are visible, and plugin-only
+state is never exposed.
+
+WebSocket subscriptions use `/api/v1/sessions/subscribe` for session events and
+`/api/v1/sessions/{id|active}/subscribe` for selected fields, with the same
+pointer-array/frame protocol described below. `active` follows focus; its initial
+upgrade returns 404 when there is no focus. API v1 uses the independent, live
+`API_V1_SUBSCRIPTION_DEBOUNCE` setting. These read endpoints need no credential
+but retain peer/Origin checks, and are not served by the dashboard listener.
+The existing 1.x routes and `/websocket/v2/subscribe` remain available during
+the transition. See the [API v1 specification](docs/v2/api-v1.md).
+
 ### Renderer state (v2)
 
 Tools following the current map can subscribe to these additive fields through

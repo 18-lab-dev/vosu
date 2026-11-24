@@ -23,6 +23,7 @@ pub struct ProductionRouteDelegate {
     connections: OverlayConnections,
     tools: Option<Arc<dyn RouteExtension>>,
     skin_index: Arc<Mutex<files::SkinIndexCache>>,
+    api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
 }
 
 impl ProductionRouteDelegate {
@@ -32,7 +33,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())) }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None }
     }
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
@@ -42,12 +43,20 @@ impl ProductionRouteDelegate {
         self.tools = Some(tools);
         self
     }
+    pub fn with_api_v1(mut self, router: crate::server::api_v1::router::ApiV1Router) -> Self {
+        self.api_v1 = Some(router);
+        self
+    }
     pub fn services(&self) -> &ProductionServices {
         &self.services
     }
 
     async fn dispatch(&self, endpoint: Endpoint, request: Request<Body>, body: Bytes) -> Response {
         match endpoint {
+            Endpoint::ApiV1 => match &self.api_v1 {
+                Some(router) => router.handle(request).await,
+                None => crate::server::api_v1::error::error(StatusCode::NOT_FOUND, "invalid_request", "Unknown API route"),
+            },
             Endpoint::ToolOverlay => match &self.tools {
                 Some(tools) => Arc::clone(tools).overlay(request, body).await,
                 None => not_found(),

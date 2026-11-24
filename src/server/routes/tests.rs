@@ -1,5 +1,7 @@
 use super::*;
 use vosu_proptest::bounded;
+#[path = "api_v1_tests.rs"]
+mod api_v1;
 
 #[test]
 fn exact_methods_never_add_head_or_options() {
