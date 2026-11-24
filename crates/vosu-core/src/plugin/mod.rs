@@ -54,6 +54,7 @@
 pub mod action_schema;
 mod discovery;
 mod dispatch;
+mod dispatch_queue;
 mod error;
 mod focus;
 mod host;
@@ -61,6 +62,7 @@ mod host_services;
 mod instance;
 pub mod logging;
 mod matcher;
+pub mod outbox;
 mod read_plan;
 mod registry;
 mod scan;

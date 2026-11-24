@@ -55,6 +55,7 @@ pub struct PluginInstance {
     library: Option<Arc<Library>>,
     in_flight: InFlightTracker,
     dispatch: Dispatch,
+    outbox: Arc<super::outbox::ReservedOutbox>,
     /// Set once `destroy_inner` has run, whether from an explicit
     /// `destroy()` call or from `Drop`, so `Drop` never runs it twice.
     destroyed: bool,
@@ -116,13 +117,20 @@ impl PluginInstance {
                 DEFAULT_QUEUE_CAPACITY,
             )),
         };
+        let in_flight = InFlightTracker::new();
+        let queue = match &dispatch {
+            Dispatch::Serial(worker) => worker.queue(),
+            Dispatch::Concurrent(pool) => pool.queue(),
+        };
+        let outbox = super::outbox::ReservedOutbox::new(queue, vtable, ctx, in_flight.clone());
         Ok(Self {
             id,
             vtable,
             ctx,
             host_ctx: Some(host_ctx),
             library: plugin.library_handle(),
-            in_flight: InFlightTracker::new(),
+            in_flight,
+            outbox,
             dispatch,
             destroyed: false,
         })
@@ -130,6 +138,10 @@ impl PluginInstance {
 
     pub fn id(&self) -> PluginInstanceId {
         self.id
+    }
+
+    pub fn reserve_outbox(&self) -> Result<super::outbox::OutboxSlot, HostError> {
+        self.outbox.reserve()
     }
 
     /// Enqueues one message for this instance's dispatch thread (serial)
@@ -212,6 +224,7 @@ impl PluginInstance {
 
     fn destroy_inner(&mut self, grace: Duration) -> Result<(), HostError> {
         let deadline = Instant::now() + grace;
+        self.outbox.close();
         let drained = match &mut self.dispatch {
             Dispatch::Serial(worker) => {
                 worker.shutdown_within(deadline.saturating_duration_since(Instant::now()))

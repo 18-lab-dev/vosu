@@ -325,6 +325,18 @@ impl PluginHost {
         }
     }
 
+    /// Reserve terminal delivery capacity before accepting bounded work.
+    pub fn reserve_outbox(
+        &self,
+        instance: PluginInstanceId,
+    ) -> Result<crate::plugin::outbox::OutboxSlot, HostError> {
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        match instances.get(&instance) {
+            Some(InstanceSlot::Live(entry)) => entry.instance.reserve_outbox(),
+            _ => Err(HostError::UnknownInstance),
+        }
+    }
+
     pub(super) fn dispatch_to(&self, plugin_id: &str, message: &Message) {
         let Ok(owned) = OwnedMessage::from_message(message, 0) else {
             return;
