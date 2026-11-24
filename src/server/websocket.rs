@@ -198,12 +198,21 @@ pub trait StateSnapshot: Send + Sync + 'static {
     fn encode_filtered(&self, filters: &[Filter]) -> Result<Bytes, String>;
 }
 
-/// The state boundary used by all four schema hubs. Implementations normally
-/// capture the latest immutable `CombinedSnapshot`.
+/// The state boundary used by all four schema hubs.
 pub trait StateProvider: Send + Sync + 'static {
     fn poll_rate(&self, schema: Schema) -> Duration;
     fn subscribe(&self, schema: Schema) -> watch::Receiver<u64>;
     fn capture(&self, schema: Schema) -> Option<Arc<dyn StateSnapshot>>;
+    /// A lease belongs to exactly one state connection. Non-bus sources have no
+    /// sampling authority and return `None`.
+    fn demand(&self, _schema: Schema, _filters: &[Filter]) -> Result<Option<Box<dyn StateDemand>>, String> {
+        Ok(None)
+    }
+}
+
+pub trait StateDemand: Send + Sync {
+    /// Rejection must leave the old subscription and wire plan intact.
+    fn replace_filters(&self, filters: &[Filter]) -> Result<(), String>;
 }
 
 pub type ClientId = u64;
@@ -263,6 +272,7 @@ struct Client {
     cleaned: AtomicBool,
     cancellation: CancellationToken,
     terminal: Arc<Mutex<Option<Outbound>>>,
+    demand: Mutex<Option<Box<dyn StateDemand>>>,
 }
 
 impl Client {
@@ -270,11 +280,13 @@ impl Client {
         if !self.cleaned.swap(true, Ordering::AcqRel) {
             self.state.store(CLIENT_CLOSED, Ordering::Release);
             *lock_unpoisoned(&self.terminal) = Some(terminal);
+            drop(lock_unpoisoned(&self.demand).take());
             self.cancellation.cancel();
         }
     }
     fn terminate_for_shutdown(&self, code: u16) {
         self.cleaned.store(true, Ordering::Release);
+        drop(lock_unpoisoned(&self.demand).take());
         self.state.store(CLIENT_CLOSED, Ordering::Release);
         *lock_unpoisoned(&self.terminal) = Some(Outbound::Close {
             code,
@@ -382,6 +394,7 @@ pub struct OutboundReceiver {
     cancellation: CancellationToken,
     terminal: Arc<Mutex<Option<Outbound>>>,
     terminated: bool,
+    connection: ConnectionControl,
 }
 
 impl OutboundReceiver {
@@ -441,6 +454,7 @@ impl OutboundReceiver {
 
 impl Drop for OutboundReceiver {
     fn drop(&mut self) {
+        self.connection.cleanup();
         let mut state = lock_unpoisoned(&self.data.state);
         state.closed = true;
         state.frame = None;
@@ -551,8 +565,15 @@ impl WebSocketHub {
             last_generation: AtomicU64::new(u64::MAX),
             cleaned: AtomicBool::new(false),
             cancellation: cancellation.clone(),
+            demand: Mutex::new(None),
             terminal: Arc::clone(&terminal),
         });
+        if publishes_state {
+            match self.0.provider.demand(self.0.schema, &[]) {
+                Ok(demand) => *lock_unpoisoned(&client.demand) = demand,
+                Err(_) => client.terminate_for_shutdown(GOING_AWAY),
+            }
+        }
         {
             let _write = lock_unpoisoned(&self.0.client_writes);
             if self.0.accepting.load(Ordering::Acquire) {
@@ -568,7 +589,7 @@ impl WebSocketHub {
             Connection {
                 id,
                 hub: self.clone(),
-                client,
+                client: Arc::clone(&client),
                 fragments: Fragments::default(),
             },
             OutboundReceiver {
@@ -577,6 +598,11 @@ impl WebSocketHub {
                 cancellation,
                 terminal,
                 terminated: false,
+                connection: ConnectionControl {
+                    id,
+                    client: Arc::clone(&client),
+                    hub: self.clone(),
+                },
             },
         )
     }
@@ -596,6 +622,9 @@ impl WebSocketHub {
         self.0.wake.send_replace(next);
     }
     fn wake_writable(&self) {
+        if !self.0.clients.load().values().any(|client| client.publishes_state) {
+            return;
+        }
         let Some(snapshot) = self.0.provider.capture(self.0.schema) else {
             return;
         };
@@ -665,12 +694,8 @@ impl WebSocketHub {
             });
 
             if !has_state_clients {
-                next_send_at = tokio::time::Instant::now();
                 tokio::select! {
                     _ = self.0.shutdown.cancelled() => break,
-                    changed = state_events.changed() => {
-                        if changed.is_err() { break; }
-                    },
                     changed = local_wake.changed() => {
                         if changed.is_err() { break; }
                     },
@@ -678,7 +703,6 @@ impl WebSocketHub {
                         if changed.is_err() { break; }
                         self.writable_consumed();
                     },
-                    _ = tokio::time::sleep(Duration::from_millis(500)) => {},
                 }
                 continue;
             }
@@ -718,11 +742,14 @@ impl WebSocketHub {
                     force_delivery = false;
                     continue;
                 }
-                if cached.as_ref().is_none_or(|(seen, _)| *seen != generation) {
-                    match snapshot.encode_unfiltered() {
-                        Ok(bytes) => cached = Some((generation, bytes)),
-                        Err(_) => cached = None,
-                    }
+                if cached.as_ref().is_none_or(|(seen, _)| *seen != generation)
+                    && clients.values().any(|client| {
+                        client.publishes_state
+                            && client.state.load(Ordering::Acquire) == CLIENT_OPEN
+                            && client.filters.load().filters.is_empty()
+                    })
+                {
+                    cached = snapshot.encode_unfiltered().ok().map(|bytes| (generation, bytes));
                 }
                 let mut projections = SharedProjections::default();
                 let _pass = BroadcastPass::begin();
@@ -773,7 +800,14 @@ impl Connection {
     }
 
     pub fn set_filters(&self, filters: Vec<Filter>) {
+        let demand = lock_unpoisoned(&self.client.demand);
+        if let Some(demand) = demand.as_ref()
+            && demand.replace_filters(&filters).is_err()
+        {
+            return;
+        }
         self.client.set_filters(filters);
+        drop(demand);
         self.hub.mark_shared_plans();
         self.hub.wake();
     }
@@ -846,6 +880,7 @@ impl Connection {
                 None => {
                     if !self.client.cleaned.swap(true, Ordering::AcqRel) {
                         self.client.state.store(CLIENT_CLOSED, Ordering::Release);
+                        drop(lock_unpoisoned(&self.client.demand).take());
                         self.client.cancellation.cancel();
                     }
                 }
@@ -903,7 +938,14 @@ impl Connection {
 
 impl ConnectionControl {
     pub fn set_filters(&self, filters: Vec<Filter>) {
+        let demand = lock_unpoisoned(&self.client.demand);
+        if let Some(demand) = demand.as_ref()
+            && demand.replace_filters(&filters).is_err()
+        {
+            return;
+        }
         self.client.set_filters(filters);
+        drop(demand);
         self.hub.mark_shared_plans();
         self.hub.wake();
     }
@@ -918,6 +960,7 @@ impl ConnectionControl {
     pub fn cleanup(&self) {
         if !self.client.cleaned.swap(true, Ordering::AcqRel) {
             self.client.state.store(CLIENT_CLOSED, Ordering::Release);
+            drop(lock_unpoisoned(&self.client.demand).take());
             self.client.cancellation.cancel();
         }
         let _write = lock_unpoisoned(&self.hub.0.client_writes);
@@ -937,3 +980,6 @@ impl Drop for Connection {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod demand_tests;
