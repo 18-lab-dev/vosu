@@ -188,3 +188,42 @@ fn osu_settings_default_matches_reader_settings_default() {
         reader_defaults.read_mania_scroll_speed
     );
 }
+
+#[test]
+fn manifest_covers_match_coverage_table() {
+    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+    let expected = [
+        "field:vosu.status.status",
+        "field:vosu.chart.title",
+        "field:vosu.chart.artist",
+        "field:vosu.chart.difficultyName",
+        "field:vosu.chart.charter",
+        "field:vosu.chart.length",
+        "field:vosu.chart.bpm",
+        "field:vosu.chart.keyCount",
+        "field:vosu.play",
+        "field:vosu.skin.name",
+    ];
+    assert_eq!(manifest.covers.len(), expected.len());
+    for field in expected {
+        assert!(
+            manifest.covers.iter().any(|cover| cover == field),
+            "{field}"
+        );
+    }
+    assert!(manifest.resource_kinds.is_empty());
+}
+
+#[test]
+fn provides_version_equals_schema_version() {
+    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(vosu_osu::OSU_NAMESPACE_SCHEMA).unwrap();
+    assert_eq!(manifest.provides.len(), 1);
+    let provider = &manifest.provides[0];
+    assert_eq!(provider.id, "field:vosu.osu");
+    assert_eq!(provider.version, schema["version"].as_str().unwrap());
+    assert_eq!(
+        provider.schema.as_deref(),
+        Some("schemas/vosu.osu.schema.json")
+    );
+}

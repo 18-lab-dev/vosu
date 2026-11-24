@@ -10,3 +10,4 @@ session -> bridge_b1
 session -> capture
 session -> settings
 session -> scan
+publish -> project

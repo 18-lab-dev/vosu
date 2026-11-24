@@ -24,9 +24,13 @@ pub mod capture;
 pub mod classify;
 pub mod memory;
 pub mod plugin;
+pub mod project;
+pub mod publish;
 pub mod scan;
 pub mod session;
 pub mod settings;
+#[cfg(test)]
+mod test_alloc;
 #[cfg(test)]
 mod test_support;
 #[cfg(all(feature = "test-harness", not(test)))]
@@ -42,3 +46,7 @@ pub const MANIFEST: &str = include_str!("../manifest.toml");
 /// five keys bridge B2 served out of `vosu.toml` until this file replaced
 /// it (plan P0).
 pub const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
+
+/// The bundled namespace schema; its version matches the manifest's provider.
+pub const OSU_NAMESPACE_SCHEMA: &str =
+    include_str!("../../../docs/v2/schemas/vosu.osu.schema.json");
