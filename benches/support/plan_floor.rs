@@ -129,7 +129,10 @@ pub(super) fn bench(c: &mut Criterion) {
             remaining = rest;
         }
     }
-    assert!(remaining.is_empty(), "all recorded backend ops must be replayed");
+    assert!(
+        remaining.is_empty(),
+        "all recorded backend ops must be replayed"
+    );
     let mut group = c.benchmark_group("plan_floor");
     group.bench_function("native", |b| {
         b.iter(|| {
