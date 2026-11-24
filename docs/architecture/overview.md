@@ -65,7 +65,7 @@ flowchart TB
 `crates/vosu-core/src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
 Offset resolution is part of each discovered lazer instance lifecycle.
-`src/runtime/offset_generator.rs` receives the exact PID and version. The loader
+`crates/vosu-osu-reader/src/offset_generator.rs` receives the exact PID and version. The loader
 first accepts a valid exact-instance cache entry, then matching embedded offsets,
 then invokes the embedded self-contained generator against that same PID. The
 generator returns bytes; the loader validates them and atomically installs the
@@ -82,7 +82,7 @@ payload; a debug/development build without one reports an explicit
 missing-bundle error. Maintainer preparation uses the .NET SDK and
 `scripts/prepare-offset-generator.py`; generated binaries are not source inputs.
 
-`src/runtime/offset_generator/client_runtime.rs` stages the helper entry points
+`crates/vosu-osu-reader/src/offset_generator/client_runtime.rs` stages the helper entry points
 with the exact client's self-contained runtime pack and runtime configuration.
 It replaces the helper's build-runtime dependency entry with the client's
 managed/native runtime manifest, including NuGet framework replacements and

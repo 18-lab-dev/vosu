@@ -18,6 +18,10 @@
 #   today for the same ProcessMemory read types (`MemoryRead`, `ReadStatus`,
 #   `MemoryError`) the reducer reads through; removed alongside the
 #   vosu-osu-reader edge above at M5.
+# - vosu-osu-reader -> vosu-net: F7, DD/R5. The lazer offset generator
+#   moved from the root crate into `vosu-osu-reader` and still needs
+#   `vosu_net::{ZipLimits, extract_zip_atomic}` for hardened extraction of
+#   its embedded bundle; not interim, unlike the vosu-sys edges above.
 vosu-sys
 vosu-proptest
 vosu-osu-model
@@ -39,6 +43,7 @@ vosu-core -> vosu-proptest
 vosu-osu-calc -> vosu-osu-model
 vosu-osu-calc -> vosu-pp
 
+vosu-osu-reader -> vosu-net
 vosu-osu-reader -> vosu-osu-model
 vosu-osu-reader -> vosu-sys
 vosu-osu-reader -> vosu-proptest

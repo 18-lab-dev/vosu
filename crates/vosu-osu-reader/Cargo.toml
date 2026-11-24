@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+build = "build.rs"
 
 [lints]
 workspace = true
@@ -23,15 +24,21 @@ parking_lot = "0.12.5"
 rust-embed = { version = "=8.12.0", features = ["debug-embed", "include-exclude"] }
 serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+sha2 = "=0.11.0"
 tempfile = "3.26.0"
 thiserror = "2.0.18"
-tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "test-util", "process"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+vosu-net = { path = "../vosu-net" }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-sys = { path = "../vosu-sys" }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "=0.2.186"
+
+[build-dependencies]
+sha2 = "=0.11.0"
 
 [dev-dependencies]
 proptest = "1.12"

@@ -103,7 +103,6 @@ mod config;
 mod dev_plugins;
 mod discovery;
 mod lifecycle;
-mod offset_generator;
 mod preview_scheme;
 mod projection;
 mod render;
@@ -127,10 +126,10 @@ pub use worker::{ListenerOwner, ProductionStateSupervisor, WebSocketHubs};
 use config::*;
 #[cfg(test)]
 use lifecycle::*;
-use offset_generator::EmbeddedOffsetGenerator;
 use projection::*;
 use render::*;
 use service::*;
+use vosu_osu_reader::offset_generator::EmbeddedOffsetGenerator;
 use worker::*;
 
 #[cfg(test)]

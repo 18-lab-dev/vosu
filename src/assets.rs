@@ -6,11 +6,11 @@ use rust_embed::RustEmbed;
 #[folder = "assets/server/"]
 pub struct ServerAssets;
 
-/// Compile-time daemon payloads. The generator bundle is selected by Cargo's
-/// target triple and is never fetched or discovered at runtime.
+/// Compile-time, source-pinned `assets/offsets.json`. The lazer offset
+/// generator's own embedded bundle lives in `vosu-osu-reader`'s build
+/// script; this crate only needs the offsets template directly for the
+/// generator invocation site and the release report.
 #[derive(RustEmbed)]
 #[folder = "assets/"]
 #[include = "offsets.json"]
 pub struct DaemonAssets;
-
-include!(concat!(env!("OUT_DIR"), "/daemon_generator_bundle.rs"));

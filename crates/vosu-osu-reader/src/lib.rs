@@ -19,4 +19,5 @@
 pub mod assets;
 pub mod discovery;
 pub mod memory;
+pub mod offset_generator;
 pub mod process;

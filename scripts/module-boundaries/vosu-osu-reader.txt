@@ -1,2 +1,4 @@
 memory -> assets
 memory -> process
+offset_generator -> assets
+offset_generator -> memory

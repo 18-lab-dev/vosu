@@ -1,0 +1,151 @@
+fn main() {
+    embed_generator_bundle();
+}
+
+fn embed_generator_bundle() {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+
+    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let output = out_dir.join("daemon_generator_bundle.rs");
+    let target = match (
+        std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
+        std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+    ) {
+        (Ok("linux"), Ok("x86_64")) => Some("linux-x64"),
+        (Ok("windows"), Ok("x86_64")) => Some("win-x64"),
+        _ => None,
+    };
+    // This crate's Cargo manifest lives at `<workspace root>/crates/vosu-osu-reader`;
+    // the generator bundle and its inputs are tracked at the workspace root, not
+    // per-crate, so resolve relative to it rather than `CARGO_MANIFEST_DIR`.
+    let workspace_root =
+        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let (zip, checksum) = target.as_ref().map_or((None, None), |rid| {
+        let root = workspace_root.join("target/offset-generator").join(rid);
+        let zip = root.join(format!("offset-generator-v1-{rid}.zip"));
+        let checksum = root.join(format!("offset-generator-v1-{rid}.zip.sha256"));
+        println!("cargo:rerun-if-changed={}", zip.display());
+        println!("cargo:rerun-if-changed={}", checksum.display());
+        (Some(zip), Some(checksum))
+    });
+
+    let valid = match (zip.as_ref(), checksum.as_ref()) {
+        (Some(zip), Some(checksum)) if zip.is_file() && checksum.is_file() => {
+            let expected = std::fs::read_to_string(checksum)
+                .unwrap_or_default()
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let bytes = std::fs::read(zip).expect("failed to read offset generator bundle");
+            let mut actual = String::with_capacity(64);
+            for byte in Sha256::digest(&bytes) {
+                write!(actual, "{byte:02x}").unwrap();
+            }
+            if expected.len() != 64 || expected != actual {
+                if std::env::var("PROFILE").as_deref() == Ok("release") {
+                    panic!(
+                        "offset generator bundle checksum mismatch: {}",
+                        zip.display()
+                    );
+                }
+                false
+            } else {
+                if std::env::var("PROFILE").as_deref() == Ok("release") {
+                    // The checksum only proves the zip is intact. A bundle
+                    // prepared from older generator sources still passes it
+                    // while failing on templates that need newer generator
+                    // code, so release builds also require matching sources.
+                    let marker = zip.with_file_name(format!(
+                        "{}.inputs.sha256",
+                        zip.file_stem().unwrap().to_string_lossy()
+                    ));
+                    println!("cargo:rerun-if-changed={}", marker.display());
+                    let recorded = std::fs::read_to_string(&marker).unwrap_or_default();
+                    let current = generator_source_fingerprint(&workspace_root);
+                    if recorded.trim() != current {
+                        panic!(
+                            "offset generator bundle {} was prepared from different generator sources; rerun scripts/prepare-offset-generator.py",
+                            zip.display()
+                        );
+                    }
+                }
+                true
+            }
+        }
+        _ => {
+            if std::env::var("PROFILE").as_deref() == Ok("release") && target.is_some() {
+                panic!("missing offset generator bundle for release target");
+            }
+            false
+        }
+    };
+
+    let mut source = String::from("impl DaemonAssets {\n");
+    if valid {
+        let zip = zip.unwrap();
+        let checksum = checksum.unwrap();
+        writeln!(
+            source,
+            "    pub fn generator_bundle() -> Option<(&'static [u8], &'static str)> {{ Some((include_bytes!({:?}), include_str!({:?}))) }}",
+            zip.to_string_lossy().as_ref(),
+            checksum.to_string_lossy().as_ref(),
+        )
+        .unwrap();
+    } else {
+        source.push_str(
+            "    pub fn generator_bundle() -> Option<(&'static [u8], &'static str)> { None }\n",
+        );
+    }
+    source.push_str("}\n");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "build scripts write generated sources into Cargo's OUT_DIR, which Cargo owns and rebuilds"
+    )]
+    std::fs::write(output, source).expect("failed to write generated daemon asset bindings");
+}
+
+/// Mirrors `fingerprint()` in scripts/prepare-offset-generator.py.
+fn generator_source_fingerprint(workspace_root: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    use std::path::{Path, PathBuf};
+
+    let root = workspace_root;
+    let mut inputs: Vec<PathBuf> = [
+        "scripts/prepare-offset-generator.py",
+        "tools/lazer-offset-generator/lazer-offset-generator.csproj",
+        "tools/lazer-offset-generator/packages.lock.json",
+        "tools/lazer-offset-target/lazer-offset-target.csproj",
+        "tools/lazer-offset-target/packages.lock.json",
+        "LICENSE",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+        "THIRD_PARTY_NOTICES.md",
+    ]
+    .iter()
+    .map(|relative| root.join(relative))
+    .collect();
+    for directory in ["tools/lazer-offset-generator", "tools/lazer-offset-target"] {
+        let mut sources: Vec<PathBuf> = std::fs::read_dir(root.join(directory))
+            .expect("read offset generator sources")
+            .map(|entry| entry.expect("offset generator source entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "cs"))
+            .collect();
+        sources.sort();
+        inputs.extend(sources);
+    }
+    let mut digest = Sha256::new();
+    for path in &inputs {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let relative = path.strip_prefix(root).unwrap_or(Path::new(""));
+        digest.update(relative.to_string_lossy().replace('\\', "/").as_bytes());
+        digest.update(std::fs::read(path).expect("read offset generator input"));
+    }
+    let mut hex = String::with_capacity(64);
+    for byte in digest.finalize() {
+        write!(hex, "{byte:02x}").unwrap();
+    }
+    hex
+}

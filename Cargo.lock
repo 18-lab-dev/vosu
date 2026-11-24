@@ -3330,13 +3330,16 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
+ "vosu-net",
  "vosu-osu-model",
  "vosu-proptest",
  "vosu-sys",
+ "zip",
 ]
 
 [[package]]

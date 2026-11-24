@@ -1,11 +1,9 @@
 //! Compile-time embedded, source-pinned reader payloads.
 //!
-//! Duplicates the root crate's `assets::DaemonAssets` embed of the same
-//! pinned `assets/offsets.json` (the root crate also needs it directly for
-//! the lazer offset generator and release report, which stay there for
-//! now); both crates embed the identical file by its own relative
-//! `rust-embed` folder rather than sharing one Rust type across the crate
-//! boundary.
+//! `DaemonAssets` embeds the pinned `assets/offsets.json` template (also
+//! embedded, separately, by the root crate's own `assets::DaemonAssets` for
+//! its release report) and, via `build.rs`, the RID-selected embedded lazer
+//! offset generator bundle the offset generator in this crate installs.
 
 use rust_embed::RustEmbed;
 
@@ -13,3 +11,5 @@ use rust_embed::RustEmbed;
 #[folder = "../../assets/"]
 #[include = "offsets.json"]
 pub struct DaemonAssets;
+
+include!(concat!(env!("OUT_DIR"), "/daemon_generator_bundle.rs"));

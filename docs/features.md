@@ -33,6 +33,6 @@ The dashboard runs on its own listener (`DASHBOARD_PORT`, [ADR 0016](decisions/0
 | Current game files | `/files/beatmap/…`, `/files/skin/…` | `src/server/files.rs` | `server_compat` |
 | Overlay settings profiles | `/api/counters/profiles`, brokered commands | `src/counters/`, `src/server/` | `server_compat`, `config_compat` |
 | Native overlay brokers and API keys | broker token, scoped keys | `src/server/auth.rs` | `server_compat` |
-| Lazer offsets | automatic cache → embedded asset → local generator | `src/runtime/offset_generator.rs`, `src/memory/lazer_loader.rs` | unit tests; nightly lazer offset canary |
+| Lazer offsets | automatic cache → embedded asset → local generator | `crates/vosu-osu-reader/src/offset_generator.rs`, `crates/vosu-osu-reader/src/memory/lazer_loader.rs` | unit tests; nightly lazer offset canary |
 | Self-update | **Update vosu**, rollback, crash recovery | `crates/vosu-core/src/updater/` | `updater_compat`, `updater_native`, `vosu-release-smoke`, updater property tests |
 | Diagnostics report | **Diagnostics report** | `crates/vosu-core/src/report/` | unit tests (escaping) |
