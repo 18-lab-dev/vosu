@@ -18,6 +18,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   with explicit path grants and a chart-resource-derived input seam. The new
   wire model omits extension-only press/release histories; production route
   mounting remains unchanged until the adapter cutover.
+- Add the bus-backed gosuMemory builder and borrowing encoder, preserving
+  state-specific values and tournament quirks without extension hit histories.
+  Production routes remain unchanged until the adapter cutover.
 
 ## Unreleased — 2.0 M3
 
