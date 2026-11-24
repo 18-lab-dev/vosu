@@ -370,7 +370,7 @@ impl ProductionRuntime {
         // doc comment). Every exit path from here on routes through
         // `ProductionRuntime::shutdown`, which stops both before
         // `plugins.destroy_all`.
-        let discovery = discovery::start_discovery(&self.plugins, Handle::current());
+        let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger);
         #[cfg(windows)]
         let foreground = discovery
             .is_some()

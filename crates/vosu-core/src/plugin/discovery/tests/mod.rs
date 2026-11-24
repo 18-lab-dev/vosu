@@ -176,6 +176,12 @@ struct SyntheticState {
     pending_inspect: Vec<u32>,
     pending_exit: Vec<u32>,
     needs_reconcile: bool,
+    /// Consumed by the next [`ProcessSource::enumerate`] call (F2:
+    /// `failed_full_scan_retries_early_and_counts_only_success`).
+    fail_next_enumerate: bool,
+    /// Consumed by the next [`ProcessSource::inspect`] call for this pid
+    /// (F2: `failed_targeted_inspection_is_not_counted`).
+    fail_inspect: HashSet<u32>,
 }
 
 /// An in-memory [`ProcessSource`] a test drives directly: every mutation
@@ -239,28 +245,101 @@ impl SyntheticSource {
         drop(state);
         self.notifier.notify_one();
     }
+
+    /// Queues an `exit` hint without removing `pid` from the source's own
+    /// ground truth (F2 exit confirmation: simulates a push event racing
+    /// a process that is dying but has not yet actually exited --
+    /// `ProcessSource::is_alive`'s default fallback below still answers
+    /// `true` for it, since it is still present in `processes`, until
+    /// [`Self::declare_dead`] says otherwise).
+    fn report_exit_hint(&self, pid: u32) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.pending_exit.push(pid);
+        drop(state);
+        self.notifier.notify_one();
+    }
+
+    /// Removes `pid` from the source's own ground truth without queuing
+    /// any event (F2 exit confirmation: the backoff recheck, not a fresh
+    /// event, must be what discovers this -- `ProcessSource::is_alive`
+    /// now answers `false` for it).
+    fn declare_dead(&self, pid: u32) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .processes
+            .remove(&pid);
+    }
+
+    /// Queues an `inspect` hint without touching the source's own ground
+    /// truth (F2: `process_event_wakes_are_targeted_and_loss_reconciles_once`
+    /// -- a pure re-check hint, not an `appear`/record change).
+    fn request_inspect(&self, pid: u32) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.pending_inspect.push(pid);
+        drop(state);
+        self.notifier.notify_one();
+    }
+
+    /// Marks the source as having lost events, forcing a full reconcile
+    /// on the next [`ProcessSource::drain_events`] (F2:
+    /// `process_event_wakes_are_targeted_and_loss_reconciles_once`).
+    fn request_reconcile(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.needs_reconcile = true;
+        drop(state);
+        self.notifier.notify_one();
+    }
+
+    /// Fails the next [`ProcessSource::enumerate`] call once (F2).
+    fn fail_next_enumerate(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .fail_next_enumerate = true;
+    }
+
+    /// Fails the next [`ProcessSource::inspect`] call for `pid` once
+    /// (F2).
+    fn fail_next_inspect(&self, pid: u32) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .fail_inspect
+            .insert(pid);
+    }
 }
 
 impl ProcessSource for SyntheticSource {
     fn enumerate(&self) -> io::Result<Vec<ProcessRecord>> {
-        Ok(self
+        let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .processes
-            .values()
-            .cloned()
-            .collect())
+            .unwrap_or_else(|poison| poison.into_inner());
+        if std::mem::take(&mut state.fail_next_enumerate) {
+            return Err(io::Error::other("synthetic enumerate failure"));
+        }
+        Ok(state.processes.values().cloned().collect())
     }
 
     fn inspect(&self, pid: u32) -> io::Result<Option<ProcessRecord>> {
-        Ok(self
+        let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .processes
-            .get(&pid)
-            .cloned())
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.fail_inspect.remove(&pid) {
+            return Err(io::Error::other("synthetic inspect failure"));
+        }
+        Ok(state.processes.get(&pid).cloned())
     }
 
     fn drain_events(&self) -> ProcessEventBatch {
@@ -286,6 +365,20 @@ impl ProcessSource for SyntheticSource {
 
     fn notifier(&self) -> Option<&Notify> {
         Some(&self.notifier)
+    }
+
+    /// Answers from the source's own ground truth (F2 exit confirmation):
+    /// alive iff still present in `processes` -- `report_exit_hint`
+    /// leaves it present (still alive), `declare_dead`/`exit` remove it
+    /// (no longer alive), matching the real
+    /// `vosu_sys::process::is_process_alive` default's own semantics
+    /// without touching the real OS.
+    fn is_alive(&self, pid: u32) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .processes
+            .contains_key(&pid)
     }
 }
 
@@ -451,13 +544,24 @@ async fn in_place_rename_to_a_matching_name_attaches() {
     // `apply_appeared`'s `Some(previous) if same_occurrence(..)` branch
     // with a changed name on the second call.
     let mut tracked = HashMap::new();
+    let mut pending_exits = HashMap::new();
 
     // A loader execs under a non-matching name, then renames itself in
     // place (Wine's `set_process_name` -> `prctl(PR_SET_NAME)` is the
     // motivating case, P2): same pid, same start_time, only name/path
     // change. No plugin matches "loader.exe", so nothing attaches yet.
-    apply_appeared(&host, &mut tracked, test_process(600, "loader.exe"));
-    apply_appeared(&host, &mut tracked, test_process(600, "osu!.exe"));
+    apply_appeared(
+        &host,
+        &mut tracked,
+        &mut pending_exits,
+        test_process(600, "loader.exe"),
+    );
+    apply_appeared(
+        &host,
+        &mut tracked,
+        &mut pending_exits,
+        test_process(600, "osu!.exe"),
+    );
 
     let attached = expect_attached(&events, 600);
     assert_eq!(attached.pid, 600);
@@ -659,8 +763,11 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
     // tick as a possible cause: only the forced-reconcile condition can
     // make the second `run_pass` call below find pid 401.
     let mut tracked = HashMap::new();
+    let mut pending_exits = HashMap::new();
     let mut last_filter: Option<Prefilter> = None;
     let mut last_generation: Option<u64> = None;
+    let cadence = DiscoveryCadence::default();
+    let counters = DiscoveryCounters::default();
     let far_future = Instant::now() + Duration::from_secs(3600);
 
     // First pass: syncs the pre-filter/generation to the plugin just
@@ -669,8 +776,12 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
         &host,
         source.as_ref(),
         &mut tracked,
+        &mut pending_exits,
         &mut last_filter,
         &mut last_generation,
+        &cadence,
+        &counters,
+        Instant::now(),
         far_future,
     );
 
@@ -695,8 +806,12 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
         &host,
         source.as_ref(),
         &mut tracked,
+        &mut pending_exits,
         &mut last_filter,
         &mut last_generation,
+        &cadence,
+        &counters,
+        Instant::now(),
         far_future,
     );
 
@@ -822,3 +937,7 @@ async fn sync_prefilter_advances_last_filter_after_a_failure() {
     assert!(!forced_again);
     assert_eq!(source.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
+
+/// F2 cadence/exit-confirmation/stats tests (parity rows 13-17, `m1-remainder-plan.md`
+/// §7): split out to keep this file under the 1,000-line limit.
+mod cadence;

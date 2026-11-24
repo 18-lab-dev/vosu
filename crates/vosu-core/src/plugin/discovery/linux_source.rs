@@ -94,14 +94,6 @@ impl LinuxSource {
         }
     }
 
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn backend_name(&self) -> &'static str {
-        self.events
-            .as_ref()
-            .map_or("polling", LinuxProcessEvents::backend_name)
-    }
-
     fn current_filter(&self) -> CommHints {
         self.filter
             .lock()
@@ -241,6 +233,39 @@ impl ProcessSource for LinuxSource {
 
     fn notifier(&self) -> Option<&Notify> {
         self.events.as_ref().map(LinuxProcessEvents::notifier)
+    }
+
+    /// Delegates to [`LinuxProcessEvents::backend_name`] once an event
+    /// backend is open (`"ebpf"`/`"cn_proc"`), else the trait default
+    /// `"polling"` for a source that degraded (module doc comment).
+    fn backend_name(&self) -> &'static str {
+        self.events
+            .as_ref()
+            .map_or("polling", LinuxProcessEvents::backend_name)
+    }
+
+    /// Delegates to [`LinuxProcessEvents::healthy`]; `false` (the trait
+    /// default) for a source that degraded to polling.
+    fn events_healthy(&self) -> bool {
+        self.events
+            .as_ref()
+            .is_some_and(LinuxProcessEvents::healthy)
+    }
+
+    /// Delegates to [`LinuxProcessEvents::event_count`]; 0 (the trait
+    /// default) for a source that degraded to polling.
+    fn event_count(&self) -> u64 {
+        self.events
+            .as_ref()
+            .map_or(0, LinuxProcessEvents::event_count)
+    }
+
+    /// Delegates to [`LinuxProcessEvents::reconciliation_request_count`];
+    /// 0 (the trait default) for a source that degraded to polling.
+    fn reconciliation_request_count(&self) -> u64 {
+        self.events
+            .as_ref()
+            .map_or(0, LinuxProcessEvents::reconciliation_request_count)
     }
 }
 

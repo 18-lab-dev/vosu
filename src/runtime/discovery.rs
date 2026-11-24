@@ -23,6 +23,7 @@ use std::io;
 use std::sync::Arc;
 
 use tokio::runtime::Handle;
+use vosu_core::logging::Logger;
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use vosu_core::plugin::Prefilter;
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
@@ -136,16 +137,23 @@ impl ProcessSource for PollingLinuxSource {
 /// [`DiscoveryService::start`]'s own "the caller decides whether to call
 /// it at all" contract (that method's doc comment). `runtime` drives the
 /// returned service's one asynchronous wait, the same role it plays for
-/// [`DiscoveryService::start`] directly.
+/// [`DiscoveryService::start`] directly. Logs
+/// `"Process events backend: {name}"` (DI, `ProcessSource::backend_name`)
+/// exactly like 1.x's own startup log (`src/runtime/lifecycle.rs:340`,
+/// `tests/daemon_smoke.rs:1128`'s own assertion) — dormant today, since
+/// production's `BUNDLED` has no `[match]` table until `vosu-osu` lands
+/// (module doc comment), so this never actually runs in production yet.
 #[must_use]
 pub(super) fn start_discovery(
     plugin_host: &Arc<PluginHost>,
     runtime: Handle,
+    logger: &Logger,
 ) -> Option<DiscoveryService> {
     if !plugin_host.has_enabled_matchers() {
         return None;
     }
     let source = platform_process_source();
+    logger.info(format!("Process events backend: {}", source.backend_name()));
     Some(DiscoveryService::start(plugin_host, source, runtime))
 }
 
@@ -190,7 +198,7 @@ mod tests {
         }
     }
 
-    fn test_host(runtime: Handle) -> (tempfile::TempDir, Arc<PluginHost>) {
+    fn test_host(runtime: Handle) -> (tempfile::TempDir, Logger, Arc<PluginHost>) {
         let log_dir = tempfile::tempdir().unwrap();
         let logger = Logger::new(
             log_dir.path(),
@@ -203,8 +211,8 @@ mod tests {
         )
         .unwrap();
         let settings = Arc::new(PluginSettingsService::new(Arc::new(DummyStorage)));
-        let host = PluginHost::new(logger, settings, runtime);
-        (log_dir, host)
+        let host = PluginHost::new(logger.clone(), settings, runtime);
+        (log_dir, logger, host)
     }
 
     /// The zero-cost case (M1 §4 phase d2b unit d's own "production
@@ -216,10 +224,10 @@ mod tests {
     fn no_enabled_matchers_starts_no_discovery_thread() {
         let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
         let _enter = runtime.enter();
-        let (_log_dir, host) = test_host(runtime.handle().clone());
+        let (_log_dir, logger, host) = test_host(runtime.handle().clone());
         assert!(!host.has_enabled_matchers());
         assert!(
-            start_discovery(&host, runtime.handle().clone()).is_none(),
+            start_discovery(&host, runtime.handle().clone(), &logger).is_none(),
             "no plugin registered a [match] table, so discovery must not start"
         );
     }
@@ -299,7 +307,7 @@ mod tests {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn discovery_runs_and_is_stopped_before_destroy_all() {
             let runtime = tokio::runtime::Handle::current();
-            let (_log_dir, host) = test_host(runtime.clone());
+            let (_log_dir, logger, host) = test_host(runtime.clone());
 
             let comm = unique_comm();
             let events = session::register_with_config(
@@ -335,7 +343,7 @@ mod tests {
             let pid = child.0.id();
 
             assert!(host.has_enabled_matchers());
-            let discovery = start_discovery(&host, runtime)
+            let discovery = start_discovery(&host, runtime, &logger)
                 .expect("a registered [match] table must start discovery");
 
             let attached = match expect_event(
@@ -375,7 +383,7 @@ mod tests {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn discovery_attaches_via_process_names_without_comm_hints() {
             let runtime = tokio::runtime::Handle::current();
-            let (_log_dir, host) = test_host(runtime.clone());
+            let (_log_dir, logger, host) = test_host(runtime.clone());
 
             let comm = unique_comm();
             let events = session::register_with_config(
@@ -411,7 +419,7 @@ mod tests {
             let pid = child.0.id();
 
             assert!(host.has_enabled_matchers());
-            let discovery = start_discovery(&host, runtime)
+            let discovery = start_discovery(&host, runtime, &logger)
                 .expect("a registered [match] table must start discovery");
 
             let attached = match expect_event(
@@ -515,7 +523,7 @@ mod tests {
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn discovery_attaches_detaches_and_reattaches_a_restarted_child() {
             let runtime = tokio::runtime::Handle::current();
-            let (_log_dir, host) = test_host(runtime.clone());
+            let (_log_dir, logger, host) = test_host(runtime.clone());
 
             let name = unique_name();
             let events = session::register_with_config(
@@ -544,7 +552,7 @@ mod tests {
             let pid = child.0.id();
 
             assert!(host.has_enabled_matchers());
-            let discovery = start_discovery(&host, runtime.clone())
+            let discovery = start_discovery(&host, runtime.clone(), &logger)
                 .expect("a registered [match] table must start discovery");
 
             let attached = match expect_event(

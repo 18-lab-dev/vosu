@@ -28,15 +28,32 @@
 //! a source's own event [`Notify`], this service's own wake-on-stop
 //! `Notify`, and a bounded timeout together — runs on that dedicated
 //! thread, driven through `Handle::block_on`, never a worker.
+//!
+//! Cadence and exit confirmation (DI, `docs/v2/implementation-plan.md` M1
+//! §4): a flat reconciliation interval regressed Windows detection
+//! latency from 1.x's 100 ms to 2 s, so [`DiscoveryCadence`] instead
+//! mirrors 1.x's own cadence exactly (`src/instance.rs:31-42`,
+//! `src/instance/runtime.rs:262-266`) — fast (100 ms) while nothing is
+//! tracked, 1 s while something is, relaxing to 5 s only while
+//! [`ProcessSource::events_healthy`] reports a healthy push-event channel
+//! and nothing just forced an out-of-cadence pass. An `exit` hint is not
+//! trusted outright either: [`ProcessSource::is_alive`] re-confirms it,
+//! and a pid that still reports alive is re-checked with exponential
+//! backoff (10 ms up to 250 ms, at most
+//! [`MAX_PENDING_EXIT_CONFIRMATIONS`] pending at once) instead of being
+//! detached — a push event can race a process that is dying but has not
+//! yet been reaped.
+
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
+use vosu_sys::process::is_process_alive;
 
 use super::host::{PluginHost, ProcessRecord};
 use super::matcher::Prefilter;
@@ -57,22 +74,94 @@ pub struct ProcessEventBatch {
     pub exit: Vec<u32>,
     /// Whether the source itself lost events and a full
     /// [`ProcessSource::enumerate`] pass is needed regardless of
-    /// [`RECONCILE_INTERVAL`].
+    /// cadence.
     pub needs_reconcile: bool,
 }
 
-/// Full reconciliation cadence (bounded loss recovery,
-/// `docs/v2/implementation-plan.md` M1 §4): every `enumerate()`-driven full
-/// pass, regardless of whether the source's own event channel is healthy,
-/// re-derives ground truth from scratch. A source with a healthy,
-/// low-latency event channel (Linux eBPF/CN_PROC) answers almost every
-/// individual change through [`ProcessSource::drain_events`]/
-/// [`ProcessSource::inspect`] well before this fires; this interval only
-/// bounds how long a missed or lost event
-/// ([`ProcessEventBatch::needs_reconcile`], a dead event source, or a
-/// pure-poll source such as Windows or the testkit default) can leave the
-/// host's session set stale.
-const RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
+/// Full reconciliation cadence (module doc comment, DI): every
+/// `enumerate()`-driven full pass re-derives ground truth from scratch,
+/// no less often than this. [`DiscoveryService::start`] always uses
+/// [`DiscoveryCadence::default`]; no production caller configures
+/// another value today, but tests drive [`run_pass`] directly with their
+/// own instance to pin deadlines without a wall-clock sleep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryCadence {
+    /// Cadence while no process is tracked at all: 1.x polled this fast
+    /// specifically so a cold-started osu! is still detected quickly
+    /// (`src/instance.rs:31` `EMPTY_DISCOVERY_INTERVAL`).
+    pub empty: Duration,
+    /// Cadence while at least one process is tracked and either the
+    /// source's own event channel is unhealthy/absent or this pass just
+    /// forced an out-of-cadence reconcile — a failure or a loss needs
+    /// confirming soon, not after a long health-gated wait
+    /// (`src/instance.rs:32` `ACTIVE_DISCOVERY_INTERVAL`).
+    pub active: Duration,
+    /// Cadence while at least one process is tracked and
+    /// [`ProcessSource::events_healthy`] reports the event channel is
+    /// healthy: the backstop only needs to catch a missed event, which a
+    /// healthy channel already makes rare
+    /// (`src/instance.rs:34` `EVENT_RECONCILIATION_INTERVAL`).
+    pub events_healthy: Duration,
+}
+
+impl Default for DiscoveryCadence {
+    fn default() -> Self {
+        Self {
+            empty: Duration::from_millis(100),
+            active: Duration::from_secs(1),
+            events_healthy: Duration::from_secs(5),
+        }
+    }
+}
+
+/// Exit-confirmation backoff bounds (module doc comment; mirrors
+/// `src/instance.rs:37-42`).
+const MAX_PENDING_EXIT_CONFIRMATIONS: usize = 128;
+const EXIT_CONFIRMATION_INITIAL_BACKOFF: Duration = Duration::from_millis(10);
+const EXIT_CONFIRMATION_MAX_BACKOFF: Duration = Duration::from_millis(250);
+
+/// A still-pending exit hint awaiting liveness reconfirmation (module doc
+/// comment, exit confirmation). Keyed by pid in [`run_pass`]'s own
+/// state; `start_time` guards an entry against resolving the wrong
+/// occurrence once something else (a reused pid, or the same pid simply
+/// reconfirmed alive through another path) has superseded it.
+#[derive(Debug, Clone, Copy)]
+struct PendingExit {
+    start_time: u64,
+    due: Instant,
+    backoff: Duration,
+}
+
+/// Snapshot of [`DiscoveryService`]'s own lifetime counters
+/// (`DiscoveryService::stats`), useful for diagnostics and tests.
+/// `full_scans`/`targeted_inspections` count only a *successful* call —
+/// a failed [`ProcessSource::enumerate`]/[`ProcessSource::inspect`] is
+/// logged and forces a retry/reconcile but is never counted as work
+/// done. `reconciliation_requests` counts only an out-of-cadence full
+/// reconcile this service itself forced (a pre-filter/matcher-generation
+/// change, or [`apply_batch`] asking for one), never the plain periodic
+/// tick. `process_events` is a live read of
+/// [`ProcessSource::event_count`]: this service never duplicates a
+/// source backend's own internal bookkeeping.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryStats {
+    pub full_scans: u64,
+    pub targeted_inspections: u64,
+    pub event_wakes: u64,
+    pub reconciliation_requests: u64,
+    pub process_events: u64,
+}
+
+/// [`DiscoveryService`]'s own lifetime atomics backing [`DiscoveryStats`]
+/// (`DiscoveryStats`'s own doc comment explains which fields these
+/// back).
+#[derive(Debug, Default)]
+struct DiscoveryCounters {
+    full_scans: AtomicU64,
+    targeted_inspections: AtomicU64,
+    event_wakes: AtomicU64,
+    reconciliation_requests: AtomicU64,
+}
 
 /// What the discovery service needs from an OS- or test-specific process
 /// source (M1 §4, phase d2b): full enumeration for startup and periodic
@@ -80,7 +169,7 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
 /// provides (Linux eBPF/CN_PROC), and the live comm-hint pre-filter sink.
 /// A pure-poll source (Windows, the testkit default) implements only
 /// [`Self::enumerate`] and relies on this service's own
-/// [`RECONCILE_INTERVAL`] entirely — every other method's default already
+/// [`DiscoveryCadence`] entirely — every other method's default already
 /// behaves correctly for it.
 pub trait ProcessSource: Send + Sync {
     /// Every process this source currently considers a discovery
@@ -106,10 +195,10 @@ pub trait ProcessSource: Send + Sync {
     /// Drains event hints buffered since the last call: `inspect` pids to
     /// re-check, `exit` pids the source already knows are gone, and
     /// whether the source itself lost events and this service must run a
-    /// full reconcile regardless of [`RECONCILE_INTERVAL`]. The default —
-    /// an always-empty, never-reconcile-forcing batch — is exactly
-    /// correct for a pure-poll source: [`RECONCILE_INTERVAL`] alone
-    /// already drives it.
+    /// full reconcile regardless of cadence. The default — an
+    /// always-empty, never-reconcile-forcing batch — is exactly correct
+    /// for a pure-poll source: [`DiscoveryCadence`] alone already drives
+    /// it.
     fn drain_events(&self) -> ProcessEventBatch {
         ProcessEventBatch::default()
     }
@@ -126,13 +215,57 @@ pub trait ProcessSource: Send + Sync {
         Ok(())
     }
 
-    /// A [`Notify`] this service awaits alongside its own
-    /// [`RECONCILE_INTERVAL`] timeout, woken whenever new events are ready
-    /// for [`Self::drain_events`]. `None` (the default) for a source with
-    /// no event channel: the service then relies on the timeout alone,
+    /// A [`Notify`] this service awaits alongside its own cadence
+    /// timeout, woken whenever new events are ready for
+    /// [`Self::drain_events`]. `None` (the default) for a source with no
+    /// event channel: the service then relies on the timeout alone,
     /// exactly as a pure-poll source needs.
     fn notifier(&self) -> Option<&Notify> {
         None
+    }
+
+    /// Human-readable push-event backend name for diagnostics/logging
+    /// (`src/runtime/discovery.rs::start_discovery` logs `"Process
+    /// events backend: {name}"`, mirroring 1.x's own startup log). The
+    /// default, `"polling"`, is exactly right for a pure-poll source.
+    fn backend_name(&self) -> &'static str {
+        "polling"
+    }
+
+    /// Whether this source's own push-event channel is currently healthy
+    /// (DI: 1.x's `discovery_events_healthy`/`process_events_healthy`).
+    /// [`DiscoveryCadence::events_healthy`] only applies while this is
+    /// `true`; the default, `false`, is exactly right for a pure-poll
+    /// source (no event channel is ever "healthy").
+    fn events_healthy(&self) -> bool {
+        false
+    }
+
+    /// Total process-level events this source's own backend has ever
+    /// observed, for [`DiscoveryStats::process_events`]. The default, 0,
+    /// is exactly right for a pure-poll source.
+    fn event_count(&self) -> u64 {
+        0
+    }
+
+    /// Total number of times this source's own backend requested a full
+    /// reconcile (a bounded internal queue overflowing, for instance),
+    /// independent of whether [`DiscoveryService`] actually acted on it.
+    /// The default, 0, is exactly right for a pure-poll source.
+    fn reconciliation_request_count(&self) -> u64 {
+        0
+    }
+
+    /// Whether `pid` is still running, for exit confirmation (module doc
+    /// comment): an `exit` hint this source itself reported is
+    /// re-verified through this method, with backoff, instead of being
+    /// trusted outright — mirrors 1.x's own confirmation
+    /// (`src/instance.rs:37-42`). The default asks the OS directly
+    /// (`vosu_sys::process::is_process_alive`); a synthetic test source
+    /// overrides this to answer from its own in-memory state instead of
+    /// the real OS.
+    fn is_alive(&self, pid: u32) -> bool {
+        is_process_alive(pid)
     }
 }
 
@@ -175,9 +308,17 @@ fn same_occurrence(a: &ProcessRecord, b: &ProcessRecord) -> bool {
 /// running, exactly 1.x's own pid-identified session lifecycle), and a
 /// fresh attach for one whose new name/path a matcher now accepts that
 /// did not accept the old one.
+///
+/// Also clears any pending exit confirmation for this pid (exit
+/// confirmation, module doc comment): a fresh, repeated, or
+/// reused-pid-superseding appearance is itself live confirmation the pid
+/// is running, which outranks an exit hint this service has not yet
+/// confirmed — stale for the old occurrence on a supersede, redundant
+/// for the current one otherwise.
 fn apply_appeared(
     host: &PluginHost,
     tracked: &mut HashMap<u32, ProcessRecord>,
+    pending_exits: &mut HashMap<u32, PendingExit>,
     record: ProcessRecord,
 ) {
     match tracked.get(&record.pid) {
@@ -192,15 +333,23 @@ fn apply_appeared(
         }
         None => host.process_appeared(record.clone()),
     }
+    pending_exits.remove(&record.pid);
     tracked.insert(record.pid, record);
 }
 
-/// Reports `pid` exited to `host` and stops tracking it. Safe to call for
-/// a pid this service never reported as appeared (e.g. one that never
-/// matched any plugin's `[match]` table): [`PluginHost::process_exited`]
-/// is itself a no-op for a pid it is not tracking a session for.
-fn apply_exited(host: &PluginHost, tracked: &mut HashMap<u32, ProcessRecord>, pid: u32) {
+/// Reports `pid` exited to `host`, stops tracking it, and drops any
+/// pending exit confirmation for it. Safe to call for a pid this service
+/// never reported as appeared (e.g. one that never matched any plugin's
+/// `[match]` table): [`PluginHost::process_exited`] is itself a no-op for
+/// a pid it is not tracking a session for.
+fn apply_exited(
+    host: &PluginHost,
+    tracked: &mut HashMap<u32, ProcessRecord>,
+    pending_exits: &mut HashMap<u32, PendingExit>,
+    pid: u32,
+) {
     tracked.remove(&pid);
+    pending_exits.remove(&pid);
     host.process_exited(pid);
 }
 
@@ -209,24 +358,27 @@ fn apply_exited(host: &PluginHost, tracked: &mut HashMap<u32, ProcessRecord>, pi
 /// every previously tracked pid absent from that list is applied through
 /// [`apply_exited`]. Logs and leaves `tracked` unchanged on an
 /// enumeration failure, so a transient failure neither drops every
-/// tracked session nor wedges the service — the next [`RECONCILE_INTERVAL`]
-/// tick (or targeted event) retries.
+/// tracked session nor wedges the service — the next cadence tick (or
+/// targeted event) retries. Returns whether the pass succeeded; only a
+/// success counts toward [`DiscoveryStats::full_scans`].
 fn full_reconcile(
     host: &PluginHost,
     source: &dyn ProcessSource,
     tracked: &mut HashMap<u32, ProcessRecord>,
-) {
+    pending_exits: &mut HashMap<u32, PendingExit>,
+    counters: &DiscoveryCounters,
+) -> bool {
     let current = match source.enumerate() {
         Ok(current) => current,
         Err(error) => {
             tracing::warn!(%error, "discovery full reconcile failed; retrying next cycle");
-            return;
+            return false;
         }
     };
     let mut seen = HashSet::with_capacity(current.len());
     for record in current {
         seen.insert(record.pid);
-        apply_appeared(host, tracked, record);
+        apply_appeared(host, tracked, pending_exits, record);
     }
     let gone: Vec<u32> = tracked
         .keys()
@@ -234,32 +386,143 @@ fn full_reconcile(
         .filter(|pid| !seen.contains(pid))
         .collect();
     for pid in gone {
-        apply_exited(host, tracked, pid);
+        apply_exited(host, tracked, pending_exits, pid);
+    }
+    counters.full_scans.fetch_add(1, Ordering::Relaxed);
+    true
+}
+
+/// Applies one `exit` hint (exit confirmation, module doc comment):
+/// detaches outright only once [`ProcessSource::is_alive`] agrees the
+/// pid is actually gone; while it still reports alive, schedules (or
+/// keeps, backoff unchanged) a pending re-check instead — mirrors
+/// `src/instance.rs:37-42`. A pid this service is not tracking at all
+/// needs no confirmation (nothing to detach). Returns whether the
+/// [`MAX_PENDING_EXIT_CONFIRMATIONS`] bound had to evict another
+/// still-pending entry to make room: the caller treats that the same as
+/// an inspect failure, forcing a reconcile, since the evicted pid's own
+/// eventual exit can now only be caught by a full reconcile.
+fn handle_exit_hint(
+    host: &PluginHost,
+    source: &dyn ProcessSource,
+    tracked: &mut HashMap<u32, ProcessRecord>,
+    pending_exits: &mut HashMap<u32, PendingExit>,
+    now: Instant,
+    pid: u32,
+) -> bool {
+    let Some(record) = tracked.get(&pid) else {
+        pending_exits.remove(&pid);
+        return false;
+    };
+    if source.is_alive(pid) {
+        let mut evicted_another = false;
+        if !pending_exits.contains_key(&pid)
+            && pending_exits.len() >= MAX_PENDING_EXIT_CONFIRMATIONS
+            && let Some(oldest) = pending_exits
+                .iter()
+                .max_by_key(|(_, pending)| pending.due)
+                .map(|(&pid, _)| pid)
+        {
+            pending_exits.remove(&oldest);
+            evicted_another = true;
+        }
+        pending_exits.entry(pid).or_insert(PendingExit {
+            start_time: record.start_time,
+            due: now + EXIT_CONFIRMATION_INITIAL_BACKOFF,
+            backoff: EXIT_CONFIRMATION_INITIAL_BACKOFF,
+        });
+        evicted_another
+    } else {
+        pending_exits.remove(&pid);
+        apply_exited(host, tracked, pending_exits, pid);
+        false
+    }
+}
+
+/// Re-checks every pending exit confirmation whose backoff deadline is
+/// due as of `now` (exit confirmation, module doc comment): confirmed
+/// dead detaches it; still alive doubles the backoff (capped at
+/// [`EXIT_CONFIRMATION_MAX_BACKOFF`]); an entry whose pid no longer
+/// tracks the same occurrence it was scheduled for (superseded
+/// elsewhere, e.g. [`apply_appeared`]'s own unconditional clear) is
+/// simply dropped, since whatever superseded it already resolved the
+/// session correctly.
+fn resolve_due_pending_exits(
+    host: &PluginHost,
+    source: &dyn ProcessSource,
+    tracked: &mut HashMap<u32, ProcessRecord>,
+    pending_exits: &mut HashMap<u32, PendingExit>,
+    now: Instant,
+) {
+    let due: Vec<u32> = pending_exits
+        .iter()
+        .filter(|(_, pending)| pending.due <= now)
+        .map(|(&pid, _)| pid)
+        .collect();
+    for pid in due {
+        let Some(pending) = pending_exits.get(&pid).copied() else {
+            continue;
+        };
+        let still_current = tracked
+            .get(&pid)
+            .is_some_and(|record| record.start_time == pending.start_time);
+        if !still_current {
+            pending_exits.remove(&pid);
+        } else if source.is_alive(pid) {
+            let backoff = (pending.backoff * 2).min(EXIT_CONFIRMATION_MAX_BACKOFF);
+            pending_exits.insert(
+                pid,
+                PendingExit {
+                    start_time: pending.start_time,
+                    due: now + backoff,
+                    backoff,
+                },
+            );
+        } else {
+            pending_exits.remove(&pid);
+            apply_exited(host, tracked, pending_exits, pid);
+        }
     }
 }
 
 /// Applies one `source.drain_events()` batch: every `exit` pid through
-/// [`apply_exited`], every `inspect` pid re-read through
+/// [`handle_exit_hint`], every `inspect` pid re-read through
 /// [`ProcessSource::inspect`] and applied through [`apply_appeared`] (or
-/// [`apply_exited`] if it is already gone). Returns whether a full
-/// reconcile is now needed — either because the source itself asked for
-/// one ([`ProcessEventBatch::needs_reconcile`]) or because a targeted
-/// `inspect` failed, which the caller cannot otherwise tell from a plain
-/// `()` return.
+/// [`apply_exited`] if it is already gone) — a successful `inspect`
+/// (either outcome) counts toward [`DiscoveryStats::targeted_inspections`].
+/// Returns whether a full reconcile is now needed — either because the
+/// source itself asked for one ([`ProcessEventBatch::needs_reconcile`]),
+/// an exit confirmation evicted another pending entry under
+/// [`MAX_PENDING_EXIT_CONFIRMATIONS`], or because a targeted `inspect`
+/// failed, which the caller cannot otherwise tell from a plain `()`
+/// return — a failed inspect is never counted.
 fn apply_batch(
     host: &PluginHost,
     source: &dyn ProcessSource,
     tracked: &mut HashMap<u32, ProcessRecord>,
+    pending_exits: &mut HashMap<u32, PendingExit>,
+    counters: &DiscoveryCounters,
+    now: Instant,
     batch: ProcessEventBatch,
 ) -> bool {
-    for pid in batch.exit {
-        apply_exited(host, tracked, pid);
-    }
     let mut needs_reconcile = batch.needs_reconcile;
+    for pid in batch.exit {
+        needs_reconcile |= handle_exit_hint(host, source, tracked, pending_exits, now, pid);
+    }
     for pid in batch.inspect {
         match source.inspect(pid) {
-            Ok(Some(record)) => apply_appeared(host, tracked, record),
-            Ok(None) => apply_exited(host, tracked, pid),
+            Ok(Some(record)) => {
+                apply_appeared(host, tracked, pending_exits, record);
+                counters
+                    .targeted_inspections
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(None) => {
+                apply_exited(host, tracked, pending_exits, pid);
+                counters
+                    .targeted_inspections
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             Err(error) => {
                 tracing::warn!(%error, pid, "discovery targeted inspect failed; forcing a full reconcile");
                 needs_reconcile = true;
@@ -331,58 +594,125 @@ fn reoffer_tracked(host: &PluginHost, tracked: &HashMap<u32, ProcessRecord>) {
     }
 }
 
+/// The next full-reconcile deadline's interval from `now` (DI,
+/// [`DiscoveryCadence`]'s own doc comment). `forced` is `true` for an
+/// out-of-cadence reconcile (a pre-filter/matcher-generation change, or
+/// [`apply_batch`] asking for one): 1.x always re-derived
+/// `discovery_interval()` (never the healthy-events interval) the moment
+/// anything needed a retry, regardless of event health
+/// (`src/instance/runtime.rs:262-266`).
+fn cadence_interval(
+    cadence: &DiscoveryCadence,
+    tracked_empty: bool,
+    events_healthy: bool,
+    forced: bool,
+) -> Duration {
+    if events_healthy && !forced {
+        cadence.events_healthy
+    } else if tracked_empty {
+        cadence.empty
+    } else {
+        cadence.active
+    }
+}
+
 /// Blocks the calling (dedicated, non-worker) thread until `source`'s own
 /// event [`Notify`] fires, `wake` fires (service stopping, or a hint-set
 /// change worth checking promptly), or `timeout` elapses — whichever comes
 /// first. Driven through `runtime.block_on`, never a worker (module doc
-/// comment).
-fn wait_next(runtime: &Handle, source: &dyn ProcessSource, wake: &Notify, timeout: Duration) {
+/// comment). Reports which of the three actually woke it, so the caller
+/// can count [`DiscoveryStats::event_wakes`] only for a genuine source
+/// event, never a timeout or the service's own stop signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeReason {
+    SourceEvent,
+    ServiceWake,
+    Timeout,
+}
+
+fn wait_next(
+    runtime: &Handle,
+    source: &dyn ProcessSource,
+    wake: &Notify,
+    timeout: Duration,
+) -> WakeReason {
     runtime.block_on(async {
         match source.notifier() {
             Some(notifier) => {
                 tokio::select! {
-                    () = notifier.notified() => {}
-                    () = wake.notified() => {}
-                    () = tokio::time::sleep(timeout) => {}
+                    () = notifier.notified() => WakeReason::SourceEvent,
+                    () = wake.notified() => WakeReason::ServiceWake,
+                    () = tokio::time::sleep(timeout) => WakeReason::Timeout,
                 }
             }
             None => {
                 tokio::select! {
-                    () = wake.notified() => {}
-                    () = tokio::time::sleep(timeout) => {}
+                    () = wake.notified() => WakeReason::ServiceWake,
+                    () = tokio::time::sleep(timeout) => WakeReason::Timeout,
                 }
             }
         }
-    });
+    })
 }
 
 /// One discovery reconciliation pass: syncs the pre-filter and matcher
 /// generation, then either a full reconcile (startup, due tick, a
 /// pre-filter/generation change, or a source-requested reconcile) or a
-/// targeted event batch. A generation change additionally re-offers
-/// every tracked record once the full reconcile's own enumerate() has
-/// run. Returns the deadline for the next full reconcile.
+/// targeted event batch (resolving any due exit confirmations first). A
+/// generation change additionally re-offers every tracked record once
+/// the full reconcile's own `enumerate()` has run. Takes `now` explicitly
+/// (rather than reading [`Instant::now`] itself) so a test can pin
+/// deadlines and backoff windows deterministically, without a wall-clock
+/// sleep for ordering (`discovery/tests.rs`). Returns the deadline for
+/// the next full reconcile.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every argument is this pass's own mutable discovery state or a read-only input; splitting it into a struct would not reduce coupling, only hide it (scripts/lint-expectations.txt)"
+)]
 fn run_pass(
     host: &PluginHost,
     source: &dyn ProcessSource,
     tracked: &mut HashMap<u32, ProcessRecord>,
+    pending_exits: &mut HashMap<u32, PendingExit>,
     last_filter: &mut Option<Prefilter>,
     last_generation: &mut Option<u64>,
+    cadence: &DiscoveryCadence,
+    counters: &DiscoveryCounters,
+    now: Instant,
     next_reconcile: Instant,
 ) -> Instant {
     let filter_changed = sync_prefilter(host, source, last_filter);
     let generation_changed = sync_generation(host, last_generation);
-    let now = Instant::now();
     if filter_changed || generation_changed || now >= next_reconcile {
-        full_reconcile(host, source, tracked);
+        let forced = filter_changed || generation_changed;
+        if forced {
+            counters
+                .reconciliation_requests
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if !full_reconcile(host, source, tracked, pending_exits, counters) {
+            // Enumeration itself failed: retry promptly regardless of
+            // tracked-set size or event health, instead of waiting out
+            // whatever interval the formula below would otherwise pick
+            // (`failed_full_scan_retries_early_and_counts_only_success`).
+            return now + cadence.empty;
+        }
         if generation_changed {
             reoffer_tracked(host, tracked);
         }
-        return Instant::now() + RECONCILE_INTERVAL;
+        return now
+            + cadence_interval(cadence, tracked.is_empty(), source.events_healthy(), forced);
     }
-    if apply_batch(host, source, tracked, source.drain_events()) {
-        full_reconcile(host, source, tracked);
-        return Instant::now() + RECONCILE_INTERVAL;
+    resolve_due_pending_exits(host, source, tracked, pending_exits, now);
+    let batch = source.drain_events();
+    if apply_batch(host, source, tracked, pending_exits, counters, now, batch) {
+        counters
+            .reconciliation_requests
+            .fetch_add(1, Ordering::Relaxed);
+        if !full_reconcile(host, source, tracked, pending_exits, counters) {
+            return now + cadence.empty;
+        }
+        return now + cadence_interval(cadence, tracked.is_empty(), source.events_healthy(), true);
     }
     next_reconcile
 }
@@ -396,6 +726,8 @@ pub struct DiscoveryService {
     cancel: Arc<AtomicBool>,
     wake: Arc<Notify>,
     thread: Option<JoinHandle<()>>,
+    source: Arc<dyn ProcessSource>,
+    counters: Arc<DiscoveryCounters>,
 }
 
 impl DiscoveryService {
@@ -410,13 +742,18 @@ impl DiscoveryService {
     pub fn start(host: &Arc<PluginHost>, source: Arc<dyn ProcessSource>, runtime: Handle) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Notify::new());
+        let counters = Arc::new(DiscoveryCounters::default());
+        let cadence = DiscoveryCadence::default();
         let loop_host = Arc::downgrade(host);
         let loop_cancel = Arc::clone(&cancel);
         let loop_wake = Arc::clone(&wake);
+        let loop_source = Arc::clone(&source);
+        let loop_counters = Arc::clone(&counters);
         let thread = thread::Builder::new()
             .name("vosu-discovery".to_owned())
             .spawn(move || {
                 let mut tracked: HashMap<u32, ProcessRecord> = HashMap::new();
+                let mut pending_exits: HashMap<u32, PendingExit> = HashMap::new();
                 let mut last_filter: Option<Prefilter> = None;
                 let mut last_generation: Option<u64> = None;
                 // Due immediately: the first pass is always a full
@@ -429,18 +766,37 @@ impl DiscoveryService {
                     };
                     next_reconcile = run_pass(
                         &host,
-                        source.as_ref(),
+                        loop_source.as_ref(),
                         &mut tracked,
+                        &mut pending_exits,
                         &mut last_filter,
                         &mut last_generation,
+                        &cadence,
+                        &loop_counters,
+                        Instant::now(),
                         next_reconcile,
                     );
                     drop(host);
                     if loop_cancel.load(Ordering::Acquire) {
                         break;
                     }
-                    let timeout = next_reconcile.saturating_duration_since(Instant::now());
-                    wait_next(&runtime, source.as_ref(), &loop_wake, timeout);
+                    let now = Instant::now();
+                    // Wakes early for whichever is sooner: the next full
+                    // reconcile, or the next due exit-confirmation
+                    // backoff retry (module doc comment) — neither
+                    // `wait_next`'s own source notifier nor the periodic
+                    // timeout alone would otherwise retry a pending exit
+                    // on its own fast schedule.
+                    let deadline = pending_exits
+                        .values()
+                        .map(|pending| pending.due)
+                        .fold(next_reconcile, Instant::min);
+                    let timeout = deadline.saturating_duration_since(now);
+                    if wait_next(&runtime, loop_source.as_ref(), &loop_wake, timeout)
+                        == WakeReason::SourceEvent
+                    {
+                        loop_counters.event_wakes.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             })
             .expect("spawning the discovery thread must not fail");
@@ -448,6 +804,24 @@ impl DiscoveryService {
             cancel,
             wake,
             thread: Some(thread),
+            source,
+            counters,
+        }
+    }
+
+    /// A snapshot of this service's own lifetime counters
+    /// (`DiscoveryStats`'s own doc comment).
+    #[must_use]
+    pub fn stats(&self) -> DiscoveryStats {
+        DiscoveryStats {
+            full_scans: self.counters.full_scans.load(Ordering::Relaxed),
+            targeted_inspections: self.counters.targeted_inspections.load(Ordering::Relaxed),
+            event_wakes: self.counters.event_wakes.load(Ordering::Relaxed),
+            reconciliation_requests: self
+                .counters
+                .reconciliation_requests
+                .load(Ordering::Relaxed),
+            process_events: self.source.event_count(),
         }
     }
 
@@ -468,7 +842,7 @@ impl DiscoveryService {
         // permit that call consumes immediately, instead of being lost
         // the way `notify_waiters` would lose it for a `Notify` nobody
         // was already awaiting at the moment it fired (P3: `stop` must
-        // not stall until `RECONCILE_INTERVAL`'s own timeout).
+        // not stall until the cadence's own timeout).
         self.wake.notify_one();
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
