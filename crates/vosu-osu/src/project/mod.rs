@@ -70,8 +70,14 @@ pub(crate) fn project_stateful(
         caches.tourney.update(snapshot, facts);
     }
     if let Some(aggregate) = caches.stable_tourney.as_ref() {
-        sink.put(OsuPointer::OsuTourney, vosu_plugin_api::PublishValueRef::Cbor(&aggregate.bytes));
-        sink.put(OsuPointer::OsuTourneyAvailability, vosu_plugin_api::PublishValueRef::String(aggregate.availability));
+        sink.put(
+            OsuPointer::OsuTourney,
+            vosu_plugin_api::PublishValueRef::Cbor(&aggregate.bytes),
+        );
+        sink.put(
+            OsuPointer::OsuTourneyAvailability,
+            vosu_plugin_api::PublishValueRef::String(aggregate.availability),
+        );
     } else {
         tourney::project(snapshot, facts, sink);
     }
@@ -127,7 +133,10 @@ impl Projector {
 pub(crate) fn projections() -> &'static [Projection] {
     PROJECTIONS
 }
-pub(crate) fn stable_tourney(manager: Option<&StateBundleSnapshot>, clients: &[(f64, &StateBundleSnapshot)]) -> Vec<u8> {
+pub(crate) fn stable_tourney(
+    manager: Option<&StateBundleSnapshot>,
+    clients: &[(f64, &StateBundleSnapshot)],
+) -> Vec<u8> {
     tourney::stable::encode(manager, clients)
 }
 

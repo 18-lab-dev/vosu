@@ -118,13 +118,24 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
         self.identified.store(false, Ordering::Release);
     }
     pub(crate) fn set_tournament(&self, aggregate: crate::project::StableTourney) {
-        let mut current = self.aggregate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if current.as_ref().is_some_and(|current| current.revision >= aggregate.revision) {
+        let mut current = self
+            .aggregate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current
+            .as_ref()
+            .is_some_and(|current| current.revision >= aggregate.revision)
+        {
             return;
         }
+        let changed = current.as_ref().is_none_or(|current| {
+            current.bytes != aggregate.bytes || current.availability != aggregate.availability
+        });
         *current = Some(aggregate);
         drop(current);
-        self.republish_session_fields();
+        if changed {
+            self.republish_session_fields();
+        }
     }
 
     fn enqueue(&self, snapshot: Option<Arc<StateBundleSnapshot>>, refresh: bool) {
@@ -182,7 +193,11 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
                 if force || reset || inner.retry || resource_changed || !unchanged {
-                    inner.caches.stable_tourney = self.aggregate.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                    inner.caches.stable_tourney = self
+                        .aggregate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     inner.projector.prepare(&snapshot);
                     // Retain the attempted snapshot so a refresh after an unwind
                     // can retry even the first publication.

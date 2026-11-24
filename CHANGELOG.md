@@ -9,6 +9,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Publish osu! schema 1.3 source facts for independent overlay buttons, raw
   gameplay values, parsed chart clocks, leaderboard identity and tournament
   readiness, without changing existing common fields or legacy routes.
+- Identify stable tournament managers as priority sessions and publish their
+  IPC-ordered spectator aggregate to every stable session, with source readiness,
+  raw score facts and subscription-owned spectator precision demand.
 - Preserve independent primary strain histories and captured background/audio
   names even while the chart folder and filename are unavailable.
 - Add coherent, demand-free bundled adapter captures with identified session

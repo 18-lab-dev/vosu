@@ -16,8 +16,7 @@ use std::path::{Path, PathBuf};
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_reader::discovery::{
-    StartupArgs, instance_settings, is_linux_candidate_name, is_linux_named_name,
-    windows_client,
+    StartupArgs, instance_settings, is_linux_candidate_name, is_linux_named_name, windows_client,
 };
 use vosu_osu_reader::process::ProcessBitness;
 use vosu_plugin_api::{Bitness, SessionAttached};
@@ -198,7 +197,8 @@ pub fn decide(
     named_sibling_attached: bool,
 ) -> AttachDecision {
     if facts.args.as_ref().is_some_and(|args| {
-        args.get("debug-client-id").is_some_and(|value| value.is_truthy())
+        args.get("debug-client-id")
+            .is_some_and(|value| value.is_truthy())
     }) {
         return AttachDecision::Decline;
     }
@@ -206,7 +206,11 @@ pub fn decide(
         .args
         .as_ref()
         .map_or_else(default_settings, instance_settings);
-    if facts.args.as_ref().is_some_and(|args| args.get("tournament").is_some()) {
+    if facts
+        .args
+        .as_ref()
+        .is_some_and(|args| args.get("tournament").is_some())
+    {
         return AttachDecision::Identify(Identified {
             client: ClientType::Stable,
             settings,
@@ -396,7 +400,10 @@ mod tests {
         let tournament = facts(Some("osu!.exe"), Bitness::X86, args(&["--tournament="]));
         assert!(matches!(
             decide(&tournament, Platform::Windows, false),
-            AttachDecision::Identify(Identified { client: ClientType::Stable, .. })
+            AttachDecision::Identify(Identified {
+                client: ClientType::Stable,
+                ..
+            })
         ));
 
         let truthy_debug = facts(

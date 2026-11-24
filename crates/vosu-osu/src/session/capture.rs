@@ -66,7 +66,9 @@ impl OsuSession {
                     key,
                     client,
                     settings: instance_settings,
-                    is_tournament_manager: session.upgrade().is_some_and(|s| s.is_tournament_manager()),
+                    is_tournament_manager: session
+                        .upgrade()
+                        .is_some_and(|s| s.is_tournament_manager()),
                 },
             );
             // Stable also remains in this legacy dashboard phase until its

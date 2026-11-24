@@ -142,7 +142,8 @@ impl OsuSession {
     }
 
     pub(crate) fn set_tournament_manager(&self, manager: bool) {
-        self.manager.store(manager, std::sync::atomic::Ordering::Release);
+        self.manager
+            .store(manager, std::sync::atomic::Ordering::Release);
     }
     pub(crate) fn is_tournament_manager(&self) -> bool {
         self.manager.load(std::sync::atomic::Ordering::Acquire)

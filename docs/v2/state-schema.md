@@ -291,7 +291,7 @@ carry the same values while subscribed, at different cadences.
 | `folders.*`, `files.*`, `directPath.*` | removed from the API-facing surface; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. The plugin-only `vosu.osu.internal.paths.current`/`.skinFolder` (D8, R8, below) carries the same underlying names for M4a's upstream adapter to echo; API v1 itself never serves them. Unchanged in the upstream adapter. |
 | `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin`'s asset-identity fields are replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`, and its toggle fields (`useDefaultSkinInEditor`, `ignoreBeatmapSkins`, `tintSliderBall`, `useTaikoSkin`) move to the new `vosu.osu.settings.skin` (1.2.0, R7). |
 | `room` | `vosu.osu.room` | |
-| `tourney` | `vosu.osu.tourney` | Published exactly where 1.x builds it (D6): `null` on the lazer multi-spectating path (`ipcState == 11`) before the first lobby read lands, matching 1.x's own "key omitted entirely until then" behavior (`src/api/v2/tourney.rs:28-35`; every upstream-compatible adapter that carries this field — upstream v2 and gosuMemory v1 — drops the key from its own output when this value is `null`, ADR 0021's D6 amendment); populated `clients[]` once that read lands; 1.x's default empty object (`scoreVisible: false`, `clients: []`, and so on) everywhere else. Lazer tourney clients additionally publish `score`, `accuracy`, `combo {current, max}`, and `judgements` (the miss/meh/ok/great/perfect/good counts shape, 1.2.0, R6) in `$defs/tourneyClientPlay`, matching `build_lazer_tourney`'s per-client hit data (`src/api/v2/tourney.rs:166-210`). Only the stable tournament-manager aggregate is deferred, as a `temporary`-class pre-release divergence (`docs/v2/implementation-plan.md`'s M4a-or-later task and day-0 gate): until it lands, the osu! plugin takes 1.x's "no manager found" branch unconditionally on stable, and the `stable-tournament` oracle case is exempted from the M2/M4a byte-equality exits rather than passing it. |
+| `tourney` | `vosu.osu.tourney` | Stable manager controls and IPC-sorted spectator source records are aggregated onto every attached stable session; no manager produces the default empty aggregate. Before a participating source sample exists, the aggregate is null with availability `pending`. Lazer multi-spectating before its lobby read is likewise `pending`; a present score-less lazer client is `missingScore`, never an API-v1 document failure. Clients preserve per-source score, accuracy, combo, statistics, raw health/judgements, independent overlay slots and precise all-hit history. Adapters restore wire names and map readiness to their pinned omission/error policy. |
 | `GET /files/skin/` metadata (`client`, `name`, `files`, `builtin`, `base`, `entries[]`, `truncated`) | `vosu.skin.name` (common `name`); `vosu.osu.skin.{builtin,base,variant,files}`; `entries`/`truncated` are now the tree index at `vosu.skin.tree`'s `url` (`GET /api/v1/trees/{id}/`, ADR 0021) rather than a duplicated inline list | |
 
 Mapping notes (A2b):
@@ -323,6 +323,16 @@ API v1 continues to publish accurate null instead of failing the document.
 An optional public `tourneyAvailability` enum records `pending`, `ready`,
 or `missingScore`; it is updated atomically with `tourney`, even when null
 does not change.
+Stable and lazer clients additionally carry `play.healthRaw`, `play.rawJudgements`
+and `play.preciseUnstableRate`; stable `keysOverlay` retains independent physical
+slots, while lazer has no overlay sample and publishes null. Lazer's existing
+`play.judgements` remains legacy-converted; `rawJudgements` always carries the
+original six source counts. Stable precise histories retain all/press/release
+under `play.hitErrors`. Real aggregate subscriptions union sampling demand across
+the owning manager/spectators and release it without withdrawing direct clients.
+The aggregate regular parent and these nested precision leaves use
+`activity: always`: sampling activity is evaluated against the selected stable
+manager, whose Tourney state is not Play, rather than the spectated players.
 
 P1/T0 implement the approved optional additions in **vosu.osu 1.3.0**:
 `keys.overlay`; `play.score`, `play.combo`, `play.accuracyPercent`,

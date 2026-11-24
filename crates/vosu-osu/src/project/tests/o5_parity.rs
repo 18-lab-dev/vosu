@@ -100,14 +100,24 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
             &expected["rankedPlay"],
             "rankedPlay",
         );
-        if input["id"] != "stable-tournament" {
-            let mut e = expected["tourney"].clone();
+        {
+            // This is the single-session projector without a registered manager;
+            // production stable aggregation is tested through the plugin host.
+            let mut e = if input["id"] == "stable-tournament" {
+                serde_json::json!({"scoreVisible":false,"starsVisible":false,"ipcState":0,"bestOF":0,"team":{"left":"","right":""},"points":{"left":0,"right":0},"chat":[],"totalScore":{"left":0,"right":0},"clients":[]})
+            } else {
+                expected["tourney"].clone()
+            };
             if let Some(best) = e.as_object_mut().and_then(|o| o.remove("bestOF")) {
                 e.as_object_mut().unwrap().insert("bestOf".into(), best);
             }
             if let Some(clients) = e["clients"].as_array_mut() {
                 for client in clients {
                     let index = client["ipcId"].as_f64().unwrap() as usize;
+                    client
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("keysOverlay".into(), Value::Null);
                     let p = client["play"].as_object_mut().unwrap();
                     p.insert("source".into(), Value::String("spectator".into()));
                     let all = p.remove("hitErrorArray").unwrap();
@@ -117,7 +127,7 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
                     );
                     let h = p.remove("hits").unwrap();
                     p.insert("judgements".into(),serde_json::json!({"miss":h["0"],"meh":h["50"],"ok":h["100"],"good":h["katu"],"great":h["300"],"perfect":h["geki"]}));
-                    let raw = &s
+                    let score = &s
                         .regular
                         .lazer_multi_spectating
                         .data
@@ -126,8 +136,11 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
                         .spectating_clients[index]
                         .score
                         .as_ref()
-                        .unwrap()
-                        .statistics;
+                        .unwrap();
+                    let raw = &score.statistics;
+                    p.insert("healthRaw".into(), serde_json::json!({"normal":score.player_hp,"smooth":score.player_hp_smooth}));
+                    p.insert("rawJudgements".into(), serde_json::json!({"miss":raw.miss,"meh":raw.meh,"ok":raw.ok,"good":raw.good,"great":raw.great,"perfect":raw.perfect}));
+                    p.insert("preciseUnstableRate".into(), serde_json::json!(0.0));
                     p.insert("statistics".into(),serde_json::json!({"smallTickMiss":raw.small_tick_miss,"smallTickHit":h["smallTickHits"],"largeTickMiss":raw.large_tick_miss,"largeTickHit":h["largeTickHits"],"smallBonus":raw.small_bonus,"largeBonus":raw.large_bonus,"ignoreMiss":raw.ignore_miss,"ignoreHit":raw.ignore_hit,"comboBreak":raw.combo_break,"sliderTailHit":raw.slider_tail_hit,"sliderBreaks":h["sliderBreaks"],"sliderEndHits":h["sliderEndHits"],"good":h["katu"],"legacyComboIncrease":raw.legacy_combo_increase}));
                 }
             }

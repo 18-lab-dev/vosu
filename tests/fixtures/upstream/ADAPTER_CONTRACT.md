@@ -69,6 +69,13 @@ follow the same 1.3.0 transaction/version rule; API v1 does not acquire HTTP
 500 semantics. No parsed chart, strain/break/kiai/timing payload enters
 `internal`, which remains paths only.
 
+A4/T0 lane clarification: the aggregate `/tourney` regular parent and nested
+`keysOverlay`, `play.hitErrors`, and `play.preciseUnstableRate` precision leaves
+use `activity: always`. Activity is evaluated on the selected manager, whose
+Tourney state is not Play; gameplay gating there would permanently suppress
+spectator demand. The instance roster unions only established aggregate
+subscriptions and resets its derived inputs on unsubscribe/detach/manager loss.
+
 ## Per-source field fidelity
 
 | Old builder source leaves (all four builders) | Bus pointer / view type | Publication / demand | Absence, transformation / upstream quirk | Required case |
@@ -124,8 +131,8 @@ follow the same 1.3.0 transaction/version rule; API v1 does not acquire HTTP
 | beatmap.graph primary,series[].name/data,x_axis | O `/performance/graph/{primary,series,xaxis}` typed arrays | R/- | Primary is its own accurate source array, never reconstructed from a named series; v1 strains/strainsAll and v2 embedded JSON retain spelling and sharing | Distinct nonempty primary and multiple series; primary-only change |
 | result.raw player_name,score,accuracy,max_combo,mods,statistics,date; result.grade,pp | O `/result` typed recursive record | R/- | Result counts do not use gameplay counts; v1 result mode retains old gameplay.mode quirk; sliderBreaks=0 is schema-only limitation | Different play/result counts |
 | room.info room_id,users[].id,username,country_code,avatar_url | O `/room/{roomId,users}` | R/ra | Adapter restores roomID; absence/null preserved | Nonempty room |
-| manager and spectator IPC id,team,controls,best_of,points,chat,user,settings,beatmap/play | O `/tourney` recursive typed aggregate plus availability | R/rg and spectator Q/qg | Restore bestOF; stable aggregate on every stable session; precise clients IPC sorted, no arbitrary session order | Manager replacement and score-less spectator |
-| lazer_multi_spectating data/chat/clients user,team,score and score mods/statistics | O `/tourney/clients[]`, `/tourneyAvailability` | R/rg | Pending omits tourney; missingScore errors in adapter only; ready empty is not pending | Three-state readiness and stale completion |
+| manager and spectator IPC id,team,controls,best_of,points,chat,user,settings,beatmap/play | O `/tourney` recursive typed aggregate plus availability | R/r and spectator Q/q (always-active aggregate source lanes) | Restore bestOF; stable aggregate on every stable session; precise clients IPC sorted, no arbitrary session order | Manager replacement and score-less spectator |
+| lazer_multi_spectating data/chat/clients user,team,score and score mods/statistics | O `/tourney/clients[]`, `/tourneyAvailability` | R/r for aggregate, R/rg for availability | Pending omits tourney; missingScore errors in adapter only; ready empty is not pending | Three-state readiness and stale completion |
 | global.game_folder,songs_folder,skin_folder; menu.folder,filename,background_filename,audio_filename | O `/internal/paths/{stable,lazer,current,skinFolder}`: nullable str records | R/- | Current is null only when all four names are absent; every leaf is independent and retains empty strings. JSON echoes/undefined joins only, never root authority; explicit subtree grant | All 16 source-presence masks, Unicode/empty names, background/audio without folder/file, authorized privacy positive control |
 | parsed.times first_object,preview,full; raw BPM; strains/breaks/kiai/timing data | H `/resources/file` selected reference + surface bounded bytes + osu calc | R/-; owned derived generation | Resource-derived typed map, not private payload; SC mapKiaiPoints remains [] despite nonempty computed kiai; v1 preserves parsed first-object | Equal filename/different bytes; raw-vs-rounded BPM |
 | SC literal placeholders: isRunning,isBreakTime,songSelectionScores,songSelectionMainPlayerScore,songSelectionTotalScores,osu99_9PP,osuM99_9PP,mania1000000PP,maniaM1000000PP,plays,tags,source,starsNomod,comboLeft,localTime,localTimeISO,sl,sv,threadid,test | Adapter constants, no producer read | -/- | Exact pinned constants/empty JSON strings, not fabricated source facts | Raw source-oracle bytes |
