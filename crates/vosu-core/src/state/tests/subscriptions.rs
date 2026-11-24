@@ -181,7 +181,14 @@ fn merge_newer_wins_per_key_and_keeps_older_others() {
 
 #[test]
 fn internal_selector_without_grant_reports_absent() {
-    let schemas = SchemaRegistry::with_core().unwrap();
+    let mut schemas = SchemaRegistry::with_core().unwrap();
+    schemas
+        .register(
+            "vosu.osu",
+            "vosu.osu",
+            include_str!("../../../../../docs/v2/schemas/vosu.osu.schema.json"),
+        )
+        .unwrap();
     assert_eq!(
         schemas.hidden_subtrees("vosu.osu"),
         &[Pointer::parse("/internal").unwrap()]
