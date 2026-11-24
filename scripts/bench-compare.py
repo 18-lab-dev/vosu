@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Compare already-built Criterion binaries on an exclusively reserved Linux core."""
+"""Compare already-built Criterion binaries on one pinned Linux CPU."""
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import math
 import os
@@ -67,7 +67,8 @@ def reserve_core(cpu, root=CGROUP, topology=TOPOLOGY):
 
 def child_setup(group, cpu, identity):
     def setup():
-        (group / "cgroup.procs").write_text(str(os.getpid()))
+        if group is not None:
+            (group / "cgroup.procs").write_text(str(os.getpid()))
         os.sched_setaffinity(0, {cpu})
         if identity is not None:
             uid, gid = identity
@@ -162,7 +163,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", action="append", required=True, metavar="REVISION=PATH")
     parser.add_argument("--filter", required=True, help="Criterion benchmark regex")
-    parser.add_argument("--cpu", type=int, required=True, help="logical CPU; all its siblings are reserved")
+    parser.add_argument("--cpu", type=int, required=True, help="logical CPU; its siblings are reserved unless --no-reserve")
+    parser.add_argument("--no-reserve", action="store_true",
+                        help="pin only to --cpu without sudo or isolation; report non-exclusive")
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--warmup", type=float, default=3)
     parser.add_argument("--measurement", type=float, default=10)
@@ -186,25 +189,35 @@ def main():
             binaries.append((label, binary))
         if len(binaries) < 2 or len({label for label, _ in binaries}) != len(binaries):
             raise ValueError("supply at least two uniquely labelled revisions")
-        if os.geteuid() != 0 or "SUDO_UID" not in os.environ or "SUDO_GID" not in os.environ:
-            raise ValueError("run with sudo: exclusive cpuset reservation needs root; benches run as the invoking user")
-        identity = (int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"]))
-        if identity[0] == 0:
-            raise ValueError("invoke sudo from an unprivileged account; benchmarks must not run as root")
+        identity = None
+        if not args.no_reserve:
+            if os.geteuid() != 0 or "SUDO_UID" not in os.environ or "SUDO_GID" not in os.environ:
+                raise ValueError("run with sudo: exclusive cpuset reservation needs root; benches run as the invoking user")
+            identity = (int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"]))
+            if identity[0] == 0:
+                raise ValueError("invoke sudo from an unprivileged account; benchmarks must not run as root")
         args.output = args.output.resolve()
         args.output.mkdir(parents=True, exist_ok=False)
-        os.chown(args.output, *identity)
-        with reserve_core(args.cpu) as (group, siblings):
+        if identity is not None:
+            os.chown(args.output, *identity)
+        # Every benchmark child uses only --cpu, never its SMT sibling. Without
+        # reservation other host processes can still run on either sibling.
+        context = (nullcontext((None, physical_core(args.cpu))) if args.no_reserve
+                   else reserve_core(args.cpu))
+        with context as (group, siblings):
             rounds = run_rounds(binaries, args, group, identity)
         evidence = {
-            "cpu": args.cpu, "reserved_core": sorted(siblings),
+            "cpu": args.cpu, "physical_core": sorted(siblings),
+            "exclusive": not args.no_reserve,
+            "reserved_core": [] if args.no_reserve else sorted(siblings),
             "binaries": {label: str(binary) for label, binary in binaries},
             "filter": args.filter, "rounds": args.rounds,
             "results": report(rounds),
         }
         text = json.dumps(evidence, indent=2) + "\n"
         (args.output / "summary.json").write_text(text)
-        os.chown(args.output / "summary.json", *identity)
+        if identity is not None:
+            os.chown(args.output / "summary.json", *identity)
         print(text, end="")
         return 0
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

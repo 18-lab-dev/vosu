@@ -118,14 +118,81 @@ reader integration excludes the separate `ConfigPlan` experiment.
 
 ## Scope of the synthetic results
 
-- Synthetic fixtures, not live-game or whole-daemon performance. Raw snapshots
-  discard reads from zero-filled fixtures; the deterministic reader validates
-  populated graphs (native self-process lazer reads; slice-copy stable reads).
+- Synthetic fixtures, not live-game or whole-daemon performance. The stable raw
+  snapshot and PlanMemory cases share a populated x86 graph and assert successful,
+  non-default global/full-menu/gameplay values before timing. Lazer's raw snapshot
+  fixture remains zero-filled; the deterministic reader validates populated graphs
+  (native self-process lazer reads; slice-copy stable reads).
 - Calculation uses a five-object map. Cold serializers exclude setup; cache
   cases clone encoded bytes. Publication includes timer scheduling; neither
   publication nor subscriptions measures network transport.
 - Live-client and released-tosu measurements are in the
   [released tosu comparison](#released-tosu-comparison).
+
+## Stable dependent-plan comparison
+
+`benches/support/stable_fixture.rs` is shared by `hot_paths` and
+`plan_memory_bench`. Earlier stable `raw_snapshot_reads` numbers used zero
+`base_addr`/`rulesets_addr`: `global_batched` underflowed into the scalar
+fallback, while menu/gameplay returned immediately. Those historical timings
+are not comparable to this successful-capture workload; backport the shared
+fixture and benchmark setup when comparing older revisions.
+
+The corrected fixture checks populated global, full-menu and gameplay values
+and native/plan capture equality before timing. The dependent implementation
+reduces successful-capture submissions from global/menu/gameplay **4/5/5** to
+**4/4/5** by combining the menu's two independent holder chains into one
+multi-stage plan. Its native default still performs the same two backend batches.
+Scalar fallback pointer chains separately fall from 18 to 12 submissions.
+
+Compare already-built binaries, not concurrent builds:
+
+```sh
+python scripts/bench-compare.py --no-reserve \
+  --binary before=/tmp/m1-c6b-before --binary after=/tmp/m1-c6b-after \
+  --filter 'plan_memory/stable_(native|regular_fields)$' --cpu 4 \
+  --rounds 5 --warmup 2 --measurement 5 --samples 100 \
+  --output /tmp/m1-c6b-no-reserve
+```
+
+The default mode requires administrator-prepared exclusive cpuset support and
+sudo, then drops privileges before running benchmarks. `--no-reserve` needs
+neither: each child is pinned only to the requested logical CPU, never its SMT
+sibling, but other host processes remain unrestricted. Evidence explicitly
+records `exclusive: false`. Both modes interleave revisions, use fresh Criterion
+homes, and report bootstrap confidence intervals and an `inconclusive` flag when
+between-round noise or confidence-interval overlap obscures the revision delta.
+
+Measured 2026-11-24 on the Ryzen 9 9950X3D, Rust 1.96.1, default release
+features, CPU 4 (SMT sibling 20), **non-exclusive**, with the command above.
+Values are medians of five round medians; brackets are the comparison tool's
+bootstrap 95% confidence intervals, not the individual Criterion slope intervals.
+The before binary uses the corrected fixture with the unfused reader; the after
+binary includes the dependent-menu plan and allocation-free scalar chains.
+
+| Stable transport | Before, µs | After, µs |
+| --- | ---: | ---: |
+| Native `ProcessHandle` | 1.293 [1.255, 1.767] | 1.216 [1.206, 1.313] |
+| PlanMemory | 3.585 [3.261, 4.432] | 3.223 [3.168, 3.835] |
+
+The reported PlanMemory change is −10.10%, but **`inconclusive: true`**:
+between-round spread exceeds the delta and the before/after intervals overlap.
+The native change is also inconclusive. Afterward PlanMemory is **2.65× native**,
+so this run does **not** meet D17's within-10% bar. Evidence:
+`/tmp/m1-c6b-no-reserve/summary.json`. A quiet rerun is necessary before claiming
+a revision-level speedup.
+
+Separate non-exclusive transport controls measured one plan with 1/18/56
+independent four-byte ops at approximately **83/290/855 ns**. A rough fit to the
+first two gives **71 ns fixed per plan + 12 ns per op**; these are diagnostic
+estimates, not an absolute lower bound for another executor or plan shape.
+The populated capture retains 56 ops across 13 submissions: fixed submission
+cost and per-op validation/result handling are both material, not fixed cost
+alone. Fusing global's four submissions to one and gameplay's five to one would
+remove seven submissions, suggesting about **0.50 µs** saved at unchanged op
+count (roughly 3.22 → 2.72 µs, still well above native). This estimate excludes
+additional dependent-stage overhead and is not a measured speedup.
+
 
 ## vosu hot paths
 

@@ -129,6 +129,39 @@ class RunnerTests(unittest.TestCase):
             affinity.assert_called_once_with(0, {7})
             uid.assert_called_once_with(1000)
 
+    def test_nonexclusive_child_pins_only_the_requested_sibling(self):
+        with mock.patch.object(Path, "write_text") as write, \
+                mock.patch.object(os, "sched_setaffinity") as affinity, \
+                mock.patch.object(os, "setgroups") as groups:
+            bench.child_setup(None, 7, None)()
+            affinity.assert_called_once_with(0, {7})
+            write.assert_not_called()
+            groups.assert_not_called()
+
+    def test_no_reserve_cli_runs_unprivileged_and_marks_evidence_nonexclusive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            argv = ["bench-compare.py", "--binary", f"old={bench.sys.executable}",
+                    "--binary", f"new={bench.sys.executable}", "--filter", "case",
+                    "--cpu", "7", "--rounds", "2", "--no-reserve",
+                    "--output", str(output)]
+            rounds = {"old": [{"case": 100}] * 2, "new": [{"case": 110}] * 2}
+            with mock.patch.object(bench.sys, "argv", argv), \
+                    mock.patch.object(os, "geteuid", return_value=1000), \
+                    mock.patch.object(os, "chown") as chown, \
+                    mock.patch.object(bench, "physical_core", return_value={7, 23}), \
+                    mock.patch.object(bench, "reserve_core") as reserve, \
+                    mock.patch.object(bench, "run_rounds", return_value=rounds) as run, \
+                    mock.patch("builtins.print"):
+                self.assertEqual(bench.main(), 0)
+            reserve.assert_not_called()
+            chown.assert_not_called()
+            self.assertEqual(run.call_args.args[2:], (None, None))
+            evidence = json.loads((output / "summary.json").read_text())
+            self.assertFalse(evidence["exclusive"])
+            self.assertEqual(evidence["physical_core"], [7, 23])
+            self.assertEqual(evidence["reserved_core"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
