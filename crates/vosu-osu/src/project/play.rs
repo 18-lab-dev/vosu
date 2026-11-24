@@ -18,6 +18,24 @@ pub(super) fn project(
     super::leaderboard::project(s, sink);
     super::performance::project(s, sink);
     super::result::project(s, sink);
+    let g = &s.regular.gameplay;
+    sink.put(P::OsuPlayScore, V::F64(g.score));
+    sink.put(P::OsuPlayAccuracyPercent, V::F64(g.accuracy));
+    sink.put(P::OsuPlayRetries, V::I64(g.retries));
+    sink.put_cbor(P::OsuPlayCombo, &mut |b| {
+        map(b, 2);
+        field(b, "current", &g.combo);
+        field(b, "max", &g.max_combo);
+    });
+    sink.put_cbor(P::OsuPlayHealthRaw, &mut |b| {
+        map(b, 2);
+        field(b, "normal", &g.player_hp);
+        field(b, "smooth", &g.player_hp_smooth);
+    });
+    sink.put_cbor(P::OsuPlayJudgements, &mut |b| {
+        map(b, 6);
+        counts(b, &g.statistics);
+    });
     if ![P::OsuPlaySource, P::OsuPlayPp]
         .into_iter()
         .any(|at| sink.wants(at))

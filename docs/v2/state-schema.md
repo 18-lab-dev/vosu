@@ -331,9 +331,9 @@ P1/T0 implement the approved optional additions in **vosu.osu 1.3.0**:
 `beatmap.time.firstHitObject`, `beatmap.time.preview`;
 `session.watchingReplay`; `leaderboardState`; `tourneyAvailability`; and
 corresponding accurate stable spectator facts. The inventory freezes types,
-real producers, lanes, null semantics and required proofs. Ship schema,
-manifest version, partition/dirty dependencies and annotations with producers,
-not as a docs-only claim that the current 1.2.0 implementation fills them.
+real producers, lanes, null semantics and required proofs. P1 ships the source
+additions, schema 1.3.0 and manifest/partition/dirty annotations together.
+Stable spectator aggregate additions remain T0's implementation work.
 No non-path payload is added to `internal`.
 
 Common activity-gated nulls cannot recover out-of-play captured values.

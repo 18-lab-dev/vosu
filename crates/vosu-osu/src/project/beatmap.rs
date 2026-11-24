@@ -61,6 +61,18 @@ pub(super) fn project(
         V::F64(p.map_or(0.0, |p| p.times.full)),
     );
     sink.put(P::OsuBeatmapTimeMp3Length, number(r.menu.mp3_length));
+    sink.put(
+        P::OsuBeatmapSelectionMode,
+        r.menu.gamemode.map_or(V::Null, V::I64),
+    );
+    sink.put(
+        P::OsuBeatmapTimeFirstHitObject,
+        p.map_or(V::Null, |p| V::I64(i64::from(p.times.first_object))),
+    );
+    sink.put(
+        P::OsuBeatmapTimePreview,
+        p.map_or(V::Null, |p| V::I64(i64::from(p.times.preview))),
+    );
     number_name(
         sink,
         P::OsuBeatmapStatus,

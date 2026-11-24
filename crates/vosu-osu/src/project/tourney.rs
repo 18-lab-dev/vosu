@@ -36,6 +36,20 @@ pub(super) fn project(
     facts: &SessionFacts,
     sink: &mut dyn ProjectionSink,
 ) {
+    let availability = if missing_score(snap, facts) {
+        "missingScore"
+    } else if facts.client == ClientType::Lazer
+        && snap.precise.status == 11
+        && snap.regular.lazer_multi_spectating.data.is_none()
+    {
+        "pending"
+    } else {
+        "ready"
+    };
+    sink.put(
+        OsuPointer::OsuTourneyAvailability,
+        vosu_plugin_api::PublishValueRef::String(availability),
+    );
     emit(sink, OsuPointer::OsuTourney, |c| {
         let active = facts.client == ClientType::Lazer && snap.precise.status == 11;
         let data = active

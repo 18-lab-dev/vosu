@@ -6,6 +6,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Extract shared legacy wire mechanics into `vosu-adapter-support` without
   changing served routes, payloads, filters or transport behavior.
+- Publish osu! schema 1.3 source facts for independent overlay buttons, raw
+  gameplay values, parsed chart clocks, leaderboard identity and tournament
+  readiness, without changing existing common fields or legacy routes.
 
 ## Unreleased — 2.0 M3
 

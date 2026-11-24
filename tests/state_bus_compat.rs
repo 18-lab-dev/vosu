@@ -14,6 +14,8 @@ use vosu_osu::project::{Caches, DiffSink, LastValues, Projector, SessionFacts};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::StateBundleSnapshot;
 use vosu_plugin_api::{PluginManifest, PublishBatchWriter, decode_publish_batch_ref};
+#[path = "state_bus_compat/fidelity.rs"]
+mod fidelity;
 #[path = "state_api_compat/oracle.rs"]
 #[expect(
     dead_code,
@@ -338,7 +340,12 @@ fn parity(
         "isKiai",
         "isBreak",
         "isConvert",
-        "time",
+        "time/live",
+        "time/rate",
+        "time/running",
+        "time/firstObject",
+        "time/lastObject",
+        "time/mp3Length",
         "status",
         "checksum",
         "id",
@@ -497,7 +504,7 @@ fn parity(
             .unwrap()
             .keys()
             .collect::<Vec<_>>(),
-        ["all"]
+        ["overlay", "all"]
     );
     row(id, precise, "/keys/all", doc, "/vosu.osu/keys/all");
     let playing = matches!(status.as_str(), Some("play" | "pause"));
@@ -839,6 +846,7 @@ fn oracle_cases_validate_and_match_the_state_bus() {
                 seeds::coverage(&input, &v2, &precise);
             }
             parity(&input, &snapshot, &v2, &precise, &doc, &private, &entries);
+            fidelity::check(&snapshot, &doc, &v2, &precise);
             privacy(&bus, &v2, &doc);
             let revision = bus.store.current(bus.key).unwrap().revision;
             assert_eq!(

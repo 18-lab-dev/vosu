@@ -16,7 +16,7 @@ covers = ["field:vosu.status.status",
 
 [[provides]]
 id = "field:vosu.osu"
-version = "1.2.0"
+version = "1.3.0"
 schema = "schemas/vosu.osu.schema.json"
 
 [[provides]]

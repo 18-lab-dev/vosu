@@ -90,7 +90,7 @@ fn dependencies(p: P) -> u16 {
             GLOBAL | GAMEPLAY | RESULT | STATUS
         }
         SkinName => SETTINGS,
-        OsuSessionPlayTime | OsuSessionPaused => GLOBAL,
+        OsuSessionPlayTime | OsuSessionPaused | OsuSessionWatchingReplay => GLOBAL,
         OsuSessionPlayCount | OsuSessionFocused | OsuSessionIpcId | OsuSessionServer => SESSION,
         OsuSessionState => STATUS,
         OsuProfile => USER,
@@ -98,6 +98,8 @@ fn dependencies(p: P) -> u16 {
         | OsuBeatmapIsBreak
         | OsuBeatmapTimeFirstObject
         | OsuBeatmapTimeLastObject
+        | OsuBeatmapTimeFirstHitObject
+        | OsuBeatmapTimePreview
         | OsuBeatmapMode
         | OsuBeatmapSource
         | OsuBeatmapTags
@@ -106,12 +108,19 @@ fn dependencies(p: P) -> u16 {
         | OsuPerformanceAccuracy
         | OsuPerformanceGraph => BEATMAP,
         OsuBeatmapIsConvert => BEATMAP | MENU | GAMEPLAY | RESULT | STATUS,
-        OsuBeatmapTimeLive | OsuPlayHitErrors | OsuPlayHitOffsets | OsuPlayKeyHitErrors
-        | OsuPlayCatcher | OsuKeysAll => PRECISE,
+        OsuBeatmapTimeLive
+        | OsuPlayHitErrors
+        | OsuPlayHitOffsets
+        | OsuPlayKeyHitErrors
+        | OsuPlayCatcher
+        | OsuKeysAll
+        | OsuKeysOverlay
+        | OsuPlayPreciseUnstableRate => PRECISE,
         OsuBeatmapTimeRunning | OsuSkinBuiltin | OsuSkinBase | OsuSkinVariant | OsuSkinFiles => {
             GLOBAL
         }
         OsuBeatmapTimeMp3Length
+        | OsuBeatmapSelectionMode
         | OsuBeatmapStatus
         | OsuBeatmapChecksum
         | OsuBeatmapId
@@ -122,8 +131,21 @@ fn dependencies(p: P) -> u16 {
         | OsuBeatmapTitleUnicode
         | OsuBeatmapMapper
         | OsuBeatmapVersion => MENU,
-        OsuPlayFailed | OsuPlayPlayerName | OsuPlayMode | OsuPlayHealthBar | OsuPlayStatistics
-        | OsuPlayRank | OsuPlayUnstableRate | OsuLeaderboard => GAMEPLAY,
+        OsuPlayFailed
+        | OsuPlayPlayerName
+        | OsuPlayMode
+        | OsuPlayHealthBar
+        | OsuPlayStatistics
+        | OsuPlayRank
+        | OsuPlayUnstableRate
+        | OsuLeaderboard
+        | OsuLeaderboardState
+        | OsuPlayScore
+        | OsuPlayCombo
+        | OsuPlayAccuracyPercent
+        | OsuPlayHealthRaw
+        | OsuPlayJudgements
+        | OsuPlayRetries => GAMEPLAY,
         OsuResult => RESULT,
         OsuSettingsInterfaceVisible
         | OsuSettingsReplayUIVisible
@@ -148,7 +170,7 @@ fn dependencies(p: P) -> u16 {
         | OsuSettingsSkin => SETTINGS,
         OsuRankedPlay => RANKED,
         OsuRoom => ROOM,
-        OsuTourney => TOURNEY | GLOBAL | BEATMAP | STATUS,
+        OsuTourney | OsuTourneyAvailability => TOURNEY | GLOBAL | BEATMAP | STATUS,
         OsuInternalPaths => GLOBAL | MENU,
     }
 }

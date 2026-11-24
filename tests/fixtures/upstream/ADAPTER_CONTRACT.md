@@ -34,8 +34,8 @@ below name required discriminating cases, not claims of existing tests.
 A4.2 approves these public facts, not an opaque compatibility payload. Publish
 optional additions in `vosu.osu` **1.3.0**, updating the JSON Schema, provider
 version, field partition, dirty dependencies, covers where applicable, and
-sampling annotations together with their producer. Until P1 lands, the shipped
-schema and manifest stay 1.2.0. Existing accurate fields keep their meanings.
+sampling annotations together with their producer. P1 ships these source facts;
+T0 owns the stable aggregate. Existing accurate fields keep their meanings.
 All additions are nullable when the actual source is unavailable; no made-up
 zero, empty history or logical-key alias is an acceptable producer.
 

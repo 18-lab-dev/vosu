@@ -18,6 +18,10 @@ pub(super) fn project(
     sink.put(P::OsuSessionPlayCount, V::U64(0));
     sink.put(P::OsuSessionPaused, V::Bool(s.regular.global.paused));
     sink.put(
+        P::OsuSessionWatchingReplay,
+        V::Bool(s.regular.global.is_watching_replay),
+    );
+    sink.put(
         P::OsuSessionFocused,
         if cfg!(windows) {
             facts.foreground.map_or(V::Null, V::Bool)

@@ -130,14 +130,15 @@ fn hit_error_arrays_are_whole_values() {
 }
 
 #[test]
-fn keys_all_only() {
+fn logical_keys_and_unavailable_overlay_are_separate() {
     let mut s = fixture();
     let doc = collect(&s);
     assert_eq!(
         doc["/keys/all"],
         json!([{"name":"B1", "isPressed":true, "count":19, "pressedAt":12.5, "releasedAt":null}])
     );
-    assert_eq!(doc.keys().filter(|k| k.starts_with("/keys/")).count(), 1);
+    assert_eq!(doc.keys().filter(|k| k.starts_with("/keys/")).count(), 2);
+    assert!(doc["/keys/overlay"].is_null());
     Arc::make_mut(&mut s.precise).keypresses = Arc::new(Vec::new());
     assert_eq!(collect(&s)["/keys/all"], json!([]));
 }
@@ -365,7 +366,7 @@ fn graph_published_once_per_change() {
         .filter(|e| expected.contains(e.pointer))
         .map(|e| e.pointer)
         .collect();
-    assert_eq!(actual.len(), 19);
+    assert_eq!(actual.len(), 28);
     assert_eq!(actual, expected);
     let doc = collect(&s);
     for n in 90..=100 {
@@ -512,7 +513,7 @@ fn mods_settings_preserve_json_values_and_integer_extremes() {
 #[test]
 fn embedded_schema_requires_the_good_statistics_count() {
     let schema: Value = serde_json::from_str(crate::OSU_NAMESPACE_SCHEMA).unwrap();
-    assert_eq!(schema["version"], "1.2.0");
+    assert_eq!(schema["version"], "1.3.0");
     assert_eq!(
         schema["$defs"]["statistics"]["properties"]["good"]["type"],
         "integer"
@@ -525,3 +526,6 @@ fn embedded_schema_requires_the_good_statistics_count() {
             .any(|v| v == "good")
     );
 }
+
+#[path = "fidelity.rs"]
+mod fidelity;

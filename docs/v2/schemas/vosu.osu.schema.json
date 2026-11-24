@@ -1,13 +1,32 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vosu.dev/schemas/v2/vosu.osu.schema.json",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "title": "vosu.osu",
   "description": "The official osu! plugin's namespace (ADR 0020): every osu!-specific datum 1.x exposed, restructured for clarity. See docs/v2/state-schema.md for the full 1.x-to-2.0 field mapping and the common-layer coverage this plugin declares.",
   "type": "object",
   "required": ["session","profile","beatmap","play","keys","leaderboard","performance","result","settings","skin","rankedPlay","room","tourney"],
   "additionalProperties": false,
   "$defs": {
+    "overlayButton": {
+      "type": ["object","null"],
+      "required": ["isPressed","count"],
+      "additionalProperties": false,
+      "properties": {"isPressed":{"type":"boolean"},"count":{"type":"integer"}}
+    },
+    "rawJudgements": {
+      "type": ["object","null"],
+      "required": ["miss","meh","ok","good","great","perfect"],
+      "additionalProperties": false,
+      "properties": {
+        "miss": {"type":"integer"},
+        "meh": {"type":"integer"},
+        "ok": {"type":"integer"},
+        "good": {"type":"integer"},
+        "great": {"type":"integer"},
+        "perfect": {"type":"integer"}
+      }
+    },
     "numberName": {
       "type": "object",
       "required": ["number","name"],
@@ -247,6 +266,7 @@
       "additionalProperties": false,
       "description": "osu!-specific session bookkeeping not covered by vosu.client.",
       "properties": {
+        "watchingReplay": {"type":["boolean","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "playTime": {"type":"number","x-sampling-lane":{"lane":"regular","activity":"always"}},
         "playCount": {"type":"integer","minimum":0},
         "paused": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
@@ -306,6 +326,7 @@
       "additionalProperties": false,
       "description": "Full osu! beatmap detail. `title`/`artist`/`version`/`mapper`/time.length/stats.bpm.common/stats.objects` keyCount feed the vosu.chart projection; see state-schema.md's mapping table.",
       "properties": {
+        "selectionMode": {"type":["integer","null"]},
         "isKiai": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "isBreak": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "isConvert": {"type":"boolean"},
@@ -314,6 +335,8 @@
           "required": ["live","rate","running","firstObject","lastObject","mp3Length"],
           "additionalProperties": false,
           "properties": {
+            "firstHitObject": {"type":["integer","null"]},
+            "preview": {"type":["integer","null"]},
             "live": {"type":"number","x-sampling-lane":{"lane":"precise","activity":"always"}},
             "rate": {"type":["number","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
             "running": {"type":["boolean","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
@@ -344,6 +367,25 @@
       "additionalProperties": false,
       "description": "osu!-specific play detail layered beside the common vosu.play fields this plugin also fills (score, combo, maxCombo, accuracy, health, progress, rate, judgements).",
       "properties": {
+        "score": {"type":["number","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "combo": {
+          "type": ["object","null"],
+          "required": ["current","max"],
+          "additionalProperties": false,
+          "properties": {"current":{"type":"integer"},"max":{"type":"integer"}},
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
+        },
+        "accuracyPercent": {"type":["number","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "healthRaw": {
+          "type": ["object","null"],
+          "required": ["normal","smooth"],
+          "additionalProperties": false,
+          "properties": {"normal":{"type":"number"},"smooth":{"type":"number"}},
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
+        },
+        "judgements": {"$ref":"#/$defs/rawJudgements","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "retries": {"type":["integer","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "preciseUnstableRate": {"type":["number","null"],"x-sampling-lane":{"lane":"precise","activity":"gameplay"}},
         "source": {"enum":["player","replay","spectator","watching","autoplay",null],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "failed": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "playerName": {"type":"string","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
@@ -415,7 +457,46 @@
       "additionalProperties": false,
       "description": "Mode-free key/button state. `all` is the canonical logical-action list; see state-schema.md for the per-ruleset `B1..BN` mapping table.",
       "x-sampling-lane": {"lane":"precise","activity":"gameplay"},
-      "properties": {"all":{"type":"array","items":{"$ref":"#/$defs/keypress"}}}
+      "properties": {
+        "overlay": {
+          "type": ["object","null"],
+          "required": ["k1","k2","m1","m2"],
+          "additionalProperties": false,
+          "properties": {
+            "k1": {"$ref":"#/$defs/overlayButton"},
+            "k2": {"$ref":"#/$defs/overlayButton"},
+            "m1": {"$ref":"#/$defs/overlayButton"},
+            "m2": {"$ref":"#/$defs/overlayButton"}
+          }
+        },
+        "all": {"type":"array","items":{"$ref":"#/$defs/keypress"}}
+      }
+    },
+    "tourneyAvailability": {"enum":["pending","ready","missingScore"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+    "leaderboardState": {
+      "type": ["object","null"],
+      "required": ["visible","player"],
+      "additionalProperties": false,
+      "x-sampling-lane": {"lane":"regular","activity":"gameplay"},
+      "properties": {
+        "visible": {"type":"boolean"},
+        "player": {
+          "type": "object",
+          "required": ["name","score","combo","maxCombo","mods","judgements","team","position","isPassing"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {"type":"string"},
+            "score": {"type":"number"},
+            "combo": {"type":"integer"},
+            "maxCombo": {"type":"integer"},
+            "mods": {"$ref":"#/$defs/mods"},
+            "judgements": {"$ref":"#/$defs/rawJudgements"},
+            "team": {"type":"integer"},
+            "position": {"type":"integer"},
+            "isPassing": {"type":"boolean"}
+          }
+        }
+      }
     },
     "leaderboard": {
       "type": "array",
