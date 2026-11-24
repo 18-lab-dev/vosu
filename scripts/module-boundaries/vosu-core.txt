@@ -1,4 +1,5 @@
 app -> config
+desktop -> logging
 logging -> config
 plugin -> logging
 plugin -> state
