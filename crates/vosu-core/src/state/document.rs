@@ -55,6 +55,10 @@ impl SessionState {
         self.namespaces.iter().map(|(n, v)| (n.as_ref(), v))
     }
 
+    pub(super) fn namespace_entries(&self) -> &[(Arc<str>, StateValue)] {
+        &self.namespaces
+    }
+
     /// The whole document's API v1 JSON projection ([`Audience::Api`],
     /// `internal` always stripped), encoded once and cached (D2, D13).
     pub fn api_json(&self, reg: &super::schema::SchemaRegistry) -> &bytes::Bytes {

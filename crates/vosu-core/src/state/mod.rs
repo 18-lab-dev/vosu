@@ -6,19 +6,26 @@
 //! hand-written lane walker, and the `x-visibility` carve-out ([`schema`]).
 //! K2 adds the value tree ([`value`]), pointers ([`pointer`]), per-session
 //! documents ([`document`]), and the D2 projector ([`projector`]). The
-//! commit path, subscriptions, and `DEMAND_CHANGED` delivery are later
-//! units (K3 onward) and are not implemented here.
+//! commit path ([`StateStore`]) validates each whole batch before mutation.
+//! Subscriptions and demand delivery are separate layers.
 
+mod client;
+mod commit;
 mod document;
+mod grant;
 mod pointer;
 mod projector;
 pub mod schema;
+mod store;
 mod value;
 
 #[cfg(test)]
 mod tests;
 
+pub use client::ClientFacts;
+pub use commit::{CommitError, CommitOutcome};
 pub use document::{SessionKey, SessionState};
+pub use grant::{GrantError, Permit, PublisherGrant};
 pub use pointer::{Pointer, PointerError};
 pub use projector::{
     Audience, InternalGrant, Redacted, project_document, project_namespace, project_select,
@@ -27,4 +34,5 @@ pub use schema::{
     CORE_NAMESPACES, LaneBits, NamespaceSchema, SESSIONS_NAMESPACE, SchemaError, SchemaOwner,
     SchemaRegistry,
 };
+pub use store::StateStore;
 pub use value::{StateObject, StateValue, ValueError};

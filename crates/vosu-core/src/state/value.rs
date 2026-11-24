@@ -58,6 +58,10 @@ impl StateObject {
         Self(entries)
     }
 
+    pub(super) fn entries_mut(&mut self) -> &mut Vec<(Arc<str>, StateValue)> {
+        &mut self.0
+    }
+
     pub fn get(&self, key: &str) -> Option<&StateValue> {
         self.0
             .iter()
