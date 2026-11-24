@@ -1,0 +1,215 @@
+/* Catalog v2: source flags, trust warning, install-plan review, job outcome,
+   uninstall preview, game offers, catalog-installed packages and the
+   pending-restart notice. Tokens only; no new colours. */
+
+.catalog-restart {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0 var(--space-5) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg);
+  font-size: var(--step--1);
+  background: var(--bg-raised);
+  border: var(--hair) solid var(--caution);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+}
+
+.catalog-restart[hidden] {
+  display: none;
+}
+
+.catalog-restart p {
+  margin: 0;
+}
+
+.catalog-restart strong {
+  color: var(--caution);
+}
+
+.catalog-source-row__flags {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2 / -1;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.catalog-flag {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  color: var(--fg-dim);
+  font-size: var(--step--1);
+}
+
+.catalog-flag[hidden],
+.catalog-source-row__flags [hidden] {
+  display: none;
+}
+
+.catalog-dialog .dialog-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.catalog-dialog p {
+  margin: 0;
+}
+
+.catalog-dialog__source code,
+.catalog-plan__source code {
+  overflow-wrap: anywhere;
+}
+
+/* The normative trust warning and the D8 disclosure: a quiet caution rule,
+   never decoration. */
+.catalog-warning {
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg);
+  border-left: 3px solid var(--caution);
+  background: var(--bg-sunken);
+}
+
+.catalog-plan__adds {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: catalog-add;
+}
+
+.catalog-plan__add {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) 0 var(--space-2) var(--space-5);
+  border-top: var(--hair) solid var(--rule);
+  position: relative;
+  counter-increment: catalog-add;
+}
+
+.catalog-plan__add::before {
+  position: absolute;
+  top: var(--space-2);
+  left: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  content: counter(catalog-add, decimal-leading-zero);
+}
+
+.catalog-plan__head strong {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.catalog-plan__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.catalog-plan__approve {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--step--1);
+}
+
+.catalog-plan__errors ul,
+.catalog-outcome__list {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.catalog-outcome {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--ok);
+  background: var(--bg-sunken);
+}
+
+.catalog-outcome[data-state="error"] {
+  color: var(--danger);
+  border-left-color: var(--danger);
+}
+
+.catalog-outcome__list li[data-load="refused"],
+.catalog-outcome__list li[data-load="failed"] {
+  color: var(--danger);
+}
+
+.catalog-offers,
+.catalog-installed {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.catalog-offers[hidden],
+.catalog-installed[hidden] {
+  display: none;
+}
+
+.catalog-offers h2,
+.catalog-installed h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 600;
+}
+
+.catalog-offers__list,
+.catalog-installed__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-offers__item,
+.catalog-installed__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-top: var(--hair) solid var(--rule);
+}
+
+.catalog-offers__item {
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-3);
+}
+
+.catalog-offers__item p,
+.catalog-installed__item p {
+  margin: 0;
+  grid-column: 1;
+}
+
+.catalog-offers__item > .button,
+.catalog-installed__item > .tool-card__actions {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+}
+
+.catalog-installed__item strong {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+@media (max-width: 42rem) {
+  .catalog-offers__item,
+  .catalog-installed__item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .catalog-offers__item > .button,
+  .catalog-installed__item > .tool-card__actions {
+    grid-row: auto;
+    grid-column: 1;
+  }
+}

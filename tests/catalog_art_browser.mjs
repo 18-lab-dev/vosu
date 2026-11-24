@@ -44,14 +44,14 @@ try {
       const card = '.tools-catalog [data-catalog-tool="artful"]';
       const icons = await rendered(page, `${card} .tool-card__icon img`, `tools available icon ${theme}`);
       await rendered(page, `${card} .tool-card__banner img`, `tools available banner ${theme}`);
-      check(icons.every((img) => img.src.startsWith('/api/tools/catalog/art?url=')), `${theme}: catalog art is not proxied`);
+      check(icons.every((img) => img.src.startsWith('/api/catalog/art?url=')), `${theme}: catalog art is not proxied`);
       check(await page.locator(`${card} .tool-card__icon`).innerText() === '', `${theme}: icon fell back to initials`);
     } else {
       const card = '#tools-root .tool-card[data-tool-id="artful"]';
       const icons = await rendered(page, `${card} .tool-card__icon img`, `tools installed icon ${theme}`);
       await rendered(page, `${card} .tool-card__banner img`, `tools installed banner ${theme}`);
       check(icons.every((img) => img.src.includes('/tools/artful/_icon')), `${theme}: installed icon is not the tool's own`);
-      check(await page.locator('.tools-catalog [data-catalog-tool="artful"]').count() === 0, `${theme}: installed tool still offered`);
+      check(await page.locator('.tools-catalog [data-catalog-tool="artful"] .tool-card__actions button').count() === 0, `${theme}: installed tool still offered for install`);
     }
     await page.screenshot({ path: `${evidence}/tools-${phase}-${theme}.png`, fullPage: true });
     await page.goto(`${DASHBOARD}/available`, { waitUntil: 'networkidle' });
@@ -71,7 +71,7 @@ try {
     // The browser's own favicon probe is not the document's doing.
     context.on('request', (request) => { if (!request.url().endsWith('/favicon.ico')) requests.push(request.url()); });
     const page = await context.newPage();
-    const target = `${DASHBOARD}/api/tools/catalog/art?url=${encodeURIComponent(iconUrl)}`;
+    const target = `${DASHBOARD}/api/catalog/art?url=${encodeURIComponent(iconUrl)}`;
     const response = await page.goto(target, { waitUntil: 'load' });
     await page.waitForTimeout(1500);
     const state = await page.evaluate(() => ({

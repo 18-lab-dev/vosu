@@ -789,6 +789,52 @@ never substitute for dashboard provenance and CSRF. The frozen
 [M6b service and route inventory](implementation-plan.md#m6b-frozen-service-interfaces)
 defines the core-owned handlers; M7 moves presentation, not this authority.
 
+**H0 route inventory (`src/server/catalog_api`).** Exact paths and methods;
+a near miss (trailing slash, extra or empty segment, wrong case, malformed
+`%XX`, a raw `/` inside a segment) is `404`, a known path with another
+method `405`, and every route is `404` on the overlay listener. Bodies
+refuse unknown fields with a fixed `400` that never echoes the input. Every
+response carries `Cache-Control: no-store` (art: `private, no-cache`) and
+errors are fixed redacted diagnostics `{"error"}`.
+
+| Method and path | Result |
+| --- | --- |
+| `GET /api/catalog/status` | Disabled stores, `pending_restart`, `restart_required`, the last operation's `load_reports` |
+| `GET /api/catalog/sources` | Exact sources with `enabled`, `order`, `official`, `trusted`, `private_network`, `has_credential`, `form`, fetch `status`/`message` |
+| `POST /api/catalog/sources` `{"sources":[{"source","enabled"}]}` | Replace the ordered list (A6b.4); plus the T0 revocation report |
+| `GET`/`POST`/`DELETE /api/catalog/sources/<source>/credential` | `{"has_credential","available"}` / `204` / `204` |
+| `POST /api/catalog/sources/<source>/trust` `{"trusted"}` | Dedicated trust flag; revocation report |
+| `POST /api/catalog/sources/<source>/private-network` `{"allowed"}` | Dedicated exact-host private flag |
+| `POST /api/catalog/refresh` | One explicit S0/F0 fetch and SDK-validated publication |
+| `GET /api/catalog/entries` | Every validated candidate (alternatives included) with support, size and installed state |
+| `POST /api/catalog/install` `{"kind","id","source"}` | A registered, reviewable plan (`409` when sources changed or were never fetched) |
+| `POST /api/catalog/plans/<plan_id>/confirm` `{"approve":[…]}` | `{"job_id"}`; P0 status codes |
+| `GET /api/catalog/jobs/<job_id>` | The catalog `{id,status,phase,tool,error}` envelope |
+| `GET /api/catalog/installed` | Installed records (kind, id, version, exact source, `installed_for`, runtime, approval presence) |
+| `POST /api/catalog/uninstall/preview` `{"kind","id","source"}` | The U0 removal closure, or `409` with `detail.dependents` |
+| `POST /api/catalog/uninstall` `{"kind","id","source","remove_data"}` | `{"job_id"}` |
+| `POST /api/catalog/promote` `{"kind","id","source"}` | `{"promoted"}` |
+| `GET /api/catalog/offers`, `POST /api/catalog/offers/<offer_id>/accept` | G0 offers; a requested-reason plan |
+| `GET /api/catalog/art?url=` | Listed art only, inert sandboxed document |
+
+Plan prerequisites pin S0's single source generation (it advances on every
+source, order, enabled, trust, private and credential change) for each of
+those generations, the installed-record generation, the checked package cap
+(whose value is its revision), and a SHA-256 fingerprint over the source
+records, the installed document and the candidate-snapshot epoch; a new
+publication at an unchanged generation is a new epoch. Confirmation
+recomputes them from memory only.
+
+**Removal of running in-process plugins (H0, accepted under A6b.7).** The
+plugin host has no safe per-plugin teardown, so U0's runtime seam cannot
+stop a loaded in-process plugin's instances before its directory moves.
+Tool processes are stopped; a loaded plugin keeps running, its package
+directory is removed (on Windows a library the OS holds open makes the move
+fail and the whole removal roll back), and it is reported in
+`restart_required` until the daemon restarts. Data removal is refused for a
+plugin that is still loaded. Plugin settings stored in `vosu.toml` are not
+removed (M7 owns plugin settings).
+
 ## Resolver algorithm
 
 ### Built-in providers

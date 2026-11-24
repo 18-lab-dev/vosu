@@ -4,6 +4,29 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M6b
 
+- Manage catalogs through catalog v2 in the dashboard. Settings › Catalog
+  sources edits the ordered source list (all source forms), shows each
+  source's fetch status, and has per-source **Trusted** (the exact trust
+  warning before every grant), **Private network** and write-only
+  **Credential…** controls. Tools and plugins on the Tools page and overlays
+  on the Available page install only through a reviewed install plan
+  confirmed once: native code, runtime, trust, required approvals, the
+  install-path disclosure and plan errors are shown first, then the job
+  outcome with each package's load result. Catalog-installed packages can be
+  uninstalled after a preview of the dependencies that go with them, or kept
+  when nothing needs them. Game-support offers for a running game open the
+  same plan. A "Restart vosu to finish" notice names in-process plugins
+  whose removal or revoked trust takes effect only after a restart.
+- Add the dashboard-only `/api/catalog/*` routes (sources, credentials,
+  trust, private network, refresh, entries, install plans and confirmation,
+  jobs, installed packages, uninstall preview/start, promote, offers, art,
+  status); every `POST`/`DELETE` requires dashboard provenance and CSRF.
+- Remove the 1.x immediate catalog install path: `/api/tools/catalog*`,
+  `POST /api/tools/<id>/install|update|uninstall`, the overlay catalog
+  install routes and the `vosux --sources`, `--install`, `--update` and
+  `--uninstall` options. Tools installed by 1.x keep loading; the 1.x
+  source list is no longer rewritten at startup. Test-harness builds use
+  `VOSU_CATALOG_TEST_SOCKET` instead of `VOSU_TOOL_CATALOG_TEST_SOCKET`.
 - Add the D15 catalog-forge gate (`scripts/test-catalog-forge.py`, required in
   `prepush.py` and CI): a pinned Forgejo behind a throwaway internal CA that is
   installed only in the test container's OS trust store, exercising private
