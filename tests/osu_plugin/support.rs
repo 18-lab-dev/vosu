@@ -16,7 +16,8 @@ pub static DECLINES: Mutex<Vec<vosu_plugin_api::DetachReason>> = Mutex::new(Vec:
 pub static PANICS: AtomicUsize = AtomicUsize::new(0);
 pub static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 pub static PEAK: AtomicUsize = AtomicUsize::new(0);
-pub static FOCUS_EVENTS: AtomicUsize = AtomicUsize::new(0);
+pub static FOCUS_GAINS: Mutex<BTreeMap<u64, usize>> = Mutex::new(BTreeMap::new());
+pub static HANDLES: Mutex<BTreeMap<u32, u64>> = Mutex::new(BTreeMap::new());
 pub static ATTACHES: Mutex<BTreeMap<u32, usize>> = Mutex::new(BTreeMap::new());
 static TEST_BUSY: Mutex<bool> = Mutex::new(false);
 static TEST_AVAILABLE: Condvar = Condvar::new();
@@ -43,12 +44,14 @@ impl TestLease {
                 previous(info);
             }));
         });
-        for counter in [&PANICS, &DISPATCHES, &IN_FLIGHT, &PEAK, &FOCUS_EVENTS] {
+        for counter in [&PANICS, &DISPATCHES, &IN_FLIGHT, &PEAK] {
             counter.store(0, Ordering::Relaxed);
         }
         FAILURES.lock().unwrap().clear();
         DECLINES.lock().unwrap().clear();
         ATTACHES.lock().unwrap().clear();
+        FOCUS_GAINS.lock().unwrap().clear();
+        HANDLES.lock().unwrap().clear();
         Self
     }
 }
@@ -85,11 +88,17 @@ impl ConcurrentPlugin for ObservedPlugin {
         let active = IN_FLIGHT.fetch_add(1, Ordering::Relaxed) + 1;
         PEAK.fetch_max(active, Ordering::Relaxed);
         let _guard = DispatchGuard;
-        if matches!(&message, Message::FocusChanged(_)) {
-            FOCUS_EVENTS.fetch_add(1, Ordering::Relaxed);
+        if let Message::FocusChanged(focus) = &message
+            && focus.focused
+        {
+            *FOCUS_GAINS.lock().unwrap().entry(focus.handle).or_default() += 1;
         }
         if let Message::SessionAttached(attached) = &message {
             *ATTACHES.lock().unwrap().entry(attached.pid).or_default() += 1;
+            HANDLES
+                .lock()
+                .unwrap()
+                .insert(attached.pid, attached.handle);
         }
         if let Message::SessionDetached(detached) = &message {
             DECLINES.lock().unwrap().push(detached.reason);
