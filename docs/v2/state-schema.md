@@ -193,6 +193,9 @@ inside the upstream adapter, ADR 0021). `schemas/vosu.osu.schema.json` is
 authoritative for types; this section explains the restructuring and gives the
 full 1.x-to-2.0 mapping.
 
+Schema `1.2.0` is unreleased. The A2b corrections below amend that version
+without a version bump.
+
 ### Restructuring, at a glance
 
 - `vosu.osu.session` holds osu!-specific session bookkeeping (`playTime`,
@@ -231,6 +234,9 @@ full 1.x-to-2.0 mapping.
   `ENABLE_KEY_OVERLAY`/`ENABLE_MANIA_KEY_HIT_ERRORS`-gated fields are removed
   (ADR 0021): subscribing to `vosu.osu.play.keyHitErrors`, `.hitOffsets`, or
   `vosu.osu.keys` is itself the opt-in, same as every other field.
+  Bus demand enables the reader collection for `hitOffsets` and
+  `keyHitErrors` with no `ENABLE_*` gate; the 1.x outputs continue to honor
+  their 1.x configuration flags (A2b).
 
 ### 1.x-to-2.0 field mapping
 
@@ -288,6 +294,24 @@ carry the same values while subscribed, at different cadences.
 | `room` | `vosu.osu.room` | |
 | `tourney` | `vosu.osu.tourney` | Published exactly where 1.x builds it (D6): `null` on the lazer multi-spectating path (`ipcState == 11`) before the first lobby read lands, matching 1.x's own "key omitted entirely until then" behavior (`src/api/v2/tourney.rs:28-35`; every upstream-compatible adapter that carries this field — upstream v2 and gosuMemory v1 — drops the key from its own output when this value is `null`, ADR 0021's D6 amendment); populated `clients[]` once that read lands; 1.x's default empty object (`scoreVisible: false`, `clients: []`, and so on) everywhere else. Lazer tourney clients additionally publish `score`, `accuracy`, `combo {current, max}`, and `judgements` (the miss/meh/ok/great/perfect/good counts shape, 1.2.0, R6) in `$defs/tourneyClientPlay`, matching `build_lazer_tourney`'s per-client hit data (`src/api/v2/tourney.rs:166-210`). Only the stable tournament-manager aggregate is deferred, as a `temporary`-class pre-release divergence (`docs/v2/implementation-plan.md`'s M4a-or-later task and day-0 gate): until it lands, the osu! plugin takes 1.x's "no manager found" branch unconditionally on stable, and the `stable-tournament` oracle case is exempted from the M2/M4a byte-equality exits rather than passing it. |
 | `GET /files/skin/` metadata (`client`, `name`, `files`, `builtin`, `base`, `entries[]`, `truncated`) | `vosu.skin.name` (common `name`); `vosu.osu.skin.{builtin,base,variant,files}`; `entries`/`truncated` are now the tree index at `vosu.skin.tree`'s `url` (`GET /api/v1/trees/{id}/`, ADR 0021) rather than a duplicated inline list | |
+
+Mapping notes (A2b):
+
+- `$defs/statistics.good` is fed from 1.x `katu`, including the shared
+  play-statistics shape; result and leaderboard statistics retain their
+  corresponding `good` mapping.
+- `rankedPlay.stage` is an integer, matching 1.x.
+- `beatmap.stats.stars.hitWindow` is a number. Optional members of
+  `stats.stars` and `stats.hitWindow` are omitted when unavailable, as in
+  1.x, rather than published as `null`.
+- `result.statistics.sliderBreaks` is always `0`: a known limitation with
+  the 1.x v1 precedent at `src/api/v1.rs:692`, not a measured result count.
+- **Intentional 1.x divergence:** `vosu.osu.tourney` is `null` for any tick
+  where an IPC client entry has no score. 1.x instead returned HTTP 500 for
+  the whole `/json/v2` response (`src/api/v2/tourney.rs:225-228` →
+  `src/server/service/providers.rs:30-33`).
+- **Intentional 1.x divergence:** tourney `bestOF` becomes `bestOf` in the
+  schema; its value is unchanged.
 
 ### `keys` (`vosu.osu.keys`)
 

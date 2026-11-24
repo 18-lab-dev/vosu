@@ -489,6 +489,60 @@ Exit: `python scripts/check-doc-links.py`; `python scripts/check-brand.py`;
 exactly as A1b's sign-off worked. A2 signed off 2026-11-23 (owner
 delegated decisions to the implementing agent).
 
+### A2b: amendment recording M1/M2 implementation decisions (on `v2/main`, documentation only)
+
+Scope: records the approved decisions made while implementing M1 L3 and
+M2, in their normative contracts and the M1 outcome below:
+
+- [plugin-abi.md](plugin-abi.md) §6.6: K3 bounds committed state to 4 MiB
+  per namespace and 65,536 keys per session; exceeding either returns
+  `VOSU_ERR_INVALID_ARGUMENT`, committing nothing.
+- Plugin ABI §6.2: K6 cancels an unseen attach+detach pair; more than 4,096
+  undelivered lifecycle entries sends `SESSION_DETACHED(lost)` for every
+  announced session, then unsubscribes the watcher's lifecycle-session
+  subscriptions for non-owned sessions only, with a WARN. Resubscribing
+  replays the current list; the owner's final committed state flushes to
+  subscribers before its `SESSION_DETACHED`.
+- Plugin ABI §4: host lock order is
+  `focus -> state_serial -> instances -> sessions -> registry -> subscriptions`.
+- Plugin ABI §5: UnknownHandle distinguishes an issued, retired handle
+  (`VOSU_ERR_TARGET_GONE`) from a never-issued handle
+  (`VOSU_ERR_INVALID_ARGUMENT`).
+- Plugin ABI §4: plugin destroy joins lookup workers unconditionally,
+  within a 4.5-second budget.
+- [state-schema.md](state-schema.md), mapping notes, and
+  `schemas/vosu.osu.schema.json`: shared `$defs/statistics.good` is fed
+  from `katu`; `rankedPlay.stage` is an integer; `stats.stars.hitWindow`
+  is a number. These corrections are already present in the schema.
+- State-schema mapping notes and the result schema:
+  `result.statistics.sliderBreaks` is always `0`, a known limitation with
+  the 1.x v1 precedent at `src/api/v1.rs:692`.
+- State-schema mapping notes: unavailable optional stars and hitWindow
+  members are omitted, not `null`, as in 1.x (already reflected in the
+  schema). All these schema corrections retain unreleased version `1.2.0`.
+- State-schema mapping notes: intentional divergence from 1.x's whole
+  `/json/v2` HTTP 500 is `vosu.osu.tourney: null` on a tick where any IPC
+  client entry has no score.
+- State-schema mapping notes: intentional spelling divergence is tourney
+  `bestOF` → `bestOf`; the value is unchanged.
+- M1 outcome: production `vosu.osu` load/create failure or discovery not
+  starting fails daemon startup; there is no half-start.
+- M1 outcome: initial discovery logs
+  `Initial process discovery completed: N osu! process candidate(s)`.
+- M1 outcome: daemon-log forwarding includes WARN/ERROR from all tracing
+  targets and INFO from `vosu_*`, limited to 20 lines per callsite per
+  second, followed by a suppression summary.
+- M1 outcome and state-schema collection contract: 2.0 bus demand enables
+  hitOffsets/keyHitErrors reader collection without `ENABLE_*` gates;
+  1.x outputs retain the 1.x configuration gates.
+- M1 outcome: D17's stable PlanMemory microbench is 2.65x native
+  (3.22 vs 1.22 µs per capture, about 71 ns per plan plus 12 ns per op,
+  13 plans); the decision remains open pending a live daemon-CPU comparison.
+
+Exit: `python scripts/check-doc-links.py`; `python scripts/check-brand.py`.
+The owner delegated spec sign-off; A2b signed off 2026-11-24 under that
+authority. D17's live daemon-CPU outcome remains open, not a performance pass.
+
 ### M1: plugin API, in-process host, osu! plugin behind the 1.x surfaces
 
 Scope:
@@ -619,7 +673,11 @@ valid. The first successful scan logs
 `Initial process discovery completed: N osu! process candidate(s)`.
 Operational attachment/phase/detach logs remain available, and the daemon
 tracing subscriber forwards WARN/ERROR from all targets and INFO from
-`vosu_*` targets into `Logger`.
+`vosu_*` targets into `Logger`, limited to 20 lines per callsite per second,
+followed by a suppression summary.
+
+For the 2.0 bus, demand enables the hitOffsets/keyHitErrors reader collection
+without an `ENABLE_*` gate. The 1.x outputs still honor their 1.x config flags.
 
 A1b was signed off on 2026-11-23 under the owner's delegated authority:
 attached process facts (`name`, `path`, `command_line`, optional Linux `argv`),
@@ -634,10 +692,12 @@ hardened generator extraction (DD). Offsets now use
 The bundled manifest's `>=1.2.0, <3.0.0` host range must be revisited at M8's
 2.0.0 version bump; enforcement belongs to M6a, not this cutover.
 
-D17's corrected stable fixture and C6b dependent multi-stage plans are in
-progress. Final comparisons await a quiet-host run: see the
-[benchmark guide](../testing/benchmarks.md). No D17 pass or new performance
-number is claimed here.
+D17 M1 remains open: the stable PlanMemory microbench measures 2.65x native
+(3.22 vs 1.22 µs per capture, about 71 ns per plan plus 12 ns per op,
+13 plans). The decision is pending a live daemon-CPU comparison; the owner
+will record that outcome later. See the
+[benchmark guide](../testing/benchmarks.md). This microbench alone is not a
+D17 pass.
 
 The following parity map is the replacement evidence cited by C4's
 `Assertions-Removed` trailer. Old names are from `src/instance/tests.rs`

@@ -77,9 +77,15 @@ No field in any payload — flat or CBOR — is ever a raw pointer into the host
 
 The host serializes calls into one plugin instance (`dispatch`) onto one thread per instance by default, matching the existing single-worker-per-instance model. A plugin's manifest may declare `concurrent_dispatch = true` (§8) to opt into concurrent calls, which requires its `dispatch` implementation to be internally synchronized; the host then dispatches from its own worker pool instead of one dedicated thread. The one exception to per-instance serialization, regardless of `concurrent_dispatch`: a `VOSU_OP_READ_PLAN_RESULT` answering a `VOSU_READ_PLAN_SYNC` submission (§6.3, D5) is always delivered on the submitting thread itself, concurrently with whatever this instance's own serialized `dispatch` thread (or worker pool) is doing at that moment; a plugin using `VOSU_READ_PLAN_SYNC` is responsible for its own synchronization across that one concurrent delivery.
 
+**Host lock order (A2b).** When acquiring multiple host locks, core must use
+`focus -> state_serial -> instances -> sessions -> registry -> subscriptions`.
+
 - `dispatch` may block; for an in-process plugin it runs on a host worker thread dedicated to that instance (never the state-bus publisher thread, so a slow plugin cannot stall [ADR 0002](../decisions/0002-immutable-latest-only-snapshots.md)'s publication), and for a `process`-runtime plugin it runs inside `vosu plugin-host`, which shares no state with core — except, in both runtimes, a `VOSU_READ_PLAN_SYNC` result, delivered on the submitting thread itself rather than this dedicated thread (above). Even so, `dispatch` should return quickly for the high-frequency notification opcodes (`VOSU_OP_DEMAND_CHANGED`, `VOSU_OP_FOCUS_CHANGED`, `VOSU_OP_TIMER_FIRED`, `VOSU_OP_READ_PLAN_RESULT`, `VOSU_OP_SETTINGS_CHANGED`): real work triggered by one of these must be handed to the plugin's own thread and reported back asynchronously (another publish, another action result), never performed inline, because these can arrive often enough to queue up behind a slow handler. Opcodes that represent an actual unit of work (`VOSU_OP_ACTION_INVOKE`, `VOSU_OP_RESOURCE_RESOLVE`, `VOSU_OP_TREE_LIST`/`TREE_LOOKUP`, `VOSU_OP_STREAM_READ`, `VOSU_OP_SCAN_REQUEST`'s eventual result) may legitimately take longer, at the cost of only that one plugin instance's own throughput.
 - `create` may block briefly (it runs before the plugin is considered loaded) but must not perform unbounded I/O; a plugin needing slow first-run setup starts it in its own thread from `create` and reports readiness through normal state publication.
 - `destroy` must return within the host's configured shutdown grace period (matching the 5-second tool-service shutdown precedent in [`docs/tools/protocol.md`](../tools/protocol.md)) or the host proceeds without it: for a `process`-runtime plugin, `vosu plugin-host` is killed; an in-process plugin that does not return leaves the daemon process exit blocked, an accepted cost of the trust an `in-process` grant represents.
+  Plugin destroy joins lookup workers unconditionally, within a 4.5-second
+  budget; a worker is not left running merely because its lookup is still
+  pending (A2b).
 
 ## 5. Error model
 
@@ -95,6 +101,12 @@ Every `dispatch`/`send` call returns a `vosu_status`. `VOSU_OK` means the messag
 | `VOSU_ERR_BACKEND` | An underlying OS failure |
 | `VOSU_ERR_CANCELLED` | The call answers an invocation, stream, or plan that was already cancelled or closed by the other side |
 | `VOSU_ERR_TIMED_OUT` | The call exceeded a host-enforced deadline (an action invocation, a slow stream read, or plan execution) |
+
+**UnknownHandle (A2b).** A session handle that was issued to this plugin
+instance and then retired returns `VOSU_ERR_TARGET_GONE`; one that was never
+issued to it returns `VOSU_ERR_INVALID_ARGUMENT`. This distinction also applies
+to `STATE_SUBSCRIBE` (§6.12), rather than treating a retired handle as an
+unexposed handle.
 
 Per-read failure inside an otherwise-accepted plan is reported per read (`vosu_read_result_kind`, mirroring `src/process.rs`'s `MemoryError`/`ReadStatus` vocabulary) rather than failing the whole plan.
 
@@ -158,8 +170,19 @@ A session is not exposed anywhere outside core — `/api/v1/sessions`, other plu
 `SESSION_ATTACHED` carries no `focused`/`foreground` field; a plugin that needs either waits for the first `FOCUS_CHANGED` (sent once, promptly, after the session is identified, even if neither changes relative to the previous state).
 
 **Delivery ordering.** Core sends a plugin instance `SESSION_ATTACHED` for a handle before any other message naming that handle to it — not only to the owning game plugin, but to any plugin a handle is about to be named to for any reason (a `STATE_SUBSCRIBE`/`STATE_UPDATE` targeting that session, an `ACTION_INVOKE`/`ACTION_CALL` carrying it, a `RESOURCE_RESOLVE` for a session-scoped root). A plugin that has no use for session lifecycle itself may simply ignore the fields it does not need.
+The owner's final committed state must flush to subscribers before its
+`SESSION_DETACHED` is delivered (A2b).
 
 **Non-owning plugins and session events.** `SESSION_ATTACHED`, `SESSION_DETACHED`, and `FOCUS_CHANGED` for a given session go to that session's owning game plugin always, and additionally to any other plugin that subscribed to session events: `VOSU_OP_STATE_SUBSCRIBE` (§6.12) with a selector naming the reserved pseudo-namespace `vosu.sessions` and an empty pointer, exactly as `docs/v2/api-v1.md`'s session-events WebSocket reuses its field-subscription protocol for the same purpose. A non-owning subscriber's `SESSION_ATTACHED` omits `name`/`path`/`command_line`/`argv` entirely, never with a placeholder: `path` would otherwise hand every `vosu.sessions` subscriber the install directory D2 reserves for the owning plugin. Non-owning plugins learn of a session only once it is identified: their `SESSION_ATTACHED` is sent when the owning plugin's `SESSION_IDENTIFY` arrives, not at attach. A subscribing plugin receives the three messages above instead of (not in addition to) a `STATE_UPDATE` for that pseudo-namespace, since they are already typed events; this is the one selector for which `STATE_SUBSCRIBE` changes a plugin's delivered opcode set rather than only its demand.
+
+**Lifecycle backpressure (K6, A2b).** Subscribing or resubscribing to
+`vosu.sessions` replays the current identified-session list. An attach and
+detach that both remain unseen by the watcher cancel each other. If the
+lifecycle backlog exceeds 4,096 undelivered entries, core sends
+`SESSION_DETACHED` with `reason: "lost"` for every session already announced
+to that watcher, then unsubscribes its lifecycle-session subscriptions for
+non-owned sessions only, and logs a WARN. Owned-session subscriptions are
+not removed. The watcher can resubscribe to replay the current list.
 
 ### 6.3 Memory read plans
 
@@ -223,6 +246,12 @@ and it carries no CBOR tags — any violation is `VOSU_ERR_INVALID_ARGUMENT`.
 JSON projection writes a non-finite `f64` as `null` (matching JS
 `JSON.stringify`) and `VOSU_VALUE_BYTES` as standard base64; no schema in
 this freeze declares a bytes field.
+
+**Commit budget (K3, A2b).** The resulting committed state is bounded to
+4 MiB per namespace and 65,536 keys per session. A `PUBLISH_FIELD` or
+`PUBLISH_BATCH` that would exceed either budget returns
+`VOSU_ERR_INVALID_ARGUMENT` and commits nothing; these retained-state
+budgets are separate from the per-message limits.
 
 **Atomic multi-field publication (D4).** `VOSU_OP_PUBLISH_BATCH` carries a handle plus an array of the same per-field entries `PUBLISH_FIELD` carries (`vosu_publish_batch_header`, §3's flat layout), for a plugin that must change several fields as one atomic unit (`src/state/worker.rs`'s regular and precise readers running concurrently is the motivating case: a batch keeps one reader's commit from interleaving with the other's). The whole encoded payload is capped at `VOSU_PUBLISH_BATCH_MAX_BYTES` (1 MiB, matching the WebSocket/frame limit `docs/v2/api-v1.md` "Listener placement, CORS, and limits" already enforces, since a batch's `VOSU_VALUE_CBOR` entries are not bounded the small fixed-width way a read plan's ops are). The whole batch is validated and committed as a whole, with every one of the following rejecting the entire batch and applying nothing: a malformed entry; any entry's own `handle` differing from the batch's own `handle` (every entry in one batch names the same session); an entry that would itself be semantically rejected as a standalone `PUBLISH_FIELD` (an uncovered field, or `vosu.client`, which a plugin never publishes directly); or two entries sharing an `ns` whose `pointer`s overlap — equal, or one a `/`-segment prefix of the other (e.g. `/play` and `/play/combo`), since the ancestor's value would cover the descendant's own write — with no defined ordering or last-write-wins rule; an overlap is rejected, never resolved. Otherwise a single `VOSU_OK` answers the message, never a per-entry status, and core never holds a partially-applied batch as pending state between entries. A plugin that only ever changes one field at a time keeps using `PUBLISH_FIELD`; `PUBLISH_BATCH` is for the case where several fields must become visible together or not at all.
 

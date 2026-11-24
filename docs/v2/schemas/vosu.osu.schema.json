@@ -582,7 +582,7 @@
             "sliderEndHits": { "type": "integer", "minimum": 0 },
             "smallTickHits": { "type": "integer", "minimum": 0 },
             "largeTickHits": { "type": "integer", "minimum": 0 },
-            "sliderBreaks": { "type": "integer", "minimum": 0 },
+            "sliderBreaks": { "type": "integer", "const": 0, "description": "Known limitation: always 0, matching the 1.x v1 precedent at src/api/v1.rs:692 (A2b)." },
             "good": { "type": "integer", "minimum": 0, "description": "1.x `katu` (1.2.0, additive)." }
           }
         },
