@@ -1,3 +1,4 @@
+use vosu_proptest::bounded;
 use super::cli::{CliCommand, CommandInvocation, classify_command_invocation};
 #[cfg(target_os = "linux")]
 use super::cli::BackendProbe;
@@ -157,8 +158,7 @@ fn backend_probe_arguments_are_not_commands_off_linux() {
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 #[tokio::test]
 async fn backend_probe_is_unsupported_without_process_event_feature() {
-    let error = super::cli::run_command(CliCommand::ProbeBackend(BackendProbe::Ebpf))
-        .await
+    let error = bounded!(super::cli::run_command(CliCommand::ProbeBackend(BackendProbe::Ebpf)))
         .expect_err("featureless probe unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }
@@ -166,8 +166,7 @@ async fn backend_probe_is_unsupported_without_process_event_feature() {
 #[cfg(not(target_os = "linux"))]
 #[tokio::test]
 async fn setup_is_unsupported_off_linux() {
-    let error = super::cli::run_command(CliCommand::Setup)
-        .await
+    let error = bounded!(super::cli::run_command(CliCommand::Setup))
         .expect_err("non-Linux setup unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }

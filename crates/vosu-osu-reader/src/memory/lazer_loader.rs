@@ -414,24 +414,20 @@ mod tests {
         );
         let cancel = CancellationToken::new();
         assert_eq!(
-            loader
-                .resolve(Path::new("4242"), version, &cancel)
-                .await
+            vosu_proptest::bounded!(loader.resolve(Path::new("4242"), version, &cancel))
                 .unwrap()
                 .osu_version,
             version
         );
         assert_eq!(std::fs::read(&target).unwrap(), generated);
         assert_eq!(
-            loader
-                .resolve(Path::new("99"), version, &cancel)
-                .await
+            vosu_proptest::bounded!(loader.resolve(Path::new("99"), version, &cancel))
                 .unwrap()
                 .osu_version,
             version
         );
         assert_eq!(
-            *loader.generator.calls.lock().await,
+            *vosu_proptest::bounded!(loader.generator.calls.lock()),
             vec![(PathBuf::from("4242"), version.to_owned())]
         );
     }
@@ -447,10 +443,12 @@ mod tests {
             let loader =
                 LazerOffsetLoader::new(FakeGenerator::new(output), dir.path().into(), Bytes::new());
             assert!(
-                loader
-                    .resolve(Path::new("1"), version, &CancellationToken::new())
-                    .await
-                    .is_err()
+                vosu_proptest::bounded!(loader.resolve(
+                    Path::new("1"),
+                    version,
+                    &CancellationToken::new()
+                ))
+                .is_err()
             );
             assert_eq!(std::fs::read(&target).unwrap(), old);
         }
@@ -465,10 +463,12 @@ mod tests {
         generator.barrier = Some(Barrier::new(2));
         let loader = LazerOffsetLoader::new(generator, dir.path().into(), Bytes::new());
         let cancel = CancellationToken::new();
-        let (a, b) = tokio::join!(
-            loader.resolve(Path::new("1"), version, &cancel),
-            loader.resolve(Path::new("2"), version, &cancel)
-        );
+        let (a, b) = vosu_proptest::bounded!(async {
+            tokio::join!(
+                loader.resolve(Path::new("1"), version, &cancel),
+                loader.resolve(Path::new("2"), version, &cancel)
+            )
+        });
         assert_eq!(a.unwrap().osu_version, version);
         assert_eq!(b.unwrap().osu_version, version);
         assert_eq!(
@@ -495,17 +495,11 @@ mod tests {
             fixture("2026.1.0"),
         );
         let cancel = CancellationToken::new();
-        loader
-            .resolve(Path::new("5"), version, &cancel)
-            .await
-            .unwrap();
-        loader
-            .resolve(Path::new("6"), version, &cancel)
-            .await
-            .unwrap();
+        vosu_proptest::bounded!(loader.resolve(Path::new("5"), version, &cancel)).unwrap();
+        vosu_proptest::bounded!(loader.resolve(Path::new("6"), version, &cancel)).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), generated);
         assert_eq!(
-            *loader.generator.calls.lock().await,
+            *vosu_proptest::bounded!(loader.generator.calls.lock()),
             vec![(PathBuf::from("5"), version.to_owned())],
             "a complete cache must be reused after regeneration"
         );
@@ -520,11 +514,13 @@ mod tests {
             dir.path().into(),
             Bytes::new(),
         );
-        let _hold = loader.generator.result.lock().await;
+        let _hold = vosu_proptest::bounded!(loader.generator.result.lock());
         let cancel = CancellationToken::new();
-        let (result, ()) = tokio::join!(loader.resolve(Path::new("7"), version, &cancel), async {
-            loader.generator.started.notified().await;
-            cancel.cancel();
+        let (result, ()) = vosu_proptest::bounded!(async {
+            tokio::join!(loader.resolve(Path::new("7"), version, &cancel), async {
+                vosu_proptest::bounded!(loader.generator.started.notified());
+                cancel.cancel();
+            })
         });
         assert!(matches!(result, Err(LazerLoadError::Cancelled)));
         assert!(!loader.cache_path(version).unwrap().exists());
@@ -534,23 +530,27 @@ mod tests {
     async fn local_readiness_retries_back_off_until_success() {
         let attempts = AtomicUsize::new(0);
         let started = tokio::time::Instant::now();
-        let offsets = retry_pending(
-            |_| async {
-                if attempts.fetch_add(1, Ordering::SeqCst) < 6 {
-                    Err(LazerLoadError::Unavailable(
-                        "2027.1.0".into(),
-                        "assemblies not ready".into(),
-                    ))
-                } else {
-                    Ok(Arc::new(
-                        LazerOffsets::from_json(&fixture("2027.1.0")).unwrap(),
-                    ))
-                }
-            },
-            tokio_sleep,
-            CancellationToken::new(),
+        // This paused-clock test intentionally covers 1,050 virtual seconds.
+        // One more virtual second detects an extra/unending retry immediately.
+        let offsets = vosu_proptest::bounded!(
+            Duration::from_secs(1051),
+            retry_pending(
+                |_| async {
+                    if attempts.fetch_add(1, Ordering::SeqCst) < 6 {
+                        Err(LazerLoadError::Unavailable(
+                            "2027.1.0".into(),
+                            "assemblies not ready".into(),
+                        ))
+                    } else {
+                        Ok(Arc::new(
+                            LazerOffsets::from_json(&fixture("2027.1.0")).unwrap(),
+                        ))
+                    }
+                },
+                tokio_sleep,
+                CancellationToken::new(),
+            )
         )
-        .await
         .unwrap();
         assert_eq!(offsets.osu_version, "2027.1.0");
         assert_eq!(attempts.load(Ordering::SeqCst), 7);
@@ -564,23 +564,25 @@ mod tests {
     async fn cancellation_interrupts_readiness_retry_delay() {
         let cancel = CancellationToken::new();
         let attempted = Notify::new();
-        let (result, ()) = tokio::join!(
-            retry_pending(
-                |_| async {
-                    attempted.notify_one();
-                    Err(LazerLoadError::Unavailable(
-                        "2027.1.0".into(),
-                        "not ready".into(),
-                    ))
-                },
-                tokio_sleep,
-                cancel.clone()
-            ),
-            async {
-                attempted.notified().await;
-                cancel.cancel();
-            }
-        );
+        let (result, ()) = vosu_proptest::bounded!(async {
+            tokio::join!(
+                retry_pending(
+                    |_| async {
+                        attempted.notify_one();
+                        Err(LazerLoadError::Unavailable(
+                            "2027.1.0".into(),
+                            "not ready".into(),
+                        ))
+                    },
+                    tokio_sleep,
+                    cancel.clone()
+                ),
+                async {
+                    vosu_proptest::bounded!(attempted.notified());
+                    cancel.cancel();
+                }
+            )
+        });
         assert!(matches!(result, Err(LazerLoadError::Cancelled)));
     }
 }

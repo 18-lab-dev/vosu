@@ -27,16 +27,16 @@
         ));
         let _first = delegate.connections.register(Some("counter".into()));
         let _second = delegate.connections.register(Some("counter".into()));
-        let status = delegate.dispatch(Endpoint::DashboardStatus, Request::builder().uri("/api/dashboard/status").body(Body::empty()).unwrap(), Bytes::new()).await;
+        let status = bounded!(delegate.dispatch(Endpoint::DashboardStatus, Request::builder().uri("/api/dashboard/status").body(Body::empty()).unwrap(), Bytes::new()));
         assert_eq!(status.status(), StatusCode::OK);
-        let status: Value = serde_json::from_slice(&axum::body::to_bytes(status.into_body(), 16384).await.unwrap()).unwrap();
+        let status: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(status.into_body(), 16384)).unwrap()).unwrap();
         assert_eq!(status["connections"]["counter"], 2);
         assert_eq!(status["instances"], json!([]));
         for (path, expected) in [("/api/counters/details/counter", StatusCode::OK), ("/api/counters/details/%2E%2E", StatusCode::BAD_REQUEST)] {
-            let response = delegate.dispatch(Endpoint::CounterDetails, Request::builder().uri(path).body(Body::empty()).unwrap(), Bytes::new()).await;
+            let response = bounded!(delegate.dispatch(Endpoint::CounterDetails, Request::builder().uri(path).body(Body::empty()).unwrap(), Bytes::new()));
             assert_eq!(response.status(), expected);
             if expected == StatusCode::OK {
-                let details: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
+                let details: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(response.into_body(), 16384)).unwrap()).unwrap();
                 assert_eq!(details["bytes"], 5);
                 assert_eq!(details["complete"], true);
                 // Compare canonical forms: the reported path is canonical, while `folder` may
@@ -49,8 +49,8 @@
                 );
             }
         }
-        processor.shutdown().await;
-        relays.shutdown().await;
+        bounded!(processor.shutdown());
+        bounded!(relays.shutdown());
     }
 
     #[tokio::test]
@@ -85,8 +85,8 @@
             Request::builder().method("POST").uri("/api/counters/names/accuracy%20by%20sxlvia").body(Body::empty()).unwrap(),
             Bytes::from_static(body.as_bytes()),
         );
-        assert_eq!(set(r#"{"nickname":"Acc","alias":"tools"}"#).await.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(set(r#"{"nickname":"Acc","alias":"acc"}"#).await.status(), StatusCode::OK);
+        assert_eq!(bounded!(set(r#"{"nickname":"Acc","alias":"tools"}"#)).status(), StatusCode::BAD_REQUEST);
+        assert_eq!(bounded!(set(r#"{"nickname":"Acc","alias":"acc"}"#)).status(), StatusCode::OK);
         assert!(root.path().join("config/overlay-names.json").is_file());
         let get = |uri: &'static str| delegate.dispatch(
             Endpoint::CounterStatic, Request::builder().uri(uri).body(Body::empty()).unwrap(), Bytes::new(),
@@ -95,16 +95,16 @@
             ("/acc", "/accuracy%20by%20sxlvia/"),
             ("/ACC/assets/a.css?x=1", "/accuracy%20by%20sxlvia/assets/a.css?x=1"),
         ] {
-            let response = get(uri).await;
+            let response = bounded!(get(uri));
             assert_eq!(response.status(), StatusCode::FOUND, "{uri}");
             assert_eq!(response.headers()[header::LOCATION], location, "{uri}");
         }
-        assert_ne!(get("/other/").await.status(), StatusCode::FOUND);
+        assert_ne!(bounded!(get("/other/")).status(), StatusCode::FOUND);
         // A folder created later under the alias's name takes precedence.
         std::fs::create_dir_all(root.path().join("static/acc")).unwrap();
-        assert_ne!(get("/acc/").await.status(), StatusCode::FOUND);
-        processor.shutdown().await;
-        relays.shutdown().await;
+        assert_ne!(bounded!(get("/acc/")).status(), StatusCode::FOUND);
+        bounded!(processor.shutdown());
+        bounded!(relays.shutdown());
     }
 
     #[test]
@@ -189,43 +189,40 @@
             files: None,
         }));
         assert_eq!(
-            provider.select_beatmap(&PpQuery::default()).await.unwrap(),
+            bounded!(provider.select_beatmap(&PpQuery::default())).unwrap(),
             Some(Bytes::from_static(b"current")),
         );
 
         let directory = tempfile::tempdir().unwrap();
         let osu = directory.path().join("map.osu");
-        tokio::fs::write(&osu, b"path").await.unwrap();
-        let selected = provider
+        bounded!(tokio::fs::write(&osu, b"path")).unwrap();
+        let selected = bounded!(provider
             .select_beatmap(&PpQuery {
                 path: Some(osu.to_string_lossy().into_owned()),
                 ..PpQuery::default()
-            })
-            .await
+            }))
             .unwrap();
         assert_eq!(selected, Some(Bytes::from_static(b"path")));
 
         let wrong_extension = directory.path().join("map.txt");
-        tokio::fs::write(&wrong_extension, b"path").await.unwrap();
+        bounded!(tokio::fs::write(&wrong_extension, b"path")).unwrap();
         assert!(
-            provider
+            bounded!(provider
                 .select_beatmap(&PpQuery {
                     path: Some(wrong_extension.to_string_lossy().into_owned()),
                     ..PpQuery::default()
-                })
-                .await
+                }))
                 .is_err()
         );
 
         let directory_named_osu = directory.path().join("folder.osu");
-        tokio::fs::create_dir(&directory_named_osu).await.unwrap();
+        bounded!(tokio::fs::create_dir(&directory_named_osu)).unwrap();
         assert!(
-            provider
+            bounded!(provider
                 .select_beatmap(&PpQuery {
                     path: Some(directory_named_osu.to_string_lossy().into_owned()),
                     ..PpQuery::default()
-                })
-                .await
+                }))
                 .is_err()
         );
     }
@@ -278,8 +275,7 @@
 
         let failed = counter_search_response(Err(r#"<img src=x onerror="alert(1)">"#.into()));
         assert_eq!(failed.status(), StatusCode::BAD_GATEWAY);
-        let body = axum::body::to_bytes(failed.into_body(), usize::MAX)
-            .await
+        let body = bounded!(axum::body::to_bytes(failed.into_body(), usize::MAX))
             .unwrap();
         assert_eq!(
             &body[..],
@@ -336,7 +332,7 @@
         let client_id = namespaced_client_id(COMMANDS_CHANNEL, local_id).unwrap();
         let client = CommandClient::from_query(client_id, Some("counter")).unwrap();
         let _registration =
-            sink.register(COMMANDS_CHANNEL, client, connection.lock().await.control_handle());
+            sink.register(COMMANDS_CHANNEL, client, bounded!(connection.lock()).control_handle());
         for value in [1, 2] {
             sink.relay(Relay {
                 except: None,
@@ -360,8 +356,8 @@
             );
         }
 
-        connection.lock().await.cleanup();
-        sink.shutdown().await;
+        bounded!(connection.lock()).cleanup();
+        bounded!(sink.shutdown());
     }
     #[tokio::test]
     async fn relay_reply_survives_connection_mutex_contention() {
@@ -380,16 +376,16 @@
         let client_id = namespaced_client_id(COMMANDS_CHANNEL, local_id).unwrap();
         let client = CommandClient::from_query(client_id, Some("counter")).unwrap();
         let _registration =
-            sink.register(COMMANDS_CHANNEL, client, connection.lock().await.control_handle());
+            sink.register(COMMANDS_CHANNEL, client, bounded!(connection.lock()).control_handle());
         let healthy_client = CommandClient::from_query(healthy_id, Some("counter")).unwrap();
         let _healthy_registration = sink.register(
             COMMANDS_CHANNEL,
             healthy_client,
-            healthy.lock().await.control_handle(),
+            bounded!(healthy.lock()).control_handle(),
         );
 
 
-        let guard = connection.lock().await;
+        let guard = bounded!(connection.lock());
         sink.relay(Relay {
             except: None,
             command: "updateSettings".into(),
@@ -427,9 +423,9 @@
         );
         drop(guard);
 
-        connection.lock().await.cleanup();
-        healthy.lock().await.cleanup();
-        sink.shutdown().await;
+        bounded!(connection.lock()).cleanup();
+        bounded!(healthy.lock()).cleanup();
+        bounded!(sink.shutdown());
     }
 
 
@@ -453,17 +449,17 @@
         let _stalled_registration = sink.register(
             COMMANDS_CHANNEL,
             stalled_client.clone(),
-            stalled.lock().await.control_handle(),
+            bounded!(stalled.lock()).control_handle(),
         );
         let _healthy_registration = sink.register(
             COMMANDS_CHANNEL,
             healthy_client,
-            healthy.lock().await.control_handle(),
+            bounded!(healthy.lock()).control_handle(),
         );
 
         // Saturate control traffic without draining this recipient.
         for _ in 0..16 {
-            assert!(stalled.lock().await.try_send_text(Bytes::from_static(b"occupied")));
+            assert!(bounded!(stalled.lock()).try_send_text(Bytes::from_static(b"occupied")));
         }
         sink.relay(Relay {
             except: None,
@@ -484,17 +480,17 @@
             serde_json::from_slice::<Value>(&received).unwrap(),
             json!({ "command": "updateSettings", "message": { "value": 1 } })
         );
-        assert!(!stalled.lock().await.try_send_text(Bytes::from_static(b"still-open")));
-        stalled.lock().await.cleanup();
-        healthy.lock().await.cleanup();
-        sink.shutdown().await;
+        assert!(!bounded!(stalled.lock()).try_send_text(Bytes::from_static(b"still-open")));
+        bounded!(stalled.lock()).cleanup();
+        bounded!(healthy.lock()).cleanup();
+        bounded!(sink.shutdown());
     }
 
     #[tokio::test]
     async fn relay_worker_shutdown_is_joined() {
         let sink = WebSocketRelaySink::new();
         assert!(!sink.is_shutdown());
-        sink.shutdown().await;
+        bounded!(sink.shutdown());
         assert!(sink.is_shutdown());
     }
 
@@ -509,7 +505,7 @@
             MissingKind::NotFound,
         )
         .unwrap();
-        let response = resource_response(partial_target, Some("bytes=1-3".into())).await;
+        let response = bounded!(resource_response(partial_target, Some("bytes=1-3".into())));
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 1-3/6");
 
@@ -519,7 +515,7 @@
             MissingKind::NotFound,
         )
         .unwrap();
-        let response = resource_response(invalid_target, Some("bytes=8-9".into())).await;
+        let response = bounded!(resource_response(invalid_target, Some("bytes=8-9".into())));
         assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */6");
     }
@@ -538,15 +534,14 @@
         .unwrap();
 
         let response =
-            counter_resource_response(outcome, None, "nested%20counter/index.html", false).await;
+            bounded!(counter_resource_response(outcome, None, "nested%20counter/index.html", false));
         assert_eq!(response.status(), StatusCode::OK);
         let declared_length = response.headers()[header::CONTENT_LENGTH]
             .to_str()
             .unwrap()
             .parse::<usize>()
             .unwrap();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
+        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
             .unwrap();
         assert_eq!(declared_length, body.len());
         assert!(body.starts_with(original));
@@ -566,10 +561,10 @@
             MissingKind::NotFound,
         )
         .unwrap();
-        let response = counter_resource_response(outcome, None, "counter/index.html", true).await;
+        let response = bounded!(counter_resource_response(outcome, None, "counter/index.html", true));
         assert_eq!(response.status(), StatusCode::OK);
         let declared = response.headers()[header::CONTENT_LENGTH].to_str().unwrap().parse::<usize>().unwrap();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
         assert_eq!(declared, body.len());
         let body = std::str::from_utf8(&body).unwrap();
         // The marker is the first script, right after <head>, and the
@@ -596,15 +591,13 @@
         )
         .unwrap();
 
-        let response = counter_resource_response(
+        let response = bounded!(counter_resource_response(
             outcome,
             None,
             "evil%3C%2Fscript%3E%26%E2%80%A8%E2%80%A9/index.html",
             false,
-        )
-        .await;
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
+        ));
+        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
             .unwrap();
         assert!(body.starts_with(original));
         let appended = std::str::from_utf8(&body[original.len()..]).unwrap();
@@ -627,13 +620,11 @@
         .unwrap();
 
         let response =
-            counter_resource_response(outcome, Some("bytes=1-3".into()), "counter/index.html", true)
-                .await;
+            bounded!(counter_resource_response(outcome, Some("bytes=1-3".into()), "counter/index.html", true));
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.headers()[header::CONTENT_LENGTH], "3");
         assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 1-3/6");
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
+        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
             .unwrap();
         assert_eq!(body, Bytes::from_static(b"bcd"));
     }
@@ -641,11 +632,10 @@
     #[tokio::test]
     async fn unavailable_current_file_uses_exact_not_ready_envelope() {
         let response =
-            resource_response(ResourceOutcome::Missing(MissingKind::NotReady), None).await;
+            bounded!(resource_response(ResourceOutcome::Missing(MissingKind::NotReady), None));
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(response.headers()[header::CONTENT_TYPE], JSON);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
+        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
             .unwrap();
         assert_eq!(
             body,

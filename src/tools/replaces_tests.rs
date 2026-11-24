@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 fn put(root: &Path, id: &str, requires: &str) {
     fs::create_dir_all(root.join("web")).unwrap();
@@ -11,7 +12,7 @@ fn tool() -> catalog::Tool {
         "replaces":["old"], "packages":{"any":{"url":"https://example.com/new.zip", "sha256":"00".repeat(32), "size":1}}})).unwrap()
 }
 async fn host(root: &Path) -> Arc<ToolHost> {
-    ToolHost::new(
+    bounded!(ToolHost::new(
         root.join("config"),
         root.join("tools"),
         root.join("cache"),
@@ -19,8 +20,7 @@ async fn host(root: &Path) -> Arc<ToolHost> {
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
         Arc::new(|| json!({})),
-    )
-    .await
+    ))
     .unwrap()
 }
 async fn fixture(root: &Path) -> (Arc<ToolHost>, catalog::Tool) {
@@ -42,7 +42,7 @@ async fn fixture(root: &Path) -> (Arc<ToolHost>, catalog::Tool) {
         &BTreeMap::from([("old", state)]),
     )
     .unwrap();
-    let host = host(root).await;
+    let host = bounded!(host(root));
     fs::create_dir_all(host.tool_data("old")).unwrap();
     fs::write(host.tool_data("old").join("save"), b"unchanged\0data").unwrap();
     fs::create_dir_all(host.cache.join("old")).unwrap();
@@ -65,7 +65,7 @@ async fn fixture(root: &Path) -> (Arc<ToolHost>, catalog::Tool) {
 #[tokio::test]
 async fn offer_requires_same_trusted_source_and_unique_claim() {
     let root = tempfile::tempdir().unwrap();
-    let (host, mut tool) = fixture(root.path()).await;
+    let (host, mut tool) = bounded!(fixture(root.path()));
     assert_eq!(host.update_target("old").as_deref(), Some("new"));
     assert!(
         host.update_available("old", Some("99.0.0")),
@@ -113,13 +113,13 @@ async fn offer_requires_same_trusted_source_and_unique_claim() {
     );
     assert!(!host.replacement_journal().exists());
     assert!(host.data.join("old/tool.toml").exists());
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 #[tokio::test]
 async fn refuses_every_existing_target_without_changing_state() {
     for slot in 0..5 {
         let root = tempfile::tempdir().unwrap();
-        let (host, tool) = fixture(root.path()).await;
+        let (host, tool) = bounded!(fixture(root.path()));
         let path = match slot {
             0 => host.data.join("new"),
             1 => host.tool_data("new"),
@@ -152,7 +152,7 @@ async fn refuses_every_existing_target_without_changing_state() {
         if slot == 2 {
             assert_eq!(fs::read_to_string(path).unwrap(), "do not overwrite");
         }
-        host.shutdown().await;
+        bounded!(host.shutdown());
     }
 }
 
@@ -160,7 +160,7 @@ async fn refuses_every_existing_target_without_changing_state() {
 async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idempotently() {
     for cut in 0..8 {
         let root = tempfile::tempdir().unwrap();
-        let (original, tool) = fixture(root.path()).await;
+        let (original, tool) = bounded!(fixture(root.path()));
         put(&original.replacement_stage(), "new", "");
         original.prepare_replacement("old", &tool, true).unwrap();
         let paths = [
@@ -188,9 +188,9 @@ async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idem
             fs::remove_dir_all(original.data.join("old")).unwrap();
             fs::remove_dir(original.data.join(".replacement-stage")).unwrap();
         }
-        original.shutdown().await;
+        bounded!(original.shutdown());
         drop(original);
-        let recovered = host(root.path()).await;
+        let recovered = bounded!(host(root.path()));
         recovered.recover_replacement().unwrap();
         recovered.recover_replacement().unwrap();
         assert!(recovered.entry("old").is_err());
@@ -245,13 +245,11 @@ async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idem
             json!(["consumer"])
         );
         assert!(
-            recovered
-                .uninstall_catalog("new", false)
-                .await
+            bounded!(recovered.uninstall_catalog("new", false))
                 .unwrap_err()
                 .contains("requires")
         );
-        recovered.shutdown().await;
+        bounded!(recovered.shutdown());
     }
 }
 

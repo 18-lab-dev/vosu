@@ -71,7 +71,7 @@ fn helper_waits_past_legacy_two_second_window_for_durable_handoff_ack() {
             std::thread::sleep(Duration::from_millis(10));
         };
         platform.live_owner_polls.store(0, Ordering::Release);
-        let helper_result = helper.join().unwrap();
+        let helper_result = vosu_proptest::wait::JoinBounded::join_bounded(helper).unwrap();
         helper_result.unwrap();
         assert!(
             acknowledged,
@@ -135,7 +135,12 @@ fn run_helper_with_authorized_record_replacement(replacement: &[u8]) -> (UpdateE
 
         fs::write(&fixture.record_path, replacement).unwrap();
         let started = Instant::now();
-        (helper.join().unwrap().unwrap_err(), started.elapsed())
+        (
+            vosu_proptest::wait::JoinBounded::join_bounded(helper)
+                .unwrap()
+                .unwrap_err(),
+            started.elapsed(),
+        )
     })
 }
 
@@ -204,7 +209,9 @@ fn run_helper_with_locked_authorized_record(persistent: bool) {
         };
         let started = Instant::now();
         if persistent {
-            let error = helper.join().unwrap().unwrap_err();
+            let error = vosu_proptest::wait::JoinBounded::join_bounded(helper)
+                .unwrap()
+                .unwrap_err();
             assert!(matches!(error, UpdateError::Io(error) if error.raw_os_error() == Some(32)));
             assert!(
                 started.elapsed() >= Duration::from_secs(2)
@@ -223,7 +230,7 @@ fn run_helper_with_locked_authorized_record(persistent: bool) {
             }
             let retried = platform.live_owner_polls.load(Ordering::Acquire) <= before - 2;
             platform.live_owner_polls.store(0, Ordering::Release);
-            let result = helper.join().unwrap();
+            let result = vosu_proptest::wait::JoinBounded::join_bounded(helper).unwrap();
             drop(lock);
             assert!(
                 retried,

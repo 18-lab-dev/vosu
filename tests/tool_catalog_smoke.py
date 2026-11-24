@@ -242,7 +242,7 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                         daemon.wait(timeout=15)
                     except subprocess.TimeoutExpired:
                         daemon.kill()
-                        daemon.wait()
+                        daemon.wait(timeout=15)
                 server.shutdown()
     (args.evidence / 'smoke.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print('\n'.join(evidence))

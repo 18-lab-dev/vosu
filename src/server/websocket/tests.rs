@@ -2,6 +2,7 @@ use super::*;
 use axum::{extract::Request, response::Response};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Notify;
+use vosu_proptest::bounded;
 
 struct Provider {
     focused: AtomicBool,
@@ -100,7 +101,7 @@ async fn callback_tracker_seals_cancels_and_joins_live_tasks() {
     tokio::time::timeout(Duration::from_millis(100), tracker.wait_drained())
         .await
         .expect("cancellation must drain callback");
-    task.await.unwrap();
+    bounded!(task).unwrap();
     assert_eq!(tracker.active(), 0);
 }
 
@@ -123,39 +124,39 @@ async fn sealing_after_response_creation_owns_unresolved_upgrade() {
             let response_created_tx = response_created_tx.clone();
             let handler_entered_tx = handler_entered_tx.clone();
             async move {
-                let response =
-                    upgrade_response(Endpoint::V1, request, tracker, move |_, _| async move {
+                let response = bounded!(upgrade_response(
+                    Endpoint::V1,
+                    request,
+                    tracker,
+                    move |_, _| async move {
                         let _ = handler_entered_tx.send(()).await;
                         std::future::pending::<()>().await;
-                    })
-                    .await;
-                let _ = response_created_tx.send(()).await;
-                release_response.notified().await;
+                    }
+                ));
+                let _ = bounded!(response_created_tx.send(()));
+                bounded!(release_response.notified());
                 response
             }
         }
     });
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
+    let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        bounded!(axum::serve(listener, app)).unwrap();
     });
     let client = tokio::spawn(async move {
-        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
-        stream
+        let mut stream = bounded!(tokio::net::TcpStream::connect(address)).unwrap();
+        bounded!(stream
                 .write_all(
                     b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-                )
-                .await
+                ))
                 .unwrap();
         let mut response = [0_u8; 256];
-        let read = stream.read(&mut response).await.unwrap();
+        let read = bounded!(stream.read(&mut response)).unwrap();
         assert!(response[..read].starts_with(b"HTTP/1.1 101"));
     });
 
-    response_created_rx.recv().await.unwrap();
+    bounded!(response_created_rx.recv()).unwrap();
     tracker.seal();
     assert_eq!(tracker.active(), 1);
     assert!(
@@ -165,12 +166,12 @@ async fn sealing_after_response_creation_owns_unresolved_upgrade() {
     );
 
     release_response.notify_one();
-    handler_entered_rx.recv().await.unwrap();
+    bounded!(handler_entered_rx.recv()).unwrap();
     tracker.cancel();
     tokio::time::timeout(Duration::from_millis(100), tracker.wait_drained())
         .await
         .expect("cancellation must drain the upgraded handler");
-    client.await.unwrap();
+    bounded!(client).unwrap();
     server.abort();
 }
 
@@ -248,13 +249,12 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
     async fn handshake(request: Request) -> Response {
         match decide_upgrade(request.uri().path(), true) {
             UpgradeDecision::Upgrade(endpoint) => {
-                upgrade_response(
+                bounded!(upgrade_response(
                     endpoint,
                     request,
                     Arc::new(UpgradeCallbackTracker::new()),
                     |_endpoint, _socket| async {},
-                )
-                .await
+                ))
             }
             UpgradeDecision::Reject { status, body } => Response::builder()
                 .status(status)
@@ -264,11 +264,11 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
     }
 
     async fn request_status(address: std::net::SocketAddr, path: &str) -> StatusCode {
-        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        let mut stream = bounded!(tokio::net::TcpStream::connect(address)).unwrap();
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
         );
-        stream.write_all(request.as_bytes()).await.unwrap();
+        bounded!(stream.write_all(request.as_bytes())).unwrap();
         let mut response = Vec::new();
         let mut chunk = [0_u8; 512];
         loop {
@@ -295,14 +295,10 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         StatusCode::from_u16(status).unwrap()
     }
 
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
+    let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().fallback(handshake))
-            .await
-            .unwrap();
+        bounded!(axum::serve(listener, Router::new().fallback(handshake))).unwrap();
     });
 
     for path in [
@@ -314,7 +310,7 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         "/websocket/commands",
     ] {
         assert_eq!(
-            request_status(address, path).await,
+            bounded!(request_status(address, path)),
             StatusCode::SWITCHING_PROTOCOLS
         );
     }
@@ -324,7 +320,10 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         "/websocket/v2/subscribe/",
         "/websocket/unknown",
     ] {
-        assert_eq!(request_status(address, path).await, StatusCode::NOT_FOUND);
+        assert_eq!(
+            bounded!(request_status(address, path)),
+            StatusCode::NOT_FOUND
+        );
     }
     server.abort();
 }
@@ -336,7 +335,7 @@ async fn command_transport_replies_without_state_publication() {
     let (connection, mut frames) = hub.connect_commands();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     tokio::time::sleep(Duration::from_millis(30)).await;
@@ -344,12 +343,12 @@ async fn command_transport_replies_without_state_publication() {
     assert!(frames.try_recv().is_none());
 
     let reply = Bytes::from_static(b"{\"command\":\"ok\"}");
-    assert!(connection.send_text(reply.clone()).await);
-    assert_eq!(frames.recv().await, Some(Outbound::Reply(reply)));
+    assert!(bounded!(connection.send_text(reply.clone())));
+    assert_eq!(bounded!(frames.recv()), Some(Outbound::Reply(reply)));
 
     connection.cleanup();
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -362,38 +361,36 @@ async fn close_all_emits_going_away_clears_registry_and_seals_connects() {
 
     // Even queued application traffic is discarded in favor of the
     // terminal shutdown close.
-    assert!(
-        command_connection
-            .send_text(Bytes::from_static(b"queued"))
-            .await
-    );
-    hub.close_all(1001).await;
+    assert!(bounded!(
+        command_connection.send_text(Bytes::from_static(b"queued"))
+    ));
+    bounded!(hub.close_all(1001));
     assert_eq!(hub.client_count(), 0);
     let expected = Some(Outbound::Close {
         code: 1001,
         reason: "Server shutting down",
     });
-    assert_eq!(state_frames.recv().await, expected);
+    assert_eq!(bounded!(state_frames.recv()), expected);
     assert_eq!(
-        command_frames.recv().await,
+        bounded!(command_frames.recv()),
         Some(Outbound::Close {
             code: 1001,
             reason: "Server shutting down",
         })
     );
-    assert_eq!(state_frames.recv().await, None);
-    assert_eq!(command_frames.recv().await, None);
+    assert_eq!(bounded!(state_frames.recv()), None);
+    assert_eq!(bounded!(command_frames.recv()), None);
 
     let (late_connection, mut late_frames) = hub.connect();
     assert_eq!(hub.client_count(), 0);
     assert_eq!(
-        late_frames.recv().await,
+        bounded!(late_frames.recv()),
         Some(Outbound::Close {
             code: 1001,
             reason: "Server shutting down",
         })
     );
-    assert_eq!(late_frames.recv().await, None);
+    assert_eq!(bounded!(late_frames.recv()), None);
     drop((state_connection, command_connection, late_connection));
 }
 
@@ -403,7 +400,7 @@ async fn no_clients_or_focus_produces_no_encoding() {
     let hub = WebSocketHub::new(Schema::V1, provider.clone());
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert_eq!(provider.encoded.load(Ordering::Relaxed), 0);
@@ -412,7 +409,7 @@ async fn no_clients_or_focus_produces_no_encoding() {
     assert!(frames.try_recv().is_none());
     assert_eq!(provider.encoded.load(Ordering::Relaxed), 0);
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -427,20 +424,20 @@ async fn cadence_shares_encoding_drops_backpressure_and_filters_independently() 
     filtered_b.set_filters(vec![Filter::Field("two".into())]);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     let a_first = tokio::time::timeout(Duration::from_millis(100), a.recv())
         .await
         .unwrap()
         .unwrap();
-    let b_first = b.recv().await.unwrap();
+    let b_first = bounded!(b.recv()).unwrap();
     assert_eq!(a_first, b_first);
     assert_eq!(provider.encoded.load(Ordering::Relaxed), 1);
-    let Outbound::Text(filtered_first) = fa.recv().await.unwrap() else {
+    let Outbound::Text(filtered_first) = bounded!(fa.recv()).unwrap() else {
         panic!("expected filtered text");
     };
-    let Outbound::Text(filtered_second) = fb.recv().await.unwrap() else {
+    let Outbound::Text(filtered_second) = bounded!(fb.recv()).unwrap() else {
         panic!("expected filtered text");
     };
     assert_ne!(filtered_first, filtered_second);
@@ -460,7 +457,7 @@ async fn cadence_shares_encoding_drops_backpressure_and_filters_independently() 
 
     drop((plain_b, filtered_a, filtered_b));
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -471,7 +468,7 @@ async fn rapid_state_events_do_not_bypass_poll_rate() {
     let (connection, mut frames) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     tokio::time::timeout(Duration::from_millis(100), frames.recv())
@@ -496,7 +493,7 @@ async fn rapid_state_events_do_not_bypass_poll_rate() {
         .expect("next cadence frame should exist");
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -508,17 +505,11 @@ async fn staggered_write_completions_do_not_postpone_cadence() {
     let (connection_b, mut frames_b) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
-    frames_a
-        .recv()
-        .await
-        .expect("A should receive initial frame");
-    frames_b
-        .recv()
-        .await
-        .expect("B should receive initial frame");
+    bounded!(frames_a.recv()).expect("A should receive initial frame");
+    bounded!(frames_b.recv()).expect("B should receive initial frame");
 
     tokio::time::advance(Duration::from_millis(30)).await;
     connection_a.write_completed();
@@ -538,7 +529,7 @@ async fn staggered_write_completions_do_not_postpone_cadence() {
     assert!(matches!(frames_b.try_recv(), Some(Outbound::Text(_))));
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -550,17 +541,11 @@ async fn lagging_client_catch_up_does_not_postpone_shared_cadence() {
     let (slow, mut slow_frames) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
-    fast_frames
-        .recv()
-        .await
-        .expect("fast client should receive generation 1");
-    slow_frames
-        .recv()
-        .await
-        .expect("slow client should receive generation 1");
+    bounded!(fast_frames.recv()).expect("fast client should receive generation 1");
+    bounded!(slow_frames.recv()).expect("slow client should receive generation 1");
 
     tokio::time::advance(Duration::from_millis(10)).await;
     fast.write_completed();
@@ -602,7 +587,7 @@ async fn lagging_client_catch_up_does_not_postpone_shared_cadence() {
     );
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -612,22 +597,20 @@ async fn control_frames_bypass_a_full_data_slot() {
     let (mut connection, mut frames) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     tokio::time::sleep(Duration::from_millis(10)).await;
     assert_eq!(
-        connection
-            .receive(Inbound::Ping(Bytes::from_static(b"urgent")))
-            .await,
+        bounded!(connection.receive(Inbound::Ping(Bytes::from_static(b"urgent")))),
         None
     );
     assert_eq!(
-        frames.recv().await,
+        bounded!(frames.recv()),
         Some(Outbound::Pong(Bytes::from_static(b"urgent")))
     );
-    assert!(matches!(frames.recv().await, Some(Outbound::Text(_))));
+    assert!(matches!(bounded!(frames.recv()), Some(Outbound::Text(_))));
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -637,12 +620,10 @@ async fn protocol_close_preempts_full_data_and_control_slots() {
     let (mut connection, mut frames) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     tokio::time::sleep(Duration::from_millis(10)).await;
-    connection
-        .receive(Inbound::Ping(Bytes::from_static(b"queued pong")))
-        .await;
+    bounded!(connection.receive(Inbound::Ping(Bytes::from_static(b"queued pong"))));
     tokio::time::timeout(
         Duration::from_millis(100),
         connection.receive(Inbound::Continuation {
@@ -654,15 +635,15 @@ async fn protocol_close_preempts_full_data_and_control_slots() {
     .expect("protocol close must not wait behind queued pong");
     assert_eq!(hub.client_count(), 0);
     assert_eq!(
-        frames.recv().await,
+        bounded!(frames.recv()),
         Some(Outbound::Close {
             code: PROTOCOL_ERROR,
             reason: "Protocol error"
         })
     );
-    assert_eq!(frames.recv().await, None);
+    assert_eq!(bounded!(frames.recv()), None);
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -672,14 +653,14 @@ async fn reader_cleanup_cancels_writer_and_discards_queued_state() {
     let (mut connection, mut frames) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     tokio::time::sleep(Duration::from_millis(10)).await;
-    connection.receive(Inbound::Error).await;
+    bounded!(connection.receive(Inbound::Error));
     assert_eq!(hub.client_count(), 0);
-    assert_eq!(frames.recv().await, None);
+    assert_eq!(bounded!(frames.recv()), None);
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -687,14 +668,12 @@ async fn sequencing_errors_are_1002_not_1009() {
     let provider = Provider::new(true);
     let hub = WebSocketHub::new(Schema::V1, provider);
     let (mut orphan, mut orphan_frames) = hub.connect();
-    orphan
-        .receive(Inbound::Continuation {
-            data: Bytes::from_static(b"orphan"),
-            finished: true,
-        })
-        .await;
+    bounded!(orphan.receive(Inbound::Continuation {
+        data: Bytes::from_static(b"orphan"),
+        finished: true,
+    }));
     assert_eq!(
-        orphan_frames.recv().await,
+        bounded!(orphan_frames.recv()),
         Some(Outbound::Close {
             code: PROTOCOL_ERROR,
             reason: "Protocol error"
@@ -702,20 +681,16 @@ async fn sequencing_errors_are_1002_not_1009() {
     );
 
     let (mut interleaved, mut interleaved_frames) = hub.connect();
-    interleaved
-        .receive(Inbound::Text {
-            data: Bytes::from_static(b"first"),
-            finished: false,
-        })
-        .await;
-    interleaved
-        .receive(Inbound::Binary {
-            data: Bytes::from_static(b"second"),
-            finished: true,
-        })
-        .await;
+    bounded!(interleaved.receive(Inbound::Text {
+        data: Bytes::from_static(b"first"),
+        finished: false,
+    }));
+    bounded!(interleaved.receive(Inbound::Binary {
+        data: Bytes::from_static(b"second"),
+        finished: true,
+    }));
     assert_eq!(
-        interleaved_frames.recv().await,
+        bounded!(interleaved_frames.recv()),
         Some(Outbound::Close {
             code: PROTOCOL_ERROR,
             reason: "Protocol error"
@@ -729,36 +704,30 @@ async fn fragmented_limit_ping_pong_and_cleanup_are_exact() {
     let hub = WebSocketHub::new(Schema::V1, provider);
     let (mut connection, mut frames) = hub.connect();
     assert_eq!(
-        connection
-            .receive(Inbound::Ping(Bytes::from_static(b"x")))
-            .await,
+        bounded!(connection.receive(Inbound::Ping(Bytes::from_static(b"x")))),
         None
     );
     assert_eq!(
-        frames.recv().await,
+        bounded!(frames.recv()),
         Some(Outbound::Pong(Bytes::from_static(b"x")))
     );
 
     assert!(
-        connection
-            .receive(Inbound::Text {
-                data: Bytes::from(vec![b'a'; MAX_MESSAGE_BYTES]),
-                finished: false,
-            })
-            .await
-            .is_none()
+        bounded!(connection.receive(Inbound::Text {
+            data: Bytes::from(vec![b'a'; MAX_MESSAGE_BYTES]),
+            finished: false,
+        }))
+        .is_none()
     );
     assert!(
-        connection
-            .receive(Inbound::Continuation {
-                data: Bytes::from_static(b"x"),
-                finished: true,
-            })
-            .await
-            .is_none()
+        bounded!(connection.receive(Inbound::Continuation {
+            data: Bytes::from_static(b"x"),
+            finished: true,
+        }))
+        .is_none()
     );
     assert_eq!(
-        frames.recv().await,
+        bounded!(frames.recv()),
         Some(Outbound::Close {
             code: MESSAGE_TOO_BIG,
             reason: "Message too big"
@@ -766,7 +735,7 @@ async fn fragmented_limit_ping_pong_and_cleanup_are_exact() {
     );
     assert_eq!(hub.client_count(), 0);
     connection.cleanup();
-    connection.receive(Inbound::Error).await;
+    bounded!(connection.receive(Inbound::Error));
     assert_eq!(hub.client_count(), 0);
 }
 
@@ -793,21 +762,17 @@ async fn valid_fragments_assemble_once() {
     let hub = WebSocketHub::new(Schema::V1, provider);
     let (mut connection, _frames) = hub.connect();
     assert_eq!(
-        connection
-            .receive(Inbound::Text {
-                data: Bytes::from_static(b"ab"),
-                finished: false,
-            })
-            .await,
+        bounded!(connection.receive(Inbound::Text {
+            data: Bytes::from_static(b"ab"),
+            finished: false,
+        })),
         None
     );
     assert_eq!(
-        connection
-            .receive(Inbound::Continuation {
-                data: Bytes::from_static(b"cd"),
-                finished: true,
-            })
-            .await,
+        bounded!(connection.receive(Inbound::Continuation {
+            data: Bytes::from_static(b"cd"),
+            finished: true,
+        })),
         Some(Bytes::from_static(b"abcd"))
     );
 }
@@ -914,11 +879,11 @@ async fn identical_filter_plans_share_one_projection_per_generation() {
         .collect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     for (_, receiver) in &mut clients {
-        assert_eq!(echo_text(receiver).await, echo(1, &plan()));
+        assert_eq!(bounded!(echo_text(receiver)), echo(1, &plan()));
     }
     assert_eq!(provider.calls(), 1);
 
@@ -929,20 +894,20 @@ async fn identical_filter_plans_share_one_projection_per_generation() {
     provider.publish();
     hub.wake();
     for (_, receiver) in &mut clients[1..] {
-        assert_eq!(echo_text(receiver).await, echo(2, &plan()));
+        assert_eq!(bounded!(echo_text(receiver)), echo(2, &plan()));
     }
     assert!(clients[0].1.try_recv().is_none());
     assert_eq!(provider.calls(), 2);
 
     // Its own acknowledgement delivers the latest generation to it alone.
     clients[0].0.write_completed();
-    assert_eq!(echo_text(&mut clients[0].1).await, echo(2, &plan()));
+    assert_eq!(bounded!(echo_text(&mut clients[0].1)), echo(2, &plan()));
     for (_, receiver) in &mut clients[1..] {
         assert!(receiver.try_recv().is_none());
     }
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -960,7 +925,7 @@ async fn unique_filter_plans_beyond_sharing_bound_each_get_their_projection() {
         .collect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     for generation in [1, 2] {
@@ -972,13 +937,16 @@ async fn unique_filter_plans_beyond_sharing_bound_each_get_their_projection() {
             hub.wake();
         }
         for (index, (_, receiver)) in clients.iter_mut().enumerate() {
-            assert_eq!(echo_text(receiver).await, echo(generation, &plan(index)));
+            assert_eq!(
+                bounded!(echo_text(receiver)),
+                echo(generation, &plan(index))
+            );
         }
         assert_eq!(provider.calls(), count * generation as usize);
     }
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 /// Publishes `generation` (the first is delivered on start) to `clients`,
@@ -1001,7 +969,7 @@ async fn deliver_fields(
     }
     for ((_, receiver), field) in clients.iter_mut().zip(fields) {
         let plan = [Filter::Field((*field).into())];
-        assert_eq!(echo_text(receiver).await, echo(generation, &plan));
+        assert_eq!(bounded!(echo_text(receiver)), echo(generation, &plan));
     }
     provider.calls() - before
 }
@@ -1021,19 +989,19 @@ async fn plan_changes_and_departures_keep_one_projection_per_distinct_plan() {
         .collect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     let fields = ["a", "b", "c"];
     assert_eq!(
-        deliver_fields(&provider, &hub, &mut clients, 1, &fields).await,
+        bounded!(deliver_fields(&provider, &hub, &mut clients, 1, &fields)),
         3
     );
     // Once b moves to c's plan, the two share one projection.
     clients[1].0.set_filters(plan("c"));
     let fields = ["a", "c", "c"];
     assert_eq!(
-        deliver_fields(&provider, &hub, &mut clients, 2, &fields).await,
+        bounded!(deliver_fields(&provider, &hub, &mut clients, 2, &fields)),
         2
     );
     // A newcomer joining a's plan shares it too.
@@ -1042,7 +1010,7 @@ async fn plan_changes_and_departures_keep_one_projection_per_distinct_plan() {
     clients.push((connection, receiver));
     let fields = ["a", "c", "c", "a"];
     assert_eq!(
-        deliver_fields(&provider, &hub, &mut clients, 3, &fields).await,
+        bounded!(deliver_fields(&provider, &hub, &mut clients, 3, &fields)),
         2
     );
     // Departures leave every remaining client its own correct frame.
@@ -1051,12 +1019,12 @@ async fn plan_changes_and_departures_keep_one_projection_per_distinct_plan() {
     drop(departed);
     let fields = ["a", "c", "a"];
     assert_eq!(
-        deliver_fields(&provider, &hub, &mut clients, 4, &fields).await,
+        bounded!(deliver_fields(&provider, &hub, &mut clients, 4, &fields)),
         2
     );
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[test]
@@ -1130,10 +1098,10 @@ async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() 
         .collect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     for (_, receiver) in &mut clients {
-        assert_eq!(echo_text(receiver).await, echo(1, &plan()));
+        assert_eq!(bounded!(echo_text(receiver)), echo(1, &plan()));
     }
 
     // Generation 2 arrives while every client is still writing frame 1.
@@ -1148,7 +1116,7 @@ async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() 
     // was consumed; none may be suppressed until the 60 s cadence.
     for index in 0..clients.len() {
         clients[index].0.write_completed();
-        assert_eq!(echo_text(&mut clients[index].1).await, echo(2, &plan()));
+        assert_eq!(bounded!(echo_text(&mut clients[index].1)), echo(2, &plan()));
         for (_, receiver) in &mut clients[index + 1..] {
             assert!(receiver.try_recv().is_none());
         }
@@ -1162,11 +1130,11 @@ async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() 
         connection.write_completed();
     }
     for (_, receiver) in &mut clients {
-        assert_eq!(echo_text(receiver).await, echo(3, &plan()));
+        assert_eq!(bounded!(echo_text(receiver)), echo(3, &plan()));
     }
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -1177,7 +1145,10 @@ async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
     assert!(connection.client.send_data(frame.clone(), 1, false));
     // The slot holds one frame until it is taken, like a one-slot channel.
     assert!(!connection.client.data.try_send(frame.clone()));
-    assert_eq!(receiver.recv().await, Some(Outbound::Text(frame.clone())));
+    assert_eq!(
+        bounded!(receiver.recv()),
+        Some(Outbound::Text(frame.clone()))
+    );
 
     connection.write_completed();
     assert!(connection.client.send_data(frame.clone(), 2, false));

@@ -8,6 +8,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 use vosu::runtime::{ProductionSnapshotEncoder, SnapshotEncoder};
 use vosu::server::websocket::{Schema, StateProvider, StateSnapshot, WebSocketHub};
+use vosu_proptest::bounded;
 
 #[test]
 fn frozen_reference_bytes_all_schemas_and_filter_variants() {
@@ -60,9 +61,9 @@ async fn unchanged_changed_and_blocked_latest_only_then_cleanup() {
             connection.set_filters(filters(schema, index));
             let runner = tokio::spawn({
                 let hub = hub.clone();
-                async move { hub.run().await }
+                async move { bounded!(hub.run()) }
             });
-            assert_eq!(receive(&mut receiver).await, reference(schema, index));
+            assert_eq!(bounded!(receive(&mut receiver)), reference(schema, index));
             connection.write_completed();
             provider.notify_unchanged();
             assert!(
@@ -74,7 +75,7 @@ async fn unchanged_changed_and_blocked_latest_only_then_cleanup() {
             // Wake is the production mechanism for forced immediate delivery between cadence points.
             hub.wake();
             assert_eq!(
-                receive(&mut receiver).await,
+                bounded!(receive(&mut receiver)),
                 reference_offset(schema, index, 100)
             );
             // Leave the client writing while multiple generations arrive: no queued backlog.
@@ -87,7 +88,7 @@ async fn unchanged_changed_and_blocked_latest_only_then_cleanup() {
             );
             connection.write_completed();
             assert_eq!(
-                receive(&mut receiver).await,
+                bounded!(receive(&mut receiver)),
                 reference_offset(schema, index, 0)
             );
             connection.write_completed();
@@ -103,7 +104,7 @@ async fn unchanged_changed_and_blocked_latest_only_then_cleanup() {
                 .unwrap();
             connection.cleanup();
             assert_eq!(hub.client_count(), 0);
-            assert!(receiver.recv().await.is_none());
+            assert!(bounded!(receiver.recv()).is_none());
         }
     }
 }

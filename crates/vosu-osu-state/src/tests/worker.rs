@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn regular_ack_is_after_publish_then_sleep_and_never_catches_up() {
@@ -40,10 +41,12 @@ async fn regular_ack_is_after_publish_then_sleep_and_never_catches_up() {
     );
     let _open_gate_on_unwind = OpenGateOnDrop(gate.clone());
 
-    wait_until(|| regular_transitions.load(Ordering::Acquire) == 1).await;
+    bounded!(wait_until(
+        || regular_transitions.load(Ordering::Acquire) == 1
+    ));
     assert_eq!(lock(&regular_captures).as_slice(), &[1]);
     assert!(clock.observed_count(Duration::from_millis(100)) == 0);
-    wait_until(|| !lock(&precise_captures).is_empty()).await;
+    bounded!(wait_until(|| !lock(&precise_captures).is_empty()));
     assert!(
         !lock(&precise_captures).is_empty(),
         "precise reader remains independent"
@@ -51,7 +54,9 @@ async fn regular_ack_is_after_publish_then_sleep_and_never_catches_up() {
 
     *lock(&gate.0) = true;
     gate.1.notify_all();
-    wait_until(|| clock.observed_count(Duration::from_millis(100)) == 1).await;
+    bounded!(wait_until(|| clock
+        .observed_count(Duration::from_millis(100))
+        == 1));
     assert_eq!(lock(&regular_captures).as_slice(), &[1]);
 
     interval_tx.send_replace(PollIntervals {
@@ -60,14 +65,18 @@ async fn regular_ack_is_after_publish_then_sleep_and_never_catches_up() {
         subscription: None,
     });
     clock.advance(Duration::from_millis(100));
-    wait_until(|| lock(&regular_captures).len() == 2).await;
-    wait_until(|| regular_transitions.load(Ordering::Acquire) == 2).await;
+    bounded!(wait_until(|| lock(&regular_captures).len() == 2));
+    bounded!(wait_until(
+        || regular_transitions.load(Ordering::Acquire) == 2
+    ));
     assert_eq!(lock(&regular_captures).as_slice(), &[1, 2]);
     assert_eq!(regular_transitions.load(Ordering::Acquire), 2);
-    wait_until(|| clock.observed_count(Duration::from_millis(250)) == 1).await;
+    bounded!(wait_until(|| clock
+        .observed_count(Duration::from_millis(250))
+        == 1));
     assert_eq!(clock.observed_count(Duration::from_millis(100)), 1);
 
-    worker.shutdown().await.expect("clean shutdown");
+    bounded!(worker.shutdown()).expect("clean shutdown");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -107,12 +116,14 @@ async fn precise_slot_overwrites_and_context_mismatch_advances_nothing() {
         clock.clone(),
     );
 
-    wait_until(|| lock(&captures).len() == 1).await;
-    wait_until(|| lock(&publications).iter().any(|value| value == "regular")).await;
+    bounded!(wait_until(|| lock(&captures).len() == 1));
+    bounded!(wait_until(|| lock(&publications)
+        .iter()
+        .any(|value| value == "regular")));
     clock.advance(Duration::from_millis(10));
-    wait_until(|| lock(&captures).len() == 2).await;
+    bounded!(wait_until(|| lock(&captures).len() == 2));
     clock.advance(Duration::from_millis(10));
-    wait_until(|| lock(&captures).len() == 3).await;
+    bounded!(wait_until(|| lock(&captures).len() == 3));
     assert!(
         lock(&accepted).is_empty(),
         "reducer is parked in regular publication"
@@ -120,7 +131,7 @@ async fn precise_slot_overwrites_and_context_mismatch_advances_nothing() {
 
     *lock(&gate.0) = true;
     gate.1.notify_all();
-    wait_until(|| !lock(&accepted).is_empty()).await;
+    bounded!(wait_until(|| !lock(&accepted).is_empty()));
     assert_eq!(
         lock(&accepted).as_slice(),
         &[3],
@@ -134,10 +145,7 @@ async fn precise_slot_overwrites_and_context_mismatch_advances_nothing() {
         assert_eq!(captured[2].base_accepted_precise_sequence(), 0);
     }
 
-    worker
-        .shutdown()
-        .await
-        .expect("both blocking readers and reducer joined");
+    bounded!(worker.shutdown()).expect("both blocking readers and reducer joined");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -211,7 +219,7 @@ async fn stale_regular_epoch_is_recaptured_instead_of_terminating_worker() {
     })
     .await
     .expect("replacement regular capture");
-    wait_until(|| regular.load(Ordering::Acquire) == 1).await;
+    bounded!(wait_until(|| regular.load(Ordering::Acquire) == 1));
     {
         let captures = lock(&captures);
         assert_eq!(captures.len(), 2);
@@ -220,10 +228,7 @@ async fn stale_regular_epoch_is_recaptured_instead_of_terminating_worker() {
         assert_eq!(captures[0].produced_sequence, captures[1].produced_sequence);
     }
 
-    worker
-        .shutdown()
-        .await
-        .expect("stale capture replacement remains healthy");
+    bounded!(worker.shutdown()).expect("stale capture replacement remains healthy");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -262,12 +267,12 @@ async fn rejected_precise_context_does_not_advance_index_or_sequence() {
         clock.clone(),
     );
 
-    wait_until(|| lock(&captures).len() == 1).await;
-    sleep(Duration::from_millis(5)).await;
+    bounded!(wait_until(|| lock(&captures).len() == 1));
+    bounded!(sleep(Duration::from_millis(5)));
     assert!(lock(&accepted).is_empty(), "mismatched mode is rejected");
     clock.advance(Duration::from_millis(10));
-    wait_until(|| lock(&captures).len() == 2).await;
-    wait_until(|| lock(&accepted).as_slice() == [2]).await;
+    bounded!(wait_until(|| lock(&captures).len() == 2));
+    bounded!(wait_until(|| lock(&accepted).as_slice() == [2]));
     {
         let captures = lock(&captures);
         assert_eq!(captures[1].start_index(), 0);
@@ -276,10 +281,7 @@ async fn rejected_precise_context_does_not_advance_index_or_sequence() {
 
     *lock(&regular_gate.0) = true;
     regular_gate.1.notify_all();
-    worker
-        .shutdown()
-        .await
-        .expect("cancel wakes clock and joins all workers");
+    bounded!(worker.shutdown()).expect("cancel wakes clock and joins all workers");
 }
 
 struct ParkedTransition {
@@ -390,7 +392,7 @@ async fn shutdown_aborts_a_parked_transition_and_joins_readers() {
         clock,
     );
 
-    wait_until(|| entered.load(Ordering::Acquire)).await;
+    bounded!(wait_until(|| entered.load(Ordering::Acquire)));
     timeout(Duration::from_secs(2), worker.shutdown())
         .await
         .expect("shutdown must abort parked transition")
@@ -434,8 +436,8 @@ async fn shutdown_joins_precise_even_when_regular_panics() {
         clock,
     );
 
-    wait_until(|| precise_entered.load(Ordering::Acquire)).await;
-    wait_until(|| regular_entered.load(Ordering::Acquire)).await;
+    bounded!(wait_until(|| precise_entered.load(Ordering::Acquire)));
+    bounded!(wait_until(|| regular_entered.load(Ordering::Acquire)));
     let shutdown = tokio::spawn(worker.shutdown());
     tokio::time::sleep(Duration::from_millis(20)).await;
     let returned_before_precise_finished = shutdown.is_finished();
@@ -502,14 +504,11 @@ async fn cancelled_transition_cannot_publish_when_its_result_becomes_ready() {
         clock.clone(),
     );
 
-    wait_until(|| entered.load(Ordering::Acquire)).await;
+    bounded!(wait_until(|| entered.load(Ordering::Acquire)));
     clock.cancel();
     release.notify_waiters();
-    sleep(Duration::from_millis(10)).await;
-    worker
-        .shutdown()
-        .await
-        .expect("cancelled transition exits cleanly");
+    bounded!(sleep(Duration::from_millis(10)));
+    bounded!(worker.shutdown()).expect("cancelled transition exits cleanly");
     assert!(lock(&publications).is_empty());
 }
 
@@ -577,7 +576,11 @@ async fn subscriber_demand_samples_faster_but_keeps_api_cadence() {
         Arc::new(SystemWorkerClock::default()),
     );
 
-    wait_until(|| lock(&captures).iter().filter(|(_, api)| *api).count() >= 3).await;
+    bounded!(wait_until(|| lock(&captures)
+        .iter()
+        .filter(|(_, api)| *api)
+        .count()
+        >= 3));
     // Everything recorded before the switch was evaluated with demand active.
     let subscribed = lock(&captures).len();
     let subscribed_publications = lock(&publications).len();
@@ -586,8 +589,8 @@ async fn subscriber_demand_samples_faster_but_keeps_api_cadence() {
         precise: Duration::from_secs(30),
         subscription: None,
     });
-    wait_until(|| lock(&captures).len() >= subscribed + 3).await;
-    worker.shutdown().await.expect("clean shutdown");
+    bounded!(wait_until(|| lock(&captures).len() >= subscribed + 3));
+    bounded!(worker.shutdown()).expect("clean shutdown");
 
     let captures = lock(&captures).clone();
     let (cadence, fast): (Vec<&(std::time::Instant, bool)>, Vec<_>) =

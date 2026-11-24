@@ -145,7 +145,7 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                         daemon.wait(timeout=15)
                     except subprocess.TimeoutExpired:
                         daemon.kill()
-                        daemon.wait()
+                        daemon.wait(timeout=15)
 
 
 if __name__ == '__main__':

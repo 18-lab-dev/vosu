@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
+use vosu_proptest::bounded;
 
 #[derive(Default)]
 struct RecordingReplace {
@@ -60,7 +61,7 @@ async fn wait_for_value(
     predicate: impl Fn(&Config) -> bool,
 ) -> ConfigChanged {
     loop {
-        let event = changed(receiver).await;
+        let event = bounded!(changed(receiver));
         if predicate(&event.new) {
             return event;
         }
@@ -554,11 +555,7 @@ fn bare_relative_target_resolves_against_an_explicit_absolute_directory() {
 async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
-    let store = Arc::new(
-        ConfigStore::initialize(&path)
-            .await
-            .expect("initialize config"),
-    );
+    let store = Arc::new(bounded!(ConfigStore::initialize(&path)).expect("initialize config"));
     let resource = Arc::new(Mutex::new(Vec::new()));
     let (entered_send, entered_receive) = std::sync::mpsc::channel();
     let (release_send, release_receive) = std::sync::mpsc::channel();
@@ -575,7 +572,7 @@ async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
                 release_receive
                     .lock()
                     .expect("release mutex")
-                    .recv()
+                    .recv_timeout(Duration::from_secs(10))
                     .expect("release blocked publication");
             }
         }
@@ -600,8 +597,8 @@ async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
     );
 
     release_send.send(()).expect("release first publication");
-    assert!(first.join().expect("first update thread"));
-    assert!(second.join().expect("second update thread"));
+    assert!(vosu_proptest::wait::JoinBounded::join_bounded(first).expect("first update thread"));
+    assert!(vosu_proptest::wait::JoinBounded::join_bounded(second).expect("second update thread"));
     assert_eq!(
         resource.lock().expect("resource mutex").as_slice(),
         &[
@@ -611,7 +608,7 @@ async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
         ]
     );
     assert_eq!(store.current().static_folder_path, "static-c");
-    store.shutdown().await.expect("shutdown config");
+    bounded!(store.shutdown()).expect("shutdown config");
 }
 
 #[tokio::test]
@@ -619,18 +616,20 @@ async fn lifecycle_debounces_saves_and_suppresses_own_hash_event() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
     let replacer = Arc::new(RecordingReplace::default());
-    let store = ConfigStore::initialize_with_options(&path, options(replacer.clone(), 50))
-        .await
-        .expect("initialize config");
+    let store = bounded!(ConfigStore::initialize_with_options(
+        &path,
+        options(replacer.clone(), 50)
+    ))
+    .expect("initialize config");
     replacer.calls.store(0, Ordering::SeqCst);
     let mut changes = store.subscribe();
 
     store.update(|config| config.server_port = 24_051.0);
-    let first = changed(&mut changes).await;
+    let first = bounded!(changed(&mut changes));
     store.update(|config| config.server_port = 24_052.0);
-    let second = changed(&mut changes).await;
+    let second = bounded!(changed(&mut changes));
     store.update(|config| config.server_port = 24_053.0);
-    let third = changed(&mut changes).await;
+    let third = bounded!(changed(&mut changes));
     assert_eq!(first.old.server_port, 24_050.0);
     assert_eq!(first.new.server_port, 24_051.0);
     assert_eq!(second.old.server_port, 24_051.0);
@@ -665,20 +664,18 @@ async fn lifecycle_debounces_saves_and_suppresses_own_hash_event() {
             .is_err(),
         "self-generated watcher events must be hash suppressed"
     );
-    store.shutdown().await.expect("shutdown config");
+    bounded!(store.shutdown()).expect("shutdown config");
 }
 
 #[tokio::test]
 async fn lifecycle_reloads_external_create_modify_and_rename_with_exact_snapshots() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
-    let store = ConfigStore::initialize(&path)
-        .await
-        .expect("initialize config");
+    let store = bounded!(ConfigStore::initialize(&path)).expect("initialize config");
     let mut changes = store.subscribe();
 
     std::fs::write(&path, "SERVER_PORT = 25001.0\n").expect("external modify");
-    let modified = wait_for_value(&mut changes, |config| config.server_port == 25_001.0).await;
+    let modified = bounded!(wait_for_value(&mut changes, |config| config.server_port == 25_001.0));
     assert_eq!(modified.old.server_port, 24_050.0);
     assert_eq!(modified.new.server_port, 25_001.0);
     std::fs::write(&path, "SERVER_PORT = 25099.0\nBROKEN = [\n")
@@ -697,28 +694,24 @@ async fn lifecycle_reloads_external_create_modify_and_rename_with_exact_snapshot
 
     std::fs::remove_file(&path).expect("remove config");
     std::fs::write(&path, "SERVER_PORT = 25002.0\n").expect("external create");
-    let created = wait_for_value(&mut changes, |config| config.server_port == 25_002.0).await;
+    let created = bounded!(wait_for_value(&mut changes, |config| config.server_port == 25_002.0));
     assert_eq!(created.old.server_port, 25_001.0);
     assert_eq!(created.new.server_port, 25_002.0);
 
     let replacement = temp.path().join("external.toml");
     std::fs::write(&replacement, "SERVER_PORT = 25003.0\n").expect("write rename replacement");
     std::fs::rename(&replacement, &path).expect("external rename");
-    let renamed = wait_for_value(&mut changes, |config| config.server_port == 25_003.0).await;
+    let renamed = bounded!(wait_for_value(&mut changes, |config| config.server_port == 25_003.0));
     assert_eq!(renamed.old.server_port, 25_002.0);
     assert_eq!(renamed.new.server_port, 25_003.0);
-    store.shutdown().await.expect("shutdown config");
+    bounded!(store.shutdown()).expect("shutdown config");
 }
 
 #[tokio::test]
 async fn before_publish_barrier_runs_before_snapshot_becomes_observable() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
-    let store = Arc::new(
-        ConfigStore::initialize(&path)
-            .await
-            .expect("initialize config"),
-    );
+    let store = Arc::new(bounded!(ConfigStore::initialize(&path)).expect("initialize config"));
     let observed = Arc::new(Mutex::new(Vec::new()));
     let weak_store = Arc::downgrade(&store);
     let hook_observed = Arc::clone(&observed);
@@ -732,7 +725,7 @@ async fn before_publish_barrier_runs_before_snapshot_becomes_observable() {
     let mut snapshots = store.subscribe_current();
 
     assert!(store.update(|config| config.static_folder_path = "new-root".to_owned()));
-    snapshots.changed().await.expect("published snapshot");
+    bounded!(snapshots.changed()).expect("published snapshot");
 
     assert_eq!(
         observed.lock().expect("observations mutex").as_slice(),
@@ -743,18 +736,14 @@ async fn before_publish_barrier_runs_before_snapshot_becomes_observable() {
         "the hook must see the old public snapshot while installing the new generation"
     );
     assert_eq!(snapshots.borrow().static_folder_path, "new-root");
-    store.shutdown().await.expect("shutdown config");
+    bounded!(store.shutdown()).expect("shutdown config");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
-    let store = Arc::new(
-        ConfigStore::initialize(&path)
-            .await
-            .expect("initialize config"),
-    );
+    let store = Arc::new(bounded!(ConfigStore::initialize(&path)).expect("initialize config"));
     let roots = Arc::new(Mutex::new(Vec::new()));
     let (entered_b_send, entered_b_receive) = std::sync::mpsc::channel();
     let (release_b_send, release_b_receive) = std::sync::mpsc::channel();
@@ -772,7 +761,7 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
             release_b_receive
                 .lock()
                 .expect("release receiver mutex")
-                .recv()
+                .recv_timeout(Duration::from_secs(10))
                 .expect("release root-b hook");
         }
     });
@@ -783,7 +772,9 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
             store.update(|config| config.static_folder_path = "root-b".to_owned())
         })
     };
-    entered_b_receive.recv().expect("root-b hook entered");
+    entered_b_receive
+        .recv_timeout(Duration::from_secs(10))
+        .expect("root-b hook entered");
     let (started_c_send, started_c_receive) = std::sync::mpsc::channel();
     let update_c = {
         let store = Arc::clone(&store);
@@ -792,11 +783,13 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
             store.update(|config| config.static_folder_path = "root-c".to_owned())
         })
     };
-    started_c_receive.recv().expect("root-c update started");
+    started_c_receive
+        .recv_timeout(Duration::from_secs(10))
+        .expect("root-c update started");
     release_b_send.send(()).expect("release root-b hook");
 
-    assert!(update_b.join().expect("join root-b update"));
-    assert!(update_c.join().expect("join root-c update"));
+    assert!(vosu_proptest::wait::JoinBounded::join_bounded(update_b).expect("join root-b update"));
+    assert!(vosu_proptest::wait::JoinBounded::join_bounded(update_c).expect("join root-c update"));
     assert_eq!(
         roots.lock().expect("root observations mutex").as_slice(),
         &[
@@ -806,7 +799,7 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
         ]
     );
     assert_eq!(store.current().static_folder_path, "root-c");
-    store.shutdown().await.expect("shutdown config");
+    bounded!(store.shutdown()).expect("shutdown config");
 }
 
 #[tokio::test]
@@ -814,18 +807,17 @@ async fn failed_flush_retains_dirty_state_for_shutdown_retry_and_cleans_temp() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
     let replacer = Arc::new(RecordingReplace::default());
-    let store = ConfigStore::initialize_with_options(&path, options(replacer.clone(), 60_000))
-        .await
-        .expect("initialize config");
+    let store = bounded!(ConfigStore::initialize_with_options(
+        &path,
+        options(replacer.clone(), 60_000)
+    ))
+    .expect("initialize config");
     let original = std::fs::read(&path).expect("read original config");
     replacer.calls.store(0, Ordering::SeqCst);
     replacer.fail.store(true, Ordering::SeqCst);
 
     store.update(|config| config.server_port = 26_000.0);
-    let error = store
-        .flush()
-        .await
-        .expect_err("injected replacement must fail");
+    let error = bounded!(store.flush()).expect_err("injected replacement must fail");
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
     assert_eq!(replacer.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -842,10 +834,7 @@ async fn failed_flush_retains_dirty_state_for_shutdown_retry_and_cleans_temp() {
                 .ends_with(".tmp"))
     );
 
-    store
-        .shutdown()
-        .await
-        .expect("shutdown retries the failed save");
+    bounded!(store.shutdown()).expect("shutdown retries the failed save");
     assert_eq!(replacer.calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         ConfigDocument::parse(&std::fs::read_to_string(&path).expect("read retried config"))
@@ -861,9 +850,11 @@ async fn debounced_save_failure_is_rescheduled_until_persisted() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let path = temp.path().join("vosu.toml");
     let replacer = Arc::new(RecordingReplace::default());
-    let store = ConfigStore::initialize_with_options(&path, options(replacer.clone(), 50))
-        .await
-        .expect("initialize config");
+    let store = bounded!(ConfigStore::initialize_with_options(
+        &path,
+        options(replacer.clone(), 50)
+    ))
+    .expect("initialize config");
     replacer.fail.store(true, Ordering::SeqCst);
     store.update(|config| config.server_port = 26_001.0);
 
@@ -883,5 +874,5 @@ async fn debounced_save_failure_is_rescheduled_until_persisted() {
     })
     .await
     .expect("failed debounced save must retry without another update");
-    store.shutdown().await.expect("shutdown config");
+    bounded!(store.shutdown()).expect("shutdown config");
 }

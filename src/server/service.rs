@@ -67,6 +67,7 @@ mod tests {
     use super::*;
     use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
     use crate::server::routes::ModsInput;
+    use vosu_proptest::bounded;
 
     #[derive(Default)]
     struct Current {

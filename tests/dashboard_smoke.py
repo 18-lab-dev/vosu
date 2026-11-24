@@ -130,7 +130,7 @@ STATIC_FOLDER_PATH = {json.dumps(str(static))}
                         daemon.wait(timeout=15)
                     except subprocess.TimeoutExpired:
                         daemon.kill()
-                        daemon.wait()
+                        daemon.wait(timeout=15)
                 server.shutdown()
     print((args.evidence / 'dashboard.json').read_text())
 

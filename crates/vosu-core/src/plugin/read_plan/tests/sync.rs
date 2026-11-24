@@ -109,5 +109,5 @@ fn dispatch_thread_scope_is_thread_local_and_times_out_on_the_caller() {
         .expect_err("stage 0's own read sleeps past the 5ms deadline");
     assert_eq!(error, SyncReadPlanError::Execute(ReadPlanError::TimedOut));
 
-    handle.join().unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(handle).unwrap();
 }

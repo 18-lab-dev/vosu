@@ -166,7 +166,7 @@ struct ChildGuard(std::process::Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = vosu_proptest::wait::child(&mut self.0);
     }
 }
 
@@ -209,7 +209,7 @@ async fn real_child_process_drives_attach_and_detach() {
     eprintln!("real_child_process_drives_attach_and_detach: backend={backend}");
 
     child.0.kill().expect("killing the test child");
-    child.0.wait().expect("reaping the test child");
+    vosu_proptest::wait::child(&mut child.0).expect("reaping the test child");
 
     match expect_event(
         &events,

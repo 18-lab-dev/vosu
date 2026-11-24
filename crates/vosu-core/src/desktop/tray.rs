@@ -489,7 +489,7 @@ mod tests {
         let removed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let service_removed = removed.clone();
         let service = tokio::spawn(async move {
-            service_stop.cancelled().await;
+            vosu_proptest::bounded!(service_stop.cancelled());
             service_removed.store(true, std::sync::atomic::Ordering::Release);
         });
         let opener = tokio::spawn(std::future::pending());
@@ -498,9 +498,9 @@ mod tests {
             service: Some(service),
             opener,
         };
-        handle.shutdown().await;
+        vosu_proptest::bounded!(handle.shutdown());
         assert!(removed.load(std::sync::atomic::Ordering::Acquire));
         assert!(handle.service.is_none());
-        handle.shutdown().await;
+        vosu_proptest::bounded!(handle.shutdown());
     }
 }

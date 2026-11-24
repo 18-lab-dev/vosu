@@ -4,6 +4,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
+use vosu_proptest::bounded;
 
 use bytes::Bytes;
 use tokio::sync::watch;
@@ -615,13 +616,13 @@ async fn one_unfiltered_encoding_is_shared_per_generation() {
     }
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
-    let first = text(&mut clients[0].1).await;
+    let first = bounded!(text(&mut clients[0].1));
     assert_eq!(first, Bytes::from_static(b"17"));
     for (_, receiver) in &mut clients[1..] {
-        let frame = text(receiver).await;
+        let frame = bounded!(text(receiver));
         assert_eq!(frame, first);
         assert_eq!(
             frame.as_ptr(),
@@ -632,7 +633,7 @@ async fn one_unfiltered_encoding_is_shared_per_generation() {
     assert_eq!(provider.encodes.load(Ordering::Relaxed), 1);
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 #[tokio::test]
 async fn filtered_clients_encode_independently_from_shared_plain_payload() {
@@ -643,12 +644,15 @@ async fn filtered_clients_encode_independently_from_shared_plain_payload() {
     filtered.set_filters(vec![Filter::Field("menu".into())]);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
-    assert_eq!(text(&mut plain_receiver).await, Bytes::from_static(b"9"));
     assert_eq!(
-        text(&mut filtered_receiver).await,
+        bounded!(text(&mut plain_receiver)),
+        Bytes::from_static(b"9")
+    );
+    assert_eq!(
+        bounded!(text(&mut filtered_receiver)),
         Bytes::from_static(b"filtered-9")
     );
     assert_eq!(provider.encodes.load(Ordering::Relaxed), 1);
@@ -657,16 +661,19 @@ async fn filtered_clients_encode_independently_from_shared_plain_payload() {
     plain.write_completed();
     filtered.write_completed();
     assert_eq!(provider.publish(), 10);
-    assert_eq!(text(&mut plain_receiver).await, Bytes::from_static(b"10"));
     assert_eq!(
-        text(&mut filtered_receiver).await,
+        bounded!(text(&mut plain_receiver)),
+        Bytes::from_static(b"10")
+    );
+    assert_eq!(
+        bounded!(text(&mut filtered_receiver)),
         Bytes::from_static(b"filtered-10")
     );
     assert_eq!(provider.encodes.load(Ordering::Relaxed), 2);
     assert_eq!(provider.filtered_encodes.load(Ordering::Relaxed), 2);
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -676,9 +683,9 @@ async fn each_client_retains_at_most_one_in_flight_frame() {
     let (connection, mut receiver) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
-    assert_eq!(text(&mut receiver).await, Bytes::from_static(b"1"));
+    assert_eq!(bounded!(text(&mut receiver)), Bytes::from_static(b"1"));
 
     for _ in 0..32 {
         provider.publish();
@@ -690,11 +697,11 @@ async fn each_client_retains_at_most_one_in_flight_frame() {
     );
 
     connection.write_completed();
-    assert_eq!(text(&mut receiver).await, Bytes::from_static(b"33"));
+    assert_eq!(bounded!(text(&mut receiver)), Bytes::from_static(b"33"));
     assert!(receiver.try_recv().is_none());
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -704,9 +711,9 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
     let (connection, mut receiver) = hub.connect();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
-    assert_eq!(text(&mut receiver).await, Bytes::from_static(b"0"));
+    assert_eq!(bounded!(text(&mut receiver)), Bytes::from_static(b"0"));
 
     let mut latest = 0;
     for _ in 0..1_000 {
@@ -717,10 +724,13 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
 
     connection.write_completed();
     hub.wake();
-    assert_eq!(text(&mut receiver).await, Bytes::from(latest.to_string()));
+    assert_eq!(
+        bounded!(text(&mut receiver)),
+        Bytes::from(latest.to_string())
+    );
     assert_eq!(latest, 1_000);
     assert!(receiver.try_recv().is_none());
 
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }

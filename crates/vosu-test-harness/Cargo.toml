@@ -29,3 +29,4 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 
 [dev-dependencies]
 vosu-core = { path = "../vosu-core" }
+vosu-proptest = { path = "../vosu-proptest" }

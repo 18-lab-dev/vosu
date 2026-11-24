@@ -339,7 +339,7 @@
         platform
             .terminate_and_wait(&identity, Duration::from_secs(2))
             .unwrap();
-        assert!(child.wait().unwrap().code().is_none());
+        assert!(vosu_proptest::wait::child(&mut child).unwrap().code().is_none());
     }
     #[cfg(target_os = "linux")]
     #[test]
@@ -347,7 +347,7 @@
         let platform = NativePlatform;
         let mut child = Command::new("/bin/sleep").arg("0.05").spawn().unwrap();
         let identity = platform.identity_for_pid(child.id()).unwrap();
-        child.wait().unwrap();
+        vosu_proptest::wait::child(&mut child).unwrap();
         platform
             .terminate_and_wait(&identity, Duration::from_millis(100))
             .unwrap();

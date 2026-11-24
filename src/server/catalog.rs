@@ -484,32 +484,39 @@ mod tests {
         #[tokio::test]
         async fn constrained_harness_covers_valid_status_malformed_and_size() -> io::Result<()> {
             let valid_body = body(serde_json::json!([valid("A", "B", "1", "a")]));
-            let (service, request) = constrained_service(200, valid_body, None).await;
-            let result = service.fetch(&[], &CancellationToken::new()).await.unwrap();
+            let (service, request) =
+                vosu_proptest::bounded!(constrained_service(200, valid_body, None));
+            let result =
+                vosu_proptest::bounded!(service.fetch(&[], &CancellationToken::new())).unwrap();
             assert_eq!(result.len(), 1);
-            request.await.unwrap();
-
-            let (service, request) = constrained_service(503, b"[]".to_vec(), None).await;
-            assert!(matches!(
-                service.fetch(&[], &CancellationToken::new()).await,
-                Err(CatalogError::Status(503))
-            ));
-            request.await.unwrap();
-
-            let (service, request) = constrained_service(200, b"{".to_vec(), None).await;
-            assert!(matches!(
-                service.fetch(&[], &CancellationToken::new()).await,
-                Err(CatalogError::Malformed(_))
-            ));
-            request.await.unwrap();
+            vosu_proptest::bounded!(request).unwrap();
 
             let (service, request) =
-                constrained_service(200, Vec::new(), Some(CATALOG_MAX_BYTES + 1)).await;
+                vosu_proptest::bounded!(constrained_service(503, b"[]".to_vec(), None));
             assert!(matches!(
-                service.fetch(&[], &CancellationToken::new()).await,
+                vosu_proptest::bounded!(service.fetch(&[], &CancellationToken::new())),
+                Err(CatalogError::Status(503))
+            ));
+            vosu_proptest::bounded!(request).unwrap();
+
+            let (service, request) =
+                vosu_proptest::bounded!(constrained_service(200, b"{".to_vec(), None));
+            assert!(matches!(
+                vosu_proptest::bounded!(service.fetch(&[], &CancellationToken::new())),
+                Err(CatalogError::Malformed(_))
+            ));
+            vosu_proptest::bounded!(request).unwrap();
+
+            let (service, request) = vosu_proptest::bounded!(constrained_service(
+                200,
+                Vec::new(),
+                Some(CATALOG_MAX_BYTES + 1)
+            ));
+            assert!(matches!(
+                vosu_proptest::bounded!(service.fetch(&[], &CancellationToken::new())),
                 Err(CatalogError::TooLarge)
             ));
-            request.await.unwrap();
+            vosu_proptest::bounded!(request).unwrap();
             Ok(())
         }
     }

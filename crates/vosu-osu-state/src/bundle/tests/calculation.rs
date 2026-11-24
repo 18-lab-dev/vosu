@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 #[test]
 fn calculation_application_distinguishes_empty_and_applied_matches() {
@@ -279,9 +280,7 @@ async fn regular_global_refreshes_precise_projection_only_when_timing_changes() 
         })),
     )
     .publish();
-    let precise_publication = bundle
-        .apply_precise(precise)
-        .await
+    let precise_publication = bounded!(bundle.apply_precise(precise))
         .expect("precise transition")
         .publication;
     let original_precise = precise_publication.precise.clone();
@@ -294,9 +293,7 @@ async fn regular_global_refreshes_precise_projection_only_when_timing_changes() 
         Ok(ReadStatus::Ready(changed_global)),
     )
     .publish();
-    let changed_publication = bundle
-        .apply_regular(changed)
-        .await
+    let changed_publication = bounded!(bundle.apply_regular(changed))
         .expect("changed regular transition")
         .publication;
     assert_eq!(changed_publication.precise.play_time, 200.5);
@@ -314,9 +311,7 @@ async fn regular_global_refreshes_precise_projection_only_when_timing_changes() 
         Ok(ReadStatus::Ready(same_global)),
     )
     .publish();
-    let same_publication = bundle
-        .apply_regular(same)
-        .await
+    let same_publication = bounded!(bundle.apply_regular(same))
         .expect("unchanged regular transition")
         .publication;
     assert!(Arc::ptr_eq(&unchanged_precise, &same_publication.precise));
@@ -342,9 +337,7 @@ async fn regular_state_preserves_scores_above_javascript_safe_integer_range() {
         vec![leaderboard_player],
     ))))
     .publish();
-    let play_publication = bundle
-        .apply_regular(play)
-        .await
+    let play_publication = bounded!(bundle.apply_regular(play))
         .expect("large gameplay score")
         .publication;
     assert_eq!(
@@ -376,9 +369,7 @@ async fn regular_state_preserves_scores_above_javascript_safe_integer_range() {
     )
     .result_screen(Ok(ReadStatus::Ready(result)))
     .publish();
-    let result_publication = bundle
-        .apply_regular(result_snapshot)
-        .await
+    let result_publication = bounded!(bundle.apply_regular(result_snapshot))
         .expect("large result score")
         .publication;
     assert_eq!(
@@ -397,10 +388,7 @@ async fn regular_and_precise_state_preserve_fractional_and_nonfinite_times() {
         Ok(ReadStatus::Ready(raw)),
     )
     .publish();
-    let committed = bundle
-        .apply_regular(regular)
-        .await
-        .expect("non-finite regular time");
+    let committed = bounded!(bundle.apply_regular(regular)).expect("non-finite regular time");
     assert!(committed.context.play_time.is_nan());
     assert!(committed.publication.regular.global.play_time.is_nan());
 

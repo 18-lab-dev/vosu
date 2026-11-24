@@ -3,6 +3,7 @@ use super::*;
 use std::ffi::OsString;
 use std::sync::{Mutex, atomic::AtomicUsize};
 use vosu_osu_reader::discovery::StartupArgs;
+use vosu_proptest::bounded;
 use vosu_sys::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 #[derive(Debug)]
@@ -406,9 +407,9 @@ async fn lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once() {
     let (sender, mut subscriber) = watch::channel(Arc::new(InstanceLifecycleSnapshot::default()));
 
     assert_eq!(subscriber.borrow().revision, 0);
-    assert_eq!(manager.write().await.discover(&provider).unwrap(), 2);
-    publish_lifecycle(&manager, &sender).await;
-    subscriber.changed().await.unwrap();
+    assert_eq!(bounded!(manager.write()).discover(&provider).unwrap(), 2);
+    bounded!(publish_lifecycle(&manager, &sender));
+    bounded!(subscriber.changed()).unwrap();
     let added = subscriber.borrow_and_update().clone();
     assert_eq!(added.revision, 1);
     assert_eq!(
@@ -428,8 +429,8 @@ async fn lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once() {
         [1, 2],
     );
 
-    assert_eq!(manager.write().await.discover(&provider).unwrap(), 0);
-    publish_lifecycle(&manager, &sender).await;
+    assert_eq!(bounded!(manager.write()).discover(&provider).unwrap(), 0);
+    bounded!(publish_lifecycle(&manager, &sender));
     assert!(
         tokio::time::timeout(Duration::from_millis(10), subscriber.changed())
             .await
@@ -437,9 +438,9 @@ async fn lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once() {
     );
 
     provider.foreground = Some(20);
-    manager.write().await.poll_focus(&provider);
-    publish_lifecycle(&manager, &sender).await;
-    subscriber.changed().await.unwrap();
+    bounded!(manager.write()).poll_focus(&provider);
+    bounded!(publish_lifecycle(&manager, &sender));
+    bounded!(subscriber.changed()).unwrap();
     assert_eq!(subscriber.borrow_and_update().revision, 2);
     assert_eq!(
         subscriber.borrow().focus,
@@ -449,14 +450,14 @@ async fn lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once() {
         },
     );
 
-    let readiness = manager.read().await.lifecycle_changed.clone();
-    let lazer = manager.read().await.instances[&20].clone();
+    let readiness = bounded!(manager.read()).lifecycle_changed.clone();
+    let lazer = bounded!(manager.read()).instances[&20].clone();
     assert!(lazer.install_lazer_offsets(Arc::new(LazerOffsets::embedded().unwrap())));
     tokio::time::timeout(Duration::from_millis(10), readiness.notified())
         .await
         .expect("offset resolver readiness notification");
-    publish_lifecycle(&manager, &sender).await;
-    subscriber.changed().await.unwrap();
+    bounded!(publish_lifecycle(&manager, &sender));
+    bounded!(subscriber.changed()).unwrap();
     let ready = subscriber.borrow_and_update().clone();
     assert_eq!(ready.revision, 3);
     assert!(
@@ -468,16 +469,16 @@ async fn lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once() {
             .offset_ready
     );
     assert!(!lazer.install_lazer_offsets(Arc::new(LazerOffsets::embedded().unwrap())));
-    publish_lifecycle(&manager, &sender).await;
+    bounded!(publish_lifecycle(&manager, &sender));
     assert!(
         tokio::time::timeout(Duration::from_millis(10), subscriber.changed())
             .await
             .is_err()
     );
 
-    manager.write().await.remove_and_join(10).await;
-    publish_lifecycle(&manager, &sender).await;
-    subscriber.changed().await.unwrap();
+    bounded!(manager.write().await.remove_and_join(10));
+    bounded!(publish_lifecycle(&manager, &sender));
+    bounded!(subscriber.changed()).unwrap();
     let removed = subscriber.borrow_and_update().clone();
     assert_eq!(removed.revision, 4);
     assert_eq!(
@@ -505,24 +506,18 @@ async fn lazer_discovery_starts_one_resolver_and_shutdown_joins_it() {
     ));
     let mut manager = InstanceManager::default();
     assert_eq!(
-        manager
-            .discover_with_lazer_loader(&provider, loader.clone())
-            .await
-            .unwrap(),
+        bounded!(manager.discover_with_lazer_loader(&provider, loader.clone())).unwrap(),
         1
     );
     let instance = manager.instances()[&2].clone();
-    assert!(instance.resolver_task.lock().await.is_some());
+    assert!(bounded!(instance.resolver_task.lock()).is_some());
     assert_eq!(
-        manager
-            .discover_with_lazer_loader(&provider, loader)
-            .await
-            .unwrap(),
+        bounded!(manager.discover_with_lazer_loader(&provider, loader)).unwrap(),
         0
     );
-    assert!(instance.resolver_task.lock().await.is_some());
-    assert!(manager.remove_and_join(2).await.is_some());
-    assert!(instance.resolver_task.lock().await.is_none());
+    assert!(bounded!(instance.resolver_task.lock()).is_some());
+    assert!(bounded!(manager.remove_and_join(2)).is_some());
+    assert!(bounded!(instance.resolver_task.lock()).is_none());
     assert!(instance.lifecycle_token().is_cancelled());
 }
 
@@ -566,7 +561,7 @@ async fn discovery_runtime_publishes_current_then_closes_after_joined_shutdown()
         added.instances[0].generation
     );
 
-    let instance = manager.read().await.instances()[&7].clone();
+    let instance = bounded!(manager.read()).instances()[&7].clone();
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             if instance.resolver_task.lock().await.is_some() {
@@ -577,16 +572,16 @@ async fn discovery_runtime_publishes_current_then_closes_after_joined_shutdown()
     })
     .await
     .unwrap();
-    runtime.shutdown().await;
-    assert!(manager.read().await.instances().is_empty());
+    bounded!(runtime.shutdown());
+    assert!(bounded!(manager.read()).instances().is_empty());
     assert!(instance.lifecycle_token().is_cancelled());
-    assert!(instance.resolver_task.lock().await.is_none());
+    assert!(bounded!(instance.resolver_task.lock()).is_none());
 
-    subscriber.changed().await.unwrap();
+    bounded!(subscriber.changed()).unwrap();
     let removed = subscriber.borrow_and_update().clone();
     assert_eq!(removed.revision, added.revision + 1);
     assert!(removed.instances.is_empty());
-    assert!(subscriber.changed().await.is_err());
+    assert!(bounded!(subscriber.changed()).is_err());
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
@@ -621,7 +616,7 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
 
     health.store(false, Ordering::SeqCst);
     assert!(!runtime.process_events_healthy());
-    runtime.shutdown().await;
+    bounded!(runtime.shutdown());
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
@@ -671,7 +666,7 @@ async fn failed_targeted_inspection_is_not_counted() {
     .await
     .expect("successful targeted inspection");
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    runtime.shutdown().await;
+    bounded!(runtime.shutdown());
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
@@ -732,7 +727,7 @@ async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
     .await
     .expect("same-pass replacement");
     assert!(old.lifecycle_token().is_cancelled());
-    runtime.shutdown().await;
+    bounded!(runtime.shutdown());
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
@@ -785,7 +780,11 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     })
     .await
     .expect("live exit revalidation");
-    assert!(runtime.manager().read().await.instances().contains_key(&7));
+    assert!(
+        bounded!(runtime.manager().read())
+            .instances()
+            .contains_key(&7)
+    );
 
     alive.store(false, Ordering::SeqCst);
     tokio::time::timeout(Duration::from_secs(1), async {
@@ -795,7 +794,7 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     })
     .await
     .expect("pending exit confirmation");
-    runtime.shutdown().await;
+    bounded!(runtime.shutdown());
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
@@ -844,7 +843,11 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     assert_eq!(enumerations.load(Ordering::SeqCst), initial);
     assert_eq!(inspections.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.targeted_inspection_count(), 1);
-    assert!(runtime.manager().read().await.instances().contains_key(&7));
+    assert!(
+        bounded!(runtime.manager().read())
+            .instances()
+            .contains_key(&7)
+    );
 
     *event_batch
         .lock()
@@ -865,7 +868,11 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     })
     .await
     .expect("live exit revalidation");
-    assert!(runtime.manager().read().await.instances().contains_key(&7));
+    assert!(
+        bounded!(runtime.manager().read())
+            .instances()
+            .contains_key(&7)
+    );
 
     alive.store(false, Ordering::SeqCst);
     *event_batch
@@ -880,10 +887,7 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     .await
     .expect("dead exit removal");
 
-    runtime
-        .manager()
-        .read()
-        .await
+    bounded!(runtime.manager().read())
         .lifecycle_changed
         .notify_one();
     tokio::time::sleep(Duration::from_millis(25)).await;
@@ -905,5 +909,5 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     notify.notify_one();
     tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(enumerations.load(Ordering::SeqCst), initial + 1);
-    runtime.shutdown().await;
+    bounded!(runtime.shutdown());
 }

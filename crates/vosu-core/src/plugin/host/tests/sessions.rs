@@ -193,13 +193,14 @@ mod gated_matcher_plugin {
         }
 
         fn wait_for_release(&self) {
-            let mut release = self.release.lock().unwrap_or_else(|p| p.into_inner());
-            while !*release {
-                release = self
-                    .release_cv
-                    .wait(release)
-                    .unwrap_or_else(|p| p.into_inner());
-            }
+            let release = self.release.lock().unwrap_or_else(|p| p.into_inner());
+            let (release, _) = self
+                .release_cv
+                .wait_timeout_while(release, std::time::Duration::from_secs(10), |release| {
+                    !*release
+                })
+                .unwrap_or_else(|p| p.into_inner());
+            assert!(*release, "session create gate was not released within 10s");
         }
     }
 
@@ -321,8 +322,7 @@ fn matcher_registers_only_once_live_so_a_process_during_creating_goes_to_the_liv
         }
 
         gate.release();
-        create_thread
-            .join()
+        vosu_proptest::wait::JoinBounded::join_bounded(create_thread)
             .unwrap()
             .expect("creating the gated-matcher instance");
     });
@@ -364,7 +364,7 @@ fn identification_timeout_sweep_keeps_an_unidentified_session_hidden() {
     // (`identification_sweep_loop`'s own fixed interval); poll with a
     // bounded deadline for it to have logged this handle's timeout,
     // rather than guessing a fixed sleep covers at least one tick.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
     loop {
         let logged = host
             .sessions

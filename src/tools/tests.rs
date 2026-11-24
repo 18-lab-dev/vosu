@@ -4,6 +4,7 @@ use axum::{
     extract::Request,
     http::{HeaderMap, Method, StatusCode},
 };
+use vosu_proptest::bounded;
 
 fn manifest(id: &str, requires: &str) -> String {
     format!(
@@ -18,7 +19,7 @@ fn put(root: &Path, id: &str, requires: &str) -> PathBuf {
     dir
 }
 async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolHost> {
-    let host = ToolHost::new(
+    let host = bounded!(ToolHost::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
@@ -26,14 +27,13 @@ async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolHost> {
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
         Arc::new(|| json!({"client":null,"songs_dir":null,"beatmap":null})),
-    )
-    .await
+    ))
     .unwrap();
     host.activate(None);
     host
 }
 async fn value(response: axum::response::Response) -> Value {
-    serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+    serde_json::from_slice(&bounded!(to_bytes(response.into_body(), 1024 * 1024)).unwrap()).unwrap()
 }
 fn request(method: Method, path: &str) -> Request {
     Request::builder()
@@ -96,7 +96,7 @@ async fn autostart_precedence_persistence_backend_rejection_and_dependency_order
             Arc::new(|| json!({})),
         )
     };
-    let host = make().await.unwrap();
+    let host = bounded!(make()).unwrap();
     for (id, default) in [("always", true), ("demand", false)] {
         let entry = host.entry(id).unwrap();
         assert_eq!(host.view(&entry)["starts_with_vosu"], default);
@@ -105,23 +105,21 @@ async fn autostart_precedence_persistence_backend_rejection_and_dependency_order
             (json!(false), false),
             (Value::Null, default),
         ] {
-            let response = host
-                .dashboard(
-                    request(Method::PUT, &format!("/api/tools/{id}/autostart")),
-                    Bytes::from(json!({"autostart":autostart}).to_string()),
-                )
-                .await;
+            let response = bounded!(host.dashboard(
+                request(Method::PUT, &format!("/api/tools/{id}/autostart")),
+                Bytes::from(json!({"autostart":autostart}).to_string()),
+            ));
             assert_eq!(response.status(), StatusCode::OK);
-            let view = value(response).await;
+            let view = bounded!(value(response));
             assert_eq!(view["autostart"], autostart);
             assert_eq!(view["starts_with_vosu"], expected);
-            let reloaded = make().await.unwrap();
+            let reloaded = bounded!(make()).unwrap();
             assert_eq!(
                 reloaded.view(&reloaded.entry(id).unwrap())["autostart"],
                 autostart
             );
             assert_eq!(reloaded.entry(id).unwrap().state.lock().desired, expected);
-            reloaded.shutdown().await;
+            bounded!(reloaded.shutdown());
         }
     }
     for body in [
@@ -130,22 +128,20 @@ async fn autostart_precedence_persistence_backend_rejection_and_dependency_order
         r#"{"autostart":null}"#,
     ] {
         assert_eq!(
-            host.dashboard(
+            bounded!(host.dashboard(
                 request(Method::PUT, "/api/tools/backend/autostart"),
                 Bytes::from_static(body.as_bytes())
-            )
-            .await
+            ))
             .status(),
             StatusCode::BAD_REQUEST
         );
     }
     for action in ["start", "stop", "restart"] {
         assert_eq!(
-            host.dashboard(
+            bounded!(host.dashboard(
                 request(Method::POST, &format!("/api/tools/backend/{action}")),
                 Bytes::new()
-            )
-            .await
+            ))
             .status(),
             StatusCode::BAD_REQUEST
         );
@@ -162,7 +158,7 @@ async fn autostart_precedence_persistence_backend_rejection_and_dependency_order
     )
     .unwrap();
     assert_eq!(order, ["always", "demand"]);
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
@@ -174,7 +170,7 @@ async fn overlays_route_needs_a_token_and_the_context_permission() {
         "[permissions]\nhost=['context']",
     );
     let plain = put(&root.path().join("dev"), "plain", "");
-    let host = host(root.path(), vec![reader, plain]).await;
+    let host = bounded!(host(root.path(), vec![reader, plain]));
     for (tool, token) in [("reader", "reader-cli-token"), ("plain", "plain-cli-token")] {
         host.cli_sessions.lock().insert(
             format!("{tool}-cli"),
@@ -193,14 +189,14 @@ async fn overlays_route_needs_a_token_and_the_context_permission() {
         }
         host.overlay(req, Bytes::new())
     };
-    assert_eq!(get(None).await.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(bounded!(get(None)).status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
-        get(Some("plain-cli-token")).await.status(),
+        bounded!(get(Some("plain-cli-token"))).status(),
         StatusCode::FORBIDDEN
     );
     // Before the daemon wires its overlay catalog in.
     assert_eq!(
-        get(Some("reader-cli-token")).await.status(),
+        bounded!(get(Some("reader-cli-token"))).status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
 
@@ -224,9 +220,9 @@ async fn overlays_route_needs_a_token_and_the_context_permission() {
             root.path().join("counter-cache"),
         ),
     ));
-    let response = get(Some("reader-cli-token")).await;
+    let response = bounded!(get(Some("reader-cli-token")));
     assert_eq!(response.status(), StatusCode::OK);
-    let mut listing = value(response).await;
+    let mut listing = bounded!(value(response));
     let folder = listing["overlays"][0]["folder"].take();
     let folder = PathBuf::from(folder.as_str().unwrap());
     assert!(folder.is_absolute() && folder.join("index.html").is_file());
@@ -239,7 +235,7 @@ async fn overlays_route_needs_a_token_and_the_context_permission() {
         }]})
     );
     assert_eq!(
-        get(Some("plain-cli-token")).await.status(),
+        bounded!(get(Some("plain-cli-token"))).status(),
         StatusCode::FORBIDDEN
     );
     // Read-only.
@@ -247,22 +243,26 @@ async fn overlays_route_needs_a_token_and_the_context_permission() {
     post.headers_mut()
         .insert("x-vosu-tool-token", "reader-cli-token".parse().unwrap());
     assert_eq!(
-        host.overlay(post, Bytes::new()).await.status(),
+        bounded!(host.overlay(post, Bytes::new())).status(),
         StatusCode::NOT_FOUND
     );
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
 async fn theme_serves_shared_tokens_and_components_and_the_reference_page() {
     let root = tempfile::tempdir().unwrap();
-    let host = host(root.path(), Vec::new()).await;
+    let host = bounded!(host(root.path(), Vec::new()));
     let get = |path: &'static str| host.overlay(request(Method::GET, path), Bytes::new());
-    let theme = get("/tools/_host/v1/theme.css").await;
+    let theme = bounded!(get("/tools/_host/v1/theme.css"));
     assert_eq!(theme.status(), StatusCode::OK);
     assert_eq!(theme.headers()["content-type"], "text/css; charset=utf-8");
-    let css =
-        String::from_utf8(to_bytes(theme.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
+    let css = String::from_utf8(
+        bounded!(to_bytes(theme.into_body(), 1 << 20))
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
     // One source: the dashboard's token file comes first, unchanged.
     assert!(css.starts_with(include_str!("../../assets/server/tokens.css")));
     for class in [
@@ -277,18 +277,17 @@ async fn theme_serves_shared_tokens_and_components_and_the_reference_page() {
     ] {
         assert!(css.contains(class), "{class}");
     }
-    let design = get("/tools/_host/v1/design").await;
+    let design = bounded!(get("/tools/_host/v1/design"));
     assert_eq!(design.status(), StatusCode::OK);
     assert_eq!(design.headers()["content-type"], "text/html; charset=utf-8");
     let html = String::from_utf8(
-        to_bytes(design.into_body(), 1 << 20)
-            .await
+        bounded!(to_bytes(design.into_body(), 1 << 20))
             .unwrap()
             .to_vec(),
     )
     .unwrap();
     assert!(html.contains(r#"href="/tools/_host/v1/theme.css""#));
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
@@ -308,14 +307,14 @@ async fn art_is_served_in_every_status_and_sandboxed() {
     .unwrap();
     fs::write(dir.join("art/banner.png"), b"\x89PNG").unwrap();
     fs::write(dir.join("art/other.svg"), "<svg/>").unwrap();
-    let host = host(root.path(), Vec::new()).await;
+    let host = bounded!(host(root.path(), Vec::new()));
     let entry = host.entry("artful").unwrap();
     // A user tool starts untrusted: its UI is unavailable, its art is not.
     assert_eq!(host.status(&entry).0, "untrusted");
     for status in ["untrusted", "failed"] {
         entry.state.lock().status = status.into();
         for path in ["/tools/artful/_icon", "/tools/artful/_banner"] {
-            let response = host.overlay(request(Method::GET, path), Bytes::new()).await;
+            let response = bounded!(host.overlay(request(Method::GET, path), Bytes::new()));
             assert_eq!(response.status(), StatusCode::OK, "{status} {path}");
             assert!(
                 response.headers()["content-security-policy"]
@@ -326,15 +325,13 @@ async fn art_is_served_in_every_status_and_sandboxed() {
         }
         for path in ["/tools/artful/", "/tools/artful/art/other.svg"] {
             assert_eq!(
-                host.overlay(request(Method::GET, path), Bytes::new())
-                    .await
-                    .status(),
+                bounded!(host.overlay(request(Method::GET, path), Bytes::new())).status(),
                 StatusCode::SERVICE_UNAVAILABLE,
                 "{status} {path}"
             );
         }
     }
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
@@ -354,7 +351,7 @@ async fn discovery_precedence_invalid_settings_and_cycles() {
     );
     let bad = put(&root.path().join("data"), "bad", "");
     fs::write(bad.join("settings.json"), "not json").unwrap();
-    let host = host(root.path(), vec![dev.clone()]).await;
+    let host = bounded!(host(root.path(), vec![dev.clone()]));
     assert_eq!(host.entry("demo").unwrap().root, dev);
     assert_eq!(host.entry("demo").unwrap().source, "dev");
     assert_eq!(host.status(&host.entry("a").unwrap()).0, "invalid");
@@ -366,21 +363,20 @@ async fn discovery_precedence_invalid_settings_and_cycles() {
             .contains("settings.json")
     );
     assert!(a.exists());
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 #[tokio::test]
 async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
     let root = tempfile::tempdir().unwrap();
     let dev = put(root.path(), "demo", "");
-    let host = host(root.path(), vec![dev]).await;
-    let launch = value(
+    let host = bounded!(host(root.path(), vec![dev]));
+    let launch = bounded!(value(
         host.dashboard(
             request(Method::POST, "/api/tools/demo/launch"),
             Bytes::from_static(b"{\"theme\":\"light\"}"),
         )
         .await,
-    )
-    .await;
+    ));
     let url = launch["url"].as_str().unwrap();
     assert!(url.ends_with("&theme=light"));
     let code = url
@@ -391,22 +387,18 @@ async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
         .next()
         .unwrap();
     let payload = Bytes::from(json!({"tool":"demo","code":code}).to_string());
-    let response = host
-        .overlay(
-            request(Method::POST, "/tools/_host/v1/session"),
-            payload.clone(),
-        )
-        .await;
+    let response = bounded!(host.overlay(
+        request(Method::POST, "/tools/_host/v1/session"),
+        payload.clone(),
+    ));
     assert_eq!(response.status(), StatusCode::OK);
-    let session = value(response).await["session"]
+    let session = bounded!(value(response))["session"]
         .as_str()
         .unwrap()
         .to_owned();
     assert!(host.sessions.lock().contains_key(&session));
     assert_eq!(
-        host.overlay(request(Method::POST, "/tools/_host/v1/session"), payload)
-            .await
-            .status(),
+        bounded!(host.overlay(request(Method::POST, "/tools/_host/v1/session"), payload)).status(),
         StatusCode::FORBIDDEN
     );
     host.codes.lock().insert(
@@ -417,11 +409,10 @@ async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
         },
     );
     assert_eq!(
-        host.overlay(
+        bounded!(host.overlay(
             request(Method::POST, "/tools/_host/v1/session"),
             Bytes::from_static(b"{\"tool\":\"demo\",\"code\":\"expired\"}")
-        )
-        .await
+        ))
         .status(),
         StatusCode::FORBIDDEN
     );
@@ -431,19 +422,15 @@ async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
         "/tools/demo/%2fetc/passwd",
     ] {
         assert_eq!(
-            host.overlay(request(Method::GET, path), Bytes::new())
-                .await
-                .status(),
+            bounded!(host.overlay(request(Method::GET, path), Bytes::new())).status(),
             StatusCode::NOT_FOUND
         );
     }
     assert_eq!(
-        host.overlay(request(Method::GET, "/tools/demo/"), Bytes::new())
-            .await
-            .status(),
+        bounded!(host.overlay(request(Method::GET, "/tools/demo/"), Bytes::new())).status(),
         StatusCode::OK
     );
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 #[test]
 fn reservation_covers_validation_and_encoded_static_paths() {
@@ -476,7 +463,7 @@ async fn access_matrix_includes_sessions_dependencies_and_method_overlap() {
         "[[requires]]\nid='target'\nversion='>=1.0.0'",
     );
     let stranger = put(root.path(), "stranger", "");
-    let host = host(root.path(), vec![target, dependent, stranger]).await;
+    let host = bounded!(host(root.path(), vec![target, dependent, stranger]));
     let target = host.entry("target").unwrap();
     let dep = host.entry("dependent").unwrap();
     let stranger = host.entry("stranger").unwrap();
@@ -523,30 +510,27 @@ async fn access_matrix_includes_sessions_dependencies_and_method_overlap() {
         assert_eq!(manifest.access(method, "/v1/jobs/1"), Some(true));
         assert_eq!(manifest.access(method, "/v1/no"), None);
     }
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 #[cfg(unix)]
 #[tokio::test]
 async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
     let root = tempfile::tempdir().unwrap();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tool-host");
-    let host = host(root.path(), vec![fixture]).await;
-    let response = host
-        .overlay(
-            request(Method::GET, "/tools/fixture/api/v1/read?hello=world"),
-            Bytes::new(),
-        )
-        .await;
+    let host = bounded!(host(root.path(), vec![fixture]));
+    let response = bounded!(host.overlay(
+        request(Method::GET, "/tools/fixture/api/v1/read?hello=world"),
+        Bytes::new(),
+    ));
     assert_eq!(response.status(), StatusCode::OK);
-    let first = value(response).await;
+    let first = bounded!(value(response));
     assert_eq!(first["path"], "/v1/read?hello=world");
     assert_eq!(first["caller"], "overlay");
     assert_eq!(
-        host.overlay(
+        bounded!(host.overlay(
             request(Method::POST, "/tools/fixture/api/v1/write"),
             Bytes::new()
-        )
-        .await
+        ))
         .status(),
         StatusCode::FORBIDDEN
     );
@@ -558,7 +542,7 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
         .headers_mut()
         .insert("x-vosu-tool-session", "fixture-session".parse().unwrap());
     assert_eq!(
-        host.overlay(write, Bytes::new()).await.status(),
+        bounded!(host.overlay(write, Bytes::new())).status(),
         StatusCode::OK
     );
     let entry = host.entry("fixture").unwrap();
@@ -568,7 +552,7 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
         .insert("x-vosu-tool-session", "fixture-session".parse().unwrap());
     let before = Instant::now();
     assert_eq!(
-        host.overlay(crash, Bytes::new()).await.status(),
+        bounded!(host.overlay(crash, Bytes::new())).status(),
         StatusCode::BAD_GATEWAY
     );
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -594,7 +578,7 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
             .any(|line| line.text.contains("fixture started"))
     );
     let pid = entry.state.lock().pid.unwrap();
-    host.shutdown().await;
+    bounded!(host.shutdown());
     assert_eq!(
         fs::read_to_string(entry.data_dir.join("stdin-closed")).unwrap(),
         "yes"
@@ -613,20 +597,20 @@ async fn voluntary_exit_stays_stopped_and_can_be_started_again() {
         manifest.replace("on-demand", "always"),
     )
     .unwrap();
-    let host = host(root.path(), vec![fixture]).await;
-    host.start("fixture", true).await.unwrap();
+    let host = bounded!(host(root.path(), vec![fixture]));
+    bounded!(host.start("fixture", true)).unwrap();
     let entry = host.entry("fixture").unwrap();
     let first_pid = entry.state.lock().pid.unwrap();
     let (port, token) = {
         let state = entry.state.lock();
         (state.port.unwrap(), state.token.clone().unwrap())
     };
-    let _ = host
-        .http
-        .post(format!("http://127.0.0.1:{port}/v1/exit"))
-        .header("x-vosu-tool-token", token)
-        .send()
-        .await;
+    let _ = bounded!(
+        host.http
+            .post(format!("http://127.0.0.1:{port}/v1/exit"))
+            .header("x-vosu-tool-token", token)
+            .send()
+    );
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if entry.state.lock().status == "stopped" {
@@ -648,19 +632,18 @@ async fn voluntary_exit_stays_stopped_and_can_be_started_again() {
         assert!(state.port.is_none() && state.token.is_none() && state.pid.is_none());
     }
     assert_eq!(
-        host.overlay(
+        bounded!(host.overlay(
             request(Method::GET, "/tools/fixture/api/v1/read"),
             Bytes::new(),
-        )
-        .await
+        ))
         .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(entry.state.lock().status, "stopped");
-    host.start("fixture", true).await.unwrap();
+    bounded!(host.start("fixture", true)).unwrap();
     assert_eq!(entry.state.lock().status, "running");
     assert_ne!(entry.state.lock().pid, Some(first_pid));
-    host.stop_serialized(&entry, true).await;
+    bounded!(host.stop_serialized(&entry, true));
     assert!(!entry.state.lock().desired);
     assert_eq!(entry.state.lock().detail, None);
     assert_eq!(entry.state.lock().restarts, 0);
@@ -679,11 +662,11 @@ async fn voluntary_exit_stays_stopped_and_can_be_started_again() {
     cli.headers_mut()
         .insert("x-vosu-tool-token", "fixture-cli-token".parse().unwrap());
     assert_eq!(
-        host.overlay(cli, Bytes::new()).await.status(),
+        bounded!(host.overlay(cli, Bytes::new())).status(),
         StatusCode::OK
     );
     assert_eq!(entry.state.lock().status, "running");
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[cfg(unix)]
@@ -697,19 +680,19 @@ async fn voluntary_exit_before_readiness_is_not_a_crash() {
         manifest.replace("\"service.py\"", "\"service.py\", \"--exit-before-ready\""),
     )
     .unwrap();
-    let host = host(root.path(), vec![fixture]).await;
-    assert_eq!(host.start("fixture", true).await.unwrap_err(), "exited");
+    let host = bounded!(host(root.path(), vec![fixture]));
+    assert_eq!(bounded!(host.start("fixture", true)).unwrap_err(), "exited");
     let entry = host.entry("fixture").unwrap();
     assert_eq!(entry.state.lock().status, "stopped");
     assert_eq!(entry.state.lock().restarts, 0);
     assert!(!entry.state.lock().desired);
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
 async fn catalog_defaults_and_customized_sources_stay_under_user_control() {
     let root = tempfile::tempdir().unwrap();
-    let host = host(root.path(), Vec::new()).await;
+    let host = bounded!(host(root.path(), Vec::new()));
     let expected = json!([
         {"source":"18-lab-dev/vosu-tools","enabled":true},
         {"source":"18-lab-dev/vosulay","enabled":true},
@@ -747,13 +730,12 @@ async fn catalog_defaults_and_customized_sources_stay_under_user_control() {
         assert_eq!(fs::read(&path).unwrap(), before);
     }
     let removed = json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]);
-    let edited = host
-        .save_sources(&serde_json::to_vec(&json!({"sources": removed})).unwrap())
-        .await
-        .unwrap();
+    let edited =
+        bounded!(host.save_sources(&serde_json::to_vec(&json!({"sources": removed})).unwrap()))
+            .unwrap();
     assert_eq!(json!(identities(edited)), removed);
     assert_eq!(json!(identities(host.source_view().unwrap())), removed);
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
@@ -796,7 +778,7 @@ async fn organization_defaults_migrate_at_startup_without_expanding_identity_tru
         &json!({"overlay":{"source":"shiruviaa/vosu-overlays","version":"1.0.0"}}),
     )
     .unwrap();
-    let first = host(root.path(), Vec::new()).await;
+    let first = bounded!(host(root.path(), Vec::new()));
     {
         let saved = first.saved.lock();
         for id in ["official-tools", "official-vosulay"] {
@@ -845,18 +827,18 @@ async fn organization_defaults_migrate_at_startup_without_expanding_identity_tru
         serde_json::from_slice(&fs::read(config.join("overlay-catalog-state.json")).unwrap())
             .unwrap();
     assert_eq!(overlay["overlay"]["source"], "shiruviaa/vosu-overlays");
-    first.shutdown().await;
+    bounded!(first.shutdown());
     let paths = [
         "catalog-sources.json",
         "state.json",
         "overlay-catalog-state.json",
     ];
     let before = paths.map(|name| fs::read(config.join(name)).unwrap());
-    let second = host(root.path(), Vec::new()).await;
+    let second = bounded!(host(root.path(), Vec::new()));
     for (name, bytes) in paths.iter().zip(before) {
         assert_eq!(fs::read(config.join(name)).unwrap(), bytes);
     }
-    second.shutdown().await;
+    bounded!(second.shutdown());
 }
 
 #[tokio::test]
@@ -875,7 +857,7 @@ async fn former_default_lists_migrate_without_readding_explicitly_removed_source
         if edited {
             atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
         }
-        let current = host(root.path(), Vec::new()).await;
+        let current = bounded!(host(root.path(), Vec::new()));
         let migrated: Value =
             serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap())
                 .unwrap();
@@ -887,7 +869,7 @@ async fn former_default_lists_migrate_without_readding_explicitly_removed_source
             expected.push(json!({"source":"shiruviaa/vosu-overlays","enabled":true}));
         }
         assert_eq!(migrated, json!(expected));
-        current.shutdown().await;
+        bounded!(current.shutdown());
     }
 }
 
@@ -911,19 +893,17 @@ async fn the_previous_default_list_gains_the_official_overlay_source_once() {
     fs::create_dir_all(&config).unwrap();
     atomic_json(&config.join("catalog-sources.json"), &previous).unwrap();
     atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
-    let first = host(root.path(), Vec::new()).await;
+    let first = bounded!(host(root.path(), Vec::new()));
     assert_eq!(read(&config), current);
-    first.shutdown().await;
+    bounded!(first.shutdown());
     // Removing it afterwards is an explicit edit and stays removed across restarts.
-    let second = host(root.path(), Vec::new()).await;
-    second
-        .save_sources(&serde_json::to_vec(&json!({"sources": previous})).unwrap())
-        .await
+    let second = bounded!(host(root.path(), Vec::new()));
+    bounded!(second.save_sources(&serde_json::to_vec(&json!({"sources": previous})).unwrap()))
         .unwrap();
-    second.shutdown().await;
-    let third = host(root.path(), Vec::new()).await;
+    bounded!(second.shutdown());
+    let third = bounded!(host(root.path(), Vec::new()));
     assert_eq!(read(&config), previous);
-    third.shutdown().await;
+    bounded!(third.shutdown());
     // Customized lists, a disabled default included, are left alone.
     for customized in [
         json!([
@@ -936,23 +916,23 @@ async fn the_previous_default_list_gains_the_official_overlay_source_once() {
         let config = root.path().join("config");
         fs::create_dir_all(&config).unwrap();
         atomic_json(&config.join("catalog-sources.json"), &customized).unwrap();
-        let host = host(root.path(), Vec::new()).await;
+        let host = bounded!(host(root.path(), Vec::new()));
         assert_eq!(read(&config), customized);
-        host.shutdown().await;
+        bounded!(host.shutdown());
     }
 }
 
 #[tokio::test]
 async fn cycles_do_not_poison_dependents() {
     let root = tempfile::tempdir().unwrap();
-    let host = host(root.path(), Vec::new()).await;
+    let host = bounded!(host(root.path(), Vec::new()));
     put(&host.data, "cycle", "[[requires]]\nid='cycle'\nversion='*'");
     put(
         &host.data,
         "consumer",
         "[[requires]]\nid='cycle'\nversion='*'",
     );
-    host.rescan().await;
+    bounded!(host.rescan());
     host.saved
         .lock()
         .entry("consumer".into())
@@ -960,7 +940,7 @@ async fn cycles_do_not_poison_dependents() {
         .trusted = true;
     assert_eq!(host.status(&host.entry("cycle").unwrap()).0, "invalid");
     assert_eq!(host.status(&host.entry("consumer").unwrap()).0, "blocked");
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[cfg(unix)]
@@ -979,8 +959,8 @@ fn copied_fixture(root: &Path) -> PathBuf {
 async fn development_script_change_restarts_with_continuous_logs() {
     let root = tempfile::tempdir().unwrap();
     let fixture = copied_fixture(root.path());
-    let host = host(root.path(), vec![fixture.clone()]).await;
-    host.start("fixture", true).await.unwrap();
+    let host = bounded!(host(root.path(), vec![fixture.clone()]));
+    bounded!(host.start("fixture", true)).unwrap();
     let first = host.entry("fixture").unwrap();
     let pid = first.state.lock().pid.unwrap();
     let script = fs::read_to_string(fixture.join("service.py")).unwrap();
@@ -1017,7 +997,7 @@ async fn development_script_change_restarts_with_continuous_logs() {
             .zip(lines.iter().skip(1))
             .all(|(a, b)| a.seq < b.seq)
     );
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[cfg(unix)]
@@ -1031,20 +1011,19 @@ async fn five_pre_readiness_crashes_fail_until_manual_start() {
         manifest.replace("\"service.py\"", "\"service.py\", \"--crash-before-ready\""),
     )
     .unwrap();
-    let host = host(root.path(), vec![fixture]).await;
+    let host = bounded!(host(root.path(), vec![fixture]));
     let before = Instant::now();
-    assert!(host.start("fixture", false).await.is_err());
+    assert!(bounded!(host.start("fixture", false)).is_err());
     let entry = host.entry("fixture").unwrap();
     assert_eq!(entry.state.lock().status, "failed");
     assert_eq!(entry.state.lock().restarts, 5);
     assert!(before.elapsed() >= Duration::from_secs(15));
     assert!(
-        host.start("fixture", false)
-            .await
+        bounded!(host.start("fixture", false))
             .unwrap_err()
             .contains("failed")
     );
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[cfg(unix)]
@@ -1055,22 +1034,20 @@ async fn websocket_proxy_preserves_frames_subprotocol_and_drains() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
     let root = tempfile::tempdir().unwrap();
     let fixture = copied_fixture(root.path());
-    let host = host(root.path(), vec![fixture]).await;
+    let host = bounded!(host(root.path(), vec![fixture]));
     let tracker = Arc::new(crate::server::websocket::UpgradeCallbackTracker::new());
     let router = Router::new()
         .fallback(
             |State(host): State<Arc<ToolHost>>, request: Request| async move {
-                host.overlay(request, Bytes::new()).await
+                bounded!(host.overlay(request, Bytes::new()))
             },
         )
         .layer(Extension(tracker.clone()))
         .with_state(host.clone());
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
+    let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        bounded!(axum::serve(listener, router)).unwrap();
     });
     let mut request = format!("ws://{address}/tools/fixture/api/v1/stream")
         .into_client_request()
@@ -1078,21 +1055,25 @@ async fn websocket_proxy_preserves_frames_subprotocol_and_drains() {
     request
         .headers_mut()
         .insert("sec-websocket-protocol", "fixture".parse().unwrap());
-    let (mut socket, handshake) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let (mut socket, handshake) = bounded!(tokio_tungstenite::connect_async(request)).unwrap();
     assert_eq!(handshake.headers()["sec-websocket-protocol"], "fixture");
-    let frame = socket.next().await.unwrap().unwrap().into_text().unwrap();
+    let frame = bounded!(socket.next())
+        .unwrap()
+        .unwrap()
+        .into_text()
+        .unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&frame).unwrap()["caller"],
         "overlay"
     );
-    let _ = socket.close(None).await;
+    let _ = bounded!(socket.close(None));
     tracker.cancel();
     tokio::time::timeout(Duration::from_secs(3), tracker.wait_drained())
         .await
         .unwrap();
-    host.shutdown().await;
+    bounded!(host.shutdown());
     server.abort();
-    let _ = server.await;
+    let _ = bounded!(server);
 }
 
 #[tokio::test]
@@ -1100,51 +1081,46 @@ async fn tool_settings_and_approval_persist_outside_overlay_settings() {
     let root = tempfile::tempdir().unwrap();
     let tool = put(&root.path().join("data"), "user-tool", "");
     fs::write(tool.join("settings.json"), r#"[{"uniqueID":"count","type":"number","value":"12"},{"uniqueID":"enabled","type":"checkbox","value":"true"}]"#).unwrap();
-    let first = host(root.path(), Vec::new()).await;
+    let first = bounded!(host(root.path(), Vec::new()));
     assert_eq!(
         first.status(&first.entry("user-tool").unwrap()).0,
         "untrusted"
     );
     for action in ["trust", "disable"] {
         assert_eq!(
-            first
-                .dashboard(
-                    request(Method::POST, &format!("/api/tools/user-tool/{action}")),
-                    Bytes::new()
-                )
-                .await
-                .status(),
+            bounded!(first.dashboard(
+                request(Method::POST, &format!("/api/tools/user-tool/{action}")),
+                Bytes::new()
+            ))
+            .status(),
             StatusCode::OK
         );
     }
-    let settings = value(
+    let settings = bounded!(value(
         first
             .dashboard(
                 request(Method::GET, "/api/tools/user-tool/settings"),
                 Bytes::new(),
             )
             .await,
-    )
-    .await;
+    ));
     assert_eq!(settings["values"]["count"], 12.0);
     assert_eq!(settings["values"]["enabled"], true);
-    let saved = first
-        .dashboard(
-            request(Method::POST, "/api/tools/user-tool/settings"),
-            Bytes::from_static(br#"[{"uniqueID":"count","value":"25"}]"#),
-        )
-        .await;
+    let saved = bounded!(first.dashboard(
+        request(Method::POST, "/api/tools/user-tool/settings"),
+        Bytes::from_static(br#"[{"uniqueID":"count","value":"25"}]"#),
+    ));
     assert_eq!(saved.status(), StatusCode::OK);
     assert!(root.path().join("config/settings/user-tool.json").is_file());
     assert!(!tool.join("settings.schema.toml").exists());
-    first.shutdown().await;
+    bounded!(first.shutdown());
     drop(first);
-    let second = host(root.path(), Vec::new()).await;
+    let second = bounded!(host(root.path(), Vec::new()));
     let entry = second.entry("user-tool").unwrap();
     assert!(second.trusted(&entry));
     assert_eq!(second.status(&entry).0, "disabled");
     assert_eq!(second.settings(&entry).unwrap()["count"], 25.0);
-    second.shutdown().await;
+    bounded!(second.shutdown());
 }
 
 #[tokio::test]
@@ -1156,16 +1132,15 @@ async fn password_settings_never_reach_the_dashboard() {
         r#"[{"uniqueID":"secret","type":"password","value":"default-secret"},{"uniqueID":"name","type":"text","value":"x"}]"#,
     )
     .unwrap();
-    let host = host(root.path(), vec![tool]).await;
+    let host = bounded!(host(root.path(), vec![tool]));
     let read = || async {
-        value(
+        bounded!(value(
             host.dashboard(
                 request(Method::GET, "/api/tools/secretive/settings"),
                 Bytes::new(),
             )
             .await,
-        )
-        .await
+        ))
     };
     let save = |body: &'static [u8]| {
         host.dashboard(
@@ -1174,37 +1149,36 @@ async fn password_settings_never_reach_the_dashboard() {
         )
     };
     let effective = || host.settings(&host.entry("secretive").unwrap()).unwrap()["secret"].clone();
-    let settings = read().await;
+    let settings = bounded!(read());
     assert_eq!(settings["values"]["secret"], "");
     assert_eq!(settings["settings"][0]["value"], "");
     assert_eq!(settings["secrets"]["secret"], true);
     assert!(!settings.to_string().contains("default-secret"));
     assert_eq!(
-        save(br#"[{"uniqueID":"secret","value":"hunter2"}]"#)
-            .await
-            .status(),
+        bounded!(save(br#"[{"uniqueID":"secret","value":"hunter2"}]"#)).status(),
         StatusCode::OK
     );
     assert_eq!(effective(), "hunter2");
     // Blank or omitted keeps the secret; null clears it.
-    save(br#"[{"uniqueID":"secret","value":""},{"uniqueID":"name","value":"y"}]"#).await;
-    save(br#"[{"uniqueID":"name","value":"z"}]"#).await;
+    bounded!(save(
+        br#"[{"uniqueID":"secret","value":""},{"uniqueID":"name","value":"y"}]"#
+    ));
+    bounded!(save(br#"[{"uniqueID":"name","value":"z"}]"#));
     assert_eq!(effective(), "hunter2");
-    assert!(!read().await.to_string().contains("hunter2"));
+    assert!(!bounded!(read()).to_string().contains("hunter2"));
     // The overlay-origin read route omits password values entirely.
-    let readable = value(
+    let readable = bounded!(value(
         host.overlay(
             request(Method::GET, "/tools/secretive/_settings"),
             Bytes::new(),
         )
         .await,
-    )
-    .await;
+    ));
     assert_eq!(readable, json!({"values": {"name": "z"}}));
-    save(br#"[{"uniqueID":"secret","value":null}]"#).await;
+    bounded!(save(br#"[{"uniqueID":"secret","value":null}]"#));
     assert_eq!(effective(), "");
-    assert_eq!(read().await["secrets"]["secret"], false);
-    host.shutdown().await;
+    assert_eq!(bounded!(read())["secrets"]["secret"], false);
+    bounded!(host.shutdown());
 }
 
 #[tokio::test]
@@ -1223,13 +1197,13 @@ async fn cli_broker_auth_sessions_and_authority() {
         "c",
         "[service]\ncommand=['bin/c']\n[api]\nread=['/v1/read']\nwrite=['/v1/write']\n",
     );
-    let host = host(root.path(), vec![a, b, c]).await;
+    let host = bounded!(host(root.path(), vec![a, b, c]));
     let stranger = put(
         &root.path().join("data"),
         "untrusted",
         "[cli]\ncommand=['bin/untrusted']\n",
     );
-    host.rescan().await;
+    bounded!(host.rescan());
     assert!(stranger.exists());
     let broker_path = root.path().join("broker.json");
     let broker = Arc::new(BrokerToken::new(broker_path.clone()).unwrap());
@@ -1246,18 +1220,15 @@ async fn cli_broker_auth_sessions_and_authority() {
         req
     };
     assert_eq!(
-        host.overlay(request(Method::GET, "/tools/_host/v1/cli"), Bytes::new())
-            .await
-            .status(),
+        bounded!(host.overlay(request(Method::GET, "/tools/_host/v1/cli"), Bytes::new())).status(),
         StatusCode::UNAUTHORIZED
     );
     for (token, peer) in [("wrong", "127.0.0.1:1000"), (credential, "192.0.2.1:1000")] {
         assert_eq!(
-            host.overlay(
+            bounded!(host.overlay(
                 authenticated(Method::GET, "/tools/_host/v1/cli", token, peer),
                 Bytes::new()
-            )
-            .await
+            ))
             .status(),
             StatusCode::UNAUTHORIZED
         );
@@ -1269,11 +1240,10 @@ async fn cli_broker_auth_sessions_and_authority() {
         ("c", StatusCode::CONFLICT),
     ] {
         assert_eq!(
-            host.overlay(
+            bounded!(host.overlay(
                 auth(Method::POST, &format!("/tools/_host/v1/cli/{id}")),
                 Bytes::new()
-            )
-            .await
+            ))
             .status(),
             expected
         );
@@ -1290,32 +1260,27 @@ async fn cli_broker_auth_sessions_and_authority() {
                 replaces: Vec::new(),
             },
         );
-        let denied = host
-            .overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
-            .await;
+        let denied =
+            bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new()));
         assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-        assert_eq!(value(denied).await["status"], expected);
+        assert_eq!(bounded!(value(denied))["status"], expected);
         host.saved.lock().remove(disabled);
     }
     host.entry("a").unwrap().state.lock().status = "invalid".into();
     assert_eq!(
-        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
-            .await
-            .status(),
+        bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())).status(),
         StatusCode::FORBIDDEN
     );
     host.entry("a").unwrap().state.lock().status = "running".into();
-    let listing = value(
+    let listing = bounded!(value(
         host.overlay(auth(Method::GET, "/tools/_host/v1/cli"), Bytes::new())
             .await,
-    )
-    .await;
+    ));
     assert_eq!(listing["tools"][0]["cli"]["usage"], "vosux a");
-    let launch = value(
+    let launch = bounded!(value(
         host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
             .await,
-    )
-    .await;
+    ));
     assert_eq!(launch["env"]["VOSU_TOOL_INTERFACE"], "cli");
     assert!(Path::new(launch["argv"][0].as_str().unwrap()).is_absolute());
     let token = launch["env"]["VOSU_TOOL_TOKEN"].as_str().unwrap();
@@ -1330,7 +1295,7 @@ async fn cli_broker_auth_sessions_and_authority() {
     let mut req = request(Method::POST, "/tools/c/api/v1/write");
     *req.headers_mut() = headers.clone();
     assert_eq!(
-        host.overlay(req, Bytes::new()).await.status(),
+        bounded!(host.overlay(req, Bytes::new())).status(),
         StatusCode::FORBIDDEN
     );
     assert_eq!(
@@ -1338,11 +1303,10 @@ async fn cli_broker_auth_sessions_and_authority() {
             .as_deref(),
         Some("cli:a")
     );
-    let other = value(
+    let other = bounded!(value(
         host.overlay(auth(Method::POST, "/tools/_host/v1/cli/b"), Bytes::new())
             .await,
-    )
-    .await;
+    ));
     headers.insert(
         "x-vosu-tool-token",
         other["env"]["VOSU_TOOL_TOKEN"]
@@ -1356,7 +1320,7 @@ async fn cli_broker_auth_sessions_and_authority() {
             .is_none()
     );
     assert_eq!(
-        host.overlay(
+        bounded!(host.overlay(
             auth(
                 Method::DELETE,
                 &format!(
@@ -1365,8 +1329,7 @@ async fn cli_broker_auth_sessions_and_authority() {
                 )
             ),
             Bytes::new()
-        )
-        .await
+        ))
         .status(),
         StatusCode::OK
     );
@@ -1376,7 +1339,7 @@ async fn cli_broker_auth_sessions_and_authority() {
             .is_none()
     );
     assert_eq!(
-        host.overlay(
+        bounded!(host.overlay(
             {
                 let mut req = request(Method::GET, "/tools/_host/v1/self");
                 req.headers_mut()
@@ -1384,8 +1347,7 @@ async fn cli_broker_auth_sessions_and_authority() {
                 req
             },
             Bytes::new()
-        )
-        .await
+        ))
         .status(),
         StatusCode::UNAUTHORIZED
     );
@@ -1399,18 +1361,15 @@ async fn cli_broker_auth_sessions_and_authority() {
     );
     for _ in 0..64 {
         assert_eq!(
-            host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
-                .await
+            bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new()))
                 .status(),
             StatusCode::OK
         );
     }
     assert_eq!(
-        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
-            .await
-            .status(),
+        bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())).status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
-    host.shutdown().await;
+    bounded!(host.shutdown());
     assert!(host.cli_sessions.lock().is_empty());
 }

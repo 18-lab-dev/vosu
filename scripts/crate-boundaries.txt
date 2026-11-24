@@ -32,6 +32,7 @@
 #   M4a (`vosu-surface` otherwise continues on as the permanent D3
 #   surface API).
 vosu-sys
+vosu-sys -> vosu-proptest
 vosu-proptest
 vosu-osu-model
 vosu-pp
@@ -48,6 +49,10 @@ vosu-core -> vosu-plugin-api
 vosu-core -> vosu-plugin-testkit
 vosu-core -> vosu-sys
 vosu-core -> vosu-proptest
+vosu-osu -> vosu-proptest
+vosu-release-smoke -> vosu-proptest
+vosu-osu-state -> vosu-proptest
+vosu-test-harness -> vosu-proptest
 
 vosu-osu-calc -> vosu-osu-model
 vosu-osu-calc -> vosu-pp

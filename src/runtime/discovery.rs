@@ -280,7 +280,7 @@ mod tests {
         impl Drop for ChildGuard {
             fn drop(&mut self) {
                 let _ = self.0.kill();
-                let _ = self.0.wait();
+                let _ = vosu_proptest::wait::child(&mut self.0);
             }
         }
 
@@ -361,7 +361,7 @@ mod tests {
             );
 
             child.0.kill().expect("killing the test child");
-            child.0.wait().expect("reaping the test child");
+            vosu_proptest::wait::child(&mut child.0).expect("reaping the test child");
             drop(child);
 
             // Shutdown order this wiring documents (`lifecycle.rs`):
@@ -439,7 +439,7 @@ mod tests {
             );
 
             child.0.kill().expect("killing the test child");
-            child.0.wait().expect("reaping the test child");
+            vosu_proptest::wait::child(&mut child.0).expect("reaping the test child");
             drop(child);
 
             discovery.stop();
@@ -500,7 +500,7 @@ mod tests {
         impl Drop for ChildGuard {
             fn drop(&mut self) {
                 let _ = self.0.kill();
-                let _ = self.0.wait();
+                let _ = vosu_proptest::wait::child(&mut self.0);
             }
         }
 
@@ -574,7 +574,7 @@ mod tests {
             );
 
             child.0.kill().expect("killing the first test child");
-            child.0.wait().expect("reaping the first test child");
+            vosu_proptest::wait::child(&mut child.0).expect("reaping the first test child");
 
             expect_event(
                 &events,
@@ -602,7 +602,7 @@ mod tests {
             );
 
             second.0.kill().expect("killing the second test child");
-            second.0.wait().expect("reaping the second test child");
+            vosu_proptest::wait::child(&mut second.0).expect("reaping the second test child");
             drop(second);
             drop(child);
 

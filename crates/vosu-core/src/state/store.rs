@@ -345,8 +345,8 @@ families = ["image"]
             .unwrap();
         release.send(()).unwrap();
         completed.recv_timeout(Duration::from_secs(10)).unwrap();
-        writer.join().unwrap();
-        other.join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(writer).unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(other).unwrap();
         let slot = store
             .sessions
             .read()

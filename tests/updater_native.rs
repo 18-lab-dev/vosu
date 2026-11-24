@@ -463,7 +463,7 @@ fn concurrent_call_is_rejected_without_stealing_live_owner() {
                 Err(error) => error,
             }
         });
-        let error = contender.join().unwrap();
+        let error = vosu_proptest::wait::JoinBounded::join_bounded(contender).unwrap();
         assert!(matches!(error, UpdateError::AlreadyRunning));
     });
     drop(first);

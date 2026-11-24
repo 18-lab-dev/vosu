@@ -396,7 +396,8 @@ fn concurrent_focus_recomputation_never_deadlocks() {
             .expect("a hammerer thread did not finish within 10s — possible deadlock");
     }
     for hammerer in hammerers {
-        hammerer.join().expect("a hammerer thread must not panic");
+        vosu_proptest::wait::JoinBounded::join_bounded(hammerer)
+            .expect("a hammerer thread must not panic");
     }
 
     // The deterministic phase: a fresh host/instance of its own (this

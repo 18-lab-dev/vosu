@@ -266,12 +266,13 @@ impl ProcessMemory for StartGatedMemory {
             cv.notify_all();
         }
         let (lock, cv) = &*self.gate;
-        let mut released = lock.lock().unwrap_or_else(|poison| poison.into_inner());
-        while !*released {
-            released = cv
-                .wait(released)
-                .unwrap_or_else(|poison| poison.into_inner());
-        }
+        let released = lock.lock().unwrap_or_else(|poison| poison.into_inner());
+        let (released, _) = cv
+            .wait_timeout_while(released, std::time::Duration::from_secs(10), |released| {
+                !*released
+            })
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert!(*released, "sync memory gate was not released within 10s");
         dst.fill(0);
         Ok(())
     }
@@ -494,7 +495,10 @@ mod nested_sync_plugin {
             let reader_events = events.clone();
             let reader_handle = Arc::clone(&handle);
             std::thread::spawn(move || {
-                if trigger.recv().is_err() {
+                if trigger
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_err()
+                {
                     return;
                 }
                 let status = reader_host.send(

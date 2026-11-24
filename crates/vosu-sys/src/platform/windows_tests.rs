@@ -2,8 +2,9 @@ use super::*;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::windows::fs::OpenOptionsExt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier};
+use vosu_proptest::wait::Barrier;
 use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
 
 #[test]
@@ -37,7 +38,12 @@ fn concurrent_readers_never_observe_missing_file() {
         let start = start.clone();
         thread::spawn(move || {
             start.wait();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
             while !stop.load(Ordering::Acquire) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "NTFS stress reader did not receive its stop signal within 300s"
+                );
                 match read_published(&target) {
                     Ok(bytes) => {
                         assert_eq!(
@@ -61,7 +67,12 @@ fn concurrent_readers_never_observe_missing_file() {
         let start = start.clone();
         thread::spawn(move || {
             start.wait();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
             while !stop.load(Ordering::Acquire) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "NTFS stress reader did not receive its stop signal within 300s"
+                );
                 let result = OpenOptions::new()
                     .read(true)
                     .share_mode(FILE_SHARE_READ)
@@ -113,7 +124,7 @@ fn concurrent_readers_never_observe_missing_file() {
     })();
     stop.store(true, Ordering::Release);
     for reader in readers {
-        reader.join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(reader).unwrap();
     }
     let missing = missing.load(Ordering::Relaxed);
     let reads = reads.load(Ordering::Relaxed);
@@ -155,7 +166,12 @@ fn raw_concurrent_readers_characterize_missing_file_rate() {
         let start = start.clone();
         thread::spawn(move || {
             start.wait();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
             while !stop.load(Ordering::Acquire) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "NTFS stress reader did not receive its stop signal within 300s"
+                );
                 let result = if no_share_delete {
                     OpenOptions::new()
                         .read(true)
@@ -211,7 +227,7 @@ fn raw_concurrent_readers_characterize_missing_file_rate() {
     })();
     stop.store(true, Ordering::Release);
     for reader in readers {
-        reader.join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(reader).unwrap();
     }
     let missing = missing.load(Ordering::Relaxed);
     let reads = reads.load(Ordering::Relaxed);
@@ -281,13 +297,15 @@ fn read_published_succeeds_once_file_appears_within_the_retry_window() {
         let _ = ready_tx.send(());
     });
     let writer = thread::spawn(move || {
-        ready_rx.recv().unwrap();
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("published-file retry hook did not run within 10s");
         fs::write(&temp, b"generation=0001\n").unwrap();
         atomic_replace(&temp, &target_copy).unwrap();
     });
     let bytes = read_published(&target).unwrap();
     assert_eq!(bytes, b"generation=0001\n");
-    writer.join().unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(writer).unwrap();
 }
 
 #[test]
@@ -317,7 +335,7 @@ fn reader_without_share_delete_is_retried_until_released() {
         .recv_timeout(Duration::from_secs(3))
         .unwrap()
         .unwrap();
-    writer.join().unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(writer).unwrap();
     assert_eq!(fs::read_to_string(&target).unwrap(), "new");
 }
 

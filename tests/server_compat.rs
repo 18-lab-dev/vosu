@@ -15,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use vosu_proptest::bounded;
 
 use axum::{
     body::{Body, Bytes, to_bytes},
@@ -122,9 +123,9 @@ async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
             calculation: Arc::new(CalculateFixture),
             delegate: Arc::new(KeysDelegate(keys)),
         };
-        let response = routes::dispatch(State(providers), request).await;
+        let response = bounded!(routes::dispatch(State(providers), request));
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{scope}");
-        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let body = bounded!(to_bytes(response.into_body(), 1024)).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap()["error"],
             "API key revoked"
@@ -258,7 +259,7 @@ async fn api_key_peer_scope_and_management_boundaries() {
                 format!("Bearer {key}").parse().unwrap(),
             );
         }
-        let response = routes::dispatch(State(providers.clone()), request).await;
+        let response = bounded!(routes::dispatch(State(providers.clone()), request));
         assert_eq!(response.status().as_u16(), expected, "{path} from {peer}");
     }
 }
@@ -351,7 +352,7 @@ async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -
             [127, 0, 0, 1],
             40000,
         )))));
-    routes::dispatch(State(providers), request).await
+    bounded!(routes::dispatch(State(providers), request))
 }
 
 #[tokio::test]
@@ -375,25 +376,23 @@ async fn profile_management_retains_exact_routing_and_mutation_provenance() {
     }
     for origin in [None, Some("null"), Some("http://localhost:24899")] {
         assert_eq!(
-            dispatch(
+            bounded!(dispatch(
                 Method::POST,
                 "/api/counters/profiles",
                 origin,
                 Body::from("{}")
-            )
-            .await
+            ))
             .status(),
             StatusCode::FORBIDDEN
         );
     }
     assert_eq!(
-        dispatch(
+        bounded!(dispatch(
             Method::POST,
             "/api/counters/profiles",
             Some("http://localhost:24051"),
             Body::from("{}")
-        )
-        .await
+        ))
         .status(),
         StatusCode::OK
     );
@@ -401,24 +400,24 @@ async fn profile_management_retains_exact_routing_and_mutation_provenance() {
 
 #[tokio::test]
 async fn exact_method_routing_envelopes_cors_and_body_limit_are_observable() {
-    let ready = dispatch(Method::GET, "/json", None, Body::empty()).await;
+    let ready = bounded!(dispatch(Method::GET, "/json", None, Body::empty()));
     assert_eq!(ready.status(), StatusCode::OK);
     assert_eq!(ready.headers()[header::CONTENT_TYPE], "application/json");
     assert_eq!(ready.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     assert_eq!(
-        to_bytes(ready.into_body(), 1024).await.unwrap(),
+        bounded!(to_bytes(ready.into_body(), 1024)).unwrap(),
         r#"{"ok":true}"#
     );
 
-    let not_ready = dispatch(Method::GET, "/json/v2", None, Body::empty()).await;
+    let not_ready = bounded!(dispatch(Method::GET, "/json/v2", None, Body::empty()));
     assert_eq!(not_ready.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
-        to_bytes(not_ready.into_body(), 1024).await.unwrap(),
+        bounded!(to_bytes(not_ready.into_body(), 1024)).unwrap(),
         r#"{"error":"osu is not ready/running"}"#
     );
 
     for method in [Method::HEAD, Method::OPTIONS, Method::POST] {
-        let response = dispatch(method.clone(), "/json", None, Body::empty()).await;
+        let response = bounded!(dispatch(method.clone(), "/json", None, Body::empty()));
         assert_eq!(
             response.status(),
             StatusCode::NOT_FOUND,
@@ -427,34 +426,32 @@ async fn exact_method_routing_envelopes_cors_and_body_limit_are_observable() {
         assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
     }
 
-    let calculation = dispatch(
+    let calculation = bounded!(dispatch(
         Method::GET,
         "/api/calculate/pp?lazer=true&mode=3&passedObjects=12&mods=%5B%7B%22acronym%22%3A%22DT%22%7D%5D",
         None,
         Body::empty(),
-    ).await;
+    ));
     assert_eq!(calculation.status(), 200);
     assert_eq!(
-        to_bytes(calculation.into_body(), 1024).await.unwrap(),
+        bounded!(to_bytes(calculation.into_body(), 1024)).unwrap(),
         r#"{"lazer":true,"mode":3,"passed":12}"#
     );
 
-    let bad_query = dispatch(
+    let bad_query = bounded!(dispatch(
         Method::GET,
         "/api/calculate/pp?combo=-1",
         None,
         Body::empty(),
-    )
-    .await;
+    ));
     assert_eq!(bad_query.status(), StatusCode::BAD_REQUEST);
 
-    let oversized = dispatch(
+    let oversized = bounded!(dispatch(
         Method::POST,
         "/api/settingsSave",
         Some("http://localhost:24051"),
         Body::from(vec![0; routes::MAX_POST_BODY + 1]),
-    )
-    .await;
+    ));
     assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(
         oversized.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
@@ -538,16 +535,15 @@ fn authorization_matrix_requires_both_peer_and_authoritative_header() {
 
 #[tokio::test]
 async fn rejected_origin_is_403_not_found_and_never_reaches_upgrade() {
-    let response = dispatch(
+    let response = bounded!(dispatch(
         Method::GET,
         "/websocket/v2/subscribe",
         Some("http://evil.invalid"),
         Body::empty(),
-    )
-    .await;
+    ));
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert_eq!(
-        to_bytes(response.into_body(), 1024).await.unwrap(),
+        bounded!(to_bytes(response.into_body(), 1024)).unwrap(),
         "Not Found"
     );
 }
@@ -878,7 +874,7 @@ async fn command_frames_decode_target_filter_and_shutdown_without_debounce_leak(
         )
         .is_none()
     );
-    processor.shutdown().await;
+    bounded!(processor.shutdown());
 }
 
 include!("server_compat/listener.rs");
@@ -929,7 +925,7 @@ async fn websocket_cadence_backpressure_filter_control_and_cleanup_contract() {
     let hub = WebSocketHub::new(Schema::V2, provider);
     let runner = {
         let hub = hub.clone();
-        tokio::spawn(async move { hub.run().await })
+        tokio::spawn(async move { bounded!(hub.run()) })
     };
     let (mut connection, mut outbound) = hub.connect();
 
@@ -970,27 +966,21 @@ async fn websocket_cadence_backpressure_filter_control_and_cleanup_contract() {
     );
     connection.write_completed();
 
-    connection
-        .receive(Inbound::Ping(Bytes::from_static(b"p")))
-        .await;
+    bounded!(connection.receive(Inbound::Ping(Bytes::from_static(b"p"))));
     assert_eq!(
-        outbound.recv().await,
+        bounded!(outbound.recv()),
         Some(Outbound::Pong(Bytes::from_static(b"p")))
     );
-    connection
-        .receive(Inbound::Text {
-            data: Bytes::from(vec![b'x'; MAX_MESSAGE_BYTES]),
-            finished: false,
-        })
-        .await;
-    connection
-        .receive(Inbound::Continuation {
-            data: Bytes::from_static(b"x"),
-            finished: true,
-        })
-        .await;
+    bounded!(connection.receive(Inbound::Text {
+        data: Bytes::from(vec![b'x'; MAX_MESSAGE_BYTES]),
+        finished: false,
+    }));
+    bounded!(connection.receive(Inbound::Continuation {
+        data: Bytes::from_static(b"x"),
+        finished: true,
+    }));
     assert_eq!(
-        outbound.recv().await,
+        bounded!(outbound.recv()),
         Some(Outbound::Close {
             code: MESSAGE_TOO_BIG,
             reason: "Message too big"

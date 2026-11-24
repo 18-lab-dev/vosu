@@ -4,6 +4,7 @@
 )]
 
 use std::{fs, time::Duration};
+use vosu_proptest::bounded;
 
 use tempfile::TempDir;
 use vosu_core::config::{BINDING_ORDER, ConfigDocument, ConfigStore};
@@ -120,7 +121,7 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
     )
     .unwrap();
 
-    let store = ConfigStore::initialize(&current).await.unwrap();
+    let store = bounded!(ConfigStore::initialize(&current)).unwrap();
     assert!(current.is_file());
     assert!(!newer_legacy.exists());
     assert!(!older_legacy.exists());
@@ -148,7 +149,7 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
             .and_then(toml::Value::as_str),
         Some("./from-vosu-env")
     );
-    store.shutdown().await.unwrap();
+    bounded!(store.shutdown()).unwrap();
 }
 
 #[tokio::test]
@@ -173,7 +174,7 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
     )
     .unwrap();
 
-    let store = ConfigStore::initialize(&current).await.unwrap();
+    let store = bounded!(ConfigStore::initialize(&current)).unwrap();
     assert!(!newer_legacy.exists());
     assert!(!older_legacy.exists());
     assert_eq!(store.current().server_port, 24_061.0);
@@ -219,7 +220,7 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
         config.server_port = 24_065.0;
     }));
     assert!(!store.update(|config| config.server_port = 24_065.0));
-    store.flush().await.unwrap();
+    bounded!(store.flush()).unwrap();
     let persisted = fs::read_to_string(&current).unwrap();
     assert!(persisted.ends_with('\n'));
     let persisted: toml::Table = toml::from_str(&persisted).unwrap();
@@ -236,5 +237,5 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
             .iter()
             .all(|binding| persisted.contains_key(*binding))
     );
-    store.shutdown().await.unwrap();
+    bounded!(store.shutdown()).unwrap();
 }

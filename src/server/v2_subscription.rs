@@ -756,7 +756,7 @@ struct HubInner {
     #[cfg(test)]
     failed_encoding_plan: Mutex<Option<Arc<Plan>>>,
     #[cfg(test)]
-    pending_gate: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
+    pending_gate: Mutex<Option<(Arc<tests::Barrier>, Arc<tests::Barrier>)>>,
 }
 
 #[derive(Clone)]

@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 #[tokio::test]
 async fn lazer_pause_preserves_score_and_applies_final_judgements() {
@@ -11,7 +12,7 @@ async fn lazer_pause_preserves_score_and_applies_final_judgements() {
     )
     .gameplay(Ok(ReadStatus::Ready(active_score.clone())))
     .publish();
-    bundle.apply_regular(active).await.expect("active gameplay");
+    bounded!(bundle.apply_regular(active)).expect("active gameplay");
 
     let mut paused_score = active_score;
     paused_score.statistics.miss = 1;
@@ -31,7 +32,7 @@ async fn lazer_pause_preserves_score_and_applies_final_judgements() {
         )
         .gameplay(Ok(sample))
         .publish();
-        let paused = bundle.apply_regular(paused).await.expect("paused gameplay");
+        let paused = bounded!(bundle.apply_regular(paused)).expect("paused gameplay");
         let gameplay = &paused.publication.regular.gameplay;
         assert!(paused.publication.regular.global.paused);
         assert_eq!(gameplay.player_name, "player");
@@ -54,10 +55,7 @@ async fn lazer_pause_preserves_score_and_applies_final_judgements() {
     )
     .gameplay(Ok(ReadStatus::Ready(score(0, 1))))
     .publish();
-    let resumed = bundle
-        .apply_regular(resumed)
-        .await
-        .expect("resumed gameplay");
+    let resumed = bounded!(bundle.apply_regular(resumed)).expect("resumed gameplay");
     assert!(!resumed.publication.regular.global.paused);
     assert_eq!(resumed.publication.regular.gameplay.combo, 1);
 }
@@ -70,7 +68,7 @@ async fn play_start_clock_hold_does_not_report_paused() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 5))),
     )
     .publish();
-    let enter = bundle.apply_regular(enter).await.expect("enter play");
+    let enter = bounded!(bundle.apply_regular(enter)).expect("enter play");
     assert!(!enter.publication.regular.global.paused);
 
     let held = RawRegularSnapshotBuilder::new(
@@ -78,7 +76,7 @@ async fn play_start_clock_hold_does_not_report_paused() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 5))),
     )
     .publish();
-    let held = bundle.apply_regular(held).await.expect("held play clock");
+    let held = bounded!(bundle.apply_regular(held)).expect("held play clock");
     assert!(
         !held.publication.regular.global.paused,
         "pre-start/retry clock hold must not look like pause"
@@ -94,10 +92,7 @@ async fn play_retry_rewind_disarms_stall_paused_until_time_moves() {
             Ok(ReadStatus::Ready(raw_global(GameState::Play, time))),
         )
         .publish();
-        let applied = bundle
-            .apply_regular(snap)
-            .await
-            .expect("advance play clock");
+        let applied = bounded!(bundle.apply_regular(snap)).expect("advance play clock");
         assert!(!applied.publication.regular.global.paused);
     }
 
@@ -106,10 +101,7 @@ async fn play_retry_rewind_disarms_stall_paused_until_time_moves() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 300))),
     )
     .publish();
-    let mid_pause = bundle
-        .apply_regular(mid_pause)
-        .await
-        .expect("armed stall is pause");
+    let mid_pause = bounded!(bundle.apply_regular(mid_pause)).expect("armed stall is pause");
     assert!(mid_pause.publication.regular.global.paused);
 
     let retry = RawRegularSnapshotBuilder::new(
@@ -117,7 +109,7 @@ async fn play_retry_rewind_disarms_stall_paused_until_time_moves() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 5))),
     )
     .publish();
-    let retry = bundle.apply_regular(retry).await.expect("retry rewind");
+    let retry = bounded!(bundle.apply_regular(retry)).expect("retry rewind");
     assert!(!retry.publication.regular.global.paused);
 
     let retry_hold = RawRegularSnapshotBuilder::new(
@@ -125,7 +117,7 @@ async fn play_retry_rewind_disarms_stall_paused_until_time_moves() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 5))),
     )
     .publish();
-    let retry_hold = bundle.apply_regular(retry_hold).await.expect("retry hold");
+    let retry_hold = bounded!(bundle.apply_regular(retry_hold)).expect("retry hold");
     assert!(
         !retry_hold.publication.regular.global.paused,
         "retry clock hold must stay unpaused until time advances again"
@@ -159,7 +151,7 @@ async fn subscriber_samples_between_cadence_points_never_assert_stall_pause() {
             Ok(ReadStatus::Ready(raw_global(GameState::Play, time))),
         )
         .publish();
-        let applied = bundle.apply_regular(snapshot).await.expect("sample");
+        let applied = bounded!(bundle.apply_regular(snapshot)).expect("sample");
         assert_eq!(
             applied.publication.regular.global.paused, paused,
             "sample {sequence}"
@@ -191,10 +183,7 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
     )
     .gameplay(Ok(ReadStatus::Ready(active_score)))
     .publish();
-    bundle
-        .apply_regular(active)
-        .await
-        .expect("active lazer gameplay");
+    bounded!(bundle.apply_regular(active)).expect("active lazer gameplay");
 
     bundle.gameplay.hit_errors = HitErrorArray {
         all: vec![4.0, -6.0],
@@ -233,10 +222,7 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
     )
     .gameplay(Ok(ReadStatus::Ready(paused_score)))
     .publish();
-    let paused = bundle
-        .apply_regular(paused)
-        .await
-        .expect("paused lazer gameplay");
+    let paused = bounded!(bundle.apply_regular(paused)).expect("paused lazer gameplay");
 
     assert!(paused.publication.regular.global.paused);
     assert_eq!(paused.publication.regular.gameplay.mode, 3);
@@ -273,9 +259,7 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
         Ok(ReadStatus::Ready(raw_global(GameState::SelectPlay, 0))),
     )
     .publish();
-    let select_play = bundle
-        .apply_regular(select_play)
-        .await
+    let select_play = bounded!(bundle.apply_regular(select_play))
         .expect("SelectPlay after paused lazer gameplay");
 
     assert_eq!(select_play.publication.regular.gameplay.mode, 0);
@@ -309,10 +293,7 @@ async fn scoreless_lazer_pause_marks_epoch_for_select_play_reset() {
     )
     .gameplay(Ok(ReadStatus::NotReady))
     .publish();
-    bundle
-        .apply_regular(initial)
-        .await
-        .expect("initial scoreless lazer gameplay");
+    bounded!(bundle.apply_regular(initial)).expect("initial scoreless lazer gameplay");
 
     bundle.gameplay.mode = 3;
     bundle.gameplay.keypress_mode = 3;
@@ -352,10 +333,7 @@ async fn scoreless_lazer_pause_marks_epoch_for_select_play_reset() {
     )
     .gameplay(Ok(ReadStatus::NotReady))
     .publish();
-    let paused = bundle
-        .apply_regular(paused)
-        .await
-        .expect("paused scoreless lazer gameplay");
+    let paused = bounded!(bundle.apply_regular(paused)).expect("paused scoreless lazer gameplay");
 
     assert!(paused.publication.regular.global.paused);
     assert!(!bundle.gameplay.is_default_state);
@@ -390,9 +368,7 @@ async fn scoreless_lazer_pause_marks_epoch_for_select_play_reset() {
         Ok(ReadStatus::Ready(raw_global(GameState::SelectPlay, 0))),
     )
     .publish();
-    let select_play = bundle
-        .apply_regular(select_play)
-        .await
+    let select_play = bounded!(bundle.apply_regular(select_play))
         .expect("SelectPlay after paused scoreless lazer gameplay");
 
     assert!(select_play.context.reset_epoch > paused_epoch);

@@ -146,13 +146,14 @@ impl LiveHost {
     fn close(&self) {
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
         state.0 = None;
-        while state.1 != 0 {
-            state = self
-                .0
-                .drained
-                .wait(state)
-                .unwrap_or_else(|p| p.into_inner());
-        }
+        let (state, _) = self
+            .0
+            .drained
+            .wait_timeout_while(state, std::time::Duration::from_secs(10), |state| {
+                state.1 != 0
+            })
+            .unwrap_or_else(|p| p.into_inner());
+        assert_eq!(state.1, 0, "publisher host calls did not drain within 10s");
     }
 }
 

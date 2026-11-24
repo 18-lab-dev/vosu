@@ -1,8 +1,10 @@
 use std::sync::{
-    Arc, Barrier, Mutex,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
+use vosu_proptest::bounded;
+pub(super) use vosu_proptest::wait::Barrier;
 
 use serde_json::{Value, json};
 use tokio::sync::watch;
@@ -194,12 +196,12 @@ async fn mailbox_wakes_a_waiting_receiver_and_drains_before_end_of_stream() {
 
     let waiting = tokio::spawn(async move {
         let mut receiver = receiver;
-        let frame = receiver.recv().await;
+        let frame = bounded!(receiver.recv());
         (frame, receiver)
     });
     tokio::task::yield_now().await;
     mailbox.try_send_data(text(b"first")).unwrap();
-    let (frame, mut receiver) = waiting.await.unwrap();
+    let (frame, mut receiver) = bounded!(waiting).unwrap();
     assert_eq!(frame, Some(text(b"first")));
 
     mailbox.try_send_data(text(b"second")).unwrap();
@@ -209,8 +211,8 @@ async fn mailbox_wakes_a_waiting_receiver_and_drains_before_end_of_stream() {
     // queued is delivered before the end of the stream.
     drop(connection);
     drop(hub);
-    assert_eq!(receiver.recv().await, Some(text(b"second")));
-    assert_eq!(receiver.recv().await, None);
+    assert_eq!(bounded!(receiver.recv()), Some(text(b"second")));
+    assert_eq!(bounded!(receiver.recv()), None);
 }
 
 struct FakeSnapshot {
@@ -345,23 +347,26 @@ async fn initial_absent_to_present_null_and_focus_loss_are_delivered() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
-    assert_eq!(text(receiver.recv().await.unwrap()), json!([0, 1, []]));
+    assert_eq!(text(bounded!(receiver.recv()).unwrap()), json!([0, 1, []]));
     connection.write_completed();
 
     provider.publish(2, Some(json!({"a": null})));
     assert_eq!(
-        text(receiver.recv().await.unwrap()),
+        text(bounded!(receiver.recv()).unwrap()),
         json!([1, 2, [[0, null]], []])
     );
     connection.write_completed();
     provider.publish(3, None);
-    assert_eq!(text(receiver.recv().await.unwrap()), json!([1, 3, [], [0]]));
+    assert_eq!(
+        text(bounded!(receiver.recv()).unwrap()),
+        json!([1, 3, [], [0]])
+    );
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[test]
@@ -472,7 +477,7 @@ async fn demand_tracks_established_selections_only() {
     let mut demand = hub.demand();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
 
     let (connection, _receiver) = hub.connect();
@@ -483,22 +488,16 @@ async fn demand_tracks_established_selections_only() {
     );
 
     connection.subscribe(vec!["/keys".into()]).unwrap();
-    demand
-        .wait_for(|active| active.gameplay_precise)
-        .await
-        .unwrap();
+    bounded!(demand.wait_for(|active| active.gameplay_precise)).unwrap();
 
     connection.close(1000);
-    demand.wait_for(|active| active.is_empty()).await.unwrap();
+    bounded!(demand.wait_for(|active| active.is_empty())).unwrap();
 
     let (second, _second_receiver) = hub.connect();
     second.subscribe(vec!["/play/score".into()]).unwrap();
-    demand
-        .wait_for(|active| active.gameplay_regular)
-        .await
-        .unwrap();
+    bounded!(demand.wait_for(|active| active.gameplay_regular)).unwrap();
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
     assert!(demand.borrow().is_empty(), "a stopped hub releases demand");
 }
 
@@ -650,12 +649,12 @@ async fn pending_client_coalesces_directly_from_queued_a_to_latest_c() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
     assert_eq!(
-        text(receiver.recv().await.unwrap()),
+        text(bounded!(receiver.recv()).unwrap()),
         json!([0, 1, [[0, 1]]])
     );
     provider.publish(2, Some(json!({"a": 2})));
@@ -664,11 +663,11 @@ async fn pending_client_coalesces_directly_from_queued_a_to_latest_c() {
     assert!(receiver.try_recv().is_none());
     connection.write_completed();
     assert_eq!(
-        text(receiver.recv().await.unwrap()),
+        text(bounded!(receiver.recv()).unwrap()),
         json!([1, 3, [[0, 3]], []])
     );
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -677,11 +676,11 @@ async fn debounce_is_per_client_reloadable_fractional_and_coalesces_bursts() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::from_micros(1500));
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
-    let _ = receiver.recv().await.unwrap();
+    let _ = bounded!(receiver.recv()).unwrap();
     connection.write_completed();
     provider.publish(2, Some(json!({"a": 2})));
     provider.publish(3, Some(json!({"a": 3})));
@@ -690,11 +689,11 @@ async fn debounce_is_per_client_reloadable_fractional_and_coalesces_bursts() {
     assert!(receiver.try_recv().is_none());
     hub.set_debounce(Duration::from_micros(1000));
     assert_eq!(
-        text(receiver.recv().await.unwrap()),
+        text(bounded!(receiver.recv()).unwrap()),
         json!([1, 3, [[0, 3]], []])
     );
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -703,13 +702,13 @@ async fn identical_selections_share_one_build_and_emit_no_updates() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (first, mut first_rx) = hub.connect();
     let (second, mut second_rx) = hub.connect();
     first.subscribe(vec!["/a".into()]).unwrap();
     second.subscribe(vec!["/a".into()]).unwrap();
-    assert_eq!(first_rx.recv().await, second_rx.recv().await);
+    assert_eq!(bounded!(first_rx.recv()), bounded!(second_rx.recv()));
     assert_eq!(provider.builds.load(Ordering::Relaxed), 1);
     first.write_completed();
     second.write_completed();
@@ -719,7 +718,7 @@ async fn identical_selections_share_one_build_and_emit_no_updates() {
     assert!(first_rx.try_recv().is_none());
     assert!(second_rx.try_recv().is_none());
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -729,20 +728,20 @@ async fn terminal_errors_are_ordered_and_pending_clients_are_closed() {
     let (connection, mut receiver) = hub.connect();
     connection.invalid_request();
     assert_eq!(
-        receiver.recv().await,
+        bounded!(receiver.recv()),
         Some(V2SubscriptionOutbound::Error(Bytes::from_static(
             br#"[2,1,"invalid subscription request"]"#
         )))
     );
     assert_eq!(
-        receiver.recv().await,
+        bounded!(receiver.recv()),
         Some(V2SubscriptionOutbound::Close { code: 1008 })
     );
 
     let (_pending, mut pending_rx) = hub.connect();
     hub.close_all(1001);
     assert_eq!(
-        pending_rx.recv().await,
+        bounded!(pending_rx.recv()),
         Some(V2SubscriptionOutbound::Close { code: 1001 })
     );
 }
@@ -753,25 +752,25 @@ async fn serialization_failure_terminates_active_subscriber_with_1011() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
-    let _ = receiver.recv().await;
+    let _ = bounded!(receiver.recv());
     connection.write_completed();
     provider.fail(2);
     assert_eq!(
-        receiver.recv().await,
+        bounded!(receiver.recv()),
         Some(V2SubscriptionOutbound::Error(Bytes::from_static(
             br#"[2,4,"state serialization failed"]"#
         )))
     );
     assert_eq!(
-        receiver.recv().await,
+        bounded!(receiver.recv()),
         Some(V2SubscriptionOutbound::Close { code: 1011 })
     );
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
     assert_eq!(hub.client_count(), 0);
     assert!(lock(&hub.0.document).is_none());
     let plans = lock(&hub.0.plans);
@@ -795,7 +794,7 @@ fn close_during_document_build_cannot_restore_retained_state() {
             connection.cleanup();
         }
         provider.release.wait();
-        worker.join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(worker).unwrap();
 
         assert_eq!(hub.client_count(), 0);
         assert!(lock(&hub.0.document).is_none());
@@ -828,8 +827,8 @@ fn close_after_pending_reservation_cannot_restore_delivery_state() {
     });
     close_started.wait();
     release.wait();
-    worker.join().unwrap();
-    closer.join().unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(worker).unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(closer).unwrap();
 
     // Plan and baseline are released together with the subscription.
     assert!(lock(&client.subscription).is_none());
@@ -951,32 +950,32 @@ async fn document_failure_terminates_every_active_plan_including_pending_clients
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (pending, mut pending_rx) = hub.connect();
     let (open, mut open_rx) = hub.connect();
     pending.subscribe(vec!["/a".into()]).unwrap();
     open.subscribe(vec!["/b".into()]).unwrap();
-    let _ = pending_rx.recv().await.unwrap();
-    let _ = open_rx.recv().await.unwrap();
+    let _ = bounded!(pending_rx.recv()).unwrap();
+    let _ = bounded!(open_rx.recv()).unwrap();
     open.write_completed();
 
     provider.fail(2);
     for receiver in [&mut pending_rx, &mut open_rx] {
         assert_eq!(
-            receiver.recv().await,
+            bounded!(receiver.recv()),
             Some(V2SubscriptionOutbound::Error(Bytes::from_static(
                 br#"[2,4,"state serialization failed"]"#
             )))
         );
         assert_eq!(
-            receiver.recv().await,
+            bounded!(receiver.recv()),
             Some(V2SubscriptionOutbound::Close { code: 1011 })
         );
     }
     assert_eq!(hub.client_count(), 0);
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[test]
@@ -1013,13 +1012,13 @@ async fn shared_eligible_group_builds_extracts_and_encodes_once() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (first, mut first_rx) = hub.connect();
     let (second, mut second_rx) = hub.connect();
     first.subscribe(vec!["/a".into()]).unwrap();
     second.subscribe(vec!["/a".into()]).unwrap();
-    assert_eq!(first_rx.recv().await, second_rx.recv().await);
+    assert_eq!(bounded!(first_rx.recv()), bounded!(second_rx.recv()));
     assert_eq!(provider.captures.load(Ordering::Relaxed), 1);
     assert_eq!(provider.builds.load(Ordering::Relaxed), 1);
     assert_eq!(hub.0.extractions.load(Ordering::Relaxed), 1);
@@ -1030,7 +1029,7 @@ async fn shared_eligible_group_builds_extracts_and_encodes_once() {
     assert_eq!(provider.captures.load(Ordering::Relaxed), 1);
     first.write_completed();
     second.write_completed();
-    assert_eq!(first_rx.recv().await, second_rx.recv().await);
+    assert_eq!(bounded!(first_rx.recv()), bounded!(second_rx.recv()));
     assert_eq!(provider.captures.load(Ordering::Relaxed), 2);
     assert_eq!(provider.builds.load(Ordering::Relaxed), 2);
     assert_eq!(hub.0.extractions.load(Ordering::Relaxed), 2);
@@ -1047,7 +1046,7 @@ async fn shared_eligible_group_builds_extracts_and_encodes_once() {
     assert_eq!(hub.0.extractions.load(Ordering::Relaxed), 3);
     assert_eq!(hub.0.encodings.load(Ordering::Relaxed), 2);
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -1061,17 +1060,17 @@ async fn clients_use_independent_debounce_start_instants() {
     assert_eq!(hub.0.encodings.load(Ordering::Relaxed), 0);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (first, mut first_rx) = hub.connect();
     first.subscribe(vec!["/a".into()]).unwrap();
-    let _ = first_rx.recv().await.unwrap();
+    let _ = bounded!(first_rx.recv()).unwrap();
     first.write_completed();
 
     tokio::time::advance(Duration::from_millis(1)).await;
     let (second, mut second_rx) = hub.connect();
     second.subscribe(vec!["/a".into()]).unwrap();
-    let _ = second_rx.recv().await.unwrap();
+    let _ = bounded!(second_rx.recv()).unwrap();
     second.write_completed();
     provider.publish(2, Some(json!({"a": 2})));
 
@@ -1081,18 +1080,18 @@ async fn clients_use_independent_debounce_start_instants() {
     assert!(second_rx.try_recv().is_none());
     tokio::time::advance(Duration::from_micros(1)).await;
     assert_eq!(
-        text(first_rx.recv().await.unwrap()),
+        text(bounded!(first_rx.recv()).unwrap()),
         json!([1, 2, [[0, 2]], []])
     );
     assert!(second_rx.try_recv().is_none());
     tokio::time::advance(Duration::from_millis(1)).await;
     assert_eq!(
-        text(second_rx.recv().await.unwrap()),
+        text(bounded!(second_rx.recv()).unwrap()),
         json!([1, 2, [[0, 2]], []])
     );
     assert_eq!(provider.builds.load(Ordering::Relaxed), 2);
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -1101,11 +1100,11 @@ async fn debounce_increase_recomputes_from_the_original_queue_instant() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::from_millis(1));
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
-    let _ = receiver.recv().await.unwrap();
+    let _ = bounded!(receiver.recv()).unwrap();
     connection.write_completed();
     provider.publish(2, Some(json!({"a": 2})));
     hub.set_debounce(Duration::from_millis(2));
@@ -1115,11 +1114,11 @@ async fn debounce_increase_recomputes_from_the_original_queue_instant() {
     assert!(receiver.try_recv().is_none());
     tokio::time::advance(Duration::from_micros(1)).await;
     assert_eq!(
-        text(receiver.recv().await.unwrap()),
+        text(bounded!(receiver.recv()).unwrap()),
         json!([1, 2, [[0, 2]], []])
     );
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -1128,11 +1127,11 @@ async fn zero_to_nonzero_debounce_uses_the_original_queue_instant() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
-    let _ = receiver.recv().await.unwrap();
+    let _ = bounded!(receiver.recv()).unwrap();
     connection.write_completed();
     provider.publish(2, Some(json!({"a": 2})));
     hub.set_debounce(Duration::from_millis(2));
@@ -1142,11 +1141,11 @@ async fn zero_to_nonzero_debounce_uses_the_original_queue_instant() {
     assert!(receiver.try_recv().is_none());
     tokio::time::advance(Duration::from_micros(1)).await;
     assert_eq!(
-        text(receiver.recv().await.unwrap()),
+        text(bounded!(receiver.recv()).unwrap()),
         json!([1, 2, [[0, 2]], []])
     );
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[tokio::test]
@@ -1155,11 +1154,11 @@ async fn zero_debounce_stays_event_driven_without_rebuilding_or_spinning() {
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     let (connection, mut receiver) = hub.connect();
     connection.subscribe(vec!["/a".into()]).unwrap();
-    let _ = receiver.recv().await.unwrap();
+    let _ = bounded!(receiver.recv()).unwrap();
     connection.write_completed();
     let captures = provider.captures.load(Ordering::Relaxed);
     let builds = provider.builds.load(Ordering::Relaxed);
@@ -1170,7 +1169,7 @@ async fn zero_debounce_stays_event_driven_without_rebuilding_or_spinning() {
     assert_eq!(provider.builds.load(Ordering::Relaxed), builds);
     assert!(receiver.try_recv().is_none());
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
 }
 
 #[test]
@@ -1222,7 +1221,7 @@ async fn subscription_during_dispatch_is_delivered_without_another_publication()
     first.subscribe(vec!["/a".into()]).unwrap();
     let runner = tokio::spawn({
         let hub = hub.clone();
-        async move { hub.run().await }
+        async move { bounded!(hub.run()) }
     });
     provider.entered.wait();
     let (second, mut second_rx) = hub.connect();
@@ -1231,7 +1230,7 @@ async fn subscription_during_dispatch_is_delivered_without_another_publication()
 
     let delivered = tokio::time::timeout(Duration::from_secs(2), second_rx.recv()).await;
     hub.shutdown();
-    runner.await.unwrap();
+    bounded!(runner).unwrap();
     assert_eq!(text(delivered.unwrap().unwrap()), json!([0, 1, [[0, 1]]]));
 }
 
@@ -1306,7 +1305,7 @@ async fn selection_added_during_projection_is_delivered_from_a_refreshed_union()
     provider.entered.wait();
     second.subscribe(vec!["/b".into()]).unwrap();
     provider.release.wait();
-    dispatch.join().unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(dispatch).unwrap();
     assert_eq!(text(first_rx.try_recv().unwrap()), json!([0, 1, [[0, 1]]]));
     assert!(second_rx.try_recv().is_none());
     first.write_completed();

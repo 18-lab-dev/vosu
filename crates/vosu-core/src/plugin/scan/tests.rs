@@ -337,10 +337,11 @@ fn one_keys_backlog_never_blocks_another_keys_job() {
     pool.submit(1, move || {
         started_tx.send(()).unwrap();
         let (lock, cvar) = &*gate_clone;
-        let mut released = lock.lock().unwrap();
-        while !*released {
-            released = cvar.wait(released).unwrap();
-        }
+        let released = lock.lock().unwrap();
+        let (released, _) = cvar
+            .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+            .unwrap();
+        assert!(*released, "scan worker gate was not released within 10s");
     });
     // Wait for the blocking job to actually start (and so leave key 1's
     // own sub-queue empty) before this floods it, rather than guessing
@@ -396,10 +397,11 @@ fn cancelled_jobs_never_pile_up_in_their_keys_queue() {
     pool.submit(key, move || {
         started_tx.send(()).unwrap();
         let (lock, cvar) = &*gate_clone;
-        let mut released = lock.lock().unwrap();
-        while !*released {
-            released = cvar.wait(released).unwrap();
-        }
+        let released = lock.lock().unwrap();
+        let (released, _) = cvar
+            .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+            .unwrap();
+        assert!(*released, "scan worker gate was not released within 10s");
     });
     // N4: wait for the blocking job to actually start (and so leave
     // `key`'s own sub-queue empty) before this loop runs — a fixed sleep
@@ -548,10 +550,11 @@ fn cancel_session_frees_the_slot_and_suppresses_the_workers_own_result() {
     let release_clone = Arc::clone(&release);
     pool.submit(1, move || {
         let (lock, cvar) = &*release_clone;
-        let mut released = lock.lock().unwrap();
-        while !*released {
-            released = cvar.wait(released).unwrap();
-        }
+        let released = lock.lock().unwrap();
+        let (released, _) = cvar
+            .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+            .unwrap();
+        assert!(*released, "scan worker gate was not released within 10s");
     });
     std::thread::sleep(Duration::from_millis(50));
 
@@ -603,10 +606,11 @@ fn cancel_session_racing_admission_still_answers_exactly_once() {
     let release_clone = Arc::clone(&release);
     pool.submit(1, move || {
         let (lock, cvar) = &*release_clone;
-        let mut released = lock.lock().unwrap();
-        while !*released {
-            released = cvar.wait(released).unwrap();
-        }
+        let released = lock.lock().unwrap();
+        let (released, _) = cvar
+            .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+            .unwrap();
+        assert!(*released, "scan worker gate was not released within 10s");
     });
     std::thread::sleep(Duration::from_millis(50));
 
@@ -666,10 +670,11 @@ fn cancel_session_racing_admission_also_removes_the_queued_job() {
     pool.submit(1, move || {
         started_tx.send(()).unwrap();
         let (lock, cvar) = &*release_clone;
-        let mut released = lock.lock().unwrap();
-        while !*released {
-            released = cvar.wait(released).unwrap();
-        }
+        let released = lock.lock().unwrap();
+        let (released, _) = cvar
+            .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+            .unwrap();
+        assert!(*released, "scan worker gate was not released within 10s");
     });
     started_rx
         .recv_timeout(Duration::from_secs(5))

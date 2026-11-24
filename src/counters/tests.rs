@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use vosu_proptest::bounded;
 
 use serde_json::{Value, json};
 
@@ -312,29 +313,25 @@ async fn debounce_commits_only_latest_payload() {
         .unwrap();
     let first_service = service.clone();
     let first = tokio::spawn(async move {
-        first_service
-            .save_user_settings_debounced(
-                "counter".into(),
-                vec![SettingInput {
-                    unique_id: "text".into(),
-                    value: json!("first"),
-                }],
-            )
-            .await
-            .unwrap()
-    });
-    tokio::time::sleep(Duration::from_millis(25)).await;
-    let second = service
-        .save_user_settings_debounced(
+        bounded!(first_service.save_user_settings_debounced(
             "counter".into(),
             vec![SettingInput {
                 unique_id: "text".into(),
-                value: json!("second"),
+                value: json!("first"),
             }],
-        )
-        .await
-        .unwrap();
-    assert!(!first.await.unwrap());
+        ))
+        .unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    let second = bounded!(service.save_user_settings_debounced(
+        "counter".into(),
+        vec![SettingInput {
+            unique_id: "text".into(),
+            value: json!("second"),
+        }],
+    ))
+    .unwrap();
+    assert!(!bounded!(first).unwrap());
     assert!(second);
     assert_eq!(
         service.get_counter_values("counter").unwrap()["text"],
@@ -353,13 +350,13 @@ async fn parses_raw_download_input_once_and_honors_update_lifecycle() {
     .unwrap();
     assert_eq!(request.url, "https://example.com/a%2Fb.zip?x=a%26b");
     assert_eq!(request.name, "counter");
-    service.download(&request).await.unwrap();
-    assert!(service.download(&request).await.is_err());
+    bounded!(service.download(&request)).unwrap();
+    assert!(bounded!(service.download(&request)).is_err());
     let update = DownloadRequest {
         update: true,
         ..request
     };
-    service.download(&update).await.unwrap();
+    bounded!(service.download(&update)).unwrap();
     assert_eq!(lock(&downloader.0).len(), 2);
     assert!(root.path().join("static/counter/index.html").exists());
     #[cfg(unix)]
@@ -376,7 +373,7 @@ async fn parses_raw_download_input_once_and_honors_update_lifecycle() {
             update: true,
         };
         assert!(matches!(
-            service.download(&dangling).await,
+            bounded!(service.download(&dangling)),
             Err(CounterError::Symlink)
         ));
     }
@@ -529,14 +526,12 @@ async fn reloadable_service_switches_assets_counters_settings_and_mutations_atom
         &[root_b.clone(), root_b.join("beta")]
     );
 
-    service
-        .download(&DownloadRequest {
-            url: "https://example.com/new.zip".into(),
-            name: "downloaded".into(),
-            update: false,
-        })
-        .await
-        .unwrap();
+    bounded!(service.download(&DownloadRequest {
+        url: "https://example.com/new.zip".into(),
+        name: "downloaded".into(),
+        update: false,
+    }))
+    .unwrap();
     assert!(root_b.join("downloaded/index.html").exists());
     assert!(!root_a.join("downloaded").exists());
     service.delete("downloaded").unwrap();
@@ -547,7 +542,7 @@ async fn reloadable_service_switches_assets_counters_settings_and_mutations_atom
     assert!(service.discover().is_err());
     service.reload_static_root(root_b);
     assert_eq!(service.discover().unwrap()[0].folder_name, "beta");
-    service.shutdown().await;
+    bounded!(service.shutdown());
 }
 
 #[tokio::test]
@@ -571,32 +566,28 @@ async fn reloadable_service_keeps_one_debounce_generation_across_root_changes() 
     )));
     let first_service = Arc::clone(&service);
     let first = tokio::spawn(async move {
-        first_service
-            .save_user_settings_debounced(
-                "counter".into(),
-                vec![SettingInput {
-                    unique_id: "text".into(),
-                    value: json!("old"),
-                }],
-            )
-            .await
-            .unwrap()
-    });
-    while service.pending_save_generation("counter").await != Some(1) {
-        tokio::task::yield_now().await;
-    }
-    service.reload_static_root(root_b);
-    let second = service
-        .save_user_settings_debounced(
+        bounded!(first_service.save_user_settings_debounced(
             "counter".into(),
             vec![SettingInput {
                 unique_id: "text".into(),
-                value: json!("new"),
+                value: json!("old"),
             }],
-        )
-        .await
-        .unwrap();
-    assert!(!first.await.unwrap());
+        ))
+        .unwrap()
+    });
+    while bounded!(service.pending_save_generation("counter")) != Some(1) {
+        tokio::task::yield_now().await;
+    }
+    service.reload_static_root(root_b);
+    let second = bounded!(service.save_user_settings_debounced(
+        "counter".into(),
+        vec![SettingInput {
+            unique_id: "text".into(),
+            value: json!("new"),
+        }],
+    ))
+    .unwrap();
+    assert!(!bounded!(first).unwrap());
     assert!(second);
     assert_eq!(
         service.get_counter_values("counter").unwrap()["text"],
@@ -668,33 +659,29 @@ async fn install_admission_rejects_when_four_jobs_are_active() {
     for index in 0..4 {
         let service = service.clone();
         jobs.push(tokio::spawn(async move {
-            service
-                .download(&DownloadRequest {
-                    url: "https://example.com/a.zip".into(),
-                    name: format!("counter{index}"),
-                    update: false,
-                })
-                .await
+            bounded!(service.download(&DownloadRequest {
+                url: "https://example.com/a.zip".into(),
+                name: format!("counter{index}"),
+                update: false,
+            }))
         }));
     }
-    let permit = downloader.started.acquire_many(4).await.unwrap();
+    let permit = bounded!(downloader.started.acquire_many(4)).unwrap();
     permit.forget();
     let reloaded_root = root.path().join("replacement");
     std::fs::create_dir(&reloaded_root).unwrap();
     service.reload_static_root(reloaded_root);
     assert!(matches!(
-        service
-            .download(&DownloadRequest {
-                url: "https://example.com/fifth.zip".into(),
-                name: "counter4".into(),
-                update: false,
-            })
-            .await,
+        bounded!(service.download(&DownloadRequest {
+            url: "https://example.com/fifth.zip".into(),
+            name: "counter4".into(),
+            update: false,
+        })),
         Err(CounterError::InstallBusy)
     ));
-    service.shutdown().await;
+    bounded!(service.shutdown());
     for job in jobs {
-        job.await.unwrap().unwrap();
+        bounded!(job).unwrap().unwrap();
     }
 }
 
@@ -719,22 +706,20 @@ async fn shutdown_cancels_and_joins_active_installs() {
         update: false,
     };
     let downloading_service = service.clone();
-    let download = tokio::spawn(async move { downloading_service.download(&request).await });
-    let permit = downloader.started.acquire().await.unwrap();
+    let download = tokio::spawn(async move { bounded!(downloading_service.download(&request)) });
+    let permit = bounded!(downloader.started.acquire()).unwrap();
     permit.forget();
     let shutdown_a = service.clone();
     let shutdown_b = service.clone();
-    tokio::join!(shutdown_a.shutdown(), shutdown_b.shutdown());
+    bounded!(async { tokio::join!(shutdown_a.shutdown(), shutdown_b.shutdown()) });
     assert!(downloader.finished.load(Ordering::Acquire));
-    assert!(download.await.unwrap().is_ok());
+    assert!(bounded!(download).unwrap().is_ok());
     assert!(matches!(
-        service
-            .download(&DownloadRequest {
-                url: "https://example.com/b.zip".into(),
-                name: "other".into(),
-                update: false
-            })
-            .await,
+        bounded!(service.download(&DownloadRequest {
+            url: "https://example.com/b.zip".into(),
+            name: "other".into(),
+            update: false
+        })),
         Err(CounterError::ShuttingDown)
     ));
 }

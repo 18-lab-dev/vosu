@@ -3380,6 +3380,7 @@ dependencies = [
  "vosu-osu-model",
  "vosu-osu-reader",
  "vosu-pp",
+ "vosu-proptest",
  "vosu-sys",
  "windows-sys 0.61.2",
 ]
@@ -3420,6 +3421,7 @@ name = "vosu-proptest"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "tokio",
 ]
 
 [[package]]
@@ -3432,6 +3434,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "vosu-proptest",
  "windows-sys 0.61.2",
 ]
 
@@ -3473,6 +3476,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "vosu-proptest",
  "windows-sys 0.61.2",
 ]
 
@@ -3493,6 +3497,7 @@ dependencies = [
  "vosu",
  "vosu-core",
  "vosu-net",
+ "vosu-proptest",
  "zip",
 ]
 

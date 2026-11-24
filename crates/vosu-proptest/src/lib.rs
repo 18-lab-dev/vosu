@@ -10,6 +10,22 @@
 use proptest::prelude::ProptestConfig;
 use proptest::test_runner::{FileFailurePersistence, RngSeed};
 
+pub mod wait;
+
+/// Awaits a test future with a diagnostic naming the stalled operation.
+/// The caller supplies Tokio, so synchronous users need no runtime dependency.
+#[macro_export]
+macro_rules! bounded {
+    ($future:expr) => {
+        $crate::bounded!(std::time::Duration::from_secs(30), $future)
+    };
+    ($limit:expr, $future:expr) => {
+        tokio::time::timeout($limit, $future)
+            .await
+            .expect(concat!("test future timed out: ", stringify!($future)))
+    };
+}
+
 /// Arbitrary but fixed seed bytes, chosen once and never changed: changing
 /// them would silently stop reproducing previously-shrunk regressions.
 const FIXED_SEED: u64 = 0x766f_7375_5f70_726f;

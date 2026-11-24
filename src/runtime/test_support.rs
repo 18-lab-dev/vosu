@@ -34,25 +34,29 @@ impl TestProductionComposition {
     }
 
     pub async fn shutdown(mut self) {
-        let listener = self.listener.take();
-        if let Some(listener) = listener.as_ref() {
-            listener.stop_accepting();
-        }
-        if let Some(hubs) = self.hubs.take() {
-            hubs.shutdown().await;
-        }
-        if let Some(listener) = listener {
-            listener.join().await;
-        }
-        if let Some(processor) = self.processor.take() {
-            processor.shutdown().await;
-        }
-        if let Some(relays) = self.relays.take() {
-            relays.shutdown().await;
-        }
-        if let Some(counters) = self.counters.take() {
-            counters.shutdown().await;
-        }
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let listener = self.listener.take();
+            if let Some(listener) = listener.as_ref() {
+                listener.stop_accepting();
+            }
+            if let Some(hubs) = self.hubs.take() {
+                hubs.shutdown().await;
+            }
+            if let Some(listener) = listener {
+                listener.join().await;
+            }
+            if let Some(processor) = self.processor.take() {
+                processor.shutdown().await;
+            }
+            if let Some(relays) = self.relays.take() {
+                relays.shutdown().await;
+            }
+            if let Some(counters) = self.counters.take() {
+                counters.shutdown().await;
+            }
+        })
+        .await
+        .expect("test production composition did not shut down within 30s");
     }
 }
 

@@ -211,6 +211,14 @@ fn writers_publish_many_batches_and_retained_host_refuses_after_destroy() {
         done_rx.recv_timeout(TIMEOUT).unwrap();
     }
     for thread in threads {
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        while !thread.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "publisher writer did not finish within {TIMEOUT:?}"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
         assert_eq!(thread.join().unwrap(), vosu_status::VOSU_OK);
     }
     let mut scores: Vec<u64> = messages

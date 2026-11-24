@@ -850,7 +850,7 @@ mod tests {
             assert_eq!(found.name.to_ascii_lowercase(), name.to_ascii_lowercase());
 
             child.kill().expect("killing the test child");
-            child.wait().expect("reaping the test child");
+            vosu_proptest::wait::child(&mut child).expect("reaping the test child");
 
             poll_until(|| {
                 let still_present = source
@@ -889,7 +889,7 @@ mod tests {
             );
 
             child.kill().expect("killing the test child");
-            child.wait().expect("reaping the test child");
+            vosu_proptest::wait::child(&mut child).expect("reaping the test child");
         }
     }
 }

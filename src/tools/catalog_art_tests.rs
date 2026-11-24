@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 const SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>"#;
 
@@ -111,7 +112,7 @@ mod routes {
             response::{IntoResponse, Redirect},
             routing::get,
         };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = bounded!(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
         let socket = listener.local_addr().unwrap();
         let octet = |body: Vec<u8>| {
             ([(header::CONTENT_TYPE, "application/octet-stream")], body).into_response()
@@ -158,7 +159,7 @@ mod routes {
                         Redirect::to("https://10.0.0.1/icon.svg").into_response()
                     }),
                 );
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(async move { bounded!(axum::serve(listener, app)).unwrap() });
         socket
     }
 
@@ -189,7 +190,7 @@ mod routes {
     }
 
     async fn host(root: &Path, socket: std::net::SocketAddr) -> Arc<ToolHost> {
-        let host = ToolHost::new(
+        let host = bounded!(ToolHost::new(
             root.join("config"),
             root.join("data"),
             root.join("cache"),
@@ -197,8 +198,7 @@ mod routes {
             "http://127.0.0.1:25150".into(),
             "http://127.0.0.1:25151".into(),
             Arc::new(|| json!({})),
-        )
-        .await
+        ))
         .unwrap();
         let network =
             TestNetworkConfig::new(Arc::new(Resolver), vec![HOST.into()], vec![socket]).unwrap();
@@ -221,12 +221,10 @@ mod routes {
             .uri(format!("/api/tools/catalog/art?{query}"))
             .body(axum::body::Body::empty())
             .unwrap();
-        let response = host.dashboard(request, Bytes::new()).await;
+        let response = bounded!(host.dashboard(request, Bytes::new()));
         let status = response.status();
         let headers = response.headers().clone();
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
         (status, headers, body)
     }
 
@@ -241,9 +239,9 @@ mod routes {
     #[tokio::test]
     async fn listed_art_is_proxied_typed_cached_and_inert() {
         let hits = Arc::new(AtomicUsize::new(0));
-        let socket = upstream(hits.clone()).await;
+        let socket = bounded!(upstream(hits.clone()));
         let root = tempfile::tempdir().unwrap();
-        let host = host(root.path(), socket).await;
+        let host = bounded!(host(root.path(), socket));
         let base = format!("http://{HOST}:{}", socket.port());
         let icon = format!("{base}/download/icon.svg");
         let preview = format!("{base}/page.svg");
@@ -276,18 +274,18 @@ mod routes {
         };
 
         // Listed: fetched through the redirect, typed by content, inert.
-        let (status, headers, body) = get(&host, &icon).await;
+        let (status, headers, body) = bounded!(get(&host, &icon));
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers[header::CONTENT_TYPE], "image/svg+xml");
         assert_eq!(body, SVG);
         assert_inert(&headers);
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         // Cached for this catalog revision.
-        assert_eq!(get(&host, &icon).await.0, StatusCode::OK);
+        assert_eq!(bounded!(get(&host, &icon)).0, StatusCode::OK);
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         // A new catalog revision fetches again.
         host.catalog.lock().published = "2026-10-27T00:00:00Z".into();
-        assert_eq!(get(&host, &icon).await.0, StatusCode::OK);
+        assert_eq!(bounded!(get(&host, &icon)).0, StatusCode::OK);
         assert_eq!(hits.load(Ordering::SeqCst), 2);
 
         // Not listed: never fetched, whatever the host.
@@ -296,7 +294,7 @@ mod routes {
             "https://example.com/icon.svg".into(),
             String::new(),
         ] {
-            let (status, headers, _) = get(&host, &url).await;
+            let (status, headers, _) = bounded!(get(&host, &url));
             assert_eq!(status, StatusCode::NOT_FOUND, "{url}");
             assert_inert(&headers);
         }
@@ -306,7 +304,7 @@ mod routes {
             .body(axum::body::Body::empty())
             .unwrap();
         assert_eq!(
-            host.dashboard(bare, Bytes::new()).await.status(),
+            bounded!(host.dashboard(bare, Bytes::new())).status(),
             StatusCode::NOT_FOUND
         );
 
@@ -319,7 +317,7 @@ mod routes {
             (&format!("{base}/private.svg"), "not permitted: 127.0.0.1"),
             (&format!("{base}/internal.svg"), "not permitted: 10.0.0.1"),
         ] {
-            let (status, headers, body) = get(&host, url).await;
+            let (status, headers, body) = bounded!(get(&host, url));
             assert_eq!(status, StatusCode::BAD_GATEWAY, "{url}");
             assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
             assert_inert(&headers);
@@ -330,7 +328,7 @@ mod routes {
 
         // Clearing the sources empties the allowlist.
         *host.catalog.lock() = Catalog::default();
-        assert_eq!(get(&host, &icon).await.0, StatusCode::NOT_FOUND);
-        host.shutdown().await;
+        assert_eq!(bounded!(get(&host, &icon)).0, StatusCode::NOT_FOUND);
+        bounded!(host.shutdown());
     }
 }

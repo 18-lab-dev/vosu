@@ -6,6 +6,7 @@ use vosu_osu_calc::beatmap::{
     Ruleset, ScoringMode,
 };
 use vosu_osu_model::memory::{StableReplayFrame, StableReplayFrameBatch};
+use vosu_proptest::bounded;
 
 struct MetadataTestEngine;
 
@@ -75,9 +76,7 @@ async fn changed_beatmap_projection_publishes_a_new_regular_arc() {
     )
     .menu(Ok(ReadStatus::Ready(RawMenu::Full(menu("projected")))))
     .publish();
-    let first = bundle
-        .apply_regular(first)
-        .await
+    let first = bounded!(bundle.apply_regular(first))
         .expect("first projection")
         .publication;
     let second = RawRegularSnapshotBuilder::new(
@@ -91,9 +90,7 @@ async fn changed_beatmap_projection_publishes_a_new_regular_arc() {
         },
     ))))
     .publish();
-    let second = bundle
-        .apply_regular(second)
-        .await
+    let second = bounded!(bundle.apply_regular(second))
         .expect("changed projection")
         .publication;
 
@@ -155,10 +152,7 @@ async fn pre_object_poll_preserves_hit_history_cursor_and_keys() {
     ))))
     .publish();
 
-    let committed = bundle
-        .apply_regular(regular)
-        .await
-        .expect("pre-object poll");
+    let committed = bounded!(bundle.apply_regular(regular)).expect("pre-object poll");
     assert_eq!(committed.context.reset_epoch, 0);
     assert_eq!(committed.publication.precise.key_overlay[0].count, 3);
     assert!(committed.publication.precise.key_overlay[0].is_pressed);
@@ -186,10 +180,8 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
     .gameplay(Ok(ReadStatus::NotReady))
     .publish();
 
-    let failed_metadata = bundle
-        .apply_regular(new_map)
-        .await
-        .expect("mismatched metadata is rejected");
+    let failed_metadata =
+        bounded!(bundle.apply_regular(new_map)).expect("mismatched metadata is rejected");
     assert_eq!(failed_metadata.context.reset_epoch, 0);
     assert_eq!(bundle.gameplay.hit_errors.all, [7.0]);
     assert_eq!(bundle.beatmap.checksum.as_deref(), Some("old"));
@@ -208,9 +200,7 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
     ))))
     .gameplay(Ok(ReadStatus::NotReady))
     .publish();
-    let accepted = bundle
-        .apply_regular(accepted_metadata)
-        .await
+    let accepted = bounded!(bundle.apply_regular(accepted_metadata))
         .expect("accepted metadata does not end the play attempt");
     assert_eq!(accepted.context.reset_epoch, 0);
     assert_eq!(bundle.gameplay.hit_errors.all, [7.0]);
@@ -249,10 +239,7 @@ async fn stale_regular_global_preserves_precise_time_but_updates_session_clock()
         Ok(ReadStatus::Ready(global)),
     )
     .publish();
-    let committed = bundle
-        .apply_regular(stale)
-        .await
-        .expect("stale regular snapshot");
+    let committed = bounded!(bundle.apply_regular(stale)).expect("stale regular snapshot");
 
     assert_eq!(committed.context.play_time, 250.0);
     assert_eq!(committed.publication.regular.global.game_time, 523_409);
@@ -271,10 +258,7 @@ async fn empty_skin_folder_uses_node_path_normalization() {
     )
     .publish();
 
-    bundle
-        .apply_regular(snapshot)
-        .await
-        .expect("empty skin folder snapshot applies");
+    bounded!(bundle.apply_regular(snapshot)).expect("empty skin folder snapshot applies");
 
     assert_eq!(bundle.global.skin_folder, ".");
 }
@@ -413,7 +397,7 @@ async fn hit_history_appends_during_play_and_survives_pause_and_results_until_ma
         )
         .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(1, vec![88.0]))))
         .publish();
-        let unreadable = bundle.apply_precise(unreadable).await.unwrap();
+        let unreadable = bounded!(bundle.apply_precise(unreadable)).unwrap();
         assert!(unreadable.publication.precise.hit_errors.all.is_empty());
         assert_eq!(unreadable.publication.precise.committed_hit_error_index, 0);
 
@@ -427,7 +411,7 @@ async fn hit_history_appends_during_play_and_survives_pause_and_results_until_ma
         )
         .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(1, vec![-4.0]))))
         .publish();
-        let played = bundle.apply_precise(early).await.unwrap();
+        let played = bounded!(bundle.apply_precise(early)).unwrap();
         assert_eq!(played.publication.precise.hit_errors.all, [-4.0]);
         assert_eq!(played.publication.precise.hit_errors.press, [-4.0]);
 
@@ -438,7 +422,7 @@ async fn hit_history_appends_during_play_and_survives_pause_and_results_until_ma
             Ok(ReadStatus::Ready(paused_global)),
         )
         .publish();
-        let paused = bundle.apply_regular(paused).await.unwrap();
+        let paused = bounded!(bundle.apply_regular(paused)).unwrap();
         assert_eq!(paused.publication.precise.hit_errors.all, [-4.0]);
         assert_eq!(paused.publication.precise.committed_hit_error_index, 1);
 
@@ -452,7 +436,7 @@ async fn hit_history_appends_during_play_and_survives_pause_and_results_until_ma
         )
         .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(2, vec![99.0]))))
         .publish();
-        let result = bundle.apply_precise(result).await.unwrap();
+        let result = bounded!(bundle.apply_precise(result)).unwrap();
         assert_eq!(result.publication.precise.hit_errors.all, [-4.0]);
         assert_eq!(result.publication.precise.hit_errors.press, [-4.0]);
         assert_eq!(result.publication.precise.committed_hit_error_index, 1);
@@ -462,7 +446,7 @@ async fn hit_history_appends_during_play_and_survives_pause_and_results_until_ma
             Ok(ReadStatus::Ready(raw_global(GameState::SelectPlay, 1_000))),
         )
         .publish();
-        let exit = bundle.apply_regular(exit).await.unwrap();
+        let exit = bounded!(bundle.apply_regular(exit)).unwrap();
         assert!(exit.publication.precise.hit_errors.all.is_empty());
         assert!(exit.publication.precise.hit_errors.press.is_empty());
         assert!(exit.publication.precise.hit_errors.release.is_empty());

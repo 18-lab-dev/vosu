@@ -40,7 +40,7 @@
         let mut writer = Box::pin(std::future::pending());
         let started = tokio::time::Instant::now();
 
-        drain_v2_subscription_writer(writer.as_mut()).await;
+        bounded!(drain_v2_subscription_writer(writer.as_mut()));
 
         assert_eq!(started.elapsed(), V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT);
     }
@@ -48,8 +48,8 @@
     async fn subscription_client(
         address: std::net::SocketAddr,
     ) -> (tokio::net::TcpStream, Vec<u8>) {
-        let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
-        client
+        let mut client = bounded!(tokio::net::TcpStream::connect(address)).unwrap();
+        bounded!(client
             .write_all(
                 b"GET /websocket/v2/subscribe HTTP/1.1\r\n\
 Host: localhost\r\n\
@@ -57,8 +57,7 @@ Connection: Upgrade\r\n\
 Upgrade: websocket\r\n\
 Sec-WebSocket-Version: 13\r\n\
 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-            )
-            .await
+            ))
             .unwrap();
         let mut response = Vec::new();
         let header_end = tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -222,22 +221,20 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             delegate,
         };
         let binder = TokioBinder(AxumListenerFactory::new(providers));
-        let listener = binder
+        let listener = bounded!(binder
             .bind(
                 &ListenTarget::new("127.0.0.1", 0),
                 "127.0.0.1:0".parse().unwrap(),
-            )
-            .await
+            ))
             .unwrap();
         assert_eq!(
-            vosu_core::desktop::existing_dashboard("127.0.0.1", listener.address().port()).await,
+            bounded!(vosu_core::desktop::existing_dashboard("127.0.0.1", listener.address().port())),
             Some(vosu_core::desktop::dashboard_url("127.0.0.1", listener.address().port())),
         );
 
-        let mut client = tokio::net::TcpStream::connect(listener.address())
-            .await
+        let mut client = bounded!(tokio::net::TcpStream::connect(listener.address()))
             .unwrap();
-        client
+        bounded!(client
             .write_all(
                 b"GET /websocket/commands?l=counter HTTP/1.1\r\n\
 Host: localhost\r\n\
@@ -245,8 +242,7 @@ Connection: Upgrade\r\n\
 Upgrade: websocket\r\n\
 Sec-WebSocket-Version: 13\r\n\
 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-            )
-            .await
+            ))
             .unwrap();
         let mut response = Vec::new();
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -287,7 +283,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             0,
         );
         assert_eq!(commands.client_count(), 0);
-        relays.shutdown().await;
+        bounded!(relays.shutdown());
     }
 
     #[tokio::test]
@@ -315,7 +311,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             V2SubscriptionHub::new(subscription_state.clone(), std::time::Duration::ZERO);
         let subscription_runner = tokio::spawn({
             let subscriptions = subscriptions.clone();
-            async move { subscriptions.run().await }
+            async move { bounded!(subscriptions.run()) }
         });
         let relays = Arc::new(WebSocketRelaySink::new());
         let command_providers = Arc::new(CommandProviders);
@@ -359,72 +355,66 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             delegate,
         };
         let binder = TokioBinder(AxumListenerFactory::new(providers));
-        let listener = binder
+        let listener = bounded!(binder
             .bind(
                 &ListenTarget::new("127.0.0.1", 0),
                 "127.0.0.1:0".parse().unwrap(),
-            )
-            .await
+            ))
             .unwrap();
 
         // An application-level ping is not a protocol message: like a second selection, it
         // must end the immutable subscription rather than receive a pong.
         for second_message in [br#"["/play/name"]"#.as_slice(), br#"["ping",7]"#.as_slice()] {
-            let (mut second_text, mut buffered) = subscription_client(listener.address()).await;
-            second_text
-                .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#))
-                .await
+            let (mut second_text, mut buffered) = bounded!(subscription_client(listener.address()));
+            bounded!(second_text
+                .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#)))
                 .unwrap();
-            assert_eq!(server_frame(&mut second_text, &mut buffered).await.0, 0x1);
-            second_text
-                .write_all(&masked_client_frame(0x1, second_message))
-                .await
+            assert_eq!(bounded!(server_frame(&mut second_text, &mut buffered)).0, 0x1);
+            bounded!(second_text
+                .write_all(&masked_client_frame(0x1, second_message)))
                 .unwrap();
-            let (opcode, payload) = server_frame(&mut second_text, &mut buffered).await;
+            let (opcode, payload) = bounded!(server_frame(&mut second_text, &mut buffered));
             assert_eq!(opcode, 0x1);
             assert_eq!(
                 payload,
                 br#"[2,5,"subscription already established"]"#.as_slice()
             );
-            let (opcode, payload) = server_frame(&mut second_text, &mut buffered).await;
+            let (opcode, payload) = bounded!(server_frame(&mut second_text, &mut buffered));
             assert_eq!((opcode, close_code(&payload)), (0x8, 1008));
         }
 
-        let (mut binary, mut buffered) = subscription_client(listener.address()).await;
-        binary
-            .write_all(&masked_client_frame(0x2, b"binary"))
-            .await
+        let (mut binary, mut buffered) = bounded!(subscription_client(listener.address()));
+        bounded!(binary
+            .write_all(&masked_client_frame(0x2, b"binary")))
             .unwrap();
-        let (opcode, payload) = server_frame(&mut binary, &mut buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut binary, &mut buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1003));
 
-        let (mut malformed, mut buffered) = subscription_client(listener.address()).await;
-        malformed.write_all(&[0x81, 0x00]).await.unwrap();
-        let (opcode, payload) = server_frame(&mut malformed, &mut buffered).await;
+        let (mut malformed, mut buffered) = bounded!(subscription_client(listener.address()));
+        bounded!(malformed.write_all(&[0x81, 0x00])).unwrap();
+        let (opcode, payload) = bounded!(server_frame(&mut malformed, &mut buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1002));
 
-        let (mut oversized, mut buffered) = subscription_client(listener.address()).await;
+        let (mut oversized, mut buffered) = bounded!(subscription_client(listener.address()));
         // Declaring a frame above the configured bound is sufficient for tungstenite to
         // reject it. Omitting the body leaves no unread TCP data that could turn the
         // server's graceful close into an abortive reset on Windows.
-        oversized
-            .write_all(&masked_client_frame_header(0x1, 1_048_577))
-            .await
+        bounded!(oversized
+            .write_all(&masked_client_frame_header(0x1, 1_048_577)))
             .unwrap();
-        let (opcode, payload) = server_frame(&mut oversized, &mut buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut oversized, &mut buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1009));
 
-        let (mut timeout_client, mut buffered) = subscription_client(listener.address()).await;
+        let (mut timeout_client, mut buffered) = bounded!(subscription_client(listener.address()));
         for ping in 0..4_u8 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            timeout_client
-                .write_all(&masked_client_frame(0x9, &[ping]))
-                .await
+            bounded!(timeout_client
+                .write_all(&masked_client_frame(0x9, &[ping])))
                 .unwrap();
         }
         let mut pong_seen = [false; 4];
         let timeout_payload = loop {
-            let (opcode, payload) = server_frame(&mut timeout_client, &mut buffered).await;
+            let (opcode, payload) = bounded!(server_frame(&mut timeout_client, &mut buffered));
             match opcode {
                 0xa => pong_seen[payload[0] as usize] = true,
                 0x1 => break payload,
@@ -436,36 +426,34 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             timeout_payload,
             br#"[2,3,"subscription timed out"]"#.as_slice()
         );
-        let (opcode, payload) = server_frame(&mut timeout_client, &mut buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut timeout_client, &mut buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1008));
 
         subscription_state.fail.store(true, Ordering::Release);
-        let (mut failed, mut buffered) = subscription_client(listener.address()).await;
-        failed
-            .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#))
-            .await
+        let (mut failed, mut buffered) = bounded!(subscription_client(listener.address()));
+        bounded!(failed
+            .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#)))
             .unwrap();
-        let (opcode, payload) = server_frame(&mut failed, &mut buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut failed, &mut buffered));
         assert_eq!(opcode, 0x1);
         assert_eq!(payload, br#"[2,4,"state serialization failed"]"#.as_slice());
-        let (opcode, payload) = server_frame(&mut failed, &mut buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut failed, &mut buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1011));
         subscription_state.fail.store(false, Ordering::Release);
 
-        let (mut pending, mut pending_buffered) = subscription_client(listener.address()).await;
-        let (mut active, mut active_buffered) = subscription_client(listener.address()).await;
-        active
-            .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#))
-            .await
+        let (mut pending, mut pending_buffered) = bounded!(subscription_client(listener.address()));
+        let (mut active, mut active_buffered) = bounded!(subscription_client(listener.address()));
+        bounded!(active
+            .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#)))
             .unwrap();
         assert_eq!(
-            server_frame(&mut active, &mut active_buffered).await.0,
+            bounded!(server_frame(&mut active, &mut active_buffered)).0,
             0x1
         );
         subscriptions.close_all(1001);
-        let (opcode, payload) = server_frame(&mut pending, &mut pending_buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut pending, &mut pending_buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1001));
-        let (opcode, payload) = server_frame(&mut active, &mut active_buffered).await;
+        let (opcode, payload) = bounded!(server_frame(&mut active, &mut active_buffered));
         assert_eq!((opcode, close_code(&payload)), (0x8, 1001));
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
             while subscriptions.client_count() != 0 {
@@ -477,10 +465,10 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
 
         listener.begin_drain();
         listener.cancel_survivors();
-        listener.drained().await;
+        bounded!(listener.drained());
         subscriptions.shutdown();
-        subscription_runner.await.unwrap();
-        relays.shutdown().await;
+        bounded!(subscription_runner).unwrap();
+        bounded!(relays.shutdown());
     }
 
     #[test]
@@ -567,10 +555,9 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 outcome,
                 ResourceOutcome::Missing(MissingKind::NotReady)
             ));
-            let response = resource_response(outcome, None).await;
+            let response = bounded!(resource_response(outcome, None));
             assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
+            let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
                 .unwrap();
             assert_eq!(
                 serde_json::from_slice::<Value>(&body).unwrap(),

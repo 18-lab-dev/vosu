@@ -32,22 +32,22 @@ async fn skin_report_entries_are_additive_conditional_and_invalidate_without_ski
         skin_root: Some(skin.clone()), skin_client: Some("stable"), skin_name: Some("fixture".into()), ready: true, ..Default::default()
     });
     let request = || Request::builder().uri("/files/skin/").body(Body::empty()).unwrap();
-    let first = delegate.file(Endpoint::SkinFile, request()).await;
+    let first = bounded!(delegate.file(Endpoint::SkinFile, request()));
     assert_eq!(first.status(), StatusCode::OK);
     assert_eq!(first.headers()[header::CACHE_CONTROL], "no-cache");
     let etag = first.headers()[header::ETAG].clone();
-    let body: Value = serde_json::from_slice(&axum::body::to_bytes(first.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let body: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(first.into_body(), usize::MAX)).unwrap()).unwrap();
     assert_eq!(body["files"], true);
     assert_eq!(body["entries"][0]["path"], "skin.ini");
     assert_eq!(body["entries"][0]["size"], 9);
     assert!(body["entries"][0]["modified"].is_u64());
     assert!(body["entries"][0].get("hash").is_none());
     assert_eq!(body["truncated"], false);
-    let cached = delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()).await;
+    let cached = bounded!(delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()));
     assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
-    assert!(axum::body::to_bytes(cached.into_body(), usize::MAX).await.unwrap().is_empty());
+    assert!(bounded!(axum::body::to_bytes(cached.into_body(), usize::MAX)).unwrap().is_empty());
     std::fs::write(skin.join("skin.ini"), b"[General]\nName: changed").unwrap();
-    let changed = delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()).await;
+    let changed = bounded!(delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()));
     assert_eq!(changed.status(), StatusCode::OK);
     assert_ne!(changed.headers()[header::ETAG], etag);
 }
@@ -68,35 +68,35 @@ async fn skin_and_beatmap_files_have_validators_conditional_precedence_head_and_
         (Endpoint::BeatmapBackground, "/files/beatmap/background"), (Endpoint::BeatmapPath, "/files/beatmap/audio.mp3")] {
         assert_eq!(crate::server::routes::classify(&Method::HEAD, path), Some(endpoint));
         let make = || Request::builder().uri(path);
-        let first = delegate.file(endpoint, make().body(Body::empty()).unwrap()).await;
+        let first = bounded!(delegate.file(endpoint, make().body(Body::empty()).unwrap()));
         assert_eq!(first.status(), StatusCode::OK, "{path}");
         let etag = first.headers()[header::ETAG].clone();
         let modified = first.headers()[header::LAST_MODIFIED].clone();
         assert!(!etag.to_str().unwrap().starts_with("W/"));
         assert_eq!(first.headers()[header::CACHE_CONTROL], "no-cache");
-        assert_eq!(axum::body::to_bytes(first.into_body(), usize::MAX).await.unwrap(), b"abcdef".as_slice());
+        assert_eq!(bounded!(axum::body::to_bytes(first.into_body(), usize::MAX)).unwrap(), b"abcdef".as_slice());
         for header in [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE] {
             let value = if header == header::IF_NONE_MATCH { &etag } else { &modified };
-            let response = delegate.file(endpoint, make().header(header, value).body(Body::empty()).unwrap()).await;
+            let response = bounded!(delegate.file(endpoint, make().header(header, value).body(Body::empty()).unwrap()));
             assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
             assert_eq!(response.headers()[header::ETAG], etag);
-            assert!(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().is_empty());
+            assert!(bounded!(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap().is_empty());
         }
         for condition in ["*".to_owned(), format!("\"unrelated\", W/{}", etag.to_str().unwrap())] {
-            let cached_head = delegate.file(endpoint, make().method(Method::HEAD).header(header::IF_NONE_MATCH, condition).body(Body::empty()).unwrap()).await;
+            let cached_head = bounded!(delegate.file(endpoint, make().method(Method::HEAD).header(header::IF_NONE_MATCH, condition).body(Body::empty()).unwrap()));
             assert_eq!(cached_head.status(), StatusCode::NOT_MODIFIED);
-            assert!(axum::body::to_bytes(cached_head.into_body(), usize::MAX).await.unwrap().is_empty());
+            assert!(bounded!(axum::body::to_bytes(cached_head.into_body(), usize::MAX)).unwrap().is_empty());
         }
-        let unmatched = delegate.file(endpoint, make().header(header::IF_NONE_MATCH, "\"different\"").header(header::IF_MODIFIED_SINCE, &modified).body(Body::empty()).unwrap()).await;
+        let unmatched = bounded!(delegate.file(endpoint, make().header(header::IF_NONE_MATCH, "\"different\"").header(header::IF_MODIFIED_SINCE, &modified).body(Body::empty()).unwrap()));
         assert_eq!(unmatched.status(), StatusCode::OK, "ETag condition takes precedence");
-        let head = delegate.file(endpoint, make().method(Method::HEAD).header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap()).await;
+        let head = bounded!(delegate.file(endpoint, make().method(Method::HEAD).header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap()));
         assert_eq!(head.status(), StatusCode::OK);
         assert_eq!(head.headers()[header::CONTENT_LENGTH], "6");
         assert_eq!(head.headers()[header::ETAG], etag);
-        assert!(axum::body::to_bytes(head.into_body(), usize::MAX).await.unwrap().is_empty());
-        let partial = delegate.file(endpoint, make().header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap()).await;
+        assert!(bounded!(axum::body::to_bytes(head.into_body(), usize::MAX)).unwrap().is_empty());
+        let partial = bounded!(delegate.file(endpoint, make().header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap()));
         assert_eq!(partial.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(axum::body::to_bytes(partial.into_body(), usize::MAX).await.unwrap(), b"bc".as_slice());
+        assert_eq!(bounded!(axum::body::to_bytes(partial.into_body(), usize::MAX)).unwrap(), b"bc".as_slice());
     }
 }
 
@@ -111,14 +111,14 @@ async fn lazer_file_etag_is_the_store_hash() {
         skin: Some(Arc::new(vosu_osu_model::memory::CurrentSkin { name: "skin".into(), base: None, builtin: None, files: [("skin.ini".into(), relative)].into() })),
         ..Default::default()
     });
-    let report = delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").body(Body::empty()).unwrap()).await;
-    let report: Value = serde_json::from_slice(&axum::body::to_bytes(report.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let report = bounded!(delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").body(Body::empty()).unwrap()));
+    let report: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(report.into_body(), usize::MAX)).unwrap()).unwrap();
     assert_eq!(report["entries"][0]["path"], "skin.ini");
     assert_eq!(report["entries"][0]["hash"], hash);
     assert_eq!(report["entries"][0]["size"], 4);
     assert!(report["entries"][0].get("modified").is_none());
     for (endpoint, path) in [(Endpoint::SkinFile, "/files/skin/skin.ini"), (Endpoint::BeatmapFile, "/files/beatmap/file")] {
-        let response = delegate.file(endpoint, Request::builder().uri(path).body(Body::empty()).unwrap()).await;
+        let response = bounded!(delegate.file(endpoint, Request::builder().uri(path).body(Body::empty()).unwrap()));
         assert_eq!(response.headers()[header::ETAG], format!("\"{hash}\""));
     }
 }
@@ -147,14 +147,14 @@ async fn game_files_are_sandboxed_but_counter_pages_are_not() {
         "/files/skin/page.html", "/files/beatmap/file", "/files/beatmap/audio", "/files/beatmap/background", "/backgroundImage"] {
         let endpoint = crate::server::routes::classify(&Method::GET, path).unwrap();
         for method in [Method::GET, Method::HEAD] {
-            let response = delegate.file(endpoint, Request::builder().method(method.clone()).uri(path).body(Body::empty()).unwrap()).await;
+            let response = bounded!(delegate.file(endpoint, Request::builder().method(method.clone()).uri(path).body(Body::empty()).unwrap()));
             assert_eq!(response.status(), StatusCode::OK, "{method} {path}");
             assert_eq!(response.headers()[header::CONTENT_SECURITY_POLICY], "sandbox", "{method} {path}");
         }
     }
-    let html = delegate.file(Endpoint::SongsFile, Request::builder().uri("/Songs/set/page.html").body(Body::empty()).unwrap()).await;
+    let html = bounded!(delegate.file(Endpoint::SongsFile, Request::builder().uri("/Songs/set/page.html").body(Body::empty()).unwrap()));
     assert_eq!(html.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8", "the upstream-compatible type is kept");
-    let counter_page = delegate.file(Endpoint::CounterStatic, Request::builder().uri("/counter/").body(Body::empty()).unwrap()).await;
+    let counter_page = bounded!(delegate.file(Endpoint::CounterStatic, Request::builder().uri("/counter/").body(Body::empty()).unwrap()));
     assert_eq!(counter_page.status(), StatusCode::OK);
     assert!(counter_page.headers().get(header::CONTENT_SECURITY_POLICY).is_none(), "counters must keep running script");
 }

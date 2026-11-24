@@ -1,6 +1,7 @@
 use super::archive::preflight_zip_entries;
 use super::*;
 use std::io::Write;
+use vosu_proptest::bounded;
 
 #[test]
 fn public_policy_rejects_special_and_embedded_ranges() {
@@ -64,16 +65,12 @@ async fn complete_dns_answer_is_validated_and_http_is_rejected() {
         "127.0.0.1".parse().unwrap(),
     ]);
     assert!(matches!(
-        mixed
-            .resolve_and_validate(&Url::parse("https://mixed.test/a").unwrap())
-            .await,
+        bounded!(mixed.resolve_and_validate(&Url::parse("https://mixed.test/a").unwrap())),
         Err(NetworkError::Destination(_))
     ));
     let public = test_client(vec!["1.1.1.1".parse().unwrap()]);
     assert!(matches!(
-        public
-            .resolve_and_validate(&Url::parse("http://public.test/a").unwrap())
-            .await,
+        bounded!(public.resolve_and_validate(&Url::parse("http://public.test/a").unwrap())),
         Err(NetworkError::Scheme)
     ));
 }
@@ -103,11 +100,11 @@ async fn every_hop_gets_one_fresh_complete_dns_validation() {
     );
     let url = Url::parse("https://rebind.test/a").unwrap();
     assert_eq!(
-        client.resolve_and_validate(&url).await.unwrap().2,
+        bounded!(client.resolve_and_validate(&url)).unwrap().2,
         vec!["1.1.1.1".parse::<IpAddr>().unwrap()]
     );
     assert!(matches!(
-        client.resolve_and_validate(&url).await,
+        bounded!(client.resolve_and_validate(&url)),
         Err(NetworkError::Destination(_))
     ));
 }
@@ -141,9 +138,11 @@ async fn injected_time_source_controls_absolute_deadline() {
     .with_time_source(Arc::new(ManualTime(notify.clone())));
     notify.notify_one();
     assert!(matches!(
-        client
-            .request_bytes("https://deadline.test/a", "test", &CancellationToken::new())
-            .await,
+        bounded!(client.request_bytes(
+            "https://deadline.test/a",
+            "test",
+            &CancellationToken::new()
+        )),
         Err(NetworkError::Timeout)
     ));
 }
@@ -159,9 +158,7 @@ async fn cancellation_interrupts_dns_resolution() {
     let cancel = CancellationToken::new();
     cancel.cancel();
     assert!(matches!(
-        client
-            .request_bytes("https://cancel.test/a", "test", &cancel)
-            .await,
+        bounded!(client.request_bytes("https://cancel.test/a", "test", &cancel)),
         Err(NetworkError::Cancelled)
     ));
 }
@@ -190,18 +187,16 @@ fn redirects_are_relative_bounded_and_never_downgrade() {
 #[cfg(feature = "test-harness")]
 async fn harness_fixture() -> (StreamingClient, String, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt as _};
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
+    let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
     let socket = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         loop {
-            let Ok((mut stream, _)) = listener.accept().await else {
+            let Ok((mut stream, _)) = bounded!(listener.accept()) else {
                 return;
             };
             tokio::spawn(async move {
                 let mut request = vec![0; 2048];
-                let Ok(length) = stream.read(&mut request).await else {
+                let Ok(length) = bounded!(stream.read(&mut request)) else {
                     return;
                 };
                 let first = String::from_utf8_lossy(&request[..length]);
@@ -227,7 +222,7 @@ async fn harness_fixture() -> (StreamingClient, String, tokio::task::JoinHandle<
                     }
                     _ => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n",
                 };
-                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = bounded!(stream.write_all(response.as_bytes()));
                 if path == "/idle" || path == "/slow" || path == "/status" {
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }
@@ -269,11 +264,10 @@ async fn proxy_bypass_child() {
     if std::env::var_os("VOSU_PROXY_BYPASS_CHILD").is_none() {
         return;
     }
-    let (client, base, server) = harness_fixture().await;
-    let response = client
-        .request_bytes(&format!("{base}/ok"), "test", &CancellationToken::new())
-        .await
-        .unwrap();
+    let (client, base, server) = bounded!(harness_fixture());
+    let response =
+        bounded!(client.request_bytes(&format!("{base}/ok"), "test", &CancellationToken::new()))
+            .unwrap();
     assert_eq!(response.body, "ok");
     server.abort();
 }
@@ -282,7 +276,7 @@ async fn proxy_bypass_child() {
 #[tokio::test]
 async fn no_proxy_ignores_process_proxy_configuration() {
     let executable = std::env::current_exe().unwrap();
-    let status = tokio::task::spawn_blocking(move || {
+    let status = bounded!(tokio::task::spawn_blocking(move || {
         std::process::Command::new(executable)
             .arg("--ignored")
             .arg("--exact")
@@ -293,8 +287,7 @@ async fn no_proxy_ignores_process_proxy_configuration() {
             .env("ALL_PROXY", "http://127.0.0.1:9")
             .status()
             .unwrap()
-    })
-    .await
+    }))
     .unwrap();
     assert!(status.success());
 }
@@ -302,65 +295,56 @@ async fn no_proxy_ignores_process_proxy_configuration() {
 #[cfg(feature = "test-harness")]
 #[tokio::test]
 async fn harness_allowlist_status_timeouts_redirects_json_and_caps() {
-    let (client, base, server) = harness_fixture().await;
+    let (client, base, server) = bounded!(harness_fixture());
     assert_eq!(
-        client
-            .request_bytes(&format!("{base}/ok"), "test", &CancellationToken::new())
-            .await
+        bounded!(client.request_bytes(&format!("{base}/ok"), "test", &CancellationToken::new()))
             .unwrap()
             .body,
         "ok"
     );
-    let status = client
-        .request_bytes(&format!("{base}/status"), "test", &CancellationToken::new())
-        .await
-        .unwrap();
+    let status = bounded!(client.request_bytes(
+        &format!("{base}/status"),
+        "test",
+        &CancellationToken::new()
+    ))
+    .unwrap();
     assert_eq!(status.status, 500);
     assert!(status.body.is_empty());
     assert!(
-        client
-            .request_json::<serde_json::Value>(
-                &format!("{base}/json"),
-                "test",
-                &CancellationToken::new()
-            )
-            .await
-            .unwrap()
-            .is_object()
+        bounded!(client.request_json::<serde_json::Value>(
+            &format!("{base}/json"),
+            "test",
+            &CancellationToken::new()
+        ))
+        .unwrap()
+        .is_object()
     );
     assert!(matches!(
-        client
-            .request_bytes(&format!("{base}/large"), "test", &CancellationToken::new())
-            .await,
+        bounded!(client.request_bytes(&format!("{base}/large"), "test", &CancellationToken::new())),
         Err(NetworkError::TooLarge(4))
     ));
     assert!(matches!(
-        client
-            .request_bytes(&format!("{base}/idle"), "test", &CancellationToken::new())
-            .await,
+        bounded!(client.request_bytes(&format!("{base}/idle"), "test", &CancellationToken::new())),
         Err(NetworkError::Timeout)
     ));
     assert!(matches!(
-        client
-            .request_bytes(
-                &format!("{base}/headers"),
-                "test",
-                &CancellationToken::new()
-            )
-            .await,
+        bounded!(client.request_bytes(
+            &format!("{base}/headers"),
+            "test",
+            &CancellationToken::new()
+        )),
         Err(NetworkError::Timeout)
     ));
-    let loop_error = client
-        .request_bytes(&format!("{base}/loop"), "test", &CancellationToken::new())
-        .await
-        .unwrap_err();
+    let loop_error =
+        bounded!(client.request_bytes(&format!("{base}/loop"), "test", &CancellationToken::new()))
+            .unwrap_err();
     assert!(
         matches!(loop_error, NetworkError::RedirectLimit),
         "{loop_error:?}"
     );
     let denied = Url::parse(&base.replace("fixture.invalid", "other.invalid")).unwrap();
     assert!(matches!(
-        client.resolve_and_validate(&denied).await,
+        bounded!(client.resolve_and_validate(&denied)),
         Err(NetworkError::Destination(_))
     ));
     server.abort();
@@ -389,18 +373,16 @@ fn harness_config_rejects_nonreserved_hosts_and_nonloopback_sockets() {
 #[cfg(feature = "test-harness")]
 #[tokio::test]
 async fn cancelled_and_oversized_downloads_remove_parts_and_preserve_destination() {
-    let (client, base, server) = harness_fixture().await;
+    let (client, base, server) = bounded!(harness_fixture());
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("file");
     std::fs::write(&target, b"old").unwrap();
-    let oversized = client
-        .download_atomic(
-            &format!("{base}/large"),
-            "test",
-            &target,
-            &CancellationToken::new(),
-        )
-        .await;
+    let oversized = bounded!(client.download_atomic(
+        &format!("{base}/large"),
+        "test",
+        &target,
+        &CancellationToken::new(),
+    ));
     assert!(
         matches!(&oversized, Err(NetworkError::TooLarge(4))),
         "unexpected oversized-download result: {oversized:?}"
@@ -413,21 +395,17 @@ async fn cancelled_and_oversized_downloads_remove_parts_and_preserve_destination
         later.cancel();
     });
     assert!(matches!(
-        client
-            .download_atomic(&format!("{base}/slow"), "test", &target, &cancel)
-            .await,
+        bounded!(client.download_atomic(&format!("{base}/slow"), "test", &target, &cancel)),
         Err(NetworkError::Cancelled)
     ));
     assert_eq!(std::fs::read(&target).unwrap(), b"old");
-    client
-        .download_atomic(
-            &format!("{base}/ok"),
-            "test",
-            &target,
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    bounded!(client.download_atomic(
+        &format!("{base}/ok"),
+        "test",
+        &target,
+        &CancellationToken::new(),
+    ))
+    .unwrap();
     assert_eq!(std::fs::read(&target).unwrap(), b"ok");
     assert!(!std::fs::read_dir(root.path()).unwrap().any(|entry| {
         entry

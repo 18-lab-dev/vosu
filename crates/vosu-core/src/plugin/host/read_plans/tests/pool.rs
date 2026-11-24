@@ -204,7 +204,7 @@ fn dropping_host_while_a_background_job_runs_neither_aborts_nor_self_joins() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(dropper.is_finished(), "dropping host did not complete");
-    dropper.join().expect("dropping host must not panic");
+    vosu_proptest::wait::JoinBounded::join_bounded(dropper).expect("dropping host must not panic");
 }
 
 /// P2-7: a full *shared* background-pool queue must never turn already-

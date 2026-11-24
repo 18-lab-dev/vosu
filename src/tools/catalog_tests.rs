@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 fn tool(id: &str, version: &str) -> Tool {
     Tool {
@@ -202,7 +203,7 @@ fn package_integrity_and_atomic_rollback() {
     assert!(destination.join("web/index.html").exists());
 }
 async fn host(root: &Path) -> Arc<ToolHost> {
-    ToolHost::new(
+    bounded!(ToolHost::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
@@ -210,14 +211,13 @@ async fn host(root: &Path) -> Arc<ToolHost> {
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
         Arc::new(|| json!({})),
-    )
-    .await
+    ))
     .unwrap()
 }
 #[tokio::test]
 async fn source_update_badge_and_uninstall_choices() {
     let root = tempfile::tempdir().unwrap();
-    let host = host(root.path()).await;
+    let host = bounded!(host(root.path()));
     let path = host.data.join("fixture");
     fs::create_dir_all(path.join("web")).unwrap();
     fs::write(
@@ -225,7 +225,7 @@ async fn source_update_badge_and_uninstall_choices() {
         "manifest_version=1\nid='fixture'\nname='Fixture'\nversion='1.0.0'\n[ui]\nroot='web'\n",
     )
     .unwrap();
-    host.rescan().await;
+    bounded!(host.rescan());
     assert_eq!(host.view(&host.entry("fixture").unwrap())["source"], "user");
     host.saved
         .lock()
@@ -234,7 +234,7 @@ async fn source_update_badge_and_uninstall_choices() {
         .official = true;
     // A source transition also changes the discovery identity.
     host.entries.lock().clear();
-    host.rescan().await;
+    bounded!(host.rescan());
     *host.catalog.lock() = catalog(vec![tool("fixture", "2.0.0")]);
     let entry = host.entry("fixture").unwrap();
     let view = host.view(&entry);
@@ -244,7 +244,7 @@ async fn source_update_badge_and_uninstall_choices() {
     fs::create_dir_all(&entry.data_dir).unwrap();
     fs::write(entry.data_dir.join("save"), "data").unwrap();
     assert!(host.begin_catalog("fixture", "uninstall", b"{}").is_err());
-    host.uninstall_catalog("fixture", false).await.unwrap();
+    bounded!(host.uninstall_catalog("fixture", false)).unwrap();
     assert!(entry.data_dir.join("save").exists());
     assert!(!path.exists());
     fs::create_dir_all(path.join("web")).unwrap();
@@ -258,10 +258,10 @@ async fn source_update_badge_and_uninstall_choices() {
         .entry("fixture".into())
         .or_default()
         .official = true;
-    host.rescan().await;
-    host.uninstall_catalog("fixture", true).await.unwrap();
+    bounded!(host.rescan());
+    bounded!(host.uninstall_catalog("fixture", true)).unwrap();
     assert!(!entry.data_dir.exists());
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[test]
@@ -307,10 +307,9 @@ async fn catalog_transport_rejects_http_and_private_destinations() {
         ("https://127.0.0.1/catalog.json", false),
         ("https://10.0.0.1/catalog.json", false),
     ] {
-        let error = client(1024)
-            .request_bytes(url, "catalog-test", &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let error =
+            bounded!(client(1024).request_bytes(url, "catalog-test", &CancellationToken::new()))
+                .unwrap_err();
         assert!(
             matches!(error, vosu_net::NetworkError::Scheme) && scheme
                 || matches!(error, vosu_net::NetworkError::Destination(_)) && !scheme,
@@ -322,7 +321,7 @@ async fn catalog_transport_rejects_http_and_private_destinations() {
 #[tokio::test]
 async fn durable_data_cannot_collide_with_any_package_id() {
     let root = tempfile::tempdir().unwrap();
-    let host = host(root.path()).await;
+    let host = bounded!(host(root.path()));
     let package = host.data.join("data");
     fs::create_dir_all(package.join("web")).unwrap();
     fs::write(
@@ -330,7 +329,7 @@ async fn durable_data_cannot_collide_with_any_package_id() {
         "manifest_version=1\nid='data'\nname='Data'\nversion='1.0.0'\n[ui]\nroot='web'\n",
     )
     .unwrap();
-    host.rescan().await;
+    bounded!(host.rescan());
     let entry = host.entry("data").unwrap();
     assert_eq!(entry.root, package);
     assert!(!entry.data_dir.starts_with(&host.data));
@@ -341,7 +340,7 @@ async fn durable_data_cannot_collide_with_any_package_id() {
         fs::read_to_string(entry.data_dir.join("save")).unwrap(),
         "durable"
     );
-    host.shutdown().await;
+    bounded!(host.shutdown());
 }
 
 #[test]

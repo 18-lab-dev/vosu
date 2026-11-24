@@ -115,7 +115,14 @@ impl Plugin for ScanPlugin {
         let reader_host = host;
         let reader_events = events.clone();
         std::thread::spawn(move || {
-            while let Ok(command) = commands.recv() {
+            loop {
+                let command = match commands.recv_timeout(std::time::Duration::from_secs(10)) {
+                    Ok(command) => command,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        panic!("testkit command worker received no command within 10s")
+                    }
+                };
                 let status = reader_host.scan(
                     command.correlation_id,
                     ScanRequest {

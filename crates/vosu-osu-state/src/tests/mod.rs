@@ -160,6 +160,7 @@ impl WorkerClock for ManualClock {
         let mut state = lock(&self.state);
         state.observed.push(duration);
         self.changed.notify_all();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             if self.cancelled.load(Ordering::Acquire) {
                 return false;
@@ -168,10 +169,18 @@ impl WorkerClock for ManualClock {
                 state.releases.remove(position);
                 return true;
             }
-            state = self
+            let (next, result) = self
                 .changed
-                .wait(state)
+                .wait_timeout(
+                    state,
+                    deadline.saturating_duration_since(std::time::Instant::now()),
+                )
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert!(
+                !result.timed_out(),
+                "manual worker clock received no release or cancel within 10s"
+            );
+            state = next;
         }
     }
 

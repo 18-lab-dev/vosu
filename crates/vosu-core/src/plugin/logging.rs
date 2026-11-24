@@ -324,7 +324,7 @@ mod tests {
 
     #[tokio::test]
     async fn accepts_up_to_the_per_second_limit_and_drops_past_it() {
-        let (_dir, _console, _logger, router) = router().await;
+        let (_dir, _console, _logger, router) = vosu_proptest::bounded!(router());
         let instance = PluginInstanceId::new(1);
         let mut accepted = 0;
         for i in 0..(LOG_RATE_LIMIT_PER_SECOND + 50) {
@@ -337,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_instance_exceeding_the_limit_does_not_affect_another() {
-        let (_dir, _console, _logger, router) = router().await;
+        let (_dir, _console, _logger, router) = vosu_proptest::bounded!(router());
         let noisy = PluginInstanceId::new(1);
         let quiet = PluginInstanceId::new(2);
         for i in 0..(LOG_RATE_LIMIT_PER_SECOND + 10) {
@@ -348,7 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_records_are_summarized_once_per_second_without_another_record() {
-        let (_dir, console, logger, router) = router().await;
+        let (_dir, console, logger, router) = vosu_proptest::bounded!(router());
         let instance = PluginInstanceId::new(7);
         for i in 0..(LOG_RATE_LIMIT_PER_SECOND + 25) {
             router.record(instance, "vosu.test", None, record(&format!("line {i}")));
@@ -357,7 +357,7 @@ mod tests {
         // next record, must surface the summary once its own one-second
         // tick elapses.
         tokio::time::sleep(Duration::from_millis(1100)).await;
-        logger.flush().await.unwrap();
+        vosu_proptest::bounded!(logger.flush()).unwrap();
         let lines = console.lines.lock().unwrap();
         assert!(
             lines
@@ -369,10 +369,10 @@ mod tests {
 
     #[tokio::test]
     async fn log_lines_are_attributed_by_plugin_id_and_session() {
-        let (_dir, console, logger, router) = router().await;
+        let (_dir, console, logger, router) = vosu_proptest::bounded!(router());
         let instance = PluginInstanceId::new(3);
         assert!(router.record(instance, "vosu.osu", Some("session-abc"), record("hello")));
-        logger.flush().await.unwrap();
+        vosu_proptest::bounded!(logger.flush()).unwrap();
         let lines = console.lines.lock().unwrap();
         assert!(
             lines
@@ -384,7 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn fields_render_readably_and_plugin_text_is_escaped() {
-        let (_dir, console, logger, router) = router().await;
+        let (_dir, console, logger, router) = vosu_proptest::bounded!(router());
         let instance = PluginInstanceId::new(4);
         let message = "line one\nline two\r%fake-markup%".to_owned();
         let fields = CborValue::Map(vec![(
@@ -401,7 +401,7 @@ mod tests {
                 fields,
             },
         );
-        logger.flush().await.unwrap();
+        vosu_proptest::bounded!(logger.flush()).unwrap();
         let lines = console.lines.lock().unwrap();
         let line = lines
             .iter()

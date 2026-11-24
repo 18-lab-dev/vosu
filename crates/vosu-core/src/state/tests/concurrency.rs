@@ -53,7 +53,12 @@ fn concurrent_batches_never_interleave() {
         let pointers = ["/a", "/b", "/c", "/d"].map(|p| Pointer::parse(p).unwrap());
         let mut revision = 0;
         ready.send(()).unwrap();
+        let deadline = std::time::Instant::now();
         loop {
+            assert!(
+                deadline.elapsed() < Duration::from_secs(30),
+                "state reader did not observe both writers finishing within 30s"
+            );
             let state = reader_store.current(KEY).unwrap();
             assert!(state.revision >= revision);
             revision = state.revision;
@@ -77,10 +82,10 @@ fn concurrent_batches_never_interleave() {
     }
     drop(done);
     for _ in 0..3 {
-        received.recv_timeout(Duration::from_secs(60)).unwrap();
+        received.recv_timeout(Duration::from_secs(30)).unwrap();
     }
     for thread in threads {
-        thread.join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(thread).unwrap();
     }
     let final_state = store.current(KEY).unwrap();
     assert_eq!(final_state.revision, 40_001);

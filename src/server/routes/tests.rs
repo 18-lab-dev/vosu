@@ -1,4 +1,5 @@
 use super::*;
+use vosu_proptest::bounded;
 
 #[test]
 fn exact_methods_never_add_head_or_options() {
@@ -79,7 +80,7 @@ async fn tool_autostart_put_is_exact_and_requires_dashboard_csrf() {
                         .headers_mut()
                         .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
                 }
-                let status = dispatch(State(providers), request).await.status();
+                let status = bounded!(dispatch(State(providers), request)).status();
                 assert_eq!(
                     status,
                     if !dashboard {
@@ -132,7 +133,7 @@ async fn management_mutations_require_post_and_exact_browser_origin() {
                     .headers_mut()
                     .insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
             }
-            let response = dispatch(State(providers), request).await;
+            let response = bounded!(dispatch(State(providers), request));
             assert_eq!(
                 response.status(),
                 if origin == Some("http://localhost:24861") {
@@ -146,9 +147,7 @@ async fn management_mutations_require_post_and_exact_browser_origin() {
         if path != "/api/counters/settings/expendable" && !path.starts_with("/api/tools/") {
             let request = make_request(Method::GET, path, Body::empty());
             assert_eq!(
-                dispatch(State(providers(CachedJson::NotReady)), request)
-                    .await
-                    .status(),
+                bounded!(dispatch(State(providers(CachedJson::NotReady)), request)).status(),
                 StatusCode::NOT_FOUND,
                 "{path}"
             );
@@ -200,13 +199,12 @@ async fn websocket_upgrade_headers_never_fall_through_to_http_routes() {
         request
             .headers_mut()
             .insert(header::UPGRADE, HeaderValue::from_static("websocket"));
-        let response = dispatch(
+        let response = bounded!(dispatch(
             State(providers(CachedJson::Ready(Bytes::from_static(b"{}")))),
             request,
-        )
-        .await;
+        ));
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-        assert_eq!(body(response).await, "Not Found", "{path}");
+        assert_eq!(bounded!(body(response)), "Not Found", "{path}");
     }
 }
 
@@ -354,38 +352,37 @@ fn make_request(method: Method, uri: &str, body: Body) -> Request {
         .unwrap()
 }
 async fn body(response: Response) -> Bytes {
-    to_bytes(response.into_body(), usize::MAX).await.unwrap()
+    bounded!(to_bytes(response.into_body(), usize::MAX)).unwrap()
 }
 
 #[tokio::test]
 async fn dispatch_has_exact_not_found_and_not_ready_envelopes() {
     for method in [Method::HEAD, Method::OPTIONS, Method::POST] {
         let request = make_request(method, "/json", Body::empty());
-        let response = dispatch(State(providers(CachedJson::NotReady)), request).await;
+        let response = bounded!(dispatch(State(providers(CachedJson::NotReady)), request));
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-        assert_eq!(body(response).await, "Not Found");
+        assert_eq!(bounded!(body(response)), "Not Found");
     }
     let request = make_request(Method::GET, "/json", Body::empty());
-    let response = dispatch(State(providers(CachedJson::NotReady)), request).await;
+    let response = bounded!(dispatch(State(providers(CachedJson::NotReady)), request));
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(
-        body(response).await,
+        bounded!(body(response)),
         r#"{"error":"osu is not ready/running"}"#
     );
 
     let request = make_request(Method::GET, "/json/v2", Body::empty());
-    let response = dispatch(
+    let response = bounded!(dispatch(
         State(providers(CachedJson::Failed {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             body: Bytes::from_static(br#"{"error":"builder failed"}"#),
         })),
         request,
-    )
-    .await;
+    ));
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-    assert_eq!(body(response).await, r#"{"error":"builder failed"}"#);
+    assert_eq!(bounded!(body(response)), r#"{"error":"builder failed"}"#);
 }
 
 #[tokio::test]
@@ -402,10 +399,10 @@ async fn post_body_is_rejected_beyond_one_mibibyte() {
         header::ORIGIN,
         HeaderValue::from_static("http://localhost:24861"),
     );
-    let response = dispatch(State(providers(CachedJson::NotReady)), request).await;
+    let response = bounded!(dispatch(State(providers(CachedJson::NotReady)), request));
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-    assert_eq!(body(response).await, r#"{"error":"payload too large"}"#);
+    assert_eq!(bounded!(body(response)), r#"{"error":"payload too large"}"#);
 }
 
 #[tokio::test]
@@ -475,11 +472,10 @@ async fn real_request_authorization_precedes_http_and_websocket_delegation() {
         if let Some(value) = case.host {
             builder = builder.header(header::HOST, value);
         }
-        let response = dispatch(
+        let response = bounded!(dispatch(
             State(providers(CachedJson::Ready(Bytes::from_static(b"{}")))),
             builder.body(Body::empty()).unwrap(),
-        )
-        .await;
+        ));
         assert_eq!(
             response.status(),
             case.expected,
@@ -488,11 +484,11 @@ async fn real_request_authorization_precedes_http_and_websocket_delegation() {
         );
         if case.expected == StatusCode::FORBIDDEN {
             assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-            assert_eq!(body(response).await, "Not Found");
+            assert_eq!(bounded!(body(response)), "Not Found");
         }
     }
 
-    let response = dispatch(
+    let response = bounded!(dispatch(
         State(providers(CachedJson::Ready(Bytes::from_static(b"{}")))),
         Request::builder()
             .method(Method::GET)
@@ -501,13 +497,12 @@ async fn real_request_authorization_precedes_http_and_websocket_delegation() {
             .header(header::ORIGIN, "http://evil.example")
             .body(Body::empty())
             .unwrap(),
-    )
-    .await;
+    ));
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
 
     for path in ["/ws/", "/tokens/", "/websocket", "/websocket/v2/near-miss"] {
-        let response = dispatch(
+        let response = bounded!(dispatch(
             State(providers(CachedJson::Ready(Bytes::from_static(b"{}")))),
             Request::builder()
                 .method(Method::GET)
@@ -515,11 +510,10 @@ async fn real_request_authorization_precedes_http_and_websocket_delegation() {
                 .extension(ConnectInfo("127.0.0.1:1".parse::<SocketAddr>().unwrap()))
                 .body(Body::empty())
                 .unwrap(),
-        )
-        .await;
+        ));
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-        assert_eq!(body(response).await, "Not Found");
+        assert_eq!(bounded!(body(response)), "Not Found");
     }
 }
 
@@ -617,7 +611,7 @@ async fn overlay_rejects_every_browser_management_mutation_even_with_same_origin
             .headers_mut()
             .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
         assert_eq!(
-            dispatch(State(providers), request).await.status(),
+            bounded!(dispatch(State(providers), request)).status(),
             StatusCode::FORBIDDEN,
             "{path}"
         );
@@ -644,7 +638,10 @@ async fn dashboard_requires_token_and_provenance_and_never_serves_overlay_files(
                 .headers_mut()
                 .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
         }
-        assert_eq!(dispatch(State(providers), request).await.status(), expected);
+        assert_eq!(
+            bounded!(dispatch(State(providers), request)).status(),
+            expected
+        );
     }
     for path in [
         "/sample/",
@@ -658,11 +655,10 @@ async fn dashboard_requires_token_and_provenance_and_never_serves_overlay_files(
     ] {
         let (providers, _) = split_providers(true);
         assert_eq!(
-            dispatch(
+            bounded!(dispatch(
                 State(providers),
                 make_request(Method::GET, path, Body::empty())
-            )
-            .await
+            ))
             .status(),
             StatusCode::NOT_FOUND,
             "{path}"
@@ -690,7 +686,7 @@ async fn redirects_preserve_path_query_without_trusting_attacker_host() {
             request
                 .headers_mut()
                 .insert(header::HOST, HeaderValue::from_str(host).unwrap());
-            let response = dispatch(State(providers), request).await;
+            let response = bounded!(dispatch(State(providers), request));
             assert_eq!(response.status(), StatusCode::FOUND);
             assert_eq!(
                 response.headers()[header::LOCATION],
@@ -703,12 +699,11 @@ async fn redirects_preserve_path_query_without_trusting_attacker_host() {
 #[tokio::test]
 async fn discovery_publishes_effective_dashboard_origin_and_no_csrf_secret() {
     let (providers, origins) = split_providers(false);
-    let response = dispatch(
+    let response = bounded!(dispatch(
         State(providers.clone()),
         make_request(Method::GET, "/api/dashboard", Body::empty()),
-    )
-    .await;
-    let value: Value = serde_json::from_slice(&body(response).await).unwrap();
+    ));
+    let value: Value = serde_json::from_slice(&bounded!(body(response))).unwrap();
     assert_eq!(
         value,
         serde_json::json!({"origin":"http://127.0.0.1:24861"})
@@ -716,13 +711,12 @@ async fn discovery_publishes_effective_dashboard_origin_and_no_csrf_secret() {
     *origins.dashboard.write() = vosu_core::desktop::dashboard_url("0.0.0.0", 24862)
         .trim_end_matches('/')
         .to_owned();
-    let response = dispatch(
+    let response = bounded!(dispatch(
         State(providers),
         make_request(Method::GET, "/api/dashboard", Body::empty()),
-    )
-    .await;
+    ));
     assert_eq!(
-        serde_json::from_slice::<Value>(&body(response).await).unwrap(),
+        serde_json::from_slice::<Value>(&bounded!(body(response))).unwrap(),
         serde_json::json!({"origin":"http://127.0.0.1:24862"})
     );
 }
@@ -736,21 +730,19 @@ async fn dashboard_ux_reads_are_not_overlay_management_routes() {
     ] {
         let (providers, _) = split_providers(false);
         assert_eq!(
-            dispatch(
+            bounded!(dispatch(
                 State(providers),
                 make_request(Method::GET, path, Body::empty())
-            )
-            .await
+            ))
             .status(),
             StatusCode::NOT_FOUND,
         );
     }
     let (providers, _) = split_providers(true);
-    let response = dispatch(
+    let response = bounded!(dispatch(
         State(providers),
         make_request(Method::OPTIONS, "/api/dashboard", Body::empty()),
-    )
-    .await;
+    ));
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(
         !response
@@ -780,7 +772,7 @@ async fn dashboard_refuses_all_websocket_upgrades_and_untrusted_hosts() {
             HeaderValue::from_static("http://evil.example"),
         );
         assert_eq!(
-            dispatch(State(providers), request).await.status(),
+            bounded!(dispatch(State(providers), request)).status(),
             StatusCode::FORBIDDEN
         );
     }
@@ -801,7 +793,7 @@ async fn dashboard_refuses_all_websocket_upgrades_and_untrusted_hosts() {
                     .insert(header::HOST, HeaderValue::from_str(host).unwrap());
             }
             assert_eq!(
-                dispatch(State(providers), request).await.status(),
+                bounded!(dispatch(State(providers), request)).status(),
                 StatusCode::FORBIDDEN
             );
         }
@@ -833,11 +825,10 @@ async fn dashboard_html_has_inert_context_csp_and_never_allows_framing() {
     ] {
         let (mut providers, _) = split_providers(true);
         providers.delegate = Arc::new(Html);
-        let response = dispatch(
+        let response = bounded!(dispatch(
             State(providers),
             make_request(Method::GET, path, Body::empty()),
-        )
-        .await;
+        ));
         let csp = response.headers()[header::CONTENT_SECURITY_POLICY]
             .to_str()
             .unwrap();
@@ -847,7 +838,7 @@ async fn dashboard_html_has_inert_context_csp_and_never_allows_framing() {
             response.headers()[header::X_CONTENT_TYPE_OPTIONS],
             "nosniff"
         );
-        let html = String::from_utf8(body(response).await.to_vec()).unwrap();
+        let html = String::from_utf8(bounded!(body(response)).to_vec()).unwrap();
         assert!(html.contains("type=\"application/json\""));
         assert!(!html.contains("<script>"));
         assert!(!html.contains("window.VOSU_CSRF"));
@@ -890,7 +881,7 @@ async fn broker_http_permissions_are_exact_and_loopback_only() {
                 header::AUTHORIZATION,
                 HeaderValue::from_str(&format!("Bearer {credential}")).unwrap(),
             );
-            let response = dispatch(State(providers), request).await;
+            let response = bounded!(dispatch(State(providers), request));
             assert_eq!(
                 response.status(),
                 if permitted && peer.starts_with("127.") && credential == token {
@@ -916,7 +907,7 @@ async fn broker_http_revalidates_after_body_read_and_restart_rotates_token() {
         HeaderValue::from_str(&format!("Bearer {}", published["token"].as_str().unwrap())).unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let stream = futures_util::stream::once(async move {
-        rx.await.unwrap();
+        bounded!(rx).unwrap();
         Ok::<_, std::io::Error>(Bytes::from_static(b"{}"))
     });
     let (providers, _) = split_providers(false);
@@ -934,7 +925,7 @@ async fn broker_http_revalidates_after_body_read_and_restart_rotates_token() {
     assert!(futures_util::poll!(&mut pending).is_pending());
     broker.disable();
     tx.send(()).unwrap();
-    assert_eq!(pending.await.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(bounded!(pending).status(), StatusCode::UNAUTHORIZED);
 
     let replacement = Arc::new(super::super::broker::BrokerToken::new(path).unwrap());
     replacement
@@ -947,7 +938,7 @@ async fn broker_http_revalidates_after_body_read_and_restart_rotates_token() {
         .headers_mut()
         .insert(header::AUTHORIZATION, credential);
     assert_eq!(
-        dispatch(State(providers), request).await.status(),
+        bounded!(dispatch(State(providers), request)).status(),
         StatusCode::UNAUTHORIZED
     );
 }

@@ -411,7 +411,7 @@ fn pidfd_liveness_changes_only_when_retained_process_exits() {
     assert!(memory.is_alive());
 
     child.kill().expect("kill sleep");
-    child.wait().expect("reap sleep");
+    vosu_proptest::wait::child(&mut child).expect("reap sleep");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while memory.is_alive() && std::time::Instant::now() < deadline {
         std::thread::yield_now();
@@ -490,7 +490,7 @@ fn pidfd_rejects_reads_answered_after_the_retained_process_exits() {
     let syscall = ForeignAnswer::new(|| {});
     let memory = open(&exited, syscall.clone());
     exited.kill().expect("kill sleep");
-    exited.wait().expect("reap sleep");
+    vosu_proptest::wait::child(&mut exited).expect("reap sleep");
     let mut single = [9u8; 8];
     assert!(memory.read_exact(0x1000, &mut single).is_err());
     assert_eq!(single, [0; 8]);
@@ -1140,7 +1140,7 @@ fn bounded_proc_reads_limit_streams_with_zero_reported_length() {
     });
 
     let error = read_bounded(&path, 4096).unwrap_err();
-    writer.join().unwrap();
+    vosu_proptest::wait::JoinBounded::join_bounded(writer).unwrap();
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
 

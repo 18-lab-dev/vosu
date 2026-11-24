@@ -494,7 +494,11 @@ mod tests {
                     .is_ok()
                 {
                     self.entered.send(()).unwrap();
-                    self.release.lock().unwrap().recv().unwrap();
+                    self.release
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(10))
+                        .expect("timer delivery gate was not released within 10s");
                 }
                 self.fired.send((instance, timer)).unwrap();
             }
@@ -524,7 +528,10 @@ mod tests {
         let cancel = std::thread::spawn(move || registry2.cancel(instance, 1));
 
         release_tx.send(()).unwrap();
-        assert_eq!(cancel.join().unwrap(), vosu_status::VOSU_OK);
+        assert_eq!(
+            vosu_proptest::wait::JoinBounded::join_bounded(cancel).unwrap(),
+            vosu_status::VOSU_OK
+        );
         // The delivery that was already in flight when `cancel` was
         // called still completes: it raced `cancel`, it did not follow
         // it. The periodic timer's next tick can race `cancel` for the

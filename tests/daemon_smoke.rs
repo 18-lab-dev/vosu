@@ -11,6 +11,7 @@ use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+use vosu_proptest::bounded;
 
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -22,7 +23,7 @@ impl Drop for ChildGuard {
     fn drop(&mut self) {
         if let Some(child) = self.0.as_mut() {
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = vosu_proptest::wait::child(child);
         }
     }
 }
@@ -52,7 +53,7 @@ fn toml_config(port: u16, static_root: &Path) -> String {
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        match client.get(url).send().await {
+        match bounded!(client.get(url).send()) {
             Ok(response) => return response,
             Err(error) if Instant::now() < deadline => {
                 let _ = error;
@@ -184,7 +185,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .build()
         .unwrap();
     let base = format!("http://127.0.0.1:{port}");
-    let dashboard = wait_get(&client, &format!("{base}/")).await;
+    let dashboard = bounded!(wait_get(&client, &format!("{base}/")));
     assert_eq!(dashboard.status(), 200);
     assert!(
         !dashboard
@@ -193,7 +194,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "dashboard CSRF pages must not be CORS-readable by overlays"
     );
     let management = dashboard.url().origin().ascii_serialization();
-    let dashboard = dashboard.text().await.unwrap();
+    let dashboard = bounded!(dashboard.text()).unwrap();
     let csrf = dashboard
         .split("\"csrf\":\"")
         .nth(1)
@@ -201,22 +202,20 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .split('"')
         .next()
         .unwrap();
-    let discovery: serde_json::Value = client
-        .get(format!("{base}/api/dashboard"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let discovery: serde_json::Value = bounded!(
+        client
+            .get(format!("{base}/api/dashboard"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+    )
+    .unwrap();
     assert_eq!(discovery["origin"], management);
     assert!(!management.ends_with(&format!(":{port}")));
     for path in ["/seeded-counter/", "/seeded-counter/app.js"] {
         assert_eq!(
-            client
-                .get(format!("{management}{path}"))
-                .send()
-                .await
+            bounded!(client.get(format!("{management}{path}")).send())
                 .unwrap()
                 .status(),
             404
@@ -236,26 +235,28 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "/api/keys",
     ] {
         assert_eq!(
-            client
-                .post(format!("{base}{path}"))
-                .header("Origin", &base)
-                .json(&serde_json::json!({}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
+            bounded!(
+                client
+                    .post(format!("{base}{path}"))
+                    .header("Origin", &base)
+                    .json(&serde_json::json!({}))
+                    .send()
+            )
+            .unwrap()
+            .status(),
             403,
             "{path}"
         );
         assert_eq!(
-            client
-                .post(format!("{management}{path}"))
-                .header("Origin", &management)
-                .json(&serde_json::json!({}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
+            bounded!(
+                client
+                    .post(format!("{management}{path}"))
+                    .header("Origin", &management)
+                    .json(&serde_json::json!({}))
+                    .send()
+            )
+            .unwrap()
+            .status(),
             403,
             "missing CSRF: {path}"
         );
@@ -276,26 +277,18 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
     assert!(!config_home.join("vosu/vosu.env").exists());
     assert!(!config_home.join("vosu/tosu.env").exists());
-    let css = client
-        .get(format!("{base}/assets/homepage.css"))
-        .send()
-        .await
-        .unwrap();
+    let css = bounded!(client.get(format!("{base}/assets/homepage.css")).send()).unwrap();
     assert_eq!(css.status(), 200);
-    assert!(!css.bytes().await.unwrap().is_empty());
+    assert!(!bounded!(css.bytes()).unwrap().is_empty());
 
-    let seeded_counter = client
-        .get(format!("{base}/seeded-counter/"))
-        .send()
-        .await
-        .unwrap();
+    let seeded_counter = bounded!(client.get(format!("{base}/seeded-counter/")).send()).unwrap();
     assert_eq!(seeded_counter.status(), 200);
     assert_eq!(
         seeded_counter.headers()[reqwest::header::CONTENT_TYPE],
         "text/html; charset=utf-8"
     );
     assert_eq!(
-        seeded_counter.text().await.unwrap(),
+        bounded!(seeded_counter.text()).unwrap(),
         format!(r#"{seeded_index}<script>window.COUNTER_PATH="seeded-counter";</script>"#)
     );
 
@@ -305,83 +298,86 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
-    let seeded_counter_redirect = no_redirect_client
-        .get(format!("{base}/seeded-counter?foo=bar"))
-        .send()
-        .await
-        .unwrap();
+    let seeded_counter_redirect = bounded!(
+        no_redirect_client
+            .get(format!("{base}/seeded-counter?foo=bar"))
+            .send()
+    )
+    .unwrap();
     assert!(seeded_counter_redirect.status().is_redirection());
     assert_eq!(
         seeded_counter_redirect.headers()[reqwest::header::LOCATION],
         "/seeded-counter/?foo=bar"
     );
 
-    let missing_counter = no_redirect_client
-        .get(format!("{base}/definitely-missing"))
-        .send()
-        .await
-        .unwrap();
+    let missing_counter = bounded!(
+        no_redirect_client
+            .get(format!("{base}/definitely-missing"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(missing_counter.status(), 404);
 
-    let seeded_script_response = no_redirect_client
-        .get(format!("{base}/seeded-counter/app%2Ejs"))
-        .send()
-        .await
-        .unwrap();
+    let seeded_script_response = bounded!(
+        no_redirect_client
+            .get(format!("{base}/seeded-counter/app%2Ejs"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(seeded_script_response.status(), 200);
     assert_eq!(
-        seeded_script_response.bytes().await.unwrap().as_ref(),
+        bounded!(seeded_script_response.bytes()).unwrap().as_ref(),
         seeded_script.as_slice()
     );
     #[cfg(unix)]
     {
-        let alias = no_redirect_client
-            .get(format!("{base}/external-alias/"))
-            .send()
-            .await
-            .unwrap();
+        let alias = bounded!(
+            no_redirect_client
+                .get(format!("{base}/external-alias/"))
+                .send()
+        )
+        .unwrap();
         assert_eq!(alias.status(), 200);
         let mut expected_alias = alias_index.to_vec();
         expected_alias
             .extend_from_slice(br#"<script>window.COUNTER_PATH="external-alias";</script>"#);
         assert_eq!(
-            alias.bytes().await.unwrap().as_ref(),
+            bounded!(alias.bytes()).unwrap().as_ref(),
             expected_alias.as_slice()
         );
 
-        let alias_asset_response = no_redirect_client
-            .get(format!("{base}/external-alias/alias.js"))
-            .send()
-            .await
-            .unwrap();
+        let alias_asset_response = bounded!(
+            no_redirect_client
+                .get(format!("{base}/external-alias/alias.js"))
+                .send()
+        )
+        .unwrap();
         assert_eq!(alias_asset_response.status(), 200);
         assert_eq!(
-            alias_asset_response.bytes().await.unwrap().as_ref(),
+            bounded!(alias_asset_response.bytes()).unwrap().as_ref(),
             alias_asset
         );
     }
 
-    let directory_index = no_redirect_client
-        .get(format!("{base}/directory-index-counter/"))
-        .send()
-        .await
-        .unwrap();
+    let directory_index = bounded!(
+        no_redirect_client
+            .get(format!("{base}/directory-index-counter/"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(directory_index.status(), 404);
 
-    let not_ready = client.get(format!("{base}/json/v2")).send().await.unwrap();
+    let not_ready = bounded!(client.get(format!("{base}/json/v2")).send()).unwrap();
     assert_eq!(not_ready.status(), 500);
     assert_eq!(
-        not_ready.text().await.unwrap(),
+        bounded!(not_ready.text()).unwrap(),
         r#"{"error":"osu is not ready/running"}"#
     );
 
     let (mut subscription, mut buffered) =
-        websocket_connect(port, "/websocket/v2/subscribe", None).await;
-    subscription
-        .write_all(&masked_frame(0x1, br#"["/play/score"]"#))
-        .await
-        .unwrap();
-    let (opcode, payload) = read_server_frame(&mut subscription, &mut buffered).await;
+        bounded!(websocket_connect(port, "/websocket/v2/subscribe", None));
+    bounded!(subscription.write_all(&masked_frame(0x1, br#"["/play/score"]"#))).unwrap();
+    let (opcode, payload) = bounded!(read_server_frame(&mut subscription, &mut buffered));
     assert_eq!(opcode, 0x1, "initial subscription message must be text");
     let initial: serde_json::Value = serde_json::from_slice(&payload).unwrap();
     let initial = initial
@@ -392,24 +388,22 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(initial[1].as_u64().is_some(), "revision must be an integer");
     assert_eq!(initial[2], serde_json::json!([]));
 
-    subscription
-        .write_all(&masked_frame(0x8, &1000_u16.to_be_bytes()))
-        .await
-        .unwrap();
-    let (opcode, payload) = read_server_frame(&mut subscription, &mut buffered).await;
+    bounded!(subscription.write_all(&masked_frame(0x8, &1000_u16.to_be_bytes()))).unwrap();
+    let (opcode, payload) = bounded!(read_server_frame(&mut subscription, &mut buffered));
     assert_eq!(opcode, 0x8, "daemon must complete the WebSocket close");
     assert!(
         payload.is_empty() || payload.starts_with(&1000_u16.to_be_bytes()),
         "unexpected close payload: {payload:?}"
     );
 
-    let catalog = client
-        .get(format!("{base}/api/counters/search/seeded"))
-        .send()
-        .await
-        .unwrap();
+    let catalog = bounded!(
+        client
+            .get(format!("{base}/api/counters/search/seeded"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(catalog.status(), 200);
-    let body = catalog.text().await.unwrap();
+    let body = bounded!(catalog.text()).unwrap();
     assert!(body.contains("Seeded Counter"), "counter response: {body}");
 
     let settings_paths = SettingsStore::new(static_root.clone(), settings_root.clone());
@@ -454,23 +448,25 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             }
         })
     };
-    let seeded_settings = client
-        .get(format!("{base}/api/counters/settings/seeded-counter"))
-        .send()
-        .await
-        .unwrap();
+    let seeded_settings = bounded!(
+        client
+            .get(format!("{base}/api/counters/settings/seeded-counter"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(seeded_settings.status(), 200);
     assert_eq!(
-        seeded_settings.json::<serde_json::Value>().await.unwrap(),
+        bounded!(seeded_settings.json::<serde_json::Value>()).unwrap(),
         expected_settings("persisted seeded")
     );
 
     // A browser navigation/image with no provenance must never delete a counter.
-    let refused_get = client
-        .get(format!("{base}/api/counters/delete/seeded-counter"))
-        .send()
-        .await
-        .unwrap();
+    let refused_get = bounded!(
+        client
+            .get(format!("{base}/api/counters/delete/seeded-counter"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(refused_get.status(), 404);
     for origin in [
         None,
@@ -483,7 +479,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         if let Some(origin) = origin {
             request = request.header(reqwest::header::ORIGIN, origin);
         }
-        assert_eq!(request.send().await.unwrap().status(), 403);
+        assert_eq!(bounded!(request.send()).unwrap().status(), 403);
         assert!(counter.is_dir(), "rejected request deleted the counter");
     }
     for path in [
@@ -500,62 +496,57 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
                 request = request.header(reqwest::header::ORIGIN, origin);
             }
             assert_eq!(
-                request.send().await.unwrap().status(),
+                bounded!(request.send()).unwrap().status(),
                 if path.starts_with("/json") { 500 } else { 200 }
             );
         }
     }
     // Headerless stock command sockets retain getSettings, but cannot save.
-    let (mut commands, mut command_buffer) =
-        websocket_connect(port, "/websocket/commands?l=seeded-counter", None).await;
-    commands
-        .write_all(&masked_frame(1, b"getSettings:seeded-counter:"))
-        .await
-        .unwrap();
-    let (opcode, payload) = read_server_frame(&mut commands, &mut command_buffer).await;
+    let (mut commands, mut command_buffer) = bounded!(websocket_connect(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        None
+    ));
+    bounded!(commands.write_all(&masked_frame(1, b"getSettings:seeded-counter:"))).unwrap();
+    let (opcode, payload) = bounded!(read_server_frame(&mut commands, &mut command_buffer));
     assert_eq!(opcode, 1);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&payload).unwrap()["message"]["title"],
         "persisted seeded"
     );
-    commands
-        .write_all(&masked_frame(
-            1,
-            br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"csrf"}]"#,
-        ))
-        .await
-        .unwrap();
-    let (opcode, payload) = read_server_frame(&mut commands, &mut command_buffer).await;
+    bounded!(commands.write_all(&masked_frame(
+        1,
+        br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"csrf"}]"#,
+    )))
+    .unwrap();
+    let (opcode, payload) = bounded!(read_server_frame(&mut commands, &mut command_buffer));
     assert_eq!(opcode, 8);
     assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 1008);
     drop(commands);
 
     let changed_legacy_schema = b"root JSON changed after registration";
     fs::write(&legacy_schema_json_path, changed_legacy_schema).unwrap();
-    let rediscovered = client
-        .get(format!("{base}/api/counters/search/seeded"))
-        .send()
-        .await
-        .unwrap();
+    let rediscovered = bounded!(
+        client
+            .get(format!("{base}/api/counters/search/seeded"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(rediscovered.status(), 200);
     assert!(
-        rediscovered
-            .text()
-            .await
+        bounded!(rediscovered.text())
             .unwrap()
             .contains("Seeded Counter"),
         "registered counter disappeared after root JSON changed"
     );
-    let unchanged_settings = client
-        .get(format!("{base}/api/counters/settings/seeded-counter"))
-        .send()
-        .await
-        .unwrap();
+    let unchanged_settings = bounded!(
+        client
+            .get(format!("{base}/api/counters/settings/seeded-counter"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(
-        unchanged_settings
-            .json::<serde_json::Value>()
-            .await
-            .unwrap(),
+        bounded!(unchanged_settings.json::<serde_json::Value>()).unwrap(),
         expected_settings("persisted seeded")
     );
     assert_eq!(
@@ -569,44 +560,41 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
 
     // User-managed keys: scoped HTTP, native and browser sockets, live revocation.
-    let created: serde_json::Value = client.post(format!("{management}/api/keys"))
+    let created: serde_json::Value = bounded!(client.post(format!("{management}/api/keys"))
         .header("Origin", &management).header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({"action":"create","name":"Smoke settings","scopes":["settings:write"]}))
-        .send().await.unwrap().json().await.unwrap();
+        .send().await.unwrap().json()).unwrap();
     let key = created["key"].as_str().unwrap();
     let id = created["entry"]["id"].as_str().unwrap();
     assert_eq!(
-        client
-            .get(format!("{base}/api/keys"))
-            .send()
-            .await
+        bounded!(client.get(format!("{base}/api/keys")).send())
             .unwrap()
             .status(),
         403
     );
     assert_eq!(
-        client
-            .get(format!("{management}/api/keys"))
-            .header("Origin", &management)
-            .header("X-Vosu-CSRF", csrf)
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        bounded!(
+            client
+                .get(format!("{management}/api/keys"))
+                .header("Origin", &management)
+                .header("X-Vosu-CSRF", csrf)
+                .send()
+        )
+        .unwrap()
+        .status(),
         200
     );
-    let saved = client
-        .post(format!("{base}/api/counters/settings/seeded-counter"))
-        .bearer_auth(key)
-        .json(&serde_json::json!([{"uniqueID":"title","value":"key write"}]))
-        .send()
-        .await
-        .unwrap();
+    let saved = bounded!(
+        client
+            .post(format!("{base}/api/counters/settings/seeded-counter"))
+            .bearer_auth(key)
+            .json(&serde_json::json!([{"uniqueID":"title","value":"key write"}]))
+            .send()
+    )
+    .unwrap();
     assert_eq!(saved.status(), 200);
     assert!(
-        saved
-            .json::<serde_json::Value>()
-            .await
+        bounded!(saved.json::<serde_json::Value>())
             .unwrap()
             .get("error")
             .is_none()
@@ -619,108 +607,111 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "/api/counters/download/test",
     ] {
         assert_eq!(
-            client
-                .post(format!("{base}{path}"))
-                .bearer_auth(key)
-                .json(&serde_json::json!({}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
+            bounded!(
+                client
+                    .post(format!("{base}{path}"))
+                    .bearer_auth(key)
+                    .json(&serde_json::json!({}))
+                    .send()
+            )
+            .unwrap()
+            .status(),
             401,
             "{path}"
         );
     }
-    let profiles: serde_json::Value = client.post(format!("{management}/api/keys")).header("Origin", &management).header("X-Vosu-CSRF", csrf)
+    let profiles: serde_json::Value = bounded!(client.post(format!("{management}/api/keys")).header("Origin", &management).header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({"action":"create","name":"Smoke profiles","scopes":["profiles:manage"]}))
-        .send().await.unwrap().json().await.unwrap();
+        .send().await.unwrap().json()).unwrap();
     let profiles_key = profiles["key"].as_str().unwrap();
     assert_eq!(
-        client
-            .post(format!("{base}/api/counters/settings/seeded-counter"))
-            .bearer_auth(profiles_key)
-            .json(&serde_json::json!([]))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        bounded!(
+            client
+                .post(format!("{base}/api/counters/settings/seeded-counter"))
+                .bearer_auth(profiles_key)
+                .json(&serde_json::json!([]))
+                .send()
+        )
+        .unwrap()
+        .status(),
         401
     );
     assert_eq!(
-        client
-            .post(format!("{base}/api/counters/profiles"))
-            .bearer_auth(profiles_key)
-            .json(&serde_json::json!({"action":"create","name":"key-profile"}))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        bounded!(
+            client
+                .post(format!("{base}/api/counters/profiles"))
+                .bearer_auth(profiles_key)
+                .json(&serde_json::json!({"action":"create","name":"key-profile"}))
+                .send()
+        )
+        .unwrap()
+        .status(),
         200
     );
-    let (mut key_socket, mut key_buffer) = websocket_connect_with_bearer(
+    let (mut key_socket, mut key_buffer) = bounded!(websocket_connect_with_bearer(
         port,
         "/websocket/commands?l=seeded-counter",
         None,
         Some(key),
         101,
-    )
-    .await;
-    let (mut browser_socket, mut browser_buffer) = websocket_connect_with_authorization(
+    ));
+    let (mut browser_socket, mut browser_buffer) = bounded!(websocket_connect_with_authorization(
         port,
         "/websocket/commands?l=seeded-counter",
         Some("https://third-party.example"),
         &format!("Sec-WebSocket-Protocol: vosu.key, vosu.key.{key}\r\n"),
         101,
+    ));
+    bounded!(
+        client
+            .post(format!("{management}/api/keys"))
+            .header("Origin", &management)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!({"action":"revoke","id":id}))
+            .send()
     )
-    .await;
-    client
-        .post(format!("{management}/api/keys"))
-        .header("Origin", &management)
-        .header("X-Vosu-CSRF", csrf)
-        .json(&serde_json::json!({"action":"revoke","id":id}))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
+    .unwrap()
+    .error_for_status()
+    .unwrap();
     // Both clients remain idle: revocation itself must close them, without
     // waiting for an inbound write. A subsequent settings relay cannot reach them.
-    client
-        .post(format!("{management}/api/counters/settings/seeded-counter"))
-        .header("Origin", &management)
-        .header("X-Vosu-CSRF", csrf)
-        .json(&serde_json::json!([{"uniqueID":"title","value":"after revoke"}]))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
+    bounded!(
+        client
+            .post(format!("{management}/api/counters/settings/seeded-counter"))
+            .header("Origin", &management)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!([{"uniqueID":"title","value":"after revoke"}]))
+            .send()
+    )
+    .unwrap()
+    .error_for_status()
+    .unwrap();
     for (socket, buffered) in [
         (&mut key_socket, &mut key_buffer),
         (&mut browser_socket, &mut browser_buffer),
     ] {
-        let (opcode, payload) = read_server_frame(socket, buffered).await;
+        let (opcode, payload) = bounded!(read_server_frame(socket, buffered));
         assert_eq!(
             opcode, 8,
             "revoked idle sockets must not receive relayed settings"
         );
         assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 1008);
     }
-    let _ = websocket_connect_with_bearer(port, "/websocket/commands", None, Some(key), 401).await;
-    let (mut query_socket, mut query_buffer) = websocket_connect(
+    let _ = bounded!(websocket_connect_with_bearer(
+        port,
+        "/websocket/commands",
+        None,
+        Some(key),
+        401
+    ));
+    let (mut query_socket, mut query_buffer) = bounded!(websocket_connect(
         port,
         &format!("/websocket/commands?key={profiles_key}"),
         None,
-    )
-    .await;
-    query_socket
-        .write_all(&masked_frame(1, b"saveSettings:seeded-counter:[]"))
-        .await
-        .unwrap();
+    ));
+    bounded!(query_socket.write_all(&masked_frame(1, b"saveSettings:seeded-counter:[]"))).unwrap();
     assert_eq!(
-        read_server_frame(&mut query_socket, &mut query_buffer)
-            .await
-            .0,
+        bounded!(read_server_frame(&mut query_socket, &mut query_buffer)).0,
         8
     );
 
@@ -743,75 +734,75 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         (format!("Authorization: bearer {token}\r\n"), 101),
         ("Authorization: Basic cached\r\n".to_owned(), 101),
     ] {
-        let _ = websocket_connect_with_authorization(
+        let _ = bounded!(websocket_connect_with_authorization(
             port,
             "/websocket/commands?l=seeded-counter",
             None,
             &authorization,
             status,
-        )
-        .await;
+        ));
     }
-    let _ = websocket_connect_with_bearer(port, "/websocket/v2", None, Some(&wrong), 101).await;
-    let uncredentialed = client
-        .get(format!("{base}/websocket/commands"))
-        .send()
-        .await
+    let _ = bounded!(websocket_connect_with_bearer(
+        port,
+        "/websocket/v2",
+        None,
+        Some(&wrong),
+        101
+    ));
+    let uncredentialed = bounded!(client.get(format!("{base}/websocket/commands")).send())
         .unwrap()
         .status();
     for credential in [token, &wrong] {
-        let response = client
-            .get(format!("{base}/websocket/commands"))
-            .bearer_auth(credential)
-            .send()
-            .await
-            .unwrap();
+        let response = bounded!(
+            client
+                .get(format!("{base}/websocket/commands"))
+                .bearer_auth(credential)
+                .send()
+        )
+        .unwrap();
         assert_eq!(response.status(), uncredentialed);
         assert_ne!(response.status(), 401);
     }
-    let saved = client
-        .post(format!("{base}/api/counters/settings/seeded-counter"))
-        .bearer_auth(token)
-        .json(&serde_json::json!([{"uniqueID":"title","value":"native HTTP"}]))
-        .send()
-        .await
-        .unwrap();
+    let saved = bounded!(
+        client
+            .post(format!("{base}/api/counters/settings/seeded-counter"))
+            .bearer_auth(token)
+            .json(&serde_json::json!([{"uniqueID":"title","value":"native HTTP"}]))
+            .send()
+    )
+    .unwrap();
     assert_eq!(saved.status(), 200);
     assert_eq!(
-        saved.json::<serde_json::Value>().await.unwrap(),
+        bounded!(saved.json::<serde_json::Value>()).unwrap(),
         serde_json::json!({"result":"success"})
     );
-    let _ = websocket_connect_with_bearer(
+    let _ = bounded!(websocket_connect_with_bearer(
         port,
         "/websocket/commands?l=seeded-counter",
         Some(&base),
         Some("stale"),
         401,
-    )
-    .await;
-    let (mut observer, mut observer_buffer) =
-        websocket_connect(port, "/websocket/commands?l=seeded-counter", None).await;
-    observer
-        .write_all(&masked_frame(1, b"getSettings:seeded-counter:"))
-        .await
-        .unwrap();
-    let _ = read_server_frame(&mut observer, &mut observer_buffer).await;
-    let (mut broker, _) = websocket_connect_with_bearer(
+    ));
+    let (mut observer, mut observer_buffer) = bounded!(websocket_connect(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        None
+    ));
+    bounded!(observer.write_all(&masked_frame(1, b"getSettings:seeded-counter:"))).unwrap();
+    let _ = bounded!(read_server_frame(&mut observer, &mut observer_buffer));
+    let (mut broker, _) = bounded!(websocket_connect_with_bearer(
         port,
         "/websocket/commands?l=seeded-counter",
         None,
         Some(token),
         101,
-    )
-    .await;
-    broker
-        .write_all(&masked_frame(
-            1,
-            br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"broker write"}]"#,
-        ))
-        .await
-        .unwrap();
-    let (opcode, payload) = read_server_frame(&mut observer, &mut observer_buffer).await;
+    ));
+    bounded!(broker.write_all(&masked_frame(
+        1,
+        br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"broker write"}]"#,
+    )))
+    .unwrap();
+    let (opcode, payload) = bounded!(read_server_frame(&mut observer, &mut observer_buffer));
     assert_eq!(opcode, 1);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&payload).unwrap()["message"][0]["value"],
@@ -819,14 +810,15 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let persisted = client
-            .get(format!("{base}/api/counters/settings/seeded-counter"))
-            .send()
-            .await
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap();
+        let persisted = bounded!(
+            client
+                .get(format!("{base}/api/counters/settings/seeded-counter"))
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+        )
+        .unwrap();
         if persisted == expected_settings("broker write") {
             break;
         }
@@ -844,25 +836,27 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     drop(broker);
     drop(observer);
     // The stock hosted settings protocol needs no token or new message shape.
-    let (mut hosted, _) =
-        websocket_connect(port, "/websocket/commands?l=seeded-counter", Some(&base)).await;
-    hosted
-        .write_all(&masked_frame(
-            1,
-            br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"hosted write"}]"#,
-        ))
-        .await
-        .unwrap();
+    let (mut hosted, _) = bounded!(websocket_connect(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        Some(&base)
+    ));
+    bounded!(hosted.write_all(&masked_frame(
+        1,
+        br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"hosted write"}]"#,
+    )))
+    .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let values = client
-            .get(format!("{base}/api/counters/settings/seeded-counter"))
-            .send()
-            .await
-            .unwrap()
-            .json::<serde_json::Value>()
-            .await
-            .unwrap();
+        let values = bounded!(
+            client
+                .get(format!("{base}/api/counters/settings/seeded-counter"))
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+        )
+        .unwrap();
         if values == expected_settings("hosted write") {
             break;
         }
@@ -874,42 +868,42 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     }
     drop(hosted);
 
-    let saved = client
-        .post(format!("{management}/api/counters/settings/seeded-counter"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(r#"[{"uniqueID":"title","value":"saved over TOML"}]"#)
-        .send()
-        .await
-        .unwrap();
+    let saved = bounded!(
+        client
+            .post(format!("{management}/api/counters/settings/seeded-counter"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(r#"[{"uniqueID":"title","value":"saved over TOML"}]"#)
+            .send()
+    )
+    .unwrap();
     assert_eq!(saved.status(), 200);
     assert_eq!(
-        saved.json::<serde_json::Value>().await.unwrap(),
+        bounded!(saved.json::<serde_json::Value>()).unwrap(),
         serde_json::json!({ "result": "success" })
     );
-    let persisted_settings = client
-        .get(format!("{base}/api/counters/settings/seeded-counter"))
-        .send()
-        .await
-        .unwrap();
+    let persisted_settings = bounded!(
+        client
+            .get(format!("{base}/api/counters/settings/seeded-counter"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(
-        persisted_settings
-            .json::<serde_json::Value>()
-            .await
-            .unwrap(),
+        bounded!(persisted_settings.json::<serde_json::Value>()).unwrap(),
         expected_settings("saved over TOML")
     );
     assert!(values_toml_path.is_file());
     #[cfg(unix)]
     {
-        let alias_catalog = client
-            .get(format!("{base}/api/counters/search/alias"))
-            .send()
-            .await
-            .unwrap();
+        let alias_catalog = bounded!(
+            client
+                .get(format!("{base}/api/counters/search/alias"))
+                .send()
+        )
+        .unwrap();
         assert_eq!(alias_catalog.status(), 200);
-        let alias_body = alias_catalog.text().await.unwrap();
+        let alias_body = bounded!(alias_catalog.text()).unwrap();
         assert!(
             alias_body.contains("External Alias Counter"),
             "counter response: {alias_body}"
@@ -918,40 +912,40 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             alias_body.contains("/external-alias/"),
             "counter alias missing from response: {alias_body}"
         );
-        let alias_settings = client
-            .get(format!("{base}/api/counters/settings/external-alias"))
-            .send()
-            .await
-            .unwrap();
+        let alias_settings = bounded!(
+            client
+                .get(format!("{base}/api/counters/settings/external-alias"))
+                .send()
+        )
+        .unwrap();
         assert_eq!(alias_settings.status(), 200);
         assert!(
-            alias_settings
-                .text()
-                .await
+            bounded!(alias_settings.text())
                 .unwrap()
                 .contains(r#""uniqueID":"title""#),
             "symlinked overlay settings were not returned"
         );
     }
 
-    let rejected = client.post(format!(
+    let rejected = bounded!(client.post(format!(
         "{management}/api/counters/download/http%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
-    )).header(reqwest::header::ORIGIN, &management).header("X-Vosu-CSRF", csrf).send().await.unwrap();
+    )).header(reqwest::header::ORIGIN, &management).header("X-Vosu-CSRF", csrf).send()).unwrap();
     assert_eq!(rejected.status(), 200);
-    let rejected_body = rejected.text().await.unwrap();
+    let rejected_body = bounded!(rejected.text()).unwrap();
     assert!(
         rejected_body.contains("error"),
         "loopback download was not rejected: {rejected_body}"
     );
     assert!(!static_root.join("blocked").exists());
 
-    let report = client
-        .post(format!("{management}/api/generateReport"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .send()
-        .await
-        .unwrap();
+    let report = bounded!(
+        client
+            .post(format!("{management}/api/generateReport"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .send()
+    )
+    .unwrap();
     assert_eq!(report.status(), 200);
     let disposition = report
         .headers()
@@ -960,13 +954,13 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .unwrap_or_default()
         .to_owned();
     assert!(disposition.contains("vosu-report-") && disposition.ends_with(".html\""));
-    assert!(report.text().await.unwrap().contains("vosu"));
+    assert!(bounded!(report.text()).unwrap().contains("vosu"));
 
     // Reload rejection retains the configuration and listener; it does not make
     // a focused game unready. /json therefore depends on the host's osu! state.
-    let settings_before = client.get(format!("{base}/settings")).send().await.unwrap();
+    let settings_before = bounded!(client.get(format!("{base}/settings")).send()).unwrap();
     assert_eq!(settings_before.status(), 200);
-    let settings_before = settings_before.text().await.unwrap();
+    let settings_before = bounded!(settings_before.text()).unwrap();
     let malformed_port = available_port();
     let malformed_config = format!("SERVER_PORT = {malformed_port}\nBROKEN = [\n");
     fs::write(&current_config, &malformed_config).unwrap();
@@ -976,13 +970,10 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .timeout(Duration::from_secs(15))
         .build()
         .unwrap();
-    let last_good = last_good_client
-        .get(format!("{base}/settings"))
-        .send()
-        .await
+    let last_good = bounded!(last_good_client.get(format!("{base}/settings")).send())
         .expect("malformed TOML must leave the last-good listener accepting");
     assert_eq!(last_good.status(), 200);
-    assert_eq!(last_good.text().await.unwrap(), settings_before);
+    assert_eq!(bounded!(last_good.text()).unwrap(), settings_before);
     assert_eq!(
         fs::read_to_string(&current_config).unwrap(),
         malformed_config
@@ -994,20 +985,21 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let next_port = available_port();
     fs::write(&current_config, toml_config(next_port, &static_root)).unwrap();
     let next_base = format!("http://127.0.0.1:{next_port}");
-    let rebound = wait_get(&client, &format!("{next_base}/settings")).await;
+    let rebound = bounded!(wait_get(&client, &format!("{next_base}/settings")));
     assert_eq!(rebound.status(), 200);
     assert_eq!(
         rebound.url().origin().ascii_serialization(),
         management,
         "overlay rebind must leave dashboard listener unchanged"
     );
-    let reloaded_settings = client
-        .get(format!("{next_base}/api/counters/settings/seeded-counter"))
-        .send()
-        .await
-        .unwrap();
+    let reloaded_settings = bounded!(
+        client
+            .get(format!("{next_base}/api/counters/settings/seeded-counter"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(
-        reloaded_settings.json::<serde_json::Value>().await.unwrap(),
+        bounded!(reloaded_settings.json::<serde_json::Value>()).unwrap(),
         expected_settings("saved over TOML")
     );
     assert_eq!(
@@ -1025,44 +1017,45 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     .unwrap();
     let management = format!("http://127.0.0.1:{next_dashboard_port}");
     assert_eq!(
-        wait_get(&client, &format!("{management}/settings"))
-            .await
-            .status(),
+        bounded!(wait_get(&client, &format!("{management}/settings"))).status(),
         200
     );
     assert_eq!(
-        client
-            .get(format!("{next_base}/api/counters/settings/seeded-counter"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
+        bounded!(
+            client
+                .get(format!("{next_base}/api/counters/settings/seeded-counter"))
+                .send()
+        )
+        .unwrap()
+        .status(),
         200,
         "dashboard rebind must leave overlay listener unchanged"
     );
-    let discovery: serde_json::Value = client
-        .get(format!("{next_base}/api/dashboard"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let discovery: serde_json::Value = bounded!(
+        client
+            .get(format!("{next_base}/api/dashboard"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+    )
+    .unwrap();
     assert_eq!(discovery["origin"], management);
-    let saved = client
-        .post(format!("{management}/api/settingsSave"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .json(&serde_json::json!({
-            "SHOW_MP_COMMANDS": true,
-            "V2_SUBSCRIPTION_DEBOUNCE": 1.125
-        }))
-        .send()
-        .await
-        .expect("save uppercase JSON server settings");
+    let saved = bounded!(
+        client
+            .post(format!("{management}/api/settingsSave"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!({
+                "SHOW_MP_COMMANDS": true,
+                "V2_SUBSCRIPTION_DEBOUNCE": 1.125
+            }))
+            .send()
+    )
+    .expect("save uppercase JSON server settings");
     assert_eq!(saved.status(), 200);
     assert_eq!(
-        saved.json::<serde_json::Value>().await.unwrap(),
+        bounded!(saved.json::<serde_json::Value>()).unwrap(),
         serde_json::json!({"status":"updated"})
     );
     let persisted: toml::Table =
@@ -1081,13 +1074,14 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         Some(1.125)
     );
 
-    let deleted = client
-        .post(format!("{management}/api/counters/delete/seeded-counter"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .send()
-        .await
-        .unwrap();
+    let deleted = bounded!(
+        client
+            .post(format!("{management}/api/counters/delete/seeded-counter"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .send()
+    )
+    .unwrap();
     assert_eq!(deleted.status(), 200);
     assert!(!counter.exists());
 

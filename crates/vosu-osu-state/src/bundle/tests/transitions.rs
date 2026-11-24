@@ -1,6 +1,7 @@
 mod pause;
 
 use super::*;
+use vosu_proptest::bounded;
 
 #[test]
 fn settings_snapshots_share_defaults_and_copy_only_changed_values() {
@@ -216,10 +217,7 @@ async fn user_profile_initializes_and_retains_last_connected_value() {
     )
     .user(Ok(ReadStatus::Ready(user.clone())))
     .publish();
-    let initial = bundle
-        .apply_regular(initial)
-        .await
-        .expect("initial guest user transition");
+    let initial = bounded!(bundle.apply_regular(initial)).expect("initial guest user transition");
     assert_eq!(
         initial
             .publication
@@ -239,10 +237,7 @@ async fn user_profile_initializes_and_retains_last_connected_value() {
     )
     .user(Ok(ReadStatus::Ready(user.clone())))
     .publish();
-    let connected = bundle
-        .apply_regular(connected)
-        .await
-        .expect("connected user transition");
+    let connected = bounded!(bundle.apply_regular(connected)).expect("connected user transition");
     assert_eq!(
         connected
             .publication
@@ -262,10 +257,8 @@ async fn user_profile_initializes_and_retains_last_connected_value() {
     )
     .user(Ok(ReadStatus::Ready(user)))
     .publish();
-    let reconnecting = bundle
-        .apply_regular(reconnecting)
-        .await
-        .expect("reconnecting user transition");
+    let reconnecting =
+        bounded!(bundle.apply_regular(reconnecting)).expect("reconnecting user transition");
     assert_eq!(
         reconnecting
             .publication
@@ -339,10 +332,7 @@ async fn regular_transition_is_source_ordered_and_rewind_resets_epoch() {
         vec![raw_leaderboard_player()],
     ))))
     .publish();
-    let committed = bundle
-        .apply_regular(first)
-        .await
-        .expect("regular transition");
+    let committed = bounded!(bundle.apply_regular(first)).expect("regular transition");
     assert_eq!(committed.context.status, GameState::Play.value() as i64);
     assert_eq!(committed.context.mode, 3);
     assert_eq!(
@@ -374,10 +364,7 @@ async fn regular_transition_is_source_ordered_and_rewind_resets_epoch() {
     ))))
     .gameplay(Ok(ReadStatus::Ready(score(3, 10))))
     .publish();
-    let rewound = bundle
-        .apply_regular(rewind)
-        .await
-        .expect("rewind transition");
+    let rewound = bounded!(bundle.apply_regular(rewind)).expect("rewind transition");
     assert!(rewound.context.reset_epoch > epoch);
     assert_eq!(rewound.context.committed_hit_error_index, 0);
     assert_eq!(rewound.context.accepted_precise_sequence, 0);
@@ -393,10 +380,7 @@ async fn mismatched_calculation_key_cannot_mutate_published_state() {
     .menu(Ok(ReadStatus::Ready(RawMenu::Full(menu("keyed-map")))))
     .audio_velocity_base(Ok(ReadStatus::Ready(vec![0.0; 40])))
     .publish();
-    let committed = bundle
-        .apply_regular(regular)
-        .await
-        .expect("calculation transition");
+    let committed = bounded!(bundle.apply_regular(regular)).expect("calculation transition");
     assert_eq!(committed.publication.regular.beatmap.full_pp, 0.0);
     assert!(committed.publication.regular.beatmap.source_key.is_none());
     assert_eq!(committed.publication.regular.result_screen.pp, 0.0);
@@ -425,10 +409,7 @@ async fn calculation_uses_post_read_paths_and_metadata_even_when_pp_disabled() {
     .menu(Ok(ReadStatus::Ready(RawMenu::Full(menu("fresh-map")))))
     .publish();
 
-    let committed = bundle
-        .apply_regular(regular)
-        .await
-        .expect("metadata calculation");
+    let committed = bounded!(bundle.apply_regular(regular)).expect("metadata calculation");
     assert!(!committed.next_capture.read_mania_scroll_speed);
     assert!(committed.next_capture.show_mp_commands);
     let requests = requests
@@ -484,9 +465,7 @@ async fn first_play_calculation_uses_fresh_score_mode_and_mods() {
     .gameplay(Ok(ReadStatus::Ready(fresh_score)))
     .publish();
 
-    let publication = bundle
-        .apply_regular(regular)
-        .await
+    let publication = bounded!(bundle.apply_regular(regular))
         .expect("first play calculation")
         .publication;
     let requests = requests
@@ -523,15 +502,11 @@ async fn retry_calculation_reuses_entry_and_publishes_exact_current_snapshot() {
         .publish()
     };
 
-    let before_retry = bundle
-        .apply_regular(transition(1, 500, 50))
-        .await
+    let before_retry = bounded!(bundle.apply_regular(transition(1, 500, 50)))
         .expect("initial gameplay publication")
         .publication;
-    let retried = bundle
-        .apply_regular(transition(2, 100, 10))
-        .await
-        .expect("retry publication");
+    let retried =
+        bounded!(bundle.apply_regular(transition(2, 100, 10))).expect("retry publication");
 
     let requests = requests
         .lock()
@@ -582,27 +557,21 @@ async fn editor_graph_change_retries_same_time_after_transient_failure() {
         .menu(Ok(ReadStatus::Ready(raw_menu)))
         .publish()
     };
-    bundle
-        .apply_regular(snapshot(1, RawMenu::Full(menu("old"))))
-        .await
+    bounded!(bundle.apply_regular(snapshot(1, RawMenu::Full(menu("old")))))
         .expect("initial editor calculation");
     failures.store(1, std::sync::atomic::Ordering::Release);
-    let transient = bundle
-        .apply_regular(snapshot(2, RawMenu::Full(menu("new"))))
-        .await
+    let transient = bounded!(bundle.apply_regular(snapshot(2, RawMenu::Full(menu("new")))))
         .expect("transient editor calculation is retained");
     assert_eq!(transient.next_capture.first_object_time, None);
     assert_eq!(bundle.previous_state_key, "old:0:");
-    bundle
-        .apply_regular(snapshot(
-            3,
-            RawMenu::Checksum(vosu_osu_model::memory::MenuChecksum {
-                gamemode: 0,
-                ranked_status: 4.0,
-            }),
-        ))
-        .await
-        .expect("same-time editor retry succeeds");
+    bounded!(bundle.apply_regular(snapshot(
+        3,
+        RawMenu::Checksum(vosu_osu_model::memory::MenuChecksum {
+            gamemode: 0,
+            ranked_status: 4.0,
+        }),
+    )))
+    .expect("same-time editor retry succeeds");
     let requests = requests
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -630,10 +599,7 @@ async fn retry_not_ready_preserves_a_default_gameplay_marker() {
     .gameplay(Ok(ReadStatus::NotReady))
     .publish();
 
-    bundle
-        .apply_regular(snapshot)
-        .await
-        .expect("retry with player loader not ready");
+    bounded!(bundle.apply_regular(snapshot)).expect("retry with player loader not ready");
     assert!(bundle.gameplay.is_default_state);
     assert_eq!(bundle.calculation_reset_generation, 1);
 }
@@ -656,9 +622,7 @@ async fn backward_seek_after_first_object_retains_accumulated_hit_errors() {
     .gameplay(Ok(ReadStatus::NotReady))
     .publish();
 
-    bundle
-        .apply_regular(snapshot)
-        .await
+    bounded!(bundle.apply_regular(snapshot))
         .expect("backward seek remains in the active play epoch");
 
     assert_eq!(bundle.gameplay.hit_errors.all, [0.0, 1.0, -1.0]);
@@ -686,10 +650,8 @@ async fn stable_tourney_spectator_preserves_global_rank() {
     })))
     .publish();
 
-    let committed = bundle
-        .apply_regular(snapshot)
-        .await
-        .expect("stable tournament spectator publication");
+    let committed =
+        bounded!(bundle.apply_regular(snapshot)).expect("stable tournament spectator publication");
 
     assert_eq!(
         committed
@@ -719,10 +681,8 @@ async fn stable_global_not_ready_and_tourney_debounce_do_not_abort_later_updates
     .settings(Ok(ReadStatus::Ready(settings)))
     .publish();
 
-    let committed = bundle
-        .apply_regular(regular)
-        .await
-        .expect("stable stale global transition");
+    let committed =
+        bounded!(bundle.apply_regular(regular)).expect("stable stale global transition");
     assert!(committed.publication.regular.menu.checksum.is_none());
     assert_eq!(committed.publication.regular.global.game_folder, "/game");
     assert_eq!(
@@ -746,7 +706,7 @@ async fn stable_global_not_ready_and_tourney_debounce_do_not_abort_later_updates
     )
     .settings(Ok(ReadStatus::Ready(settings)))
     .publish();
-    let gated = lazer.apply_regular(gated).await.expect("lazer global gate");
+    let gated = bounded!(lazer.apply_regular(gated)).expect("lazer global gate");
     assert_eq!(gated.publication.regular.settings.values["groupType"], 0);
 }
 
@@ -764,9 +724,7 @@ async fn precise_publication_reuses_regular_arc_and_regular_reuses_clean_precise
     .gameplay(Ok(ReadStatus::Ready(score(0, 50))))
     .leaderboard(Ok(ReadStatus::Ready((true, None, leaderboard))))
     .publish();
-    let first = bundle
-        .apply_regular(regular)
-        .await
+    let first = bounded!(bundle.apply_regular(regular))
         .expect("initial regular publication")
         .publication;
     let regular_ptr = first.regular.gameplay.leaderboard_scores.as_ptr();
@@ -789,9 +747,7 @@ async fn precise_publication_reuses_regular_arc_and_regular_reuses_clean_precise
     )
     .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(1, vec![2.0]))))
     .publish();
-    let precise_publication = bundle
-        .apply_precise(precise)
-        .await
+    let precise_publication = bounded!(bundle.apply_precise(precise))
         .expect("precise publication")
         .publication;
     assert!(Arc::ptr_eq(&first.regular, &precise_publication.regular));
@@ -818,9 +774,7 @@ async fn precise_publication_reuses_regular_arc_and_regular_reuses_clean_precise
     ))))
     .gameplay(Ok(ReadStatus::Ready(score(0, 50))))
     .publish();
-    let next = bundle
-        .apply_regular(next)
-        .await
+    let next = bounded!(bundle.apply_regular(next))
         .expect("next regular publication")
         .publication;
     assert!(!Arc::ptr_eq(&precise_publication.regular, &next.regular));
@@ -981,7 +935,7 @@ async fn room_state_enters_updates_and_clears_on_unavailable_reads() {
             )
             .room(room)
             .publish();
-            let transition = bundle.apply_regular(sample).await.unwrap();
+            let transition = bounded!(bundle.apply_regular(sample)).unwrap();
             assert_eq!(
                 transition
                     .publication

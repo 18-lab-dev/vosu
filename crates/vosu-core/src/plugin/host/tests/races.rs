@@ -38,13 +38,12 @@ impl CreateGate {
     }
 
     fn wait_for_release(&self) {
-        let mut release = self.release.lock().unwrap_or_else(|p| p.into_inner());
-        while !*release {
-            release = self
-                .release_cv
-                .wait(release)
-                .unwrap_or_else(|p| p.into_inner());
-        }
+        let release = self.release.lock().unwrap_or_else(|p| p.into_inner());
+        let (release, _) = self
+            .release_cv
+            .wait_timeout_while(release, Duration::from_secs(10), |release| !*release)
+            .unwrap_or_else(|p| p.into_inner());
+        assert!(*release, "create gate was not released within 10s");
     }
 
     fn release(&self) {
@@ -203,8 +202,7 @@ fn a_timer_set_during_create_that_fires_before_registration_is_queued_and_replay
         }
 
         gate.release();
-        create_thread
-            .join()
+        vosu_proptest::wait::JoinBounded::join_bounded(create_thread)
             .unwrap()
             .expect("creating the gated-timer instance");
     });
@@ -346,8 +344,8 @@ fn destroy_all_does_not_leak_an_instance_still_creating_when_it_races() {
 
         gate.release();
 
-        let create_result = create_thread.join().unwrap();
-        destroy_thread.join().unwrap();
+        let create_result = vosu_proptest::wait::JoinBounded::join_bounded(create_thread).unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(destroy_thread).unwrap();
 
         assert!(
             matches!(create_result, Err(HostError::ShuttingDown)),

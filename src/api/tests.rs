@@ -116,7 +116,10 @@ fn concurrent_success_and_failure_each_encode_once() {
                 }));
             }
             for worker in workers {
-                assert_eq!(worker.join().expect("cache worker"), expected);
+                assert_eq!(
+                    vosu_proptest::wait::JoinBounded::join_bounded(worker).expect("cache worker"),
+                    expected
+                );
             }
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
@@ -304,7 +307,7 @@ fn readers_never_observe_mixed_generation_or_manager_components() {
             generation
         );
     }
-    publisher.join().expect("publisher");
+    vosu_proptest::wait::JoinBounded::join_bounded(publisher).expect("publisher");
 }
 
 #[test]
@@ -529,8 +532,7 @@ fn synthetic_live_state_worker_smoke_encodes_every_transition() {
             }
         })
     };
-    worker
-        .join()
+    vosu_proptest::wait::JoinBounded::join_bounded(worker)
         .expect("synthetic state worker must not panic");
 
     let exited = snapshots.publish(Arc::new(ManagerSnapshot::not_ready(

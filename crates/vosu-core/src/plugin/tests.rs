@@ -502,7 +502,8 @@ fn send_from_a_thread_long_after_create_reaches_the_live_host_table() {
     // triggers the plugin's background `send`, on top of the plugin's own
     // background thread doing the same before it sends.
     for _ in 0..8 {
-        std::thread::spawn(|| churn_stack(400)).join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(std::thread::spawn(|| churn_stack(400)))
+            .unwrap();
     }
 
     instance
@@ -879,10 +880,15 @@ mod blocking_plugin {
         ) -> Result<(), PluginError> {
             *self.gate.started.lock().unwrap() = true;
             self.gate.started_cv.notify_all();
-            let mut proceed = self.gate.proceed.lock().unwrap();
-            while !*proceed {
-                proceed = self.gate.proceed_cv.wait(proceed).unwrap();
-            }
+            let proceed = self.gate.proceed.lock().unwrap();
+            let (proceed, _) = self
+                .gate
+                .proceed_cv
+                .wait_timeout_while(proceed, std::time::Duration::from_secs(10), |proceed| {
+                    !*proceed
+                })
+                .unwrap();
+            assert!(*proceed, "plugin dispatch gate was not released within 10s");
             Ok(())
         }
     }

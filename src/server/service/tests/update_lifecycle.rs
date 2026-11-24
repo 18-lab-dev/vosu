@@ -25,8 +25,7 @@
         for (result, expected) in cases {
             let response = update_response(result, None);
             assert_eq!(response.status(), StatusCode::OK);
-            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
+            let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
                 .unwrap();
             assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), expected);
         }
@@ -43,13 +42,13 @@
             DeferredUpdateBody::new(json_bytes(json!({ "status": "updated" })), trigger, None);
 
         assert!(!fired.load(std::sync::atomic::Ordering::SeqCst));
-        let payload = body.next().await.unwrap().unwrap();
+        let payload = bounded!(body.next()).unwrap().unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&payload).unwrap(),
             json!({ "status": "updated" })
         );
         assert!(!fired.load(std::sync::atomic::Ordering::SeqCst));
-        assert!(body.next().await.is_none());
+        assert!(bounded!(body.next()).is_none());
         assert!(fired.load(std::sync::atomic::Ordering::SeqCst));
 
         let disconnected = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -124,18 +123,16 @@
             delegate,
         };
         let binder = TokioBinder(AxumListenerFactory::new(providers));
-        let listener = binder
+        let listener = bounded!(binder
             .bind(
                 &ListenTarget::new("127.0.0.1", 0),
                 "127.0.0.1:0".parse().unwrap(),
-            )
-            .await
+            ))
             .unwrap();
 
-        let mut client = tokio::net::TcpStream::connect(listener.address())
-            .await
+        let mut client = bounded!(tokio::net::TcpStream::connect(listener.address()))
             .unwrap();
-        client
+        bounded!(client
             .write_all(
                 b"GET /websocket/commands?l=counter HTTP/1.1\r\n\
 Host: localhost\r\n\
@@ -143,8 +140,7 @@ Connection: Upgrade\r\n\
 Upgrade: websocket\r\n\
 Sec-WebSocket-Version: 13\r\n\
 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-            )
-            .await
+            ))
             .unwrap();
         let mut response = Vec::new();
         while !response.windows(4).any(|window| window == b"\r\n\r\n") {
@@ -172,9 +168,9 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         let closing_socket = tokio::net::TcpSocket::new_v4().unwrap();
         closing_socket.set_recv_buffer_size(4096).unwrap();
         closing_socket.set_send_buffer_size(4096).unwrap();
-        let mut closing_client = closing_socket.connect(listener.address()).await.unwrap();
+        let mut closing_client = bounded!(closing_socket.connect(listener.address())).unwrap();
         closing_client.set_nodelay(true).unwrap();
-        closing_client
+        bounded!(closing_client
             .write_all(
                 b"GET /websocket/commands?l=counter HTTP/1.1\r\n\
 Host: localhost\r\n\
@@ -182,8 +178,7 @@ Connection: Upgrade\r\n\
 Upgrade: websocket\r\n\
 Sec-WebSocket-Version: 13\r\n\
 Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
-            )
-            .await
+            ))
             .unwrap();
         let mut closing_response = Vec::new();
         while !closing_response
@@ -191,7 +186,7 @@ Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
             .any(|window| window == b"\r\n\r\n")
         {
             let mut chunk = [0_u8; 512];
-            let read = closing_client.read(&mut chunk).await.unwrap();
+            let read = bounded!(closing_client.read(&mut chunk)).unwrap();
             assert_ne!(read, 0);
             closing_response.extend_from_slice(&chunk[..read]);
         }
@@ -267,7 +262,7 @@ Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
                 }
                 websocket_bytes
             };
-            let ((), websocket_bytes) = tokio::join!(writer, reader);
+            let ((), websocket_bytes) = bounded!(async { tokio::join!(writer, reader) });
             websocket_bytes
         })
         .await
@@ -283,13 +278,12 @@ Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
         let owner_listener = Arc::clone(&listener);
         let owner_commands = commands.clone();
         let update_owner = tokio::spawn(async move {
-            update_started.cancelled().await;
+            bounded!(update_started.cancelled());
             owner_listener.begin_drain();
-            owner_commands.close_all(1001).await;
+            bounded!(owner_commands.close_all(1001));
             owner_commands.shutdown();
         });
-        let mut update_client = tokio::net::TcpStream::connect(listener.address())
-            .await
+        let mut update_client = bounded!(tokio::net::TcpStream::connect(listener.address()))
             .unwrap();
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -349,7 +343,7 @@ Connection: close\r\n\r\n",
             .await
             .expect("listener must drain after response and WebSocket close");
         assert_eq!(commands.client_count(), 0);
-        relays.shutdown().await;
+        bounded!(relays.shutdown());
     }
 
 
@@ -411,7 +405,7 @@ Connection: close\r\n\r\n",
             (Bytes::from_static(br#"{"consent":false}"#), "majorAvailable"),
             (Bytes::from_static(br#"{"consent":true}"#), "latest"),
         ] {
-            let response = delegate
+            let response = bounded!(delegate
                 .dispatch(
                     Endpoint::RunUpdates,
                     Request::builder()
@@ -419,12 +413,10 @@ Connection: close\r\n\r\n",
                         .body(Body::empty())
                         .unwrap(),
                     body,
-                )
-                .await;
+                ));
             assert_eq!(response.status(), StatusCode::OK);
             let payload: Value = serde_json::from_slice(
-                &axum::body::to_bytes(response.into_body(), 16384)
-                    .await
+                &bounded!(axum::body::to_bytes(response.into_body(), 16384))
                     .unwrap(),
             )
             .unwrap();

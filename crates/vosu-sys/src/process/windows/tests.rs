@@ -320,7 +320,7 @@ fn create_time_from_the_process_list_matches_get_process_times_for_self_and_a_ch
     );
 
     child.kill().unwrap();
-    child.wait().unwrap();
+    vosu_proptest::wait::child(&mut child).unwrap();
 }
 
 #[cfg(target_os = "windows")]
@@ -365,7 +365,7 @@ fn process_image_path_returns_the_full_path_of_a_spawned_child_and_matches_curre
     );
 
     child.kill().unwrap();
-    child.wait().unwrap();
+    vosu_proptest::wait::child(&mut child).unwrap();
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn is_process_alive_reports_a_recycled_pid_as_dead() {
         .spawn()
         .unwrap();
     let pid = child.id();
-    child.wait().unwrap();
+    vosu_proptest::wait::child(&mut child).unwrap();
     assert!(!is_process_alive(pid));
 }
 
@@ -426,7 +426,7 @@ fn is_process_alive_tracks_a_spawned_child_until_it_is_reaped() {
     );
 
     child.kill().unwrap();
-    child.wait().unwrap();
+    vosu_proptest::wait::child(&mut child).unwrap();
     assert!(
         !is_process_alive(pid),
         "the child must no longer be alive once it has been killed and reaped"

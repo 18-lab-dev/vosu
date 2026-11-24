@@ -110,7 +110,7 @@ fn embedded_checksum_anchors_extraction_and_verified_reuse() {
 fn concurrent_extraction_publishes_only_a_complete_verified_payload() {
     let root = tempfile::tempdir().unwrap();
     let (archive, checksum) = fixture_bundle();
-    let barrier = std::sync::Barrier::new(2);
+    let barrier = vosu_proptest::wait::Barrier::new(2);
     std::thread::scope(|scope| {
         let install = || {
             barrier.wait();
@@ -118,8 +118,11 @@ fn concurrent_extraction_publishes_only_a_complete_verified_payload() {
         };
         let left = scope.spawn(install);
         let right = scope.spawn(install);
-        let payload = left.join().unwrap();
-        assert_eq!(right.join().unwrap(), payload);
+        let payload = vosu_proptest::wait::JoinBounded::join_bounded(left).unwrap();
+        assert_eq!(
+            vosu_proptest::wait::JoinBounded::join_bounded(right).unwrap(),
+            payload
+        );
         assert_eq!(fs::read(payload.join(GENERATOR)).unwrap(), b"generator");
         assert_eq!(fs::read(payload.join(TARGET_HOST)).unwrap(), b"target");
     });

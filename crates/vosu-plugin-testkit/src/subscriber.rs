@@ -213,6 +213,14 @@ impl Drop for SubscriberPlugin {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !thread.is_finished() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "subscriber command worker did not stop within 10s"
+                );
+                std::thread::park_timeout(Duration::from_millis(1));
+            }
             let _ = thread.join();
         }
         events_registry()

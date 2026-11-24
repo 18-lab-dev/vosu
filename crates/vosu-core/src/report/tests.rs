@@ -1,6 +1,7 @@
 use super::*;
 use futures_util::StreamExt;
 use tempfile::TempDir;
+use vosu_proptest::bounded;
 
 struct FixedProbe(MachineData);
 impl ReportProbe for FixedProbe {
@@ -12,7 +13,7 @@ impl ReportProbe for FixedProbe {
 async fn rendered(document: &ReportDocument) -> String {
     let mut stream = ReportBodyStream::new(document.report.clone());
     let mut body = Vec::new();
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = bounded!(stream.next()) {
         body.extend_from_slice(&chunk.unwrap());
     }
     String::from_utf8(body).unwrap()
@@ -61,9 +62,12 @@ async fn escapes_every_dynamic_field_and_keeps_exact_sections() {
         logs_dir: None,
     };
     let now = UNIX_EPOCH + Duration::from_millis(42);
-    let report = collect_report_at(input.clone(), &FixedProbe(malicious_machine()), now)
-        .await
-        .unwrap();
+    let report = bounded!(collect_report_at(
+        input.clone(),
+        &FixedProbe(malicious_machine()),
+        now
+    ))
+    .unwrap();
     assert_eq!(report.date, DateTime::<Utc>::from(now));
     assert_eq!(report.spec.system_type, DeviceType::Laptop);
     assert_eq!(report.spec.os, "<linux&>");
@@ -72,10 +76,13 @@ async fn escapes_every_dynamic_field_and_keeps_exact_sections() {
     assert_eq!(report.spec.gpus, vec!["same<&>"]);
     assert_eq!(report.instances[0].pid, 9);
     assert_eq!(report.counters[0].folder_name, "folder'");
-    let document = generate_report_document_at(input, &FixedProbe(malicious_machine()), now)
-        .await
-        .unwrap();
-    let html = rendered(&document).await;
+    let document = bounded!(generate_report_document_at(
+        input,
+        &FixedProbe(malicious_machine()),
+        now
+    ))
+    .unwrap();
+    let html = bounded!(rendered(&document));
     for escaped in [
         "&lt;linux&amp;&gt;-x86&quot;64",
         "cpu&lt;script&gt;",
@@ -128,20 +135,23 @@ async fn newest_logs_are_deterministic_capped_and_escaped() {
         logs_dir: Some(directory.path().into()),
         ..ReportInput::default()
     };
-    let doc = generate_report_document_at(input, &FixedProbe(MachineData::unknown()), UNIX_EPOCH)
-        .await
-        .unwrap();
+    let doc = bounded!(generate_report_document_at(
+        input,
+        &FixedProbe(MachineData::unknown()),
+        UNIX_EPOCH
+    ))
+    .unwrap();
     let mut lazy_stream = ReportBodyStream::new(doc.report.clone());
     assert!(matches!(lazy_stream.phase, StreamPhase::Head));
     assert_eq!(lazy_stream.log_index, 0);
-    let first_chunk = lazy_stream.next().await.unwrap().unwrap();
+    let first_chunk = bounded!(lazy_stream.next()).unwrap().unwrap();
     assert!(matches!(lazy_stream.phase, StreamPhase::LogHeader));
     assert!(
         String::from_utf8(first_chunk.to_vec())
             .unwrap()
             .contains("System Configuration")
     );
-    let html = rendered(&doc).await;
+    let html = bounded!(rendered(&doc));
     assert_eq!(html.matches("class=\"group logs\"").count(), 10);
     assert!(!html.contains("01&amp;.log"));
     assert!(html.find("11&amp;.log").unwrap() < html.find("10&amp;.log").unwrap());
@@ -213,11 +223,13 @@ async fn missing_data_is_resilient_and_order_is_stable() {
         logs_dir: None,
         ..ReportInput::default()
     };
-    let document =
-        generate_report_document_at(input, &FixedProbe(MachineData::unknown()), UNIX_EPOCH)
-            .await
-            .unwrap();
-    let html = rendered(&document).await;
+    let document = bounded!(generate_report_document_at(
+        input,
+        &FixedProbe(MachineData::unknown()),
+        UNIX_EPOCH
+    ))
+    .unwrap();
+    let html = bounded!(rendered(&document));
     assert!(html.contains("Unknown-x86_64") || html.contains("Unknown-Unknown"));
     assert!(html.find("<td>2</td>").unwrap() < html.find("<td>20</td>").unwrap());
     assert!(
@@ -260,9 +272,12 @@ async fn configured_log_io_errors_surface() {
         logs_dir: Some(PathBuf::from("/definitely/missing/vosu/logs")),
         ..ReportInput::default()
     };
-    let error = generate_report_document_at(input, &FixedProbe(MachineData::unknown()), UNIX_EPOCH)
-        .await
-        .unwrap_err();
+    let error = bounded!(generate_report_document_at(
+        input,
+        &FixedProbe(MachineData::unknown()),
+        UNIX_EPOCH
+    ))
+    .unwrap_err();
     assert!(matches!(error, ReportError::Logs(_)));
 }
 
@@ -278,11 +293,13 @@ async fn oversized_logs_are_bounded_with_visible_truncation() {
         logs_dir: Some(directory.path().into()),
         ..ReportInput::default()
     };
-    let document =
-        generate_report_document_at(input, &FixedProbe(MachineData::unknown()), UNIX_EPOCH)
-            .await
-            .unwrap();
-    let html = rendered(&document).await;
+    let document = bounded!(generate_report_document_at(
+        input,
+        &FixedProbe(MachineData::unknown()),
+        UNIX_EPOCH
+    ))
+    .unwrap();
+    let html = bounded!(rendered(&document));
     assert!(html.contains("[log truncated: maximum"));
     assert!(html.len() < LOG_MAX_BYTES * 2);
 }

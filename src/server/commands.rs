@@ -518,7 +518,7 @@ mod tests {
         assert_eq!(store.counter_values("counter").unwrap()["color"], "normal");
         store.manage_profile("activate", "stream", None).unwrap();
         assert_eq!(store.counter_values("counter").unwrap()["color"], "pinned");
-        processor.shutdown().await;
+        vosu_proptest::bounded!(processor.shutdown());
         assert!(lock_unpoisoned(&relays.relays).iter().any(|r| r.command == "getSettings" && r.overlay == "/@vosu-profile/stream/counter"));
     }
 
@@ -683,17 +683,17 @@ mod tests {
         connection.set_filters(filters);
         let runner = tokio::spawn({
             let hub = hub.clone();
-            async move { hub.run().await }
+            async move { vosu_proptest::bounded!(hub.run()) }
         });
         assert_eq!(
-            frames.recv().await,
+            vosu_proptest::bounded!(frames.recv()),
             Some(Outbound::Text(Bytes::from(
                 serde_json::to_vec(&expected).unwrap()
             )))
         );
         connection.cleanup();
         hub.shutdown();
-        runner.await.unwrap();
+        vosu_proptest::bounded!(runner).unwrap();
     }
 
     #[tokio::test]
@@ -744,12 +744,16 @@ mod tests {
                     serde_json::json!({"n":1}),
                     move || {
                         older_locked_tx.send(()).unwrap();
-                        release_older_rx.recv().unwrap();
+                        release_older_rx
+                            .recv_timeout(Duration::from_secs(10))
+                            .unwrap();
                     },
                 );
             })
         };
-        older_locked_rx.recv().unwrap();
+        older_locked_rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
 
         let (newer_started_tx, newer_started_rx) = std_mpsc::channel();
         let newer = {
@@ -759,24 +763,26 @@ mod tests {
                 processor.schedule_save_inner("newer".into(), serde_json::json!({"n":2}), || {});
             })
         };
-        newer_started_rx.recv().unwrap();
+        newer_started_rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
         release_older_tx.send(()).unwrap();
-        older.join().unwrap();
-        newer.join().unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(older).unwrap();
+        vosu_proptest::wait::JoinBounded::join_bounded(newer).unwrap();
 
         tokio::time::sleep(Duration::from_millis(550)).await;
         assert_eq!(
             *lock_unpoisoned(&providers.saves),
             vec![("newer".into(), serde_json::json!({"n":2}))]
         );
-        processor.shutdown().await;
+        vosu_proptest::bounded!(processor.shutdown());
     }
 
     #[tokio::test]
     async fn shutdown_cancels_and_joins_pending_save() {
         let (providers, processor, _) = setup("overlay");
         processor.schedule_save("overlay".into(), serde_json::json!({"n":1}));
-        processor.shutdown().await;
+        vosu_proptest::bounded!(processor.shutdown());
         tokio::time::sleep(SAVE_DEBOUNCE + Duration::from_millis(20)).await;
         assert!(lock_unpoisoned(&providers.saves).is_empty());
     }

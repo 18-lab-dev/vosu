@@ -112,24 +112,25 @@ mod tests {
     #[tokio::test]
     async fn positive_and_negative_listener_probe() {
         for identity in [true, false] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listener =
+                vosu_proptest::bounded!(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
             let port = listener.local_addr().unwrap().port();
             let server = tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
+                let (mut stream, _) = vosu_proptest::bounded!(listener.accept()).unwrap();
                 let mut request = [0_u8; 1024];
-                assert!(stream.read(&mut request).await.unwrap() > 0);
+                assert!(vosu_proptest::bounded!(stream.read(&mut request)).unwrap() > 0);
                 let response: &[u8] = if identity {
                     b"HTTP/1.1 200 OK\r\nX-Vosu-Identity: vosu\r\nContent-Length: 0\r\n\r\n"
                 } else {
                     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
                 };
-                stream.write_all(response).await.unwrap();
+                vosu_proptest::bounded!(stream.write_all(response)).unwrap();
             });
             assert_eq!(
-                existing_dashboard("127.0.0.1", port).await.is_some(),
+                vosu_proptest::bounded!(existing_dashboard("127.0.0.1", port)).is_some(),
                 identity
             );
-            server.await.unwrap();
+            vosu_proptest::bounded!(server).unwrap();
         }
     }
 }

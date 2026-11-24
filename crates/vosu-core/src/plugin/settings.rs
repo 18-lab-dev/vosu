@@ -536,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_b2_loads_current_config_values() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         config.update(|c| {
             c.poll_rate = 200.0;
             c.calculate_pp = false;
@@ -549,7 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_b2_store_writes_through_to_the_config() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let bridge = ConfigSettingsBridgeB2::new(Arc::clone(&config));
         let mut values = Map::new();
         values.insert("POLL_RATE".into(), Value::from(300.0));
@@ -561,7 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_b2_refuses_an_unbridged_plugin_id() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let bridge = ConfigSettingsBridgeB2::new(config);
         assert_eq!(
             bridge.load("some.other.plugin").unwrap_err(),
@@ -571,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_validates_stores_and_builds_settings_changed() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let storage: Arc<dyn SettingsStorage> = Arc::new(ConfigSettingsBridgeB2::new(config));
         let service = PluginSettingsService::new(storage);
         let mut patch = Map::new();
@@ -595,7 +595,7 @@ mod tests {
         // `ConfigDocument::validate` raises `POLL_RATE` below 100 up to
         // 100 (`config/document.rs`): `apply` must broadcast what was
         // actually saved, never the value this call merely submitted.
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let storage: Arc<dyn SettingsStorage> = Arc::new(ConfigSettingsBridgeB2::new(config));
         let service = PluginSettingsService::new(storage);
         let mut patch = Map::new();
@@ -619,7 +619,7 @@ mod tests {
 
     #[tokio::test]
     async fn effective_settings_is_an_empty_map_without_a_schema() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let storage: Arc<dyn SettingsStorage> = Arc::new(ConfigSettingsBridgeB2::new(config));
         let service = PluginSettingsService::new(storage);
         let value = service
@@ -652,7 +652,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_dashboard_style_config_update_reaches_the_plugin_as_settings_changed() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
         let service = Arc::new(PluginSettingsService::new(bridge.clone()));
         let (tx, rx) = std::sync::mpsc::channel();
@@ -702,7 +702,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unrelated_config_change_does_not_trigger_a_settings_changed() {
-        let (_dir, config) = config_store().await;
+        let (_dir, config) = vosu_proptest::bounded!(config_store());
         let bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
         let service = Arc::new(PluginSettingsService::new(bridge.clone()));
         let (tx, rx) = std::sync::mpsc::channel();

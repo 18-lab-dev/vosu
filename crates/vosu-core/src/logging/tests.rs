@@ -1,4 +1,5 @@
 use chrono::{DateTime, Local};
+use vosu_proptest::bounded;
 
 use super::*;
 use std::fs::File;
@@ -69,7 +70,7 @@ async fn exact_file_labels_and_highlights_are_stripped() {
     ] {
         logger.log(level, "plain %bright% tail");
     }
-    logger.flush().await.unwrap();
+    bounded!(logger.flush()).unwrap();
     let text = fs::read_to_string(dir.path().join("latest.log")).unwrap();
     let labels: Vec<_> = text.lines().map(|line| &line[13..21]).collect();
     assert_eq!(
@@ -80,7 +81,7 @@ async fn exact_file_labels_and_highlights_are_stripped() {
     );
     assert!(text.lines().all(|line| line.ends_with("plain bright tail")));
     assert!(!text.contains('%'));
-    logger.shutdown().await.unwrap();
+    bounded!(logger.shutdown()).unwrap();
 }
 
 #[tokio::test]
@@ -99,14 +100,14 @@ async fn console_filters_debug_at_enqueue_time_across_reload() {
     config.debug_log = false;
     logger.update_config(&config);
     logger.time("hidden again");
-    logger.flush().await.unwrap();
+    bounded!(logger.flush()).unwrap();
     {
         let logs = lock(&console.logs);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].contains("shown"));
         assert!(!logs[0].contains("hidden"));
     }
-    logger.shutdown().await.unwrap();
+    bounded!(logger.shutdown()).unwrap();
 }
 
 #[test]
@@ -180,24 +181,24 @@ async fn progress_is_tty_only_and_rate_limited() {
     let token = logger.progress_start("Download");
     logger.progress_update(token, 0.1, "one");
     assert!(lock(&non_tty.progress).is_empty());
-    logger.shutdown().await.unwrap();
+    bounded!(logger.shutdown()).unwrap();
 
     let dir = tempdir().unwrap();
     let tty = Arc::new(TestConsole::tty());
     let logger = Logger::new(dir.path(), options(8), tty.clone()).unwrap();
     let token = logger.progress_start("Download");
-    logger.flush().await.unwrap();
+    bounded!(logger.flush()).unwrap();
     let after_start = lock(&tty.progress).len();
     logger.progress_update(token, 0.1, "one");
-    logger.flush().await.unwrap();
+    bounded!(logger.flush()).unwrap();
     let after_first = lock(&tty.progress).len();
     logger.progress_update(token, 0.2, "two");
     assert_eq!(lock(&tty.progress).len(), after_first);
     assert!(after_first > after_start);
     logger.progress_update(token, 1.0, "done");
-    logger.flush().await.unwrap();
+    bounded!(logger.flush()).unwrap();
     assert_eq!(lock(&tty.progress).len(), after_first + 1);
-    logger.shutdown().await.unwrap();
+    bounded!(logger.shutdown()).unwrap();
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -215,7 +216,7 @@ async fn blocked_console_drops_without_blocking_producers() {
     }
     assert!(logger.dropped_lines() > 0);
     blocked.store(false, Ordering::Release);
-    logger.shutdown().await.unwrap();
+    bounded!(logger.shutdown()).unwrap();
 }
 
 #[tokio::test]
@@ -223,12 +224,12 @@ async fn flush_acknowledges_persisted_lines_and_shutdown_is_idempotent() {
     let dir = tempdir().unwrap();
     let logger = Logger::new(dir.path(), options(8), Arc::new(TestConsole::default())).unwrap();
     logger.info("persist me");
-    logger.flush().await.unwrap();
+    bounded!(logger.flush()).unwrap();
     assert!(
         fs::read_to_string(dir.path().join("latest.log"))
             .unwrap()
             .contains("persist me")
     );
-    logger.shutdown().await.unwrap();
-    logger.shutdown().await.unwrap();
+    bounded!(logger.shutdown()).unwrap();
+    bounded!(logger.shutdown()).unwrap();
 }

@@ -190,37 +190,36 @@ mod tests {
     async fn startup_and_shutdown_restore_unconfirmed_network_without_losing_other_settings() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("vosu.toml");
-        let store = ConfigStore::initialize(&path).await.unwrap();
-        store.stage_network(&store.current()).await.unwrap();
+        let store = vosu_proptest::bounded!(ConfigStore::initialize(&path)).unwrap();
+        vosu_proptest::bounded!(store.stage_network(&store.current())).unwrap();
         store.update(|config| {
             config.server_port = 2405.0;
             config.debug_log = true;
         });
-        store.flush().await.unwrap();
+        vosu_proptest::bounded!(store.flush()).unwrap();
         // Simulate crash recovery: the new process sees persisted new values and a journal.
-        let recovered = ConfigStore::initialize(&path).await.unwrap();
-        recovered.claim_network_ownership().await.unwrap();
+        let recovered = vosu_proptest::bounded!(ConfigStore::initialize(&path)).unwrap();
+        vosu_proptest::bounded!(recovered.claim_network_ownership()).unwrap();
         assert_eq!(recovered.current().server_port, 24050.0);
         assert!(recovered.current().debug_log);
-        recovered.stage_network(&recovered.current()).await.unwrap();
+        vosu_proptest::bounded!(recovered.stage_network(&recovered.current())).unwrap();
         recovered.update(|config| config.server_port = 2406.0);
-        recovered.flush().await.unwrap();
-        recovered.shutdown().await.unwrap();
+        vosu_proptest::bounded!(recovered.flush()).unwrap();
+        vosu_proptest::bounded!(recovered.shutdown()).unwrap();
         assert_eq!(recovered.current().server_port, 24050.0);
         assert!(load(&journal_path(&path)).unwrap().pending.is_none());
-        store.shutdown().await.unwrap();
+        vosu_proptest::bounded!(store.shutdown()).unwrap();
     }
     #[tokio::test]
     async fn rejects_overlapping_binds_and_remembers_previous_overlay_origins() {
         let root = tempfile::tempdir().unwrap();
-        let store = ConfigStore::initialize(root.path().join("vosu.toml"))
-            .await
+        let store = vosu_proptest::bounded!(ConfigStore::initialize(root.path().join("vosu.toml")))
             .unwrap();
         let mut swapped = (*store.current()).clone();
         swapped.server_port = swapped.dashboard_port;
         swapped.dashboard_port = 24890.0;
         assert!(
-            store.validate_network(&swapped).await.is_err(),
+            vosu_proptest::bounded!(store.validate_network(&swapped)).is_err(),
             "the rollback dashboard cannot temporarily become an overlay origin"
         );
         for host in [
@@ -233,18 +232,21 @@ mod tests {
             let mut candidate = (*store.current()).clone();
             candidate.dashboard_ip = host.into();
             candidate.dashboard_port = candidate.server_port;
-            assert!(store.validate_network(&candidate).await.is_err(), "{host}");
+            assert!(
+                vosu_proptest::bounded!(store.validate_network(&candidate)).is_err(),
+                "{host}"
+            );
         }
-        store.stage_network(&store.current()).await.unwrap();
+        vosu_proptest::bounded!(store.stage_network(&store.current())).unwrap();
         store.update(|config| config.server_port = 24893.0);
-        store.flush().await.unwrap();
-        store.confirm_network().await.unwrap();
+        vosu_proptest::bounded!(store.flush()).unwrap();
+        vosu_proptest::bounded!(store.confirm_network()).unwrap();
         let mut candidate = (*store.current()).clone();
         candidate.dashboard_port = 24050.0;
-        assert!(store.validate_network(&candidate).await.is_err());
+        assert!(vosu_proptest::bounded!(store.validate_network(&candidate)).is_err());
         candidate.dashboard_port = 24894.0;
-        assert!(store.validate_network(&candidate).await.is_ok());
-        store.shutdown().await.unwrap();
+        assert!(vosu_proptest::bounded!(store.validate_network(&candidate)).is_ok());
+        vosu_proptest::bounded!(store.shutdown()).unwrap();
     }
 }
 
@@ -255,32 +257,32 @@ mod ownership_tests {
     async fn secondary_launch_preserves_pending_change_and_probes_current_dashboard() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("vosu.toml");
-        let owner = ConfigStore::initialize(&path).await.unwrap();
+        let owner = vosu_proptest::bounded!(ConfigStore::initialize(&path)).unwrap();
         let mut candidate = (*owner.current()).clone();
         candidate.server_port = 24893.0;
         candidate.dashboard_port = 24894.0;
-        owner.stage_network(&candidate).await.unwrap();
+        vosu_proptest::bounded!(owner.stage_network(&candidate)).unwrap();
         owner.update(|config| *config = candidate.clone());
-        owner.flush().await.unwrap();
+        vosu_proptest::bounded!(owner.flush()).unwrap();
         let journal = std::fs::read(journal_path(&path)).unwrap();
-        let secondary = ConfigStore::initialize(&path).await.unwrap();
+        let secondary = vosu_proptest::bounded!(ConfigStore::initialize(&path)).unwrap();
         assert_eq!(
             secondary.current().dashboard_port,
             24894.0,
             "live-owner probe must use the pending dashboard port"
         );
         assert_eq!(std::fs::read(journal_path(&path)).unwrap(), journal);
-        secondary.shutdown().await.unwrap();
+        vosu_proptest::bounded!(secondary.shutdown()).unwrap();
         assert_eq!(owner.current().dashboard_port, 24894.0);
         assert_eq!(std::fs::read(journal_path(&path)).unwrap(), journal);
-        owner.rollback_pending_network().await.unwrap();
+        vosu_proptest::bounded!(owner.rollback_pending_network()).unwrap();
         assert_eq!(owner.current().dashboard_port, 24051.0);
         let mut later = (*owner.current()).clone();
         later.dashboard_port = 24893.0;
         assert!(
-            owner.validate_network(&later).await.is_err(),
+            vosu_proptest::bounded!(owner.validate_network(&later)).is_err(),
             "rolled-back candidate overlay origins remain reserved"
         );
-        owner.shutdown().await.unwrap();
+        vosu_proptest::bounded!(owner.shutdown()).unwrap();
     }
 }

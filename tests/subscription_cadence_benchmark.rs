@@ -21,6 +21,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use vosu_proptest::bounded;
 
 use tokio::sync::watch;
 use tokio::time::sleep;
@@ -98,7 +99,7 @@ async fn subscription_cadence_cpu_and_wakeups() {
             V2SubscriptionHub::new(Arc::new(FixtureDocument(events)), Duration::from_millis(1));
         let runner = tokio::spawn({
             let hub = hub.clone();
-            async move { hub.run().await }
+            async move { bounded!(hub.run()) }
         });
         let connection = if paths.is_empty() {
             None
@@ -107,7 +108,7 @@ async fn subscription_cadence_cpu_and_wakeups() {
             connection
                 .subscribe(paths.into_iter().map(str::to_owned).collect())
                 .unwrap();
-            receiver.recv().await.expect("initial subscription frame");
+            bounded!(receiver.recv()).expect("initial subscription frame");
             connection.write_completed();
             Some((connection, receiver))
         };
@@ -136,18 +137,18 @@ async fn subscription_cadence_cpu_and_wakeups() {
             Arc::new(Mutex::new(ReaderSynchronization::default())),
             Arc::new(SystemWorkerClock::default()),
         );
-        sleep(Duration::from_millis(250)).await;
+        bounded!(sleep(Duration::from_millis(250)));
         let before = (lock(&captures).len(), lock(&precise).len());
         let cpu_start = cpu_seconds();
         let start = std::time::Instant::now();
-        sleep(Duration::from_secs(5)).await;
+        bounded!(sleep(Duration::from_secs(5)));
         let elapsed = start.elapsed().as_secs_f64();
         let cpu = cpu_seconds() - cpu_start;
         let after = (lock(&captures).len(), lock(&precise).len());
-        worker.shutdown().await.unwrap();
+        bounded!(worker.shutdown()).unwrap();
         drop(connection);
         hub.shutdown();
-        runner.await.unwrap();
+        bounded!(runner).unwrap();
         println!(
             "cadence={name} seconds={elapsed:.6} regular_hz={:.3} precise_hz={:.3} cpu_seconds={cpu:.6} cpu_percent={:.3}",
             (after.0 - before.0) as f64 / elapsed,

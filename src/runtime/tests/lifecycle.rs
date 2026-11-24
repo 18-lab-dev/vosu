@@ -112,13 +112,12 @@ async fn signal_completion_cancels_the_shared_runtime_token() {
     let observed = shutdown.clone();
     let (send, receive) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(cancel_on_signal(shutdown, async move {
-        receive
-            .await
+        bounded!(receive)
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "signal test closed"))
     }));
 
     send.send(()).expect("deliver synthetic signal");
-    task.await
+    bounded!(task)
         .expect("join signal task")
         .expect("signal task result");
     assert!(observed.is_cancelled());
@@ -157,11 +156,10 @@ fn quarantined_recovery_is_nonfatal() {
 async fn run_error_still_invokes_shutdown() {
     let shutdown_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let called = shutdown_called.clone();
-    let result = finish_runtime_run(Err(io::Error::other("run failed")), async move {
+    let result = bounded!(finish_runtime_run(Err(io::Error::other("run failed")), async move {
         called.store(true, Ordering::Release);
         Ok(())
-    })
-    .await;
+    }));
     assert_eq!(result.unwrap_err().to_string(), "run failed");
     assert!(shutdown_called.load(Ordering::Acquire));
 }
@@ -183,7 +181,7 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
     let task_cancel = cancel.clone();
     let retained = old_target.clone();
     let task = tokio::spawn(async move {
-        desired_rx.changed().await.unwrap();
+        bounded!(desired_rx.changed()).unwrap();
         let requested = desired_rx.borrow().clone();
         state_tx.send_replace(ListenerState {
             desired: Some(requested),
@@ -193,7 +191,7 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
             }),
             last_error: Some("bind failed".into()),
         });
-        task_cancel.cancelled().await;
+        bounded!(task_cancel.cancelled());
     });
     let mut owner = ListenerOwner {
         desired,
@@ -203,20 +201,19 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
         broker: None,
         broker_logger: None,
     };
-    assert!(owner.stage(replacement.clone()).await.is_err());
+    assert!(bounded!(owner.stage(replacement.clone())).is_err());
     let state = owner.state();
     assert_eq!(state.desired, Some(replacement));
     assert_eq!(state.effective.unwrap().target, old_target);
-    owner
-        .stage(old_target.clone())
-        .await
+    bounded!(owner
+        .stage(old_target.clone()))
         .expect("rollback to effective target");
     assert_eq!(
         owner.desired.borrow().clone(),
         old_target,
         "rollback must replace the failed desired target even when it is already effective"
     );
-    owner.shutdown().await;
+    bounded!(owner.shutdown());
 }
 
 #[tokio::test]
@@ -244,14 +241,14 @@ async fn broker_publication_failure_keeps_effective_rebind_and_disables_writes()
     });
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
-    let task = tokio::spawn(async move { task_cancel.cancelled().await; });
+    let task = tokio::spawn(async move { bounded!(task_cancel.cancelled()); });
     let mut owner = ListenerOwner {
         desired, state, cancel, task, broker: Some(broker.clone()), broker_logger: None,
     };
-    owner.stage(target.clone()).await.expect("live rebind must remain successful");
+    bounded!(owner.stage(target.clone())).expect("live rebind must remain successful");
     assert_eq!(owner.state().effective.unwrap().target, target);
     assert_eq!(broker.authorize(&headers, peer), Err(()));
-    owner.shutdown().await;
+    bounded!(owner.shutdown());
 }
 
 #[tokio::test]
@@ -266,9 +263,9 @@ async fn listener_accept_stop_is_separate_from_forced_drain_join() {
     let (events, mut event_rx) = mpsc::unbounded_channel();
     let task_events = events.clone();
     let task = tokio::spawn(async move {
-        task_cancel.cancelled().await;
+        bounded!(task_cancel.cancelled());
         task_events.send("accept-stopped").unwrap();
-        task_release.notified().await;
+        bounded!(task_release.notified());
         task_events.send("listener-joined").unwrap();
     });
     let owner = ListenerOwner {
@@ -280,12 +277,12 @@ async fn listener_accept_stop_is_separate_from_forced_drain_join() {
         broker_logger: None,
     };
     owner.stop_accepting();
-    assert_eq!(event_rx.recv().await, Some("accept-stopped"));
+    assert_eq!(bounded!(event_rx.recv()), Some("accept-stopped"));
     events.send("hubs-closed-1001").unwrap();
     release.notify_one();
-    owner.join().await;
-    assert_eq!(event_rx.recv().await, Some("hubs-closed-1001"));
-    assert_eq!(event_rx.recv().await, Some("listener-joined"));
+    bounded!(owner.join());
+    assert_eq!(bounded!(event_rx.recv()), Some("hubs-closed-1001"));
+    assert_eq!(bounded!(event_rx.recv()), Some("listener-joined"));
 }
 
 struct RuntimeTestPathResolver {

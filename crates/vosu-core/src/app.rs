@@ -378,7 +378,7 @@ mod tests {
             RecordingHooks::default(),
         );
         assert_eq!(
-            app.run().await.unwrap(),
+            vosu_proptest::bounded!(app.run()).unwrap(),
             StartupOutcome::Guarded(StartupGuard::Archive)
         );
         assert_eq!(app.hooks().events, [format!("warn:{ARCHIVE_WARNING}")]);
@@ -400,7 +400,7 @@ mod tests {
             RecordingHooks::default(),
         );
         assert_eq!(
-            blocked.run().await.unwrap(),
+            vosu_proptest::bounded!(blocked.run()).unwrap(),
             StartupOutcome::Guarded(StartupGuard::OneDrive)
         );
         assert_eq!(
@@ -422,7 +422,10 @@ mod tests {
             Arc::new(Config::default()),
             RecordingHooks::default(),
         );
-        assert_eq!(bypassed.run().await.unwrap(), StartupOutcome::Started);
+        assert_eq!(
+            vosu_proptest::bounded!(bypassed.run()).unwrap(),
+            StartupOutcome::Started
+        );
         assert_eq!(bypassed.hooks().events, ["update:false", "runtime"]);
     }
 }

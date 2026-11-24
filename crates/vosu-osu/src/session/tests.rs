@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use vosu_proptest::bounded;
 
 use bytes::Bytes;
 use tokio_util::sync::CancellationToken;
@@ -134,25 +135,23 @@ fn warn_signal() -> (LogWarn, Arc<tokio::sync::Notify>) {
 async fn stable_session_never_starts_a_resolver() {
     let session = session_with(ClientType::Stable, FakeMemory::new(true));
     let (loader, _data_dir) = offline_loader();
-    assert!(!session.start_lazer_resolver(loader, noop_warn()).await);
-    assert!(session.resolver.lock().await.is_none());
+    assert!(!bounded!(session.start_lazer_resolver(loader, noop_warn())));
+    assert!(bounded!(session.resolver.lock()).is_none());
 }
 
 #[tokio::test]
 async fn lazer_session_starts_at_most_one_resolver() {
     let session = session_with(ClientType::Lazer, FakeMemory::new(true));
     let (loader, _data_dir) = offline_loader();
-    assert!(
-        session
-            .start_lazer_resolver(Arc::clone(&loader), noop_warn())
-            .await
-    );
-    assert!(session.resolver.lock().await.is_some());
+    assert!(bounded!(
+        session.start_lazer_resolver(Arc::clone(&loader), noop_warn())
+    ));
+    assert!(bounded!(session.resolver.lock()).is_some());
 
     // A second call while one is already running is a no-op
     // (install-once, ported from `Instance::start_lazer_resolver_inner`).
-    assert!(!session.start_lazer_resolver(loader, noop_warn()).await);
-    session.join_resolver().await;
+    assert!(!bounded!(session.start_lazer_resolver(loader, noop_warn())));
+    bounded!(session.join_resolver());
 }
 
 #[tokio::test]
@@ -160,7 +159,7 @@ async fn join_resolver_cancels_and_joins_promptly() {
     let session = session_with(ClientType::Lazer, FakeMemory::new(true));
     let (loader, _data_dir) = offline_loader();
     let (warn, attempted) = warn_signal();
-    assert!(session.start_lazer_resolver(loader, warn).await);
+    assert!(bounded!(session.start_lazer_resolver(loader, warn)));
     // Wait for the resolver to actually report its first failed attempt
     // (pid 0's `executable_root()` fails immediately and
     // deterministically) before cancelling it, so the resolver really is
@@ -175,13 +174,13 @@ async fn join_resolver_cancels_and_joins_promptly() {
     tokio::time::timeout(Duration::from_secs(5), session.join_resolver())
         .await
         .expect("cancellation must preempt the retry backoff, not wait it out");
-    assert!(session.resolver.lock().await.is_none());
+    assert!(bounded!(session.resolver.lock()).is_none());
     assert!(session.lifecycle.is_cancelled());
 
     // A resolver cannot be restarted on a cancelled session: `join_resolver`
     // is also how `destroy`/detach shut a session down for good.
     let (loader, _data_dir) = offline_loader();
-    assert!(!session.start_lazer_resolver(loader, noop_warn()).await);
+    assert!(!bounded!(session.start_lazer_resolver(loader, noop_warn())));
 }
 
 #[test]

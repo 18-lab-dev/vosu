@@ -322,8 +322,7 @@ fn schema_for_resolves_a_schema_while_the_instance_is_still_creating() {
         }
 
         gate.release();
-        handle
-            .join()
+        vosu_proptest::wait::JoinBounded::join_bounded(handle)
             .unwrap()
             .expect("creating the gated schema instance");
     });
@@ -540,8 +539,7 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
         }
 
         gate.release();
-        create_thread
-            .join()
+        vosu_proptest::wait::JoinBounded::join_bounded(create_thread)
             .unwrap()
             .expect("creating the gated replay instance");
     });

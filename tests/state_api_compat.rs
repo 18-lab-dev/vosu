@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use vosu_proptest::bounded;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -827,11 +828,11 @@ async fn v2_subscription_emitted_values_match_parsed_v2_wire_values() {
         let hub = V2SubscriptionHub::new(provider, std::time::Duration::ZERO);
         let runner = tokio::spawn({
             let hub = hub.clone();
-            async move { hub.run().await }
+            async move { bounded!(hub.run()) }
         });
         let (connection, mut receiver) = hub.connect();
         connection.subscribe(vec![String::new()]).unwrap();
-        let frame = match receiver.recv().await.unwrap() {
+        let frame = match bounded!(receiver.recv()).unwrap() {
             V2SubscriptionOutbound::Text(bytes) => {
                 serde_json::from_slice::<Value>(&bytes).expect("subscription frame must be valid")
             }
@@ -847,6 +848,6 @@ async fn v2_subscription_emitted_values_match_parsed_v2_wire_values() {
             None => assert_eq!(frame, serde_json::json!([0, 1, []])),
         }
         hub.shutdown();
-        runner.await.unwrap();
+        bounded!(runner).unwrap();
     }
 }

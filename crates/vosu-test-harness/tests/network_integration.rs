@@ -12,6 +12,7 @@ use std::{
     },
     time::Duration,
 };
+use vosu_proptest::bounded;
 
 use axum::{
     Json, Router,
@@ -62,7 +63,7 @@ fn deadlines() -> Deadlines {
 }
 
 async fn run_updates(State(updater): State<Arc<dyn UpdaterHandoff>>) -> Response {
-    match updater.run_update(false).await {
+    match bounded!(updater.run_update(false)) {
         Ok(UpdateRouteResult::Latest) => {
             Json(serde_json::json!({"status":"latest"})).into_response()
         }
@@ -85,7 +86,7 @@ async fn run_updates(State(updater): State<Arc<dyn UpdaterHandoff>>) -> Response
 
 #[tokio::test]
 async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycle() {
-    let mock = MockNetwork::start().await.expect("start loopback fixture");
+    let mock = bounded!(MockNetwork::start()).expect("start loopback fixture");
     let client = StreamingClient::for_test_network(
         mock.test_network_config()
             .expect("valid exact-listener config"),
@@ -94,26 +95,22 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     );
     let cancel = CancellationToken::new();
 
-    let catalog: serde_json::Value = client
-        .request_json(&mock.endpoints().catalog, USER_AGENT, &cancel)
-        .await
-        .expect("catalog through reserved host");
+    let catalog: serde_json::Value =
+        bounded!(client.request_json(&mock.endpoints().catalog, USER_AGENT, &cancel))
+            .expect("catalog through reserved host");
     assert_eq!(catalog[0]["name"], "Harness Counter");
 
-    let release: serde_json::Value = client
-        .request_json(&mock.endpoints().release_latest, USER_AGENT, &cancel)
-        .await
-        .expect("release endpoint through reserved host");
+    let release: serde_json::Value =
+        bounded!(client.request_json(&mock.endpoints().release_latest, USER_AGENT, &cancel))
+            .expect("release endpoint through reserved host");
     assert_eq!(release["tag_name"], "v0.1.0");
 
-    let offsets: serde_json::Value = client
-        .request_json(
-            &format!("{}/2026.714.0.json", mock.endpoints().offsets_base),
-            USER_AGENT,
-            &cancel,
-        )
-        .await
-        .expect("offset endpoint through reserved host");
+    let offsets: serde_json::Value = bounded!(client.request_json(
+        &format!("{}/2026.714.0.json", mock.endpoints().offsets_base),
+        USER_AGENT,
+        &cancel,
+    ))
+    .expect("offset endpoint through reserved host");
     assert_eq!(offsets["OsuVersion"], "2026.714.0");
 
     let roots = TempDir::new().expect("temporary roots");
@@ -129,9 +126,11 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
             .expect("updater exact-listener config"),
     )
     .expect("construct injected updater handoff");
-    let update_listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-        .await
-        .expect("bind in-process application route");
+    let update_listener = bounded!(tokio::net::TcpListener::bind((
+        std::net::Ipv4Addr::LOCALHOST,
+        0
+    )))
+    .expect("bind in-process application route");
     let update_address = update_listener.local_addr().unwrap();
     let update_stop = CancellationToken::new();
     let update_shutdown = update_stop.clone();
@@ -139,23 +138,25 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
         .route("/api/runUpdates", post(run_updates))
         .with_state(updater);
     let update_task = tokio::spawn(async move {
-        axum::serve(update_listener, update_app)
-            .with_graceful_shutdown(update_shutdown.cancelled_owned())
-            .await
+        bounded!(
+            axum::serve(update_listener, update_app)
+                .with_graceful_shutdown(update_shutdown.cancelled_owned())
+        )
     });
     let route_client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let response = route_client
-        .post(format!("http://{update_address}/api/runUpdates"))
-        .send()
-        .await
-        .expect("call in-process update HTTP route");
+    let response = bounded!(
+        route_client
+            .post(format!("http://{update_address}/api/runUpdates"))
+            .send()
+    )
+    .expect("call in-process update HTTP route");
     assert_eq!(response.status(), 200);
     assert_eq!(
-        response.json::<serde_json::Value>().await.unwrap(),
+        bounded!(response.json::<serde_json::Value>()).unwrap(),
         serde_json::json!({"status":"latest"})
     );
     update_stop.cancel();
-    update_task.await.unwrap().unwrap();
+    bounded!(update_task).unwrap().unwrap();
     let update_residue: Vec<_> = std::fs::read_dir(update_program.join(".cache"))
         .unwrap()
         .filter_map(Result::ok)
@@ -179,14 +180,12 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
         opener.clone(),
         downloader,
     );
-    counters
-        .download(&DownloadRequest {
-            url: mock.endpoints().counter_redirect.clone(),
-            name: "harness-counter".to_owned(),
-            update: false,
-        })
-        .await
-        .expect("download and atomically extract counter");
+    bounded!(counters.download(&DownloadRequest {
+        url: mock.endpoints().counter_redirect.clone(),
+        name: "harness-counter".to_owned(),
+        update: false,
+    }))
+    .expect("download and atomically extract counter");
 
     assert_eq!(
         std::fs::read_to_string(static_root.join("harness-counter/assets/value.txt")).unwrap(),
@@ -203,7 +202,7 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
         .delete("harness-counter")
         .expect("delete installed counter");
     assert!(!static_root.join("harness-counter").exists());
-    counters.shutdown().await;
+    bounded!(counters.shutdown());
 
     let requests = mock.requests();
     assert!(
@@ -216,14 +215,12 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
         !cache_root.exists() || std::fs::read_dir(&cache_root).unwrap().next().is_none(),
         "temporary counter archives must be cleaned"
     );
-    mock.shutdown()
-        .await
-        .expect("fixture drains without active requests");
+    bounded!(mock.shutdown()).expect("fixture drains without active requests");
 }
 
 #[tokio::test]
 async fn counter_download_failures_name_the_download_host() {
-    let mock = MockNetwork::start().await.expect("start loopback fixture");
+    let mock = bounded!(MockNetwork::start()).expect("start loopback fixture");
     let client = StreamingClient::for_test_network(
         mock.test_network_config()
             .expect("valid exact-listener config"),
@@ -249,14 +246,12 @@ async fn counter_download_failures_name_the_download_host() {
             "response is not a ZIP archive",
         ),
     ] {
-        let error = counters
-            .download(&DownloadRequest {
-                url: format!("http://vosu-harness.invalid:{port}{path}"),
-                name: "harness-counter".to_owned(),
-                update: false,
-            })
-            .await
-            .expect_err("failed download must not install");
+        let error = bounded!(counters.download(&DownloadRequest {
+            url: format!("http://vosu-harness.invalid:{port}{path}"),
+            name: "harness-counter".to_owned(),
+            update: false,
+        }))
+        .expect_err("failed download must not install");
         assert!(
             matches!(
                 &error,
@@ -267,19 +262,18 @@ async fn counter_download_failures_name_the_download_host() {
         );
         assert!(!static_root.join("harness-counter").exists());
     }
-    counters.shutdown().await;
-    mock.shutdown().await.expect("fixture drains");
+    bounded!(counters.shutdown());
+    bounded!(mock.shutdown()).expect("fixture drains");
 }
 
 #[tokio::test]
 async fn production_policy_rejects_identical_loopback_url_and_harness_is_exact() {
-    let mock = MockNetwork::start().await.expect("start loopback fixture");
+    let mock = bounded!(MockNetwork::start()).expect("start loopback fixture");
     let cancel = CancellationToken::new();
     let production = StreamingClient::production()
         .with_deadlines_and_limits(deadlines(), DownloadLimits::default());
-    let rejection = production
-        .request_bytes(&mock.endpoints().counter_zip, USER_AGENT, &cancel)
-        .await;
+    let rejection =
+        bounded!(production.request_bytes(&mock.endpoints().counter_zip, USER_AGENT, &cancel));
     assert!(
         rejection.is_err(),
         "production policy accepted a harness-only URL"
@@ -298,7 +292,7 @@ async fn production_policy_rejects_identical_loopback_url_and_harness_is_exact()
         DownloadLimits::default(),
     );
     assert!(matches!(
-        harness.request_bytes(&wrong_url, USER_AGENT, &cancel).await,
+        bounded!(harness.request_bytes(&wrong_url, USER_AGENT, &cancel)),
         Err(NetworkError::Destination(message)) if message.contains("allowlist")
     ));
 
@@ -306,10 +300,8 @@ async fn production_policy_rejects_identical_loopback_url_and_harness_is_exact()
         "http://vosu-harness.invalid:{}/status/503",
         mock.address().port()
     );
-    let response = harness
-        .request_bytes(&status_url, USER_AGENT, &cancel)
-        .await
-        .expect("status response");
+    let response =
+        bounded!(harness.request_bytes(&status_url, USER_AGENT, &cancel)).expect("status response");
     assert_eq!(response.status, 503);
     assert!(
         response.body.is_empty(),
@@ -318,12 +310,10 @@ async fn production_policy_rejects_identical_loopback_url_and_harness_is_exact()
 
     let slow_url = format!("http://vosu-harness.invalid:{}/slow", mock.address().port());
     assert!(matches!(
-        harness.request_bytes(&slow_url, USER_AGENT, &cancel).await,
+        bounded!(harness.request_bytes(&slow_url, USER_AGENT, &cancel)),
         Err(NetworkError::Timeout)
     ));
-    mock.shutdown()
-        .await
-        .expect("timed-out request is released before shutdown completes");
+    bounded!(mock.shutdown()).expect("timed-out request is released before shutdown completes");
 }
 
 struct InProcessHooks {
@@ -368,7 +358,7 @@ impl RuntimeHooks for InProcessHooks {
 
 #[tokio::test]
 async fn real_app_lifecycle_uses_only_the_injected_in_process_origin() {
-    let mock = MockNetwork::start().await.expect("start loopback fixture");
+    let mock = bounded!(MockNetwork::start()).expect("start loopback fixture");
     let client = StreamingClient::for_test_network(
         mock.test_network_config()
             .expect("valid exact-listener config"),
@@ -399,7 +389,7 @@ async fn real_app_lifecycle_uses_only_the_injected_in_process_origin() {
         hooks,
     );
     assert_eq!(
-        app.run().await.expect("run in-process App"),
+        bounded!(app.run()).expect("run in-process App"),
         StartupOutcome::Started
     );
     assert_eq!(app.hooks().update_enabled, Some(false));
@@ -409,7 +399,7 @@ async fn real_app_lifecycle_uses_only_the_injected_in_process_origin() {
         1,
         "App must not contact any implicit endpoint"
     );
-    mock.shutdown().await.expect("App fixture drains cleanly");
+    bounded!(mock.shutdown()).expect("App fixture drains cleanly");
 }
 
 struct PreparedUpdate {
@@ -434,55 +424,51 @@ impl UpdaterHandoff for PreparedUpdate {
 
 #[tokio::test]
 async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_1001() {
-    let mock = MockNetwork::start()
-        .await
-        .expect("start reserved outbound fixture");
+    let mock = bounded!(MockNetwork::start()).expect("start reserved outbound fixture");
     let roots = TempDir::new().expect("temporary production composition roots");
     let config_path = roots.path().join("config/vosu.toml");
     let config = Arc::new(
-        ConfigStore::initialize(&config_path)
-            .await
-            .expect("initialize production config"),
+        bounded!(ConfigStore::initialize(&config_path)).expect("initialize production config"),
     );
     let triggered = CancellationToken::new();
-    let composition = start_test_production_composition(TestProductionCompositionOptions {
-        target: ListenTarget::new("127.0.0.1", 0),
-        config: Arc::clone(&config),
-        static_root: roots.path().join("static"),
-        settings_root: roots.path().join("settings"),
-        cache_root: roots.path().join("cache"),
-        logs_root: roots.path().join("logs"),
-        updater: Arc::new(PreparedUpdate {
-            triggered: triggered.clone(),
-        }),
-        network: mock
-            .test_network_config()
-            .expect("exact-listener production network"),
-    })
-    .await
+    let composition = bounded!(start_test_production_composition(
+        TestProductionCompositionOptions {
+            target: ListenTarget::new("127.0.0.1", 0),
+            config: Arc::clone(&config),
+            static_root: roots.path().join("static"),
+            settings_root: roots.path().join("settings"),
+            cache_root: roots.path().join("cache"),
+            logs_root: roots.path().join("logs"),
+            updater: Arc::new(PreparedUpdate {
+                triggered: triggered.clone(),
+            }),
+            network: mock
+                .test_network_config()
+                .expect("exact-listener production network"),
+        }
+    ))
     .expect("start actual ProductionRouteDelegate listener");
     let address = composition.address();
 
-    let (mut websocket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/ws"))
-        .await
-        .expect("connect production v1 WebSocket");
+    let (mut websocket, _) = bounded!(tokio_tungstenite::connect_async(format!(
+        "ws://{address}/ws"
+    )))
+    .expect("connect production v1 WebSocket");
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let saved = client
-        .post(format!("http://{address}/api/settingsSave"))
-        .header(reqwest::header::ORIGIN, format!("http://{address}"))
-        .json(&serde_json::json!({
-            "DEBUG_LOG": true,
-            "V2_SUBSCRIPTION_DEBOUNCE": 1.125
-        }))
-        .send()
-        .await
-        .expect("save uppercase JSON settings");
+    let saved = bounded!(
+        client
+            .post(format!("http://{address}/api/settingsSave"))
+            .header(reqwest::header::ORIGIN, format!("http://{address}"))
+            .json(&serde_json::json!({
+                "DEBUG_LOG": true,
+                "V2_SUBSCRIPTION_DEBOUNCE": 1.125
+            }))
+            .send()
+    )
+    .expect("save uppercase JSON settings");
     assert_eq!(saved.status(), 200);
     assert_eq!(
-        saved
-            .json::<serde_json::Value>()
-            .await
-            .expect("decode settingsSave response"),
+        bounded!(saved.json::<serde_json::Value>()).expect("decode settingsSave response"),
         serde_json::json!({"status":"updated"})
     );
     let persisted = ConfigDocument::parse(
@@ -492,20 +478,18 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
     assert!(persisted.config().debug_log);
     assert_eq!(persisted.config().v2_subscription_debounce, 1.125);
 
-    let response = client
-        .post(format!("http://{address}/api/runUpdates"))
-        .header(reqwest::header::ORIGIN, format!("http://{address}"))
-        .send()
-        .await
-        .expect("call production update route");
+    let response = bounded!(
+        client
+            .post(format!("http://{address}/api/runUpdates"))
+            .header(reqwest::header::ORIGIN, format!("http://{address}"))
+            .send()
+    )
+    .expect("call production update route");
     assert_eq!(response.status(), 200);
     let declared = response
         .content_length()
         .expect("updated response must publish Content-Length") as usize;
-    let body = response
-        .bytes()
-        .await
-        .expect("receive complete updated response");
+    let body = bounded!(response.bytes()).expect("receive complete updated response");
     assert_eq!(body.len(), declared);
     assert_eq!(body.as_ref(), br#"{"status":"updated"}"#);
 
@@ -527,8 +511,8 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
         }
         other => panic!("expected WebSocket 1001 close, got {other:?}"),
     }
-    shutdown.await.unwrap();
-    config.shutdown().await.expect("shutdown production config");
+    bounded!(shutdown).unwrap();
+    bounded!(config.shutdown()).expect("shutdown production config");
 
     let cache_entries: Vec<_> = std::fs::read_dir(roots.path().join("cache"))
         .into_iter()
@@ -539,7 +523,5 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
         cache_entries.is_empty(),
         "prepared-update fixture left cache residue"
     );
-    mock.shutdown()
-        .await
-        .expect("reserved fixture drains cleanly");
+    bounded!(mock.shutdown()).expect("reserved fixture drains cleanly");
 }

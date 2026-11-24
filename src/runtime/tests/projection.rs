@@ -1030,18 +1030,18 @@ async fn subscription_projection_keeps_initial_delta_not_ready_and_error_frames_
         let mut runners = Vec::new();
         let mut bridges = Vec::new();
         for hub in &hubs {
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
             let address = listener.local_addr().unwrap();
             let hub_for_bridge = hub.clone();
             bridges.push(tokio::spawn(async move {
-                let (stream, _) = listener.accept().await.unwrap();
+                let (stream, _) = bounded!(listener.accept()).unwrap();
                 stream.set_nodelay(true).unwrap();
-                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-                let request = socket.next().await.unwrap().unwrap().into_data();
+                let mut socket = bounded!(tokio_tungstenite::accept_async(stream)).unwrap();
+                let request = bounded!(socket.next()).unwrap().unwrap().into_data();
                 let pointers = crate::server::v2_subscription::parse_subscription_request(&request).unwrap();
                 let (connection, mut receiver) = hub_for_bridge.connect();
                 connection.subscribe(pointers).unwrap();
-                while let Some(frame) = receiver.recv().await {
+                while let Some(frame) = bounded!(receiver.recv()) {
                     let acknowledge = matches!(frame, V2SubscriptionOutbound::Text(_));
                     let message = match frame {
                         V2SubscriptionOutbound::Text(bytes) | V2SubscriptionOutbound::Error(bytes) => Message::Text(bytes.try_into().unwrap()),
@@ -1049,15 +1049,15 @@ async fn subscription_projection_keeps_initial_delta_not_ready_and_error_frames_
                         V2SubscriptionOutbound::Close { code } => Message::Close(Some(CloseFrame { code: CloseCode::from(code), reason: "".into() })),
                     };
                     let closing = message.is_close();
-                    socket.send(message).await.unwrap();
+                    bounded!(socket.send(message)).unwrap();
                     if acknowledge { connection.write_completed(); }
                     if closing { break; }
                 }
             }));
-            let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/websocket/v2/subscribe")).await.unwrap();
-            socket.send(Message::Text(serde_json::to_string(&pointers).unwrap().into())).await.unwrap();
+            let (mut socket, _) = bounded!(tokio_tungstenite::connect_async(format!("ws://{address}/websocket/v2/subscribe"))).unwrap();
+            bounded!(socket.send(Message::Text(serde_json::to_string(&pointers).unwrap().into()))).unwrap();
             clients.push(socket);
-            runners.push(tokio::spawn({ let hub = hub.clone(); async move { hub.run().await } }));
+            runners.push(tokio::spawn({ let hub = hub.clone(); async move { bounded!(hub.run()) } }));
         }
         for (revision, snapshot) in [(1, &initial), (2, &changed), (3, &missing), (4, &initial)] {
             if revision != 1 {
@@ -1079,7 +1079,7 @@ async fn subscription_projection_keeps_initial_delta_not_ready_and_error_frames_
         }
         assert_eq!(closes[0], closes[1]);
         for hub in hubs { hub.shutdown(); }
-        for runner in runners { runner.await.unwrap(); }
-        for bridge in bridges { bridge.await.unwrap(); }
+        for runner in runners { bounded!(runner).unwrap(); }
+        for bridge in bridges { bounded!(bridge).unwrap(); }
     }
 }

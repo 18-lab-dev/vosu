@@ -10,6 +10,7 @@ use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+use vosu_proptest::bounded;
 
 use tempfile::TempDir;
 
@@ -48,7 +49,7 @@ fn toml_config(port: u16, static_root: &Path) -> String {
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        match client.get(url).send().await {
+        match bounded!(client.get(url).send()) {
             Ok(response) => return response,
             Err(error) if Instant::now() < deadline => {
                 let _ = error;
@@ -226,10 +227,10 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .build()
         .unwrap();
     let base = format!("http://127.0.0.1:{first_port}");
-    let dashboard = wait_get(&client, &format!("{base}/")).await;
+    let dashboard = bounded!(wait_get(&client, &format!("{base}/")));
     assert_eq!(dashboard.status(), 200);
     let management = dashboard.url().origin().ascii_serialization();
-    let dashboard = dashboard.text().await.unwrap();
+    let dashboard = bounded!(dashboard.text()).unwrap();
     assert!(dashboard.contains("vosu"));
     let csrf = dashboard
         .split("\"csrf\":\"")
@@ -247,15 +248,11 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     );
     assert!(!config_dir.join("vosu.env").exists());
     assert!(!config_dir.join("tosu.env").exists());
-    let asset = client
-        .get(format!("{base}/assets/homepage.css"))
-        .send()
-        .await
-        .unwrap();
+    let asset = bounded!(client.get(format!("{base}/assets/homepage.css")).send()).unwrap();
     assert_eq!(asset.status(), 200);
-    assert!(!asset.bytes().await.unwrap().is_empty());
+    assert!(!bounded!(asset.bytes()).unwrap().is_empty());
 
-    let state = client.get(format!("{base}/json")).send().await.unwrap();
+    let state = bounded!(client.get(format!("{base}/json")).send()).unwrap();
     let state_status = state.status();
     assert!(
         state_status == 200 || state_status == 500,
@@ -263,33 +260,39 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     );
     if state_status == 500 {
         assert_eq!(
-            state.text().await.unwrap(),
+            bounded!(state.text()).unwrap(),
             r#"{"error":"osu is not ready/running"}"#
         );
     }
 
-    let counters = client
-        .get(format!("{base}/api/counters/search/seeded"))
-        .send()
-        .await
-        .unwrap();
+    let counters = bounded!(
+        client
+            .get(format!("{base}/api/counters/search/seeded"))
+            .send()
+    )
+    .unwrap();
     assert_eq!(counters.status(), 200);
-    assert!(counters.text().await.unwrap().contains("Seeded Counter"));
+    assert!(
+        bounded!(counters.text())
+            .unwrap()
+            .contains("Seeded Counter")
+    );
 
-    let rejected = client.post(format!(
+    let rejected = bounded!(client.post(format!(
         "{management}/api/counters/download/https%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
-    )).header(reqwest::header::ORIGIN, &management).header("X-Vosu-CSRF", csrf).send().await.unwrap();
+    )).header(reqwest::header::ORIGIN, &management).header("X-Vosu-CSRF", csrf).send()).unwrap();
     assert_eq!(rejected.status(), 200);
-    assert!(rejected.text().await.unwrap().contains("error"));
+    assert!(bounded!(rejected.text()).unwrap().contains("error"));
     assert!(!static_root.join("blocked").exists());
 
-    let report = client
-        .post(format!("{management}/api/generateReport"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .send()
-        .await
-        .unwrap();
+    let report = bounded!(
+        client
+            .post(format!("{management}/api/generateReport"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .send()
+    )
+    .unwrap();
     assert_eq!(report.status(), 200);
     let disposition = report
         .headers()
@@ -298,7 +301,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .unwrap_or_default()
         .to_owned();
     assert!(disposition.contains("vosu-report-") && disposition.contains(".html"));
-    assert!(report.text().await.unwrap().contains("vosu"));
+    assert!(bounded!(report.text()).unwrap().contains("vosu"));
 
     let second_port = available_port();
     fs::write(
@@ -312,29 +315,27 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
-    let last_good = last_good_client
-        .get(format!("{base}/"))
-        .send()
-        .await
+    let last_good = bounded!(last_good_client.get(format!("{base}/")).send())
         .expect("malformed TOML must retain the packaged listener");
     assert_eq!(last_good.status(), 200);
 
     fs::write(&config_path, toml_config(second_port, &static_root)).unwrap();
     let second_base = format!("http://127.0.0.1:{second_port}");
-    let rebound = wait_get(&client, &format!("{second_base}/")).await;
+    let rebound = bounded!(wait_get(&client, &format!("{second_base}/")));
     assert_eq!(rebound.status(), 200);
 
-    let saved = client
-        .post(format!("{management}/api/settingsSave"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .json(&serde_json::json!({"SHOW_MP_COMMANDS": true}))
-        .send()
-        .await
-        .expect("save packaged uppercase JSON settings");
+    let saved = bounded!(
+        client
+            .post(format!("{management}/api/settingsSave"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!({"SHOW_MP_COMMANDS": true}))
+            .send()
+    )
+    .expect("save packaged uppercase JSON settings");
     assert_eq!(saved.status(), 200);
     assert_eq!(
-        saved.json::<serde_json::Value>().await.unwrap(),
+        bounded!(saved.json::<serde_json::Value>()).unwrap(),
         serde_json::json!({"status":"updated"})
     );
     let persisted: toml::Table =
@@ -347,13 +348,14 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         Some(true)
     );
 
-    let deleted = client
-        .post(format!("{management}/api/counters/delete/seeded-counter"))
-        .header(reqwest::header::ORIGIN, &management)
-        .header("X-Vosu-CSRF", csrf)
-        .send()
-        .await
-        .unwrap();
+    let deleted = bounded!(
+        client
+            .post(format!("{management}/api/counters/delete/seeded-counter"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .send()
+    )
+    .unwrap();
     assert_eq!(deleted.status(), 200);
     assert!(!seeded.exists());
     assert!(config_path.is_file());

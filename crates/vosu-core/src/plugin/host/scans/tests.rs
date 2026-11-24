@@ -379,12 +379,11 @@ struct GatedMemory {
 impl ProcessMemory for GatedMemory {
     fn read_exact(&self, _address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         let (lock, condvar) = &*self.gate;
-        let mut released = lock.lock().unwrap_or_else(|poison| poison.into_inner());
-        while !*released {
-            released = condvar
-                .wait(released)
-                .unwrap_or_else(|poison| poison.into_inner());
-        }
+        let released = lock.lock().unwrap_or_else(|poison| poison.into_inner());
+        let (released, _) = condvar
+            .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+            .unwrap_or_else(|poison| poison.into_inner());
+        assert!(*released, "scan memory gate was not released within 10s");
         dst.fill(0);
         Ok(())
     }

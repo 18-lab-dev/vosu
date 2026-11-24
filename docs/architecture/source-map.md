@@ -34,6 +34,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Integration evidence | `tools/live-parity/`, `tools/oracle/` | Pinned parity captures, calculator provenance and diffs |
 | Precise validation | `tools/input-validation/` | Map scanning, navigation, autoplay, edge accounting and capture artifacts |
 | Behavioral contracts | `tests/`, `crates/vosu-test-harness/`, `crates/vosu-release-smoke/` | Compatibility, native, daemon smoke, updater/state/performance, and external packaged-executable tests |
+| Bounded test synchronization | `crates/vosu-proptest/src/wait.rs` and `bounded!` | Shared test-only ten-second barriers, worker joins and child exits, and thirty-second Tokio future bounds; native, state, smoke and harness test crates use dev-only dependencies for these helpers. `.config/nextest.toml` remains the wall-clock backstop for product mutex deadlocks and synchronous work that cannot be interrupted in-process. |
 | Performance evidence | `benches/hot_paths.rs`, [benchmark guide](../testing/benchmarks.md) | Criterion hot paths and machine-specific comparisons |
 | Embedded inputs | `assets/`, `build.rs`, `crates/vosu-osu-reader/build.rs` | Dashboard, fonts, images, offsets and checksum-covered assets; the reader's own `build.rs` additionally embeds the RID-selected lazer offset generator bundle |
 

@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
+use vosu_proptest::bounded;
 
 use bytes::Bytes;
 use serde_json::Value;
@@ -577,18 +578,16 @@ async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generatio
     let generator = FakeGenerator::default();
     let loader = LazerOffsetLoader::new(generator.clone(), cache.path().into(), embedded.clone());
     assert_eq!(
-        loader
-            .resolve(
-                std::path::Path::new("11"),
-                &embedded_version,
-                &CancellationToken::new()
-            )
-            .await
-            .unwrap()
-            .osu_version,
+        bounded!(loader.resolve(
+            std::path::Path::new("11"),
+            &embedded_version,
+            &CancellationToken::new()
+        ))
+        .unwrap()
+        .osu_version,
         embedded_version
     );
-    assert!(generator.calls.lock().await.is_empty());
+    assert!(bounded!(generator.calls.lock()).is_empty());
 
     let cached_version = "2026.518.0";
     std::fs::write(
@@ -597,37 +596,29 @@ async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generatio
     )
     .unwrap();
     assert_eq!(
-        loader
-            .resolve(
-                std::path::Path::new("12"),
-                cached_version,
-                &CancellationToken::new()
-            )
-            .await
-            .unwrap()
-            .osu_version,
+        bounded!(loader.resolve(
+            std::path::Path::new("12"),
+            cached_version,
+            &CancellationToken::new()
+        ))
+        .unwrap()
+        .osu_version,
         cached_version
     );
-    assert!(generator.calls.lock().await.is_empty());
+    assert!(bounded!(generator.calls.lock()).is_empty());
 
     let generated_version = "2027.1.0";
     let generated = offsets_for(generated_version);
-    generator
-        .responses
-        .lock()
-        .await
-        .push_back(Ok(generated.clone()));
-    let result = loader
-        .resolve(
-            std::path::Path::new("99"),
-            generated_version,
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    bounded!(generator.responses.lock()).push_back(Ok(generated.clone()));
+    let result = bounded!(loader.resolve(
+        std::path::Path::new("99"),
+        generated_version,
+        &CancellationToken::new(),
+    ))
+    .unwrap();
     assert_eq!(result.osu_version, generated_version);
     assert_eq!(
-        *generator.calls.lock().await,
+        *bounded!(generator.calls.lock()),
         vec![(std::path::PathBuf::from("99"), generated_version.to_owned())]
     );
     assert_eq!(
