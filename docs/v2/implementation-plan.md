@@ -1347,7 +1347,7 @@ The approved D17 case names, common baseline harness and evidence requirements
 are [frozen in the benchmark guide](../testing/benchmarks.md#m4a-d17-contract).
 No measurement or D17 pass is claimed by the contract freeze.
 
-### M4b: golden fixtures from live captures (owner-dependent)
+### M4b: golden fixtures from live captures (owner-authorized)
 
 Scope: extend `tools/live-parity` with (1) a route-probe matrix recording
 status, headers, and error bodies, including near-miss routes; (2) a
@@ -1356,25 +1356,97 @@ captures can be replayed; (3) a `golden` command that normalizes volatile
 values and writes fixtures under `tests/fixtures/upstream/<pinned revision>/`.
 A new `tests/adapter_golden.rs` replays the bus dumps into the adapters and
 compares every route and frame with the upstream capture, minus the
-divergence file.
+machine-readable divergence rules.
 
 Captures (D14), against the pinned upstream revision (`Cargo.toml`
 `source-commit`), traversing menu → play → paused → result:
 
 1. **Pilot**, as soon as the tooling lands: one pair (Windows lazer, the pair
-   that exercises the most adapter surface) by the owner. Mismatches become
-   M4a follow-up fixes immediately.
-2. **Full set** before M8: every pair in `tools/live-parity/live_parity.py:25`
-   `SUPPORTED_MATRIX` (Windows stable, Windows lazer, Linux lazer), in the
-   same owner session as the `/api/ingame` observation (section 6).
-3. **Recapture** if the pin moves before M8.
+   that exercises the most adapter surface), in an owner-authorized session.
+   Mismatches become M4a follow-up fixes immediately.
+2. **Full set** before M8: every pair in `SUPPORTED_MATRIX`
+   (`tools/live-parity/live_parity.py`: Windows stable, Windows lazer, Linux
+   lazer), in the same owner-authorized session as the `/api/ingame`
+   observation (section 6).
+3. **Recapture** of all three if the pin moves before M8.
 
-Exit: `cargo test --locked --test adapter_golden` on the pilot, then on the
-full set; the fixture inventory names its revision and is covered by
-`scripts/brand-allowlist.txt` entries in the `parity`/`fixture` categories
-where fixtures spell the upstream name.
+Exit: `cargo test --locked --features test-harness --test adapter_golden`
+(A4b.9) with nonzero case counts by platform and family, on the pilot, then on
+the full set; the fixture inventory names its revision and is covered by exact
+per-file `scripts/brand-allowlist.txt` entries in the `parity`/`fixture`
+categories where fixtures spell the upstream name.
 
 Blocking: M8's release gate blocks on the full set. Nothing else does.
+
+#### A4b approved golden contract freeze (2026-11-24)
+
+The owner decided A4b.1 and A4b.4; main adopted every other A4b item exactly
+as recommended under delegated spec authority. The normative text is the
+[behavioral golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md);
+in summary:
+
+1. **Capture authority (A4b.1).** Captures are owner-authorized per session
+   and agent-operated on isolated VM test installs. A written authorization
+   names the vosu commit and pin, platform/client version/install/profile,
+   scenario, account/data/media/network policy, private evidence path, GUI
+   operator scope and fixture review route. VM lifecycle pre-authorization is
+   not capture authorization. The agent stops on any login, purchase, legal,
+   private-account or unexpected data prompt. The Windows and Linux VMs never
+   run together.
+2. **Capture build (A4b.2).** An attested debug
+   `cargo build --locked --features test-harness` vosu (Windows without
+   default features; Linux keeps `linux-process-events`). No release-capable
+   harness; release live parity stays an optional diagnostic, and debug
+   cadence is not performance evidence.
+3. **Endpoint (A4b.3).** Exactly
+   `GET /__vosu_test/v1/adapter-capture?schema=<v1|sc|v2|v2-precise>`:
+   harness-only, mounted only with a per-launch capability, loopback-only,
+   ordinary 404 for absent or invalid authorization, exact query, GET only,
+   `no-store`, 8 MiB bound, no demand or history. It returns the
+   provider-retained capture and the adapter bytes from that same snapshot.
+4. **Data and licensing (A4b.4).** Offline or test accounts, no chat.
+   Committed fixtures use generated vosu-owned test maps, skins and media
+   with a recorded license; never the owner's library. Raw captures stay
+   private.
+5. **Sandwiches (A4b.5).** Stable case IDs; upstream request twice, vosu
+   dump → route → dump; whole-case retries with every attempt recorded; no
+   timestamp joins. Exact payloads only in stable windows; active play is
+   diagnostic.
+6. **Normalization (A4b.6).** A closed list of exact-scope rules (`date`,
+   file `last-modified`/`etag` and their request validators, capability
+   redaction in raw evidence, dump identities, synthetic roots, and
+   individually listed client timestamps, none initially). Never status,
+   route, method, content-type, security, cache, range or upgrade semantics,
+   numbers, null versus absence, order, quirks or coherent-sample
+   relationships. A new rule needs review, a counterexample test and a
+   manifest version bump.
+7. **Headers (A4b.7).** Status, content type/length, cache, validators,
+   range, location, CSP, nosniff, `access-control-*` and WebSocket
+   upgrade/accept/protocol fields are compared; others are recorded
+   privately.
+8. **Publication (A4b.8).** `golden` writes only a candidate directory; main
+   reviews the diff, brand inventory, privacy and asset checks and replay
+   before commit. Nothing is uploaded or published.
+9. **Exit command (A4b.9).** As above, with
+   `[[test]] required-features = ["test-harness"]`; a featureless or zero-case
+   run is not evidence.
+10. **Pin policy (A4b.10).** The test reads only the Cargo pin's directory;
+    a pin bump is one owner-approved change that also deletes the previous
+    behavioral directory, and before M8 it triggers a full recapture.
+11. **Divergence rules (A4b.11).** `divergence-rules.json` rules reference
+    existing non-`temporary` ledger IDs with exact case and record-part
+    scope; unused rules fail; whole-route subtraction needs whole-route
+    ledger scope.
+12. **`/api/ingame` (A4b.12).** Not captured, not a golden. The clean-room
+    observation is separate human work; its author is named by the owner
+    when M7 needs it, and M4b does not depend on it.
+13. **Size (A4b.13).** Per platform at most 8 MiB of JSON/CBOR envelopes and
+    4 MiB of approved binary assets; text stays UTF-8, never compressed.
+14. **Brand (A4b.14).** Exact per-file allowlist entries (`parity` for
+    upstream wire/provenance, `fixture` for synthetic replay content), added
+    only in the reviewed fixture commit; no revision-directory wildcard.
+
+The freeze is not evidence that any tool, capture or fixture exists.
 
 ### M5: plugin-host process, capability drop, brokered reads
 
@@ -1581,16 +1653,19 @@ Golden fixtures come from two sources with different owners:
    `tools/oracle/generate.ts` at the revisions in `tools/oracle/oracle-lock.json`
    and checked by `tests/state_api_compat.rs` (`EXPECTED_REVISIONS`, lines
    39–45). M4a reuses them unchanged as the adapters' payload goldens.
-2. **Behavioral goldens need a live session (owner-dependent, M4b).** Status
+2. **Behavioral goldens need a live session (owner-authorized, M4b).** Status
    codes, error bodies, headers, file routes, `/api/calculate/pp`, WebSocket
    framing and cadence, and near-miss routes are observable only from a
    running pinned upstream with a live osu! client. ADR 0021 requires these
    captures to be committed and checked in CI. The tooling extension lands
-   first in M4b without the owner; the captures need the owner's machines and
-   clients. A one-pair **pilot** runs as soon as the tooling lands, so
-   mismatches surface early; **M8 (the release) blocks on the full set; no
-   earlier milestone does.** Each later pin bump repeats the capture (ADR
-   0021).
+   first in M4b without the owner; each capture session needs the owner's
+   written authorization and runs on isolated VM test installs, operated by
+   an agent within that authorization (A4b.1, D14). A one-pair **pilot** runs
+   as soon as the tooling lands, so mismatches surface early; **M8 (the
+   release) blocks on the full set; no earlier milestone does.** Each later
+   pin bump repeats the capture (ADR 0021). These behavioral goldens never
+   replace the projection goldens above; their contract is
+   [GOLDEN_CONTRACT.md](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md).
 
 Between M4a and M4b the adapters are checked by the source oracle plus the
 1.x behavioral tests in `server_compat`, which already encode the upstream
@@ -1619,11 +1694,15 @@ recorded in `CHANGELOG.md` and [ADR 0008](../decisions/0008-external-in-game-ove
 - **Who (adopted):** the owner if eligible; otherwise a contributor who
   has never worked in this repository's history before `1ccd4cc`. The plan's
   implementing agents are not eligible, because they routinely read history.
-- **When:** in the same owner session as the M4b captures (D14), because both
-  need the pinned upstream and a live client. If the owner is not eligible as
-  author, the owner operates the machine while the named author observes. The
-  M7 implementation blocks on this document; if the session slips, the
-  endpoint lands as a separate step before M8 rather than holding M7.
+- **When:** scheduled in the same owner-authorized session as the M4b full-set
+  captures (D14), because both need the pinned upstream and a live client.
+  If the owner is not eligible as author, the owner operates the machine while
+  the named author observes; an agent operates it only if the owner
+  explicitly asks, and then never inspects, records or summarizes page source
+  (A4b.12). M4b captures no `/api/ingame` record, and the full set does not
+  wait for the author to be named. The M7 implementation blocks on this
+  document; if the session slips, the endpoint lands as a separate step
+  before M8 rather than holding M7.
 - **Implementer:** a second clean contributor (or agent) given only the
   behavioral spec, ADR 0021's deprecation requirements (`Deprecation` and
   `Link: <…>; rel="successor-version"` headers, one first-request warning,
@@ -2044,12 +2123,21 @@ states what was adopted and why. Spec amendments land in A1.
   `default-features = false`. Why: a linker-collected slice still needs every
   crate referenced to be linked, so it gives no omission guarantee that a
   compile-time list does not give more simply.
-- **D14 Owner captures.** A one-pair pilot capture runs as soon as the M4b
-  tooling lands; the full set (Windows stable, Windows lazer, Linux lazer) and
-  the `/api/ingame` observation run in one later session with the clean-room
-  author named beforehand; a pin move before M8 triggers a recapture. Why: a
-  single end-of-project session would surface adapter mismatches only at
-  the release gate.
+- **D14 Owner-controlled captures** (amended by A4b.1, 2026-11-24). A
+  one-pair pilot capture runs as soon as the M4b tooling lands; the full set
+  (Windows stable, Windows lazer, Linux lazer) runs in one later session,
+  scheduled with the `/api/ingame` observation; a pin move before M8 triggers
+  a full recapture. Captures are owner-controlled, not owner-hand-operated:
+  the owner authorizes each session in writing (commit and pin, client
+  build and install, scenario, account/data/media policy, evidence path, GUI
+  operator scope, review route) and keeps control of scope and publication;
+  an agent operates the isolated VM test installs within that authorization,
+  and main reviews every candidate fixture before commit (A4b.8). VM
+  lifecycle approval is not capture authorization. The `/api/ingame`
+  observation stays human work by the clean-room author. Why: a single
+  end-of-project session would surface adapter mismatches only at the
+  release gate, and agent operation keeps the pilot from waiting on the
+  owner's hands while the owner keeps control of scope and publication.
 - **D15 Forge verification.** CI uses a local Forgejo or Gitea container
   behind an internal certificate authority in `network_integration`, making
   the private-network exception and the OS trust-store path repeatable (ADR

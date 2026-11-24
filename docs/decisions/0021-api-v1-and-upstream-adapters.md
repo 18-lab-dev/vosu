@@ -230,3 +230,19 @@ spellings confined inside the selected session's declared roots only; the
 new rejection is a named security divergence. D20 attribution uses validated
 overlay identity, bounded deduplication and separate unknown buckets, never
 Origin alone or arbitrary path/referrer logging.
+
+**2026-11-24 (A4b):** The
+[behavioral golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md)
+makes "commits the captures as golden fixtures" (above, line 84) precise.
+Raw live captures stay private and are never committed or uploaded; a
+`golden` command normalizes only a closed list of exact-scope volatile values
+and writes a candidate that main reviews before commit, using generated
+vosu-owned test media only. Fixtures live under
+`tests/fixtures/upstream/<pin>/`, the test reads only the current pin's
+directory, and a pin bump deletes the previous one and recaptures every
+platform. "Each divergence is listed with its reason in one file" (line 87)
+is extended: compatibility tests subtract a ledger row only through exact
+machine-readable rules in `divergence-rules.json` that name an existing
+non-`temporary` ledger ID, the affected cases and record part; unused rules
+and whole-route subtraction without whole-route ledger scope fail. The
+`/api/ingame` route is never captured or used as a golden.

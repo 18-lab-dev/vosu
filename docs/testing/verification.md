@@ -119,6 +119,59 @@ Use `flock /tmp/vosu-smoke.lock` for smokes. D17 names and measurement policy
 are [frozen separately](benchmarks.md#m4a-d17-contract), not passed by functional
 tests. M4b owns live captures/golden tooling and M8 owns migration execution.
 
+## M4b behavioral goldens
+
+The approved A4b freeze is the
+[behavioral golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md):
+capture authority, harness endpoint and dump envelope, case sandwiches, route
+families and header set, the closed normalization inventory, fixture layout,
+size budget, divergence-rule format, pin and brand policy. Upstream
+observations are the only expected values; vosu dumps are replay inputs. The
+source oracle stays the projection golden. A private raw capture is never a
+fixture, and `/api/ingame` is never captured.
+
+The commands below are frozen for the implementing units; they are required
+future evidence, not a claim that the targets or subcommands exist yet.
+`tests/adapter_golden.rs` requires the `test-harness` feature
+(`[[test]] required-features`), so the exit command names it:
+
+```sh
+# L1 tooling exit, at the integrated head
+python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
+cargo test --locked --features test-harness --test adapter_golden
+cargo test --locked --features test-harness --test daemon_smoke adapter_capture
+cargo test --locked --features test-harness --test server_compat adapter_capture
+cargo test --locked --test state_api_compat --test server_compat
+python scripts/check-brand.py
+python scripts/check-doc-links.py
+python scripts/check-file-length.py
+# Native Windows; the VM command must forward --features test-harness
+python scripts/vm-test.py --test adapter_golden -- --nocapture
+python scripts/vm-test.py --test daemon_smoke -- adapter_capture --nocapture
+```
+
+Also prove that a default build compiles and that a release-profile
+`test-harness` build still fails in a disposable target. Record nonzero case
+counts by platform and family. A featureless, zero-case or unpinned run, and
+any synthetic mechanics fixture, is not pilot or full evidence.
+
+Captures run only under a written owner authorization for that session
+(commit and pin, client build/install/profile, scenario, data/media policy,
+private evidence path, GUI operator scope, review route); VM lifecycle
+approval is not capture authorization. On the authorized platform:
+
+```sh
+python tools/live-parity/run.py check-config --config "$PARITY_CONFIG"
+python tools/live-parity/run.py golden-capture --config "$PARITY_CONFIG" --scenario-set "$APPROVED_SCENARIO" --out "$PRIVATE_CAPTURE"
+python tools/live-parity/run.py golden --capture "$PRIVATE_CAPTURE" --candidate-dir "$CANDIDATE_DIR"
+cargo test --locked --features test-harness --test adapter_golden
+python scripts/check-brand.py
+```
+
+Report the evidence items listed in the contract's exit section; name the
+private evidence location by label only. Main reviews each candidate before a
+separate fixture commit, and nothing is uploaded or published.
+
 ## M3 API, resources and actions
 
 A3 freezes the following exit commands for implementation/integration owners.
@@ -437,10 +490,11 @@ replaces nor relaxes the deterministic gate. That gate is `state_api_compat`
 adapter bytes), `server_compat` (the mounted production listener matrix) and
 `daemon_smoke` with `test-harness`. Fix a reported mismatch in the owning
 adapter or record an approved ledger row with exact route and member scope;
-never add a comparator exemption. M4b owns the pilot/full golden capture
-commands and owner artifacts; until they exist, report missing captures as
-pending M4b/release evidence, never as a pass. The 1.x captures in the
-verification history attest vosu 1.2.5 only.
+never add a comparator exemption. These release-build diagnostic captures are
+never golden evidence. M4b owns the pilot/full golden capture commands under
+its [own contract](#m4b-behavioral-goldens); until committed fixtures exist,
+report missing captures as pending M4b/release evidence, never as a pass. The
+1.x captures in the verification history attest vosu 1.2.5 only.
 
 Native-reference mode also accepts the exact compressed upstream Linux 4.26.2
 ELF (SHA-256 `fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f`).

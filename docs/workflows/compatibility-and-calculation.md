@@ -94,4 +94,18 @@ frame without consuming observations needed by later reference frames.
 The fixed 300 ms window, payload comparators, and unmatched-reference failures
 remain unchanged; neither clock agreement nor a denser stream waives coverage.
 
+vosu 2.0 adapter wire compatibility has two committed goldens. The source
+oracle under `tests/fixtures/oracle/` is the projection golden. M4b's
+behavioral goldens under `tests/fixtures/upstream/<pin>/` record the pinned
+upstream daemon's statuses, headers, error bodies, file routes, legacy
+calculation and WebSocket handshakes and frames, and `adapter_golden` replays
+their vosu bus dumps through the real routes
+(`cargo test --locked --features test-harness --test adapter_golden`). The
+[golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md) fixes
+capture authority, the closed normalization list, the header set, divergence
+rules, size budgets, data/licensing and pin policy. Fix a golden mismatch in
+the owning adapter or core module; never regenerate an expected value from
+vosu output, widen normalization to hide it, or subtract it without an
+approved ledger row.
+
 The [testing and verification guide](../testing/verification.md) is the verification owner for commands and evidence interpretation. The [runtime architecture](../architecture/overview.md) explains why atomic snapshots and generation checks are non-negotiable.
