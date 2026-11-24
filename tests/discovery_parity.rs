@@ -165,13 +165,13 @@ fn linux_named_sibling_and_lone_fallback_variants() {
     assert_dispatches_ok();
 }
 
-/// Row 5: presence/truthiness is preserved through host decline delivery;
-/// declined generations stay dropped when rediscovered, false/zero identify.
+/// Row 5: debug-client presence/truthiness is preserved through host decline
+/// delivery; declined generations stay dropped, while false/zero identify.
 #[test]
 fn command_filters_decline_and_suppress_reoffers() {
     let harness = Harness::new("test.osu.p7.filters", 0x7a00_0300, 6);
     let args = [
-        "--tournament=",
+        "--debug-client-id=7",
         "--debug-client-id=1",
         "--debug-client-id=true",
         "--debug-client-id=false",
@@ -214,6 +214,51 @@ fn command_filters_decline_and_suppress_reoffers() {
         harness.pids[3..]
     );
     assert!(!events.late_publish);
+    assert_dispatches_ok();
+}
+
+/// M4a/T0 intentionally replaces the old tournament decline with an identified
+/// stable priority manager. Rediscovery must still never attach its generation
+/// twice, and identification must not depend on the interim B1 sink.
+#[test]
+fn tournament_manager_identifies_without_b1_and_suppresses_reoffers() {
+    use vosu_core::state::{Pointer, SessionKey, StateValue};
+    let mut harness = Harness::new("test.osu.p7.manager", 0x7a00_0600, 1);
+    harness.remove_b1();
+    let pid = harness.pids[0];
+    harness
+        .host
+        .process_appeared(Harness::record(pid, &["--tournament="]));
+    eventually(|| HANDLES.lock().unwrap().contains_key(&pid));
+    let handle = HANDLES.lock().unwrap()[&pid];
+    eventually(|| {
+        harness
+            .host
+            .state()
+            .store
+            .current(SessionKey(handle))
+            .is_some()
+    });
+    let state = harness
+        .host
+        .state()
+        .store
+        .current(SessionKey(handle))
+        .unwrap();
+    assert!(matches!(
+        state.get("vosu.client", &Pointer::parse("/variant").unwrap()),
+        Some(StateValue::String(variant)) if variant.as_ref() == "stable"
+    ));
+    assert!(DECLINES.lock().unwrap().is_empty());
+    for _ in 0..3 {
+        harness
+            .host
+            .process_appeared(Harness::record(pid, &["--tournament="]));
+    }
+    assert_eq!(ATTACHES.lock().unwrap().get(&pid), Some(&1));
+    assert!(harness.sink.events.lock().unwrap().attached.is_empty());
+    assert!(harness.sink.events.lock().unwrap().published.is_empty());
+    harness.host.destroy_all(WAIT);
     assert_dispatches_ok();
 }
 
