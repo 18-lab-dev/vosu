@@ -22,6 +22,7 @@ arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false }
 bytes = "=1.12.1"
 chrono = { version = "0.4.44", features = ["serde"] }
+ciborium = "=0.2.2"
 futures-util = "0.3.32"
 libloading = "0.8.6"
 notify = "=8.2.0"
@@ -53,7 +54,6 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Grap
 wmi = "=0.18.4"
 
 [dev-dependencies]
-ciborium = "0.2.2"
 proptest = "1.12"
 vosu-plugin-testkit = { path = "../vosu-plugin-testkit", features = ["test-harness"] }
 vosu-proptest = { path = "../vosu-proptest" }
