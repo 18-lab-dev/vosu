@@ -96,6 +96,21 @@ pub enum CachedJson {
     NotReady,
     Failed { status: StatusCode, body: Bytes },
 }
+/// Production body of every state or calculation read before a client is ready.
+pub const NOT_READY_BODY: &[u8] = br#"{"error":"osu is not ready/running"}"#;
+impl CachedJson {
+    /// The status and body every production state route serves for this result.
+    pub fn status_body(self) -> (StatusCode, Bytes) {
+        match self {
+            Self::Ready(body) => (StatusCode::OK, body),
+            Self::NotReady => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Bytes::from_static(NOT_READY_BODY),
+            ),
+            Self::Failed { status, body } => (status, body),
+        }
+    }
+}
 
 pub trait StateJsonProvider: Send + Sync {
     fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson>;
