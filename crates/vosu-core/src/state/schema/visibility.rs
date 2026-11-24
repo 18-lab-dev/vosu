@@ -16,11 +16,10 @@
 //! independent of which keywords the lane walker itself recurses into, so
 //! none of the above can bypass it.
 
-use std::sync::Arc;
-
 use serde_json::Value;
 
 use super::{SchemaError, SchemaOwner};
+use crate::state::Pointer;
 
 /// The one location `x-visibility: "plugins"` may literally sit at.
 const ALLOWED_PATH: [&str; 2] = ["properties", "internal"];
@@ -93,7 +92,7 @@ fn scan_node(
 /// *disallowed* `x-visibility` occurrence exists: the only possibility left
 /// is the canonical one, or none at all, so this only needs to re-read that
 /// one spot.
-pub(super) fn hidden_subtrees(namespace: &str, owner: &SchemaOwner, root: &Value) -> Vec<Arc<str>> {
+pub(super) fn hidden_subtrees(namespace: &str, owner: &SchemaOwner, root: &Value) -> Vec<Pointer> {
     if namespace != "vosu.osu" || !owner_eligible(owner) {
         return Vec::new();
     }
@@ -104,7 +103,7 @@ pub(super) fn hidden_subtrees(namespace: &str, owner: &SchemaOwner, root: &Value
         .and_then(Value::as_str)
         == Some("plugins");
     if marked {
-        vec![Arc::from("/internal")]
+        vec![Pointer::parse("/internal").expect("a literal pointer always parses")]
     } else {
         Vec::new()
     }

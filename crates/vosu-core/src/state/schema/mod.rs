@@ -25,6 +25,8 @@ use std::sync::Arc;
 pub use lanes::LaneBits;
 use serde_json::Value;
 
+use crate::state::Pointer;
+
 /// The five best-effort common namespaces any game plugin may fill
 /// (`docs/v2/state-schema.md`, ADR 0020).
 pub const CORE_NAMESPACES: [&str; 5] = [
@@ -57,9 +59,9 @@ pub struct NamespaceSchema {
     pub owner: SchemaOwner,
     pub required_top_level: Vec<Arc<str>>,
     lanes: Vec<(Vec<Arc<str>>, LaneBits)>,
-    /// `x-visibility` pointer strings, e.g. `["/internal"]` for `vosu.osu`;
-    /// empty for every other namespace in this freeze.
-    hidden: Vec<Arc<str>>,
+    /// `x-visibility` pointers, e.g. `[Pointer::parse("/internal")]` for
+    /// `vosu.osu`; empty for every other namespace in this freeze.
+    hidden: Vec<Pointer>,
 }
 
 impl NamespaceSchema {
@@ -195,9 +197,9 @@ impl SchemaRegistry {
             .unwrap_or_default()
     }
 
-    /// `x-visibility` pointer strings for `ns` (`["/internal"]` for
+    /// `x-visibility` pointers for `ns` (`[Pointer::parse("/internal")]` for
     /// `vosu.osu`, empty elsewhere).
-    pub fn hidden_subtrees(&self, ns: &str) -> &[Arc<str>] {
+    pub fn hidden_subtrees(&self, ns: &str) -> &[Pointer] {
         self.namespaces
             .get(ns)
             .map(|schema| schema.hidden.as_slice())

@@ -17,6 +17,7 @@ use serde_json::Value;
 use super::lanes::LaneBits;
 use super::visibility;
 use super::{SchemaError, SchemaOwner};
+use crate::state::Pointer;
 
 /// At most 256 KiB of schema text (D7, cat:66).
 const MAX_BYTES: usize = 256 * 1024;
@@ -36,8 +37,8 @@ pub(super) struct Walked {
     pub(super) version: semver::Version,
     pub(super) required_top_level: Vec<Arc<str>>,
     pub(super) lanes: Vec<(Vec<Arc<str>>, LaneBits)>,
-    /// Pointer strings (e.g. `"/internal"`) carrying `x-visibility`.
-    pub(super) hidden: Vec<Arc<str>>,
+    /// Pointers (e.g. `Pointer::parse("/internal")`) carrying `x-visibility`.
+    pub(super) hidden: Vec<Pointer>,
 }
 
 /// Walks `text`, a namespace schema document whose `title` must equal
