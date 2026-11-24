@@ -9,7 +9,7 @@ fn plan(pointers: &[&str]) -> ApiPlan {
 }
 fn changed(rt: &tokio::runtime::Runtime, subscription: &mut ApiSubscription) {
     rt.block_on(async {
-        tokio::time::timeout(RECV_TIMEOUT, subscription.updates.changed())
+        tokio::time::timeout(RECV_TIMEOUT, subscription.changed())
             .await
             .unwrap()
             .unwrap();
@@ -500,4 +500,111 @@ fn api_established_active_survives_no_focus_and_reappears() {
         vec![Some(StateValue::U64(9409)), None]
     );
     host.destroy_all(RECV_TIMEOUT);
+}
+
+#[test]
+fn api_active_lost_between_upgrade_and_establishment_starts_absent() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_logs, host) = test_host(rt.handle().clone());
+    let first = publisher_instance(&host, "test.s0.upgrade-loss", 9410, 9410);
+    let source = host.api_state_source();
+    let public_id = summary_id(&source.session(&SessionTarget::Active).unwrap());
+    // Transport upgrade succeeded, but focus disappeared before the selection.
+    host.process_exited(9410);
+    let mut subscription = source
+        .subscribe(SessionTarget::Active, plan(&["/vosu.client/pid"]))
+        .unwrap();
+    let initial = subscription.current();
+    assert_eq!(initial.session, None);
+    assert_eq!(initial.values, vec![None]);
+    assert!(!initial.ended);
+    assert!(matches!(
+        source.subscribe(SessionTarget::Id(public_id), plan(&[""])),
+        Err(ApiError::UnknownSession)
+    ));
+    assert!(matches!(
+        source.session(&SessionTarget::Active),
+        Err(ApiError::UnknownSession)
+    ));
+    assert!(
+        host.state
+            .subscriptions
+            .lock()
+            .unwrap()
+            .demand(SessionKey(first), Some("play"))
+            .selectors
+            .is_empty()
+    );
+    publisher_instance(&host, "test.s0.upgrade-return", 9411, 9411);
+    changed(&rt, &mut subscription);
+    let current = subscription.current();
+    assert_eq!(current.values, vec![Some(StateValue::U64(9411))]);
+    assert!(current.binding > initial.binding);
+    host.destroy_all(RECV_TIMEOUT);
+}
+
+#[test]
+fn api_session_document_binding_is_constant_after_prior_notifications() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_logs, host) = test_host(rt.handle().clone());
+    let id = "test.s0.session-binding";
+    let handle = publisher_instance(&host, id, 9412, 9412);
+    let source = host.api_state_source();
+    // Make the publication and notification revision domains deliberately differ.
+    for value in [15, 28] {
+        assert_eq!(
+            send(
+                id,
+                &batch(
+                    handle,
+                    &[("vosu.play", "/combo", PublishValueRef::U64(value))]
+                )
+            ),
+            vosu_status::VOSU_OK
+        );
+    }
+    let field = source
+        .subscribe(SessionTarget::Active, plan(&["/vosu.play/combo"]))
+        .unwrap();
+    assert_eq!(
+        send(
+            id,
+            &batch(handle, &[("vosu.play", "/combo", PublishValueRef::U64(39))])
+        ),
+        vosu_status::VOSU_OK
+    );
+    let notification = field.current();
+    assert!(notification.revision > 0);
+    let read = source
+        .read(&SessionTarget::Active, &plan(&["/vosu.play/combo"]))
+        .unwrap();
+    assert_eq!(read.revision, notification.revision);
+    assert_ne!(
+        read.revision,
+        host.state
+            .store
+            .current(SessionKey(handle))
+            .unwrap()
+            .revision
+    );
+    let public_id = notification.session.as_ref().unwrap();
+    let mut sessions = source
+        .subscribe_sessions(plan(&[&format!("/{public_id}")]))
+        .unwrap();
+    let initial = sessions.current();
+    assert!(initial.revision > 0);
+    assert_eq!(initial.binding, 0);
+    assert!(initial.values[0].is_some());
+    host.process_exited(9412);
+    changed(&rt, &mut sessions);
+    let removed = sessions.current();
+    assert!(removed.revision > initial.revision);
+    assert_eq!(removed.binding, initial.binding);
+    assert_eq!(removed.values, vec![None]);
+    assert!(!removed.ended);
+    host.destroy_all(RECV_TIMEOUT);
+    assert!(sessions.current().ended);
+    assert_eq!(sessions.current().binding, initial.binding);
 }

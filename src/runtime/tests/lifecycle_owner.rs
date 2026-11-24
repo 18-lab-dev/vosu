@@ -6,6 +6,9 @@ use vosu_surface::LegacySink;
 
 const WAIT: Duration = Duration::from_secs(10);
 
+#[path = "shutdown_close.rs"]
+mod shutdown_close;
+
 #[derive(Default)]
 struct Console(Mutex<String>);
 impl ConsoleSink for Console {
@@ -62,6 +65,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             tools: AsyncMutex::new(None),
             dev_tools: vec![],
             dev_plugins: vec![],
+            api_v1: api_v1::ApiV1Service::new(&plugins, &current),
             plugins,
             state_host: AsyncMutex::new(None),
             plugin_settings_watch: AsyncMutex::new(None),

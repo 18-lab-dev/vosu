@@ -162,6 +162,17 @@ impl ApiSubscription {
             _guard: Box::new(guard),
         }
     }
+
+    /// The full latest selected snapshot; no selection values are consumed.
+    pub fn current(&self) -> Arc<ApiUpdate> {
+        Arc::clone(&self.updates.borrow())
+    }
+
+    /// Await the next latest-value notification. Callers own their wait bound.
+    pub async fn changed(&mut self) -> Result<Arc<ApiUpdate>, ApiError> {
+        self.updates.changed().await.map_err(|_| ApiError::Closed)?;
+        Ok(self.current())
+    }
 }
 
 #[derive(Default)]
