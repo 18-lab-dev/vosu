@@ -3,7 +3,7 @@
 //! [`crate::classify::decide`] into `SESSION_DECLINE`/`SESSION_IDENTIFY`,
 //! and routes `VOSU_OP_SCAN_RESULT` into P3's [`crate::scan::ScanWaiters`].
 //! P4 adds the session map ([`crate::session::OsuSession`]) and this
-//! plugin's own 2-worker Tokio runtime (DG): every identified session gets
+//! plugin's own single-worker Tokio runtime: every identified session gets
 //! a `ProcessHandle` backed by P3's `PlanProcessMemory`/`PlanScanBackend`,
 //! and a lazer session's offset resolver is started on that runtime, never
 //! inline on a dispatch thread. P5 adds session-owned capture workers and
@@ -137,7 +137,7 @@ pub struct OsuPlugin<
     /// DH: resolves offsets under `<data_dir>/offsets`, generating with
     /// `<data_dir>/offset-generator` as scratch space.
     loader: Arc<LazerOffsetLoader<G>>,
-    /// DG: this plugin's own 2-worker Tokio runtime, created in `create`
+    /// This plugin's own single-worker Tokio runtime, created in `create`
     /// and shut down (bounded, abi:82) in `destroy`. A cheap `Handle`
     /// clone lets a dispatch thread (which has no runtime context of its
     /// own) or the lazer-version-lookup OS thread enqueue work on it
@@ -198,11 +198,13 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         loader: Arc<LazerOffsetLoader<G>>,
     ) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            // Readers and blocking initialization/join work run off-runtime.
+            // A second scheduler worker adds a park/unpark handoff per sample.
+            .worker_threads(1)
             .thread_name("vosu-osu")
             .enable_all()
             .build()
-            .expect("failed to start the vosu-osu plugin's own 2-worker runtime (DG)");
+            .expect("failed to start the vosu-osu plugin's own runtime");
         let runtime_handle = runtime.handle().clone();
         Self {
             host: Arc::new(host),

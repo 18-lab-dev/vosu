@@ -989,6 +989,8 @@ pub mod linux_common;
 pub use foreground::FOREGROUND_POLL_INTERVAL;
 #[cfg(windows)]
 pub use foreground::ForegroundPoller;
+#[cfg(any(windows, test))]
+pub(crate) use foreground::foreground_owner_changed;
 
 mod windows_source;
 #[cfg(windows)]

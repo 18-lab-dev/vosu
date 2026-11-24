@@ -16,6 +16,61 @@ use super::helpers::{
     RECV_TIMEOUT, create_session_instance, test_host, test_host_with, test_process,
 };
 
+#[test]
+fn foreground_poll_queries_once_and_shares_the_sample_between_consumers() {
+    use super::helpers::{DummyStorage, SilentConsole};
+    use crate::logging::LoggerOptions;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingForeground {
+        queries: AtomicUsize,
+        pid: focus::SyntheticForegroundSource,
+    }
+    impl ForegroundSource for CountingForeground {
+        fn foreground_pid(&self) -> Option<u32> {
+            self.queries.fetch_add(1, Ordering::Relaxed);
+            self.pid.foreground_pid()
+        }
+    }
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let root = tempfile::tempdir().unwrap();
+    let logger = Logger::new(
+        root.path(),
+        LoggerOptions::default(),
+        Arc::new(SilentConsole),
+    )
+    .unwrap();
+    let settings = Arc::new(PluginSettingsService::new(Arc::new(DummyStorage)));
+    let host = PluginHost::new(logger, settings, runtime.handle().clone());
+    let mut bridge = host.subscribe_foreground();
+    let source = CountingForeground {
+        queries: AtomicUsize::new(0),
+        pid: focus::SyntheticForegroundSource::new(None),
+    };
+    for (period, pid, changed) in [
+        (1, None, false),
+        (2, Some(21501), true),
+        (3, Some(21501), false),
+        (4, Some(21502), true),
+        (5, None, true),
+    ] {
+        source.pid.set(pid);
+        // The Windows loop calls this once per 100 ms period. Drive passes
+        // directly: no test rendezvous on a repeating timer.
+        host.poll_foreground(&source);
+        assert_eq!(bridge.has_changed().unwrap(), changed);
+        assert_eq!(*bridge.borrow_and_update(), pid);
+        assert_eq!(host.foreground.foreground_pid(), pid);
+        host.foreground_changed();
+        host.foreground_changed();
+        assert_eq!(
+            source.queries.load(Ordering::Relaxed),
+            period,
+            "host recomputation and B1 reads must never query the OS"
+        );
+    }
+}
 /// M1 Exit: "`SESSION_ATTACHED` -> `SESSION_IDENTIFY` -> first
 /// `FOCUS_CHANGED`" driven end to end through a real
 /// [`session::SessionPlugin`] instance, not `SessionRegistry`/

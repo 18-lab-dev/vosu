@@ -346,8 +346,7 @@ impl ProductionRuntime {
         let installed = vosu_surface::install(bridge.clone()).map_err(io::Error::other)?;
         dashboard_lifecycle.store(Some(Arc::new(bridge.lifecycle())));
         *self.bridge_installed.get_mut() = Some(installed);
-        *self.bridge.get_mut() =
-            Some(bridge.start(Arc::new(vosu_core::plugin::OsForegroundSource)));
+        *self.bridge.get_mut() = Some(bridge.start(self.plugins.subscribe_foreground()));
         self.snapshots.set_poll_rates(
             poll_duration(config.poll_rate),
             poll_duration(config.precise_data_poll_rate),

@@ -94,6 +94,8 @@ pub enum ReadPlanError {
     /// The target session's process was already dead before any read
     /// executed (§5 `VOSU_ERR_TARGET_GONE`).
     TargetGone,
+    /// The platform's coarse monotonic clock was unavailable.
+    ClockUnavailable,
 }
 
 impl From<ReadPlanError> for vosu_status {
@@ -102,6 +104,7 @@ impl From<ReadPlanError> for vosu_status {
             ReadPlanError::RefOpWrongWidth => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
             ReadPlanError::TimedOut => vosu_status::VOSU_ERR_TIMED_OUT,
             ReadPlanError::TargetGone => vosu_status::VOSU_ERR_TARGET_GONE,
+            ReadPlanError::ClockUnavailable => vosu_status::VOSU_ERR_BACKEND,
         }
     }
 }
@@ -345,6 +348,9 @@ fn execute_stage_ops(
     let base = match stage_base {
         Ok(base) => *base,
         Err(failure) => {
+            if memory.reads_pin_process_identity() && !memory.is_alive() {
+                return Err(ReadPlanError::TargetGone);
+            }
             let failure = strip_message(failure);
             return Ok(ops
                 .iter()
@@ -397,6 +403,9 @@ fn execute_stage_ops(
             .map(|(&(_, address), buffer)| ReadRequest::new(address, buffer))
             .collect();
         if memory.read_many(&mut requests).is_err() {
+            if !memory.is_alive() {
+                return Err(ReadPlanError::TargetGone);
+            }
             drop(requests);
             let mut timed_out = false;
             for (outcome, (&(_, address), buffer)) in outcomes
@@ -412,6 +421,9 @@ fn execute_stage_ops(
                     continue;
                 }
                 *outcome = Outcome::Read(memory.read_exact(address, buffer));
+                if matches!(outcome, Outcome::Read(Err(_))) && !memory.is_alive() {
+                    return Err(ReadPlanError::TargetGone);
+                }
             }
         }
     }
@@ -488,7 +500,7 @@ fn execute_core(
 
     let mut budget = ErrorBudget::new(error_budget_slack(submit));
 
-    if !memory.is_alive() {
+    if !memory.reads_pin_process_identity() && !memory.is_alive() {
         return match mode {
             DeadlineMode::PerRead => Ok(not_ready_result(submit)),
             DeadlineMode::RejectCall => Err(ReadPlanError::TargetGone),
@@ -521,14 +533,13 @@ fn execute_core(
             });
         }
         let stage_base = resolve_stage_base(stage, &per_stage, &root_base, bitness);
-        per_stage.push(execute_stage_ops(
-            memory,
-            &stage_base,
-            &stage.ops,
-            &mut budget,
-            deadline,
-            mode,
-        )?);
+        match execute_stage_ops(memory, &stage_base, &stage.ops, &mut budget, deadline, mode) {
+            Ok(results) => per_stage.push(results),
+            Err(ReadPlanError::TargetGone) if mode == DeadlineMode::PerRead => {
+                return Ok(not_ready_result(submit));
+            }
+            Err(error) => return Err(error),
+        }
     }
 
     Ok(ReadPlanResult {
@@ -579,7 +590,9 @@ fn execute_sync(
     )
 }
 
+mod deadline;
 mod raw;
+pub(crate) use raw::ValidatedPlan;
 pub use raw::{execute_bytes, execute_into};
 
 thread_local! {

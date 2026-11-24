@@ -91,7 +91,7 @@ are outside both end-to-end measurements. Each legacy iteration gets a fresh
 ```sh
 cargo bench --locked --package vosu --bench state_bus_bench
 cargo bench --locked --package vosu --bench hot_paths -- 'publication|serializers'
-cargo nextest run --locked --features test-harness --test performance_invariants
+cargo nextest run --locked --features test-harness --test performance_invariants --test state_bus_invariants
 ```
 
 Criterion accepts one regex filter; the plan's literal two positional filters
@@ -289,6 +289,35 @@ are not whole-daemon CPU/tick or read-to-network-frame latency measurements.
 Regular captures reuse the beatmap head and track length from `global`; the
 reader integration excludes the separate `ConfigPlan` experiment.
 
+## Plugin runtime wakeups
+
+Reproduce on Linux (debug/test harness, no game or VM required):
+
+```sh
+nice -n 10 cargo test --locked --all-features --test runtime_wakeups -- --include-ignored --nocapture --test-threads=1
+```
+
+The populated stable fixture runs the real readers, reducer and synchronous B1
+publisher. Stable Tokio's unpark hook counts runtime wakes; a test-harness-only
+future wrapper counts reducer polls without `tokio_unstable`. At 150 ms regular /
+10 ms precise cadence in the menu, 50 publications took 0.475 s before and
+0.473 s after: **105 → 53 runtime wakes**, **53 → 53 reducer polls**. The change
+uses one scheduler worker instead of two and removes the reducer's unrelated
+10 ms cancellation timer (shutdown already aborts it). Reader cadence is unchanged.
+With 100 ms precise sampling and regular captures held outside the sample window,
+the resulting single-worker runtime has exactly 50 wakes and 50 polls for 50
+publications; this case guards against reintroducing timer-only wakes.
+
+Eight tournament-like stable sessions, 150/10 ms cadence, 100 precise samples per
+session after 20 warmups: two-worker read-completion-to-publication p50 spans
+14.408–23.364 µs and p99 74.501–250.282 µs; one-worker p50 spans
+15.329–34.425 µs and p99 98.837–269.178 µs. The largest paired per-session p99
+increase is 190.900 µs, below one precise tick (10 ms). This synthetic case has
+PP enabled but no successfully loaded beatmap; PP/progressive calculation runs
+on the blocking pool, not the scheduler worker. These are not network or live
+Windows CPU measurements. The real ConcurrentPlugin stress test also passes
+with one worker (32 sessions, 16 persistent anchors, eight concurrent producers).
+
 ## Scope of the synthetic results
 
 - Synthetic fixtures, not live-game or whole-daemon performance. The stable raw
@@ -322,10 +351,11 @@ Compare already-built binaries, not concurrent builds:
 
 ```sh
 python scripts/bench-compare.py --no-reserve \
-  --binary before=/tmp/m1-c6b-before --binary after=/tmp/m1-c6b-after \
-  --filter 'plan_memory/stable_(native|regular_fields)$' --cpu 4 \
-  --rounds 5 --warmup 2 --measurement 5 --samples 100 \
-  --output /tmp/m1-c6b-no-reserve
+  --binary before=/home/user/.cache/vosu-bench-c6c/before \
+  --binary after=/home/user/.cache/vosu-bench-c6c/after-clock-fix \
+  --filter '^plan_memory/' --cpu 4 \
+  --rounds 5 --warmup 1 --measurement 3 --samples 50 \
+  --output /home/user/.cache/vosu-bench-c6c/paired-clock-fix
 ```
 
 The default mode requires administrator-prepared exclusive cpuset support and
@@ -336,35 +366,74 @@ records `exclusive: false`. Both modes interleave revisions, use fresh Criterion
 homes, and report bootstrap confidence intervals and an `inconclusive` flag when
 between-round noise or confidence-interval overlap obscures the revision delta.
 
-Measured 2026-11-24 on the Ryzen 9 9950X3D, Rust 1.96.1, default release
-features, CPU 4 (SMT sibling 20), **non-exclusive**, with the command above.
-Values are medians of five round medians; brackets are the comparison tool's
-bootstrap 95% confidence intervals, not the individual Criterion slope intervals.
-The before binary uses the corrected fixture with the unfused reader; the after
-binary includes the dependent-menu plan and allocation-free scalar chains.
+Measured 2026-11-24 on the Ryzen 9 9950X3D, Rust 1.96.1, CPU 4 (SMT sibling
+20), **non-exclusive**, with the command above. Before is `ec2d086`; after is
+`050b554` with profiling's environment variable unset. This run precedes the
+follow-up that compiles instrumentation out of default builds.
+Values are medians of five round medians; brackets are bootstrap 95% CIs.
 
-| Stable transport | Before, µs | After, µs |
+| Benchmark | Before, µs | After, µs |
 | --- | ---: | ---: |
-| Native `ProcessHandle` | 1.293 [1.255, 1.767] | 1.216 [1.206, 1.313] |
-| PlanMemory | 3.585 [3.261, 4.432] | 3.223 [3.168, 3.835] |
+| One-op floor | 0.0832 [0.0807, 0.1115] | 0.1052 [0.0934, 0.1110] |
+| 18-op floor | 0.2878 [0.2847, 0.4119] | 0.3651 [0.3183, 0.4174] |
+| 56-op floor | 0.7406 [0.7357, 2.1121] | 0.9139 [0.7646, 1.1756] |
+| Stable native | 1.275 [1.235, 2.343] | 1.450 [1.236, 1.820] |
+| Stable plan | 3.222 [3.111, 41.254] | 3.876 [3.370, 108.317] |
+| Stable unfused plan | 3.215 [3.191, 5.601] | 4.209 [3.404, 31.386] |
+| Lazer plan | 12.783 [10.817, 27.883] | 13.524 [11.822, 106.373] |
 
-The reported PlanMemory change is −10.10%, but **`inconclusive: true`**:
-between-round spread exceeds the delta and the before/after intervals overlap.
-The native change is also inconclusive. Afterward PlanMemory is **2.65× native**,
-so this run does **not** meet D17's within-10% bar. Evidence:
-`/tmp/m1-c6b-no-reserve/summary.json`. A quiet rerun is necessary before claiming
-a revision-level speedup.
+**All seven comparisons report `inconclusive: true`.** Stable plan's +20.28%
+median delta is overwhelmed by between-round noise; no revision-level speedup
+or regression is established. Evidence:
+`/home/user/.cache/vosu-bench-c6c/paired-clock-fix/summary.json`.
+The executor-only benchmark keeps public `execute_into` absolute deadlines and
+excludes `PluginHost`, so it cannot measure removal of the host's QPC calls.
+Default-build profiling elimination and the live Windows D17 bar remain to be
+measured; this noisy run does not establish the within-10% exit bar.
 
-Separate non-exclusive transport controls measured one plan with 1/18/56
-independent four-byte ops at approximately **83/290/855 ns**. A rough fit to the
-first two gives **71 ns fixed per plan + 12 ns per op**; these are diagnostic
-estimates, not an absolute lower bound for another executor or plan shape.
-The populated capture retains 56 ops across 13 submissions: fixed submission
-cost and per-op validation/result handling are both material, not fixed cost
-alone. Fusing global's four submissions to one and gameplay's five to one would
-remove seven submissions, suggesting about **0.50 µs** saved at unchanged op
-count (roughly 3.22 → 2.72 µs, still well above native). This estimate excludes
-additional dependent-stage overhead and is not a measured speedup.
+With an explicitly **x86** fixture session, regular capture uses native **14
+backend calls / 56 ops**, versus plan **15 calls / 56 ops** (one additional
+dependent stage). Non-playing precise capture uses **1 batch / 2 ops** on both.
+These are backend calls, not measured OS syscalls. The original host additionally
+probed health **13 times per regular / once per precise capture**. Windows handle
+reads now defer that probe until read failure; the pinned fake observes **zero**
+successful-path probes. Linux retains its identity preflight for PID-based reads.
+The host also retains a borrowed validation proof instead of scanning the same
+submission twice, and borrows its module resolver's session reference. Result
+delivery still rechecks the instance, preserving teardown-race behavior.
+
+`cargo run --locked --features test-harness --example plan_process_bench` spawns a
+real child holding the populated graph, translates fixture offsets only at the
+native read boundary, and compares native reads with the real in-process host.
+One CPU-4-pinned debug run measured native/plan medians of **0.762/3.456 µs**
+(one op), **1.413/4.739 µs** (non-playing precise), and **42.761/101.391 µs**
+(regular). These debug diagnostics are not release Criterion exit evidence.
+
+Fresh successful SYNC plans now make **zero precise clock reads**: a single stage
+also makes zero coarse reads; an N-stage plan makes N coarse reads. Previously
+the host/executor used N+1 `Instant` queries per plan. SDK encoding and
+`PlanProcessMemory` themselves make no clock queries. The host's 2 s budget uses
+~16 ms Windows / typically 1–4 ms Linux ticks and clamps overrides to 64 ms.
+Public `execute_into` absolute deadlines remain precise.
+The populated child fixture reports **0 precise / 0 coarse** queries for one-op
+and non-playing precise captures, and **0 precise / 3 coarse** for regular.
+
+For per-phase Windows diagnostics against an existing process (no test-harness):
+
+```powershell
+$env:VOSU_READ_PLAN_PROFILE='1'
+cargo run --release --locked --features read-plan-profile --example plan_process_bench -- --pid 1234 --cycles 1000
+```
+
+Optional `--address 0x...` selects a known readable address; otherwise the
+diagnostic chooses one readable region once, outside timing. The synthetic
+stable/lazer shapes repeat that address rather than chasing unknown pointers.
+Output separates application precise/coarse clock counts from the profiler's
+own two precise reads per span. Profiling therefore inflates timings, especially
+on a VM with trapping QPC; unset the environment variable for throughput runs.
+Linux can use `--pid self` without changing ptrace permissions.
+The diagnostic Cargo feature is off by default and is not part of packaged
+release feature sets. Default builds compile its spans/counters out entirely.
 
 
 ## vosu hot paths

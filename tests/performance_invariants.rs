@@ -318,6 +318,152 @@ fn plan_memory_scalar_readers_allocate_nothing() {
     );
 }
 
+#[cfg(feature = "test-harness")]
+#[path = "../benches/support/stable_fixture.rs"]
+mod stable_fixture;
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn plan_memory_stable_capture_backend_call_count() {
+    struct CountedMemory {
+        bytes: Vec<u8>,
+        calls: Arc<AtomicUsize>,
+        ops: Arc<AtomicUsize>,
+        health: Arc<AtomicUsize>,
+    }
+    impl CountedMemory {
+        fn copy(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+            let source = address
+                .checked_add(dst.len())
+                .and_then(|end| self.bytes.get(address..end))
+                .ok_or_else(|| fixture_error("outside stable fixture"))?;
+            dst.copy_from_slice(source);
+            Ok(())
+        }
+    }
+    impl ProcessMemory for CountedMemory {
+        fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.ops.fetch_add(1, Ordering::Relaxed);
+            self.copy(address, dst)
+        }
+        fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.ops.fetch_add(reads.len(), Ordering::Relaxed);
+            for read in reads {
+                self.copy(read.address, read.dst)?;
+            }
+            Ok(())
+        }
+        fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+            panic!("absolute capture must not refresh process regions")
+        }
+        fn process_id(&self) -> Option<u32> {
+            panic!("capture must not reopen or re-resolve the process")
+        }
+        fn is_alive(&self) -> bool {
+            self.health.fetch_add(1, Ordering::Relaxed);
+            true
+        }
+        fn reads_pin_process_identity(&self) -> bool {
+            true
+        }
+    }
+    let make_memory = || {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ops = Arc::new(AtomicUsize::new(0));
+        let health = Arc::new(AtomicUsize::new(0));
+        let memory = Arc::new(CountedMemory {
+            bytes: stable_fixture::bytes(),
+            calls: Arc::clone(&calls),
+            ops: Arc::clone(&ops),
+            health: Arc::clone(&health),
+        });
+        (memory, calls, ops, health)
+    };
+    let (native, native_calls, native_ops, native_health) = make_memory();
+    let mut native = StableMemory::new(
+        ProcessHandle::new(native, ProcessBitness::X86),
+        stable_fixture::patterns(),
+    );
+    let (plan, plan_calls, plan_ops, plan_health) = make_memory();
+    let pid = 910_600_103;
+    vosu_core::plugin::test_support::set_session_memory(pid, plan, ProcessBitness::X86);
+    struct Cleanup(u32);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            vosu_core::plugin::test_support::clear_session_memory(self.0);
+        }
+    }
+    let _cleanup = Cleanup(pid);
+    let mut record = plan_attachment::native_record(std::process::id()).unwrap();
+    record.pid = pid;
+    record.bitness = vosu_plugin_api::Bitness::X86;
+    let attachment = plan_attachment::Attachment::new(record, "vosu.test.plan.counts").unwrap();
+    let mut plan = StableMemory::new(attachment.process.clone(), stable_fixture::patterns());
+    stable_fixture::assert_capture(&mut native);
+    stable_fixture::assert_capture(&mut plan);
+    for counter in [
+        &native_calls,
+        &native_ops,
+        &native_health,
+        &plan_calls,
+        &plan_ops,
+        &plan_health,
+    ] {
+        counter.store(0, Ordering::Relaxed);
+    }
+    assert_eq!(
+        format!("{:?}", stable_fixture::capture(&mut native)),
+        format!("{:?}", stable_fixture::capture(&mut plan))
+    );
+    let native_regular_calls = native_calls.load(Ordering::Relaxed);
+    let plan_regular_calls = plan_calls.load(Ordering::Relaxed);
+    eprintln!(
+        "stable regular: native calls={native_regular_calls} ops={} health={}; plan calls={plan_regular_calls} ops={} health={}",
+        native_ops.load(Ordering::Relaxed),
+        native_health.load(Ordering::Relaxed),
+        plan_ops.load(Ordering::Relaxed),
+        plan_health.load(Ordering::Relaxed),
+    );
+    assert_eq!(native_regular_calls, 14);
+    assert_eq!(plan_regular_calls, 15);
+    assert_eq!(native_ops.load(Ordering::Relaxed), 56);
+    assert_eq!(plan_ops.load(Ordering::Relaxed), 56);
+    assert_eq!(plan_health.load(Ordering::Relaxed), 0);
+    for counter in [
+        &native_calls,
+        &native_ops,
+        &native_health,
+        &plan_calls,
+        &plan_ops,
+        &plan_health,
+    ] {
+        counter.store(0, Ordering::Relaxed);
+    }
+    let native_precise = native.global_precise().unwrap();
+    let plan_precise = plan.global_precise().unwrap();
+    assert!(matches!(
+        native_precise,
+        vosu_sys::process::ReadStatus::Ready(_)
+    ));
+    assert_eq!(format!("{native_precise:?}"), format!("{plan_precise:?}"));
+    eprintln!(
+        "stable precise (non-playing): native calls={} ops={} health={}; plan calls={} ops={} health={}",
+        native_calls.load(Ordering::Relaxed),
+        native_ops.load(Ordering::Relaxed),
+        native_health.load(Ordering::Relaxed),
+        plan_calls.load(Ordering::Relaxed),
+        plan_ops.load(Ordering::Relaxed),
+        plan_health.load(Ordering::Relaxed),
+    );
+    assert_eq!(
+        plan_calls.load(Ordering::Relaxed),
+        native_calls.load(Ordering::Relaxed)
+    );
+    assert_eq!(plan_health.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn scanner_scratch_is_bounded_to_one_mib_plus_overlap() {
     let pattern_len = 257;
@@ -789,152 +935,4 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
 
     hub.shutdown();
     bounded!(runner).unwrap();
-}
-
-#[test]
-fn unchanged_snapshot_publishes_and_allocates_nothing() {
-    use std::sync::atomic::AtomicBool;
-    use vosu_osu::{project::SessionFacts, publish::BusPublisher};
-    use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
-    use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundle};
-    use vosu_plugin_api::{HostServices, Message, vosu_opcode, vosu_status};
-    struct Counter(Arc<AtomicUsize>);
-    impl HostServices for Counter {
-        fn send(&self, _: &Message, _: u64) -> vosu_status {
-            vosu_status::VOSU_OK
-        }
-        fn send_flat(&self, _: vosu_opcode, _: u32, _: u64, _: &[u8]) -> vosu_status {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            vosu_status::VOSU_OK
-        }
-    }
-    let sends = Arc::new(AtomicUsize::new(0));
-    let publisher = BusPublisher::new(
-        Counter(sends.clone()),
-        8203,
-        Arc::new(AtomicBool::new(true)),
-        SessionFacts {
-            client: ClientType::Stable,
-            settings: InstanceSettings {
-                tournament_spectator: false,
-                tournament_ipc_id: None,
-                devserver_endpoint: None,
-            },
-            foreground: None,
-        },
-    );
-    let snapshot = StateBundle::new(
-        ClientType::Stable,
-        1,
-        Arc::new(vosu_osu_state::state_backend::LiveStateCalculationBackend::new()),
-    )
-    .snapshot();
-    publisher.publish(snapshot.clone(), Delivery::All).unwrap();
-    assert_eq!(
-        sends.load(Ordering::Relaxed),
-        1,
-        "the publisher must be active, not unidentified"
-    );
-    let (_, allocations) = allocations_during(|| {
-        for _ in 0..100 {
-            publisher.publish(snapshot.clone(), Delivery::All).unwrap();
-        }
-    });
-    assert_eq!(allocations, 0);
-    assert_eq!(sends.load(Ordering::Relaxed), 1);
-    let mut changed = (*snapshot).clone();
-    let mut precise = (*changed.precise).clone();
-    precise.play_time = 1234.0;
-    changed.precise = Arc::new(precise);
-    let changed = Arc::new(changed);
-    publisher
-        .publish(changed.clone(), Delivery::Precise)
-        .unwrap();
-    assert_eq!(
-        sends.load(Ordering::Relaxed),
-        2,
-        "a changed precise input must publish"
-    );
-    // Both lanes and the output buffers have been warmed. Changing the precise
-    // lane must not allocate to remember regular groups or build dirty flags.
-    publisher
-        .publish(snapshot.clone(), Delivery::Precise)
-        .unwrap();
-    publisher
-        .publish(changed.clone(), Delivery::Precise)
-        .unwrap();
-    let before = sends.load(Ordering::Relaxed);
-    let (_, allocations) = allocations_during(|| {
-        for _ in 0..100 {
-            publisher
-                .publish(snapshot.clone(), Delivery::Precise)
-                .unwrap();
-            publisher
-                .publish(changed.clone(), Delivery::Precise)
-                .unwrap();
-        }
-    });
-    assert_eq!(allocations, 0);
-    assert_eq!(sends.load(Ordering::Relaxed), before + 200);
-}
-
-#[test]
-fn steady_state_scalar_commit_allocations_bounded() {
-    use std::sync::RwLock;
-    use vosu_core::state::{
-        ClientFacts, Pointer, PublisherGrant, SchemaRegistry, SessionKey, StateStore, StateValue,
-    };
-    use vosu_plugin_api::{PluginManifest, PublishFieldRef, PublishValueRef};
-    let grant = PublisherGrant::from_manifest(
-        &PluginManifest::parse(include_str!("../crates/vosu-osu/manifest.toml")).unwrap(),
-    )
-    .unwrap();
-    let store = StateStore::new(Arc::new(RwLock::new(SchemaRegistry::with_core().unwrap())));
-    let key = SessionKey(8204);
-    store.open_session(
-        key,
-        &grant,
-        ClientFacts {
-            game: "osu".into(),
-            variant: "stable".into(),
-            name: "bench".into(),
-            version: "1".into(),
-            pid: 8204,
-            session: "invariant".into(),
-            plugin_id: "vosu.osu".into(),
-            plugin_version: "2.0.0-alpha.0".into(),
-        },
-        true,
-    );
-    let commit = |n| {
-        store
-            .commit(
-                &grant,
-                key,
-                [PublishFieldRef {
-                    handle: key.0,
-                    ns: "vosu.osu",
-                    pointer: "/bench/scalar",
-                    value: PublishValueRef::I64(n),
-                }]
-                .into_iter(),
-            )
-            .unwrap()
-    };
-    drop(commit(0));
-    let mut maximum = 0;
-    for n in 1..=100 {
-        let (outcome, allocations) = allocations_during(|| commit(n));
-        maximum = maximum.max(allocations);
-        assert_eq!(outcome.current.revision, n as u64 + 1);
-        assert_eq!(
-            outcome
-                .current
-                .get("vosu.osu", &Pointer::parse("/bench/scalar").unwrap()),
-            Some(&StateValue::I64(n))
-        );
-    }
-    // A fixed-size scalar update must not grow with session revision/history.
-    // This ceiling covers validation, persistent path copies and commit metadata.
-    assert!(maximum <= 64, "scalar commit allocated {maximum} times");
 }

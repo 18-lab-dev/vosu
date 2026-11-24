@@ -205,7 +205,11 @@ impl PlanMemory {
         if ON_DISPATCH_THREAD.with(Cell::get) {
             return Err(PlanMemoryError::OnDispatchThread);
         }
-        encode_submit_into(&mut buffers.submit, plan, handle, &root, stages);
+        {
+            let _encode_profile =
+                crate::read_plan_profile::Span::new(crate::read_plan_profile::Phase::SdkEncode);
+            encode_submit_into(&mut buffers.submit, plan, handle, &root, stages);
+        }
 
         EXPECTING_PLAN.with(|cell| cell.set(Some(plan)));
         SYNC_RAW_PRESENT.with(|present| present.set(false));

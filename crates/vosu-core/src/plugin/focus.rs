@@ -24,6 +24,12 @@ pub trait ForegroundSource: Send + Sync {
     }
 }
 
+impl ForegroundSource for tokio::sync::watch::Receiver<Option<u32>> {
+    fn foreground_pid(&self) -> Option<u32> {
+        *self.borrow()
+    }
+}
+
 /// A test-only, settable [`ForegroundSource`].
 #[derive(Debug, Default)]
 pub struct SyntheticForegroundSource {

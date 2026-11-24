@@ -22,6 +22,8 @@ mod manifest;
 mod message;
 mod opcode;
 mod primitives;
+#[doc(hidden)]
+pub mod read_plan_profile;
 mod sdk;
 mod status;
 mod validate;

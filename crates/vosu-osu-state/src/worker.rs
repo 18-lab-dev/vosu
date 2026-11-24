@@ -94,9 +94,18 @@ pub struct StateWorkerHandle {
     regular_thread: Option<thread::JoinHandle<()>>,
     precise_thread: Option<thread::JoinHandle<()>>,
     reducer: tokio::task::JoinHandle<Result<(), StateWorkerError>>,
+    #[cfg(feature = "test-harness")]
+    reducer_polls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl StateWorkerHandle {
+    /// Reducer task polls, including polls which found no new capture.
+    #[cfg(feature = "test-harness")]
+    pub fn reducer_poll_count(&self) -> usize {
+        self.reducer_polls
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub async fn shutdown(mut self) -> Result<(), StateWorkerError> {
         self.clock.cancel();
         if !self.reducer.is_finished() {
@@ -286,7 +295,7 @@ where
 
     let reducer_clock = clock.clone();
     let reducer_context = live_context;
-    let reducer = tokio::spawn(async move {
+    let reducer = async move {
         let mut context = initial_context;
         let mut regular_sequence = 1u64;
         let mut current_capture = initial_capture;
@@ -426,15 +435,33 @@ where
                         context_tx.send_replace(shared_context);
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
             }
         }
-    });
+    };
+    #[cfg(feature = "test-harness")]
+    let reducer_polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    #[cfg(feature = "test-harness")]
+    let reducer = {
+        let polls = Arc::clone(&reducer_polls);
+        async move {
+            let mut reducer = std::pin::pin!(reducer);
+            // Stable Tokio exposes worker parks, but task poll hooks require
+            // tokio_unstable. Count just this future without changing its waker.
+            std::future::poll_fn(move |context| {
+                polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                reducer.as_mut().poll(context)
+            })
+            .await
+        }
+    };
+    let reducer = tokio::spawn(reducer);
 
     StateWorkerHandle {
         clock,
         regular_thread: Some(regular_thread),
         precise_thread: Some(precise_thread),
         reducer,
+        #[cfg(feature = "test-harness")]
+        reducer_polls,
     }
 }

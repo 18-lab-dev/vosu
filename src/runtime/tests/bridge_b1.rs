@@ -127,7 +127,8 @@ async fn live_selection_promotes_file_and_checksum_before_api_cadence() {
         is_tournament_manager: false,
     });
     let sink = B1Publisher::new(key, bridge.clone());
-    let task = bridge.start(Arc::new(vosu_core::plugin::SyntheticForegroundSource::new(None)));
+    let (_foreground, foreground_rx) = watch::channel(None);
+    let task = bridge.start(foreground_rx);
     let mut previous = None;
     for (_revision, bytes, delivery) in [
         (1, b"osu file format v14\n[Metadata]\nTitle:Old\n".as_slice(), Delivery::All),
@@ -266,8 +267,6 @@ fn b1_foreground_exact_and_unavailable_focus_fallback() {
 async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     use vosu_osu::bridge_b1::{B1Event, B1SessionKey, B1Phase};
     use vosu_surface::LegacySink;
-    struct NoForeground;
-    impl vosu_core::plugin::ForegroundSource for NoForeground { fn foreground_pid(&self) -> Option<u32> { None } }
     let root = tempfile::tempdir().unwrap();
     let logger = Logger::new(root.path(), LoggerOptions::default(), Arc::new(StdoutConsole)).unwrap();
     let (config, config_rx) = watch::channel(Arc::new(Config::default()));
@@ -290,7 +289,8 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     assert_eq!(lifecycle.borrow().revision, 3);
     assert_eq!(lifecycle.borrow().sessions[0].generation, 2);
     let mut inputs = bridge.inputs();
-    let task = bridge.start(Arc::new(NoForeground));
+    let (_foreground, foreground_rx) = watch::channel(None);
+    let task = bridge.start(foreground_rx);
     let mut next = Config::default(); next.enable_key_overlay = !next.enable_key_overlay;
     next.enable_mania_key_hit_errors = !next.enable_mania_key_hit_errors;
     next.enable_hit_offsets = !next.enable_hit_offsets;
@@ -325,16 +325,9 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
 }
 
 #[tokio::test]
-async fn b1_foreground_poll_and_detach_update_lifecycle_and_manager() {
+async fn b1_shared_foreground_and_detach_update_lifecycle_and_manager() {
     use vosu_osu::bridge_b1::{B1Event, B1SessionKey};
     use vosu_surface::LegacySink;
-    struct Foreground(std::sync::atomic::AtomicU32);
-    impl vosu_core::plugin::ForegroundSource for Foreground {
-        fn foreground_pid(&self) -> Option<u32> {
-            let pid = self.0.load(Ordering::Acquire);
-            (pid != 0).then_some(pid)
-        }
-    }
     let root = tempfile::tempdir().unwrap();
     let logger = Logger::new(root.path(), LoggerOptions::default(), Arc::new(StdoutConsole)).unwrap();
     let (_config, config_rx) = watch::channel(Arc::new(Config::default()));
@@ -349,16 +342,15 @@ async fn b1_foreground_poll_and_detach_update_lifecycle_and_manager() {
         let state = Arc::new(state);
         bridge.send(B1Event::Publish { key, api: state.clone(), live: state });
     }
-    let foreground = Arc::new(Foreground(std::sync::atomic::AtomicU32::new(0)));
+    let (foreground, foreground_rx) = watch::channel(None);
     let lifecycle = bridge.lifecycle();
-    let task = bridge.start(foreground.clone());
+    let task = bridge.start(foreground_rx);
     tokio::time::timeout(Duration::from_secs(2), async {
         while snapshots.load().manager().focused_pid() != Some(21401) { tokio::task::yield_now().await; }
     }).await.unwrap();
     assert_eq!(lifecycle.borrow().focus, FocusState { focused_client: ClientType::Lazer, game_focused: false });
-    #[cfg(windows)]
     let (detached, remaining, fallback_client) = {
-        foreground.0.store(21402, Ordering::Release);
+        foreground.send(Some(21402)).unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             while lifecycle.borrow().focus != (FocusState { focused_client: ClientType::Stable, game_focused: true })
                 || snapshots.load().manager().focused_pid() != Some(21402) {
@@ -369,8 +361,6 @@ async fn b1_foreground_poll_and_detach_update_lifecycle_and_manager() {
         assert_eq!(snapshots.load().manager().focused_pid(), Some(21402));
         (21402, 21401, ClientType::Lazer)
     };
-    #[cfg(not(windows))]
-    let (detached, remaining, fallback_client) = (21401, 21402, ClientType::Stable);
     bridge.send(B1Event::Detached { key: B1SessionKey { pid: detached, generation: 1 } });
     tokio::time::timeout(Duration::from_secs(2), async {
         while lifecycle.borrow().focus != (FocusState { focused_client: fallback_client, game_focused: false })
@@ -381,5 +371,20 @@ async fn b1_foreground_poll_and_detach_update_lifecycle_and_manager() {
     assert_eq!(lifecycle.borrow().focus, FocusState { focused_client: fallback_client, game_focused: false });
     assert_eq!(snapshots.load().manager().focused_pid(), Some(remaining));
     assert!(!snapshots.load().manager().instances().contains_key(&detached));
+    // The OS owner is unchanged: a new attachment must consume the cached
+    // sample without another poll or watch notification.
+    let key = B1SessionKey { pid: detached, generation: 2 };
+    bridge.send(B1Event::Attached { key, client: ClientType::Stable, settings: b1_session(detached, ClientType::Stable, false).settings, is_tournament_manager: false });
+    let mut state = (*state_bundle(2, 0)).clone();
+    state.source = ClientType::Stable;
+    let state = Arc::new(state);
+    bridge.send(B1Event::Publish { key, api: state.clone(), live: state });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !lifecycle.borrow().focus.game_focused || snapshots.load().manager().focused_pid() != Some(detached) {
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    assert_eq!(lifecycle.borrow().focus, FocusState { focused_client: ClientType::Stable, game_focused: true });
+    assert_eq!(snapshots.load().manager().focused_pid(), Some(detached));
     tokio::time::timeout(Duration::from_secs(2), task.shutdown()).await.unwrap();
 }

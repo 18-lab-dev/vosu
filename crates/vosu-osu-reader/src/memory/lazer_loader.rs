@@ -125,17 +125,24 @@ impl<G: OffsetGenerator> LazerOffsetLoader<G> {
         if cancel.is_cancelled() {
             return Err(LazerLoadError::Cancelled);
         }
-        let offsets = LazerOffsets::from_json(&generated)?;
-        if offsets.osu_version != version {
-            return Err(LazerLoadError::Unavailable(
-                version.to_owned(),
-                format!("generator returned osu! version {}", offsets.osu_version),
-            ));
-        }
-        if cancel.is_cancelled() {
-            return Err(LazerLoadError::Cancelled);
-        }
-        install_cache(&cache_path, &generated, cancel)?;
+        let version = version.to_owned();
+        let cancel = cancel.clone();
+        let offsets = tokio::task::spawn_blocking(move || {
+            let offsets = LazerOffsets::from_json(&generated)?;
+            if offsets.osu_version != version {
+                return Err(LazerLoadError::Unavailable(
+                    version.to_owned(),
+                    format!("generator returned osu! version {}", offsets.osu_version),
+                ));
+            }
+            if cancel.is_cancelled() {
+                return Err(LazerLoadError::Cancelled);
+            }
+            install_cache(&cache_path, &generated, &cancel)?;
+            Ok(offsets)
+        })
+        .await
+        .map_err(io::Error::other)??;
         Ok(Arc::new(offsets))
     }
 }
@@ -307,17 +314,22 @@ where
                 let loader = loader.clone();
                 let instance = instance.clone();
                 async move {
-                    if !instance.is_alive() {
-                        return Err(LazerLoadError::Cancelled);
-                    }
-                    let root = instance.executable_root()?;
-                    let version =
-                        super::lazer_version::discover_from_root(&root).map_err(|error| {
-                            LazerLoadError::Unavailable(
-                                "unknown".into(),
-                                format!("version discovery failed: {error}"),
-                            )
-                        })?;
+                    let (root, version) = tokio::task::spawn_blocking(move || {
+                        if !instance.is_alive() {
+                            return Err(LazerLoadError::Cancelled);
+                        }
+                        let root = instance.executable_root()?;
+                        let version =
+                            super::lazer_version::discover_from_root(&root).map_err(|error| {
+                                LazerLoadError::Unavailable(
+                                    "unknown".into(),
+                                    format!("version discovery failed: {error}"),
+                                )
+                            })?;
+                        Ok((root, version))
+                    })
+                    .await
+                    .map_err(io::Error::other)??;
                     loader.resolve(&root, &version, &attempt_cancel).await
                 }
             }
@@ -582,5 +594,72 @@ mod tests {
             )
         });
         assert!(matches!(result, Err(LazerLoadError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn version_discovery_does_not_block_the_async_worker() {
+        struct Identity {
+            entered: Notify,
+            release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+            progressed: std::sync::atomic::AtomicBool,
+        }
+        impl GenerationIdentity for Identity {
+            fn client(&self) -> vosu_osu_model::enums::ClientType {
+                vosu_osu_model::enums::ClientType::Lazer
+            }
+            fn pid(&self) -> u32 {
+                910_600_181
+            }
+            fn is_alive(&self) -> bool {
+                true
+            }
+            fn lifecycle_token(&self) -> CancellationToken {
+                CancellationToken::new()
+            }
+            fn lazer_offsets(&self) -> Option<Arc<LazerOffsets>> {
+                None
+            }
+            fn install_lazer_offsets(&self, _: Arc<LazerOffsets>) -> bool {
+                false
+            }
+            fn executable_root(&self) -> Result<PathBuf, LazerLoadError> {
+                self.entered.notify_one();
+                let progressed = self
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(2))
+                    .is_ok();
+                self.progressed.store(progressed, Ordering::Relaxed);
+                Err(LazerLoadError::Cancelled)
+            }
+        }
+        let (release, released) = std::sync::mpsc::sync_channel(1);
+        let identity = Arc::new(Identity {
+            entered: Notify::new(),
+            release: std::sync::Mutex::new(released),
+            progressed: std::sync::atomic::AtomicBool::new(false),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let loader = Arc::new(LazerOffsetLoader::new(
+            FakeGenerator::new(Bytes::new()),
+            dir.path().into(),
+            Bytes::new(),
+        ));
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(resolve_for_instance(loader, identity.clone()), async {
+                tokio::time::timeout(Duration::from_secs(3), identity.entered.notified())
+                    .await
+                    .expect("version discovery entered");
+                let _ = release.try_send(());
+            })
+        })
+        .await
+        .expect("resolution completion deadline");
+        assert!(matches!(result, Err(LazerLoadError::Cancelled)));
+        assert!(
+            identity.progressed.load(Ordering::Relaxed),
+            "a blocked discovery must not starve the sole async worker"
+        );
     }
 }

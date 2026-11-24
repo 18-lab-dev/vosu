@@ -110,11 +110,13 @@ fn sync_deadline_times_out() {
     set_session_memory_hook_for_tests(
         pid,
         Arc::new(SlowMemory {
-            sleep: Duration::from_millis(50),
+            sleep: Duration::from_millis(200),
         }),
         ProcessBitness::X64,
     );
-    set_read_plan_deadline_for_tests(&host, Duration::from_millis(10));
+    // At least four ~16 ms Windows ticks; the first stage deliberately
+    // exceeds this plus a complete tick before the second stage is admitted.
+    set_read_plan_deadline_for_tests(&host, Duration::from_millis(64));
 
     let (events, commands) = create_read_plan_instance(
         &host,
@@ -586,7 +588,9 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
     )
     .expect("creating the nested-sync testkit instance");
 
-    let pid = 500_100_501;
+    // Unique across the read-plan tests: basics.rs's open-retry test owns
+    // 500_100_501, and the session-memory hook registry is process-wide.
+    let pid = 500_100_601;
     set_session_memory_hook_for_tests(pid, Arc::new(AlwaysOkMemory), ProcessBitness::X64);
     host.process_appeared(test_process(pid, "proc-nestedsync"));
 

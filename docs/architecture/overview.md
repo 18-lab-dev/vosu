@@ -151,13 +151,26 @@ sequenceDiagram
 
 Core's `DiscoveryService` queries a platform `ProcessSource`, matches enabled plugin manifests, and owns session generations. `vosu-osu` parses the attached process facts, declines tournament/debug clients, classifies stable/lazer, and identifies sessions. Linux fallback candidates settle once against named siblings from the discovery pass; their variant then stays fixed for that generation. Windows metadata is keyed by PID plus process start time, so reuse invalidates cached facts and detaches the old generation before attaching the new one. B1 retains the 1.x tournament-manager/foreground-client/lowest-PID selection until M4a; core's API-v1 Focus rule is separate.
 
+On Windows, core samples the foreground owner once every 100 ms and caches it before recomputing plugin focus. B1 consumes the same latest-value watch, not a second OS query or timer. Session attach/detach still reruns B1's own reduction against the cached sample even when the foreground owner has not changed.
+
 `vosu-sys::process::ProcessMemory` is the native all-or-error syscall boundary. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
+
+Resolver version discovery, generated-offset parsing and cache installation run
+on Tokio's blocking pool. The embedded generator uses a blocking-pool bridge
+for filesystem operations, JSON merging and temporary-directory cleanup on every
+exit path; its child processes remain asynchronous and cancellation-aware.
 
 `src/memory.rs::MemoryReader` is the client-decoding boundary. Stable and lazer implementations translate client-specific pointers and sentinels into typed raw snapshots and `ReadStatus`. Regular and precise reader instances are independent because their blocking capture threads cannot share mutable pointer caches. `ReaderSynchronization` copies only the small address state needed by lazer precise capture; stable leaves it empty.
 
 ### Regular and precise state
 
 `src/state/worker.rs` owns two named blocking reader threads plus one async reducer task per ready process generation. The regular path is backpressured by a one-slot permit channel, so only the requested capture plan is produced. The precise path overwrites a latest-only slot; it does not queue every high-frequency observation. The reducer gives regular input priority, rejects samples whose source, generation, sequence, mode/mod context, or hit-error suffix is stale, then calls `StateBundle::apply_regular` or `StateBundle::apply_precise` serially.
+
+The plugin owns one Tokio scheduler worker; reader threads send each sample to
+the serialized reducer, which publishes synchronously into B1's latest-only
+sink. There is no per-publication task or reducer polling timer. Heavy
+PP/progressive calculation runs through the blocking pool, while capture and
+shutdown retain their existing generation checks and bounded lifecycle.
 
 `V2SubscriptionHub::demand` reports the union of established plans' producing lanes, not connection presence. Plans classify decoded pointer subtrees once at compilation. Slow identity/settings/metadata leaves request no acceleration; precise gameplay fields request only precise sampling, regular gameplay fields only regular sampling. Gameplay demand is dormant unless the current read context's status is play (including replay/spectate). The live beatmap clock and precise status can request precise sampling outside play; bass density/session clock/room state can request regular sampling outside play. Only demanded active lanes sleep `min(V2_SUBSCRIPTION_DEBOUNCE, own interval)` (`PollIntervals::{regular_delay,precise_delay}`); other lanes keep their configured interval. Broad parents inherit descendant demand, and disconnect releases that client's demand. The regular reader tags a capture `RegularCaptureContext::api_cadence` only when at least `POLL_RATE` has passed since the previous tagged capture; the reducer applies the same rule to precise publications against `PRECISE_DATA_POLL_RATE`. Each publication carries a `Delivery` (`All`, `Precise`, or `Live`). The stable stall-pause heuristic compares against the last API-cadence play time, so faster sampling cannot report a pause that did not happen; untagged samples may resume but never assert a pause.
 

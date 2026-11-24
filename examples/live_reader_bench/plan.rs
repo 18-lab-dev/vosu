@@ -86,8 +86,14 @@ pub struct Attachment {
     pub publication: Option<(VtableHostServices, u64)>,
     host: Arc<PluginHost>,
     pid: u32,
+    submitter: (VtableHostServices, u64),
     _runtime: tokio::runtime::Runtime,
     _directories: Vec<tempfile::TempDir>,
+}
+impl AsRef<(VtableHostServices, u64)> for Attachment {
+    fn as_ref(&self) -> &(VtableHostServices, u64) {
+        &self.submitter
+    }
 }
 impl Attachment {
     pub fn new(record: ProcessRecord, id: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -187,6 +193,7 @@ impl Attachment {
             publication: bus.then_some((services, handle)),
             host,
             pid,
+            submitter: (services, handle),
             _runtime: runtime,
             _directories: vec![logs, config_dir, data],
         })

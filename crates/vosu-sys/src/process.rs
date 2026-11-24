@@ -8,6 +8,8 @@ use std::fmt;
 
 use thiserror::Error;
 
+mod clock;
+pub use clock::coarse_monotonic_millis;
 pub mod scanner;
 pub use scanner::{BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE};
 
@@ -191,6 +193,13 @@ pub trait ProcessMemory: Send + Sync {
     /// Cheap process-health probe. In-memory/test backends are alive by default.
     fn is_alive(&self) -> bool {
         true
+    }
+
+    /// Whether reads target an owned process object rather than a reusable PID.
+    /// Such backends can defer a plan's health probe until a read fails without
+    /// allowing PID reuse to redirect successful reads into another process.
+    fn reads_pin_process_identity(&self) -> bool {
+        false
     }
 }
 

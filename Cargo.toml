@@ -76,6 +76,8 @@ lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb7
 default = ["linux-process-events"]
 linux-process-events = ["vosu-sys/linux-process-events", "vosu-core/linux-process-events"]
 test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/test-harness", "vosu-osu-state/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness"]
+# Diagnostic-only; never included in packaged release feature sets.
+read-plan-profile = ["vosu-plugin-api/read-plan-profile"]
 [dependencies]
 arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
@@ -170,6 +172,9 @@ harness = false
 
 [[example]]
 name = "live_reader_bench"
+
+[[example]]
+name = "plan_process_bench"
 
 [[example]]
 name = "brokered_reads_target"
