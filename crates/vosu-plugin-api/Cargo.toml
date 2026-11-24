@@ -16,6 +16,7 @@ workspace = true
 # Synchronous read-plan delivery (D5): a plugin's own reader threads only;
 # never published (D11).
 unstable-sync-reads = []
+read-plan-profile = []
 # Bundled-plugin registration glue consumed by the root crate's explicit
 # `BUNDLED` array (D13); never published (D11).
 bundled = []

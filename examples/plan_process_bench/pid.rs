@@ -59,6 +59,11 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
     black_box(attachment.process.read_u32(address)?);
     let (host, handle) = attachment.as_ref();
     let profiling = std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1");
+    if profiling && !read_plan_profile::COMPILED_IN {
+        return Err(
+            "rebuild with --features read-plan-profile to enable phase/clock counters".into(),
+        );
+    }
     let mut floor = Vec::with_capacity(1_000);
     for _ in 0..1_000 {
         let start = Instant::now();

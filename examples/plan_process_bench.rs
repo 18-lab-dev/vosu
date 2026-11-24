@@ -1,5 +1,5 @@
 //! Real-process native/PluginHost diagnostic. Windows (no test-harness required):
-//! `$env:VOSU_READ_PLAN_PROFILE='1'; cargo run --release --locked --example plan_process_bench -- --pid 1234 --cycles 1000`
+//! `$env:VOSU_READ_PLAN_PROFILE='1'; cargo run --release --locked --features read-plan-profile --example plan_process_bench -- --pid 1234 --cycles 1000`
 //! Optional `--address 0x...` overrides the first readable region. The synthetic
 //! stable/lazer widths repeat that readable address, not arbitrary pointer chases.
 //! Profiling adds two QPC reads per span; application/profiler clocks are separate.
@@ -193,7 +193,9 @@ fn fixture_run() -> Result<()> {
             "{shape}: native_ns={native_ns} plan_ns={plan_ns} ratio={:.3}",
             plan_ns as f64 / native_ns as f64
         );
-        if std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1") {
+        if vosu_plugin_api::read_plan_profile::COMPILED_IN
+            && std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1")
+        {
             vosu_plugin_api::read_plan_profile::take_thread_snapshot();
             capture(shape, &attachment.process, &mut plan_reader);
             let clocks = vosu_plugin_api::read_plan_profile::take_thread_snapshot();
