@@ -215,13 +215,6 @@ impl CredentialStore {
     }
 
     /// Secret authority stays within core, not dashboard/surface/ABI exports.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "core-only fetch authority is consumed by the source-service landing"
-        )
-    )]
     pub(crate) fn lease(
         &self,
         identity: &str,

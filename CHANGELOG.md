@@ -4,6 +4,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M6b
 
+- Fetch catalog-v2 release assets through bounded GitHub API, nested-project
+  GitLab, Gitea/Forgejo and literal static protocols with exact asset selection,
+  initial-origin rejection and request-local credentials. Reconcile credential
+  membership before exposing the core fetch service; disabled/failed sources
+  contribute no candidates. Real-CA/owner-forge D15 evidence remains pending.
 - Add exact-identity catalog source settings and HTTPS source parsing, with
   dedicated trust/private-network mutations and journaled credential-purge
   recovery. Preserve legacy source lists and migration markers for M8.

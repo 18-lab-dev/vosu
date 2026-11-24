@@ -40,9 +40,7 @@ impl StreamingClient {
             if let Some(value) = credentials.header() {
                 request = request.header(reqwest::header::AUTHORIZATION, value);
             }
-            if request_policy.purpose == RequestPurpose::CatalogAsset {
-                request = request.header(reqwest::header::ACCEPT, "application/octet-stream");
-            }
+            request = metadata_headers(request, request_policy.purpose);
             let response = tokio::select! {
                 () = cancel.cancelled() => return Err(NetworkError::Cancelled),
                 result = wait_for(
@@ -200,5 +198,58 @@ impl StreamingClient {
             }
         }
         Ok((host_text, port, addresses))
+    }
+}
+
+fn metadata_headers(
+    request: reqwest::RequestBuilder,
+    purpose: RequestPurpose,
+) -> reqwest::RequestBuilder {
+    let accept = match purpose {
+        RequestPurpose::SourceMetadata(MetadataAccept::GitHub) => "application/vnd.github+json",
+        RequestPurpose::SourceMetadata(MetadataAccept::Json) => "application/json",
+        RequestPurpose::CatalogAsset => "application/octet-stream",
+        _ => return request,
+    };
+    request.header(reqwest::header::ACCEPT, accept)
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+    #[test]
+    fn typed_purposes_add_only_the_expected_accept_header() {
+        for (purpose, expected) in [
+            (
+                RequestPurpose::SourceMetadata(MetadataAccept::GitHub),
+                Some("application/vnd.github+json"),
+            ),
+            (
+                RequestPurpose::SourceMetadata(MetadataAccept::Json),
+                Some("application/json"),
+            ),
+            (
+                RequestPurpose::CatalogAsset,
+                Some("application/octet-stream"),
+            ),
+            (RequestPurpose::Probe, None),
+            (RequestPurpose::Package, None),
+            (RequestPurpose::Artwork, None),
+            (RequestPurpose::Updater, None),
+            (RequestPurpose::Counter, None),
+        ] {
+            let request =
+                metadata_headers(reqwest::Client::new().get("https://example.org/"), purpose)
+                    .build()
+                    .unwrap();
+            assert_eq!(request.headers().len(), usize::from(expected.is_some()));
+            assert_eq!(
+                request
+                    .headers()
+                    .get(reqwest::header::ACCEPT)
+                    .map(|v| v.to_str().unwrap()),
+                expected
+            );
+        }
     }
 }

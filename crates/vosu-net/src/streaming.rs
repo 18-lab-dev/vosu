@@ -20,7 +20,9 @@ mod redirect;
 use redirect::redirect_target;
 mod request;
 mod tls;
-pub use policy::{Origin, RequestCredential, RequestPolicy, RequestPurpose, SourcePolicy};
+pub use policy::{
+    MetadataAccept, Origin, RequestCredential, RequestPolicy, RequestPurpose, SourcePolicy,
+};
 
 pub type ResolverFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>>;
 

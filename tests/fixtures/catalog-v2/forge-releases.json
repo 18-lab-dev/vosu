@@ -1,0 +1,6 @@
+{
+  "github": {"tag_name":"v2.3.4","assets":[{"name":"notes.txt","url":"https://api.github.com/repos/alice/catalog/releases/assets/1"},{"name":"catalog-v2.json","url":"https://api.github.com/repos/alice/catalog/releases/assets/42","browser_download_url":"https://evil.test/never-use-this"}]},
+  "gitlab": {"tag_name":"v8.2","assets":{"links":[{"name":"notes.txt","direct_asset_url":"https://gitlab.com/acme/team/catalog/notes"},{"name":"catalog-v2.json","direct_asset_url":"https://gitlab.com/acme/team/catalog/-/releases/v8.2/downloads/catalog-v2.json"}]}},
+  "gitea": {"tag_name":"v5.1","assets":[{"name":"notes.txt","browser_download_url":"https://codeberg.org/alice/catalog/notes"},{"name":"catalog-v2.json","browser_download_url":"https://codeberg.org/alice/catalog/releases/download/v5.1/catalog-v2.json"}]},
+  "catalog": {"catalog_version":2,"name":"Fetched catalog","published":"2026-11-24T00:00:00Z","tools":[{"id":"fixture-tool","name":"Fixture tool","version":"2.3.4","host":"^2.0.0","packages":{"any":{"url":"https://packages.test/tool.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":37}}}]}
+}

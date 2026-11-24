@@ -36,9 +36,15 @@ impl Origin {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MetadataAccept {
+    GitHub,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestPurpose {
     Probe,
-    SourceMetadata,
+    SourceMetadata(MetadataAccept),
     CatalogAsset,
     Package,
     Artwork,
@@ -100,7 +106,9 @@ impl RequestPolicy {
     pub fn source(purpose: RequestPurpose, source: SourcePolicy) -> Result<Self, NetworkError> {
         if !matches!(
             purpose,
-            RequestPurpose::Probe | RequestPurpose::SourceMetadata | RequestPurpose::CatalogAsset
+            RequestPurpose::Probe
+                | RequestPurpose::SourceMetadata(_)
+                | RequestPurpose::CatalogAsset
         ) {
             return Err(NetworkError::InvalidPolicy);
         }
@@ -130,7 +138,7 @@ impl RequestPolicy {
     pub(super) fn credential_eligible(&self, url: &Url) -> bool {
         matches!(
             self.purpose,
-            RequestPurpose::SourceMetadata | RequestPurpose::CatalogAsset
+            RequestPurpose::SourceMetadata(_) | RequestPurpose::CatalogAsset
         ) && self.source.as_ref().is_some_and(|source| {
             Origin::from_url(url).is_ok_and(|origin| origin == source.credential_origin)
         })
