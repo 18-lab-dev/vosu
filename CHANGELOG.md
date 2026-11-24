@@ -8,6 +8,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
   and `play.source` (including filtered and WebSocket output). Accurate facts
   remain available as `vosu.osu.beatmap.time.{rate,running}` and
   `vosu.osu.play.source` on the state bus; `vosu.play.rate` is unchanged.
+- The optional live-parity diagnostic now targets the 2.0 bus-backed adapters:
+  it attests the 2.0 package version, reports any reappearing 1.x extension
+  member instead of exempting it, and no longer writes the retired
+  `ENABLE_KEY_OVERLAY`/`V2_SUBSCRIPTION_DEBOUNCE` keys into its vosu config.
 
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.

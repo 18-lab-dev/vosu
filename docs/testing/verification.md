@@ -406,6 +406,42 @@ MSVC SDK caching is independent of Cargo.lock and restricted to x86_64. Prepared
 
 `tools/live-parity/` is an optional interactive diagnostic, not a normal unit test or a required check ([ADR 0011](../decisions/0011-live-parity-optional.md)). Use it to investigate a suspected divergence from upstream: validate configuration, capture a controlled client lifecycle, compare, and generate diffs. It requires pinned artifacts, distinct loopback ports, and supported platform/client combinations. Dated captures, release gates, and native runs are kept in the [verification history](verification-history.md) as evidence for their recorded source generations.
 
+### Live parity for the bus-backed adapters
+
+Since M4a the compared vosu endpoints are the three bundled adapter
+projections mounted through the permanent surface: HTTP `/json`, `/json/sc`,
+`/json/v2`, `/json/v2/precise` and the `/ws`, `/tokens`, `/websocket/v2`,
+`/websocket/v2/precise` feeds. The tool attests the 2.0 workspace package
+version and compares the adapters' real bytes against the pinned upstream
+reference with no extension exemption: ADR 0021 removed every 1.x extension
+member (the `adr0021-*` rows of the
+[divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md)), so any
+reappearance, including nested tournament copies, is a `keys` mismatch. The
+generated vosu configuration no longer writes the retired
+`ENABLE_KEY_OVERLAY` or `V2_SUBSCRIPTION_DEBOUNCE`; real feed selectors drive
+precise demand. Only the owner starts a capture, with a validated
+configuration, distinct loopback ports and a supported native pair, traversing
+menu → active play → paused → result → client exit:
+
+```sh
+python tools/live-parity/run.py config-schema
+python tools/live-parity/run.py check-config --config "$PARITY_CONFIG"
+python tools/live-parity/run.py capture --config "$PARITY_CONFIG" --out "$CAPTURE"
+python tools/live-parity/run.py compare --capture "$CAPTURE" --report "$REPORT"
+python tools/live-parity/run.py diff --capture "$CAPTURE" --out-dir "$DIFF_DIR"
+```
+
+A capture remains diagnostic evidence for its recorded build only; it neither
+replaces nor relaxes the deterministic gate. That gate is `state_api_compat`
+(committed source oracle replayed through producer → ABI → bus → surface →
+adapter bytes), `server_compat` (the mounted production listener matrix) and
+`daemon_smoke` with `test-harness`. Fix a reported mismatch in the owning
+adapter or record an approved ledger row with exact route and member scope;
+never add a comparator exemption. M4b owns the pilot/full golden capture
+commands and owner artifacts; until they exist, report missing captures as
+pending M4b/release evidence, never as a pass. The 1.x captures in the
+verification history attest vosu 1.2.5 only.
+
 Native-reference mode also accepts the exact compressed upstream Linux 4.26.2
 ELF (SHA-256 `fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f`).
 Its version string is not stored as plain ASCII. The digest is pinned in the
