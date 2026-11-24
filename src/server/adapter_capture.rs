@@ -9,6 +9,8 @@
 //! owner instance numbers are private run identity: they become
 //! first-appearance ordinals (roster order, then the selected session), so
 //! equal identities share an ordinal and distinct identities never do.
+pub mod endpoint;
+
 use super::{routes::CachedJson, websocket::Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;

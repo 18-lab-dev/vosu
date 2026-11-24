@@ -121,17 +121,25 @@ Endpoint: `GET /__vosu_test/v1/adapter-capture?schema=<v1|sc|v2|v2-precise>`.
 
 - Compiled only with root `test-harness`; never present in a release build.
 - Mounted only when the daemon receives a per-launch capability from the
-  live-parity runner through a private environment entry. With the feature but
-  no capability the path is an ordinary exact 404.
-- Loopback peers only. The request carries
-  `X-Vosu-Test-Capture: <32-byte random hex capability>`. A non-loopback peer
-  or a missing or incorrect capability gets the ordinary 404 (never 401/403).
-  No Origin-based access, API key or tool-token substitute, and no CORS.
+  live-parity runner through the private environment entry
+  `VOSU_TEST_ADAPTER_CAPTURE` (exactly 64 lowercase hex characters, 32 random
+  bytes). A malformed value fails daemon startup with an error that does not
+  contain it. With the feature but no capability the path is an ordinary exact
+  404.
+- Loopback peers only. The request carries exactly one
+  `X-Vosu-Test-Capture: <32-byte random hex capability>` header. A request from
+  a non-loopback peer, with a missing, duplicated or incorrect capability, or to
+  any near-miss path is routed exactly as by a build without the endpoint, so
+  it gets the ordinary unknown-path 404 (never an endpoint-specific 401/403).
+  The overlay listener's peer and Origin gate still applies first, and the
+  dashboard listener never serves the endpoint. No Origin-based access, API key
+  or tool-token substitute, and no CORS.
 - Exact query: exactly one known `schema` parameter. Unknown, duplicate or
   extra parameters get 400 with a fixed small JSON error.
 - GET only; every other method gets 405 and records no sample.
 - `200 application/json`, `Cache-Control: no-store`. A response above 8 MiB is
-  never truncated: it gets 507 with a fixed error.
+  never truncated: it gets 507 with a fixed error. A failed capture or envelope
+  gets 500 with a fixed error that never echoes the internal message.
 - Not a stream. No demand registration, subscription, global journal, PID
   registry or unbounded history. Concurrent requests use the provider's
   existing serialization; daemon shutdown drops them.
