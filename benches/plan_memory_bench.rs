@@ -278,7 +278,7 @@ fn bench(c: &mut Criterion) {
         let global = counter.load(std::sync::atomic::Ordering::Relaxed);
         let _ = reader.menu("");
         let menu = counter.load(std::sync::atomic::Ordering::Relaxed);
-        let _ = reader.gameplay(0.0, None);
+        let _ = reader.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME);
         let gameplay = counter.load(std::sync::atomic::Ordering::Relaxed);
         eprintln!(
             "sequential={sequential}: global={} menu={} gameplay={}",
@@ -295,6 +295,16 @@ fn bench(c: &mut Criterion) {
     group.bench_function("floor_eighteen_independent_ops", |b| {
         b.iter(|| {
             let mut requests = destinations.each_mut().map(|dst| ReadRequest::new(0, dst));
+            floor.read_many(&mut requests).unwrap();
+            black_box(&requests);
+        })
+    });
+    let mut many_destinations = [[0; 4]; 56];
+    group.bench_function("floor_fifty_six_independent_ops", |b| {
+        b.iter(|| {
+            let mut requests = many_destinations
+                .each_mut()
+                .map(|dst| ReadRequest::new(0, dst));
             floor.read_many(&mut requests).unwrap();
             black_box(&requests);
         })
@@ -316,7 +326,7 @@ fn bench(c: &mut Criterion) {
             );
         })
     });
-    group.bench_function("stable_sequential_plans", |b| {
+    group.bench_function("stable_unfused_plans", |b| {
         b.iter(|| {
             let _ = black_box(sequential_stable.global());
             let _ = black_box(sequential_stable.menu(""));

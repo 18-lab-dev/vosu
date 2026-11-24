@@ -342,17 +342,14 @@ impl StableMemory {
         let mode_anchor = base
             .checked_sub(0x33)
             .ok_or(MemoryError::AddressOverflow { base, offset: 0x33 })?;
-        let (mut beat_holder, mut mode_holder) = (Word::new(), Word::new());
-        self.read_batch([
-            beat_holder.request(beat_anchor)?,
-            mode_holder.request(mode_anchor)?,
-        ])?;
-        // The mode container also holds the play count at +0xc.
         let (mut beat_word, mut mode_object) = (Word::new(), Span::<0, 0x10>::new());
-        self.read_batch([
-            beat_word.request(beat_holder.ptr(0))?,
-            mode_object.request(mode_holder.ptr(0))?,
-        ])?;
+        self.process.read_indirect_many(
+            &mut [
+                crate::process::IndirectReadRequest::new(beat_anchor, 0, &mut beat_word.bytes),
+                crate::process::IndirectReadRequest::new(mode_anchor, 0, &mut mode_object.bytes),
+            ],
+            crate::process::ProcessBitness::X86,
+        )?;
         let beat = beat_word.ptr(0);
         if beat == 0 {
             return self.not_ready();

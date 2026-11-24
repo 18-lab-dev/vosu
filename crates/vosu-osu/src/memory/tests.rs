@@ -253,4 +253,110 @@ fn readable_regions_is_unsupported_through_read_plans() {
     ));
 }
 
+#[test]
+fn dependent_chains_use_one_submission_and_target_pointer_width() {
+    for bitness in [ProcessBitness::X86, ProcessBitness::X64] {
+        let mut bytes = vec![0; 128];
+        bytes[..bitness.pointer_size()]
+            .copy_from_slice(&32u64.to_le_bytes()[..bitness.pointer_size()]);
+        bytes[36..36 + bitness.pointer_size()]
+            .copy_from_slice(&64u64.to_le_bytes()[..bitness.pointer_size()]);
+        bytes[72..76].copy_from_slice(&0x12345678u32.to_le_bytes());
+        let host = FakeHost::new(|_, _| {}, bytes, 0, Arc::new(AtomicBool::new(true)));
+        let process = PlanProcessMemory::new(host, 1, 4242, bitness);
+        let mut dst = [0; 4];
+        process.read_chain(0, &[4, 8], bitness, &mut dst).unwrap();
+        assert_eq!(u32::from_le_bytes(dst), 0x12345678);
+        assert_eq!(process.host.submission_count(), 1);
+    }
+}
+
+#[test]
+fn dependent_chains_read_null_and_preserve_destination_on_pointer_failure() {
+    let process = memory(vec![0; 16], 0);
+    let mut dst = [7; 4];
+    process
+        .read_chain(0, &[0], ProcessBitness::X64, &mut dst)
+        .unwrap();
+    assert_eq!(dst, [0; 4], "a zero pointer must still read address zero");
+    dst = [7; 4];
+    let error = process
+        .read_chain(100, &[0], ProcessBitness::X64, &mut dst)
+        .unwrap_err();
+    assert!(matches!(error, MemoryError::Read { address: 100, .. }));
+    assert_eq!(dst, [7; 4]);
+}
+
+#[test]
+fn dependent_chains_report_the_resolved_failure_address() {
+    let mut bytes = vec![0; 16];
+    bytes[..8].copy_from_slice(&128u64.to_le_bytes());
+    let process = memory(bytes, 0);
+    let mut dst = [7; 4];
+    let error = process
+        .read_chain(0, &[4], ProcessBitness::X64, &mut dst)
+        .unwrap_err();
+    assert!(matches!(error, MemoryError::Read { address: 132, .. }));
+    assert_eq!(dst, [7; 4]);
+}
+
+#[test]
+fn dependent_chain_overflow_and_large_offset_keep_sequential_error_precedence() {
+    let mut bytes = vec![0; 16];
+    bytes[..8].copy_from_slice(&u64::MAX.to_le_bytes());
+    let process = memory(bytes, 0);
+    let mut dst = [7; 4];
+    assert_eq!(
+        process.read_chain(0, &[1], ProcessBitness::X64, &mut dst),
+        Err(MemoryError::AddressOverflow {
+            base: usize::MAX,
+            offset: 1
+        })
+    );
+    assert_eq!(dst, [7; 4]);
+    let error = process
+        .read_chain(100, &[usize::MAX], ProcessBitness::X64, &mut dst)
+        .unwrap_err();
+    assert!(matches!(error, MemoryError::Read { address: 100, .. }));
+    assert_eq!(dst, [7; 4]);
+}
+
+#[test]
+fn indirect_many_fuses_holders_and_pointees_without_publishing_on_holder_error() {
+    use vosu_osu_reader::process::IndirectReadRequest;
+    let mut bytes = vec![0; 96];
+    bytes[..8].copy_from_slice(&32u64.to_le_bytes());
+    bytes[8..16].copy_from_slice(&64u64.to_le_bytes());
+    bytes[36..40].copy_from_slice(&123u32.to_le_bytes());
+    bytes[72..76].copy_from_slice(&456u32.to_le_bytes());
+    let process = memory(bytes, 0);
+    let (mut a, mut b) = ([7; 4], [7; 4]);
+    process
+        .read_indirect_many(
+            &mut [
+                IndirectReadRequest::new(0, 4, &mut a),
+                IndirectReadRequest::new(8, 8, &mut b),
+            ],
+            ProcessBitness::X64,
+        )
+        .unwrap();
+    assert_eq!(u32::from_le_bytes(a), 123);
+    assert_eq!(u32::from_le_bytes(b), 456);
+    assert_eq!(process.host.submission_count(), 1);
+    a = [7; 4];
+    b = [7; 4];
+    let error = process
+        .read_indirect_many(
+            &mut [
+                IndirectReadRequest::new(0, 4, &mut a),
+                IndirectReadRequest::new(100, 8, &mut b),
+            ],
+            ProcessBitness::X64,
+        )
+        .unwrap_err();
+    assert!(matches!(error, MemoryError::Read { address: 100, .. }));
+    assert_eq!(a, [7; 4]);
+    assert_eq!(b, [7; 4]);
+}
+
 mod zero_alloc;

@@ -314,12 +314,30 @@ impl FakeHost {
         let PlanBase::Absolute(root) = submit.root else {
             panic!("FakeHost only resolves VOSU_BASE_ABSOLUTE roots");
         };
-        let mut results = Vec::new();
+        let mut results: Vec<ReadResult> = Vec::new();
         for stage in &submit.stages {
-            let StageBase::Root = stage.base else {
-                panic!("FakeHost does not resolve dependent stages");
-            };
-            let base = i128::from(root) + i128::from(stage.base_offset);
+            let base = match stage.base {
+                StageBase::Root => i128::from(root),
+                StageBase::Dependent { ref_stage, ref_op } => {
+                    let index = submit.stages[..ref_stage as usize]
+                        .iter()
+                        .map(|stage| stage.ops.len())
+                        .sum::<usize>()
+                        + ref_op as usize;
+                    match &results[index] {
+                        ReadResult::Ok(bytes) => {
+                            let mut pointer = [0; 8];
+                            pointer[..bytes.len()].copy_from_slice(bytes);
+                            i128::from(u64::from_le_bytes(pointer))
+                        }
+                        result => {
+                            let result = result.clone();
+                            results.extend(stage.ops.iter().map(|_| result.clone()));
+                            continue;
+                        }
+                    }
+                }
+            } + i128::from(stage.base_offset);
             for op in &stage.ops {
                 let address = base + i128::from(op.offset);
                 let result = match usize::try_from(address) {

@@ -111,7 +111,6 @@ fn process(bytes: Vec<u8>, base: usize, bitness: ProcessBitness) -> ProcessHandl
     )
 }
 
-
 fn regular_state() -> RegularState {
     RegularState {
         global: Default::default(),

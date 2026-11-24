@@ -44,6 +44,24 @@ impl<'a> ReadRequest<'a> {
     }
 }
 
+/// A read at the pointer stored at `address`, plus `offset`.
+pub struct IndirectReadRequest<'a> {
+    pub address: usize,
+    pub offset: usize,
+    pub dst: &'a mut [u8],
+}
+
+impl<'a> IndirectReadRequest<'a> {
+    #[must_use]
+    pub fn new(address: usize, offset: usize, dst: &'a mut [u8]) -> Self {
+        Self {
+            address,
+            offset,
+            dst,
+        }
+    }
+}
+
 impl fmt::Debug for ReadRequest<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -117,6 +135,44 @@ pub type MemoryRead<T> = Result<ReadStatus<T>, MemoryError>;
 pub trait ProcessMemory: Send + Sync {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError>;
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError>;
+    /// Follows pointer reads at `address`, then each relative offset, writing only
+    /// the final read into `dst`. Zero pointers are ordinary addresses, not sentinels.
+    /// Backends may execute the dependencies together without changing read order.
+    fn read_chain(
+        &self,
+        mut address: usize,
+        offsets: &[usize],
+        bitness: ProcessBitness,
+        dst: &mut [u8],
+    ) -> Result<(), MemoryError> {
+        for &offset in offsets {
+            let mut bytes = [0; 8];
+            self.read_exact(address, &mut bytes[..bitness.pointer_size()])?;
+            let pointer =
+                usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| MemoryError::Corrupt {
+                    context: "pointer",
+                    address,
+                    message: "target pointer does not fit the host address width",
+                })?;
+            address = pointer
+                .checked_add(offset)
+                .ok_or(MemoryError::AddressOverflow {
+                    base: pointer,
+                    offset,
+                })?;
+        }
+        self.read_exact(address, dst)
+    }
+    /// Reads pointer holders together, then their pointees together, in chunks
+    /// of at most 24. Native backends retain two batches; plan backends may
+    /// express both levels in one dependent plan. Null pointers remain readable.
+    fn read_indirect_many(
+        &self,
+        reads: &mut [IndirectReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        read_indirect_many_default(self, reads, bitness)
+    }
     fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError>;
     /// Reads bytes wholly contained in a region returned by [`Self::readable_regions`].
     ///
@@ -152,4 +208,44 @@ impl ProcessBitness {
             Self::X64 => 8,
         }
     }
+}
+
+/// Ordered two-level implementation for backends that cannot batch dependencies.
+pub fn read_indirect_many_default<M: ProcessMemory + ?Sized>(
+    memory: &M,
+    reads: &mut [IndirectReadRequest<'_>],
+    bitness: ProcessBitness,
+) -> Result<(), MemoryError> {
+    for chunk in reads.chunks_mut(24) {
+        let mut pointers = [[0; 8]; 24];
+        {
+            let mut requests: [_; 24] = std::array::from_fn(|_| ReadRequest::new(0, &mut []));
+            for (request, (read, bytes)) in requests
+                .iter_mut()
+                .zip(chunk.iter().zip(pointers.iter_mut()))
+            {
+                *request = ReadRequest::new(read.address, &mut bytes[..bitness.pointer_size()]);
+            }
+            memory.read_many(&mut requests[..chunk.len()])?;
+        }
+        let count = chunk.len();
+        let mut requests: [_; 24] = std::array::from_fn(|_| ReadRequest::new(0, &mut []));
+        for (request, (read, bytes)) in requests.iter_mut().zip(chunk.iter_mut().zip(pointers)) {
+            let pointer =
+                usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| MemoryError::Corrupt {
+                    context: "pointer",
+                    address: read.address,
+                    message: "target pointer does not fit the host address width",
+                })?;
+            let address = pointer
+                .checked_add(read.offset)
+                .ok_or(MemoryError::AddressOverflow {
+                    base: pointer,
+                    offset: read.offset,
+                })?;
+            *request = ReadRequest::new(address, read.dst);
+        }
+        memory.read_many(&mut requests[..count])?;
+    }
+    Ok(())
 }

@@ -10,11 +10,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
+pub use vosu_sys::process::read_indirect_many_default;
 pub use vosu_sys::process::scanner::{
     BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE,
 };
 pub use vosu_sys::process::{
-    MemoryError, MemoryRead, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
+    IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion, ProcessBitness, ProcessMemory,
+    ReadRequest, ReadStatus,
 };
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
@@ -110,6 +112,23 @@ impl ProcessHandle {
     pub fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
         self.memory.read_many(reads)
     }
+    /// Reads through a dependent pointer chain using the backend's native batching.
+    pub fn read_chain(
+        &self,
+        address: usize,
+        offsets: &[usize],
+        bitness: ProcessBitness,
+        dst: &mut [u8],
+    ) -> Result<(), MemoryError> {
+        self.memory.read_chain(address, offsets, bitness, dst)
+    }
+    pub fn read_indirect_many(
+        &self,
+        reads: &mut [IndirectReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        self.memory.read_indirect_many(reads, bitness)
+    }
 
     pub fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
         self.memory.readable_regions()
@@ -186,7 +205,18 @@ impl ProcessHandle {
     }
 
     pub fn read_pointer_pointer(&self, address: usize) -> Result<usize, MemoryError> {
-        self.read_pointer(self.read_pointer(address)?)
+        let mut bytes = [0; 8];
+        self.memory.read_chain(
+            address,
+            &[0],
+            self.bitness,
+            &mut bytes[..self.pointer_size()],
+        )?;
+        usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| MemoryError::Corrupt {
+            context: "pointer",
+            address,
+            message: "target pointer does not fit the host address width",
+        })
     }
 
     /// Reads a CLR string object. Null is not-ready; an allocated empty

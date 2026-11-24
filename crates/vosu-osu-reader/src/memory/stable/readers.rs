@@ -448,13 +448,9 @@ impl StableMemory {
     }
     pub(super) fn global_sequential(&mut self) -> MemoryRead<Global> {
         let menu = mods(self.ptr2(self.patterns.menu_mods_ptr)? as i64);
-        let chat = self
-            .process
-            .read_i8(self.ptr(self.patterns.chat_checker_ptr)?)? as i64;
-        let watching = self
-            .process
-            .read_u8(self.ptr(self.add(self.patterns.can_run_slowly_addr, 0x46)?)?)?
-            == 1;
+        let chat = self.chain::<1>(self.patterns.chat_checker_ptr, &[0])?[0] as i8 as i64;
+        let watching =
+            self.chain::<1>(self.add(self.patterns.can_run_slowly_addr, 0x46)?, &[0])?[0] == 1;
         let game_time = self.ptr2(self.patterns.game_time_ptr)? as i64;
         let status = self.status_value()?;
         let play_time = if status == 3 {
@@ -463,12 +459,9 @@ impl StableMemory {
             self.play_time_value()? as f64
         };
         let sc = self.ptr(self.add(self.patterns.settings_class_addr, 8)?)?;
-        let songs_ptr = self.ptr(self.add(self.ptr(self.add(sc, 0xb8)?)?, 4)?)?;
+        let songs_ptr = u32::from_le_bytes(self.chain(self.add(sc, 0xb8)?, &[4])?) as usize;
         let songs = self.string(songs_ptr)?;
-        let show = self
-            .process
-            .read_u8(self.add(self.ptr(self.add(sc, 4)?)?, 0xc)?)?
-            != 0;
+        let show = self.chain::<1>(self.add(sc, 4)?, &[0xc])?[0] != 0;
         let mut hidden = false;
         if watching {
             let r = self.ruleset()?;
