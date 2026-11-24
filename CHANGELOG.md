@@ -14,6 +14,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   follows existing same-directory atomic writes, Unix 0600 temporary/final files
   and inherited Windows directory ACLs, not a keyring or encrypted secret store.
   Native Windows ACL/replacement evidence remains pending.
+- Add pure current-source native trust policy and exact artifact approvals.
+  Revocation clears process approvals and reports running in-process code as
+  disabled pending user restart; actual runtime handoff remains M5/W4 work.
 
 ## Unreleased — 2.0 M6a
 
