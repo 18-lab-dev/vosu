@@ -132,6 +132,7 @@ pub struct Events {
     >,
     pub phases: BTreeMap<B1SessionKey, Vec<B1Phase>>,
     pub published: BTreeMap<B1SessionKey, usize>,
+    pub latest: BTreeMap<B1SessionKey, Arc<vosu_osu_state::StateBundleSnapshot>>,
     pub detached: BTreeSet<B1SessionKey>,
     pub late_publish: bool,
     sequence: usize,
@@ -186,7 +187,8 @@ impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
                 .get_or_insert(sequence);
                 events.phases.entry(key).or_default().push(phase);
             }
-            B1Event::Publish { key, .. } => {
+            B1Event::Publish { key, live, .. } => {
+                events.latest.insert(key, live);
                 events
                     .order
                     .entry(key)

@@ -41,7 +41,7 @@ impl SessionDemand {
         }
     }
     pub fn set_bus(&self, regular: bool, precise: bool) {
-        self.set_bus_collection(regular, precise, precise);
+        self.set_bus_collection(regular, precise, false);
     }
     pub fn receiver(&self) -> watch::Receiver<SubscriptionDemand> {
         self.out.clone()

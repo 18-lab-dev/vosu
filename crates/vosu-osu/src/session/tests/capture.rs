@@ -385,16 +385,13 @@ async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directio
     assert!(!reader.borrow_and_update().enable_hit_offsets);
     assert!(!reader.borrow().enable_mania_key_hit_errors);
     let publication = session.publication.get().unwrap();
-    publication.demand.set_bus(false, true);
+    publication.demand.set_bus_collection(false, true, true);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
         .unwrap()
         .unwrap();
     assert!(reader.borrow_and_update().enable_hit_offsets);
     assert!(reader.borrow().enable_mania_key_hit_errors);
-    // Bus collection must never mutate the 1.x policy.
-    assert!(!sink.inputs.borrow().enable_hit_offsets);
-    assert!(!sink.inputs.borrow().enable_mania_key_hit_errors);
     publication.demand.set_bus(false, false);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
@@ -412,7 +409,7 @@ async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directio
         .unwrap();
     assert!(reader.borrow_and_update().enable_hit_offsets);
     assert!(reader.borrow().enable_mania_key_hit_errors);
-    publication.demand.set_bus(false, true);
+    publication.demand.set_bus_collection(false, true, true);
     tokio::time::timeout(Duration::from_secs(5), reader.changed())
         .await
         .unwrap()

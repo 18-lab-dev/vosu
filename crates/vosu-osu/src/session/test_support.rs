@@ -45,3 +45,19 @@ pub fn session_demand(pid: u32) -> Option<vosu_osu_state::SubscriptionDemand> {
                 .map(|publication| *publication.demand.receiver().borrow())
         })
 }
+
+/// Whether the delivered bus selectors opt into extended error collection.
+pub fn session_error_collection(pid: u32) -> Option<bool> {
+    SESSIONS
+        .lock()
+        .expect("session observations poisoned")
+        .iter()
+        .filter_map(Weak::upgrade)
+        .find(|session| session.pid == pid && !session.lifecycle.is_cancelled())
+        .and_then(|session| {
+            session
+                .publication
+                .get()
+                .map(|publication| publication.demand.bus_receiver().borrow().collect_errors)
+        })
+}

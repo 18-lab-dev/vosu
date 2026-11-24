@@ -240,23 +240,22 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             }
             Message::SettingsChanged(changed) => self.update_settings(&changed.values),
             Message::DemandChanged(changed) => {
-                let collect_errors = changed.precise
-                    || changed.selectors.iter().any(|selector| {
-                        selector.ns == "vosu.osu"
-                            && ["/play/hitOffsets", "/play/keyHitErrors"]
-                                .iter()
-                                .any(|path| {
-                                    selector.pointer.is_empty()
-                                        || *path == selector.pointer
-                                        || path
-                                            .strip_prefix(&selector.pointer)
-                                            .is_some_and(|rest| rest.starts_with('/'))
-                                        || selector
-                                            .pointer
-                                            .strip_prefix(path)
-                                            .is_some_and(|rest| rest.starts_with('/'))
-                                })
-                    });
+                let collect_errors = changed.selectors.iter().any(|selector| {
+                    selector.ns == "vosu.osu"
+                        && ["/play/hitOffsets", "/play/keyHitErrors"]
+                            .iter()
+                            .any(|path| {
+                                selector.pointer.is_empty()
+                                    || *path == selector.pointer
+                                    || path
+                                        .strip_prefix(&selector.pointer)
+                                        .is_some_and(|rest| rest.starts_with('/'))
+                                    || selector
+                                        .pointer
+                                        .strip_prefix(path)
+                                        .is_some_and(|rest| rest.starts_with('/'))
+                            })
+                });
                 let mut state = self.state.lock().expect("plugin state mutex poisoned");
                 if let Some(session) = state.sessions.get(&changed.handle)
                     && let Some(publication) = session.publication.get()

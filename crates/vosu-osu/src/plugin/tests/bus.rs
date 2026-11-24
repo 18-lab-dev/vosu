@@ -56,7 +56,10 @@ impl HostServices for ReentrantHost {
                         handle: identify.handle,
                         regular: true,
                         precise: true,
-                        selectors: vec![],
+                        selectors: vec![FieldSelector {
+                            ns: "vosu.osu".into(),
+                            pointer: "/play/hitOffsets".into(),
+                        }],
                     }),
                     0,
                 )
@@ -98,4 +101,44 @@ fn identify_reentrant_controls_are_retained_until_session_registration() {
         "registration must retain the pre-return foreground"
     );
     assert!(plugin.state.lock().unwrap().pending_controls.is_empty());
+}
+
+#[test]
+fn precise_only_demand_does_not_opt_in_to_error_collection() {
+    let (plugin, _data) = hermetic(RecordingHost::default(), Platform::Windows);
+    plugin
+        .dispatch(
+            Message::SessionAttached(attached(61107, 61107, "osu!.exe", Bitness::X86)),
+            0,
+        )
+        .unwrap();
+    let session = plugin.state.lock().unwrap().sessions[&61107].clone();
+    let publication = session.publication.get().unwrap();
+    for (ns, pointer, collect) in [
+        ("vosu.status", "/status", false),
+        ("vosu.osu", "/session/state", false),
+        ("vosu.osu", "/play/hitOffsets", true),
+        ("vosu.osu", "/play", true),
+        ("vosu.osu", "", true),
+    ] {
+        plugin
+            .dispatch(
+                Message::DemandChanged(DemandChanged {
+                    handle: 61107,
+                    regular: false,
+                    precise: true,
+                    selectors: vec![FieldSelector {
+                        ns: ns.into(),
+                        pointer: pointer.into(),
+                    }],
+                }),
+                0,
+            )
+            .unwrap();
+        let receiver = publication.demand.bus_receiver();
+        assert!(receiver.borrow().lanes.precise);
+        assert_eq!(receiver.borrow().collect_errors, collect, "{ns}{pointer}");
+    }
+    publication.demand.set_bus(false, true);
+    assert!(!publication.demand.bus_receiver().borrow().collect_errors);
 }

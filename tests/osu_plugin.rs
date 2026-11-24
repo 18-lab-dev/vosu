@@ -309,10 +309,16 @@ fn bus_demand_unions_with_hub_demand() {
     commands
         .try_send(SubscribeCommand {
             session: Some(handle),
-            selectors: vec![Selector {
-                ns: "vosu.osu".into(),
-                pointer: "/play/hitErrors".into(),
-            }],
+            selectors: vec![
+                Selector {
+                    ns: "vosu.osu".into(),
+                    pointer: "/play/hitErrors".into(),
+                },
+                Selector {
+                    ns: "vosu.osu".into(),
+                    pointer: "/session/playTime".into(),
+                },
+            ],
         })
         .unwrap();
     loop {
@@ -325,7 +331,9 @@ fn bus_demand_unions_with_hub_demand() {
         }
     }
     let demand = || vosu_osu::test_support::session_demand(harness.pids[0]);
-    eventually(|| demand().is_some());
+    // The bus-only regular selector is a positive acknowledgement that this
+    // subscription's DemandChanged reached the plugin, not just registration.
+    eventually(|| demand().is_some_and(|demand| demand.regular));
     assert!(
         !demand().unwrap().precise,
         "gameplay lane stays dormant in menu"
@@ -362,5 +370,102 @@ fn focus_foreground_sets_session_focused() {
         namespace(&harness, handle, "vosu.osu")
             .is_some_and(|value| value["session"]["focused"] == false)
     });
+    assert_dispatches_ok();
+}
+
+#[test]
+fn bus_error_selection_controls_collection_but_not_legacy_encoder_flags() {
+    use vosu::api::{
+        self, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
+    };
+    use vosu_plugin_api::Selector;
+    use vosu_plugin_testkit::subscriber::{SubscribeCommand, SubscriberEvent};
+    let harness = Harness::new("vosu.osu", 0x6a00_0d00, 1);
+    let pid = harness.pids[0];
+    let (events, commands) = harness.subscriber("test.osu.o6.collection");
+    commands
+        .try_send(SubscribeCommand {
+            session: None,
+            selectors: vec![Selector {
+                ns: "vosu.sessions".into(),
+                pointer: String::new(),
+            }],
+        })
+        .unwrap();
+    harness.host.process_appeared(Harness::record(pid, &[]));
+    let deadline = Instant::now() + WAIT;
+    let handle = loop {
+        if let SubscriberEvent::Attached(attached) = events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            break attached.handle;
+        }
+    };
+    let select = |ns: &str, pointer: &str| {
+        commands
+            .try_send(SubscribeCommand {
+                session: Some(handle),
+                selectors: vec![Selector {
+                    ns: ns.into(),
+                    pointer: pointer.into(),
+                }],
+            })
+            .unwrap();
+    };
+    let collecting = || vosu_osu::test_support::session_error_collection(pid);
+    select("vosu.status", "/status");
+    // A precise raise positively acknowledges delivery of this subscription.
+    eventually(|| vosu_osu::test_support::session_demand(pid).is_some_and(|demand| demand.precise));
+    assert_eq!(collecting(), Some(false));
+    select("vosu.osu", "/play/hitOffsets");
+    eventually(|| collecting() == Some(true));
+    harness.memory.set_status(2);
+    harness.sink.until(WAIT, |events| {
+        events
+            .latest
+            .values()
+            .any(|state| state.precise.status == 2)
+    });
+    let (key, state, settings) = {
+        let events = harness.sink.events.lock().unwrap();
+        let (&key, state) = events.latest.iter().next().unwrap();
+        (key, state.clone(), events.identified[&key].1.clone())
+    };
+    // Encode an actual B1 publication while bus collection is enabled. The
+    // positive legacy-enabled cases prevent empty fixture data making this
+    // omission check vacuous; neither encoder may infer flags from collection.
+    for enabled in [false, true, false] {
+        let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+            1,
+            Some(pid),
+            true,
+            ApiRuntimeSettings {
+                enable_hit_offsets: enabled,
+                enable_mania_key_hit_errors: enabled,
+                ..Default::default()
+            },
+            [ManagerInstanceSnapshot::new(
+                key.pid,
+                settings.clone(),
+                false,
+                state.clone(),
+            )],
+        )));
+        let precise: serde_json::Value =
+            serde_json::from_slice(&api::precise::encode(&snapshot).unwrap()).unwrap();
+        let v2: serde_json::Value =
+            serde_json::from_slice(&api::v2::encode(&snapshot).unwrap()).unwrap();
+        for field in ["hitOffsets", "keyHitErrors"] {
+            assert_eq!(precise.get(field).is_some(), enabled, "precise {field}");
+            assert_eq!(v2["play"].get(field).is_some(), enabled, "v2 {field}");
+        }
+    }
+    for pointer in ["/play", ""] {
+        select("vosu.status", "/status");
+        eventually(|| collecting() == Some(false));
+        select("vosu.osu", pointer);
+        eventually(|| collecting() == Some(true));
+    }
     assert_dispatches_ok();
 }
