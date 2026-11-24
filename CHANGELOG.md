@@ -4,6 +4,13 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M6b
 
+- Add the D15 catalog-forge gate (`scripts/test-catalog-forge.py`, required in
+  `prepush.py` and CI): a pinned Forgejo behind a throwaway internal CA that is
+  installed only in the test container's OS trust store, exercising private
+  exact-host access, token/Basic receipt and storage, real-forge redirects,
+  foreign-host and same-host package/art denial, and missing-CA/wrong-name
+  failures through the production client. Native Windows store and owner
+  live-forge evidence remain pending.
 - Fetch catalog-v2 release assets through bounded GitHub API, nested-project
   GitLab, Gitea/Forgejo and literal static protocols with exact asset selection,
   initial-origin rejection and request-local credentials. Reconcile credential
