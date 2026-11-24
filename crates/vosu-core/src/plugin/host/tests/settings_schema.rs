@@ -189,6 +189,14 @@ struct CreateGate {
     release_cv: Condvar,
 }
 
+/// How long [`CreateGate::wait_for_release`] waits before giving up.
+/// Bounded deliberately (post-hang-review finding): a test bug driving
+/// this gate — an assertion that fires and unwinds before `release()`
+/// runs, or a missed notification — must fail with a clear message
+/// within this bound, never park the gated plugin's `create` (and
+/// `std::thread::scope`'s forced join of the thread running it) forever.
+const CREATE_GATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl CreateGate {
     fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -198,13 +206,21 @@ impl CreateGate {
     }
 
     fn wait_for_release(&self) {
-        let mut release = self.release.lock().unwrap_or_else(|p| p.into_inner());
-        while !*release {
-            release = self
-                .release_cv
-                .wait(release)
-                .unwrap_or_else(|p| p.into_inner());
-        }
+        let (guard, result) = self
+            .release_cv
+            .wait_timeout_while(
+                self.release.lock().unwrap_or_else(|p| p.into_inner()),
+                CREATE_GATE_TIMEOUT,
+                |release| !*release,
+            )
+            .unwrap_or_else(|p| p.into_inner());
+        drop(guard);
+        assert!(
+            !result.timed_out(),
+            "CreateGate::wait_for_release timed out after {CREATE_GATE_TIMEOUT:?}: the test \
+             driving it never called release() (an assertion likely fired first) — this must \
+             never hang"
+        );
     }
 
     fn release(&self) {
@@ -452,6 +468,41 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
         let data_dir_path = data_dir.path().to_path_buf();
         let create_thread =
             scope.spawn(move || host_ref.create_instance(id, loaded_ref, data_dir_path, None));
+
+        // Bug found by a 1-in-6 hang (Main's report): without this
+        // wait, the config change below can race ahead of
+        // `create_instance` even registering `id`'s `Creating`
+        // placeholder at all (it is registered inline, but on another
+        // thread, with no happens-before edge to this one). `dispatch_to`
+        // never retries a message that found no matching instance, so
+        // the delivery below is then silently and permanently lost, the
+        // "queued" wait times out, its `assert!` panics, and — because
+        // that panic unwinds out of this `scope` closure while
+        // `create_thread` is still parked in `CreateGate::wait_for_release`
+        // — `std::thread::Scope`'s forced join of that thread (required
+        // before the panic may propagate) hung forever pre-fix. Waiting
+        // here for the placeholder to exist first removes the race
+        // outright; `CreateGate::wait_for_release`'s own bound (above)
+        // is the fallback that turns any future instance of this into a
+        // fast, readable failure instead of a second hang.
+        let registered_deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let registered = matches!(
+                host.instances
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&id),
+                Some(InstanceSlot::Creating { .. })
+            );
+            if registered {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < registered_deadline,
+                "expected create_instance to register id's Creating placeholder within 5s"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
 
         host.watch_bridge_b2(&bridge, &runtime.handle().clone());
 
