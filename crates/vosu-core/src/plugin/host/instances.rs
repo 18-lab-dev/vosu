@@ -98,6 +98,9 @@ impl PluginHost {
             return Err(HostError::ShuttingDown);
         }
         let plugin_id = plugin.manifest().id.clone();
+        let publisher = crate::state::PublisherGrant::from_manifest(plugin.manifest())
+            .map_err(|e| HostError::State(e.to_string()))?;
+        let registration = super::state::SchemaRegistration::new(&self.state, plugin)?;
         let matcher_table = plugin.manifest().matcher.clone();
         let schema = plugin.settings_schema().cloned();
         self.instances
@@ -212,6 +215,11 @@ impl PluginHost {
                 settings_schema: schema,
                 outstanding_plans: Arc::new(OutstandingPlans::new()),
                 outstanding_scans: OutstandingScans::new(),
+                publisher: Box::new(super::state::Publisher {
+                    grant: publisher,
+                    version: plugin.manifest().version.clone(),
+                    _registration: registration,
+                }),
             }),
         );
         let pending = match previous {

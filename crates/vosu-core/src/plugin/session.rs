@@ -127,6 +127,7 @@ struct IdentifiedSession {
     generation: Generation,
     pid: u32,
     identify: SessionIdentify,
+    public_id: String,
 }
 
 /// Every attached session (pending identification, or already identified)
@@ -368,6 +369,7 @@ impl SessionRegistry {
                 generation: record.generation,
                 pid: record.process.pid,
                 identify: request,
+                public_id: record.public_id,
             },
         );
         Ok(IdentifyOutcome {
@@ -462,6 +464,21 @@ impl SessionRegistry {
     #[must_use]
     pub fn identify_of(&self, handle: SessionHandle) -> Option<&SessionIdentify> {
         self.identified.get(&handle).map(|record| &record.identify)
+    }
+
+    pub fn public_id_of(&self, handle: SessionHandle) -> Option<&str> {
+        self.identified
+            .get(&handle)
+            .map(|record| record.public_id.as_str())
+            .or_else(|| {
+                self.pending
+                    .get(&handle)
+                    .map(|record| record.public_id.as_str())
+            })
+    }
+
+    pub fn was_issued(&self, handle: SessionHandle) -> bool {
+        handle.0 != 0 && handle.0 <= self.next_handle
     }
 
     /// The [`Generation`] a handle belongs to, whether pending or

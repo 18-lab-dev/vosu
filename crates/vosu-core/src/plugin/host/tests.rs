@@ -26,3 +26,4 @@ mod races;
 /// loaded plugin's own schema, and `PluginHost::schema_for` (plugin-id
 /// match, `Creating`-and-`Live` resolution).
 mod settings_schema;
+mod state;

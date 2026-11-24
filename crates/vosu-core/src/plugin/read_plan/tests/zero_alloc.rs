@@ -401,6 +401,7 @@ fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
     let loaded = crate::plugin::load_bundled(&[crate::plugin::BundledPlugin {
         manifest: &manifest,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");
@@ -488,4 +489,31 @@ fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
     );
 
     crate::plugin::test_support::clear_session_memory(pid);
+}
+
+/// K4's raw publication path borrows namespace/pointer/scalar values.
+/// K3's persistent-tree commit allocates by design; X2 measures that cost.
+#[test]
+fn raw_publish_path_allocates_only_for_values() {
+    use vosu_plugin_api::{PublishBatchWriter, PublishValueRef, decode_publish_batch_ref};
+    let mut writer = PublishBatchWriter::new();
+    writer.begin(8410);
+    writer.push("vosu.play", "/combo", PublishValueRef::U64(42));
+    let mut payload = Vec::new();
+    writer.finish_into(&mut payload).unwrap();
+    let _ = allocations_during(|| ());
+    let (value, allocations) = allocations_during(|| {
+        let batch = decode_publish_batch_ref(black_box(&payload)).unwrap();
+        let entry = batch.entries().next().unwrap();
+        black_box((entry.ns, entry.pointer, entry.value))
+    });
+    assert_eq!(
+        allocations, 0,
+        "borrowed host decode must not allocate strings or values"
+    );
+    assert_eq!(value.0, "vosu.play");
+    assert_eq!(value.1, "/combo");
+    assert!(matches!(value.2, PublishValueRef::U64(42)));
+    let (_, counted) = allocations_during(|| black_box(vec![0_u8; black_box(64)]));
+    assert!(counted > 0, "the counter must detect a real allocation");
 }

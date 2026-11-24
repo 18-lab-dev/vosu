@@ -79,6 +79,7 @@ pub enum HostError {
         manifest_declares_one: bool,
         entry_declares_one: bool,
     },
+    State(String),
 }
 
 impl fmt::Display for HostError {
@@ -134,6 +135,7 @@ impl fmt::Display for HostError {
                     "declares no"
                 },
             ),
+            Self::State(e) => write!(f, "state: {e}"),
         }
     }
 }

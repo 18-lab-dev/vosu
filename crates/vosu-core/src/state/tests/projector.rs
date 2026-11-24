@@ -49,7 +49,13 @@ fn client_namespace() -> StateValue {
 }
 
 fn session() -> (SchemaRegistry, SessionState) {
-    let reg = SchemaRegistry::with_core().unwrap();
+    let mut reg = SchemaRegistry::with_core().unwrap();
+    reg.register(
+        "vosu.osu",
+        "vosu.osu",
+        include_str!("../../../../../docs/v2/schemas/vosu.osu.schema.json"),
+    )
+    .unwrap();
     let state = SessionState::new(
         SessionKey(1),
         1,

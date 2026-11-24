@@ -11,13 +11,17 @@
 //! the result — "which session, if any, currently holds it" — to decide
 //! who is focused.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Which process, if any, currently owns the OS foreground window.
 /// Pluggable so the Focus rule is tested without a real desktop: tests use
 /// [`SyntheticForegroundSource`].
 pub trait ForegroundSource: Send + Sync {
     fn foreground_pid(&self) -> Option<u32>;
+    /// Whether this source can distinguish no foreground owner from no API.
+    fn available(&self) -> bool {
+        true
+    }
 }
 
 /// A test-only, settable [`ForegroundSource`].
@@ -58,6 +62,9 @@ impl ForegroundSource for SyntheticForegroundSource {
 pub struct OsForegroundSource;
 
 impl ForegroundSource for OsForegroundSource {
+    fn available(&self) -> bool {
+        cfg!(windows)
+    }
     #[cfg(windows)]
     fn foreground_pid(&self) -> Option<u32> {
         vosu_sys::process::foreground_process_id()
@@ -96,6 +103,7 @@ pub struct FocusCandidate {
 pub struct FocusEvent {
     pub handle: FocusKey,
     pub focused: bool,
+    pub foreground: Option<bool>,
 }
 
 /// Tracks the currently focused session and the recency fallback across
@@ -109,6 +117,7 @@ pub struct FocusTracker {
     /// detached for good and keeping its entry here would only grow this
     /// list without bound).
     recency: Vec<FocusKey>,
+    foreground: HashMap<FocusKey, Option<bool>>,
 }
 
 impl Default for FocusTracker {
@@ -123,6 +132,7 @@ impl FocusTracker {
         Self {
             focused: None,
             recency: Vec::new(),
+            foreground: HashMap::new(),
         }
     }
 
@@ -136,7 +146,7 @@ impl FocusTracker {
         candidates: &[FocusCandidate],
         present: &HashSet<FocusKey>,
         priority_holder: Option<FocusKey>,
-        foreground: &dyn ForegroundSource,
+        foreground_pid: Option<u32>,
     ) -> Option<FocusKey> {
         if candidates.is_empty() {
             return None;
@@ -150,7 +160,7 @@ impl FocusTracker {
             return Some(holder);
         }
         // The foreground-owner rule.
-        if let Some(fg_pid) = foreground.foreground_pid()
+        if let Some(fg_pid) = foreground_pid
             && let Some(candidate) = candidates.iter().find(|c| c.pid == fg_pid)
         {
             return Some(candidate.handle);
@@ -173,8 +183,8 @@ impl FocusTracker {
     /// `priority_holder` (`super::session::SessionRegistry::priority_holder`,
     /// re-keyed to [`FocusKey`] by the caller). Returns the events to
     /// deliver, in §6.2's documented "Delivery ordering": the session
-    /// losing focus before the session gaining it. Returns no events when
-    /// focus does not change.
+    /// losing focus before the session gaining it. Foreground-only changes
+    /// also notify the affected owner, without changing the focus decision.
     pub fn recompute(
         &mut self,
         candidates: &[FocusCandidate],
@@ -183,10 +193,19 @@ impl FocusTracker {
     ) -> Vec<FocusEvent> {
         let present: HashSet<FocusKey> = candidates.iter().map(|c| c.handle).collect();
         self.recency.retain(|handle| present.contains(handle));
-        let new_focus = self.decide(candidates, &present, priority_holder, foreground);
-        if new_focus == self.focused {
-            return Vec::new();
-        }
+        let foreground_pid = foreground.foreground_pid();
+        let new_focus = self.decide(candidates, &present, priority_holder, foreground_pid);
+        let states: HashMap<_, _> = candidates
+            .iter()
+            .map(|c| {
+                (
+                    c.handle,
+                    foreground
+                        .available()
+                        .then_some(foreground_pid == Some(c.pid)),
+                )
+            })
+            .collect();
         let mut events = Vec::new();
         // The previously focused session is told it lost focus only while
         // it is still a candidate: once it has left `candidates` it has
@@ -200,16 +219,35 @@ impl FocusTracker {
             events.push(FocusEvent {
                 handle: old,
                 focused: false,
+                foreground: states.get(&old).copied().flatten(),
             });
         }
-        if let Some(new) = new_focus {
+        if let Some(new) = new_focus
+            && Some(new) != self.focused
+        {
             events.push(FocusEvent {
                 handle: new,
                 focused: true,
+                foreground: states.get(&new).copied().flatten(),
             });
             self.recency.retain(|handle| *handle != new);
             self.recency.insert(0, new);
         }
+        for candidate in candidates {
+            if self
+                .foreground
+                .get(&candidate.handle)
+                .is_some_and(|old| Some(old) != states.get(&candidate.handle))
+                && !events.iter().any(|e| e.handle == candidate.handle)
+            {
+                events.push(FocusEvent {
+                    handle: candidate.handle,
+                    focused: Some(candidate.handle) == new_focus,
+                    foreground: states.get(&candidate.handle).copied().flatten(),
+                });
+            }
+        }
+        self.foreground = states;
         self.focused = new_focus;
         events
     }
@@ -233,6 +271,7 @@ impl FocusTracker {
             events.push(FocusEvent {
                 handle: new_handle,
                 focused: self.focused == Some(new_handle),
+                foreground: self.foreground.get(&new_handle).copied().flatten(),
             });
         }
         events
@@ -272,7 +311,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(1),
-                focused: true
+                focused: true,
+                foreground: Some(false),
             }]
         );
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
@@ -291,7 +331,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(1),
-                focused: true
+                focused: true,
+                foreground: Some(false),
             }]
         );
     }
@@ -306,7 +347,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(2),
-                focused: true
+                focused: true,
+                foreground: Some(true),
             }]
         );
     }
@@ -326,11 +368,13 @@ mod tests {
             vec![
                 FocusEvent {
                     handle: FocusKey(1),
-                    focused: false
+                    focused: false,
+                    foreground: Some(false),
                 },
                 FocusEvent {
                     handle: FocusKey(2),
-                    focused: true
+                    focused: true,
+                    foreground: Some(true),
                 },
             ]
         );
@@ -349,7 +393,14 @@ mod tests {
         // 1 here, so exercise it with a disjoint "first" to be sure).
         foreground.set(Some(999));
         let events = tracker.recompute(&candidates, None, &foreground);
-        assert!(events.is_empty());
+        assert_eq!(
+            events,
+            vec![FocusEvent {
+                handle: FocusKey(1),
+                focused: true,
+                foreground: Some(false)
+            }]
+        );
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
     }
 
@@ -365,7 +416,14 @@ mod tests {
         let events = tracker.recompute(&candidates, None, &foreground);
         // 2 was most recently focused even though 1 is the deterministic
         // "first by install order".
-        assert!(events.is_empty());
+        assert_eq!(
+            events,
+            vec![FocusEvent {
+                handle: FocusKey(2),
+                focused: true,
+                foreground: Some(false)
+            }]
+        );
         assert_eq!(tracker.focused(), Some(FocusKey(2)));
     }
 
@@ -398,7 +456,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(2),
-                focused: true
+                focused: true,
+                foreground: Some(false),
             }]
         );
     }
@@ -420,7 +479,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(2),
-                focused: false
+                focused: false,
+                foreground: Some(false),
             }]
         );
     }
@@ -435,7 +495,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(2),
-                focused: true
+                focused: true,
+                foreground: Some(true),
             }]
         );
     }
@@ -463,7 +524,8 @@ mod tests {
             events,
             vec![FocusEvent {
                 handle: FocusKey(1),
-                focused: true
+                focused: true,
+                foreground: Some(false),
             }]
         );
     }
@@ -482,5 +544,20 @@ mod tests {
         let events = tracker.on_session_detached(&[], None, &foreground);
         assert!(events.is_empty());
         assert_eq!(tracker.focused(), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unsupported_os_source_omits_foreground() {
+        let mut tracker = FocusTracker::new();
+        let events = tracker.recompute(&[candidate(8414, 8414, 0)], None, &OsForegroundSource);
+        assert_eq!(
+            events,
+            vec![FocusEvent {
+                handle: FocusKey(8414),
+                focused: true,
+                foreground: None,
+            }]
+        );
     }
 }

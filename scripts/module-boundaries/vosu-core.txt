@@ -1,6 +1,7 @@
 app -> config
 logging -> config
 plugin -> logging
+plugin -> state
 # B2, deleted in M8
 plugin -> config
 report -> config

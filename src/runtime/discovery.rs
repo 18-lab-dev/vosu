@@ -320,6 +320,7 @@ mod tests {
             let loaded = load_bundled(&[BundledPlugin {
                 manifest: &manifest,
                 settings_schema: None,
+                namespace_schemas: &[],
                 vtable: session::vosu_plugin_vtable,
             }])
             .expect("loading the session testkit plugin");
@@ -397,6 +398,7 @@ mod tests {
             let loaded = load_bundled(&[BundledPlugin {
                 manifest: &manifest,
                 settings_schema: None,
+                namespace_schemas: &[],
                 vtable: session::vosu_plugin_vtable,
             }])
             .expect("loading the session testkit plugin");
@@ -538,6 +540,7 @@ mod tests {
             let loaded = load_bundled(&[BundledPlugin {
                 manifest: &manifest,
                 settings_schema: None,
+                namespace_schemas: &[],
                 vtable: session::vosu_plugin_vtable,
             }])
             .expect("loading the session testkit plugin");

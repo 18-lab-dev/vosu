@@ -1,0 +1,181 @@
+//! Host publication routing. Lock order: focus -> sessions -> instances ->
+//! store; no callback into plugin code runs while these locks are held.
+use super::{InstanceSlot, PluginHost};
+use crate::plugin::{host_services::PluginInstanceId, session::SessionHandle};
+use crate::state::{ClientFacts, SessionKey};
+use vosu_plugin_api::{
+    PublishFieldRef, decode_publish_batch_ref, decode_publish_field_ref, vosu_opcode, vosu_status,
+};
+
+impl PluginHost {
+    pub(super) fn handle_publish_raw(
+        &self,
+        instance: PluginInstanceId,
+        opcode: vosu_opcode,
+        payload: &[u8],
+    ) -> vosu_status {
+        match opcode {
+            vosu_opcode::VOSU_OP_PUBLISH_FIELD => match decode_publish_field_ref(payload) {
+                Ok(entry) => {
+                    self.commit_publication(instance, entry.handle, std::iter::once(entry))
+                }
+                Err(_) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+            },
+            vosu_opcode::VOSU_OP_PUBLISH_BATCH => match decode_publish_batch_ref(payload) {
+                Ok(batch) => self.commit_publication(instance, batch.handle, batch.entries()),
+                Err(_) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+            },
+            _ => vosu_status::VOSU_ERR_UNSUPPORTED,
+        }
+    }
+
+    fn commit_publication<'a>(
+        &self,
+        instance: PluginInstanceId,
+        raw: u64,
+        entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
+    ) -> vosu_status {
+        // Keep sessions locked through commit so detach cannot race an accepted
+        // publication back into the document store after closing the session.
+        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(InstanceSlot::Live(entry)) = instances.get(&instance) else {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        };
+        let handle = SessionHandle(raw);
+        let Some((owner, _)) = sessions.owner_and_pid(handle) else {
+            // Session handles are monotonic and never reused. The registry
+            // exposes its issued high-water mark rather than retaining tombstones.
+            return if sessions.was_issued(handle) {
+                vosu_status::VOSU_ERR_TARGET_GONE
+            } else {
+                vosu_status::VOSU_ERR_INVALID_ARGUMENT
+            };
+        };
+        if owner != &entry.plugin_id {
+            return vosu_status::VOSU_ERR_PERMISSION_DENIED;
+        }
+        if sessions.identify_of(handle).is_none() {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        }
+        self.state
+            .store
+            .commit(&entry.publisher.grant, SessionKey(raw), entries)
+            .map_or_else(Into::into, |_| vosu_status::VOSU_OK)
+    }
+
+    pub(super) fn open_bus_session(&self, handle: SessionHandle, focused: bool) {
+        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(identify) = sessions.identify_of(handle) else {
+            return;
+        };
+        let Some((owner, pid)) = sessions.owner_and_pid(handle) else {
+            return;
+        };
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(entry) = instances.values().find_map(|slot| match slot {
+            InstanceSlot::Live(entry) if &entry.plugin_id == owner => Some(entry),
+            _ => None,
+        }) else {
+            return;
+        };
+        let facts = ClientFacts {
+            game: identify.game.clone(),
+            variant: identify.variant.clone(),
+            name: identify.name.clone(),
+            version: identify.version.clone(),
+            pid,
+            session: sessions
+                .public_id_of(handle)
+                .expect("identified session has public id")
+                .to_owned(),
+            plugin_id: owner.clone(),
+            plugin_version: entry.publisher.version.clone(),
+        };
+        self.state
+            .store
+            .open_session(SessionKey(handle.0), &entry.publisher.grant, facts, focused);
+    }
+
+    pub(super) fn close_bus_session(&self, handle: SessionHandle) {
+        self.state.store.close_session(SessionKey(handle.0));
+    }
+
+    pub(super) fn close_bus_sessions_for(&self, plugin_id: &str) {
+        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+        for (handle, owner, _) in sessions.identified_sessions() {
+            if owner == plugin_id {
+                self.close_bus_session(handle);
+            }
+        }
+    }
+}
+
+/// Cold per-instance publisher data stays out of the hot instance-slot enum.
+pub(super) struct Publisher {
+    pub(super) grant: crate::state::PublisherGrant,
+    pub(super) version: String,
+    pub(super) _registration: SchemaRegistration,
+}
+
+/// Owns namespace registrations across every create/error/shutdown path.
+pub(super) struct SchemaRegistration {
+    runtime: std::sync::Arc<crate::state::StateRuntime>,
+    provider: String,
+    registered: bool,
+}
+impl SchemaRegistration {
+    pub(super) fn new(
+        runtime: &std::sync::Arc<crate::state::StateRuntime>,
+        plugin: &crate::plugin::registry::LoadedPlugin,
+    ) -> Result<Self, crate::plugin::error::HostError> {
+        use crate::plugin::error::HostError;
+        let manifest = plugin.manifest();
+        let provided: Vec<_> = manifest
+            .provides
+            .iter()
+            .filter(|p| p.schema.is_some())
+            .collect();
+        if provided.len() != plugin.namespace_schemas().len() {
+            return Err(HostError::State(
+                "namespace schema count does not match provides".into(),
+            ));
+        }
+        let mut registry = runtime.registry.write().unwrap_or_else(|p| p.into_inner());
+        // Refuse duplicate live providers rather than letting a failed second
+        // instance unregister the first instance's schemas.
+        if provided.iter().any(|p| {
+            registry
+                .get(p.id.strip_prefix("field:").unwrap_or(&p.id))
+                .is_some()
+        }) {
+            return Err(HostError::State(
+                "namespace provider already registered".into(),
+            ));
+        }
+        for (provided, text) in provided.iter().zip(plugin.namespace_schemas()) {
+            let ns = provided.id.strip_prefix("field:").unwrap_or(&provided.id);
+            if let Err(error) = registry.register(&manifest.id, ns, text) {
+                registry.unregister_provider(&manifest.id);
+                return Err(HostError::State(error.to_string()));
+            }
+        }
+        Ok(Self {
+            runtime: runtime.clone(),
+            provider: manifest.id.clone(),
+            registered: !provided.is_empty(),
+        })
+    }
+}
+impl Drop for SchemaRegistration {
+    fn drop(&mut self) {
+        if !self.registered {
+            return;
+        }
+        self.runtime
+            .registry
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .unregister_provider(&self.provider);
+    }
+}

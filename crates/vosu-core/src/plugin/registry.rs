@@ -26,6 +26,8 @@ pub struct BundledPlugin<'a> {
     /// is embedded: `None` for a plugin that declares no
     /// `settings_schema`.
     pub settings_schema: Option<&'a str>,
+    /// Embedded schemas for this plugin's namespace capabilities.
+    pub namespace_schemas: &'a [&'a str],
     pub vtable: fn() -> vosu_plugin_vtable,
 }
 
@@ -40,6 +42,7 @@ pub struct LoadedPlugin {
     /// `settings_schema` manifest field; `BundledPlugin::settings_schema`/
     /// `load_development`'s `manifest.settings_schema` path).
     settings_schema: Option<SettingsSchema>,
+    namespace_schemas: Vec<String>,
     // Shared, not just held: unloading while an instance's `plugin_ctx`
     // still points into the library would be immediate undefined behavior
     // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
@@ -64,6 +67,10 @@ impl LoadedPlugin {
     /// one.
     pub fn settings_schema(&self) -> Option<&SettingsSchema> {
         self.settings_schema.as_ref()
+    }
+
+    pub fn namespace_schemas(&self) -> &[String] {
+        &self.namespace_schemas
     }
 
     /// Clones this plugin's `Arc<Library>` handle, so a `PluginInstance`
@@ -150,6 +157,11 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                 manifest,
                 vtable,
                 settings_schema,
+                namespace_schemas: entry
+                    .namespace_schemas
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect(),
                 library: None,
             })
         })
@@ -182,6 +194,24 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
             SettingsSchema::parse(&text).map_err(HostError::Settings)
         })
         .transpose()?;
+    // Canonical containment also rejects symlinks escaping the plugin root.
+    // Manifest validation has already rejected non-relative schema paths.
+    let root = dir.canonicalize()?;
+    let namespace_schemas = manifest
+        .provides
+        .iter()
+        .filter_map(|provided| provided.schema.as_ref())
+        .map(|relative| {
+            let path = root.join(relative).canonicalize()?;
+            if !path.starts_with(&root) {
+                return Err(HostError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "namespace schema escapes plugin directory",
+                )));
+            }
+            std::fs::read_to_string(path).map_err(HostError::Io)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let triple = current_target_triple();
     let target = manifest
         .targets
@@ -226,6 +256,7 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
         manifest,
         vtable,
         settings_schema,
+        namespace_schemas,
         library: Some(Arc::new(library)),
     })
 }

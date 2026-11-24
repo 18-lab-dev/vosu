@@ -18,6 +18,7 @@ mod ecma_number;
 mod grant;
 mod pointer;
 mod projector;
+mod runtime;
 pub mod schema;
 mod store;
 mod subscriptions;
@@ -36,6 +37,7 @@ pub use pointer::{Pointer, PointerError};
 pub use projector::{
     Audience, InternalGrant, Redacted, project_document, project_namespace, project_select,
 };
+pub use runtime::StateRuntime;
 pub use schema::{
     CORE_NAMESPACES, LaneBits, NamespaceSchema, SESSIONS_NAMESPACE, SchemaError, SchemaOwner,
     SchemaRegistry,

@@ -196,6 +196,7 @@ fn bundled_manifest_requesting_process_runtime_is_rejected() {
     expect_in_process_refused(registry::load_bundled(&[registry::BundledPlugin {
         manifest: text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]));
 }
@@ -207,6 +208,7 @@ fn bundled_settings_schema_is_parsed_and_served() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: Some(schema_text),
+        namespace_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -223,6 +225,7 @@ fn invalid_bundled_settings_schema_refuses_load() {
     let result = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: Some("not valid json"),
+        namespace_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]);
     match result {
@@ -313,6 +316,7 @@ fn serial_dispatch_runs_messages_strictly_in_order() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: serial_recorder::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -381,6 +385,7 @@ fn concurrent_dispatch_runs_messages_in_overlapping_windows() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: concurrent_recorder::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -478,6 +483,7 @@ fn send_from_a_thread_long_after_create_reaches_the_live_host_table() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: stack_churn_sender::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -601,6 +607,7 @@ fn destroy_waits_for_in_flight_concurrent_jobs_before_tearing_down() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: concurrent_destroy_guard::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -670,6 +677,7 @@ fn destroy_times_out_when_the_plugin_does_not_return_in_time() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: slow_destroy::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -738,6 +746,7 @@ fn destroy_timeout_leaks_host_ctx_so_a_late_send_from_the_plugin_stays_valid() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: slow_destroy_sends_late::vosu_plugin_vtable,
     }])
     .unwrap();
@@ -885,6 +894,7 @@ fn dispatch_queue_full_reports_backpressure_without_blocking() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &text,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: blocking_plugin::vosu_plugin_vtable,
     }])
     .unwrap();

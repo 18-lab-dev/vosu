@@ -52,6 +52,17 @@ pub trait PluginHostHandler: Send + Sync {
         let _ = (instance, payload, flags);
         None
     }
+
+    /// Borrowed publication fast path; None requests ordinary owning decode.
+    fn handle_publish(
+        &self,
+        instance: PluginInstanceId,
+        opcode: vosu_opcode,
+        payload: &[u8],
+    ) -> Option<vosu_status> {
+        let _ = (instance, opcode, payload);
+        None
+    }
 }
 
 /// `host_ctx` passed to `create`: outlives the instance exactly as
@@ -119,6 +130,13 @@ fn decode_and_handle(ctx: &HostContext, raw: &vosu_message) -> vosu_status {
         && let Some(status) = ctx
             .handler
             .handle_read_plan_sync(ctx.instance, payload, raw.flags)
+    {
+        return status;
+    }
+    if matches!(
+        opcode,
+        vosu_opcode::VOSU_OP_PUBLISH_FIELD | vosu_opcode::VOSU_OP_PUBLISH_BATCH
+    ) && let Some(status) = ctx.handler.handle_publish(ctx.instance, opcode, payload)
     {
         return status;
     }

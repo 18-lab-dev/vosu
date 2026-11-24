@@ -138,6 +138,9 @@ impl PluginHost {
                 }
             };
             let (id, instance) = next;
+            if let Some(plugin_id) = self.plugin_id_of(id) {
+                self.close_bus_sessions_for(&plugin_id);
+            }
             self.timers.cancel_all(id);
             if let Some(instance) = instance {
                 if let Err(error) = instance.destroy(grace) {
@@ -224,6 +227,7 @@ impl PluginHost {
             self.dispatch_to(&owner, &Message::SessionDetached(detached));
         }
         self.forget_read_plan_session(handle);
+        self.close_bus_session(handle);
         self.recompute_focus();
     }
 

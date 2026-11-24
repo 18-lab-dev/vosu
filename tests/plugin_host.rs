@@ -382,6 +382,7 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: vosu_plugin_testkit::host_services::vosu_plugin_vtable,
     }])
     .expect("loading the host-services testkit plugin");
@@ -530,6 +531,7 @@ fn injected_session_memory_answers_a_sync_plan() {
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest: &manifest,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
     }])
     .expect("loading the read-plan testkit plugin");
@@ -678,6 +680,7 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest: &manifest,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: vosu_plugin_testkit::scan::vosu_plugin_vtable,
     }])
     .expect("loading the scan testkit plugin");

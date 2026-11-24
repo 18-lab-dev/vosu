@@ -102,9 +102,7 @@ pub enum SchemaError {
     Json(String),
 }
 
-/// Loaded namespace schemas: the 5 core namespaces and `vosu.osu` at
-/// startup ([`SchemaRegistry::with_core`]), plus any development plugin's
-/// own namespace schema registered later ([`SchemaRegistry::register`]).
+/// Loaded core namespace schemas plus each live plugin's own namespace.
 pub struct SchemaRegistry {
     namespaces: HashMap<Arc<str>, Arc<NamespaceSchema>>,
     /// `common-defs.schema.json`'s `$defs` object, kept parsed once for
@@ -113,21 +111,8 @@ pub struct SchemaRegistry {
 }
 
 impl SchemaRegistry {
-    /// The common-defs `$defs` map plus the 5 core namespaces and
-    /// `vosu.osu`, every one embedded (`include_str!`) from
-    /// `docs/v2/schemas`.
-    ///
-    /// **Deviation (S6/O6):** the plan routes `vosu.osu`'s schema through
-    /// `vosu-osu`'s own `BundledPlugin.namespace_schemas`, registered as
-    /// `SchemaOwner::Plugin("vosu.osu")`, not loaded here as `Core`. That
-    /// wiring (O6) does not exist yet, so this bring-up fixture loads
-    /// `vosu.osu` as `Core` instead — the only way its schema enters the
-    /// registry today. `register`'s conflict check (below) and the
-    /// owner-gated `x-visibility` carve-out (`visibility::owner_eligible`)
-    /// both treat `Core` and `Plugin("vosu.osu")` as equally eligible, so
-    /// this stand-in cannot be silently replaced or unregistered by an
-    /// unrelated plugin id; O6 can later switch this to a `register` call
-    /// without changing either check.
+    /// Core namespace schemas only. Plugin schemas enter through their
+    /// bundled or development plugin registrations, never implicitly here.
     pub fn with_core() -> Result<Self, SchemaError> {
         let common_doc: Value = serde_json::from_str(embedded::COMMON_DEFS)
             .map_err(|e| SchemaError::Json(e.to_string()))?;
@@ -146,7 +131,6 @@ impl SchemaRegistry {
         ] {
             registry.load(namespace, SchemaOwner::Core, text)?;
         }
-        registry.load("vosu.osu", SchemaOwner::Core, embedded::VOSU_OSU)?;
         Ok(registry)
     }
 
@@ -156,8 +140,7 @@ impl SchemaRegistry {
     /// core namespace or `vosu.sessions` id is refused, and so is a
     /// `provides_id` already registered to a different owner — otherwise a
     /// second plugin (or the same plugin under another id) could silently
-    /// replace another provider's namespace, including the `vosu.osu`
-    /// `with_core` loads (finding 3). Re-registering under the *same*
+    /// replace another provider's namespace. Re-registering under the same
     /// owner (a plugin reloading its own schema) is allowed.
     pub fn register(
         &mut self,

@@ -57,6 +57,7 @@ use super::settings::{
 use super::timers::TimerDelivery;
 use super::timers::TimerRegistry;
 use crate::logging::Logger;
+use crate::state::StateRuntime;
 
 /// One registered instance's metadata alongside its [`PluginInstance`]:
 /// enough to attribute its logs (§6.10) without re-deriving the plugin id
@@ -81,6 +82,7 @@ struct InstanceEntry {
     /// plugin-initiated cancel opcode of its own (`scans.rs`'s own module
     /// doc comment).
     outstanding_scans: Arc<OutstandingScans>,
+    publisher: Box<state::Publisher>,
 }
 
 /// One `instances` map slot's lifecycle state. Every state keeps
@@ -170,6 +172,7 @@ pub struct PluginHost {
     log_router: PluginLogRouter,
     timers: TimerRegistry,
     settings: Arc<PluginSettingsService>,
+    state: Arc<StateRuntime>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
@@ -299,6 +302,7 @@ impl PluginHost {
             log_router: PluginLogRouter::new(logger, runtime.clone()),
             timers: TimerRegistry::new(runtime.clone()),
             settings,
+            state: Arc::new(StateRuntime::new()),
             instances: Mutex::new(HashMap::new()),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
@@ -327,6 +331,10 @@ impl PluginHost {
         // `Arc` to weaken.
         runtime.spawn(identification_sweep_loop(Arc::downgrade(&host)));
         host
+    }
+
+    pub fn state(&self) -> &Arc<StateRuntime> {
+        &self.state
     }
 
     /// `self.self_ref` always upgrades while any `&self` call (this one
@@ -386,6 +394,9 @@ impl PluginHost {
     fn deliver_focus_events(&self, events: Vec<FocusEvent>) {
         for event in events {
             let handle = SessionHandle(event.handle.0);
+            self.state
+                .store
+                .set_focused(crate::state::SessionKey(handle.0), event.focused);
             let owner = {
                 let sessions = self
                     .sessions
@@ -401,7 +412,7 @@ impl PluginHost {
                     &Message::FocusChanged(FocusChanged {
                         handle: handle.0,
                         focused: event.focused,
-                        foreground: None,
+                        foreground: event.foreground,
                     }),
                 );
             }
@@ -448,6 +459,7 @@ impl PluginHost {
             priority_holder,
             self.foreground.as_ref(),
         );
+        self.open_bus_session(handle, focus.focused() == Some(FocusKey(handle.0)));
         self.deliver_focus_events(events);
         drop(focus);
     }
@@ -618,6 +630,12 @@ impl PluginHostHandler for PluginHost {
             Message::ScanRequest(request) => {
                 self.handle_scan_request(instance, correlation_id, request)
             }
+            message @ (Message::PublishField(_) | Message::PublishBatch(_)) => {
+                let Ok(payload) = message.encode_payload() else {
+                    return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+                };
+                self.handle_publish_raw(instance, message.opcode(), &payload)
+            }
             other => {
                 // State/resource/tree/stream/action ops: later milestones, logged only.
                 tracing::debug!(
@@ -637,6 +655,15 @@ impl PluginHostHandler for PluginHost {
         flags: u32,
     ) -> Option<vosu_status> {
         Some(self.handle_read_plan_submit_raw(instance, payload, flags))
+    }
+
+    fn handle_publish(
+        &self,
+        instance: PluginInstanceId,
+        opcode: vosu_plugin_api::vosu_opcode,
+        payload: &[u8],
+    ) -> Option<vosu_status> {
+        Some(self.handle_publish_raw(instance, opcode, payload))
     }
 }
 
@@ -739,6 +766,7 @@ mod instances;
 mod lifecycle;
 pub(super) mod read_plans;
 mod scans;
+mod state;
 
 #[cfg(test)]
 mod tests;

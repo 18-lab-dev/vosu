@@ -21,16 +21,23 @@ fn plugin(id: &str) -> SchemaOwner {
     SchemaOwner::Plugin(Arc::from(id))
 }
 
+fn with_osu() -> SchemaRegistry {
+    let mut registry = SchemaRegistry::with_core().unwrap();
+    assert!(registry.get("vosu.osu").is_none());
+    registry.register("vosu.osu", "vosu.osu", OSU).unwrap();
+    registry
+}
+
 #[test]
 fn core_and_osu_schemas_load() {
-    let registry = SchemaRegistry::with_core().expect("every embedded schema loads");
+    let registry = with_osu();
     for ns in CORE_NAMESPACES {
         let schema = registry.get(ns).unwrap_or_else(|| panic!("{ns} missing"));
         assert_eq!(schema.owner, SchemaOwner::Core);
         assert_eq!(&*schema.namespace, ns);
     }
     let osu = registry.get("vosu.osu").expect("vosu.osu registered");
-    assert_eq!(osu.owner, SchemaOwner::Core);
+    assert_eq!(osu.owner, plugin("vosu.osu"));
     // Not a specific version string: A2 bumps 1.1.0 -> 1.2.0 in parallel.
     assert!(osu.version >= semver::Version::new(1, 1, 0));
     assert!(registry.get("vosu.sessions").is_none());
@@ -41,7 +48,7 @@ fn osu_lanes_match_1x_pointer_demand() {
     // Copied from `src/server/v2_subscription.rs:267-325`'s `pointer_demand`,
     // each 1.x pointer mapped through `docs/v2/state-schema.md`'s
     // 1.x-to-2.0 mapping table (ss:224-268) to its 2.0 selector(s).
-    let registry = SchemaRegistry::with_core().unwrap();
+    let registry = with_osu();
     let always = |regular: bool, precise: bool| LaneBits {
         regular_always: regular,
         precise_always: precise,
@@ -183,7 +190,7 @@ fn osu_lanes_match_1x_pointer_demand() {
 
 #[test]
 fn annotation_in_defs_applies_through_ref() {
-    let registry = SchemaRegistry::with_core().unwrap();
+    let registry = with_osu();
     let bits = registry.lanes("vosu.osu", &["beatmap", "stats", "stars", "live"]);
     assert_eq!(
         bits,
@@ -197,7 +204,7 @@ fn annotation_in_defs_applies_through_ref() {
 
 #[test]
 fn descendant_selector_inherits_lane() {
-    let registry = SchemaRegistry::with_core().unwrap();
+    let registry = with_osu();
     let bits = registry.lanes("vosu.osu", &["play", "hitErrors", "all"]);
     assert_eq!(
         bits,
@@ -211,7 +218,7 @@ fn descendant_selector_inherits_lane() {
 
 #[test]
 fn parent_selector_unions_lanes() {
-    let registry = SchemaRegistry::with_core().unwrap();
+    let registry = with_osu();
     let play = registry.lanes("vosu.osu", &["play"]);
     assert!(
         play.regular_gameplay && play.precise_gameplay,
@@ -587,7 +594,7 @@ fn register_refuses_core_and_sessions_namespaces() {
 
 #[test]
 fn register_refuses_conflicting_owner_for_vosu_osu() {
-    let mut registry = SchemaRegistry::with_core().unwrap();
+    let mut registry = with_osu();
     let text = json!({
         "title": "vosu.osu",
         "version": "1.0.0",
@@ -597,10 +604,10 @@ fn register_refuses_conflicting_owner_for_vosu_osu() {
     .to_string();
     let err = registry
         .register("unrelated.plugin", "vosu.osu", &text)
-        .expect_err("an unrelated provider must not be able to replace the Core vosu.osu");
+        .expect_err("an unrelated provider must not replace the registered vosu.osu");
     assert!(matches!(err, SchemaError::NamespaceConflict(ns) if ns == "vosu.osu"));
-    // The Core-loaded schema is untouched.
-    assert_eq!(registry.get("vosu.osu").unwrap().owner, SchemaOwner::Core);
+    // The plugin-owned schema is untouched.
+    assert_eq!(registry.get("vosu.osu").unwrap().owner, plugin("vosu.osu"));
 }
 
 #[test]
