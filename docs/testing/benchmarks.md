@@ -124,6 +124,96 @@ on native Windows stable/lazer and Linux lazer. Existing live reader `--bus`
 mode is not adapter-frame evidence; X1 must add/document the actual adapter
 output mode before measuring. No native/live/capture run is authorized by A4.
 
+## M4a D17 implementation (exploratory, non-exclusive)
+
+**No D17 pass is claimed.** These are short exploratory runs of X1 commit
+`89824bc` on the shared Linux workstation (Ryzen 9 9950X3D, Rust 1.96.1,
+release bench profile, default features), timed with `taskset -c 0 nice -n 10`
+while other work used the host, CPU 0's SMT sibling not reserved, with
+`--warm-up-time 0.5 --measurement-time 2 --sample-size 20`. Criterion home
+`~/.cache/vosu-criterion/m4a-x1-exploratory`, target
+`~/.cache/vosu-targets/m4a-x1`. No baseline binary was run, so no milestone or
+cumulative delta is reported.
+
+All cases share `benches/support/adapter/` (also used by the invariants): the
+real osu! `BusPublisher` projection and ABI batch, host bus commit, the bundled
+adapters' own surface requesters, the production `BusStateProvider` and
+`WebSocketHub`. Inputs are `adapter/input.rs`: stable gameplay with scores
+12345/23456 (regular) or `k1` counts 41/42 (precise-only; regular v2 emits no
+keys). Each iteration publishes a different value and asserts a new encoding
+or frame; exact view/encode/parse counts are asserted after timing through
+instance-owned counters around the real adapters.
+
+| Exact case | Timed work | Median [95% CI] |
+|---|---|---|
+| `end_to_end/adapter` | regular change → `/json/v2` HTTP bytes + encoded, delivered and acknowledged API v1 frame | 96.8 [90.6, 102.3] µs |
+| `end_to_end/adapter_precise` | precise-only change → `/json/v2/precise` hub frame; regular bytes retained (same allocation, zero regular decodes) | 33.8 [32.3, 35.9] µs |
+| `adapter/idle_no_clients` | one commit with four providers, four hubs and an API v1 hub but no client; zero adapter work and demand | 8.41 [8.33, 8.51] µs |
+| `adapter/http_then_ws_cache` | change → HTTP bytes → WS frame sharing that allocation | 204.5 [201.0, 209.1] µs |
+| `adapter/slow_consumer` | 16 commits while one frame is in flight, then ack → latest frame; one view/encoding | 1.147 [1.136, 1.155] ms |
+| `adapter/focus_switch` | foreground switch between two stable sessions → HTTP + WS | 488 [461, 516] µs |
+| `adapter/sc_unchanged_chart` | score change with the chart unchanged; zero chart opens/reads/parses | 199 [189, 210] µs |
+| `adapter/plain_100_clients` | change fanned out to 100 acknowledging plain clients; one encoding | 8.34 [7.99, 8.70] ms |
+| `adapter/filtered_clients` | 16 clients, 8 plans in pairs; 10.96 filtered encodings per change observed | 1.63 [1.48, 1.75] ms |
+
+Cold chart work, reported separately from hot cases:
+`adapter/sc_changed_chart` 654.7 [616.3, 710.8] µs per change: the osu!
+cold-resource worker declares the songs root and publishes the new chart
+reference, the SC worker opens, reads and parses it (4383 changes, exactly
+4383 opens/reads/parses), then HTTP and WS share the derived bytes. Tiny
+two-file fixture; OS page cache not flushed.
+
+Unchanged comparison cases from the same run: `end_to_end/bus` 23.2, `bus_precise`
+17.7, `api_frame` 18.1 µs; `serializers_cold/{v1,v2,v2_precise,stream_companion}`
+3.08, 7.89, 0.234, 4.35 µs; `publication/unfiltered_clients/{1,100,1000}` 2.13,
+2.08, 2.11 ms (synthetic hub only; dominated by its 1 ms cadence, not adapter
+evidence).
+
+**Exploratory findings for the official run.** `plain_100_clients` costs about
+83 µs per client although one encoding is shared: every transport
+acknowledgement runs `wake_writable`, which captures the surface selection and
+compares it with the cached image. `http_then_ws_cache` (204 µs) is likewise
+about twice `end_to_end/adapter`. Filtered pairs share bytes only when both
+acknowledgements reach one delivery pass. These are measurements, not yet
+attributed regressions.
+
+The 1.x `end_to_end/legacy` workload over these same inputs is **not built
+yet**: the benchmark-only legacy harness commits for pre-M0 `3a91ff9` and M3
+`e1df38f`, and a `scripts/bench-compare.py` case-alias option to pair
+`end_to_end/adapter` with `end_to_end/legacy`, remain to be added. Compare only
+case names present in every binary until then.
+
+### Live adapter-output mode
+
+`examples/live_reader_bench.rs --adapter` loads the production osu! grants and
+the bundled upstream adapter in a private host attached to the live client.
+Per lane (regular → `/json/v2`, precise → `/json/v2/precise`):
+
+- `adapter_stages`: median tick-thread CPU per tick by stage: `read` (capture
+  plan execution), `reduce`, `projection` (projection, diff, batch encoding),
+  `commit` (host commit inside the synchronous publish call), `surface_view`
+  (coherent capture plus typed decode) and `encode`. A tick whose captured
+  selection equals the previous one is a cache hit, as in the provider.
+- `adapter_frame`: wall time from read start to the real hub frame, delivered by
+  acknowledgement/wake; it excludes the 1.x cadence wait (up to one poll
+  interval) an idle, already-acknowledged client sees.
+
+These stages attribute the residual left open in the
+[M1 PlanMemory](#m1-planmemory-paired-d17) exception. `--bus` remains bus-only.
+
+```powershell
+# Native Windows, release examples, client in gameplay; repeat idle in menu.
+cargo build --release --locked --no-default-features --example live_reader_bench
+target\release\examples\live_reader_bench.exe --pid <stable-pid> --client stable --adapter
+target\release\examples\live_reader_bench.exe --pid <stable-pid> --client stable --adapter --memory plan
+target\release\examples\live_reader_bench.exe --pid <lazer-pid> --client lazer --adapter
+target\release\examples\live_reader_bench.exe --pid <lazer-pid> --client lazer --adapter --memory plan
+```
+
+Linux lazer: `cargo build --release --locked --example live_reader_bench`, then
+`target/release/examples/live_reader_bench --pid <pid> --client lazer --adapter`
+(add `--memory plan`). Each JSON result holds both lanes and both modes.
+
 ## M3 D17 contract
 
 **No D17 pass is claimed.** X1 implementation `4f0c6654cb` (base
