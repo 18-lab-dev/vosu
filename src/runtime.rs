@@ -92,6 +92,7 @@ use vosu_osu_state::{
     duration_from_millis_saturating,
 };
 
+pub(crate) mod bridge_b1;
 mod cli;
 mod config;
 mod dev_plugins;
@@ -117,6 +118,8 @@ pub use test_support::{
 };
 pub use worker::{ListenerOwner, ProductionStateSupervisor, WebSocketHubs};
 
+#[cfg(test)]
+use bridge_b1::*;
 use config::*;
 #[cfg(test)]
 use lifecycle::*;
@@ -140,6 +143,7 @@ mod tests {
 
     include!("runtime/tests/cli.rs");
     include!("runtime/tests/worker.rs");
+    include!("runtime/tests/bridge_b1.rs");
     include!("runtime/tests/projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");

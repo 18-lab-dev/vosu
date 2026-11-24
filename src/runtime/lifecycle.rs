@@ -342,7 +342,7 @@ impl ProductionRuntime {
         ));
         let instances =
             InstanceRuntime::start_with_logger(process_provider, loader, self.logger.clone());
-        dashboard_lifecycle.store(Some(Arc::new(instances.subscribe_current())));
+        dashboard_lifecycle.store(Some(Arc::new(instances.subscribe_current().into())));
         let supervisor = ProductionStateSupervisor::start(
             instances.subscribe_current(),
             self.config.subscribe_current(),

@@ -331,11 +331,35 @@ pub(super) fn apply_config_values(
     string!("ALLOWED_IPS", allowed_ips);
 }
 
-pub(super) type DashboardLifecycle = Arc<
-    arc_swap::ArcSwapOption<
-        tokio::sync::watch::Receiver<Arc<crate::instance::InstanceLifecycleSnapshot>>,
-    >,
->;
+pub(super) type DashboardLifecycle = Arc<arc_swap::ArcSwapOption<DashboardLifecycleReceiver>>;
+
+pub(super) enum DashboardLifecycleReceiver {
+    // Deleted by C3 in this same m1-cutover landing, before v2/main.
+    Legacy(watch::Receiver<Arc<InstanceLifecycleSnapshot>>),
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C3 installs the bridge in this same m1-cutover landing"
+        )
+    )]
+    B1(watch::Receiver<Arc<super::bridge_b1::B1Lifecycle>>),
+}
+impl From<watch::Receiver<Arc<InstanceLifecycleSnapshot>>> for DashboardLifecycleReceiver {
+    fn from(receiver: watch::Receiver<Arc<InstanceLifecycleSnapshot>>) -> Self {
+        Self::Legacy(receiver)
+    }
+}
+impl DashboardLifecycleReceiver {
+    fn current(&self) -> Arc<super::bridge_b1::B1Lifecycle> {
+        match self {
+            Self::Legacy(receiver) => Arc::new(super::bridge_b1::B1Lifecycle::from(
+                receiver.borrow().as_ref(),
+            )),
+            Self::B1(receiver) => receiver.borrow().clone(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct RuntimeReportInput {
@@ -354,7 +378,7 @@ impl ReportInputProvider for RuntimeReportInput {
             .lifecycle
             .load()
             .as_ref()
-            .map(|receiver| receiver.borrow().clone());
+            .map(|receiver| receiver.current());
         let render = |pid, client, entry: Option<&crate::api::ManagerInstanceSnapshot>, state| {
             serde_json::json!({
                 "pid": pid,
@@ -367,7 +391,7 @@ impl ReportInputProvider for RuntimeReportInput {
         };
         let instances = if let Some(lifecycle) = lifecycle {
             lifecycle
-                .instances
+                .sessions
                 .iter()
                 .map(|detected| {
                     let entry = combined
@@ -377,10 +401,12 @@ impl ReportInputProvider for RuntimeReportInput {
                         .filter(|entry| entry.state().generation == detected.generation);
                     let state = if entry.is_some() {
                         "reading"
-                    } else if detected.offset_ready {
-                        "starting reader"
                     } else {
-                        "resolving offsets"
+                        match detected.phase {
+                            vosu_osu::bridge_b1::B1Phase::ResolvingOffsets => "resolving offsets",
+                            vosu_osu::bridge_b1::B1Phase::StartingReader => "starting reader",
+                            vosu_osu::bridge_b1::B1Phase::Reading => "reading",
+                        }
                     };
                     render(detected.pid, detected.client, entry, state)
                 })

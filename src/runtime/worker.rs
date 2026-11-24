@@ -1,8 +1,7 @@
+use super::bridge_b1::*;
 use super::*;
 use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Publisher, B1SessionKey};
-use vosu_osu::capture::{
-    CaptureTarget, create_state_worker, equivalent_state_snapshots, initialize_state_worker,
-};
+use vosu_osu::capture::{CaptureTarget, create_state_worker, initialize_state_worker};
 
 /// Exactly five state publication loops. Connections are owned by their hubs;
 /// shutdown cancels every loop and joins it before the provider can be dropped.
@@ -264,74 +263,6 @@ impl PidWorkerRegistry {
     }
 }
 
-/// One worker's API-visible and live state. Both are carried on every
-/// publication so the latest-only queue never drops an API update.
-pub(super) struct StatePublication {
-    pub(super) pid: u32,
-    pub(super) generation: u64,
-    pub(super) api: Arc<StateBundleSnapshot>,
-    pub(super) live: Arc<StateBundleSnapshot>,
-}
-
-#[derive(Default)]
-struct StatePublicationQueueState {
-    closed: bool,
-    pending: BTreeMap<u32, StatePublication>,
-}
-
-#[derive(Default)]
-pub(super) struct StatePublicationQueue {
-    state: Mutex<StatePublicationQueueState>,
-    notified: tokio::sync::Notify,
-}
-
-impl StatePublicationQueue {
-    pub(super) fn publish(&self, publication: StatePublication) -> Result<(), StateWorkerError> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.closed {
-            return Err(StateWorkerError::Publish("state supervisor stopped".into()));
-        }
-
-        let should_replace = state
-            .pending
-            .get(&publication.pid)
-            .is_none_or(|pending| pending.generation <= publication.generation);
-        if should_replace {
-            let should_notify = state.pending.is_empty();
-            state.pending.insert(publication.pid, publication);
-            drop(state);
-            if should_notify {
-                self.notified.notify_one();
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn drain(&self) -> BTreeMap<u32, StatePublication> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        std::mem::take(&mut state.pending)
-    }
-
-    async fn notified(&self) {
-        self.notified.notified().await;
-    }
-
-    fn close(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.closed = true;
-        state.pending.clear();
-    }
-}
-
 pub(super) struct StatePublicationSink(B1Publisher);
 
 impl StatePublicationSink {
@@ -412,42 +343,6 @@ impl ProductionStateSupervisor {
     }
 }
 
-/// One manager publication target: API consumers or the live selected-field
-/// stream. Each keeps its own per-instance states and semantic revisions.
-#[derive(Default)]
-struct ManagerView {
-    states: BTreeMap<u32, Arc<StateBundleSnapshot>>,
-    state_revisions: BTreeMap<u32, u64>,
-    revisions: SemanticRevision,
-}
-
-impl ManagerView {
-    fn retain(&mut self, desired: &BTreeMap<u32, u64>) {
-        self.states
-            .retain(|pid, state| desired.get(pid).copied() == Some(state.generation));
-        self.state_revisions
-            .retain(|pid, _| desired.contains_key(pid));
-    }
-
-    fn update(&mut self, pid: u32, snapshot: Arc<StateBundleSnapshot>) {
-        update_state_publication(&mut self.states, &mut self.state_revisions, pid, snapshot);
-    }
-
-    fn manager(
-        &mut self,
-        lifecycle: &InstanceLifecycleSnapshot,
-        config: &vosu_core::config::Config,
-    ) -> Option<Arc<ManagerSnapshot>> {
-        build_manager_snapshot(
-            &mut self.revisions,
-            lifecycle,
-            config,
-            &self.states,
-            &self.state_revisions,
-        )
-    }
-}
-
 pub(super) async fn run_state_supervisor(
     mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     mut config: watch::Receiver<Arc<vosu_core::config::Config>>,
@@ -505,10 +400,11 @@ pub(super) async fn run_state_supervisor(
             })
             .await;
 
-        if let Some(manager) = api.manager(&lifecycle_value, &config_value) {
+        let bridge_lifecycle = B1Lifecycle::from(lifecycle_value.as_ref());
+        if let Some(manager) = api.manager(&bridge_lifecycle, &config_value) {
             snapshots.publish_api(manager);
         }
-        if let Some(manager) = live.manager(&lifecycle_value, &config_value) {
+        if let Some(manager) = live.manager(&bridge_lifecycle, &config_value) {
             snapshots.publish_live(manager);
         }
 
@@ -555,23 +451,6 @@ fn reader_settings_from(config: &vosu_core::config::Config) -> vosu_osu_state::R
         show_mp_commands: config.show_mp_commands,
         read_mania_scroll_speed: config.read_mania_scroll_speed,
     }
-}
-
-pub(super) fn update_state_publication(
-    states: &mut BTreeMap<u32, Arc<StateBundleSnapshot>>,
-    state_revisions: &mut BTreeMap<u32, u64>,
-    pid: u32,
-    snapshot: Arc<StateBundleSnapshot>,
-) {
-    let unchanged = states
-        .get(&pid)
-        .is_some_and(|current| equivalent_state_snapshots(current, &snapshot));
-    if unchanged {
-        return;
-    }
-    states.insert(pid, snapshot);
-    let revision = state_revisions.entry(pid).or_default();
-    *revision = revision.saturating_add(1);
 }
 
 pub(super) async fn run_instance_state_worker(
@@ -625,99 +504,4 @@ pub(super) async fn run_instance_state_worker(
     };
     cancel.cancelled().await;
     let _ = worker.shutdown().await;
-}
-
-pub(super) fn build_manager_snapshot(
-    revisions: &mut SemanticRevision,
-    lifecycle: &InstanceLifecycleSnapshot,
-    config: &vosu_core::config::Config,
-    states: &BTreeMap<u32, Arc<StateBundleSnapshot>>,
-    state_revisions: &BTreeMap<u32, u64>,
-) -> Option<Arc<ManagerSnapshot>> {
-    let ready = lifecycle
-        .instances
-        .iter()
-        .filter_map(|entry| states.get(&entry.pid).map(|state| (entry, state)))
-        .collect::<Vec<_>>();
-    let focused_pid = ready
-        .iter()
-        .find(|(entry, _)| entry.instance.is_tournament_manager())
-        .or_else(|| {
-            ready
-                .iter()
-                .find(|(entry, _)| entry.client == lifecycle.focus.focused_client)
-        })
-        .map(|(entry, _)| entry.pid);
-    let semantics = ManagerSemantics {
-        focused_pid,
-        game_focused: lifecycle.focus.game_focused,
-        enable_key_overlay: config.enable_key_overlay,
-        enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-        enable_hit_offsets: config.enable_hit_offsets,
-        instances: ready
-            .iter()
-            .map(|(entry, _)| {
-                (
-                    entry.pid,
-                    state_revisions.get(&entry.pid).copied().unwrap_or_default(),
-                )
-            })
-            .collect(),
-    };
-    let (revision, changed) = revisions.observe_with_change(semantics);
-    if !changed {
-        return None;
-    }
-    let entries = ready.into_iter().map(|(entry, state)| {
-        ManagerInstanceSnapshot::new(
-            entry.pid,
-            entry.settings.clone(),
-            entry.instance.is_tournament_manager(),
-            Arc::clone(state),
-        )
-    });
-    Some(Arc::new(ManagerSnapshot::new(
-        revision,
-        focused_pid,
-        lifecycle.focus.game_focused,
-        ApiRuntimeSettings {
-            enable_key_overlay: config.enable_key_overlay,
-            enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-            enable_hit_offsets: config.enable_hit_offsets,
-        },
-        entries,
-    )))
-}
-/// Advances only when API-observable manager semantics change. In particular,
-/// every instance generation participates, not only the focused PID.
-#[derive(Default)]
-pub(super) struct SemanticRevision {
-    pub(super) revision: u64,
-    pub(super) previous: Option<ManagerSemantics>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ManagerSemantics {
-    pub(super) focused_pid: Option<u32>,
-    pub(super) game_focused: bool,
-    pub(super) enable_key_overlay: bool,
-    pub(super) enable_mania_key_hit_errors: bool,
-    pub(super) enable_hit_offsets: bool,
-    pub(super) instances: BTreeMap<u32, u64>,
-}
-
-impl SemanticRevision {
-    fn observe_with_change(&mut self, semantics: ManagerSemantics) -> (u64, bool) {
-        let changed = self.previous.as_ref() != Some(&semantics);
-        if changed {
-            self.revision = self.revision.saturating_add(1);
-            self.previous = Some(semantics);
-        }
-        (self.revision, changed)
-    }
-
-    #[cfg(test)]
-    pub(super) fn observe(&mut self, semantics: ManagerSemantics) -> u64 {
-        self.observe_with_change(semantics).0
-    }
 }

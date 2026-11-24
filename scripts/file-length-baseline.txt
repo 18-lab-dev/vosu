@@ -3,7 +3,6 @@
 1005 tests/server_compat.rs
 1019 src/api/v2/tests.rs
 1027 crates/vosu-osu-reader/src/memory/lazer/tests_behavior.rs
-1041 src/runtime/tests/service.rs
 1045 crates/vosu-sys/src/platform/linux/capabilities.rs
 1047 crates/vosu-osu-state/src/bundle/reducer.rs
 1059 crates/vosu-osu-reader/src/memory/stable/batched.rs

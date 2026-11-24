@@ -1,4 +1,5 @@
 //! Process discovery, client classification, and deterministic instance selection.
+use crate::runtime::bridge_b1::{FocusState, reduce_foreground};
 
 use arc_swap::ArcSwapOption;
 use tokio::sync::{Notify, watch};
@@ -244,21 +245,6 @@ impl GenerationIdentity for Instance {
                 format!("version discovery failed: {error}"),
             )
         })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FocusState {
-    pub focused_client: ClientType,
-    pub game_focused: bool,
-}
-
-impl Default for FocusState {
-    fn default() -> Self {
-        Self {
-            focused_client: ClientType::Stable,
-            game_focused: false,
-        }
     }
 }
 
@@ -639,7 +625,12 @@ impl InstanceManager {
         } else {
             None
         };
-        self.focus = reduce_foreground(&self.instances, foreground_pid);
+        self.focus = reduce_foreground(
+            self.instances
+                .iter()
+                .map(|(&pid, instance)| (pid, instance.client, instance.is_tournament_manager())),
+            foreground_pid,
+        );
         self.focus
     }
     fn take_dead(&mut self) -> Vec<Arc<Instance>> {
@@ -675,27 +666,6 @@ pub struct InstanceRuntime<P, G> {
     provider: Arc<P>,
     _provider: PhantomData<fn() -> P>,
     _loader: Arc<LazerOffsetLoader<G>>,
-}
-
-#[must_use]
-pub fn reduce_foreground(
-    instances: &BTreeMap<Pid, Arc<Instance>>,
-    foreground_pid: Option<Pid>,
-) -> FocusState {
-    if let Some(instance) = foreground_pid.and_then(|pid| instances.get(&pid)) {
-        return FocusState {
-            focused_client: instance.client,
-            game_focused: true,
-        };
-    }
-    FocusState {
-        focused_client: instances
-            .values()
-            .find(|instance| instance.is_tournament_manager())
-            .or_else(|| instances.first_key_value().map(|(_, instance)| instance))
-            .map_or(ClientType::Stable, |instance| instance.client),
-        game_focused: false,
-    }
 }
 
 #[cfg(test)]

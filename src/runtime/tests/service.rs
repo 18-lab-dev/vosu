@@ -1,31 +1,3 @@
-#[tokio::test]
-async fn dashboard_attachment_status_uses_existing_roster_and_published_version() {
-    let root = tempfile::tempdir().unwrap();
-    let config = Arc::new(ConfigStore::initialize(root.path().join("vosu.toml")).await.unwrap());
-    let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default()))));
-    let provider = RuntimeReportInput {
-        config: config.clone(), snapshots: snapshots.clone(),
-        counters: Arc::new(ReloadableCounterService::production(root.path().join("static"), root.path().join("settings"), root.path().join("cache"))),
-        logs: root.path().join("logs"), lifecycle: Arc::default(),
-    };
-    assert_eq!(provider.dashboard_status()["instances"], serde_json::json!([]));
-    let mut state = (*state_bundle(3, 0)).clone();
-    Arc::make_mut(&mut Arc::make_mut(&mut state.regular).settings.values).insert("client".into(), serde_json::json!({"version": "2026.1005.0"}));
-    snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
-        ManagerInstanceSnapshot::new(42, vosu_osu_model::launch::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
-    ])));
-    let status = provider.dashboard_status();
-    assert_eq!(status["instances"][0]["pid"], 42);
-    assert_eq!(status["instances"][0]["client"], "stable");
-    assert_eq!(status["instances"][0]["version"], "2026.1005.0");
-    assert_eq!(status["instances"][0]["state"], "reading");
-    let (_, lifecycle) = tokio::sync::watch::channel(Arc::new(crate::instance::InstanceLifecycleSnapshot {
-        revision: 2, instances: Arc::from([]), focus: Default::default(),
-    }));
-    provider.lifecycle.store(Some(Arc::new(lifecycle)));
-    assert_eq!(provider.dashboard_status()["instances"], serde_json::json!([]), "exited instances must not linger through a stale published state");
-    config.shutdown().await.unwrap();
-}
 
 #[test]
 fn tool_context_exposes_only_selected_instance_game_and_skin_paths() {
@@ -59,28 +31,6 @@ fn tool_context_exposes_only_selected_instance_game_and_skin_paths() {
     }
 }
 
-#[test]
-fn non_focused_instance_generation_invalidates_manager_revision() {
-    let mut revisions = SemanticRevision::default();
-    let initial = ManagerSemantics {
-        focused_pid: Some(7),
-        game_focused: true,
-        enable_key_overlay: true,
-        enable_mania_key_hit_errors: false,
-        enable_hit_offsets: false,
-        instances: BTreeMap::from([(7, 10), (9, 20)]),
-    };
-    assert_eq!(revisions.observe(initial.clone()), 1);
-    assert_eq!(revisions.observe(initial.clone()), 1);
-
-    let mut non_focused_changed = initial.clone();
-    non_focused_changed.instances.insert(9, 21);
-    assert_eq!(revisions.observe(non_focused_changed), 2);
-
-    let mut settings_changed = initial;
-    settings_changed.enable_key_overlay = false;
-    assert_eq!(revisions.observe(settings_changed), 3);
-}
 #[test]
 fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     let page = render_homepage(
