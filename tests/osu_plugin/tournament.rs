@@ -139,6 +139,24 @@ fn real_tourney_subscription_drives_and_releases_only_spectator_sampling() {
             }],
         })
         .unwrap();
+    let mut known = std::collections::BTreeSet::new();
+    let mut subscribed = false;
+    let deadline = Instant::now() + WAIT;
+    while known.len() < 3 || !subscribed {
+        match events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            vosu_plugin_testkit::subscriber::SubscriberEvent::Attached(attached) => {
+                known.insert(attached.handle);
+            }
+            vosu_plugin_testkit::subscriber::SubscriberEvent::SubscribeStatus(status) => {
+                assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_OK);
+                subscribed = true;
+            }
+            _ => {}
+        }
+    }
     let ack = || {
         let deadline = Instant::now() + WAIT;
         loop {
@@ -156,7 +174,6 @@ fn real_tourney_subscription_drives_and_releases_only_spectator_sampling() {
             }
         }
     };
-    ack();
     let select = |handle, path: Option<&str>| {
         commands
             .try_send(SubscribeCommand {

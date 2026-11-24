@@ -952,8 +952,14 @@ fn comparison_and_exemption_guards_reject_unlisted_differences() {
         std::panic::catch_unwind(|| equal("guard", "/keys", &json!({"a":1}), &json!({}))).is_err()
     );
     equal("guard", "/null", &json!({}), &json!({"a":null}));
+    let entries = exemptions(DIVERGENCES);
+    assert!(!entries.contains_key("stable-tournament/tourney"));
+    assert!(
+        std::panic::catch_unwind(|| require(&entries, "stable-tournament/tourney", "temporary"))
+            .is_err(),
+        "the retired tournament exemption cannot authorize a skip"
+    );
     for id in [
-        "stable-tournament/tourney",
         "tourney-bestOf-rename",
         "room-roomId-rename",
         "tourney-null-without-score",
