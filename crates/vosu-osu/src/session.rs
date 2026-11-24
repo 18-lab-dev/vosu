@@ -146,7 +146,7 @@ impl OsuSession {
         let bus = Arc::new(crate::publish::BusPublisher::new(
             crate::publish::SessionHost(host),
             self.handle,
-            // Registration happens only after IDENTIFY returned OK.
+            // Prepared before IDENTIFY; capture starts only after acceptance.
             Arc::new(AtomicBool::new(true)),
             crate::project::SessionFacts {
                 client: self.client,

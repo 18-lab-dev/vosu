@@ -1,15 +1,13 @@
 //! Identified-session setup, including frozen selected-client launch facts.
 use super::*;
-/// Builds this handle's `ProcessHandle` (P3's `PlanProcessMemory` +
-/// `PlanScanBackend`, sharing this plugin instance's `ScanWaiters`) and
-/// registers its [`OsuSession`] (P4) — but only if the handle is still
-/// live: a detach racing this identify, landing between `finish_identify`
-/// succeeding and the lock this function takes, must never leave a
-/// session registered that nothing will ever detach again (the module
-/// doc comment's "P4's analogous race"). A lazer session's resolver is
-/// started on `runtime_handle` only once registration itself succeeded.
-/// Free (not a method), for the same reason as `finish_identify`: the
-/// lazer identify thread calls this with only the `Arc`s it captured.
+/// Prepare the action target before making it public through SESSION_IDENTIFY.
+/// B2 settings/control delivery remains serialized by PluginState; no host call
+/// runs under that lock. Capture/B1 and lazer resolution start only after the
+/// host accepts identification. Rejection rolls back the prepared session.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "registration requires the frozen attach facts and resolved public version"
+)]
 pub(super) fn register_session<H, G>(
     host: &Arc<H>,
     state: &Arc<Mutex<PluginState>>,
@@ -18,7 +16,9 @@ pub(super) fn register_session<H, G>(
     runtime_handle: &Handle,
     handle: u64,
     identified: &Identified,
-) where
+    version: String,
+) -> Result<(), PluginError>
+where
     H: HostServices + Send + Sync + Clone + 'static,
     G: OffsetGenerator + 'static,
 {
@@ -28,7 +28,7 @@ pub(super) fn register_session<H, G>(
         .live_handles
         .contains(&handle)
     {
-        return;
+        return Ok(());
     }
     let bitness = to_process_bitness(identified.bitness);
     let memory = Arc::new(PlanProcessMemory::new(
@@ -98,13 +98,41 @@ pub(super) fn register_session<H, G>(
             false
         }
     };
-    if !registered {
+    let identification = if registered {
+        let (variant, name) = match identified.client {
+            ClientType::Stable => ("stable", "osu!"),
+            ClientType::Lazer => ("lazer", "osu!(lazer)"),
+        };
+        finish_identify(
+            host.as_ref(),
+            state,
+            handle,
+            variant,
+            name,
+            version,
+            identified.named,
+        )
+    } else {
+        Ok(false)
+    };
+    if !matches!(identification, Ok(true)) {
+        {
+            let mut state = state.lock().expect("plugin state mutex poisoned");
+            if state
+                .sessions
+                .get(&handle)
+                .is_some_and(|current| Arc::ptr_eq(current, &session))
+            {
+                state.sessions.remove(&handle);
+            }
+        }
+        session.cancel();
         runtime_handle.spawn(async move {
             session.join_resolver().await;
         });
-        return;
+        return identification.map(|_| ());
     }
-    if registered && identified.client == ClientType::Lazer {
+    if identified.client == ClientType::Lazer {
         let loader = Arc::clone(loader);
         let warn = log_warn(host);
         runtime_handle.spawn(async move {
@@ -125,4 +153,5 @@ pub(super) fn register_session<H, G>(
             });
         }
     }
+    Ok(())
 }

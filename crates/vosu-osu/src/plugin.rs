@@ -513,29 +513,16 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
     /// identify ordering (nothing else ever identifies this handle again).
     fn commit_identify(&self, handle: u64, identified: Identified) -> Result<(), PluginError> {
         match identified.client {
-            ClientType::Stable => {
-                let result = finish_identify(
-                    self.host.as_ref(),
-                    &self.state,
-                    handle,
-                    "stable",
-                    "osu!",
-                    String::new(),
-                    identified.named,
-                );
-                if matches!(result, Ok(true)) {
-                    register_session(
-                        &self.host,
-                        &self.state,
-                        &self.scan_waiters,
-                        &self.loader,
-                        &self.runtime_handle,
-                        handle,
-                        &identified,
-                    );
-                }
-                result.map(|_| ())
-            }
+            ClientType::Stable => register_session(
+                &self.host,
+                &self.state,
+                &self.scan_waiters,
+                &self.loader,
+                &self.runtime_handle,
+                handle,
+                &identified,
+                String::new(),
+            ),
             ClientType::Lazer => {
                 let host = Arc::clone(&self.host);
                 let state = Arc::clone(&self.state);
@@ -544,32 +531,22 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                 let runtime_handle = self.runtime_handle.clone();
                 let executable_root = identified.executable_root.clone();
                 let pid = identified.pid;
-                let named = identified.named;
+                // The session is installed before the host publishes identify.
                 let identified_for_session = identified.clone();
                 let spawned = thread::Builder::new()
                     .name("vosu-osu-lazer-version".to_owned())
                     .spawn(move || {
                         let version = resolve_lazer_version(host.as_ref(), pid, &executable_root);
-                        let result = finish_identify(
-                            host.as_ref(),
+                        let _ = register_session(
+                            &host,
                             &state,
+                            &scan_waiters,
+                            &loader,
+                            &runtime_handle,
                             handle,
-                            "lazer",
-                            "osu!(lazer)",
+                            &identified_for_session,
                             version,
-                            named,
                         );
-                        if matches!(result, Ok(true)) {
-                            register_session(
-                                &host,
-                                &state,
-                                &scan_waiters,
-                                &loader,
-                                &runtime_handle,
-                                handle,
-                                &identified_for_session,
-                            );
-                        }
                     });
                 match spawned {
                     Ok(join_handle) => {
@@ -587,27 +564,16 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                             identified.pid,
                             &identified.executable_root,
                         );
-                        let result = finish_identify(
-                            self.host.as_ref(),
+                        register_session(
+                            &self.host,
                             &self.state,
+                            &self.scan_waiters,
+                            &self.loader,
+                            &self.runtime_handle,
                             handle,
-                            "lazer",
-                            "osu!(lazer)",
+                            &identified,
                             version,
-                            identified.named,
-                        );
-                        if matches!(result, Ok(true)) {
-                            register_session(
-                                &self.host,
-                                &self.state,
-                                &self.scan_waiters,
-                                &self.loader,
-                                &self.runtime_handle,
-                                handle,
-                                &identified,
-                            );
-                        }
-                        result.map(|_| ())
+                        )
                     }
                 }
             }

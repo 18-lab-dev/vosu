@@ -397,3 +397,54 @@ fn lazer_dispatch_freezes_selected_process_context_and_reports_submitted() {
     plugin.imports.shutdown();
     assert!(!rx.try_iter().any(|m| matches!(m, Message::ActionResult(_))));
 }
+
+#[test]
+fn action_reentering_public_identify_already_has_a_registered_session() {
+    #[derive(Clone)]
+    struct ImmediateHost {
+        messages: mpsc::SyncSender<Message>,
+        plugin: Arc<OnceLock<std::sync::Weak<OsuPlugin<ImmediateHost, OfflineGenerator>>>>,
+    }
+    impl HostServices for ImmediateHost {
+        fn send(&self, message: &Message, _: u64) -> vosu_status {
+            if let Message::SessionIdentify(_) = message {
+                let plugin = self.plugin.get().unwrap().upgrade().unwrap();
+                // Exactly the public visibility boundary, before identify send
+                // returns. The old order returned target_gone synchronously.
+                plugin
+                    .dispatch(
+                        invoke(991, &PathBuf::from("/missing-j3-immediate-archive.osz")),
+                        0,
+                    )
+                    .unwrap();
+            }
+            self.messages.try_send(message.clone()).unwrap();
+            vosu_status::VOSU_OK
+        }
+    }
+    let (tx, rx) = mpsc::sync_channel(256);
+    let host = ImmediateHost {
+        messages: tx,
+        plugin: Arc::default(),
+    };
+    let (plugin, _root) = hermetic(host, Platform::Windows);
+    let plugin = Arc::new(plugin);
+    plugin
+        .host
+        .plugin
+        .set(Arc::downgrade(&plugin))
+        .unwrap_or_else(|_| panic!("set once"));
+    plugin
+        .dispatch(
+            Message::SessionAttached(attached(917201, 783341, "osu!.exe", Bitness::X86)),
+            0,
+        )
+        .unwrap();
+    let result = receive(&rx);
+    assert_eq!(result.invocation, 991);
+    assert_eq!(result.code.as_deref(), Some("invalid_archive"));
+    assert!(plugin.state.lock().unwrap().sessions.contains_key(&917201));
+    wait_until(|| plugin.imports.finished(), "immediate import completion");
+    plugin.imports.shutdown();
+    assert!(!rx.try_iter().any(|m| matches!(m, Message::ActionResult(_))));
+}

@@ -753,7 +753,9 @@ fn register_session_refuses_a_handle_that_is_not_live() {
         &plugin.runtime_handle,
         42,
         &identified,
-    );
+        String::new(),
+    )
+    .unwrap();
     assert!(
         plugin.state.lock().unwrap().sessions.is_empty(),
         "a handle missing from live_handles must never get a session registered"
@@ -803,16 +805,6 @@ fn destroy_revokes_a_gated_lazer_lookup_before_it_can_register() {
         entered_tx.send(()).unwrap();
         release_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         let version = resolve_lazer_version(host.as_ref(), 0, Path::new(""));
-        finish_identify(
-            host.as_ref(),
-            &lookup_state,
-            904,
-            "lazer",
-            "osu!(lazer)",
-            version,
-            false,
-        )
-        .unwrap();
         let identified = Identified {
             client: ClientType::Lazer,
             settings: InstanceSettings {
@@ -835,7 +827,9 @@ fn destroy_revokes_a_gated_lazer_lookup_before_it_can_register() {
             &runtime,
             904,
             &identified,
-        );
+            version,
+        )
+        .unwrap();
         // Sample before this thread returns: Drop is still joining us,
         // so the runtime has not been shut down to mask a spawned task.
         result_tx
