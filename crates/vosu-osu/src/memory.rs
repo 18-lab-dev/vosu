@@ -15,13 +15,19 @@
 //! batches as many of its independent requests as fit into one plan's ops
 //! before starting the next round trip, so a short batch costs one round
 //! trip rather than one per request.
+//!
+//! `read_chain` emits one dependent stage per pointer and one final byte read.
+//! Its stack-resident stage/operation descriptors share the same reusable flat
+//! buffers. Native backends use `ProcessMemory`'s ordered scalar default; reader
+//! bodies do not branch on the transport.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{cell::RefCell, mem::size_of};
 
 use vosu_osu_reader::process::{
-    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+    IndirectReadRequest, MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+    read_indirect_many_default,
 };
 use vosu_plugin_api::{
     FlatReadResults, HostServices, PlanBase, PlanMemory, PlanMemoryError, PlanOp, StageBase,
@@ -140,12 +146,26 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
         ops: &[PlanOp],
         mut apply: impl FnMut(usize, &FlatReadResults<'_>) -> Result<(), MemoryError>,
     ) -> Result<(), MemoryError> {
+        self.submit_stages(
+            root,
+            &[StageRef {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops,
+            }],
+            ops.len(),
+            &mut apply,
+        )
+    }
+
+    fn submit_stages(
+        &self,
+        root: PlanBase,
+        stages: &[StageRef<'_>],
+        count: usize,
+        mut apply: impl FnMut(usize, &FlatReadResults<'_>) -> Result<(), MemoryError>,
+    ) -> Result<(), MemoryError> {
         let plan = self.next_plan_id();
-        let stage = StageRef {
-            base: StageBase::Root,
-            base_offset: 0,
-            ops,
-        };
         SYNC_READ_BUFFERS.with(|cell| {
             let mut buffers = cell.borrow_mut();
             match PlanMemory::new().read_flat(
@@ -153,11 +173,11 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
                 plan,
                 self.handle,
                 root,
-                &[stage],
+                stages,
                 &mut buffers,
             ) {
                 Ok(results) => {
-                    for index in 0..ops.len() {
+                    for index in 0..count {
                         apply(index, &results)?;
                     }
                     Ok(())
@@ -253,6 +273,184 @@ fn apply_result(
 }
 
 impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemory<H> {
+    fn read_chain(
+        &self,
+        mut address: usize,
+        offsets: &[usize],
+        bitness: ProcessBitness,
+        dst: &mut [u8],
+    ) -> Result<(), MemoryError> {
+        // Fixed-size stack storage covers the reader's short chains. Longer or
+        // oversized requests retain the sequential boundary's exact behavior.
+        const CAP: usize = 8;
+        if offsets.len() >= CAP
+            || dst.is_empty()
+            || dst.len() > MAX_SINGLE_OP_BYTES / CAP
+            || bitness != self.bitness
+            || offsets.iter().any(|&offset| i64::try_from(offset).is_err())
+        {
+            for &offset in offsets {
+                let mut bytes = [0; 8];
+                self.read_exact(address, &mut bytes[..bitness.pointer_size()])?;
+                let pointer = u64::from_le_bytes(bytes) as usize;
+                address = pointer
+                    .checked_add(offset)
+                    .ok_or(MemoryError::AddressOverflow {
+                        base: pointer,
+                        offset,
+                    })?;
+            }
+            return self.read_exact(address, dst);
+        }
+        let mut ops = [PlanOp {
+            offset: 0,
+            length: 0,
+        }; CAP];
+        for (index, op) in ops.iter_mut().enumerate().take(offsets.len() + 1) {
+            op.offset = if index == 0 {
+                0
+            } else {
+                i64::try_from(offsets[index - 1]).map_err(|_| MemoryError::AddressOverflow {
+                    base: address,
+                    offset: offsets[index - 1],
+                })?
+            };
+            op.length = if index == offsets.len() {
+                dst.len() as u32
+            } else {
+                bitness.pointer_size() as u32
+            };
+        }
+        let mut stages = [StageRef {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: &[],
+        }; CAP];
+        for (index, stage) in stages[..offsets.len() + 1].iter_mut().enumerate() {
+            stage.base = if index == 0 {
+                StageBase::Root
+            } else {
+                StageBase::Dependent {
+                    ref_stage: (index - 1) as u32,
+                    ref_op: 0,
+                }
+            };
+            stage.ops = &ops[index..index + 1];
+        }
+        self.submit_stages(
+            PlanBase::Absolute(address as u64),
+            &stages[..offsets.len() + 1],
+            offsets.len() + 1,
+            |index, results| {
+                if index == offsets.len() {
+                    apply_result(results, index, address, dst)
+                } else {
+                    let mut bytes = [0; 8];
+                    apply_result(
+                        results,
+                        index,
+                        address,
+                        &mut bytes[..bitness.pointer_size()],
+                    )?;
+                    let pointer = u64::from_le_bytes(bytes) as usize;
+                    address = pointer.checked_add(offsets[index]).ok_or(
+                        MemoryError::AddressOverflow {
+                            base: pointer,
+                            offset: offsets[index],
+                        },
+                    )?;
+                    Ok(())
+                }
+            },
+        )
+    }
+    fn read_indirect_many(
+        &self,
+        reads: &mut [IndirectReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        const CAP: usize = 24;
+        if bitness != self.bitness
+            || reads.iter().any(|read| {
+                read.dst.is_empty()
+                    || read.dst.len() > MAX_SINGLE_OP_BYTES / (2 * CAP)
+                    || i64::try_from(read.offset).is_err()
+            })
+        {
+            return read_indirect_many_default(self, reads, bitness);
+        }
+        for chunk in reads.chunks_mut(CAP) {
+            let count = chunk.len();
+            let mut ops = [PlanOp {
+                offset: 0,
+                length: 0,
+            }; 2 * CAP];
+            for (index, read) in chunk.iter().enumerate() {
+                ops[index] = PlanOp {
+                    offset: i64::try_from(read.address).map_err(|_| {
+                        MemoryError::AddressOverflow {
+                            base: read.address,
+                            offset: 0,
+                        }
+                    })?,
+                    length: bitness.pointer_size() as u32,
+                };
+                ops[count + index] = PlanOp {
+                    offset: read.offset as i64,
+                    length: read.dst.len() as u32,
+                };
+            }
+            let mut stages = [StageRef {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: &[],
+            }; CAP + 1];
+            stages[0].ops = &ops[..count];
+            for (index, stage) in stages[1..=count].iter_mut().enumerate() {
+                stage.base = StageBase::Dependent {
+                    ref_stage: 0,
+                    ref_op: index as u32,
+                };
+                stage.ops = &ops[count + index..count + index + 1];
+            }
+            let mut pointers = [[0; 8]; CAP];
+            let mut addresses = [0; CAP];
+            self.submit_stages(
+                PlanBase::Absolute(0),
+                &stages[..count + 1],
+                2 * count,
+                |index, results| {
+                    if index < count {
+                        apply_result(
+                            results,
+                            index,
+                            chunk[index].address,
+                            &mut pointers[index][..bitness.pointer_size()],
+                        )
+                    } else {
+                        // Resolve every address before publishing any pointee, matching
+                        // the native second batch's checked-address construction order.
+                        if index == count {
+                            for (slot, (read, bytes)) in
+                                addresses.iter_mut().zip(chunk.iter().zip(pointers.iter()))
+                            {
+                                let pointer = u64::from_le_bytes(*bytes) as usize;
+                                *slot = pointer.checked_add(read.offset).ok_or(
+                                    MemoryError::AddressOverflow {
+                                        base: pointer,
+                                        offset: read.offset,
+                                    },
+                                )?;
+                            }
+                        }
+                        let read_index = index - count;
+                        apply_result(results, index, addresses[read_index], chunk[read_index].dst)
+                    }
+                },
+            )?;
+        }
+        Ok(())
+    }
     /// Root `Absolute(address)`, one op: splits into several sequential
     /// plans once `dst` is longer than `MAX_SINGLE_OP_BYTES`.
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {

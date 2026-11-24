@@ -17,6 +17,7 @@ pub struct ProductionRuntime {
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     dev_tools: Vec<PathBuf>,
+    dev_plugins: Vec<PathBuf>,
     plugins: Arc<PluginHost>,
     state_host: AsyncMutex<Option<vosu_surface::state::StateHostInstalled>>,
     /// Bridge B2's `ConfigStore` watch task (§6.9): has no other way to
@@ -31,11 +32,10 @@ pub struct ProductionRuntime {
     hubs: AsyncMutex<Option<WebSocketHubs>>,
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
-    supervisor: AsyncMutex<Option<ProductionStateSupervisor>>,
-    instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
+    bridge: AsyncMutex<Option<bridge_b1::LegacyBridgeTask>>,
+    bridge_installed: AsyncMutex<Option<vosu_surface::Installed>>,
     ordinary_role: bool,
     tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
-    /// Active only when an enabled plugin declares a process match table.
     discovery: AsyncMutex<Option<vosu_core::plugin::DiscoveryService>>,
     #[cfg(windows)]
     foreground: AsyncMutex<Option<vosu_core::plugin::ForegroundPoller>>,
@@ -76,6 +76,10 @@ impl ProductionRuntime {
         tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
             .await
             .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
+        if let Some(bridge) = self.bridge.lock().await.take() {
+            bridge.shutdown().await;
+        }
+        self.bridge_installed.lock().await.take();
         self.state_host.lock().await.take();
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
@@ -103,12 +107,6 @@ impl ProductionRuntime {
         if let Some(relays) = self.relays.lock().await.take() {
             relays.shutdown().await;
         }
-        if let Some(supervisor) = self.supervisor.lock().await.take() {
-            supervisor.shutdown().await;
-        }
-        if let Some(instances) = self.instances.lock().await.take() {
-            instances.shutdown().await;
-        }
         if let Some(counters) = self.counters.lock().await.take() {
             counters.shutdown().await;
         }
@@ -127,6 +125,17 @@ impl ProductionRuntime {
         if self.listener.get_mut().is_some() {
             return Ok(());
         }
+        let host = Arc::clone(&self.plugins);
+        let paths = self.paths.clone();
+        let logger = self.logger.clone();
+        let dev_dirs = std::mem::take(&mut self.dev_plugins);
+        tokio::task::spawn_blocking(move || {
+            dev_plugins::load_all(&host, dev_dirs, &paths, &logger)
+        })
+        .await
+        .map_err(io::Error::other)
+        .and_then(|result| result)
+        .inspect_err(|error| self.logger.error(format!("Plugin startup failed: {error}")))?;
         let config = self.config.current();
         self.config.validate_network(&config).await?;
         let dashboard_target = dashboard_listen_target(&config)?;
@@ -134,15 +143,6 @@ impl ProductionRuntime {
         // long-lived task.
         let target = listen_target(&config)?;
         let program = env::current_exe()?;
-        let asset = DaemonAssets::get("offsets.json").ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "embedded offsets.json is missing")
-        })?;
-        let generator = EmbeddedOffsetGenerator::new(self.paths.cache().join("offset-generator"));
-        let loader = LazerOffsetLoader::new(
-            generator,
-            self.paths.cache().join("offsets"),
-            Bytes::copy_from_slice(&asset.data),
-        );
         let static_root = resolved_static_root(&self.paths, &config)?;
         let counters = Arc::new(ReloadableCounterService::production(
             static_root,
@@ -197,7 +197,7 @@ impl ProductionRuntime {
                 #[cfg(not(target_os = "linux"))]
                 login_state: Arc::new(AsyncMutex::new(config.start_at_login)),
             }),
-            // The receiver is bound once native discovery starts below.
+            // Bound to the installed B1 bridge's lifecycle below.
             Arc::new(RuntimeReportInput {
                 config: Arc::clone(&self.config),
                 snapshots: self.snapshots.snapshot_manager(),
@@ -332,44 +332,41 @@ impl ProductionRuntime {
             )
         ));
         *self.dashboard_listener.get_mut() = Some(dashboard_listener);
-        // Bind the existing discovery stream; do not maintain a second roster.
-        let process_provider = NativeProcessProvider::new();
-        self.logger.info(format!(
-            "Process events backend: {}",
-            process_provider.process_event_backend_name()
-        ));
-        let instances =
-            InstanceRuntime::start_with_logger(process_provider, loader, self.logger.clone());
-        dashboard_lifecycle.store(Some(Arc::new(instances.subscribe_current())));
-        let supervisor = ProductionStateSupervisor::start(
-            instances.subscribe_current(),
+        let bridge = bridge_b1::LegacyBridge::new(
             self.config.subscribe_current(),
             hubs.v2_subscription.demand(),
             self.snapshots.clone(),
             self.logger.clone(),
-        );
-        self.snapshots.set_poll_rates(
-            poll_duration(config.poll_rate),
-            poll_duration(config.precise_data_poll_rate),
         );
         *self.counters.get_mut() = Some(counters);
         *self.listener.get_mut() = Some(listener);
         *self.hubs.get_mut() = Some(hubs);
         *self.processor.get_mut() = Some(processor);
         *self.relays.get_mut() = Some(relays);
-        *self.supervisor.get_mut() = Some(supervisor);
-        *self.instances.get_mut() = Some(instances);
-        // Start discovery only after App's startup guards; shutdown stops it
-        // before destroying plugins and uninstalling the state read host.
-        let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger);
+        let installed = vosu_surface::install(bridge.clone()).map_err(io::Error::other)?;
+        dashboard_lifecycle.store(Some(Arc::new(bridge.lifecycle())));
+        *self.bridge_installed.get_mut() = Some(installed);
+        *self.bridge.get_mut() =
+            Some(bridge.start(Arc::new(vosu_core::plugin::OsForegroundSource)));
+        self.snapshots.set_poll_rates(
+            poll_duration(config.poll_rate),
+            poll_duration(config.precise_data_poll_rate),
+        );
+        // Discovery starts only after B1 is installed and its manager task is
+        // owned by this runtime. All subsequent exits use ordered shutdown.
+        let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger)
+            .ok_or_else(|| {
+                let message = "required osu! discovery did not start";
+                self.logger.error(message);
+                io::Error::other(message)
+            })?;
         #[cfg(windows)]
-        let foreground = discovery
-            .is_some()
-            .then(|| vosu_core::plugin::ForegroundPoller::start(&self.plugins, Handle::current()));
-        *self.discovery.get_mut() = discovery;
+        let foreground =
+            vosu_core::plugin::ForegroundPoller::start(&self.plugins, Handle::current());
+        *self.discovery.get_mut() = Some(discovery);
         #[cfg(windows)]
         {
-            *self.foreground.get_mut() = foreground;
+            *self.foreground.get_mut() = Some(foreground);
         }
         if self.ordinary_role {
             let origins = Arc::clone(&self.origins);
@@ -855,6 +852,7 @@ pub async fn run_cli() -> io::Result<()> {
         },
         Arc::new(StdoutConsole),
     )?;
+    super::tracing_log::install(logger.clone());
     if let Some(warning) = recovery_warning {
         logger.warn(format!(
             "Update recovery was quarantined; continuing for diagnostics: {warning}"
@@ -900,10 +898,7 @@ pub async fn run_cli() -> io::Result<()> {
     let shutdown_token = CancellationToken::new();
     let signal_task = tokio::spawn(run_signal_cancellation(shutdown_token.clone()));
     let dev_plugin_dirs = vosu_core::plugin::development_roots(args.raw())?;
-    // Resolved before the plugin host is built so no fallible step remains
-    // between loading plugins and `hooks` taking ownership of the host:
-    // every exit path once loading starts goes through an explicit
-    // `destroy_all`, not an early `?` return that skips it.
+    // Resolve development roots before constructing owned runtime resources.
     let dev_tools = crate::tools::development_roots(args.raw())?;
     let origins = Arc::new(crate::server::origins::Origins::new(
         vosu_core::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
@@ -919,26 +914,6 @@ pub async fn run_cli() -> io::Result<()> {
     let state_host = vosu_surface::state::install_state_host(plugin_host.surface_host())
         .map_err(io::Error::other)?;
     let plugin_settings_watch = plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
-    {
-        let host = Arc::clone(&plugin_host);
-        let logger = logger.clone();
-        let paths = paths.clone();
-        if let Err(error) = tokio::task::spawn_blocking(move || {
-            dev_plugins::load_all(&host, dev_plugin_dirs, &paths, &logger)
-        })
-        .await
-        {
-            let host = Arc::clone(&plugin_host);
-            plugin_settings_watch.abort();
-            let _ = tokio::task::spawn_blocking(move || {
-                host.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
-            })
-            .await;
-            return Err(io::Error::other(format!(
-                "plugin startup task failed: {error}"
-            )));
-        }
-    }
     // Discovery/foreground poller start in `compose()`, not here (P3: only after `App::run`'s guards).
     let hooks = ProductionRuntime {
         config,
@@ -958,6 +933,7 @@ pub async fn run_cli() -> io::Result<()> {
         counters: AsyncMutex::new(None),
         tools: AsyncMutex::new(None),
         dev_tools,
+        dev_plugins: dev_plugin_dirs,
         plugins: plugin_host,
         state_host: AsyncMutex::new(Some(state_host)),
         plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
@@ -966,9 +942,9 @@ pub async fn run_cli() -> io::Result<()> {
         origins,
         hubs: AsyncMutex::new(None),
         processor: AsyncMutex::new(None),
-        supervisor: AsyncMutex::new(None),
+        bridge: AsyncMutex::new(None),
         relays: AsyncMutex::new(None),
-        instances: AsyncMutex::new(None),
+        bridge_installed: AsyncMutex::new(None),
         ordinary_role,
         tray: AsyncMutex::new(None),
         discovery: AsyncMutex::new(None),
@@ -992,3 +968,7 @@ pub async fn run_cli() -> io::Result<()> {
     }
     finish_runtime_run(run_result, app.hooks().shutdown()).await
 }
+
+#[cfg(test)]
+#[path = "tests/lifecycle_owner.rs"]
+mod owner_tests;

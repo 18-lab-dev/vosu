@@ -129,17 +129,35 @@ fn run_setup() -> io::Result<()> {
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 fn run_backend_probe(backend: BackendProbe) -> io::Result<()> {
-    use crate::instance::{CommHints, LinuxProcessEvents, ProcessEventMode};
+    use vosu_sys::events::{LinuxProcessEvents, ProcessEventMode};
 
     let mode = match backend {
         BackendProbe::Ebpf => ProcessEventMode::Ebpf,
         BackendProbe::CnProc => ProcessEventMode::CnProc,
     };
-    // Byte-identical to the former hard-coded `osu!`/`osulazer.exe` filter.
-    let comm_hints = CommHints::new(["osu!", "osulazer.exe"])
-        .expect("hardcoded default comm hints satisfy CommHints::new's bounds");
+    let comm_hints = backend_probe_hints()?;
     let _events = LinuxProcessEvents::open(mode, &comm_hints)?;
     Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+pub(super) fn backend_probe_hints() -> io::Result<vosu_sys::events::CommHints> {
+    use vosu_core::plugin::{MatchPlatform, MatcherEngine, Prefilter};
+    let manifest =
+        vosu_plugin_api::PluginManifest::parse(vosu_osu::MANIFEST).map_err(io::Error::other)?;
+    let matcher = manifest
+        .matcher
+        .ok_or_else(|| io::Error::other("osu! manifest has no matcher"))?;
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(manifest.id, matcher)
+        .map_err(io::Error::other)?;
+    let Prefilter::Names(names) = engine.prefilter() else {
+        return Err(io::Error::other(
+            "osu! backend probe requires a bounded name filter",
+        ));
+    };
+    vosu_sys::events::CommHints::new(names.iter().map(String::as_str)).map_err(io::Error::other)
 }
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]

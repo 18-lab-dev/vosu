@@ -592,3 +592,25 @@ fn reset_and_errors_do_not_leave_stale_progression_or_replace_valid_preparation(
     assert_eq!(preparation_counts(&backend), (1, 1, 1));
     std::fs::remove_dir_all(root).expect("remove backend test directory");
 }
+
+#[test]
+fn retained_calculation_error_logs_only_at_each_streak_threshold() {
+    use std::sync::atomic::Ordering;
+    let (subscriber, errors) = crate::test_logging::errors();
+    tracing::subscriber::with_default(subscriber, || {
+        let mut failures = 0;
+        for _ in 0..10 {
+            super::report_retained_error("flood", &mut failures, "same error");
+        }
+        assert_eq!(errors.load(Ordering::Relaxed), 0);
+        for _ in 10..10_000 {
+            super::report_retained_error("flood", &mut failures, "same error");
+        }
+        assert_eq!(errors.load(Ordering::Relaxed), 1);
+        failures = 0; // Updated outcomes reset this per-calculation counter.
+        for _ in 0..11 {
+            super::report_retained_error("flood", &mut failures, "same error");
+        }
+        assert_eq!(errors.load(Ordering::Relaxed), 2);
+    });
+}

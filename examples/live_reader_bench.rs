@@ -1,4 +1,6 @@
 //! Read-only benchmark of production native capture adapters, not publication.
+#[path = "live_reader_bench/plan.rs"]
+mod plan;
 use serde::Serialize;
 use std::{
     error::Error,
@@ -36,10 +38,12 @@ struct Args {
     client: ClientType,
     warmup: usize,
     cycles: usize,
+    memory: String,
 }
 impl Args {
     fn parse(mut values: impl Iterator<Item = String>) -> Result<Self> {
         let (mut pid, mut client, mut warmup, mut cycles) = (None, None, 100, 1000);
+        let mut memory = "native".to_owned();
         while let Some(flag) = values.next() {
             let value = values
                 .next()
@@ -55,6 +59,7 @@ impl Args {
                 }
                 "--warmup" => warmup = value.parse()?,
                 "--cycles" => cycles = value.parse()?,
+                "--memory" if matches!(value.as_str(), "native" | "plan") => memory = value,
                 "--samples" if value == "9" => {}
                 _ => {
                     return Err(fail(format!(
@@ -73,6 +78,7 @@ impl Args {
             client: client.ok_or_else(|| fail("--client is required"))?,
             warmup,
             cycles,
+            memory,
         })
     }
 }
@@ -273,7 +279,7 @@ fn run<R: SynchronizedMemoryReader + 'static>(
     println!("Production capture adapters; setup excluded; native read counters unavailable.");
     println!(
         "{}",
-        serde_json::json!({"product":"vosu", "client": if args.client == ClientType::Lazer {"lazer"} else {"stable"}, "pid":args.pid, "client_version":version, "state":format!("{state_start} -> {state_end}"), "regular":regular_result, "precise":precise_result, "setup_ns":setup_ns})
+        serde_json::json!({"product":"vosu", "memory":args.memory, "client": if args.client == ClientType::Lazer {"lazer"} else {"stable"}, "pid":args.pid, "client_version":version, "state":format!("{state_start} -> {state_end}"), "regular":regular_result, "precise":precise_result, "setup_ns":setup_ns})
     );
     Ok(())
 }
@@ -286,7 +292,18 @@ fn main() {
 fn execute() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
     let start = Instant::now();
-    let process = open(args.pid)?;
+    let attachment = if args.memory == "plan" {
+        Some(plan::Attachment::new(
+            plan::native_record(args.pid)?,
+            "vosu.bench.live",
+        )?)
+    } else {
+        None
+    };
+    let process = match &attachment {
+        Some(attachment) => attachment.process.clone(),
+        None => open(args.pid)?,
+    };
     match args.client {
         ClientType::Stable => {
             if lazer_version::discover_for_process(args.pid).is_ok() {
@@ -364,6 +381,8 @@ mod tests {
         assert!(args(&["--cycles", "0"]).is_err());
         assert!(args(&["--samples", "8"]).is_err());
         assert!(args(&["--unknown", "1"]).is_err());
+        assert!(args(&["--memory", "invalid"]).is_err());
+        assert_eq!(args(&["--memory", "plan"]).unwrap().memory, "plan");
         assert_eq!(args(&[]).unwrap().cycles, 1000);
     }
     #[test]

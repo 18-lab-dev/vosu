@@ -6,21 +6,24 @@
 //! guarantee a compile-time list does not give more simply — forgetting an
 //! entry here is a visible, reviewed omission, not a silent one.
 //!
-//! The only bundled plugin so far is the `test-harness`-only testkit echo
-//! plugin; the osu! plugin and the first-party surfaces join this array in
-//! later milestones.
+//! Production ships `vosu.osu`; the echo fixture is test-harness-only.
 
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n";
 
-#[cfg(feature = "test-harness")]
-pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] =
-    &[vosu_core::plugin::BundledPlugin {
+/// The required `vosu.osu` entry is first; later entries are optional fixtures.
+pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_osu::MANIFEST,
+        settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
+        namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
+        vtable: vosu_osu::vosu_plugin_vtable,
+    },
+    #[cfg(feature = "test-harness")]
+    vosu_core::plugin::BundledPlugin {
         manifest: TESTKIT_ECHO_MANIFEST,
         settings_schema: None,
         namespace_schemas: &[],
         vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
-    }];
-
-#[cfg(not(feature = "test-harness"))]
-pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[];
+    },
+];

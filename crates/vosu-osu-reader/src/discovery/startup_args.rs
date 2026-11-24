@@ -1,9 +1,8 @@
 //! Source-compatible parser for the osu! client's own startup argv.
 //!
-//! Lives in `vosu-osu-reader` (not the root crate's `app` module) because
-//! `instance::discovery` is the only consumer today; the root crate parses
-//! `update`/`onedrive` with this type and builds `vosu_core::app::StartupFlags`
-//! from them, so core itself never depends on this osu!-specific parser.
+//! Shared by osu! plugin session classification and the root CLI's
+//! `update`/`onedrive` parsing. The root builds `vosu_core::app::StartupFlags`
+//! from those values, so core never depends on this osu!-specific parser.
 
 use std::ffi::OsString;
 

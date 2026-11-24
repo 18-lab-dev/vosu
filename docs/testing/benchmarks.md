@@ -36,37 +36,163 @@ original source-generation semantics and are not measurements of this change.
 Windows releases use no default features, so the Windows commands below keep
 `--no-default-features`.
 
-### Live native reader
+### Interleaved revision comparison (Linux)
 
-The dev-only example attaches read-only to an existing client PID and measures
-the production regular and precise capture adapters, without network publication.
-Setup is excluded; nine sample means follow warm-up. Keep the client in the same
-state throughout the run. Lazer uses the daemon's versioned cache or embedded
-offsets; if unavailable, run the release daemon once to populate the reported
-cache path. Read/byte counts are null because the native reader has no counters.
+Build each revision first, with independent `CARGO_TARGET_DIR` directories and
+identical features and populated fixtures. Then pass the already-built Criterion
+executables, not Cargo commands, to the comparison tool:
 
 ```sh
-cargo build --release --locked --example live_reader_bench
-target/release/examples/live_reader_bench --pid 1234 --client lazer --warmup 100 --cycles 1000 --samples 9
+sudo python3 scripts/bench-compare.py --cpu 7 --rounds 5 \
+  --binary baseline=/absolute/baseline-target/release/deps/hot_paths-HASH \
+  --binary candidate=/absolute/candidate-target/release/deps/hot_paths-HASH \
+  --filter '^raw_snapshot_reads/stable_regular_fields$' \
+  --output /absolute/new-comparison-directory
 ```
 
-Current lazer regular captures reuse the beatmap head and track length read by
-`global`. With a player, menu fields, beatmap hash, and MP3 length therefore
-observe the global-read instant rather than independent later reads. Without
-a player, the hash may still be read in `menu`. This is capture-local reuse,
-not a cache across captures. The reader integration excludes `ConfigPlan`;
-do not attribute changes to that separate configuration-plan experiment.
+The tool reads Linux `thread_siblings_list` and reserves the **entire physical
+core** using a temporary cgroup-v2 isolated cpuset partition. Only the benchmark
+enters that partition, pinned to the requested logical CPU; its SMT siblings
+are left idle. This needs sudo and an already-enabled root cpuset controller;
+reservation failure aborts rather than silently falling back to taskset.
+Benchmarks drop privileges to the invoking user. The empty partition is removed
+on exit, returning its CPUs to the host. Kernel IRQs and shared CPU power/cache
+effects are not isolated: stop builds and use a quiet window.
+
+Runs interleave A,B,…,A,B,… for five rounds by default. Every invocation has a
+fresh Criterion home, a saved log, and a bounded timeout (600 seconds by default).
+`summary.json` reports each case's median of round medians, a deterministic
+10,000-resample bootstrap 95% interval, raw round medians, and max–min spread.
+Each candidate is compared with the first revision; a spread at least as large
+as the absolute delta, or overlapping bootstrap intervals, is **inconclusive**.
+Intervals describe these rounds, not immunity to systematic fixture or host
+bias. Repeated `--binary` accepts more than two revisions. Timing controls:
+`--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
+
+### Live reader: native versus plan
+
+The dev-only example attaches read-only to an existing client PID and measures
+production regular and precise capture adapters, without network publication.
+`--memory native` opens the OS backend directly (the default); `--memory plan`
+attaches the same PID to an in-process bundled SDK plugin and reads through
+`PlanProcessMemory`, the real host and SDK. Signature scans use `PlanScanBackend`.
+Setup is excluded; nine sample means follow warm-up. Keep the client in the
+same state for both modes, and reject runs with errors or a changed state.
+Lazer needs cached or embedded offsets for its exact version; run the release
+daemon once to populate the cache if needed. Read/byte counters remain null.
+
+Windows VM (PowerShell, repository root; run once for each `$client`):
+
+```powershell
+$client = 'stable' # repeat with 'lazer'; close the previous client first
+& V:\osu-setup\launch.ps1 -Client $client
+$clientPid = (Get-CimInstance Win32_Process | Where-Object Name -eq 'osu!.exe' | Sort-Object CreationDate -Descending | Select-Object -First 1).ProcessId
+if (-not $clientPid) { throw 'osu! client not running' }
+cargo build --release --locked --no-default-features --example live_reader_bench --target-dir target
+foreach ($memory in @('native', 'plan')) {
+    cmd /c "start `"`" /b /wait /affinity 4 target\release\examples\live_reader_bench.exe --pid $clientPid --client $client --memory $memory --warmup 100 --cycles 1000 --samples 9"
+    if ($LASTEXITCODE) { throw "reader bench failed: $memory" }
+}
+```
+
+Linux VM (native lazer installed under `/opt/osu`; launch in the guest desktop,
+or use its existing headless launcher `/opt/osu/osu-headless`):
+
+```sh
+/opt/osu/osu
+# In another guest terminal, from the repository root:
+pgrep -af '/opt/osu|osu!'
+read -r -p 'Target lazer game PID (not wrapper): ' client_pid
+cargo build --release --locked --example live_reader_bench --target-dir target
+for memory in native plan; do
+  taskset -c 2 target/release/examples/live_reader_bench \
+    --pid "$client_pid" --client lazer --memory "$memory" \
+    --warmup 100 --cycles 1000 --samples 9 || exit
+done
+```
+
+Repeat in reverse mode order for a paired comparison. These capture timings
+are not whole-daemon CPU/tick or read-to-network-frame latency measurements.
+Regular captures reuse the beatmap head and track length from `global`; the
+reader integration excludes the separate `ConfigPlan` experiment.
 
 ## Scope of the synthetic results
 
-- Synthetic fixtures, not live-game or whole-daemon performance. Raw snapshots
-  discard reads from zero-filled fixtures; the deterministic reader validates
-  populated graphs (native self-process lazer reads; slice-copy stable reads).
+- Synthetic fixtures, not live-game or whole-daemon performance. The stable raw
+  snapshot and PlanMemory cases share a populated x86 graph and assert successful,
+  non-default global/full-menu/gameplay values before timing. Lazer's raw snapshot
+  fixture remains zero-filled; the deterministic reader validates populated graphs
+  (native self-process lazer reads; slice-copy stable reads).
 - Calculation uses a five-object map. Cold serializers exclude setup; cache
   cases clone encoded bytes. Publication includes timer scheduling; neither
   publication nor subscriptions measures network transport.
 - Live-client and released-tosu measurements are in the
   [released tosu comparison](#released-tosu-comparison).
+
+## Stable dependent-plan comparison
+
+`benches/support/stable_fixture.rs` is shared by `hot_paths` and
+`plan_memory_bench`. Earlier stable `raw_snapshot_reads` numbers used zero
+`base_addr`/`rulesets_addr`: `global_batched` underflowed into the scalar
+fallback, while menu/gameplay returned immediately. Those historical timings
+are not comparable to this successful-capture workload; backport the shared
+fixture and benchmark setup when comparing older revisions.
+
+The corrected fixture checks populated global, full-menu and gameplay values
+and native/plan capture equality before timing. The dependent implementation
+reduces successful-capture submissions from global/menu/gameplay **4/5/5** to
+**4/4/5** by combining the menu's two independent holder chains into one
+multi-stage plan. Its native default still performs the same two backend batches.
+Scalar fallback pointer chains separately fall from 18 to 12 submissions.
+
+Compare already-built binaries, not concurrent builds:
+
+```sh
+python scripts/bench-compare.py --no-reserve \
+  --binary before=/tmp/m1-c6b-before --binary after=/tmp/m1-c6b-after \
+  --filter 'plan_memory/stable_(native|regular_fields)$' --cpu 4 \
+  --rounds 5 --warmup 2 --measurement 5 --samples 100 \
+  --output /tmp/m1-c6b-no-reserve
+```
+
+The default mode requires administrator-prepared exclusive cpuset support and
+sudo, then drops privileges before running benchmarks. `--no-reserve` needs
+neither: each child is pinned only to the requested logical CPU, never its SMT
+sibling, but other host processes remain unrestricted. Evidence explicitly
+records `exclusive: false`. Both modes interleave revisions, use fresh Criterion
+homes, and report bootstrap confidence intervals and an `inconclusive` flag when
+between-round noise or confidence-interval overlap obscures the revision delta.
+
+Measured 2026-11-24 on the Ryzen 9 9950X3D, Rust 1.96.1, default release
+features, CPU 4 (SMT sibling 20), **non-exclusive**, with the command above.
+Values are medians of five round medians; brackets are the comparison tool's
+bootstrap 95% confidence intervals, not the individual Criterion slope intervals.
+The before binary uses the corrected fixture with the unfused reader; the after
+binary includes the dependent-menu plan and allocation-free scalar chains.
+
+| Stable transport | Before, µs | After, µs |
+| --- | ---: | ---: |
+| Native `ProcessHandle` | 1.293 [1.255, 1.767] | 1.216 [1.206, 1.313] |
+| PlanMemory | 3.585 [3.261, 4.432] | 3.223 [3.168, 3.835] |
+
+The reported PlanMemory change is −10.10%, but **`inconclusive: true`**:
+between-round spread exceeds the delta and the before/after intervals overlap.
+The native change is also inconclusive. Afterward PlanMemory is **2.65× native**,
+so this run does **not** meet D17's within-10% bar. Evidence:
+`/tmp/m1-c6b-no-reserve/summary.json`. A quiet rerun is necessary before claiming
+a revision-level speedup.
+
+Separate non-exclusive transport controls measured one plan with 1/18/56
+independent four-byte ops at approximately **83/290/855 ns**. A rough fit to the
+first two gives **71 ns fixed per plan + 12 ns per op**; these are diagnostic
+estimates, not an absolute lower bound for another executor or plan shape.
+The populated capture retains 56 ops across 13 submissions: fixed submission
+cost and per-op validation/result handling are both material, not fixed cost
+alone. Fusing global's four submissions to one and gameplay's five to one would
+remove seven submissions, suggesting about **0.50 µs** saved at unchanged op
+count (roughly 3.22 → 2.72 µs, still well above native). This estimate excludes
+additional dependent-stage overhead and is not a measured speedup.
+
 
 ## vosu hot paths
 
@@ -743,59 +869,62 @@ affect; the realistic edit-loop total falls short of the 15% bar.
   over the default linker at all. Neither is wired into any build path;
   `scripts/dev-env.sh` sets no linker variables.
 
-## Performance changes for M0 (paired, D17)
+## M1 PlanMemory (paired, D17)
 
-Measured **2026-11-22**, pre-M0 baseline `3a91ff9` versus M0 crate-split
-`cd81696`, same machine and `cargo bench` setup as the section above: Ryzen 9
-9950X3D host, kernel `7.3.5-2-cachyos-bore`, Rust 1.96.1, performance
-governor, boost enabled, default release features, `--locked`; independent
-`CARGO_TARGET_DIR`/`CRITERION_HOME` per side, `taskset --cpu-list 0-7,16-23`,
-only while `pgrep -f scripts/prepush.py` was empty. This is D17's M0 gate:
-the reader bench (`raw_snapshot_reads`), the serializer benches
-(`serializers_cold`, `serialization_cache`), and the publication bench
-(`publication`) from `benches/hot_paths.rs`, which becomes the cumulative
-baseline for every later milestone's performance gate.
+Measured **2026-11-24**: C6 candidate over L2 `7a08a52`, M0 end `fda1625`,
+and pre-M0 `3a91ff9`. Ryzen 9 9950X3D Linux host,
+`7.3.5-2-cachyos-bore`, Rust 1.96.1, performance governor, default release
+features, locked dependencies. Every benchmark process was pinned to **CPU 7**
+(outside the Windows VM's CCD); no CPU/IRQ isolation. The L2 Windows gate
+remained active, so these are shared-host measurements, not idle-machine claims.
+All builds finished before their timed invocation.
+
+Each revision used its own `CARGO_TARGET_DIR` and `CRITERION_HOME`
+(`~/.cache/vosu-targets/{m1-c6-pre,m1-c6-m0,m1-c6}` and the corresponding
+`~/.cache/vosu-criterion/` directories); no cross-revision artifact reuse.
+One invocation per transport/revision, sequential order pre-M0 native →
+M0 native → candidate native → candidate plan. Criterion: 100 samples,
+3 s warm-up, 10 s measurement. Values below are **median estimates with
+their bootstrap 95% CIs**, from `new/estimates.json`'s `median` field,
+not the slope/mean printed in Criterion's terminal summary.
+
+| Regular fields | Pre-M0 native `3a91ff9` | M0 native `fda1625` | C6 native | C6 plan |
+| --- | ---: | ---: | ---: | ---: |
+| stable, ns | 133.63 (133.36–134.46) | 125.89 (123.95–127.72) | 164.51 (161.67–168.23) | 1936.19 (1871.69–2060.33) |
+| lazer, µs | 11.862 (11.511–12.028) | 11.730 (11.340–11.788) | 12.158 (11.767–13.325) | 11.136 (11.054–11.325) |
+
+| Candidate path | vs M0 | vs pre-M0 | 95% CIs overlap, M0 / pre-M0 | D17 bar |
+| --- | ---: | ---: | :---: | :---: |
+| stable native | +30.67% | +23.11% | no / no | missed |
+| stable plan | +1437.99% | +1348.97% | no / no | missed |
+| lazer native | +3.66% | +2.50% | yes / yes | met |
+| lazer plan | -5.06% | -6.12% | no / no | met |
+
+**D17 remains unverified.** These single-invocation results do not establish a
+native regression: paired reruns of the exact M0/C6 binaries twice gave median
+pairs 143.00/154.12 ns and 160.10/145.66 ns, so even the delta's sign changed.
+CPU 7's SMT sibling was not reserved. Do not attribute the original +30.67%
+to an L1/L2 commit. Repeat with `bench-compare.py` in a quiet window and C6b's
+corrected, populated stable fixtures before deciding the D17 bar.
+
+Both groups mirror `hot_paths/raw_snapshot_reads`: zero-filled 64 KiB fixtures,
+not populated gameplay. Stable's zero base underflows its batched address
+calculation into the scalar fallback; menu/gameplay return without useful reads.
+The plan bench asserts decoder-result equality with native before timing, but
+that does not prove successful captures. Because these fixtures retry resolution,
+both use the same direct fixture region walk; scan-broker cost is excluded.
+Plan reads execute the public core executor and SDK interception; host routing
+is excluded from this release bench, not from the allocation/native tests.
+The lazer result is scan/error-path dominated, not a live-reader speedup claim.
 
 ```sh
+# In each corresponding checkout, set the independent directories above.
+# Prepare the matching helper bundle for the candidate first:
 python scripts/prepare-offset-generator.py --rid linux-x64
-# Set CARGO_TARGET_DIR and CRITERION_HOME to the corresponding side first.
-taskset --cpu-list 0-7,16-23 cargo bench --locked --package vosu --bench hot_paths -- '^(raw_snapshot_reads|serializers_cold|serialization_cache|publication)/'
+taskset -c 7 nice -n 10 cargo bench --locked --package vosu --bench hot_paths -- raw_snapshot_reads --warm-up-time 3 --measurement-time 10 --sample-size 100 --noplot
+# Candidate only (release benches must not enable test-harness):
+taskset -c 7 nice -n 10 cargo bench --locked --package vosu --bench plan_memory_bench -- --warm-up-time 3 --measurement-time 10 --sample-size 100 --noplot
 ```
-
-One Criterion invocation per side (100 samples, default 3 s warm-up / 5 s
-measurement); values are Criterion's own `[low mean high]` 95% confidence
-interval. Change is `(M0 mean / pre-M0 mean − 1) × 100%`; positive is
-slower. Verdict uses D17's bar: no regression above 10% of the median,
-judged by non-overlapping confidence intervals.
-
-| Benchmark ID | Pre-M0 `3a91ff9` (95% CI) | M0 `cd81696` (95% CI) | Change | CIs overlap |
-| --- | ---: | ---: | ---: | :---: |
-| `raw_snapshot_reads/stable_regular_fields` | 115.21 ns (115.00–115.44 ns) | 89.672 ns (89.485–89.857 ns) | -22.17% | no |
-| `raw_snapshot_reads/lazer_regular_fields` | 9.8338 µs (9.8040–9.8597 µs) | 10.197 µs (10.188–10.205 µs) | +3.69% | no |
-| `serializers_cold/v1` | 1.0435 µs (1.0420–1.0454 µs) | 1.0333 µs (1.0323–1.0343 µs) | -0.98% | no |
-| `serializers_cold/v2` | 2.9079 µs (2.8054–2.9904 µs) | 2.2825 µs (2.2799–2.2850 µs) | -21.51% | no |
-| `serializers_cold/v2_precise` | 793.63 ns (792.84–794.47 ns) | 797.31 ns (795.94–798.73 ns) | +0.46% | no |
-| `serializers_cold/stream_companion` | 1.2158 µs (1.2145–1.2172 µs) | 1.2126 µs (1.2113–1.2139 µs) | -0.26% | no |
-| `serialization_cache/v1_bytes_clone` | 15.925 ns (15.912–15.937 ns) | 15.965 ns (15.949–15.983 ns) | +0.25% | no |
-| `serialization_cache/v2_bytes_clone` | 15.939 ns (15.924–15.956 ns) | 15.936 ns (15.915–15.967 ns) | -0.02% | yes |
-| `serialization_cache/v2_precise_bytes_clone` | 15.972 ns (15.961–15.984 ns) | 15.958 ns (15.943–15.974 ns) | -0.09% | yes |
-| `serialization_cache/stream_companion_bytes_clone` | 16.638 ns (16.520–16.763 ns) | 15.979 ns (15.962–15.997 ns) | -3.96% | no |
-| `publication/unfiltered_clients/1` | 2.0532 ms (2.0513–2.0548 ms) | 2.0519 ms (2.0488–2.0547 ms) | -0.06% | yes |
-| `publication/unfiltered_clients/100` | 2.0565 ms (2.0533–2.0595 ms) | 2.0528 ms (2.0486–2.0567 ms) | -0.18% | yes |
-| `publication/unfiltered_clients/1000` | 2.0712 ms (2.0656–2.0769 ms) | 2.0987 ms (2.0922–2.1052 ms) | +1.33% | no |
-
-Verdict: **D17 met** — every change stays far inside the 10%-of-median bar
-(largest is `raw_snapshot_reads/lazer_regular_fields` at +3.69%), so there is
-no regression to call out. Two results are larger, reproducible
-improvements rather than noise: `raw_snapshot_reads/stable_regular_fields`
-(-22%) and `serializers_cold/v2` (-21%) both repeated the same direction and
-magnitude on a second, isolated rerun of just those two IDs on each commit
-(stable: ~115.2–115.8 ns baseline vs ~90–96 ns M0; `v2`: ~2.9–3.3 µs baseline
-vs ~2.3 µs M0). M0 makes no behavior or algorithm change to either path, so
-the likely cause is compiler codegen differing with the crate boundary
-(smaller per-crate codegen units change inlining/register allocation
-decisions for the `vosu` binary that links the split crates), not a real
-regression risk; it is recorded as an observation, not attributed further.
 
 ## Released tosu comparison
 

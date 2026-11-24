@@ -68,6 +68,7 @@ struct ByteEchoHost {
     dispatch: Cell<Option<unsafe extern "C" fn(*mut c_void, *const vosu_message) -> u32>>,
     memory: Vec<u8>,
     base: usize,
+    expected_stages: u32,
     result_buf: RefCell<Vec<u8>>,
 }
 
@@ -107,6 +108,7 @@ impl ByteEchoHost {
             dispatch: Cell::new(vt.dispatch),
             memory,
             base,
+            expected_stages: 1,
             result_buf: RefCell::new(Vec::new()),
         }
     }
@@ -128,13 +130,18 @@ impl HostServices for ByteEchoHost {
         let header: vosu_read_plan_submit_header =
             read_flat_header(payload).expect("well-formed submit header");
         assert_eq!(
-            header.stage_count, 1,
-            "PlanProcessMemory only ever emits one stage"
+            header.stage_count, self.expected_stages,
+            "the transport must retain the expected dependency shape"
         );
-        let stage: vosu_stage_header =
-            read_flat_header(&payload[header.stages_offset as usize..]).expect("stage header");
-        let op_size = core::mem::size_of::<vosu_plan_op>();
-        let op_count = stage.op_count as usize;
+        let stage_size = size_of::<vosu_stage_header>();
+        let stage_at = |index| -> vosu_stage_header {
+            read_flat_header(&payload[header.stages_offset as usize + index * stage_size..])
+                .expect("stage header")
+        };
+        let op_size = size_of::<vosu_plan_op>();
+        let op_count = (0..header.stage_count as usize)
+            .map(|index| stage_at(index).op_count as usize)
+            .sum::<usize>();
 
         let mut buf = self.result_buf.borrow_mut();
         buf.clear();
@@ -145,53 +152,73 @@ impl HostServices for ByteEchoHost {
         let reserved_len = buf.len() + entry_size * op_count;
         buf.resize(reserved_len, 0);
 
-        for op_index in 0..op_count {
-            let op: vosu_plan_op =
-                read_flat_header(&payload[stage.ops_offset as usize + op_index * op_size..])
-                    .expect("well-formed op header");
-            let address = i128::from(header.root.address)
-                + i128::from(stage.base.offset)
-                + i128::from(op.offset)
-                - i128::try_from(self.base).expect("test base fits i128");
-            let len = op.length as usize;
-            let entry = match usize::try_from(address).ok().and_then(|address| {
-                address
-                    .checked_add(len)
-                    .filter(|&end| end <= self.memory.len())
-                    .map(|end| (address, end))
-            }) {
-                Some((start, end)) => {
-                    let bytes_offset = buf.len() as u32;
-                    buf.extend_from_slice(&self.memory[start..end]);
-                    vosu_read_result_flat {
-                        kind: vosu_read_result_kind::VOSU_READ_OK as u32,
-                        bytes_offset,
-                        bytes_len: len as u32,
+        let mut op_index = 0;
+        for stage_index in 0..header.stage_count as usize {
+            let stage = stage_at(stage_index);
+            let root = if stage_index == 0 {
+                header.root.address
+            } else {
+                let reference = (0..stage.base.ref_stage as usize)
+                    .map(|index| stage_at(index).op_count as usize)
+                    .sum::<usize>()
+                    + stage.base.ref_op as usize;
+                let previous: vosu_read_result_flat =
+                    read_flat_header(&buf[results_offset as usize + reference * entry_size..])
+                        .unwrap();
+                let mut pointer = [0; 8];
+                pointer[..previous.bytes_len as usize].copy_from_slice(
+                    &buf[previous.bytes_offset as usize..][..previous.bytes_len as usize],
+                );
+                u64::from_le_bytes(pointer)
+            };
+            for local_index in 0..stage.op_count as usize {
+                let op: vosu_plan_op =
+                    read_flat_header(&payload[stage.ops_offset as usize + local_index * op_size..])
+                        .expect("well-formed op header");
+                let address =
+                    i128::from(root) + i128::from(stage.base.offset) + i128::from(op.offset)
+                        - i128::try_from(self.base).expect("test base fits i128");
+                let len = op.length as usize;
+                let entry = match usize::try_from(address).ok().and_then(|address| {
+                    address
+                        .checked_add(len)
+                        .filter(|&end| end <= self.memory.len())
+                        .map(|end| (address, end))
+                }) {
+                    Some((start, end)) => {
+                        let bytes_offset = buf.len() as u32;
+                        buf.extend_from_slice(&self.memory[start..end]);
+                        vosu_read_result_flat {
+                            kind: vosu_read_result_kind::VOSU_READ_OK as u32,
+                            bytes_offset,
+                            bytes_len: len as u32,
+                            error_code: 0,
+                            error_message_offset: 0,
+                            error_message_len: 0,
+                        }
+                    }
+                    None => vosu_read_result_flat {
+                        kind: vosu_read_result_kind::VOSU_READ_ERROR as u32,
+                        bytes_offset: 0,
+                        bytes_len: 0,
                         error_code: 0,
                         error_message_offset: 0,
                         error_message_len: 0,
-                    }
-                }
-                None => vosu_read_result_flat {
-                    kind: vosu_read_result_kind::VOSU_READ_ERROR as u32,
-                    bytes_offset: 0,
-                    bytes_len: 0,
-                    error_code: 0,
-                    error_message_offset: 0,
-                    error_message_len: 0,
-                },
-            };
-            let entry_region = results_offset as usize + op_index * entry_size;
-            // SAFETY: `vosu_read_result_flat` is a `#[repr(C)]` flat
-            // header struct of plain integers with no padding this byte
-            // read could expose uninitialized memory from.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(
-                    (&entry as *const vosu_read_result_flat).cast::<u8>(),
-                    entry_size,
-                )
-            };
-            buf[entry_region..entry_region + entry_size].copy_from_slice(bytes);
+                    },
+                };
+                let entry_region = results_offset as usize + op_index * entry_size;
+                // SAFETY: `vosu_read_result_flat` is a `#[repr(C)]` flat
+                // header struct of plain integers with no padding this byte
+                // read could expose uninitialized memory from.
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        (&entry as *const vosu_read_result_flat).cast::<u8>(),
+                        entry_size,
+                    )
+                };
+                buf[entry_region..entry_region + entry_size].copy_from_slice(bytes);
+                op_index += 1;
+            }
         }
 
         let result_header = vosu_read_plan_result_header {
@@ -287,4 +314,52 @@ fn read_many_is_allocation_free_once_warmed() {
     assert_eq!(b, bytes[100..200]);
     assert_eq!(c, bytes[200..300]);
     assert_eq!(allocations, 0, "a warmed-up read_many must not allocate");
+}
+
+#[test]
+fn read_chain_is_allocation_free_once_warmed() {
+    let mut bytes = vec![0; 96];
+    bytes[..8].copy_from_slice(&32u64.to_le_bytes());
+    bytes[36..44].copy_from_slice(&64u64.to_le_bytes());
+    bytes[72..76].copy_from_slice(&123u32.to_le_bytes());
+    let mut host = ByteEchoHost::new(bytes, 0);
+    host.expected_stages = 3;
+    let process = PlanProcessMemory::new(host, 1, 123, ProcessBitness::X64);
+    let mut dst = [0; 4];
+    process
+        .read_chain(0, &[4, 8], ProcessBitness::X64, &mut dst)
+        .unwrap();
+    let (result, allocations) =
+        allocations_during(|| process.read_chain(0, &[4, 8], ProcessBitness::X64, &mut dst));
+    result.unwrap();
+    assert_eq!(u32::from_le_bytes(dst), 123);
+    assert_eq!(allocations, 0, "dependent stages must remain stack-only");
+}
+
+#[test]
+fn indirect_many_is_allocation_free_once_warmed() {
+    let mut bytes = vec![0; 96];
+    bytes[..8].copy_from_slice(&32u64.to_le_bytes());
+    bytes[8..16].copy_from_slice(&64u64.to_le_bytes());
+    bytes[36..40].copy_from_slice(&123u32.to_le_bytes());
+    bytes[72..76].copy_from_slice(&456u32.to_le_bytes());
+    let mut host = ByteEchoHost::new(bytes, 0);
+    host.expected_stages = 3;
+    let process = PlanProcessMemory::new(host, 1, 123, ProcessBitness::X64);
+    let (mut a, mut b) = ([0; 4], [0; 4]);
+    let mut read = || {
+        process.read_indirect_many(
+            &mut [
+                vosu_osu_reader::process::IndirectReadRequest::new(0, 4, &mut a),
+                vosu_osu_reader::process::IndirectReadRequest::new(8, 8, &mut b),
+            ],
+            ProcessBitness::X64,
+        )
+    };
+    read().unwrap();
+    let (result, allocations) = allocations_during(read);
+    result.unwrap();
+    assert_eq!(u32::from_le_bytes(a), 123);
+    assert_eq!(u32::from_le_bytes(b), 456);
+    assert_eq!(allocations, 0, "dependent batches must remain stack-only");
 }

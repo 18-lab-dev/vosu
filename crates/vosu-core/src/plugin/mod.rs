@@ -73,7 +73,8 @@ pub use discovery::LinuxSource;
 #[cfg(target_os = "linux")]
 pub use discovery::linux_common;
 pub use discovery::{
-    DiscoveryCadence, DiscoveryService, FOREGROUND_POLL_INTERVAL, ProcessSource, cadence_interval,
+    DiscoveryCadence, DiscoveryService, FOREGROUND_POLL_INTERVAL, ProcessEventBatch, ProcessSource,
+    cadence_interval,
 };
 #[cfg(windows)]
 pub use discovery::{ForegroundPoller, WindowsProcessSource};

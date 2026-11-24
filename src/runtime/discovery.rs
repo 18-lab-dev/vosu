@@ -11,12 +11,8 @@
 //! directly, under the same [`PluginHost::has_enabled_matchers`] gate
 //! [`start_discovery`] applies.
 //!
-//! Separate from this crate's own 1.x-style discovery
-//! (`crate::instance::NativeProcessProvider`, wired in
-//! `ProductionRuntime::compose`): until a plugin with a `[match]` table
-//! is registered (`BUNDLED` holds none until `vosu-osu` lands), this
-//! module's [`start_discovery`] returns `None` and 1.x discovery stays
-//! the only active one — zero added cost in production today.
+//! This is the sole production discovery path. The bundled osu! plugin
+//! classifies sessions and publishes legacy surface state through B1.
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use std::io;
@@ -29,6 +25,8 @@ use vosu_core::plugin::Prefilter;
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use vosu_core::plugin::ProcessRecord;
 use vosu_core::plugin::{DiscoveryService, PluginHost, ProcessSource};
+
+pub(super) mod operational;
 
 /// Builds this platform's production [`ProcessSource`]
 /// (`docs/v2/implementation-plan.md` M1 §4, phase d2b, unit d): Linux
@@ -139,10 +137,7 @@ impl ProcessSource for PollingLinuxSource {
 /// returned service's one asynchronous wait, the same role it plays for
 /// [`DiscoveryService::start`] directly. Logs
 /// `"Process events backend: {name}"` (DI, `ProcessSource::backend_name`)
-/// exactly like 1.x's own startup log (`src/runtime/lifecycle.rs:340`,
-/// `tests/daemon_smoke.rs:1128`'s own assertion) — dormant today, since
-/// production's `BUNDLED` has no `[match]` table until `vosu-osu` lands
-/// (module doc comment), so this never actually runs in production yet.
+/// with the same backend name as the previous runtime.
 #[must_use]
 pub(super) fn start_discovery(
     plugin_host: &Arc<PluginHost>,
@@ -152,7 +147,10 @@ pub(super) fn start_discovery(
     if !plugin_host.has_enabled_matchers() {
         return None;
     }
-    let source = platform_process_source();
+    let source = Arc::new(operational::LoggedSource::new(
+        platform_process_source(),
+        logger.clone(),
+    ));
     logger.info(format!("Process events backend: {}", source.backend_name()));
     Some(DiscoveryService::start(plugin_host, source, runtime))
 }
@@ -215,11 +213,7 @@ mod tests {
         (log_dir, logger, host)
     }
 
-    /// The zero-cost case (M1 §4 phase d2b unit d's own "production
-    /// `BUNDLED` holds no matching plugin until `vosu-osu` lands"): no
-    /// plugin ever registered a `[match]` table, so `start_discovery`
-    /// must return `None` — no background thread spawned at all, exactly
-    /// production's own state today.
+    /// No enabled matcher means no source or discovery thread is needed.
     #[test]
     fn no_enabled_matchers_starts_no_discovery_thread() {
         let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");

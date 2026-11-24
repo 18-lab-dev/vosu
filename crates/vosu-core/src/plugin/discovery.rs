@@ -178,6 +178,7 @@ pub struct DiscoveryStats {
 /// back).
 #[derive(Debug, Default)]
 struct DiscoveryCounters {
+    last_scan_error: std::sync::Mutex<Option<String>>,
     full_scans: AtomicU64,
     targeted_inspections: AtomicU64,
     event_wakes: AtomicU64,
@@ -402,10 +403,30 @@ fn full_reconcile(
     let current = match source.enumerate() {
         Ok(current) => current,
         Err(error) => {
-            tracing::warn!(%error, "discovery full reconcile failed; retrying next cycle");
+            let message = error.to_string();
+            let changed = {
+                let mut previous = counters
+                    .last_scan_error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if previous.as_ref() == Some(&message) {
+                    false
+                } else {
+                    *previous = Some(message.clone());
+                    true
+                }
+            };
+            if changed {
+                tracing::error!("Process discovery scan failed: {message}");
+            }
             return false;
         }
     };
+    counters
+        .last_scan_error
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
     let mut seen = HashSet::with_capacity(current.len());
     for record in current {
         seen.insert(record.pid);
@@ -571,7 +592,7 @@ fn apply_batch(
                     .fetch_add(1, Ordering::Relaxed);
             }
             Err(error) => {
-                tracing::warn!(%error, pid, "discovery targeted inspect failed; forcing a full reconcile");
+                tracing::error!("Targeted process inspection failed for PID {pid}: {error}");
                 needs_reconcile = true;
                 degraded = true;
             }

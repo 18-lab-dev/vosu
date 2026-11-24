@@ -159,6 +159,10 @@ harness = false
 name = "brokered_reads_bench"
 harness = false
 
+[[bench]]
+name = "plan_memory_bench"
+harness = false
+
 [[example]]
 name = "live_reader_bench"
 

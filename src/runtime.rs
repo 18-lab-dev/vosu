@@ -32,7 +32,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use vosu_osu::capture::poll_duration;
 use vosu_osu_model::enums::ClientType;
-use vosu_osu_reader::memory::{ReaderSynchronization, lazer_loader::LazerOffsetLoader};
 use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
@@ -40,11 +39,7 @@ use crate::{
         ApiError, ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot,
         ManagerSnapshot, SnapshotManager,
     },
-    assets::DaemonAssets,
     counters::ReloadableCounterService,
-    instance::{
-        InstanceGeneration, InstanceLifecycleSnapshot, InstanceRuntime, NativeProcessProvider,
-    },
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
         catalog::{CatalogOverlay, CatalogService, LocalOverlay},
@@ -87,11 +82,9 @@ use vosu_core::{
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
-use vosu_osu_state::{
-    Delivery, SnapshotPublisher, StateBundleSnapshot, StateWorkerError,
-    duration_from_millis_saturating,
-};
+use vosu_osu_state::{StateBundleSnapshot, StateWorkerError, duration_from_millis_saturating};
 
+pub(crate) mod bridge_b1;
 mod cli;
 mod config;
 mod dev_plugins;
@@ -103,6 +96,7 @@ mod render;
 mod service;
 #[cfg(feature = "test-harness")]
 mod test_support;
+mod tracing_log;
 mod worker;
 
 #[cfg(feature = "test-harness")]
@@ -115,24 +109,22 @@ pub use projection::{
 pub use test_support::{
     TestProductionComposition, TestProductionCompositionOptions, start_test_production_composition,
 };
-pub use worker::{ListenerOwner, ProductionStateSupervisor, WebSocketHubs};
+pub use worker::{ListenerOwner, WebSocketHubs};
 
+#[cfg(test)]
+use bridge_b1::*;
 use config::*;
 #[cfg(test)]
 use lifecycle::*;
 use projection::*;
 use render::*;
 use service::*;
-use vosu_osu_reader::offset_generator::EmbeddedOffsetGenerator;
 #[cfg(test)]
-use worker::*;
+use vosu_osu_state::{Delivery, SnapshotPublisher};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::sync::{Mutex, atomic::Ordering};
 
     use tokio::sync::mpsc;
 
@@ -140,6 +132,7 @@ mod tests {
 
     include!("runtime/tests/cli.rs");
     include!("runtime/tests/worker.rs");
+    include!("runtime/tests/bridge_b1.rs");
     include!("runtime/tests/projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");

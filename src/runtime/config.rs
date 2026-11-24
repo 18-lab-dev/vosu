@@ -331,11 +331,8 @@ pub(super) fn apply_config_values(
     string!("ALLOWED_IPS", allowed_ips);
 }
 
-pub(super) type DashboardLifecycle = Arc<
-    arc_swap::ArcSwapOption<
-        tokio::sync::watch::Receiver<Arc<crate::instance::InstanceLifecycleSnapshot>>,
-    >,
->;
+pub(super) type DashboardLifecycle =
+    Arc<arc_swap::ArcSwapOption<watch::Receiver<Arc<super::bridge_b1::B1Lifecycle>>>>;
 
 #[derive(Clone)]
 pub(super) struct RuntimeReportInput {
@@ -367,7 +364,7 @@ impl ReportInputProvider for RuntimeReportInput {
         };
         let instances = if let Some(lifecycle) = lifecycle {
             lifecycle
-                .instances
+                .sessions
                 .iter()
                 .map(|detected| {
                     let entry = combined
@@ -377,10 +374,12 @@ impl ReportInputProvider for RuntimeReportInput {
                         .filter(|entry| entry.state().generation == detected.generation);
                     let state = if entry.is_some() {
                         "reading"
-                    } else if detected.offset_ready {
-                        "starting reader"
                     } else {
-                        "resolving offsets"
+                        match detected.phase {
+                            vosu_osu::bridge_b1::B1Phase::ResolvingOffsets => "resolving offsets",
+                            vosu_osu::bridge_b1::B1Phase::StartingReader => "starting reader",
+                            vosu_osu::bridge_b1::B1Phase::Reading => "reading",
+                        }
                     };
                     render(detected.pid, detected.client, entry, state)
                 })

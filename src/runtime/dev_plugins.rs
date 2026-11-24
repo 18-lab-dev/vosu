@@ -31,43 +31,54 @@ fn bundled_data_dir(paths: &Paths, plugin_id: &str) -> PathBuf {
     paths.data().join("plugins").join(plugin_id)
 }
 
-/// Loads `plugins::BUNDLED` (D13) through the host's registry and
-/// registers an instance with `host` for each entry, in array order. §7.1
-/// grants `in-process` unconditionally to the explicit `BUNDLED` array, so
-/// unlike a development plugin there is no trust refusal to handle here —
-/// only `create` itself failing, which is logged and skipped rather than
-/// failing startup. Returns the number of ids this pass assigned (used,
-/// even failed, so a later failure never reuses an id another entry still
-/// expects), the offset [`load_development`] numbers its own instances
-/// from.
+/// Loads the production-required osu! entry first, followed by optional bundled
+/// fixtures. Required-plugin failure aborts composition; optional fixtures keep
+/// warn-and-continue behavior. Array positions remain reserved even on failure.
 pub(super) fn load_bundled(
     host: &Arc<PluginHost>,
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
     pool: &Arc<WorkerPool>,
-) -> u64 {
-    let loaded = match plugin::load_bundled(crate::plugins::BUNDLED) {
-        Ok(loaded) => loaded,
-        Err(error) => {
-            logger.warn(format!("bundled plugin registry failed to load: {error}"));
-            return 0;
-        }
-    };
-    for (index, loaded) in loaded.iter().enumerate() {
-        let plugin_id = &loaded.manifest().id;
-        let data_dir = bundled_data_dir(paths, plugin_id);
-        if let Err(error) = host.create_instance(
-            PluginInstanceId::new(index as u64),
-            loaded,
-            data_dir,
-            Some(Arc::clone(pool)),
-        ) {
+    bundled: &[plugin::BundledPlugin<'_>],
+) -> std::io::Result<u64> {
+    if bundled.is_empty() {
+        return Err(std::io::Error::other(
+            "required bundled plugin vosu.osu is missing",
+        ));
+    }
+    for (index, entry) in bundled.iter().enumerate() {
+        // BUNDLED's first entry is the production-required plugin. Check the
+        // identity after parsing too, so omission/reordering cannot half-start.
+        let result = (|| {
+            let loaded =
+                plugin::load_bundled(std::slice::from_ref(entry)).map_err(std::io::Error::other)?;
+            let loaded = &loaded[0];
+            let plugin_id = &loaded.manifest().id;
+            if index == 0 && plugin_id != "vosu.osu" {
+                return Err(std::io::Error::other(
+                    "required bundled plugin vosu.osu is missing",
+                ));
+            }
+            host.create_instance(
+                PluginInstanceId::new(index as u64),
+                loaded,
+                bundled_data_dir(paths, plugin_id),
+                Some(Arc::clone(pool)),
+            )
+            .map_err(std::io::Error::other)
+        })();
+        if let Err(error) = result {
+            if index == 0 {
+                return Err(std::io::Error::other(format!(
+                    "required bundled plugin vosu.osu failed: {error}"
+                )));
+            }
             logger.warn(format!(
-                "bundled plugin {plugin_id:?}: create failed: {error}"
+                "optional bundled plugin at index {index} failed: {error}"
             ));
         }
     }
-    loaded.len() as u64
+    Ok(bundled.len() as u64)
 }
 
 /// Loads and registers every `--plugin <dir>` directory with `host`, in
@@ -114,8 +125,9 @@ pub(super) fn load_all(
     dev_dirs: Vec<PathBuf>,
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
-) {
+) -> std::io::Result<()> {
     let pool = WorkerPool::new(PLUGIN_CONCURRENT_WORKERS, DEFAULT_QUEUE_CAPACITY);
-    let offset = load_bundled(host, paths, logger, &pool);
+    let offset = load_bundled(host, paths, logger, &pool, crate::plugins::BUNDLED)?;
     load_development(host, dev_dirs, offset, logger, &pool);
+    Ok(())
 }

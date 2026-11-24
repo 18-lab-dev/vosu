@@ -187,6 +187,16 @@ root.
 
 The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation. The analogous `--plugin <directory>` repeatable argument loads an in-process development plugin (`docs/v2/plugin-abi.md`) from a directory holding its own `manifest.toml` and compiled library; like `--tool`, it is a debug-build-only trust override and is refused outright in a release build.
 
+Production startup requires the bundled `vosu.osu` plugin and its discovery
+service. A missing plugin, load/create failure, or absent discovery service
+stops startup rather than serving silently without game discovery. No running
+osu! process is not an error: the first successful scan logs
+`Initial process discovery completed: N osu! process candidate(s)` (including
+zero). On attachment, `Found osu! process PID N (CLIENT); probing memory`
+reports a candidate, not proof that capture is ready. Plugin startup errors are
+reported as `Plugin startup failed: ...`. The daemon forwards all tracing
+WARN/ERROR events, plus INFO from `vosu_*` targets, into its normal logs.
+
 Offset resolution is automatic. For each discovered osu!lazer process, vosu first
 checks a valid cache entry for that exact process version, then the matching
 embedded offsets asset, and finally runs the embedded self-contained generator
@@ -197,7 +207,7 @@ does not replace an existing cache entry.
 
 End users do not install .NET, an SDK, a source checkout, or a runtime override.
 The generator payload is embedded in release binaries and is extracted into the
-normal per-user cache only when an exact process needs generation. A release
+plugin's data directory only when an exact process needs generation. A release
 binary must contain its matching generator payload; a debug/development binary
 without a prepared payload reports an explicit missing-bundle error rather than
 falling back to a remote source.
@@ -209,11 +219,15 @@ fork. The verified embedded payload supplies the helper code; neither the game
 installation nor the extracted payload is modified. Linux links the client
 runtime files; Windows hard-links them when possible and copies them otherwise.
 
-Offset caches live under the platform cache root:
+Offset caches now live in the bundled osu! plugin's data directory:
 
-- Linux: `$XDG_CACHE_HOME/vosu/offsets`, defaulting to `$HOME/.cache/vosu/offsets`.
-- Windows: `.cache\offsets` under the portable executable directory (the
-  canonical Windows cache root).
+- Linux: `${XDG_DATA_HOME:-$HOME/.local/share}/vosu/plugins/vosu.osu/offsets`.
+- Windows: `plugins\vosu.osu\offsets` under the portable executable directory.
+
+M1 does not migrate the former platform-cache `offsets` directory. Existing
+files are left untouched; when embedded offsets do not match, the first load of
+each lazer version regenerates locally. The generator payload and scratch
+workspace live in the sibling `offset-generator` directory.
 
 Offset entries are keyed by client version and remain the validated
 `<version>.json` contract. The separately extracted generator payload cache is

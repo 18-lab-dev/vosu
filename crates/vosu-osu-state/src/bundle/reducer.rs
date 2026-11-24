@@ -619,7 +619,7 @@ impl StateBundle {
                             error = %message,
                             "state calculation failed; retaining stale state"
                         );
-                    } else {
+                    } else if self.calculation_failures == 11 {
                         tracing::error!(
                             source = ?self.source,
                             failures = self.calculation_failures,

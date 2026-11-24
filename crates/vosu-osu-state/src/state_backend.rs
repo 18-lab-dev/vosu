@@ -771,7 +771,7 @@ fn report_retained_error(kind: &'static str, count: &mut u64, error: &str) {
     *count = count.saturating_add(1);
     if *count <= 10 {
         tracing::debug!(calculation = kind, failure_count = *count, %error);
-    } else {
+    } else if *count == 11 {
         tracing::error!(calculation = kind, failure_count = *count, %error);
     }
 }

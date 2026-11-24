@@ -85,6 +85,91 @@ fn fixture(memory: SparseMemory, bitness: ProcessBitness) -> (Arc<SparseMemory>,
 }
 
 #[test]
+fn dependent_native_reads_preserve_partial_writes_and_error_order() {
+    let mut memory = SparseMemory::default();
+    memory.put_u32(0x1000, 0x2000);
+    memory.put(0x2004, [1, 2]);
+    let (memory, handle) = fixture(memory, ProcessBitness::X64);
+    let mut dst = [7; 4];
+    let error = handle
+        .read_chain(0x1000, &[4], ProcessBitness::X86, &mut dst)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MemoryError::Read {
+            address: 0x2004,
+            len: 4,
+            ..
+        }
+    ));
+    assert_eq!(dst, [1, 2, 7, 7]);
+    assert_eq!(memory.exact_calls.load(Ordering::SeqCst), 2);
+    let error = handle
+        .read_chain(0x3000, &[usize::MAX], ProcessBitness::X86, &mut dst)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            MemoryError::Read {
+                address: 0x3000,
+                ..
+            }
+        ),
+        "a pointer read failure precedes address arithmetic"
+    );
+    assert_eq!(dst, [1, 2, 7, 7]);
+}
+
+#[test]
+fn dependent_native_reads_check_resolved_address_overflow() {
+    let mut memory = SparseMemory::default();
+    memory.put_u64(0x1000, u64::MAX);
+    let (_, handle) = fixture(memory, ProcessBitness::X64);
+    let mut dst = [7; 4];
+    assert_eq!(
+        handle.read_chain(0x1000, &[1], ProcessBitness::X64, &mut dst),
+        Err(MemoryError::AddressOverflow {
+            base: usize::MAX,
+            offset: 1
+        })
+    );
+    assert_eq!(dst, [7; 4]);
+}
+
+#[test]
+fn indirect_native_reads_retain_two_batches_and_partial_destination_behavior() {
+    let mut memory = SparseMemory::default();
+    memory.put_u32(0x1000, 0x2000);
+    memory.put_u32(0x1010, 0x3000);
+    memory.put(0x2004, [1, 2, 3, 4]);
+    memory.put(0x3008, [5, 6]);
+    let (memory, handle) = fixture(memory, ProcessBitness::X86);
+    let (mut a, mut b) = ([7; 4], [7; 4]);
+    let error = handle
+        .read_indirect_many(
+            &mut [
+                IndirectReadRequest::new(0x1000, 4, &mut a),
+                IndirectReadRequest::new(0x1010, 8, &mut b),
+            ],
+            ProcessBitness::X86,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MemoryError::Read {
+            address: 0x3008,
+            len: 4,
+            ..
+        }
+    ));
+    assert_eq!(a, [1, 2, 3, 4]);
+    assert_eq!(b, [5, 6, 7, 7]);
+    assert_eq!(memory.many_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(memory.many_requests.load(Ordering::SeqCst), 4);
+    assert_eq!(memory.exact_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn scalar_readers_are_little_endian() {
     let mut memory = SparseMemory::default();
     memory.put(0x1000, [0xfe]);

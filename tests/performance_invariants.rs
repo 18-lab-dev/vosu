@@ -262,6 +262,62 @@ fn scalar_readers_allocate_nothing() {
     );
 }
 
+#[cfg(feature = "test-harness")]
+#[path = "../examples/live_reader_bench/plan.rs"]
+mod plan_attachment;
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn plan_memory_scalar_readers_allocate_nothing() {
+    let pid = 910_600_101;
+    struct InjectedSession(u32);
+    impl Drop for InjectedSession {
+        fn drop(&mut self) {
+            vosu_core::plugin::test_support::clear_session_memory(self.0);
+        }
+    }
+    let mut bytes = vec![0_u8; 64];
+    bytes[0..8].copy_from_slice(&0x0123_4567_89AB_CDEF_u64.to_le_bytes());
+    bytes[8..16].copy_from_slice(&42.25_f64.to_le_bytes());
+    vosu_core::plugin::test_support::set_session_memory(
+        pid,
+        Arc::new(FixtureMemory {
+            base: 0x1000,
+            bytes: bytes.into(),
+            max_read: Arc::new(AtomicUsize::new(0)),
+        }),
+        ProcessBitness::X64,
+    );
+    let _injected = InjectedSession(pid);
+    let mut record = plan_attachment::native_record(std::process::id()).unwrap();
+    record.pid = pid;
+    let attachment = plan_attachment::Attachment::new(record, "vosu.test.plan.scalar").unwrap();
+    let handle = &attachment.process;
+    let read = || {
+        black_box((
+            handle.read_u8(0x1000).unwrap(),
+            handle.read_i8(0x1000).unwrap(),
+            handle.read_u16(0x1000).unwrap(),
+            handle.read_i16(0x1000).unwrap(),
+            handle.read_u32(0x1000).unwrap(),
+            handle.read_i32(0x1000).unwrap(),
+            handle.read_u64(0x1000).unwrap(),
+            handle.read_i64(0x1000).unwrap(),
+            handle.read_f32(0x1008).unwrap(),
+            handle.read_f64(0x1008).unwrap(),
+            handle.read_bool(0x1000).unwrap(),
+        ))
+    };
+    read();
+    let (values, allocations) = allocations_during(read);
+    assert_eq!(values.6, 0x0123_4567_89AB_CDEF);
+    assert_eq!(values.9, 42.25);
+    assert_eq!(
+        allocations, 0,
+        "warmed scalar readers over the real host must remain stack-only"
+    );
+}
+
 #[test]
 fn scanner_scratch_is_bounded_to_one_mib_plus_overlap() {
     let pattern_len = 257;

@@ -654,3 +654,36 @@ fn windows_native_backend_opens_and_reads_this_process() {
     assert!(handle.is_alive());
     assert_eq!(handle.read_u64(address).unwrap(), *marker);
 }
+
+#[path = "../examples/live_reader_bench/plan.rs"]
+mod plan_attachment;
+
+fn plan_memory_reads_this_process() {
+    static MARKER: u64 = 0x6a91_b72c_34df_0805;
+    let pid = std::process::id();
+    let attachment = plan_attachment::Attachment::new(
+        plan_attachment::native_record(pid).unwrap(),
+        "vosu.test.native.plan",
+    )
+    .unwrap();
+    assert_eq!(attachment.process.process_id(), Some(pid));
+    assert_eq!(
+        attachment
+            .process
+            .read_u64((&MARKER as *const u64) as usize)
+            .unwrap(),
+        MARKER
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_plan_memory_reads_this_process() {
+    plan_memory_reads_this_process();
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_plan_memory_reads_this_process() {
+    plan_memory_reads_this_process();
+}

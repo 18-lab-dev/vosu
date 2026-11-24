@@ -96,8 +96,25 @@ impl StableMemory {
     pub(super) fn ptr(&self, a: usize) -> Result<usize, MemoryError> {
         Ok(self.process.read_u32(a)? as usize)
     }
+    pub(super) fn chain<const N: usize>(
+        &self,
+        address: usize,
+        offsets: &[usize],
+    ) -> Result<[u8; N], MemoryError> {
+        let mut bytes = [0; N];
+        self.process.read_chain(
+            address,
+            offsets,
+            crate::process::ProcessBitness::X86,
+            &mut bytes,
+        )?;
+        Ok(bytes)
+    }
     pub(super) fn ptr2(&self, a: usize) -> Result<usize, MemoryError> {
-        self.ptr(self.ptr(a)?)
+        let mut bytes = [0; 4];
+        self.process
+            .read_chain(a, &[0], crate::process::ProcessBitness::X86, &mut bytes)?;
+        Ok(u32::from_le_bytes(bytes) as usize)
     }
     pub(super) fn string(&self, a: usize) -> Result<String, MemoryError> {
         match self.process.read_stable_string(a)? {

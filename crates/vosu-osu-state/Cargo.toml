@@ -33,3 +33,4 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Media"] }
 md-5 = "0.11.0"
 tempfile = "3.26.0"
 vosu-proptest = { path = "../vosu-proptest" }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["registry"] }

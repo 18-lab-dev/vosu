@@ -725,13 +725,14 @@ fn register_session<H, G>(
     if registered {
         if let Some(sink) = vosu_surface::current::<B1Event, B1Inputs>() {
             let warn = log_warn(host);
+            let error = log_error(host);
             let session = {
                 let state = state.lock().expect("plugin state mutex poisoned");
                 state.sessions.get(&handle).cloned()
             };
             if let Some(session) = session {
                 runtime_handle.spawn(async move {
-                    session.start_capture(sink, warn).await;
+                    session.start_capture(sink, warn, error).await;
                 });
             }
         } else {
@@ -757,6 +758,13 @@ fn log_warn<H: HostServices + Send + Sync + 'static>(host: &Arc<H>) -> LogWarn {
     let host = Arc::clone(host);
     Arc::new(move |message: String| {
         let _ = host.log(LogLevel::Warn, &message, CborValue::Map(Vec::new()));
+    })
+}
+
+fn log_error<H: HostServices + Send + Sync + 'static>(host: &Arc<H>) -> LogWarn {
+    let host = Arc::clone(host);
+    Arc::new(move |message: String| {
+        let _ = host.log(LogLevel::Error, &message, CborValue::Map(Vec::new()));
     })
 }
 

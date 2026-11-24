@@ -29,4 +29,6 @@ pub use readers::*;
 pub use worker::*;
 
 #[cfg(test)]
+mod test_logging;
+#[cfg(test)]
 mod tests;

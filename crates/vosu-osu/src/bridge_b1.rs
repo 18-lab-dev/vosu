@@ -104,7 +104,7 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for B1Publisher {
         snapshot: Arc<StateBundleSnapshot>,
         delivery: Delivery,
     ) -> Result<(), StateWorkerError> {
-        let api = {
+        let (api, first_publication) = {
             let mut last = self
                 .last
                 .lock()
@@ -118,9 +118,10 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for B1Publisher {
             if unchanged(&last.live, &snapshot) && unchanged(&last.api, &api) {
                 return Ok(());
             }
+            let first_publication = last.live.is_none();
             last.api = Some(Arc::clone(&api));
             last.live = Some(Arc::clone(&snapshot));
-            api
+            (api, first_publication)
         };
         // No publication lock is held across the sink callback: it may re-enter.
         // LegacySink::send is non-blocking and coalesces at the root boundary.
@@ -129,6 +130,12 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for B1Publisher {
             api,
             live: snapshot,
         });
+        if first_publication {
+            self.sink.send(B1Event::Phase {
+                key: self.key,
+                phase: B1Phase::Reading,
+            });
+        }
         Ok(())
     }
 }

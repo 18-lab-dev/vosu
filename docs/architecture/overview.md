@@ -45,13 +45,15 @@ The daemon boundary is the `vosu` process; hosted tools are supervised out-of-pr
 flowchart TB
     Entry[src/main.rs] --> Runtime[src/runtime/lifecycle.rs<br/>ProductionRuntime]
     Runtime --> Config[crates/vosu-core/src/config<br/>ConfigStore]
-    Runtime --> Instances[src/instance.rs<br/>InstanceRuntime and InstanceManager]
-    Instances --> Process[src/process.rs and src/process/*<br/>ProcessHandle and ProcessMemory]
-    Process --> Readers[src/memory/*<br/>stable and lazer readers]
-    Runtime --> Supervisor[src/runtime/worker.rs<br/>ProductionStateSupervisor]
-    Readers --> Workers[src/state/worker.rs<br/>regular and precise capture]
-    Workers --> Reducer[src/state/bundle/*<br/>StateBundle]
-    Reducer --> Snapshot[src/api/snapshot.rs<br/>SnapshotManager]
+    Runtime --> Discovery[crates/vosu-core/src/plugin/discovery.rs<br/>DiscoveryService]
+    Discovery --> Plugin[crates/vosu-osu<br/>classification and session lifecycle]
+    Plugin --> Process[vosu-plugin-api PlanMemory<br/>core executor over vosu-sys]
+    Process --> Readers[crates/vosu-osu-reader<br/>stable and lazer readers]
+    Runtime --> Supervisor[src/runtime/worker.rs and bridge_b1.rs<br/>ProductionStateSupervisor and interim B1]
+    Readers --> Workers[crates/vosu-osu-state/src/worker.rs<br/>regular and precise capture]
+    Workers --> Reducer[crates/vosu-osu-state/src/bundle<br/>StateBundle]
+    Reducer --> Supervisor
+    Supervisor --> Snapshot[src/api/snapshot.rs<br/>SnapshotManager]
     Snapshot --> Schemas[src/api/{v1,v2,precise,sc}.rs]
     Schemas --> Server[src/server/*<br/>Axum HTTP and WebSocket]
     Reducer --> Calc[src/calculation/* and<br/>crates/vosu-pp]
@@ -60,7 +62,7 @@ flowchart TB
     Runtime --> Desktop[crates/vosu-core/src/desktop/*<br/>tray and login service]
 ```
 
-`src/main.rs` only constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `src/runtime/lifecycle.rs::ProductionRuntime` is the composition root and owns every long-lived service: configuration, logging, authorization, listener, WebSocket hubs, command processor and relays, counters, instance runtime, state supervisor, update handoff, and shutdown token. Its shutdown order first stops new HTTP accepts, closes WebSockets, then joins downstream services before configuration and logging.
+`src/main.rs` constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `ProductionRuntime` composes configuration, logging, authorization, listeners, hubs, counters, core discovery, required bundled `vosu.osu`, and the interim B1 supervisor. Missing/failed production plugin load/create or absent discovery fails composition; there is no 1.x fallback. Shutdown stops accepts and WebSockets, then stops discovery/foreground polling, destroys plugins (joining their session work), and joins B1 before configuration and logging.
 
 `crates/vosu-core/src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
@@ -72,11 +74,12 @@ generator returns bytes; the loader validates them and atomically installs the
 versioned offsets cache entry.
 
 The platform-matching generator ZIP and checksum are embedded in release
-binaries. On first use, the daemon extracts the payload into the normal
-`offset-generator` cache and reuses it only when its embedded checksum matches.
-The offsets cache remains the validated versioned `<version>.json` contract;
-bundle identity does not become offset-file metadata. No remote offset source,
-local-source environment override, or global process scan is involved.
+binaries. On first use, the plugin extracts the payload into
+`<data>/plugins/vosu.osu/offset-generator` and reuses it only when its embedded
+checksum matches. Validated versioned offsets live in the sibling
+`offsets/<version>.json`; M1 does not migrate the old `<cache>/offsets` directory
+(DH). No remote offset source, local-source environment override, or global
+process scan is involved.
 The generator uses no user-installed .NET runtime. Release builds require the
 payload; a debug/development build without one reports an explicit
 missing-bundle error. Maintainer preparation uses the .NET SDK and
@@ -100,7 +103,7 @@ checksum-verified payload and game installation remain untouched.
 | Concern | Primary ownership | Main entry points |
 |---|---|---|
 | Startup and process-wide lifecycle | `crates/vosu-core/src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
-| Client discovery, generations, focus | `src/instance.rs`, `src/instance/discovery.rs` | `InstanceRuntime`, `InstanceManager`, `classify_candidates` |
+| Client discovery, generations, focus | `crates/vosu-core/src/plugin/discovery.rs`, `crates/vosu-osu/src/plugin.rs`, `src/runtime/bridge_b1.rs` | `DiscoveryService`, plugin classification/identification, interim B1 selection/focus |
 | Native process access | `src/process.rs`, `src/process/linux.rs`, `src/process/windows.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
 | Signature/offset scanning | `src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
 | Raw client decoding | `src/memory/stable/*`, `src/memory/lazer/*`, `src/memory/snapshot/*` | `MemoryReader`, `StableMemory`, `LazerMemory`, raw snapshots |
@@ -122,14 +125,14 @@ checksum-verified payload and game installation remain untouched.
 
 ```mermaid
 sequenceDiagram
-    participant D as InstanceRuntime
+    participant D as Core DiscoveryService and vosu.osu sessions
     participant M as Memory readers
     participant W as State worker
     participant R as StateBundle reducer
     participant P as SnapshotManager
     participant A as HTTP and WebSocket APIs
 
-    D->>W: ready InstanceGeneration
+    D->>W: identified session generation, offsets ready
     par regular reader thread
         W->>M: capture regular plan and context
         M-->>W: RawRegularSnapshot
@@ -146,9 +149,9 @@ sequenceDiagram
 
 ### Discovery and reader boundary
 
-`InstanceRuntime` repeatedly asks `NativeProcessProvider` for candidates. `src/instance/discovery.rs::classify_candidates` performs platform-specific classification; Linux uses a named first pass before its broader lazer fallback. On Windows, discovery caches bitness and command-line metadata by PID, but invalidates that entry when `GetProcessTimes` reports a new creation time, so PID reuse cannot inherit stale instance arguments or roots. `InstanceManager` validates and opens candidates, assigns a monotonically increasing generation, removes dead processes, and deterministically selects tournament manager first or otherwise the lowest matching PID. A reused PID therefore becomes a new generation rather than mutating an existing worker.
+Core's `DiscoveryService` queries a platform `ProcessSource`, matches enabled plugin manifests, and owns session generations. `vosu-osu` parses the attached process facts, declines tournament/debug clients, classifies stable/lazer, and identifies sessions. Linux fallback candidates settle once against named siblings from the discovery pass; their variant then stays fixed for that generation. Windows metadata is keyed by PID plus process start time, so reuse invalidates cached facts and detaches the old generation before attaching the new one. B1 retains the 1.x tournament-manager/foreground-client/lowest-PID selection until M4a; core's API-v1 Focus rule is separate.
 
-`src/process.rs::ProcessMemory` is the object-safe syscall boundary. Platform backends own native handles and must either fill every requested destination or return an error. `ProcessHandle` adds pointer-width-aware primitive, managed collection, batch, liveness, and module operations above that boundary. Stable signature discovery and lazer offset resolution stay outside the OS backend. Each lazer generation starts at most one lifecycle-owned offset resolver and is not eligible for a state worker until immutable offsets are installed; stable generations are ready immediately (`Instance::start_lazer_resolver`, `ProductionStateSupervisor::run_state_supervisor`).
+`vosu-sys::process::ProcessMemory` is the native all-or-error syscall boundary. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
 
 `src/memory.rs::MemoryReader` is the client-decoding boundary. Stable and lazer implementations translate client-specific pointers and sentinels into typed raw snapshots and `ReadStatus`. Regular and precise reader instances are independent because their blocking capture threads cannot share mutable pointer caches. `ReaderSynchronization` copies only the small address state needed by lazer precise capture; stable leaves it empty.
 
@@ -227,7 +230,7 @@ Candidate/rollback readiness uses a one-use secret delivered only through the ex
 - Latest-only precise capture, per-PID worker-to-supervisor publication slots, and atomic snapshots bound queue growth and prevent mixed publications. A late publication from an older process generation cannot replace a newer pending generation.
 - Read errors are retained/reported according to method-specific policies in `crates/vosu-osu-reader/src/memory.rs::ErrorReportCounters`; transient target races need not erase last-good state. Corrupt lengths and address arithmetic fail explicitly at the process boundary.
 - A failed listener reload leaves the previous listener effective. Listener shutdown stops accepts, waits up to `src/server/runtime.rs::DRAIN_TIMEOUT`, then cancels survivors.
-- Configuration, logging, startup recovery, initial binding, and required embedded offsets can fail startup. A quarantined update recovery is logged and startup continues; active-owner conflicts receive the dedicated exit status.
+- Configuration, logging, startup recovery, initial binding, required embedded offsets, required `vosu.osu` load/create, and missing production discovery can fail startup. A quarantined update recovery is logged and startup continues; active-owner conflicts receive the dedicated exit status.
 - Shutdown is dependency ordered in `ProductionRuntime::shutdown`, and WebSockets close before their backing snapshot provider can be dropped.
 
 ## Quality risks and change hotspots

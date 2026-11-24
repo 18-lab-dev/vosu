@@ -84,8 +84,12 @@ async fn stable_capture_attaches_scans_reads_and_detaches_after_join() {
     let session = capture_session(61051, ClientType::Stable);
     let (sink, mut events) = sink();
     let target: Arc<B1Sink> = sink;
-    session.start_capture(target.clone(), noop_warn()).await;
-    session.start_capture(target, noop_warn()).await;
+    session
+        .start_capture(target.clone(), noop_warn(), noop_warn())
+        .await;
+    session
+        .start_capture(target, noop_warn(), noop_warn())
+        .await;
     match event(&mut events).await {
         B1Event::Attached {
             key,
@@ -145,7 +149,7 @@ async fn stable_capture_attaches_scans_reads_and_detaches_after_join() {
 async fn lazer_capture_waits_for_offsets_and_cancel_releases_the_session() {
     let session = capture_session(61052, ClientType::Lazer);
     let (sink, mut events) = sink();
-    session.start_capture(sink, noop_warn()).await;
+    session.start_capture(sink, noop_warn(), noop_warn()).await;
     assert!(matches!(event(&mut events).await, B1Event::Attached { .. }));
     assert!(matches!(
         event(&mut events).await,
@@ -170,7 +174,7 @@ async fn cancelled_session_never_attaches_capture() {
     let session = capture_session(61053, ClientType::Stable);
     let (sink, mut events) = sink();
     session.cancel();
-    session.start_capture(sink, noop_warn()).await;
+    session.start_capture(sink, noop_warn(), noop_warn()).await;
     assert!(session.capture.lock().await.is_none());
     assert!(events.try_recv().is_err());
 }
@@ -188,7 +192,7 @@ async fn installing_offsets_wakes_capture_without_waiting_for_retry_delay() {
     );
     let offsets = Arc::new(LazerOffsets::embedded().unwrap());
     let (sink, mut events) = sink();
-    session.start_capture(sink, noop_warn()).await;
+    session.start_capture(sink, noop_warn(), noop_warn()).await;
     assert!(matches!(event(&mut events).await, B1Event::Attached { .. }));
     assert!(matches!(
         event(&mut events).await,
@@ -234,7 +238,9 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
     use vosu_osu_state::{ReaderSettings, SubscriptionDemand};
     let session = capture_session(61102, ClientType::Stable);
     let (sink, mut events) = sink();
-    session.start_capture(sink.clone(), noop_warn()).await;
+    session
+        .start_capture(sink.clone(), noop_warn(), noop_warn())
+        .await;
     assert!(matches!(event(&mut events).await, B1Event::Attached { .. }));
     assert!(matches!(
         event(&mut events).await,
