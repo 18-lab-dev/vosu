@@ -10,15 +10,16 @@
 # period) and reports it as a timeout failure naming the test. A timed
 # baseline run (`cargo nextest run --workspace --lib --bins --tests
 # --examples --all-features --locked`, warm target dir) found the slowest
-# test at ~15s on Linux, well under the default bound, so there is no
-# Linux-only override.
+# test at 15.298s on Linux (2,067 tests, warm target directory). No Linux
+# test exceeded 20s, so none needs a wider explicit override. The default
+# kills a stuck test after two 30-second periods instead of five minutes.
 [profile.default]
 retries = 0
-slow-timeout = { period = "60s", terminate-after = 5 }
+slow-timeout = { period = "30s", terminate-after = 2 }
 
 # The same baseline run on the native Windows VM found one test past the
-# default 60s/5-period bound: `vosu-sys` platform::windows::tests::
-# concurrent_readers_never_observe_missing_file measured 99.1s. It is a
+# default bound: `vosu-sys` platform::windows::tests::
+# concurrent_readers_never_observe_missing_file previously measured 99.1s. It is a
 # fixed-work NTFS contention stress test (200 generations x 32
 # atomic-replace rounds against two concurrent readers, see its own doc
 # comment), not an open-ended wait, so it gets a wider explicit bound
