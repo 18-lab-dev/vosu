@@ -149,7 +149,7 @@ impl OsuSession {
     /// (install-once, ported from `Instance::start_lazer_resolver_inner`):
     /// a no-op for a non-lazer client, once cancelled, once a resolver is
     /// already running, or once offsets are already installed. Must run on
-    /// the plugin's own 2-worker runtime (DG) — `plugin.rs` only ever
+    /// the plugin's own runtime — `plugin.rs` only ever
     /// calls this from a task it spawned there, never inline on a
     /// dispatch thread.
     pub async fn start_lazer_resolver<G: OffsetGenerator + 'static>(

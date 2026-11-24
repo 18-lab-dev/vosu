@@ -159,7 +159,7 @@ impl OsuSession {
             }
             if let Some(worker) = worker {
                 // shutdown awaits the reducer and synchronously joins reader
-                // threads. Keep both joins off the two plugin runtime workers.
+                // threads. Keep both joins off the plugin runtime worker.
                 let runtime = tokio::runtime::Handle::current();
                 let _ =
                     tokio::task::spawn_blocking(move || runtime.block_on(worker.shutdown())).await;

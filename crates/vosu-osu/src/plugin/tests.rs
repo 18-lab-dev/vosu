@@ -70,6 +70,12 @@ fn hermetic<H: HostServices + Send + Sync + Clone + 'static>(
     (plugin, data_dir)
 }
 
+#[test]
+fn capture_runtime_uses_one_scheduler_worker() {
+    let (plugin, _data_dir) = hermetic(RecordingHost::default(), Platform::Windows);
+    assert_eq!(plugin.runtime_handle.metrics().num_workers(), 1);
+}
+
 fn test_root_resolver(_pid: u32, path: Option<&Path>, _command_line: Option<&str>) -> PathBuf {
     path.and_then(Path::parent)
         .map(Path::to_path_buf)

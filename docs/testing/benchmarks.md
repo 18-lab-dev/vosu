@@ -116,6 +116,35 @@ are not whole-daemon CPU/tick or read-to-network-frame latency measurements.
 Regular captures reuse the beatmap head and track length from `global`; the
 reader integration excludes the separate `ConfigPlan` experiment.
 
+## Plugin runtime wakeups
+
+Reproduce on Linux (debug/test harness, no game or VM required):
+
+```sh
+nice -n 10 cargo test --locked --all-features --test runtime_wakeups -- --include-ignored --nocapture --test-threads=1
+```
+
+The populated stable fixture runs the real readers, reducer and synchronous B1
+publisher. Stable Tokio's unpark hook counts runtime wakes; a test-harness-only
+future wrapper counts reducer polls without `tokio_unstable`. At 150 ms regular /
+10 ms precise cadence in the menu, 50 publications took 0.475 s before and
+0.473 s after: **105 → 53 runtime wakes**, **53 → 53 reducer polls**. The change
+uses one scheduler worker instead of two and removes the reducer's unrelated
+10 ms cancellation timer (shutdown already aborts it). Reader cadence is unchanged.
+With 100 ms precise sampling and regular captures held outside the sample window,
+the resulting single-worker runtime has exactly 50 wakes and 50 polls for 50
+publications; this case guards against reintroducing timer-only wakes.
+
+Eight tournament-like stable sessions, 150/10 ms cadence, 100 precise samples per
+session after 20 warmups: two-worker read-completion-to-publication p50 spans
+14.408–23.364 µs and p99 74.501–250.282 µs; one-worker p50 spans
+15.329–34.425 µs and p99 98.837–269.178 µs. The largest paired per-session p99
+increase is 190.900 µs, below one precise tick (10 ms). This synthetic case has
+PP enabled but no successfully loaded beatmap; PP/progressive calculation runs
+on the blocking pool, not the scheduler worker. These are not network or live
+Windows CPU measurements. The real ConcurrentPlugin stress test also passes
+with one worker (32 sessions, 16 persistent anchors, eight concurrent producers).
+
 ## Scope of the synthetic results
 
 - Synthetic fixtures, not live-game or whole-daemon performance. The stable raw
