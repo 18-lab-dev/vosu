@@ -110,6 +110,11 @@ impl Publisher {
             .expect("resource owner")
             .request(message, correlation)
     }
+    /// Whether asynchronous resource publication has committed and the
+    /// publisher mailbox is idle, so the next publish commits on its caller.
+    pub fn settled(&self) -> bool {
+        self.bus.settled()
+    }
     /// Stream-ownership routing, as the production plugin's `dispatch_resource`.
     pub fn owns_stream(&self, stream: u64) -> bool {
         self.bus

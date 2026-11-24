@@ -114,6 +114,21 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
     pub fn republish_session_fields(&self) {
         self.enqueue(None, true);
     }
+    /// Bench/test quiescence: the resource worker applied its current epoch,
+    /// that revision is committed, and no thread holds or awaits the mailbox.
+    /// Reads the resource state before the mailbox lock; neither is nested.
+    #[cfg(feature = "bench-harness")]
+    pub(crate) fn settled(&self) -> bool {
+        let resources = self.resources.get().map(|r| r.prepared());
+        let shared = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        shared.pending.is_none()
+            && !shared.refresh
+            && shared.inner.as_ref().is_some_and(|inner| {
+                resources.is_none_or(|(revision, prepared)| {
+                    prepared && inner.resource_revision == revision
+                })
+            })
+    }
     pub(crate) fn deactivate(&self) {
         self.identified.store(false, Ordering::Release);
     }
