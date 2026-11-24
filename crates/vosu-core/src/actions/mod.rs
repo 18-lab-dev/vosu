@@ -6,19 +6,20 @@
 //! expired token. HTTP response policy (including no-store) belongs to the server.
 
 pub mod deadline;
-pub mod jobs;
-pub mod waiters;
 pub mod invocation;
+pub mod jobs;
 pub mod registry;
+pub mod waiters;
 
 pub use invocation::{
     InvocationError, InvocationExecutor, InvocationId, InvocationPolicy, InvocationResult,
     InvocationSink, JobSink, PreparedInvocation, SessionId,
 };
+pub use registry::{ActionDescriptor, ActionRegistry, ToolAuthority};
 
 pub use deadline::{DeadlineGuard, DeadlinePolicy};
 pub use jobs::{
-    CancellationRequest, JobError, JobFailure, JobOwner, JobPrincipal, JobProgress, JobRegistry,
-    JobSnapshot, JobState, TerminalOutcome,
+    CancellationRequest, JobError, JobFailure, JobOwner, JobProgress, JobRegistry, JobSnapshot,
+    JobState, Principal, TerminalOutcome,
 };
 pub use waiters::{JobWait, WaiterGuard};

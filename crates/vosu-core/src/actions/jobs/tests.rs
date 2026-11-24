@@ -94,11 +94,7 @@ fn ownership_is_exact_launch_identity_and_broker_is_authoritative() {
     let job = registry
         .create(principal.clone(), "fixture.work".into(), None)
         .unwrap();
-    assert!(
-        registry
-            .get(&job.id, &JobPrincipal::ToolSession(owner))
-            .is_ok()
-    );
+    assert!(registry.get(&job.id, &Principal::Tool(owner)).is_ok());
     assert_eq!(registry.get(&job.id, &stranger), Err(JobError::UnknownJob));
     assert_eq!(
         registry.request_cancel(&job.id, &stranger).unwrap_err(),
@@ -147,10 +143,7 @@ fn cancel_is_advisory_idempotent_and_session_never_retargets() {
     assert_eq!(current.job.result, Some(Value::from(91)));
     assert!(!current.dispatch);
     assert_eq!(
-        registry
-            .get(&other.id, &JobPrincipal::Broker)
-            .unwrap()
-            .state,
+        registry.get(&other.id, &Principal::Broker).unwrap().state,
         JobState::Running
     );
 }
@@ -382,10 +375,7 @@ async fn deadline_is_terminal_and_late_success_cannot_resurrect() {
             .finish(&job.id, TerminalOutcome::Succeeded(Value::from(71)))
             .unwrap()
     );
-    assert_eq!(
-        registry.get(&job.id, &JobPrincipal::Broker).unwrap(),
-        terminal
-    );
+    assert_eq!(registry.get(&job.id, &Principal::Broker).unwrap(), terminal);
 }
 
 #[tokio::test]

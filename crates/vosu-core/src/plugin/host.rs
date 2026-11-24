@@ -875,9 +875,9 @@ impl SettingsSchemaSource for PluginHost {
     }
 }
 
-mod api;
-mod actions;
 mod action_delivery;
+mod actions;
+mod api;
 mod instances;
 mod lifecycle;
 pub(super) mod read_plans;

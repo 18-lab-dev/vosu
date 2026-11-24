@@ -2,6 +2,8 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use super::{ActionDescriptor, JobProgress, JobRegistry, Principal, TerminalOutcome};
+use crate::plugin::PluginHost;
 use serde_json::Value;
 use vosu_plugin_api::ActionProgress;
 
@@ -15,7 +17,9 @@ pub struct InvocationPolicy {
 }
 impl Default for InvocationPolicy {
     fn default() -> Self {
-        Self { deadline: Duration::from_secs(30) }
+        Self {
+            deadline: Duration::from_secs(30),
+        }
     }
 }
 
@@ -62,13 +66,69 @@ impl InvocationExecutor {
         arguments: Value,
         sink: Arc<dyn InvocationSink>,
     ) -> Result<InvocationId, InvocationError> {
-        self.host.upgrade().ok_or(InvocationError::Unavailable)?
-            .invoke_action(principal, action, session, arguments, sink, self.policy)
+        self.prepare(principal, action, session, arguments)?
+            .invoke(sink)
+    }
+
+    /// Reserves and validates the exact encoded invocation before job creation.
+    /// Dropping this preparation releases the bounded reservation.
+    pub fn prepare(
+        &self,
+        principal: Principal,
+        action: Arc<ActionDescriptor>,
+        session: Option<SessionId>,
+        arguments: Value,
+    ) -> Result<PreparedInvocation, InvocationError> {
+        if let Principal::Tool(owner) = &principal
+            && !self
+                .tool_authority
+                .as_ref()
+                .is_some_and(|authority| authority.authorizes(owner, &action))
+        {
+            return Err(InvocationError::PermissionDenied);
+        }
+        self.host
+            .upgrade()
+            .ok_or(InvocationError::Unavailable)?
+            .prepare_action(principal, action, session, arguments, self.policy)
     }
 
     pub fn cancel(&self, invocation: InvocationId) {
         if let Some(host) = self.host.upgrade() {
             host.cancel_action(invocation);
+        }
+    }
+}
+
+pub struct PreparedInvocation {
+    pub(crate) host: Weak<PluginHost>,
+    pub(crate) id: InvocationId,
+    pub(crate) message: Option<vosu_plugin_api::Message>,
+    pub(crate) provider: crate::plugin::PluginInstanceId,
+    pub(crate) policy: InvocationPolicy,
+}
+impl PreparedInvocation {
+    pub fn invoke(
+        mut self,
+        sink: Arc<dyn InvocationSink>,
+    ) -> Result<InvocationId, InvocationError> {
+        let host = self.host.upgrade().ok_or(InvocationError::Unavailable)?;
+        host.start_action(
+            self.id,
+            self.provider,
+            self.message.take().expect("prepared once"),
+            sink,
+            self.policy,
+        )?;
+        Ok(self.id)
+    }
+}
+impl Drop for PreparedInvocation {
+    fn drop(&mut self) {
+        if self.message.is_some()
+            && let Some(host) = self.host.upgrade()
+        {
+            host.discard_prepared_action(self.id);
         }
     }
 }
@@ -80,14 +140,19 @@ pub struct JobSink {
     id: String,
 }
 impl JobSink {
-    pub fn new(registry: JobRegistry, id: String) -> Self { Self { registry, id } }
+    pub fn new(registry: JobRegistry, id: String) -> Self {
+        Self { registry, id }
+    }
 }
 impl InvocationSink for JobSink {
     fn progress(&self, progress: ActionProgress) {
-        let _ = self.registry.progress(&self.id, JobProgress {
-            fraction: progress.fraction,
-            message: progress.message,
-        });
+        let _ = self.registry.progress(
+            &self.id,
+            JobProgress {
+                fraction: progress.fraction,
+                message: progress.message,
+            },
+        );
     }
     fn finish(&self, result: InvocationResult) {
         let _ = self.registry.finish(&self.id, result);

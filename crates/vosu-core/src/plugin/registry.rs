@@ -366,8 +366,10 @@ fn load_action_schemas(
 
 fn compile_action_schemas(
     schemas: &std::collections::BTreeMap<String, String>,
-) -> Result<std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>>, HostError>
-{
+) -> Result<
+    std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>>,
+    HostError,
+> {
     schemas
         .iter()
         .map(|(path, text)| {

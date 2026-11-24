@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
-use super::jobs::{JobError, JobPrincipal, JobRegistry, JobSnapshot, RegistryInner};
+use super::jobs::{JobError, JobRegistry, JobSnapshot, Principal, RegistryInner};
 
 pub const MAX_WAITERS_PER_JOB: usize = 8;
 pub const MAX_WAITERS: usize = 256;
