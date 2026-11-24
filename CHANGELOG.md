@@ -6,6 +6,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Extract shared legacy wire mechanics into `vosu-adapter-support` without
   changing served routes, payloads, filters or transport behavior.
+- Add coherent, demand-free bundled adapter captures with identified session
+  rosters, per-namespace revisions and independent foreground observations;
+  add atomic route/feed registration and RAII demand/registration cleanup.
 
 ## Unreleased — 2.0 M3
 

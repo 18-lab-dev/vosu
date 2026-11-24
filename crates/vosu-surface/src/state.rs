@@ -20,6 +20,68 @@ pub struct SurfaceUpdate {
     pub values: Vec<StateEntry>,
 }
 
+/// Identity is a host-issued session id and occurrence, never a process id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdentifiedSession {
+    pub session: String,
+    pub generation: u64,
+    pub owner: String,
+    pub owner_instance: u64,
+    pub game: String,
+    pub variant: String,
+    pub foreground: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdentifiedRoster {
+    pub revision: u64,
+    pub sessions: Arc<[IdentifiedSession]>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct CapturedSelection {
+    pub session: Option<IdentifiedSession>,
+    pub focus_revision: u64,
+    pub roster: IdentifiedRoster,
+    pub revision: u64,
+    pub namespace_revisions: Arc<[(String, u64)]>,
+    pub values: Arc<[StateEntry]>,
+}
+
+impl fmt::Debug for CapturedSelection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CapturedSelection")
+            .field("session", &self.session)
+            .field("focus_revision", &self.focus_revision)
+            .field("roster_revision", &self.roster.revision)
+            .field("namespace_revisions", &self.namespace_revisions)
+            .field("selection_count", &self.values.len())
+            .finish()
+    }
+}
+
+/// Core binds this object to one live bundled instance. No caller supplies an id.
+pub trait BundledRequester: Send + Sync + 'static {
+    fn capture(
+        &self,
+        target: SessionTarget,
+        selectors: &[Selector],
+    ) -> Result<CapturedSelection, SurfaceError>;
+    fn capture_roster(&self, game: &str) -> Result<IdentifiedRoster, SurfaceError>;
+    fn subscribe(
+        &self,
+        target: SessionTarget,
+        selectors: Vec<Selector>,
+    ) -> Result<SurfaceSubscription, SurfaceError>;
+    fn register_routes(
+        &self,
+        routes: Vec<(
+            crate::routes::RouteDescriptor,
+            Arc<dyn crate::routes::RouteProvider>,
+        )>,
+    ) -> Result<crate::routes::RegistrationLease, crate::routes::RegistrationError>;
+}
+
 pub trait StateReadHost: Send + Sync + 'static {
     fn subscribe(
         &self,
@@ -37,9 +99,12 @@ pub trait StateReadHost: Send + Sync + 'static {
     ) -> Result<StateEntry, SurfaceError>;
 }
 
+type ReplaceSelectors = dyn Fn(Vec<Selector>) -> Result<(), SurfaceError> + Send + Sync;
+
 pub struct SurfaceSubscription {
     pub updates: watch::Receiver<Arc<SurfaceUpdate>>,
     _unsubscribe: Box<dyn Send + Sync>,
+    replace: Option<Box<ReplaceSelectors>>,
 }
 
 impl SurfaceSubscription {
@@ -51,7 +116,23 @@ impl SurfaceSubscription {
         Self {
             updates,
             _unsubscribe: Box::new(unsubscribe),
+            replace: None,
         }
+    }
+
+    pub fn with_replacement(
+        mut self,
+        replace: impl Fn(Vec<Selector>) -> Result<(), SurfaceError> + Send + Sync + 'static,
+    ) -> Self {
+        self.replace = Some(Box::new(replace));
+        self
+    }
+
+    /// Atomic replacement retains other clients' subscriptions on success or error.
+    pub fn replace_selectors(&self, selectors: Vec<Selector>) -> Result<(), SurfaceError> {
+        self.replace.as_ref().ok_or_else(|| {
+            SurfaceError::InvalidSelector("subscription cannot replace selectors".into())
+        })?(selectors)
     }
 }
 
