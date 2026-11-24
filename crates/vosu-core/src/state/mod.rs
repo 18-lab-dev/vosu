@@ -9,10 +9,12 @@
 //! commit path ([`StateStore`]) validates each whole batch before mutation.
 //! Subscriptions and demand delivery are separate layers.
 
+mod cbor;
 mod client;
 mod commit;
 mod demand;
 mod document;
+mod ecma_number;
 mod grant;
 mod pointer;
 mod projector;

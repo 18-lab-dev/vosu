@@ -3235,6 +3235,8 @@ dependencies = [
  "bytes",
  "chrono",
  "ciborium",
+ "ciborium-io",
+ "ciborium-ll",
  "futures-util",
  "ksni",
  "libc",
@@ -3263,6 +3265,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "wmi",
  "zip",
+ "zmij",
 ]
 
 [[package]]
