@@ -140,7 +140,7 @@ pub(super) fn update_state_publication(
 pub(super) fn build_manager_snapshot(
     revisions: &mut SemanticRevision,
     lifecycle: &B1Lifecycle,
-    config: &vosu_core::config::Config,
+    _config: &vosu_core::config::Config,
     states: &BTreeMap<u32, Arc<StateBundleSnapshot>>,
     state_revisions: &BTreeMap<u32, u64>,
 ) -> Option<Arc<ManagerSnapshot>> {

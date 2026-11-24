@@ -37,7 +37,6 @@ pub trait SnapshotEncoder: Send + Sync + 'static {
 #[derive(Default)]
 pub struct ProductionSnapshotEncoder;
 
-
 impl SnapshotEncoder for ProductionSnapshotEncoder {
     fn encode(
         &self,
@@ -263,7 +262,6 @@ impl StateJsonProvider for SnapshotProviders {
     }
 }
 
-
 pub(super) struct WebSocketSnapshotView {
     snapshot: Arc<CombinedSnapshot>,
     schema: ApiSchema,
@@ -334,4 +332,3 @@ pub(super) const fn api_schema_ws(schema: WebSocketSchema) -> ApiSchema {
         WebSocketSchema::V2Precise => ApiSchema::V2Precise,
     }
 }
-

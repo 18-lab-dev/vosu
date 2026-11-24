@@ -1244,6 +1244,12 @@ Scope:
   D20 consumes only identity, feature, first/last seen and saturating count;
   unknown requests never acquire a guessed overlay name. M8 day-0 execution,
   M7's migration-guide notice UI and the clean-room page remain separate work.
+  First-party consumer migration inputs include
+  `assets/server/tool-bridge-v1.js` (selected-v2 URL and renderer pointer map),
+  the overlay quickstart's selected-v2 client, and consumers of legacy skin
+  metadata/lazer files. Their owners move to API v1 namespace subscriptions
+  and skin trees/resources at M8; preserving those consumers does not restore
+  removed endpoints. Keep user overlays installed and enabled.
 - **Stable tournament-manager aggregate (D6, mandatory M4a exit).** The osu!
   plugin attaches the `--tournament` process
   as an identified `stable` session, setting `focus_priority: true` on its

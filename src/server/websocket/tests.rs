@@ -187,10 +187,7 @@ fn exact_endpoint_classification_rejects_near_misses() {
         Endpoint::classify("/websocket/v2/precise"),
         Some(Endpoint::V2Precise)
     );
-    assert_eq!(
-        Endpoint::classify("/websocket/v2/subscribe"),
-        None
-    );
+    assert_eq!(Endpoint::classify("/websocket/v2/subscribe"), None);
     assert_eq!(
         Endpoint::classify("/websocket/commands"),
         Some(Endpoint::Commands)

@@ -12,7 +12,10 @@ pub struct ConfigDocument {
 
 impl ConfigDocument {
     pub fn new(config: Config) -> Self {
-        Self { config, unknown: toml::Table::new() }
+        Self {
+            config,
+            unknown: toml::Table::new(),
+        }
     }
 
     /// Parses a TOML document over the schema defaults.
@@ -39,7 +42,7 @@ impl ConfigDocument {
     /// Applies bindings present in `content`, retaining current values for
     /// missing bindings.
     ///
-    /// Unknown bindings are ignored. A known binding with the wrong TOML type,
+    /// Unknown bindings are preserved without being applied. A known binding with the wrong TOML type,
     /// including a non-finite number, is reset to that binding's schema
     /// default. The document is parsed completely before any value is changed,
     /// so a syntax error leaves the current configuration untouched.
@@ -51,7 +54,10 @@ impl ConfigDocument {
 
     pub(super) fn apply_table(&mut self, table: &toml::Table) {
         for (key, value) in table {
-            if !DEFAULT_SCHEMA.items().iter().any(|item| item.binding == key)
+            if !DEFAULT_SCHEMA
+                .items()
+                .iter()
+                .any(|item| item.binding == key)
                 && !RETIRED_BINDINGS.contains(&key.as_str())
             {
                 self.unknown.insert(key.clone(), value.clone());

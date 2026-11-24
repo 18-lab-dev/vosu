@@ -210,10 +210,9 @@ pending snapshot replaces an older unsent one for both data and control
 frames. A connection whose pong queue is full closes with code `1011` rather
 than pinning the reader. Frames and assembled messages are limited to 1 MiB,
 matching the WebSocket API's general limit. Debounce applies per active
-producing lane as 1.x's does; the configuration knob is a new
-`API_V1_SUBSCRIPTION_DEBOUNCE` (default 1 ms), independent of
-`V2_SUBSCRIPTION_DEBOUNCE`, since the two protocols run on separate hubs with
-separate client populations.
+producing lane; `API_V1_SUBSCRIPTION_DEBOUNCE` (default 1 ms) remains the
+API v1 delivery setting. The selected-v2 protocol and its independent
+`V2_SUBSCRIPTION_DEBOUNCE` setting are retired by ADR 0021.
 
 ## HTTP state reads
 

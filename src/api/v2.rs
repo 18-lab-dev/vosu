@@ -18,14 +18,6 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
     build_internal(snapshot, true)
 }
 
-/// The subscription projector borrows histories and uses the already encoded graph.
-/// Unselected histories must not be copied at the precise reader's cadence.
-pub(crate) fn subscription_response(
-    snapshot: &CombinedSnapshot,
-) -> Result<Response<&[f64]>, ApiError> {
-    build_internal(snapshot, false)
-}
-
 fn build_internal<'a, V: From<&'a [f64]>>(
     snapshot: &'a CombinedSnapshot,
     include_graph_data: bool,

@@ -98,7 +98,6 @@ mod tests {
         }
     }
 
-
     struct CommandProviders;
 
     impl super::super::commands::SettingsProvider for CommandProviders {

@@ -56,14 +56,18 @@ pub(super) fn initialize_file(
         .flatten()
     {
         for binding in env_binding_order(content) {
-            if super::document::RETIRED_BINDINGS.contains(&binding.as_str()) && !deprecated.contains(&binding) {
+            if super::document::RETIRED_BINDINGS.contains(&binding.as_str())
+                && !deprecated.contains(&binding)
+            {
                 deprecated.push(binding);
             }
         }
     }
     if let Some(values) = toml_table.as_ref() {
         for binding in values.keys() {
-            if super::document::RETIRED_BINDINGS.contains(&binding.as_str()) && !deprecated.contains(binding) {
+            if super::document::RETIRED_BINDINGS.contains(&binding.as_str())
+                && !deprecated.contains(binding)
+            {
                 deprecated.push(binding.clone());
             }
         }

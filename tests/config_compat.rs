@@ -111,7 +111,11 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
     assert_eq!(store.current().server_port, 24_052.0);
     assert_eq!(store.current().poll_rate, 100.0);
     assert_eq!(store.current().precise_data_poll_rate, 5.0);
-    assert!(!fs::read_to_string(&current).unwrap().contains("V2_SUBSCRIPTION_DEBOUNCE"));
+    assert!(
+        !fs::read_to_string(&current)
+            .unwrap()
+            .contains("V2_SUBSCRIPTION_DEBOUNCE")
+    );
     assert_eq!(store.current().static_folder_path, "./from-vosu-env");
 
     let persisted = fs::read_to_string(&current).unwrap();
@@ -263,7 +267,10 @@ fn api_v1_debounce_disk_bounds_and_invalid_types_follow_interval_policy() {
             expected,
             "{input}"
         );
-        assert!(!document.serialize().contains("\nV2_SUBSCRIPTION_DEBOUNCE"), "{input}");
+        assert!(
+            !document.serialize().contains("\nV2_SUBSCRIPTION_DEBOUNCE"),
+            "{input}"
+        );
     }
 }
 
@@ -286,7 +293,11 @@ async fn api_v1_debounce_changes_publish_and_persist_after_legacy_retirement() {
     bounded!(store.shutdown()).unwrap();
     let reloaded = bounded!(ConfigStore::initialize(&path)).unwrap();
     assert_eq!(reloaded.current().api_v1_subscription_debounce, 7.375);
-    assert!(!fs::read_to_string(&path).unwrap().contains("\nV2_SUBSCRIPTION_DEBOUNCE"));
+    assert!(
+        !fs::read_to_string(&path)
+            .unwrap()
+            .contains("\nV2_SUBSCRIPTION_DEBOUNCE")
+    );
     bounded!(reloaded.shutdown()).unwrap();
 }
 
@@ -329,13 +340,22 @@ async fn retired_bindings_are_ignored_on_reload_while_unknown_values_survive_sav
     assert!(store.update(|config| config.debug_log = true));
     bounded!(store.flush()).unwrap();
     let table: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    for key in ["ENABLE_KEY_OVERLAY", "ENABLE_MANIA_KEY_HIT_ERRORS", "ENABLE_HIT_OFFSETS", "V2_SUBSCRIPTION_DEBOUNCE"] {
+    for key in [
+        "ENABLE_KEY_OVERLAY",
+        "ENABLE_MANIA_KEY_HIT_ERRORS",
+        "ENABLE_HIT_OFFSETS",
+        "V2_SUBSCRIPTION_DEBOUNCE",
+    ] {
         assert!(!table.contains_key(key), "{key}");
     }
     assert_eq!(table["CUSTOM_SENTINEL"].as_str(), Some("keep"));
     assert_eq!(table["custom"]["value"].as_integer(), Some(42));
     let mut changes = store.subscribe();
-    fs::write(&path, format!("{retired}API_V1_SUBSCRIPTION_DEBOUNCE = 3.125\nCUSTOM_SENTINEL = 'updated'\n")).unwrap();
+    fs::write(
+        &path,
+        format!("{retired}API_V1_SUBSCRIPTION_DEBOUNCE = 3.125\nCUSTOM_SENTINEL = 'updated'\n"),
+    )
+    .unwrap();
     let change = bounded!(changes.recv()).unwrap();
     assert_eq!(change.new.api_v1_subscription_debounce, 3.125);
     assert!(store.update(|config| config.debug_log = false));

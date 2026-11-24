@@ -68,6 +68,10 @@ mod tests {
     }
 
     include!("tests_frames.rs");
-    mod pointer { include!("tests_pointer.rs"); }
-    mod wire { include!("tests_wire.rs"); }
+    mod pointer {
+        include!("tests_pointer.rs");
+    }
+    mod wire {
+        include!("tests_wire.rs");
+    }
 }

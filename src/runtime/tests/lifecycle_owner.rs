@@ -107,9 +107,7 @@ async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_service
         // Deterministically make create_instance fail, without a process-global
         // fault switch or a different production plugin loading path.
         owner.plugins.destroy_all(Duration::ZERO);
-        *owner.hubs.get_mut() = Some(WebSocketHubs::start(
-            owner.snapshots.clone(),
-        ));
+        *owner.hubs.get_mut() = Some(WebSocketHubs::start(owner.snapshots.clone()));
         let error = owner.compose().await.unwrap_err();
         assert!(
             error

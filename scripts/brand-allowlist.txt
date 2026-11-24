@@ -9,7 +9,7 @@ AGENTS.md 2 history states the rename policy: tosu appears only as a migration s
 CONTRIBUTING.md 1 history states that the former name tosu appears only in migration, upstream, and history context
 scripts/check-brand.py 3 fixture the check must spell the old brand to detect it
 scripts/test_repo_checks.py 9 fixture brand-check tests plant old-brand occurrences to prove detection
-README.md 31 history documents the rename, migration precedence, and upstream tosu compatibility target for users
+README.md 27 history documents the rename, migration precedence, and upstream tosu compatibility target for users
 CHANGELOG.md 33 history pre-rename release notes and the rename itself are historical record, not current branding
 LICENSE 9 history retains the upstream copyright holder credit and relicensing permission text
 LICENSE-MIT 1 history retains the upstream copyright holder credit

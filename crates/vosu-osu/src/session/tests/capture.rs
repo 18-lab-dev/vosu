@@ -292,10 +292,7 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        *reader.borrow_and_update(),
-        ReaderSettings::default()
-    );
+    assert_eq!(*reader.borrow_and_update(), ReaderSettings::default());
     assert_eq!(*demand.borrow_and_update(), next_demand);
     session.osu_settings.send_replace(OsuSettings {
         calculate_pp: false,

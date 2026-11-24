@@ -82,7 +82,7 @@ use vosu_core::{
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
-use vosu_osu_state::{StateBundleSnapshot, StateWorkerError, duration_from_millis_saturating};
+use vosu_osu_state::{StateBundleSnapshot, StateWorkerError};
 
 pub(crate) mod bridge_b1;
 mod cli;
@@ -124,7 +124,7 @@ use vosu_osu_state::{Delivery, SnapshotPublisher};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, atomic::Ordering};
+    use std::sync::atomic::Ordering;
 
     use tokio::sync::mpsc;
 

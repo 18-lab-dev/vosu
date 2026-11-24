@@ -202,7 +202,11 @@ pub trait StateProvider: Send + Sync + 'static {
     fn capture(&self, schema: Schema) -> Option<Arc<dyn StateSnapshot>>;
     /// A lease belongs to exactly one state connection. Non-bus sources have no
     /// sampling authority and return `None`.
-    fn demand(&self, _schema: Schema, _filters: &[Filter]) -> Result<Option<Box<dyn StateDemand>>, String> {
+    fn demand(
+        &self,
+        _schema: Schema,
+        _filters: &[Filter],
+    ) -> Result<Option<Box<dyn StateDemand>>, String> {
         Ok(None)
     }
 }
@@ -619,7 +623,13 @@ impl WebSocketHub {
         self.0.wake.send_replace(next);
     }
     fn wake_writable(&self) {
-        if !self.0.clients.load().values().any(|client| client.publishes_state) {
+        if !self
+            .0
+            .clients
+            .load()
+            .values()
+            .any(|client| client.publishes_state)
+        {
             return;
         }
         let Some(snapshot) = self.0.provider.capture(self.0.schema) else {
@@ -746,7 +756,10 @@ impl WebSocketHub {
                             && client.filters.load().filters.is_empty()
                     })
                 {
-                    cached = snapshot.encode_unfiltered().ok().map(|bytes| (generation, bytes));
+                    cached = snapshot
+                        .encode_unfiltered()
+                        .ok()
+                        .map(|bytes| (generation, bytes));
                 }
                 let mut projections = SharedProjections::default();
                 let _pass = BroadcastPass::begin();

@@ -286,8 +286,7 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     let mut inputs = bridge.inputs();
     let (_foreground, foreground_rx) = watch::channel(None);
     let task = bridge.start(foreground_rx);
-    let mut next = Config::default();
-    next.api_v1_subscription_debounce = 31.25;
+    let next = Config { api_v1_subscription_debounce: 31.25, ..Config::default() };
     config.send(Arc::new(next)).unwrap();
     demand.send(vosu_osu_state::SubscriptionDemand { precise: true, ..Default::default() }).unwrap();
     tokio::time::timeout(Duration::from_secs(2), async {

@@ -133,9 +133,24 @@ fn retired_keys_have_no_schema_or_runtime_storage() {
     ] {
         let mut document = ConfigDocument::parse(&format!("{key} = true\n")).unwrap();
         assert_eq!(document.config(), &Config::default());
-        assert!(!DEFAULT_SCHEMA.items().iter().any(|item| item.binding == key));
-        assert!(!document.serialize().lines().any(|line| line.starts_with(key)));
-        assert!(document.refresh(&format!("{key} = \"ignored\"\n")).unwrap().is_empty());
+        assert!(
+            !DEFAULT_SCHEMA
+                .items()
+                .iter()
+                .any(|item| item.binding == key)
+        );
+        assert!(
+            !document
+                .serialize()
+                .lines()
+                .any(|line| line.starts_with(key))
+        );
+        assert!(
+            document
+                .refresh(&format!("{key} = \"ignored\"\n"))
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(document.config(), &Config::default());
     }
 }

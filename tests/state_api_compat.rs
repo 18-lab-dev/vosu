@@ -1,6 +1,5 @@
 use serde_json::Value;
 use std::{collections::BTreeSet, fs};
-use vosu::api;
 #[path = "state_api_compat/oracle.rs"]
 mod oracle;
 use oracle::*;
@@ -165,4 +164,3 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
         }
     }
 }
-

@@ -1,4 +1,3 @@
-use super::*;
 #[test]
 fn request_shape_and_frozen_compact_frames_are_exact() {
     assert_eq!(

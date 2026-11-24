@@ -447,7 +447,10 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     if let Some(endpoint @ Endpoint::Removed(_)) = classify(&method, &path) {
-        let _ = providers.delegate.handle(endpoint, request, Bytes::new()).await;
+        let _ = providers
+            .delegate
+            .handle(endpoint, request, Bytes::new())
+            .await;
         return cors(not_found());
     }
     let websocket_upgrade = request

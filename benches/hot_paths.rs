@@ -7,9 +7,7 @@ use vosu_adapter_support::filtered::Filter;
 use bytes::Bytes;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::sync::watch;
-use vosu::api::{
-    ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
-};
+use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_core::plugin::{ModuleResolver, execute_into};
 use vosu_osu_calc::beatmap::{
@@ -483,7 +481,6 @@ fn bench_publication(c: &mut Criterion) {
     group.finish();
 }
 
-
 #[cfg(target_os = "windows")]
 #[repr(align(4096))]
 struct BenchmarkPage([u8; 4096]);
@@ -613,7 +610,6 @@ fn bench_linux_process_memory(c: &mut Criterion) {
     });
     group.finish();
 }
-
 
 fn hot_paths(c: &mut Criterion) {
     bench_batch_scan(c);

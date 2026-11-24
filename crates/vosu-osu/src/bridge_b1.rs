@@ -41,16 +41,9 @@ pub enum B1Event {
         key: B1SessionKey,
     },
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct B1Inputs {
     pub demand: SubscriptionDemand,
-}
-impl Default for B1Inputs {
-    fn default() -> Self {
-        Self {
-            demand: SubscriptionDemand::default(),
-        }
-    }
 }
 impl B1Inputs {
     pub fn reader_settings(self, osu: OsuSettings) -> ReaderSettings {
