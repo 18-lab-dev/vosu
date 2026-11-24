@@ -1,5 +1,5 @@
 //! Opaque, issuer-bound management provenance. Issuers stay in core transport.
-use crate::routes::ListenerRole;
+use crate::listener::ListenerRole;
 use std::sync::Arc;
 
 #[derive(Clone)]

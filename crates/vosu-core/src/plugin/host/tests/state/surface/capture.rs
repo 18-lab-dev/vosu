@@ -1,7 +1,8 @@
 use super::*;
+use vosu_surface::listener::ListenerRole;
 use vosu_surface::routes::{
-    ListenerRole, ProviderResponse, RegistrationError, RouteDescriptor, RoutePath, RouteProvider,
-    SurfaceRequest, SurfaceResponse,
+    ProviderResponse, RegistrationError, RouteDescriptor, RoutePath, RouteProvider, SurfaceRequest,
+    SurfaceResponse,
 };
 
 fn reader(
@@ -9,7 +10,7 @@ fn reader(
     name: &str,
     instance: u64,
     fields: &[&str],
-) -> Arc<dyn vosu_surface::state::BundledRequester> {
+) -> Arc<dyn vosu_surface::requester::BundledRequester> {
     let requirements = fields
         .iter()
         .map(|field| format!("[[requires]]\nid='{field}'\nversion='*'\n"))
@@ -320,7 +321,7 @@ fn replacement_is_atomic_and_disconnect_preserves_other_demand() {
     host.destroy_all(RECV_TIMEOUT);
 }
 
-struct Feed(Arc<dyn vosu_surface::state::BundledRequester>);
+struct Feed(Arc<dyn vosu_surface::requester::BundledRequester>);
 impl vosu_surface::routes::FeedEncoder for Feed {
     fn encode(&self, _update: &vosu_surface::state::SurfaceUpdate) -> SurfaceResponse {
         SurfaceResponse {

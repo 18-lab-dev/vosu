@@ -1,9 +1,10 @@
 use super::capture::Requester;
 use super::*;
 use crate::state::surface::SurfaceRoute;
+use vosu_surface::listener::ListenerRole;
 use vosu_surface::routes::{
-    ListenerRole, ProviderResponse, RegistrationError, RegistrationLease, RouteDescriptor,
-    RoutePath, RouteProvider, SurfaceRequest,
+    ProviderResponse, RegistrationError, RegistrationLease, RouteDescriptor, RoutePath,
+    RouteProvider, SurfaceRequest,
 };
 
 const MAX_ROUTES: usize = 256;

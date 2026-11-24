@@ -1,11 +1,6 @@
 //! Bundled route descriptors and bounded, immutable provider messages.
+use crate::listener::ListenerRole;
 use std::sync::Arc;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ListenerRole {
-    Overlay,
-    Dashboard,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoutePath {

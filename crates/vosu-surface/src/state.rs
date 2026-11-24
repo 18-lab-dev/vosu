@@ -60,28 +60,6 @@ impl fmt::Debug for CapturedSelection {
     }
 }
 
-/// Core binds this object to one live bundled instance. No caller supplies an id.
-pub trait BundledRequester: Send + Sync + 'static {
-    fn capture(
-        &self,
-        target: SessionTarget,
-        selectors: &[Selector],
-    ) -> Result<CapturedSelection, SurfaceError>;
-    fn capture_roster(&self, game: &str) -> Result<IdentifiedRoster, SurfaceError>;
-    fn subscribe(
-        &self,
-        target: SessionTarget,
-        selectors: Vec<Selector>,
-    ) -> Result<SurfaceSubscription, SurfaceError>;
-    fn register_routes(
-        &self,
-        routes: Vec<(
-            crate::routes::RouteDescriptor,
-            Arc<dyn crate::routes::RouteProvider>,
-        )>,
-    ) -> Result<crate::routes::RegistrationLease, crate::routes::RegistrationError>;
-}
-
 pub trait StateReadHost: Send + Sync + 'static {
     fn subscribe(
         &self,
