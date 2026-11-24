@@ -815,6 +815,57 @@ Risks: whole-array republication of growing hit-error arrays (§6.6 publishes
 arrays only as whole CBOR subtrees) may cost more than 1.x's shared vectors;
 D17's end-to-end bench decides whether an additive append form is needed.
 
+#### M2 outcome
+
+The state bus and production osu! projection now publish side by side with
+B1. Core owns atomic bounded commits, client facts, schema-lane demand,
+audience projection and ABI/bundled subscriptions; `vosu-osu` owns
+projection, changed-value batches and the union of bus/B1 reader demand.
+This does not claim M3's public transport or resources have landed:
+`vosu.chart.resources` remains `{}`, `vosu.skin.tree` remains `null`, and
+B1 continues serving the 1.x APIs until M4a.
+
+The implemented contract includes the approved [A2](#a2-state-schema-and-plugin-abi-amendment-from-m2-planning-findings-on-v2main-documentation-only)
+and [A2b](#a2b-amendment-recording-m1m2-implementation-decisions-on-v2main-documentation-only)
+decisions:
+
+- A2 separates precise `session.state` from beatmap status, defines all
+  `GameState` common statuses and play/pause activity, and fixes common-layer
+  formulas: accuracy/health divided by 100, rate-1 BPM rounded to four
+  decimals, chart length from the last object, mania key count from rounded
+  converted CS. It adds client/server/settings-skin mappings, `good`,
+  lazer spectator score fields and private current-file/skin paths in
+  unreleased `vosu.osu` schema `1.2.0`.
+- A2 adds Windows foreground facts, strips non-owner attach process facts,
+  specifies publication/subscription errors and limits, and requires explicit
+  internal-subtree grants rather than a whole-namespace grant.
+- A2b records the 4 MiB/namespace and 65,536 keys/session commit bounds,
+  unseen attach/detach cancellation, the 4,096-entry lifecycle-loss backstop,
+  final-state-before-detach delivery, host lock order, retired-versus-unknown
+  handle errors and unconditional lookup-worker joins within 4.5 seconds.
+- A2b keeps `statistics.good` sourced from `katu`, integer `rankedPlay.stage`,
+  numeric stars `hitWindow`, omission of unavailable optional stars/windows,
+  and result `sliderBreaks: 0`. It intentionally maps `bestOF` to `bestOf`
+  and publishes `tourney: null` on missing IPC scores instead of failing the
+  whole response.
+- A2b makes overlapping hit-offset/key-error selectors opt into reader
+  collection without `ENABLE_*` gates; the 1.x serializers retain those gates.
+  Its M1 startup/logging decisions and open PlanMemory CPU comparison remain
+  recorded in the M1 outcome and A2b above.
+
+The authoritative parity map is
+[state-schema.md: 1.x-to-2.0 field mapping](state-schema.md#1x-to-20-field-mapping),
+with executable coverage in `tests/state_bus_compat.rs` over the oracle
+inventory and dev-only offline JSON Schema validation. The exact
+[divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md) lists the
+permanent contract differences and the temporary stable tournament-manager
+aggregate gap (D6); the latter still requires the M4a-or-later closing task.
+`state_bus` covers host/surface atomicity, privacy and lifecycle;
+`osu_projection_privacy` covers actual osu! path projection. Commands are in
+the [verification guide](../testing/verification.md#m2-state-bus-contracts).
+Functional coverage is not D17 performance evidence: M2 measurements and
+the regression decision are maintained in the [benchmark guide](../testing/benchmarks.md).
+
 ### M3: API v1, resources, jobs, bridge
 
 Scope:

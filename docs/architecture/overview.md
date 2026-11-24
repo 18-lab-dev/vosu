@@ -173,6 +173,44 @@ Hit-error reads and appends require an authoritative precise `Play` status rathe
 
 Regular and precise notifications remain independent. `src/runtime/projection.rs::SnapshotProviders::publish_api` wakes precise consumers for every atomic replacement but does not wake regular consumers for a precise-only replacement. Four compatibility hubs—v1, stream companion, v2, and v2 precise—use their configured poll cadence. The dedicated selected-field v2 hub consumes the separate live snapshot and its notifications, then applies its per-client debounce (`src/runtime/worker.rs::WebSocketHubs`). HTTP always loads the latest API snapshot on request.
 
+### State bus (M2)
+
+Alongside [ADR 0002's atomic publication](../decisions/0002-immutable-latest-only-snapshots.md),
+`crates/vosu-core/src/state/` owns the game-agnostic bus: immutable per-session
+namespace documents, manifest-derived grants, schema-lane demand, audience
+projection and latest-only subscriptions. A `PUBLISH_BATCH` is validated in
+full before one serialized ArcSwap replacement; an invalid batch changes neither
+values nor revision. Committed state is capped at 4 MiB per namespace and
+65,536 keys per session. Schemas are embedded source inputs; production uses
+the lane walker, not a JSON Schema validator.
+
+`crates/vosu-osu/src/project/` maps each accepted snapshot into `vosu.status`,
+`vosu.chart`, `vosu.play`, `vosu.skin` and `vosu.osu`; core supplies
+`vosu.client`. `publish.rs` diffs a fixed pointer partition and sends changed
+values as one batch after identification, coalescing concurrent snapshots and
+foreground refreshes. Unchanged snapshots publish nothing. The
+[state-schema parity map](../v2/state-schema.md#1x-to-20-field-mapping)
+defines the common formulas and the intentional 1.x differences.
+
+The production plugin publishes to B1 first, then the bus, even without a B1
+sink; bus refusal does not fail legacy publication. `demand.rs` unions B1
+demand with schema-derived bus demand. Selectors overlapping
+`/vosu.osu/play/hitOffsets` or `/vosu.osu/play/keyHitErrors` opt into extended
+reader collection independently of `ENABLE_*`; precise-lane demand alone
+does not. The 1.x serializers still enforce their existing flags.
+
+ABI readers and `vosu-surface::state` share subscriptions, demand and grant
+checks; one-shot surface reads create no demand. API audiences always strip
+`vosu.osu.internal`, including installation/current-file paths. Plugin
+readers need an explicit `field:vosu.osu.internal` or descendant grant;
+`field:vosu.osu` alone does not grant it. Core strips non-owner process facts
+from session replay. Detach flushes final selected state before its terminal
+event and closes the store.
+
+M2 does not replace the HTTP/WebSocket compatibility providers above or expose
+the M3 `/api/v1` transport. B1 remains until M4a. Resource references await M3:
+`vosu.chart.resources` is `{}` and `vosu.skin.tree` is `null`, not absent.
+
 ### API and server publication
 
 `src/api/snapshot.rs` owns immutable manager/combined snapshots and per-snapshot encoding caches. `src/api/{v1,sc,v2,precise}.rs` own wire construction; `src/runtime/projection.rs::ProductionSnapshotEncoder` is the filtered WebSocket bridge. `src/server/service/providers.rs::SnapshotStateProvider` serves HTTP encodings from the same atomic snapshot and its `OnceLock` caches. No route reads game memory directly.

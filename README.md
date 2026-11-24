@@ -234,6 +234,25 @@ Offset entries are keyed by client version and remain the validated
 keyed by platform/runtime and embedded bundle checksum, so a helper from another
 release build cannot be reused accidentally.
 
+### 2.0 development: state bus
+
+The M2 build also publishes each identified osu! session on the state bus at
+`/vosu.osu`, alongside common `vosu.status`, `vosu.chart`, `vosu.play` and
+`vosu.skin` state and core-owned `vosu.client` facts. Bundled/plugin readers
+can select fields through the state subscription API. This is not a new
+`GET /vosu.osu` route: the public 2.0 HTTP/WebSocket transport arrives in M3;
+the existing `/json*` endpoints still use the legacy bridge.
+
+For 2.0 subscriptions, selecting `/vosu.osu/play/hitOffsets` or
+`/vosu.osu/play/keyHitErrors` (or an overlapping parent/child selector) is
+the opt-in to extended hit-error collection. No `ENABLE_HIT_OFFSETS` or
+`ENABLE_MANIA_KEY_HIT_ERRORS` setting is needed for bus collection; requesting
+an unrelated precise field does not opt in. Existing 1.x outputs still honor
+those flags, so a bus subscriber does not expose these fields to legacy clients.
+See the [2.0 state schema](docs/v2/state-schema.md) for paths, privacy and
+sampling rules. Resource references await M3; install paths remain private
+plugin state, not API-visible fields.
+
 ## Tools
 
 The dashboard's **Tools** page manages installed applications and lists tools from your catalog sources in **Available**, with install, update, and uninstall actions. Official [18-LAB tools and their SDK](https://github.com/18-lab-dev/vosu-tools) live separately; vosu embeds none. Packages are downloaded over HTTPS, checked against catalog SHA-256 and size, and installed atomically, dependencies first. Updating restarts a running service.

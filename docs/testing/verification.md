@@ -11,6 +11,7 @@ tags: [testing, ci, parity, benchmarks, release]
 ## Fast selection by change
 
 - API projection/routing: affected tests plus `cargo test --locked --test state_api_compat` and/or `server_compat`; add `daemon_smoke` for startup/serving changes.
+- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; keep `state_api_compat` unchanged to guard the B1-served 1.x APIs.
 - Configuration/counters: affected unit tests plus `cargo test --locked --test config_compat`; cover flat typed TOML parsing, precedence `vosu.toml > vosu.env > tosu.env > defaults`, canonical replacement before legacy removal, malformed startup/reload preservation of last-good state, watcher handling, and atomic writes.
 - Process/memory: affected tests plus `cargo test --locked --test process_memory -- --nocapture` on every affected native OS.
 - Updater/release: `updater_compat`, native `updater_native`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` for package/startup changes.
@@ -26,6 +27,48 @@ For socket backpressure tests, constrain the peer buffers and observe a blocked
 write before resuming reads. A fixed megabyte-scale flood tests machine-specific
 loopback throughput rather than the flush/shutdown ordering contract.
 
+## M2 state-bus contracts
+
+```sh
+# Real host vtables, testkit plugins and bundled surface reads (K8)
+cargo nextest run --locked --features test-harness --test state_bus
+# Oracle parity and JSON Schema validation (X1); existing 1.x wire contract
+cargo nextest run --locked --test state_bus_compat --test state_api_compat
+# Real osu! projection: private paths and explicit subtree grants
+cargo nextest run --locked --features test-harness --test osu_projection_privacy
+# Owning state-bus/schema and osu! projection/demand unit tests
+cargo nextest run --locked -p vosu-core --lib state::
+cargo nextest run --locked -p vosu-osu --lib
+```
+
+`state_bus` exercises concurrent regular/precise batch atomicity through ABI
+and surface readers, all-or-nothing rejection, internal-data exclusion from
+public documents/events/tracing, explicit `requires`/`optional` subtree
+grants, delayed identification and PID-generation replacement.
+`osu_projection_privacy` uses the actual osu! projector and path sentinels,
+not just a synthetic namespace, to guard the same API privacy boundary.
+
+`state_bus_compat` walks every case in
+`tests/fixtures/oracle/inventory.json`: sourced cases pass through encoded
+`PUBLISH_BATCH`, decode, commit and audience projection; not-ready cases
+assert that no session state exists. Its dev-only `jsonschema = 0.61.2`
+dependency has default features disabled; validators load
+`docs/v2/schemas/*.schema.json` and resolve `common-defs.schema.json` from
+an in-memory registry, without network retrieval. Both public and
+explicitly internal-granted documents validate for all six namespaces.
+This is full JSON Schema validation in tests, not the production lane walker.
+The test compares the [mapped values](../v2/state-schema.md#1x-to-20-field-mapping)
+against the existing v2/precise builders, checks unchanged publication and
+diff convergence, and rejects unlisted exemptions. Exact permitted differences
+and the deferred stable tournament-manager aggregate are recorded in
+[`DIVERGENCES.md`](../../tests/fixtures/upstream/DIVERGENCES.md);
+they are not blanket exclusions for whole fixtures.
+
+For M2 performance contracts use
+`cargo nextest run --locked --features test-harness --test performance_invariants`
+and the scoped commands in the [benchmark guide](benchmarks.md). Performance
+evidence and D17's decision belong there, not in a functional test pass.
+
 ## CI baseline
 
 `.github/workflows/ci.yml` runs these checks; `scripts/prepush.py` runs the same set locally and in the Windows VM before `scripts/land.py` moves `main` ([ADR 0018](../decisions/0018-enforce-rules-with-checks.md)):
@@ -35,6 +78,7 @@ python scripts/check-doc-links.py
 python scripts/check-file-length.py
 python scripts/check-brand.py
 python scripts/check-module-boundaries.py
+python scripts/check-crate-boundaries.py
 python scripts/assemble-release-license.py
 python scripts/check-asset-hashes.py
 python -m unittest discover -s scripts -p 'test_*.py'

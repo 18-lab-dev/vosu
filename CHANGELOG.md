@@ -4,10 +4,18 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M2
 
-- Publish osu! sessions to the state bus alongside the unchanged legacy bridge,
-  including when no legacy sink is installed. Union subscriber demand from both
-  paths, and collect bus-requested hit offsets and key hit errors independently
-  of the legacy output flags.
+- Publish identified osu! sessions to `/vosu.osu` on the 2.0 state bus, plus
+  common status, chart, play and skin namespaces and core-owned client facts,
+  alongside the unchanged legacy bridge, including when no legacy sink exists.
+  Bundled/plugin readers share atomic, latest-only subscriptions; the public
+  2.0 HTTP/WebSocket transport is not part of M2.
+- Make 2.0 selectors overlapping `/vosu.osu/play/hitOffsets` or
+  `/vosu.osu/play/keyHitErrors` the opt-in to extended hit-error collection,
+  independent of `ENABLE_HIT_OFFSETS` and `ENABLE_MANIA_KEY_HIT_ERRORS`.
+  Unrelated precise subscriptions do not opt in. Reader demand is unioned
+  across the bus and legacy bridge; existing 1.x outputs retain their flags.
+- Keep installation/current-file paths private to explicitly granted plugin
+  readers; API-facing state always excludes `vosu.osu.internal`.
 
 ## Unreleased — 2.0 M1
 
