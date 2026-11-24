@@ -10,10 +10,7 @@ use std::{
 use vosu_core::plugin::{ModuleResolver, execute_into};
 use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::{
-    memory::{
-        LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
-        lazer_offsets::LazerOffsets,
-    },
+    memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, lazer_offsets::LazerOffsets},
     process::{BatchScanResult, Pattern, ProcessHandle, ScanBackend},
 };
 use vosu_plugin_api::{
@@ -21,6 +18,9 @@ use vosu_plugin_api::{
     vosu_host_services, vosu_message, vosu_opcode, vosu_status,
 };
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+#[path = "support/stable_fixture.rs"]
+mod stable_fixture;
+use stable_fixture::patterns;
 struct SliceMemory(Vec<u8>);
 impl ProcessMemory for SliceMemory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
@@ -106,7 +106,11 @@ impl ExecutorHost {
         Self {
             context,
             vtable,
-            memory: SliceMemory(vec![0; 64 * 1024]),
+            memory: SliceMemory(if bitness == ProcessBitness::X86 {
+                stable_fixture::bytes()
+            } else {
+                vec![0; 64 * 1024]
+            }),
             bitness,
             output: Mutex::new(Vec::new()),
         }
@@ -168,39 +172,34 @@ impl ScanBackend for FixtureScan {
         self.0.scan_batch(patterns)
     }
 }
-fn process(bitness: ProcessBitness) -> ProcessHandle {
-    ProcessHandle::with_scan_backend(
-        Arc::new(PlanProcessMemory::new(
-            ExecutorHost::new(bitness),
-            1,
-            910_600_102,
+fn counted_process(bitness: ProcessBitness) -> (ProcessHandle, Arc<std::sync::atomic::AtomicU64>) {
+    let memory = PlanProcessMemory::new(ExecutorHost::new(bitness), 1, 910_600_102, bitness);
+    let counter = memory.plan_counter();
+    (
+        ProcessHandle::with_scan_backend(
+            Arc::new(memory),
             bitness,
-        )),
-        bitness,
-        Arc::new(FixtureScan(ProcessHandle::new(
-            Arc::new(SliceMemory(vec![0; 64 * 1024])),
-            bitness,
-        ))),
+            Arc::new(FixtureScan(ProcessHandle::new(
+                Arc::new(SliceMemory(vec![0; 64 * 1024])),
+                bitness,
+            ))),
+        ),
+        counter,
     )
 }
-fn patterns() -> StablePatterns {
-    StablePatterns {
-        base_addr: 0,
-        play_time_addr: 0,
-        chat_checker_ptr: 0,
-        skin_data_addr: 0,
-        settings_class_addr: 0,
-        configuration_addr: 0,
-        bindings_addr: 0,
-        rulesets_addr: 0,
-        can_run_slowly_addr: 0,
-        status_ptr: 0,
-        menu_mods_ptr: 0,
-        get_audio_length_ptr: 0,
-        user_profile_ptr: 0,
-        raw_login_status_ptr: 0,
-        spectating_user_ptr: 0,
-        game_time_ptr: 0,
+fn process(bitness: ProcessBitness) -> ProcessHandle {
+    counted_process(bitness).0
+}
+struct Sequential(ProcessHandle);
+impl ProcessMemory for Sequential {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        self.0.read_exact(address, dst)
+    }
+    fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        self.0.read_many(reads)
+    }
+    fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+        self.0.readable_regions()
     }
 }
 fn bench(c: &mut Criterion) {
@@ -211,10 +210,24 @@ fn bench(c: &mut Criterion) {
         LazerPattern::source_default(),
     );
     lazer.set_resolved_state(0x1000, 0x2000);
-    // Reject a fast error path masquerading as a reader improvement: both
-    // transports must decode exactly the same zero-filled fixture before timing.
-    let native = |bitness| ProcessHandle::new(Arc::new(SliceMemory(vec![0; 64 * 1024])), bitness);
+    // Assert successful, non-default decoding before measuring either transport.
+    let native = |bitness| {
+        ProcessHandle::new(
+            Arc::new(SliceMemory(if bitness == ProcessBitness::X86 {
+                stable_fixture::bytes()
+            } else {
+                vec![0; 64 * 1024]
+            })),
+            bitness,
+        )
+    };
     let mut native_stable = StableMemory::new(native(ProcessBitness::X86), patterns());
+    stable_fixture::assert_capture(&mut stable);
+    stable_fixture::assert_capture(&mut native_stable);
+    assert_eq!(
+        format!("{:?}", stable_fixture::capture(&mut stable)),
+        format!("{:?}", stable_fixture::capture(&mut native_stable)),
+    );
     let mut native_lazer = LazerMemory::new(
         native(ProcessBitness::X64),
         Arc::new(LazerOffsets::embedded().unwrap()),
@@ -230,8 +243,14 @@ fn bench(c: &mut Criterion) {
         format!("{:?}", native_stable.menu(""))
     );
     assert_eq!(
-        format!("{:?}", stable.gameplay(0.0, None)),
-        format!("{:?}", native_stable.gameplay(0.0, None))
+        format!(
+            "{:?}",
+            stable.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME)
+        ),
+        format!(
+            "{:?}",
+            native_stable.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME)
+        )
     );
     assert_eq!(
         format!("{:?}", lazer.global()),
@@ -246,11 +265,74 @@ fn bench(c: &mut Criterion) {
         format!("{:?}", native_lazer.gameplay(0.0, None))
     );
     let mut group = c.benchmark_group("plan_memory");
+    for sequential in [true, false] {
+        let (process, counter) = counted_process(ProcessBitness::X86);
+        let process = if sequential {
+            ProcessHandle::new(Arc::new(Sequential(process)), ProcessBitness::X86)
+        } else {
+            process
+        };
+        let mut reader = StableMemory::new(process, patterns());
+        let before = counter.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = reader.global();
+        let global = counter.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = reader.menu("");
+        let menu = counter.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = reader.gameplay(0.0, None);
+        let gameplay = counter.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!(
+            "sequential={sequential}: global={} menu={} gameplay={}",
+            global - before,
+            menu - global,
+            gameplay - menu
+        );
+    }
+    let floor = process(ProcessBitness::X86);
+    group.bench_function("floor_one_op", |b| {
+        b.iter(|| black_box(floor.read_u32(0).unwrap()))
+    });
+    let mut destinations = [[0; 4]; 18];
+    group.bench_function("floor_eighteen_independent_ops", |b| {
+        b.iter(|| {
+            let mut requests = destinations.each_mut().map(|dst| ReadRequest::new(0, dst));
+            floor.read_many(&mut requests).unwrap();
+            black_box(&requests);
+        })
+    });
+    let mut sequential_stable = StableMemory::new(
+        ProcessHandle::new(
+            Arc::new(Sequential(process(ProcessBitness::X86))),
+            ProcessBitness::X86,
+        ),
+        patterns(),
+    );
+    group.bench_function("stable_native", |b| {
+        b.iter(|| {
+            let _ = black_box(native_stable.global());
+            let _ = black_box(native_stable.menu(""));
+            let _ = black_box(
+                native_stable
+                    .gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME),
+            );
+        })
+    });
+    group.bench_function("stable_sequential_plans", |b| {
+        b.iter(|| {
+            let _ = black_box(sequential_stable.global());
+            let _ = black_box(sequential_stable.menu(""));
+            let _ = black_box(
+                sequential_stable
+                    .gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME),
+            );
+        })
+    });
     group.bench_function("stable_regular_fields", |b| {
         b.iter(|| {
             let _ = black_box(stable.global());
             let _ = black_box(stable.menu(""));
-            let _ = black_box(stable.gameplay(0.0, None));
+            let _ = black_box(
+                stable.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME),
+            );
         })
     });
     group.bench_function("lazer_regular_fields", |b| {

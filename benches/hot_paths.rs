@@ -25,13 +25,13 @@ use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
-use vosu_osu_reader::memory::{
-    LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
-};
+use vosu_osu_reader::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory};
 use vosu_osu_reader::process::{Pattern, ProcessHandle};
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 use vosu_plugin_api::{Message, PlanBase, PlanOp, ReadPlanSubmit, Stage, StageBase};
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+#[path = "support/stable_fixture.rs"]
+mod stable_fixture;
 
 const MAP: &[u8] = br#"osu file format v14
 
@@ -111,26 +111,6 @@ fn process(bytes: Vec<u8>, base: usize, bitness: ProcessBitness) -> ProcessHandl
     )
 }
 
-fn stable_patterns() -> StablePatterns {
-    StablePatterns {
-        base_addr: 0,
-        play_time_addr: 0,
-        chat_checker_ptr: 0,
-        skin_data_addr: 0,
-        settings_class_addr: 0,
-        configuration_addr: 0,
-        bindings_addr: 0,
-        rulesets_addr: 0,
-        can_run_slowly_addr: 0,
-        status_ptr: 0,
-        menu_mods_ptr: 0,
-        get_audio_length_ptr: 0,
-        user_profile_ptr: 0,
-        raw_login_status_ptr: 0,
-        spectating_user_ptr: 0,
-        game_time_ptr: 0,
-    }
-}
 
 fn regular_state() -> RegularState {
     RegularState {
@@ -243,9 +223,10 @@ fn bench_batch_scan(c: &mut Criterion) {
 fn bench_snapshot_reads(c: &mut Criterion) {
     let fixture = vec![0_u8; 64 * 1024];
     let mut stable = StableMemory::new(
-        process(fixture.clone(), 0, ProcessBitness::X86),
-        stable_patterns(),
+        process(stable_fixture::bytes(), 0, ProcessBitness::X86),
+        stable_fixture::patterns(),
     );
+    stable_fixture::assert_capture(&mut stable);
     let offsets = Arc::new(LazerOffsets::embedded().expect("embedded offsets"));
     let mut lazer = LazerMemory::new(
         process(fixture, 0, ProcessBitness::X64),
@@ -258,7 +239,9 @@ fn bench_snapshot_reads(c: &mut Criterion) {
         b.iter(|| {
             let _ = black_box(stable.global());
             let _ = black_box(stable.menu(""));
-            let _ = black_box(stable.gameplay(0.0, None));
+            let _ = black_box(
+                stable.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME),
+            );
         })
     });
     group.bench_function("lazer_regular_fields", |b| {
