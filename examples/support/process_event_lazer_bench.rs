@@ -16,8 +16,7 @@ use serde_json::json;
 use tokio::runtime::Handle;
 use tokio::time::{sleep, timeout_at};
 
-/// Mirrors `vosu::instance::Pid` (`src/instance.rs:30`); these examples
-/// no longer depend on the 1.x instance module (C5).
+/// Native process id used by the core discovery source.
 type Pid = u32;
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(15);

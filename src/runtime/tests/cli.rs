@@ -171,3 +171,12 @@ async fn setup_is_unsupported_off_linux() {
         .expect_err("non-Linux setup unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[test]
+fn backend_probe_uses_nonempty_osu_matcher_prefilter() {
+    let hints = super::cli::backend_probe_hints().unwrap();
+    assert!(!hints.is_empty());
+    assert!(hints.iter().any(|hint| hint == b"osu!"));
+    assert!(hints.iter().any(|hint| hint == b"osulazer.exe"));
+}

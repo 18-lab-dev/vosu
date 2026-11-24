@@ -11,6 +11,7 @@
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n";
 
+/// The required `vosu.osu` entry is first; later entries are optional fixtures.
 pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
     vosu_core::plugin::BundledPlugin {
         manifest: vosu_osu::MANIFEST,

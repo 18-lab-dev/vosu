@@ -17,7 +17,7 @@ pub(super) type CaptureControls = (
 );
 
 impl OsuSession {
-    pub async fn start_capture(self: &Arc<Self>, sink: Arc<B1Sink>, warn: LogWarn) {
+    pub async fn start_capture(self: &Arc<Self>, sink: Arc<B1Sink>, warn: LogWarn, error: LogWarn) {
         let mut task = self.capture.lock().await;
         if task.is_some() || self.lifecycle.is_cancelled() {
             return;
@@ -63,6 +63,7 @@ impl OsuSession {
                 Arc::new(B1Publisher::new(key, Arc::clone(&sink)));
             let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
             let mut starting = false;
+            let last_probe_error = Arc::new(Mutex::new(None::<String>));
             let initialize = async {
                 if client == vosu_osu_model::enums::ClientType::Lazer {
                     while !*offset_ready.borrow_and_update() {
@@ -94,8 +95,10 @@ impl OsuSession {
                     let demand = demand.clone();
                     let publisher = Arc::clone(&publisher);
                     let synchronization = Arc::clone(&synchronization);
+                    let warn = Arc::clone(&warn);
+                    let last_probe_error = Arc::clone(&last_probe_error);
                     async move {
-                        match target {
+                        let result = match target {
                             Some(target) => {
                                 create_state_worker(
                                     &target,
@@ -107,12 +110,32 @@ impl OsuSession {
                                 .await
                             }
                             None => Ok(None),
+                        };
+                        // One remembered message per session, cleared after success:
+                        // repeated failed probes cannot flood the daemon's log.
+                        if let Err(failure) = &result {
+                            let message = format!("PID {} memory probe failed: {failure}", key.pid);
+                            let changed = {
+                                let mut previous = last_probe_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                                if previous.as_ref() == Some(&message) {
+                                    false
+                                } else {
+                                    *previous = Some(message.clone());
+                                    true
+                                }
+                            };
+                            if changed {
+                                warn(format!("osu! process candidate rejected: {message}"));
+                            }
+                        } else {
+                            last_probe_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
                         }
+                        result
                     }
                 },
-                |error| {
-                    warn(format!(
-                        "State initialization stopped for PID {} ({client:?}, generation {}): {error}",
+                |failure| {
+                    error(format!(
+                        "State initialization stopped for PID {} ({client:?}, generation {}): {failure}",
                         key.pid, key.generation
                     ))
                 },

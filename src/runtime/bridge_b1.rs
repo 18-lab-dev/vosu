@@ -294,6 +294,7 @@ pub(super) struct LegacyBridge {
     config: watch::Receiver<Arc<Config>>,
     demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
     snapshots: Arc<SnapshotProviders>,
+    logger: Logger,
 }
 
 impl LegacyBridge {
@@ -301,7 +302,7 @@ impl LegacyBridge {
         config: watch::Receiver<Arc<Config>>,
         demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
         snapshots: Arc<SnapshotProviders>,
-        _logger: Logger,
+        logger: Logger,
     ) -> Arc<Self> {
         let (inputs, _) = watch::channel(bridge_inputs(&config.borrow(), *demand.borrow()));
         Arc::new(Self {
@@ -312,6 +313,7 @@ impl LegacyBridge {
             config,
             demand,
             snapshots,
+            logger,
         })
     }
     pub(super) fn lifecycle(&self) -> watch::Receiver<Arc<B1Lifecycle>> {
@@ -491,6 +493,10 @@ impl LegacySink<B1Event, B1Inputs> for LegacyBridge {
                         phase: B1Phase::ResolvingOffsets,
                     },
                 );
+                self.logger.info(format!(
+                    "Found osu! process PID {} ({client:?}); probing memory",
+                    key.pid
+                ));
             }
             B1Event::Phase { key, phase } => {
                 let Some(session) = state

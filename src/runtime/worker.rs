@@ -1,8 +1,4 @@
-#[cfg(test)]
-use super::bridge_b1::*;
 use super::*;
-#[cfg(test)]
-use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Publisher, B1SessionKey};
 
 /// Exactly five state publication loops. Connections are owned by their hubs;
 /// shutdown cancels every loop and joins it before the provider can be dropped.
@@ -201,47 +197,5 @@ impl ListenerOwner {
     pub async fn shutdown(self) {
         self.stop_accepting();
         self.join().await;
-    }
-}
-
-#[cfg(test)]
-pub(super) struct StatePublicationSink(B1Publisher);
-
-#[cfg(test)]
-impl StatePublicationSink {
-    pub(super) fn new(pid: u32, generation: u64, publications: Arc<StatePublicationQueue>) -> Self {
-        Self(B1Publisher::new(
-            B1SessionKey { pid, generation },
-            publications,
-        ))
-    }
-}
-
-#[cfg(test)]
-impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
-    fn publish(
-        &self,
-        snapshot: Arc<StateBundleSnapshot>,
-        delivery: Delivery,
-    ) -> Result<(), StateWorkerError> {
-        self.0.publish(snapshot, delivery)
-    }
-}
-
-#[cfg(test)]
-impl vosu_surface::LegacySink<B1Event, B1Inputs> for StatePublicationQueue {
-    fn send(&self, event: B1Event) {
-        if let B1Event::Publish { key, api, live } = event {
-            let _ = self.publish(StatePublication {
-                pid: key.pid,
-                generation: key.generation,
-                api,
-                live,
-            });
-        }
-    }
-
-    fn inputs(&self) -> watch::Receiver<B1Inputs> {
-        watch::channel(B1Inputs::default()).1
     }
 }

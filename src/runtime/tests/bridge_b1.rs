@@ -94,34 +94,42 @@ fn equivalent_state_publication_preserves_revision_and_snapshot() {
 }
 
 
-#[test]
-fn live_selection_promotes_file_and_checksum_before_api_cadence() {
+#[tokio::test]
+async fn live_selection_promotes_file_and_checksum_before_api_cadence() {
     use crate::server::service::CurrentBeatmapProvider;
     use crate::server::v2_subscription::V2SubscriptionProvider;
     use md5::{Digest, Md5};
     let md5 = |bytes: &[u8]| Md5::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
 
     let root = tempfile::tempdir().unwrap();
-    let queue = Arc::new(StatePublicationQueue::default());
-    let sink = StatePublicationSink::new(7, 1, Arc::clone(&queue));
-    let providers = SnapshotProviders::new(
+    use vosu_osu::bridge_b1::{B1Event, B1Publisher, B1SessionKey};
+    use vosu_surface::LegacySink;
+    let logger = Logger::new(root.path(), LoggerOptions::default(), Arc::new(StdoutConsole)).unwrap();
+    let (_config, config) = watch::channel(Arc::new(Config::default()));
+    let (_demand, demand) = watch::channel(Default::default());
+    let providers = Arc::new(SnapshotProviders::new(
         Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default())),
         Arc::new(ProductionSnapshotEncoder),
-    );
+    ));
     let files = RuntimeBeatmap {
         snapshots: providers.snapshot_manager(),
         counters: Arc::new(ReloadableCounterService::production(
             root.path().join("static"), root.path().join("settings"), root.path().join("cache"),
         )),
     };
-    let manager = |revision, state| Arc::new(ManagerSnapshot::new(
-        revision, Some(7), false, ApiRuntimeSettings::default(),
-        [ManagerInstanceSnapshot::new(7, vosu_osu_model::launch::InstanceSettings {
+    let bridge = LegacyBridge::new(config, demand, providers.clone(), logger.clone());
+    let key = B1SessionKey { pid: 7, generation: 1 };
+    bridge.send(B1Event::Attached {
+        key, client: ClientType::Lazer,
+        settings: vosu_osu_model::launch::InstanceSettings {
             tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None,
-        }, false, state)],
-    ));
+        },
+        is_tournament_manager: false,
+    });
+    let sink = B1Publisher::new(key, bridge.clone());
+    let task = bridge.start(Arc::new(vosu_core::plugin::SyntheticForegroundSource::new(None)));
     let mut previous = None;
-    for (revision, bytes, delivery) in [
+    for (_revision, bytes, delivery) in [
         (1, b"osu file format v14\n[Metadata]\nTitle:Old\n".as_slice(), Delivery::All),
         (2, b"osu file format v14\n[Metadata]\nTitle:New\n".as_slice(), Delivery::Live),
     ] {
@@ -137,13 +145,21 @@ fn live_selection_promotes_file_and_checksum_before_api_cadence() {
         regular.menu.folder = Some(String::new());
         regular.menu.filename = Some(relative.to_string_lossy().into_owned());
         regular.menu.checksum = Some(hash.clone());
-        sink.publish(Arc::new(state), delivery).unwrap();
-        let publication = queue.drain().remove(&7).unwrap();
-        assert!(Arc::ptr_eq(&publication.api, &publication.live));
-        // Production publishes API before live, and only then wakes subscribers.
-        providers.publish_api(manager(revision, publication.api));
-        providers.publish_live(manager(revision, publication.live));
-        let subscription = V2SubscriptionProvider::capture(&providers).document(&[&[]]).unwrap().unwrap();
+        let state = Arc::new(state);
+        sink.publish(state.clone(), delivery).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let api = providers.load();
+                let subscription = V2SubscriptionProvider::capture(providers.as_ref()).document(&[&[]]).unwrap();
+                if api.focused().is_some_and(|s| s.regular.menu.checksum.as_deref() == Some(hash.as_str()))
+                    && subscription.as_ref().is_some_and(|s| s["beatmap"]["checksum"] == hash) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert!(Arc::ptr_eq(providers.load().focused().unwrap(), &state));
+        let subscription = V2SubscriptionProvider::capture(providers.as_ref()).document(&[&[]]).unwrap().unwrap();
         assert_eq!(subscription["beatmap"]["checksum"], hash);
         assert_eq!(files.tool_context()["beatmap"]["checksum"], hash);
         let actual = files.current_beatmap_bytes().unwrap().unwrap();
@@ -155,6 +171,9 @@ fn live_selection_promotes_file_and_checksum_before_api_cadence() {
         }
         previous = Some(hash);
     }
+    tokio::time::timeout(Duration::from_secs(2), task.shutdown()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), files.counters.shutdown()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), logger.shutdown()).await.unwrap().unwrap();
 }
 #[tokio::test]
 async fn dashboard_attachment_status_uses_existing_roster_and_published_version() {

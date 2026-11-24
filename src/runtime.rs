@@ -96,6 +96,7 @@ mod render;
 mod service;
 #[cfg(feature = "test-harness")]
 mod test_support;
+mod tracing_log;
 mod worker;
 
 #[cfg(feature = "test-harness")]
@@ -120,8 +121,6 @@ use render::*;
 use service::*;
 #[cfg(test)]
 use vosu_osu_state::{Delivery, SnapshotPublisher};
-#[cfg(test)]
-use worker::*;
 
 #[cfg(test)]
 mod tests {

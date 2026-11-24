@@ -315,7 +315,7 @@ impl PathResolver for RuntimeTestPathResolver {
     }
 }
 
-fn runtime_test_paths(root: &Path) -> Paths {
+pub(super) fn runtime_test_paths(root: &Path) -> Paths {
     let program = root.join("program");
     let launch = root.join("launch");
     fs::create_dir_all(&program).unwrap();
