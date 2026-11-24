@@ -140,12 +140,31 @@ impl ProcessMemory for SlowMemory {
 /// its [`OutstandingPlans`] slot by itself) until the test releases it —
 /// the only way to hold async plans genuinely outstanding at once
 /// deterministically, rather than racing real near-instant reads.
+///
+/// `started`, when set, counts how many `read_exact` calls have actually
+/// begun blocking on `gate` so far: `VOSU_OK`/`SubmitStatus` alone only
+/// proves a plan was admitted and queued, never that a worker thread has
+/// actually dequeued and started running it
+/// (`pool::a_cancel_racing_admission_still_removes_the_queued_job_and_leaves_no_leak`
+/// flaked once, natively, on exactly that gap: it waited for
+/// `BACKGROUND_WORKER_COUNT` submissions to each report `VOSU_OK` before
+/// assuming every worker was now genuinely busy, but a slow-to-schedule
+/// worker thread can still be sitting on an unstarted job when the next,
+/// supposedly-queued-behind-them plan is submitted — a still-idle worker
+/// can then dequeue that plan immediately instead). [`wait_for_started`]
+/// blocks on this signal instead.
 pub(super) struct GatedMemory {
     pub(super) gate: Arc<(Mutex<bool>, Condvar)>,
+    pub(super) started: Option<Arc<(Mutex<usize>, Condvar)>>,
 }
 
 impl ProcessMemory for GatedMemory {
     fn read_exact(&self, _address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        if let Some(started) = &self.started {
+            let (lock, condvar) = &**started;
+            *lock.lock().unwrap_or_else(|poison| poison.into_inner()) += 1;
+            condvar.notify_all();
+        }
         let (lock, condvar) = &*self.gate;
         let mut released = lock.lock().unwrap_or_else(|poison| poison.into_inner());
         while !*released {
@@ -167,6 +186,22 @@ impl ProcessMemory for GatedMemory {
     fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
         Ok(Vec::new())
     }
+}
+
+/// Blocks until [`GatedMemory::started`]'s own counter reaches `count`
+/// (bounded: panics after [`RECV_TIMEOUT`] rather than hanging a stuck
+/// test forever).
+pub(super) fn wait_for_started(started: &Arc<(Mutex<usize>, Condvar)>, count: usize) {
+    let (lock, condvar) = &**started;
+    let guard = lock.lock().unwrap_or_else(|poison| poison.into_inner());
+    let (guard, timeout) = condvar
+        .wait_timeout_while(guard, RECV_TIMEOUT, |started| *started < count)
+        .unwrap_or_else(|poison| poison.into_inner());
+    assert!(
+        !timeout.timed_out(),
+        "only {} of {count} worker(s) ever started",
+        *guard
+    );
 }
 
 pub(super) fn release_gate(gate: &Arc<(Mutex<bool>, Condvar)>) {

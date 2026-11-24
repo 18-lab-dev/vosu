@@ -15,7 +15,7 @@ use super::super::super::tests::{test_host, test_process};
 use super::super::*;
 use super::helpers::{
     GatedMemory, RECV_TIMEOUT, create_read_plan_instance, expect_attached, expect_status,
-    one_op_stage, release_gate,
+    one_op_stage, release_gate, wait_for_started,
 };
 
 /// §5/§6.3: the 64-outstanding-async-plan cap holds; `READ_PLAN_CANCEL`
@@ -42,6 +42,7 @@ fn outstanding_plans_capped_then_freed_by_cancel_and_detach() {
         pid1,
         Arc::new(GatedMemory {
             gate: Arc::clone(&gate),
+            started: None,
         }),
         ProcessBitness::X64,
     );
@@ -49,6 +50,7 @@ fn outstanding_plans_capped_then_freed_by_cancel_and_detach() {
         pid2,
         Arc::new(GatedMemory {
             gate: Arc::clone(&gate),
+            started: None,
         }),
         ProcessBitness::X64,
     );
@@ -158,6 +160,7 @@ fn dropping_host_while_a_background_job_runs_neither_aborts_nor_self_joins() {
         pid,
         Arc::new(GatedMemory {
             gate: Arc::clone(&gate),
+            started: None,
         }),
         ProcessBitness::X64,
     );
@@ -229,6 +232,7 @@ fn one_plugin_cannot_starve_another_through_the_shared_pool_queue() {
                 pid,
                 Arc::new(GatedMemory {
                     gate: Arc::clone(&gate),
+                    started: None,
                 }),
                 ProcessBitness::X64,
             );
@@ -307,6 +311,7 @@ fn process_exit_cancels_outstanding_plans_before_detach_so_no_stale_result_follo
         pid,
         Arc::new(GatedMemory {
             gate: Arc::clone(&gate),
+            started: None,
         }),
         ProcessBitness::X64,
     );
@@ -373,11 +378,13 @@ fn a_cancel_racing_admission_still_removes_the_queued_job_and_leaves_no_leak() {
     );
 
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let started = Arc::new((Mutex::new(0usize), Condvar::new()));
     let pid = 500_100_301;
     set_session_memory_hook_for_tests(
         pid,
         Arc::new(GatedMemory {
             gate: Arc::clone(&gate),
+            started: Some(Arc::clone(&started)),
         }),
         ProcessBitness::X64,
     );
@@ -386,7 +393,13 @@ fn a_cancel_racing_admission_still_removes_the_queued_job_and_leaves_no_leak() {
 
     // Occupy every shared background worker with this same instance's
     // own blocking plans first, so the racing plan below can only ever
-    // sit queued behind them.
+    // sit queued behind them. `VOSU_OK`/`SubmitStatus` alone only proves
+    // each one was admitted and queued, never that its worker has
+    // actually started running it (`GatedMemory::started`'s own doc
+    // comment: this test flaked once, natively, on exactly that gap —
+    // a still-idle worker dequeuing the racing plan below before every
+    // occupying plan had genuinely reached its own blocking read).
+    // Waiting for `started` to reach `BACKGROUND_WORKER_COUNT` closes it.
     let stages = vec![one_op_stage(1)];
     for plan in 1..=BACKGROUND_WORKER_COUNT as u64 {
         commands
@@ -399,6 +412,7 @@ fn a_cancel_racing_admission_still_removes_the_queued_job_and_leaves_no_leak() {
             .expect("sending a blocking submit command");
         assert_eq!(expect_status(&events), vosu_status::VOSU_OK);
     }
+    wait_for_started(&started, BACKGROUND_WORKER_COUNT);
 
     let outstanding = host
         .outstanding_plans_of(instance)
