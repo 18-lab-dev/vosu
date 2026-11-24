@@ -46,7 +46,7 @@ try {
     $PatchPath = $config.PatchPath
     $ExpectedCommit = $config.ExpectedCommit
     $cargoArgsBuild = @($config.CargoArgsBuild)
-    $cargoArgsIter = @($config.CargoArgsIter)
+    $testArgs = @($config.TestArgs)
     $Iterations = [int]$config.Iterations
     $Jobs = [int]$config.Jobs
     $BuildTimeoutSeconds = [int]$config.BuildTimeoutSeconds
@@ -79,14 +79,10 @@ try {
 
     $steps = New-Object 'System.Collections.Generic.List[object]'
 
-    # Build once: `--no-run` compiles (and links) the test binary without
-    # executing it. Each iteration below reruns `cargo test` with the same
-    # args plus the filter; since nothing changes between iterations, Cargo's
-    # own fingerprint check is a fast no-op recompile and it goes straight to
-    # running the already-built binary -- "one build, N reruns" without
-    # resolving the test executable path by hand.
+    # Discover the executable paths from this one build. Calling Cargo again
+    # is not reuse: build scripts may invalidate their artifacts on every run.
     $buildExit = Invoke-VosuCargoStep -Name 'build' -CargoExe $cargo -WorkingDirectory $source `
-        -Arguments $cargoArgsBuild -LogDir $logs -Steps $steps -TimeoutSeconds $BuildTimeoutSeconds
+        -Arguments ($cargoArgsBuild + @('--message-format=json')) -LogDir $logs -Steps $steps -TimeoutSeconds $BuildTimeoutSeconds
     if ($buildExit -ne 0) {
         $summary = [ordered]@{
             commit   = $actual
@@ -97,6 +93,14 @@ try {
         Write-Done -ExitCode $buildExit -ErrorMessage 'build (cargo test --no-run) failed; see logs/build.std{out,err}.log'
         exit $buildExit
     }
+    $binaries = @(Get-Content (Join-Path $logs 'build.stdout.log') | ForEach-Object {
+        $artifact = $_ | ConvertFrom-Json
+        if ($artifact.reason -eq 'compiler-artifact' -and $artifact.profile.test -and $artifact.executable) {
+            $artifact
+        }
+    })
+    if ($binaries.Count -eq 0) { throw 'cargo test --no-run produced no test executables' }
+    $env:PATH = (Join-Path $env:CARGO_TARGET_DIR 'debug\deps') + ';' + (Join-Path $env:CARGO_TARGET_DIR 'debug') + ';' + $env:PATH
 
     $failurePattern = [regex]'(?m)^test (\S+) \.\.\. FAILED\r?$'
     $perTest = [ordered]@{}
@@ -105,9 +109,24 @@ try {
 
     for ($i = 1; $i -le $Iterations; $i++) {
         $name = "iter-$i"
-        $exitCode = Invoke-VosuCargoStep -Name $name -CargoExe $cargo -WorkingDirectory $source `
-            -Arguments $cargoArgsIter -LogDir $logs -Steps $steps -TimeoutSeconds $IterTimeoutSeconds
-        $timedOut = $steps[$steps.Count - 1].timedOut
+        $exitCode = 0
+        $timedOut = $false
+        $stdoutParts = New-Object 'System.Collections.Generic.List[string]'
+        $stderrParts = New-Object 'System.Collections.Generic.List[string]'
+        $binaryIndex = 0
+        foreach ($binary in $binaries) {
+            $binaryIndex++
+            $binaryName = "$name-bin-$binaryIndex"
+            $rc = Invoke-VosuCargoStep -Name $binaryName -CargoExe $binary.executable `
+                -WorkingDirectory (Split-Path -Parent $binary.manifest_path) `
+                -Arguments $testArgs -LogDir $logs -Steps $steps -TimeoutSeconds $IterTimeoutSeconds
+            if ($rc -ne 0) { $exitCode = $rc }
+            $timedOut = $timedOut -or $steps[$steps.Count - 1].timedOut
+            $stdoutParts.Add([IO.File]::ReadAllText((Join-Path $logs "$binaryName.stdout.log")))
+            $stderrParts.Add([IO.File]::ReadAllText((Join-Path $logs "$binaryName.stderr.log")))
+        }
+        [IO.File]::WriteAllText((Join-Path $logs "$name.stdout.log"), ($stdoutParts -join "`n"))
+        [IO.File]::WriteAllText((Join-Path $logs "$name.stderr.log"), ($stderrParts -join "`n"))
 
         $stdout = Get-Content (Join-Path $logs "$name.stdout.log") -Raw -ErrorAction SilentlyContinue
         if (-not $stdout) { $stdout = '' }
@@ -158,7 +177,7 @@ try {
     $summary = [ordered]@{
         commit      = $actual
         workRoot    = $WorkRoot
-        cargoArgs   = $cargoArgsIter
+        testArgs    = $testArgs
         iterations  = $Iterations
         finishedUtc = (Get-Date).ToUniversalTime().ToString('o')
         steps       = $steps

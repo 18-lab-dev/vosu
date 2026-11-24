@@ -34,28 +34,35 @@ class BuildCargoArgsBuildTests(unittest.TestCase):
         self.assertEqual(args[-1], "--no-run")
 
 
-class BuildCargoArgsIterTests(unittest.TestCase):
-    def test_filter_follows_double_dash(self):
-        args = vm_stress.build_cargo_args_iter("vosu-core", None, True, "plugin::", [])
-        self.assertEqual(
-            args,
-            ["test", "--locked", "--all-features", "--package", "vosu-core", "--lib", "--", "plugin::"],
-        )
+class BuildTestArgsTests(unittest.TestCase):
+    def test_filter_is_first_without_cargo_flags(self):
+        self.assertEqual(vm_stress.build_test_args("plugin::", []), ["plugin::"])
 
     def test_extra_args_follow_the_filter(self):
-        args = vm_stress.build_cargo_args_iter(None, "process_memory", False, "plugin::", ["--nocapture"])
-        self.assertEqual(args[-2:], ["plugin::", "--nocapture"])
+        args = vm_stress.build_test_args("plugin::", ["--nocapture"])
+        self.assertEqual(args, ["plugin::", "--nocapture"])
 
     def test_never_appends_no_run(self):
-        args = vm_stress.build_cargo_args_iter("vosu-core", None, True, "plugin::", [])
+        args = vm_stress.build_test_args("plugin::", [])
         self.assertNotIn("--no-run", args)
+
+
+class DirectExecutionTests(unittest.TestCase):
+    def test_iteration_loop_cannot_reinvoke_cargo(self):
+        runner = Path(__file__).with_name("vm-stress.ps1").read_text()
+        loop = runner.split("for ($i = 1;", 1)[1].split("$perTestOut =", 1)[0]
+        self.assertIn("-CargoExe $binary.executable", loop)
+        self.assertNotIn("-CargoExe $cargo ", loop)
+        self.assertIn("Split-Path -Parent $binary.manifest_path", loop)
+        self.assertIn("'--message-format=json'", runner)
+        self.assertIn("$artifact.profile.test", runner)
 
 
 class InvocationConfigTests(unittest.TestCase):
     def test_includes_all_fields(self):
         config = vm_stress.build_invocation_config(
             "V:\\bt\\vms-abc-123", "deadbeefcafef00d",
-            ["test", "--no-run"], ["test", "--", "plugin::"],
+            ["test", "--no-run"], ["plugin::"],
             has_patch=True, iterations=30, jobs=8,
             build_timeout_seconds=1800, iter_timeout_seconds=180,
         )
@@ -64,7 +71,7 @@ class InvocationConfigTests(unittest.TestCase):
         self.assertEqual(config["PatchPath"], "V:\\bt\\vms-abc-123\\uncommitted.patch")
         self.assertEqual(config["ExpectedCommit"], "deadbeefcafef00d")
         self.assertEqual(config["CargoArgsBuild"], ["test", "--no-run"])
-        self.assertEqual(config["CargoArgsIter"], ["test", "--", "plugin::"])
+        self.assertEqual(config["TestArgs"], ["plugin::"])
         self.assertEqual(config["Iterations"], 30)
         self.assertEqual(config["Jobs"], 8)
         self.assertEqual(config["BuildTimeoutSeconds"], 1800)
@@ -80,12 +87,12 @@ class InvocationConfigTests(unittest.TestCase):
 
     def test_round_trips_through_json(self):
         config = vm_stress.build_invocation_config(
-            "V:\\bt\\vms-abc-123", "deadbeefcafef00d", ["test"], ["test", "--", "a::b::"],
+            "V:\\bt\\vms-abc-123", "deadbeefcafef00d", ["test"], ["a::b::"],
             has_patch=False, iterations=30, jobs=8,
             build_timeout_seconds=1800, iter_timeout_seconds=180,
         )
         decoded = json.loads(json.dumps(config))
-        self.assertEqual(decoded["CargoArgsIter"], ["test", "--", "a::b::"])
+        self.assertEqual(decoded["TestArgs"], ["a::b::"])
 
 
 class NamingTests(unittest.TestCase):

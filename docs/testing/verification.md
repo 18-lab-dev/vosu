@@ -20,6 +20,11 @@ tags: [testing, ci, parity, benchmarks, release]
 - Lazer offsets: `python scripts/lazer-offset-canary.py [--tag <release>-lazer]` stages the generator on the client's own runtime exactly as the daemon does and fails naming any template field it cannot resolve. The nightly workflow runs it against the newest lazer release.
 - Dashboard and tool host: `tests/tool_host_smoke.py` and `tests/dashboard_smoke.py` against a `--features test-harness` debug build; CI's `dashboard` job runs them when UI paths change, and the nightly workflow also runs the catalog-art and tool-catalog smokes.
 - Hot paths: the affected Criterion group in `benches/hot_paths.rs`, compared on the same machine; record observations in the [benchmark guide](benchmarks.md), not as universal thresholds.
+- Native Windows flakes: `python scripts/vm-stress.py --package vosu --lib --iterations 20 --keep-remote -- <filter> --nocapture` builds once and reruns the JSON-reported test executable directly. This avoids build-script invalidations between samples. Each executable runs from its package directory with the normal harness parallelism; `--jobs` only caps compilation. Inspect `summary.json` and `logs/iter-*.{stdout,stderr}.log` in the reported VM directory for timings and failures.
+
+For socket backpressure tests, constrain the peer buffers and observe a blocked
+write before resuming reads. A fixed megabyte-scale flood tests machine-specific
+loopback throughput rather than the flush/shutdown ordering contract.
 
 ## CI baseline
 

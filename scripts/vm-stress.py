@@ -14,11 +14,9 @@ for it: vm-test.py answers "does this pass on Windows right now?"; this
 answers "does this still pass after N reruns?", the shape a flake report
 needs. It stages exactly HEAD plus the agent's uncommitted working tree into
 a unique directory under V:\\bt (same approach as vm-test.py), builds once
-with `cargo test --no-run`, then reruns `cargo test` with the same args plus
-the given filter N times -- nothing changes between reruns, so Cargo's own
-fingerprint check is a fast no-op and each iteration goes straight to
-executing the already-built binary with its default (full) parallelism, the
-same as a single `cargo test`/`cargo nextest run` invocation would use.
+with `cargo test --no-run --message-format=json`, then invokes the reported
+test executables directly N times with the given filter and default harness
+parallelism. No Cargo invocation or build script runs between iterations.
 
 Never starts the VM; refuses to run if it is not already running.
 """
@@ -62,13 +60,13 @@ def build_cargo_args_build(package, test, lib):
     return vm_test.build_cargo_test_args(package, test, lib, []) + ["--no-run"]
 
 
-def build_cargo_args_iter(package, test, lib, test_filter, extra):
-    """`cargo test ... -- <filter> [extra]`: reruns the already-built binary."""
-    return vm_test.build_cargo_test_args(package, test, lib, [test_filter, *extra])
+def build_test_args(test_filter, extra):
+    """Arguments for the test executable, not Cargo."""
+    return [test_filter, *extra]
 
 
 def build_invocation_config(
-    remote_dir, commit, cargo_args_build, cargo_args_iter, has_patch, iterations, jobs,
+    remote_dir, commit, cargo_args_build, test_args, has_patch, iterations, jobs,
     build_timeout_seconds, iter_timeout_seconds,
 ):
     return {
@@ -77,7 +75,7 @@ def build_invocation_config(
         "PatchPath": f"{remote_dir}\\uncommitted.patch" if has_patch else "",
         "ExpectedCommit": commit,
         "CargoArgsBuild": cargo_args_build,
-        "CargoArgsIter": cargo_args_iter,
+        "TestArgs": test_args,
         "Iterations": iterations,
         "Jobs": jobs,
         "BuildTimeoutSeconds": build_timeout_seconds,
@@ -176,13 +174,13 @@ def run(args):
     task = task_name(short_sha, token)
 
     cargo_args_build = build_cargo_args_build(args.package, args.test, args.lib)
-    cargo_args_iter = build_cargo_args_iter(args.package, args.test, args.lib, test_filter, extra)
+    test_args = build_test_args(test_filter, extra)
 
     total_timeout = args.build_timeout + args.iterations * args.iter_timeout
 
     print(f"Staging {sha} (+ uncommitted changes) into {remote_dir} as task {task}")
     print(f"build:  cargo {' '.join(cargo_args_build)}")
-    print(f"rerun:  cargo {' '.join(cargo_args_iter)}  x{args.iterations}")
+    print(f"rerun:  test executable {' '.join(test_args)}  x{args.iterations}")
 
     cleaned_up = False
 
@@ -209,7 +207,7 @@ def run(args):
             has_patch = vm_test.create_uncommitted_patch(patch_path)
 
             config = build_invocation_config(
-                remote_dir, sha, cargo_args_build, cargo_args_iter, has_patch,
+                remote_dir, sha, cargo_args_build, test_args, has_patch,
                 args.iterations, args.jobs, args.build_timeout, args.iter_timeout,
             )
             config_path = local_tmp / "invocation.json"
