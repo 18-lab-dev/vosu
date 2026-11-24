@@ -741,7 +741,7 @@ game, not any real supported or planned integration.
   shape tools already use, so every web-only entry kind shares one schema.
 
   The package limit is the `MAX_PACKAGE_MIB` setting in `vosu.toml`, also on
-  the dashboard's Settings page under Advanced: default 512, range 64–4096.
+  the dashboard's Settings page under Advanced: default 512, integer range 1–4096.
   It bounds both a package's compressed `size` and its expanded size, as
   1.x's fixed `MAX_PACKAGE` did; the 10,000-entry archive limit stays fixed.
   Like every setting, it changes only through a dashboard-origin save. The
@@ -965,6 +965,17 @@ live plan. A successful confirmation returns the existing `{"job_id"}`.
 with checked multiplication by 1,048,576. Solver and streaming use the same
 pinned cap. A larger positive catalog size remains document-valid but
 unsupported for installation at that cap.
+
+The core `catalog::plans` handoff is `CatalogExecutor::start(CatalogOperation)`.
+Its immutable `ConfirmedPlan` pins complete validated entries, selected target,
+byte cap and exact T0 approval records. The executor owns its bounded workers,
+cancellation and shutdown joins, and holds the operation guard until commit or
+rollback is finished. Dropping unfinished work fails the catalog job and releases
+the gate. Source/config/installed mutations share that operation gate. Polling
+retains the catalog `{id,status,phase,tool,error}` envelope (terminal status
+`completed`/`failed`, phase `finished`), not an API-v1 action job. Completed jobs
+and consumed plan tombstones are lazily retained for ten minutes and bounded at
+64; capacity pressure returns 409 rather than silently evicting live records.
 
 Prepare **every** package before publication: public-only unauthenticated
 streaming, exact compressed size/hash, ZIP preflight, confined assets and

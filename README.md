@@ -473,6 +473,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `DASHBOARD_IP` | `127.0.0.1` | Independent trusted dashboard listener, loopback-only by default even when overlays are shared on a LAN. |
 | `DASHBOARD_PORT` | `24051` | Trusted dashboard and management port. |
 | `STATIC_FOLDER_PATH` | `./static` | Counter root; the default maps to the data directory. |
+| `MAX_PACKAGE_MIB` | `512` | Catalog package compressed/expanded cap in MiB; integer `1`–`4096`, shared by resolution and download. Oversized entries remain valid catalogs but cannot be installed at the current cap. |
 | `ALLOWED_IPS` | `127.0.0.1,localhost,absolute` | Peer IPs/CIDRs, legacy IPv4 wildcard octets, and allowed Origin/Referer hostname tokens. Loopback peers are always allowed. `absolute` is a literal legacy hostname token, not a wildcard or authentication bypass. |
 
 Disk configuration clamps oversized/nonfinite intervals to `60000` ms with a warning. Settings API updates above that ceiling fail without publishing or persisting any part of the update.

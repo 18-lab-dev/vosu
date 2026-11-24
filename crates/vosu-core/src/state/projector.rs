@@ -58,12 +58,22 @@ impl InternalGrant {
         let subtrees = manifest
             .requires
             .iter()
-            .chain(manifest.optional.iter())
-            .filter_map(|cap| vosu_plugin_api::field_to_pointer("vosu.osu", &cap.id))
-            .filter(|ptr| ptr == "/internal" || ptr.starts_with("/internal/"))
+            .chain(&manifest.optional)
+            .filter_map(|cap| Self::internal_pointer(&cap.id))
             .filter_map(|ptr| Pointer::parse(&ptr).ok())
             .collect();
         Self { subtrees }
+    }
+
+    /// The state-schema authority shared by resolved catalog disclosures.
+    /// Callers must pass only actually resolved optional capability IDs.
+    pub fn names_internal_path(capability: &str) -> bool {
+        Self::internal_pointer(capability).is_some()
+    }
+
+    fn internal_pointer(capability: &str) -> Option<String> {
+        vosu_plugin_api::field_to_pointer("vosu.osu", capability)
+            .filter(|ptr| ptr == "/internal" || ptr.starts_with("/internal/"))
     }
 
     /// Whether every token of `subtree` is covered by a granted subtree

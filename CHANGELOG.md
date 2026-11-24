@@ -24,6 +24,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
   probes; cache success for the source lifetime and retry failures only on
   refresh or relevant edits. Publish generation-checked SDK-validated candidate
   snapshots without discarding alternatives or reusing failed-source entries.
+- Review immutable bounded catalog plans before single-use confirmation, with
+  artifact-bound approvals, stale snapshot refusal, lazy ten-minute expiry,
+  serialized catalog operations and the existing catalog-job polling envelope.
+  Add the dashboard/config `MAX_PACKAGE_MIB` integer setting (1–4096, default
+  512), pinning the same checked byte cap for resolution and executor downloads.
+  Package installation is handed to M6b I0, not implemented by plan creation.
 
 ## Unreleased — 2.0 M6a
 

@@ -21,6 +21,8 @@ mod manifest;
 mod matcher;
 #[path = "catalog_v2/mirror.rs"]
 mod mirror;
+#[path = "catalog_v2/plans.rs"]
+mod plans;
 #[path = "catalog_v2/plugin.rs"]
 mod plugin;
 #[path = "catalog_v2/resolver.rs"]

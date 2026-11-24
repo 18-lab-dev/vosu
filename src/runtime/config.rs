@@ -144,6 +144,13 @@ impl ConfigUpdateService for RuntimeConfig {
                     "Network settings require Apply and confirmation within 30 seconds".into(),
                 );
             }
+            if let Some(raw) = object.get("MAX_PACKAGE_MIB") {
+                let value =
+                    json_number(raw).ok_or("MAX_PACKAGE_MIB must be an integer from 1 to 4096")?;
+                if !value.is_finite() || value.fract() != 0.0 || !(1.0..=4096.0).contains(&value) {
+                    return Err("MAX_PACKAGE_MIB must be an integer from 1 to 4096".into());
+                }
+            }
             // Reject instead of silently ignoring or clamping, so the dashboard
             // never reports a save that did not persist the submitted value.
             for (key, minimum, maximum) in [
@@ -347,6 +354,7 @@ pub(super) fn apply_config_values(
     number!("API_V1_SUBSCRIPTION_DEBOUNCE", api_v1_subscription_debounce);
     number!("SERVER_PORT", server_port);
     number!("DASHBOARD_PORT", dashboard_port);
+    number!("MAX_PACKAGE_MIB", max_package_mib);
     string!("DASHBOARD_IP", dashboard_ip);
     string!("SERVER_IP", server_ip);
     string!("STATIC_FOLDER_PATH", static_folder_path);

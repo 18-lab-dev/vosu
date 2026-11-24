@@ -238,6 +238,12 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
     let advanced = settings_group(
         "Advanced",
         &[
+            settings_item(
+                "MAX_PACKAGE_MIB",
+                "Maximum package size",
+                "Compressed and expanded catalog package limit. Raising it permits larger downloads and archive contents.",
+                &settings_number("MAX_PACKAGE_MIB", config.max_package_mib, 1.0, 4096.0, "1", Some("MiB")),
+            ),
             switch(
                 "DEBUG_LOG",
                 "Debug logging",
