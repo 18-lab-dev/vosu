@@ -183,11 +183,11 @@ impl PlanMemory {
 
     /// [`Self::read`]'s zero-allocation counterpart (D17): encodes
     /// `root`/`stages` into `buffers.submit` with
-    /// [`crate::message::flat::encode_submit_into`] (no owned
+    /// `crate::message::flat::encode_submit_into` (no owned
     /// `ReadPlanSubmit`/`Stage`/`Vec` intermediate), submits it through
     /// [`HostServices::send_flat`] (no `Message` enum round trip either),
     /// and returns a [`FlatReadResults`] borrowing `buffers.result` — the
-    /// raw `VOSU_OP_READ_PLAN_RESULT` payload [`intercept_raw`] copied
+    /// raw `VOSU_OP_READ_PLAN_RESULT` payload `intercept_raw` copied
     /// into it, decoded on demand by [`FlatReadResults::get`] rather than
     /// up front. Reusing the same `buffers` across repeated same-shaped
     /// plans on this reader thread allocates nothing once both of its
@@ -269,8 +269,8 @@ impl Drop for SyncRawGuard {
 
 /// Reusable per-reader-thread scratch buffers for [`PlanMemory::read_flat`]
 /// (D17): `submit` holds the flat `VOSU_OP_READ_PLAN_SUBMIT` payload
-/// [`crate::message::flat::encode_submit_into`] builds; `result` holds the
-/// raw `VOSU_OP_READ_PLAN_RESULT` payload [`intercept_raw`] copies into
+/// `crate::message::flat::encode_submit_into` builds; `result` holds the
+/// raw `VOSU_OP_READ_PLAN_RESULT` payload `intercept_raw` copies into
 /// it. Neither ever shrinks on its own, so a reader thread that keeps
 /// reusing the same `SyncReadBuffers` across repeated same-shaped plans
 /// allocates nothing once both have grown to their steady-state capacity.
@@ -286,7 +286,7 @@ impl SyncReadBuffers {
     }
 }
 
-/// Borrows [`SyncReadBuffers::result`]: one [`PlanMemory::read_flat`]
+/// Borrows `SyncReadBuffers::result`: one [`PlanMemory::read_flat`]
 /// call's results, in the same (stage, op) order as the matching
 /// submission, decoded on demand by [`Self::get`] — no owned
 /// `ReadResult`/`Vec<ReadResult>` is ever built.

@@ -538,7 +538,7 @@ fn execute_core(
 }
 
 /// The async (non-`VOSU_READ_PLAN_SYNC`) path's own entry point
-/// ([`DeadlineMode::PerRead`], `execute_core`'s own doc comment).
+/// (`DeadlineMode::PerRead`, `execute_core`'s own doc comment).
 /// Allocates freely; prefer [`execute_into`] on a measured hot path.
 pub fn execute(
     submit: &ReadPlanSubmit,
@@ -649,7 +649,7 @@ impl From<SyncReadPlanError> for vosu_status {
 /// (submitting) thread, before returning — exactly what `send` must do
 /// for this one opcode flag (D5): refuses before executing anything if the
 /// calling thread is itself a dispatch thread ([`on_dispatch_thread`]),
-/// otherwise runs [`execute_sync`] directly, inline, under `deadline`
+/// otherwise runs `execute_sync` directly, inline, under `deadline`
 /// (F2: whole-call `VOSU_ERR_TARGET_GONE`/`VOSU_ERR_TIMED_OUT`, never the
 /// async path's per-read conversion). `VOSU_READ_PLAN_SYNC` submissions
 /// never count against [`OutstandingPlans`]'s cap: the result is
@@ -773,7 +773,7 @@ impl OutstandingPlans {
     /// queued. N3: a `READ_PLAN_CANCEL`/detach can race this (arriving
     /// after [`Self::begin`] but before this call reaches the lock), in
     /// which case `plan` is already in `cancelled`, not `outstanding` —
-    /// reported as [`SetQueueTicketOutcome::CancelledMeanwhile`] so the
+    /// reported as `SetQueueTicketOutcome::CancelledMeanwhile` so the
     /// caller can still remove the now-orphaned job from the pool itself
     /// (it already has `ticket`) and `forget_cancelled` it, rather than
     /// leaving it to pile up in the pool's own per-key sub-queue until a

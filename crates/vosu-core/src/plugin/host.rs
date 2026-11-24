@@ -668,7 +668,7 @@ async fn identification_sweep_loop(host: Weak<PluginHost>) {
 
 impl TimerDelivery for PluginHost {
     /// Delivers through the owning instance's own dispatch queue when it
-    /// is already [`InstanceSlot::Live`]; queues the fire for replay
+    /// is already `InstanceSlot::Live`; queues the fire for replay
     /// (module doc comment) when it is still `Creating`; drops it
     /// silently once it is `Destroying` or gone (`destroy_all` has
     /// already cancelled this instance's timers by the time either state

@@ -33,7 +33,7 @@ impl PluginHost {
     /// `PluginInstance::create`s it with this host as its
     /// `PluginHostHandler`.
     ///
-    /// Registers `id` under [`InstanceSlot::Creating`] *before* calling
+    /// Registers `id` under `InstanceSlot::Creating` *before* calling
     /// into the plugin's own `create` (module doc comment): a timer fired
     /// or a settings change delivered while `create` is still running is
     /// queued there instead of lost, and is replayed, in order, the
@@ -275,7 +275,7 @@ impl PluginHost {
     /// or focus delivery would call once it routes through `PluginHost`
     /// instead of `src/runtime/dev_plugins.rs`'s own instance list.
     /// Answers `UnknownInstance` for an id that is not currently
-    /// [`InstanceSlot::Live`] (including one still `Creating` or already
+    /// `InstanceSlot::Live` (including one still `Creating` or already
     /// `Destroying`): a caller needing `Creating`-aware queuing is
     /// `timer_fired`/`settings_changed`'s own narrower logic, not this
     /// general hook. `correlation_id` is carried unchanged into the

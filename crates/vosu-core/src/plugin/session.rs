@@ -448,7 +448,7 @@ impl SessionRegistry {
     }
 
     /// The owning plugin, PID, and generation of every currently
-    /// identified session, for [`super::focus`]'s Focus rule computation.
+    /// identified session, for `super::focus`'s Focus rule computation.
     pub fn identified_sessions(
         &self,
     ) -> impl Iterator<Item = (SessionHandle, &PluginId, u32)> + '_ {

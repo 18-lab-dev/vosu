@@ -69,8 +69,8 @@ impl AttachFacts {
 
     /// Like [`Self::from_attached`], with an injectable root resolver
     /// (P3 review #7): a test uses this to avoid the real `/proc`/env-var
-    /// reads [`resolve_root`] performs. Production code (`OsuPlugin::new`)
-    /// goes through this directly with [`resolve_root`], not through
+    /// reads `resolve_root` performs. Production code (`OsuPlugin::new`)
+    /// goes through this directly with `resolve_root`, not through
     /// [`Self::from_attached`], which has no caller of its own.
     #[must_use]
     pub fn from_attached_with(message: &SessionAttached, root_resolver: RootResolver) -> Self {
@@ -108,7 +108,7 @@ impl AttachFacts {
 }
 
 /// A root resolver function: see [`AttachFacts::from_attached_with`] and
-/// [`resolve_root`] (the real, default one).
+/// `resolve_root` (the real, default one).
 pub type RootResolver = fn(u32, Option<&Path>, Option<&str>) -> PathBuf;
 
 fn parent_or_default(path: Option<&Path>) -> PathBuf {

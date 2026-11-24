@@ -536,8 +536,8 @@ impl MatcherEngine {
     /// already-registered plugin (install order). Refuses with
     /// [`OverlapError`] when `table` statically overlaps (D18) an
     /// already-registered plugin's table; refuses with
-    /// [`PreFilterLimitError`] when installing it would push the combined
-    /// Linux pre-filter past [`PREFILTER_LIMIT`] (§6.1, D18); refuses with
+    /// `PreFilterLimitError` when installing it would push the combined
+    /// Linux pre-filter past `PREFILTER_LIMIT` (§6.1, D18); refuses with
     /// [`MatcherError`] when `table` itself fails to compile. No failure
     /// installs the plugin.
     pub fn register(&mut self, id: PluginId, table: MatchTable) -> Result<(), RegisterError> {
@@ -640,7 +640,7 @@ impl MatcherEngine {
 
     /// The unified enumeration-cost pre-filter (§6.1, [`Prefilter`]'s own
     /// doc comment): [`Prefilter::Unfiltered`] the moment any registered
-    /// plugin's matcher is not [`CompiledMatcher::names_only`] *and* has
+    /// plugin's matcher is not `CompiledMatcher::names_only` *and* has
     /// no usable hint of its own (`has_usable_hint`); otherwise the
     /// deduplicated union of every registered plugin's hint names. A
     /// plugin's hint names are: on Linux, its `process_names` entries

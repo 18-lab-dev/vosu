@@ -18,8 +18,8 @@
 //! Memory read plans (§6.3, `host/read_plans.rs`) and signature scans
 //! (§6.4, `host/scans.rs`) both route through `PluginHost::handle` now,
 //! sharing one per-session cached process handle
-//! ([`PluginHost::session_memory`]), the same ownership check
-//! ([`PluginHost::resolve_owned_session`]), and one bounded worker pool
+//! (`PluginHost::session_memory`), the same ownership check
+//! (`PluginHost::resolve_owned_session`), and one bounded worker pool
 //! (`PluginHost::background_pool`) rather than each opening/spawning its
 //! own. `scan`/`read_plan` themselves stay standalone modules (pure
 //! executors, no `PluginHost` state) that `host/scans.rs`/

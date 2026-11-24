@@ -2,7 +2,7 @@
 
 /// Every opcode exchanged across the plugin/host vtable boundary. The
 /// payload for opcodes 1-4 and 6 is the corresponding flat `*_header`
-/// struct from [`crate::flat`] followed by its trailing variable-length
+/// struct from `crate::flat` followed by its trailing variable-length
 /// data; every other opcode's payload is CBOR
 /// (`docs/v2/plugin-abi.md` §3).
 #[repr(u32)]

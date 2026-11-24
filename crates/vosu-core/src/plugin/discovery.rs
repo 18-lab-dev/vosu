@@ -85,7 +85,7 @@ pub struct ProcessEventBatch {
 /// `enumerate()`-driven full pass re-derives ground truth from scratch,
 /// no less often than this. [`DiscoveryService::start`] always uses
 /// [`DiscoveryCadence::default`]; no production caller configures
-/// another value today, but tests drive [`run_pass`] directly with their
+/// another value today, but tests drive `run_pass` directly with their
 /// own instance to pin deadlines without a wall-clock sleep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiscoveryCadence {
@@ -96,7 +96,7 @@ pub struct DiscoveryCadence {
     /// Cadence while at least one process is tracked and either the
     /// source's own event channel is unhealthy/absent or this pass was
     /// `degraded` -- a real enumerate/inspect failure or a
-    /// [`MAX_PENDING_EXIT_CONFIRMATIONS`] eviction, never a bare loss
+    /// `MAX_PENDING_EXIT_CONFIRMATIONS` eviction, never a bare loss
     /// flag alone (`cadence_interval`'s own doc comment, which keeps
     /// [`Self::events_healthy`] for that case instead): a real failure
     /// or an eviction needs confirming soon, not after a long
@@ -263,7 +263,7 @@ pub trait ProcessSource: Send + Sync {
     }
 
     /// Total process-level events this source's own backend has ever
-    /// observed, for [`DiscoveryStats::process_events`]. The default, 0,
+    /// observed, for `DiscoveryStats::process_events`. The default, 0,
     /// is exactly right for a pure-poll source.
     fn event_count(&self) -> u64 {
         0
@@ -647,8 +647,8 @@ fn reoffer_tracked(host: &PluginHost, tracked: &HashMap<u32, ProcessRecord>) {
 
 /// The next full-reconcile deadline's interval from `now` (DI,
 /// [`DiscoveryCadence`]'s own doc comment). `degraded` is `true` only
-/// for a real failure or a [`MAX_PENDING_EXIT_CONFIRMATIONS`] eviction
-/// ([`BatchOutcome::degraded`]'s own doc comment) — never for a bare
+/// for a real failure or a `MAX_PENDING_EXIT_CONFIRMATIONS` eviction
+/// (`BatchOutcome::degraded`'s own doc comment) — never for a bare
 /// pre-filter/matcher-generation change or the source's own loss flag
 /// alone (P3 review): 1.x's own `retry_reconcile` is set only by an
 /// enumeration/inspect failure or an eviction, never by `lost` alone
@@ -916,7 +916,7 @@ impl DiscoveryService {
     }
 
     /// Stops the background thread and joins it (bounded: the loop body
-    /// never blocks longer than one [`wait_next`] timeout/notify, so this
+    /// never blocks longer than one `wait_next` timeout/notify, so this
     /// returns promptly). Equivalent to dropping this value; both exist so
     /// a caller that wants to observe the join (tests; orderly runtime
     /// shutdown — discovery stops before plugins are destroyed,
@@ -958,7 +958,7 @@ mod linux_source;
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub use linux_source::LinuxSource;
 mod foreground;
-/// `ProcessRecord` mapping shared by [`linux_source`] and
+/// `ProcessRecord` mapping shared by `linux_source` and
 /// `src/runtime/discovery.rs::PollingLinuxSource` (P3): gated only on
 /// `target_os = "linux"`, so a `--no-default-features` build without the
 /// `linux-process-events` feature still reaches it

@@ -190,7 +190,7 @@ impl PluginHost {
     /// Discovery's foreground-window entry point (P2-9, phase (d2)): the
     /// OS foreground window changed owner (or lost one), so the Focus
     /// rule (`docs/v2/api-v1.md` "Focus rule") must be re-run — nothing
-    /// else calls [`Self::recompute_focus`] on a foreground change by
+    /// else calls `Self::recompute_focus` on a foreground change by
     /// itself; `foreground_pid()` is otherwise only consulted lazily, the
     /// next time some other event (identify, detach) happens to
     /// recompute. A later wiring phase feeds this from a real OS

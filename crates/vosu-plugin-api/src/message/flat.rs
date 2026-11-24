@@ -125,7 +125,7 @@ pub struct Stage {
 }
 
 /// [`Stage`], borrowed: one stage's `ops` as a slice instead of an owned
-/// `Vec`, so [`encode_submit_into`] builds a `VOSU_OP_READ_PLAN_SUBMIT`
+/// `Vec`, so `encode_submit_into` builds a `VOSU_OP_READ_PLAN_SUBMIT`
 /// payload straight from a caller's own `&[PlanOp]` without ever owning a
 /// `Stage`/`Vec<Stage>` (D17; `crate::sdk::plan_memory`'s own module doc
 /// comment).

@@ -254,7 +254,7 @@ fn apply_result(
 
 impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemory<H> {
     /// Root `Absolute(address)`, one op: splits into several sequential
-    /// plans once `dst` is longer than [`MAX_SINGLE_OP_BYTES`].
+    /// plans once `dst` is longer than `MAX_SINGLE_OP_BYTES`.
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         let mut filled = 0usize;
         while filled < dst.len() {
@@ -288,7 +288,7 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
     /// `offset: address` — batched into as many ops as fit one plan's 64
     /// KiB result cap before starting the next round trip, using a
     /// thread-local `Vec<PlanOp>` scratch buffer instead of a fresh one
-    /// per batch. A single request longer than [`MAX_SINGLE_OP_BYTES`]
+    /// per batch. A single request longer than `MAX_SINGLE_OP_BYTES`
     /// falls back to [`Self::read_exact`]'s own splitting instead of ever
     /// being batched.
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {

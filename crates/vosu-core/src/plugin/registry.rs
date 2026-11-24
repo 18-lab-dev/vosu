@@ -156,8 +156,8 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
         .collect()
 }
 
-/// Loads one development plugin from `--plugin <dir>` (§7.1, the `--tool
-/// <dir>` analog, `src/tools/mod.rs::development_roots`): trusted
+/// Loads one development plugin from `--plugin <dir>` (§7.1, the `--tool <dir>`
+/// analog, `src/tools/mod.rs::development_roots`): trusted
 /// in-process only in a debug build (`debug_build` is `cfg!(debug_assertions)`
 /// at the call site), refused outright in release with an explicit
 /// message rather than a silent downgrade.

@@ -2,7 +2,7 @@
 //! use to register routes, WebSocket feeds, and state reads (D3,
 //! plan:94). This crate is permanent.
 //!
-//! The [`bridge_b1`] module is the one interim part: the bundled osu!
+//! The `bridge_b1` module is the one interim part: the bundled osu!
 //! plugin's bridge into the legacy gosuMemory/streamCompanion adapters
 //! (crate edge `vosu-osu -> vosu-surface`) is bridge B1 (plan:447-452,
 //! abi:294 §7.5). It exists only because the ABI's `create(host, init)`

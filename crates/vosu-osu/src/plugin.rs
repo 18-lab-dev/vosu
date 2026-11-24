@@ -17,8 +17,8 @@
 //! host, an offline generator) directly, without going through the real
 //! ABI vtable or a real lazer install. `host` and `state` are `Arc`-wrapped
 //! (not bare fields) so a lazer version lookup can run on its own thread
-//! (see [`Self::commit_identify`]) while still sharing them with the
-//! instance that spawned it; `H: Clone` lets [`register_session`] hand
+//! (see `OsuPlugin::commit_identify`) while still sharing them with the
+//! instance that spawned it; `H: Clone` lets `register_session` hand
 //! P3's backends their own owned copy, exactly as `PlanProcessMemory`/
 //! `PlanScanBackend` already require.
 //!
@@ -26,7 +26,7 @@
 //! the session map, so an identify that only now notices a race already
 //! lost (review #3) and a detach that races it (P4's analogous race, one
 //! step later: between `finish_identify` succeeding and
-//! [`register_session`]'s own insert) serialize on the very same lock
+//! `register_session`'s own insert) serialize on the very same lock
 //! rather than needing a second one. Never held across a call into
 //! `self.host` (`identify_session`/`send`/`set_timer`/`log`) or into
 //! `self.runtime_handle`/`self.runtime` (spawning, joining, or shutting
@@ -208,7 +208,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
 
     /// The scan-result waiter map this instance's [`crate::scan::PlanScanBackend`]s
     /// share (wiring item 8): every session's backend is built from this
-    /// same instance (see [`register_session`]).
+    /// same instance (see `register_session`).
     #[must_use]
     pub fn scan_waiters(&self) -> &Arc<ScanWaiters> {
         &self.scan_waiters

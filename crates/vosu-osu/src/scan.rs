@@ -168,7 +168,7 @@ impl ScanWaiters {
     /// 48-permit `scan_batch` group indefinitely, since first-fit
     /// admission always prefers whichever request is smallest.
     ///
-    /// `count` must not exceed [`MAX_OUTSTANDING_SCANS`] (the semaphore's
+    /// `count` must not exceed `MAX_OUTSTANDING_SCANS` (the semaphore's
     /// own total capacity; [`PlanScanBackend::scan_batch`] enforces this
     /// by grouping). Gives up and returns an error after this instance's
     /// own timeout rather than blocking forever if `count` permits never
@@ -176,7 +176,7 @@ impl ScanWaiters {
     /// caller that gives up never blocks anyone else). The returned
     /// [`ScanSlot`]s each release their own permit and slot
     /// unconditionally, however consumed or dropped (see
-    /// [`Slot::orphaned_since`]).
+    /// `Slot::orphaned_since`).
     pub fn register_many(
         self: &Arc<Self>,
         handle: vosu_session_id,
@@ -490,7 +490,7 @@ impl ScanSlot {
     /// synthetic error), or this scan's own timeout — whichever comes
     /// first — then returns the scanned addresses or the failure as a
     /// `MemoryError`. On a timeout this slot is orphaned rather than
-    /// released (see [`Slot::orphaned_since`]); every other outcome
+    /// released (see `Slot::orphaned_since`); every other outcome
     /// removes it outright. `"permission_denied"` becomes
     /// [`MemoryError::PermissionDenied`] rather than the generic
     /// [`MemoryError::Backend`] every other scan error code becomes.
@@ -697,7 +697,7 @@ impl<H: HostServices + Send + Sync + 'static> ScanBackend for PlanScanBackend<H>
             .collect())
     }
 
-    /// Splits `patterns` into groups of at most [`MAX_OUTSTANDING_SCANS`]
+    /// Splits `patterns` into groups of at most `MAX_OUTSTANDING_SCANS`
     /// (item 1), resolving one group fully before starting the next, then
     /// returns every matched pattern's `(index, address)` **in request
     /// order** (`scan_group` appends each group's matches in the order it
