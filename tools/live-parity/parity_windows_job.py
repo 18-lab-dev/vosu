@@ -105,7 +105,13 @@ class _CompletionPortAssociation(ctypes.Structure):
 
 
 def windows_osu_process_snapshot() -> dict[int, dict[str, Any]]:
-    """Atomically preserve PID, parent, creation time, and image name."""
+    """Atomically preserve PID, parent, creation time, and image name of osu clients."""
+    return windows_process_snapshot({"osu!.exe", "osulazer.exe"})
+
+
+def windows_process_snapshot(images: set[str] | None = None) -> dict[int, dict[str, Any]]:
+    """Atomically preserve PID, parent, creation time, and image name of every process
+    (or of those whose lowercase image name is in `images`)."""
     if sys.platform != "win32":
         raise ValueError("Windows process snapshots require Windows")
     ntdll = ctypes.WinDLL("ntdll")
@@ -142,7 +148,7 @@ def windows_osu_process_snapshot() -> dict[int, dict[str, Any]]:
             image = ctypes.wstring_at(
                 entry.image_name.buffer, entry.image_name.length // 2)
         pid = int(entry.unique_process_id or 0)
-        if pid > 0 and image.lower() in {"osu!.exe", "osulazer.exe"}:
+        if pid > 0 and (images is None or image.lower() in images):
             processes[pid] = {
                 "pid": pid,
                 "parent_pid": int(entry.parent_process_id or 0),

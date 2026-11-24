@@ -37,6 +37,16 @@ pub fn case(dir: &Path, platform: &str, id: &str, assets: &[Asset]) -> Result<Ca
     if value["id"] != id || !case_id(id, &family) {
         return Err(format!("{at}: id {id} is not a {family:?} case ID"));
     }
+    // Route-matrix negative and diagnostic roles name themselves in an ID
+    // segment; their records are never goldens (golden refuses them too).
+    if id
+        .split('.')
+        .any(|segment| matches!(segment, "negative" | "diagnostic"))
+    {
+        return Err(format!(
+            "{at}: negative and diagnostic route cases are never goldens"
+        ));
+    }
     if !value["barrier"]
         .as_str()
         .is_some_and(|b| BARRIERS.contains(&b))
@@ -239,6 +249,19 @@ fn expected(
     normalized: &[String],
     assets: &[Asset],
 ) -> Result<Expected, String> {
+    if value.get("outcome").is_some() {
+        let value = object(value, "expected", &["outcome"])?;
+        if value["outcome"] != "closed" {
+            return Err("expected outcome is not closed".into());
+        }
+        return Ok(Expected {
+            status: 0,
+            headers: Vec::new(),
+            body: Body::Text(String::new()),
+            frames: None,
+            closed: true,
+        });
+    }
     let ws = family == "ws";
     let keys: &[&str] = if ws {
         &["status", "headers", "body", "frames"]
@@ -323,6 +346,7 @@ fn expected(
         headers,
         body,
         frames,
+        closed: false,
     })
 }
 
