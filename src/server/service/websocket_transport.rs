@@ -5,33 +5,26 @@ enum SocketTerminal {
 
 async fn bridge_socket(
     socket: WebSocket,
-    hub: WebSocketHub,
+    feed: vosu_surface::routes::SurfaceFeed,
     processor: Arc<CommandProcessor>,
-    commands: bool,
     client_namespace: u64,
     relays: Arc<WebSocketRelaySink>,
     (query, mutation, key_grant): (Option<&str>, super::auth::MutationAuthorization, Option<super::api_keys::KeyGrant>),
 ) {
-    let (connection, mut outbound) = if commands {
-        hub.connect_commands()
-    } else {
-        hub.connect()
-    };
+    let vosu_surface::routes::SurfaceFeed { state: connection, receiver: mut outbound } = feed;
     let Some(client_id) = namespaced_client_id(client_namespace, connection.id()) else {
-        connection.cleanup();
+        connection.close();
         return;
     };
     let overlay = query.and_then(|query| decoded_query_value(query, "l"));
     let client = match CommandClient::from_query(client_id, overlay.as_deref()) {
         Ok(client) => client,
         Err(_) => {
-            connection.cleanup();
+            connection.close();
             return;
         }
     };
-    let control = connection.control_handle();
-    let connection = Arc::new(tokio::sync::Mutex::new(connection));
-    let _relay_registration = relays.register(client_namespace, client.clone(), control);
+    let _relay_registration = relays.register(client_namespace, client.clone(), connection.clone());
     let (mut sink, mut stream) = socket.split();
     let (terminal_tx, mut terminal_rx) = tokio::sync::mpsc::channel::<SocketTerminal>(1);
 
@@ -96,7 +89,7 @@ async fn bridge_socket(
                 break;
             }
             if state_frame {
-                writer_connection.lock().await.write_completed();
+                writer_connection.write_completed();
             }
             if terminal_frame {
                 let _ = sink.flush().await;
@@ -144,7 +137,7 @@ async fn bridge_socket(
                     });
                 }
             };
-            let completed = reader_connection.lock().await.receive(inbound).await;
+            let completed = reader_connection.receive(inbound).await;
             let Some(data) = completed else { continue };
             let Ok(text) = std::str::from_utf8(&data) else {
                 continue;
@@ -174,12 +167,14 @@ async fn bridge_socket(
             }
             match processor.process(&client, text) {
                 CommandAction::Reply(bytes) => {
-                    if !reader_connection.lock().await.send_text(bytes).await {
+                    if !reader_connection.send_text(bytes).await {
                         break;
                     }
                 }
                 CommandAction::ApplyFilters(filters) => {
-                    reader_connection.lock().await.set_filters(filters);
+                    if let Ok(bytes) = serde_json::to_vec(&filters) {
+                        let _ = reader_connection.replace_filters(Bytes::from(bytes));
+                    }
                 }
                 CommandAction::NoAck => {}
             }
@@ -198,6 +193,6 @@ async fn bridge_socket(
             }
         }
     }
-    connection.lock().await.cleanup();
+    connection.close();
 }
 

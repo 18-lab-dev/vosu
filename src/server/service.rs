@@ -24,9 +24,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
-use vosu_osu_calc::engine::{
-    HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyRosuEngine,
-};
+use vosu_adapter_upstream::calculate::PpQuery;
 
 use crate::{
     api::{self, ApiError, SnapshotManager},
@@ -41,11 +39,10 @@ use super::{
     files::{self, MissingKind, ResourceOutcome},
     pages::{DynamicPage, EmbeddedResponse, PageLookup, PageService, StaticFallback},
     routes::{
-        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, PpQuery,
-        ProviderFuture, ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate,
-        StateJsonProvider, StateRoute,
+        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
+        ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate, StateJsonProvider, StateRoute,
     },
-    websocket::{self, ConnectionControl, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
+    websocket::{self, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
 };
 
 const JSON: &str = "application/json; charset=utf-8";
@@ -57,28 +54,23 @@ include!("service/routing.rs");
 include!("service/websocket_transport.rs");
 include!("service/dashboard.rs");
 include!("service/responses.rs");
-include!("service/declared_files.rs");
+include!("service/surface.rs");
 include!("service/declared_calculate.rs");
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
-    use crate::server::routes::ModsInput;
     use vosu_proptest::bounded;
 
     #[derive(Default)]
     struct Current {
-        bytes: Option<Bytes>,
         files: Option<BeatmapFiles>,
     }
 
     impl CurrentBeatmapProvider for Current {
         fn files(&self) -> BeatmapFiles {
             self.files.clone().unwrap_or_default()
-        }
-        fn current_beatmap_bytes(&self) -> Result<Option<Bytes>, String> {
-            Ok(self.bytes.clone())
         }
     }
 

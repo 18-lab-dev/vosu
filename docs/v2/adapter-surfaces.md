@@ -83,12 +83,17 @@ mean the manager is OS-foreground.
 
 `register_routes(requester, descriptors, providers) -> RegistrationLease` is
 atomic. Each descriptor names listener role (overlay-origin or dashboard-origin),
-exact HTTP method and exact path or validated path-template/prefix matcher.
+exact HTTP method and exact path or validated path-template/prefix/descendant matcher.
 WS upgrades are explicit feed registrations, not inferred from a GET route.
 Core rejects overlaps whose match sets intersect for the same role/method,
 including static/template/prefix and upgrade collisions; distinct roles or
 methods are distinct registrations. Existing core-owned routes participate
 in the same collision check. No wildcard may absorb a retired exact route.
+`RoutePath::Children` matches nonempty descendants, excluding the base and its
+trailing slash; this lets `/files/skin/<name>` coexist with the retired index.
+Core transport handlers reserve their descriptors with
+`PluginHost::reserve_core_surface_routes`; reservations have no provider callback
+and share registration collision, capacity and lease-release rules.
 
 Provider invocation receives an immutable bounded request and opaque selected
 context. Core retains generic HTTP/WS framing, peer/Origin/key policy, body

@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Notify;
 use vosu_proptest::bounded;
 
+#[path = "tests/surface_feed.rs"]
+mod surface_feed;
+
 struct Provider {
     focused: AtomicBool,
     generation: Arc<AtomicU64>,
@@ -1078,59 +1081,6 @@ fn shared_projections_are_bounded_and_never_cross_plans() {
         echo(1, &[Filter::Field("b".into())])
     );
     assert_eq!(calls.load(Ordering::Relaxed), 4);
-}
-
-#[tokio::test]
-async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() {
-    let provider = EchoProvider::new();
-    let hub = WebSocketHub::new(Schema::V2, provider.clone());
-    let plan = || vec![Filter::Field("a".into())];
-    let mut clients: Vec<_> = (0..3)
-        .map(|_| {
-            let (connection, receiver) = hub.connect();
-            connection.set_filters(plan());
-            (connection, receiver)
-        })
-        .collect();
-    let runner = tokio::spawn({
-        let hub = hub.clone();
-        async move { bounded!(hub.run()) }
-    });
-    for (_, receiver) in &mut clients {
-        assert_eq!(bounded!(echo_text(receiver)), echo(1, &plan()));
-    }
-
-    // Generation 2 arrives while every client is still writing frame 1.
-    provider.publish();
-    hub.wake();
-    tokio::task::yield_now().await;
-    for (_, receiver) in &mut clients {
-        assert!(receiver.try_recv().is_none());
-    }
-
-    // Each acknowledgement carries the same ceiling after the previous wake
-    // was consumed; none may be suppressed until the 60 s cadence.
-    for index in 0..clients.len() {
-        clients[index].0.write_completed();
-        assert_eq!(bounded!(echo_text(&mut clients[index].1)), echo(2, &plan()));
-        for (_, receiver) in &mut clients[index + 1..] {
-            assert!(receiver.try_recv().is_none());
-        }
-    }
-
-    // Acknowledgements batched before the hub runs coalesce yet all deliver.
-    provider.publish();
-    hub.wake();
-    tokio::task::yield_now().await;
-    for (connection, _) in &clients {
-        connection.write_completed();
-    }
-    for (_, receiver) in &mut clients {
-        assert_eq!(bounded!(echo_text(receiver)), echo(3, &plan()));
-    }
-
-    hub.shutdown();
-    bounded!(runner).unwrap();
 }
 
 #[tokio::test]

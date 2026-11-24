@@ -41,7 +41,7 @@ pub(crate) struct SurfaceRoute {
     pub owner: u64,
     pub reader: String,
     pub descriptor: vosu_surface::routes::RouteDescriptor,
-    pub provider: Arc<dyn vosu_surface::routes::RouteProvider>,
+    pub provider: Option<Arc<dyn vosu_surface::routes::RouteProvider>>,
     pub feeds: Vec<std::sync::Weak<dyn vosu_surface::routes::FeedControl>>,
 }
 

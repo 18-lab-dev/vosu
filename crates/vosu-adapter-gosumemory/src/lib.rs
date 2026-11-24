@@ -2,6 +2,8 @@
 mod helpers;
 pub mod model;
 mod number;
+mod plugin;
+pub use plugin::vosu_plugin_vtable;
 pub mod provider;
 mod tourney;
 pub mod view;

@@ -1,7 +1,7 @@
 use super::*;
 
 #[path = "api_v1.rs"]
-mod api_v1;
+pub(super) mod api_v1;
 
 /// Process-wide resource owner. Every long-lived production service is retained
 /// here and joined in reverse dependency order.
@@ -34,6 +34,7 @@ pub struct ProductionRuntime {
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
     hubs: AsyncMutex<Option<WebSocketHubs>>,
+    adapters: AsyncMutex<Option<Arc<adapters::Adapters>>>,
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
     bridge: AsyncMutex<Option<bridge_b1::LegacyBridgeTask>>,
@@ -92,12 +93,6 @@ impl ProductionRuntime {
                     io::Error::other(format!("foreground poller shutdown task failed: {error}"))
                 })?;
         }
-        destroy.await?;
-        if let Some(bridge) = self.bridge.lock().await.take() {
-            bridge.shutdown().await;
-        }
-        self.bridge_installed.lock().await.take();
-        self.state_host.lock().await.take();
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
@@ -118,6 +113,15 @@ impl ProductionRuntime {
         if let Some(listener) = dashboard_listener {
             listener.join().await;
         }
+        if let Some(adapters) = self.adapters.lock().await.take() {
+            adapters.shutdown().await?;
+        }
+        destroy.await?;
+        if let Some(bridge) = self.bridge.lock().await.take() {
+            bridge.shutdown().await;
+        }
+        self.bridge_installed.lock().await.take();
+        self.state_host.lock().await.take();
         if let Some(processor) = self.processor.lock().await.take() {
             processor.shutdown().await;
         }
@@ -185,9 +189,37 @@ impl ProductionRuntime {
         let counter_facade = Arc::new(RuntimeCounterFacade {
             counters: Arc::clone(&counters),
         });
+        let context_beatmap = beatmap.clone();
+        let tools = crate::tools::ToolHost::new(
+            self.paths.config().join("tools"),
+            self.paths.data().join("tools"),
+            self.paths.cache().join("tools"),
+            crate::tools::ExtraRoots {
+                dev: self.dev_tools.clone(),
+            },
+            self.origins.overlay(),
+            self.origins.dashboard(),
+            Arc::new(move || context_beatmap.tool_context()),
+        )
+        .await?;
+        tools.set_counters(Arc::clone(&counters));
+        *self.tools.get_mut() = Some(tools.clone());
+        let api_keys_path = self.paths.config().join("api-keys.toml");
+        let logger = Some(self.logger.clone());
+        // `ApiKeys::load` now retries a transient missing read of
+        // `api-keys.toml` (Windows, bounded ~50ms) through
+        // `vosu_sys::platform::read_published`; run it in
+        // `spawn_blocking` rather than on this async worker.
+        let api_keys = tokio::task::spawn_blocking(move || {
+            crate::server::api_keys::ApiKeys::load(api_keys_path, logger)
+        })
+        .await
+        .map_err(io::Error::other)?;
+        let (adapters, hubs) =
+            adapters::Adapters::start(&self.plugins, Arc::clone(&self.config)).await?;
+        *self.adapters.get_mut() = Some(adapters.clone());
         let relays = Arc::new(WebSocketRelaySink::new());
         let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
-        let hubs = WebSocketHubs::start(self.snapshots.clone());
         let dashboard_lifecycle = Arc::new(arc_swap::ArcSwapOption::empty());
         let services = ProductionServices::with_native_report_probe(
             PageService,
@@ -233,48 +265,21 @@ impl ProductionRuntime {
                 relays: relays.clone(),
             },
         );
-        let context_beatmap = beatmap.clone();
-        let tools = crate::tools::ToolHost::new(
-            self.paths.config().join("tools"),
-            self.paths.data().join("tools"),
-            self.paths.cache().join("tools"),
-            crate::tools::ExtraRoots {
-                dev: self.dev_tools.clone(),
-            },
-            self.origins.overlay(),
-            self.origins.dashboard(),
-            Arc::new(move || context_beatmap.tool_context()),
-        )
-        .await?;
-        tools.set_counters(Arc::clone(&counters));
-        *self.tools.get_mut() = Some(tools.clone());
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {
                 inner: self.authorizer.clone(),
                 origins: Arc::clone(&self.origins),
                 dashboard: false,
             }),
-            state: Arc::new(SnapshotStateProvider::new(
-                self.snapshots.snapshot_manager(),
-            )),
-            calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
-            delegate: Arc::new({
-                let api_keys_path = self.paths.config().join("api-keys.toml");
-                let logger = Some(self.logger.clone());
-                // `ApiKeys::load` now retries a transient missing read of
-                // `api-keys.toml` (Windows, bounded ~50ms) through
-                // `vosu_sys::platform::read_published`; run it in
-                // `spawn_blocking` rather than on this async worker.
-                let api_keys = tokio::task::spawn_blocking(move || {
-                    crate::server::api_keys::ApiKeys::load(api_keys_path, logger)
-                })
-                .await
-                .map_err(io::Error::other)?;
+            state: adapters.clone(),
+            calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
+            delegate: Arc::new(
                 ProductionRouteDelegate::new(services)
+                    .with_surface(adapters.router(self.plugins.clone()))
                     .with_api_keys(Arc::new(api_keys))
                     .with_tools(tools.clone())
-                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()))
-            }),
+                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone())),
+            ),
         };
         let mut dashboard_providers = providers.clone();
         dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {
@@ -947,6 +952,7 @@ pub async fn run_cli() -> io::Result<()> {
         api_v1: api_v1::ApiV1Service::new(&plugin_host, &current),
         plugins: plugin_host,
         state_host: AsyncMutex::new(Some(state_host)),
+        adapters: AsyncMutex::new(None),
         plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),

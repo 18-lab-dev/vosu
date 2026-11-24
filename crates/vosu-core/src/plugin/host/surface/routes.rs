@@ -42,6 +42,7 @@ fn parts(path: &RoutePath) -> Result<(Vec<&str>, bool), RegistrationError> {
         RoutePath::Exact(text) => (text, false, false),
         RoutePath::Template(text) => (text, true, false),
         RoutePath::Prefix(text) => (text, false, true),
+        RoutePath::Children(text) => (text, false, true),
     };
     if !text.starts_with('/')
         || text.contains(['?', '#', '%', '\\'])
@@ -74,9 +75,23 @@ fn parts(path: &RoutePath) -> Result<(Vec<&str>, bool), RegistrationError> {
     Ok((segments, prefix))
 }
 fn intersects(a: &RoutePath, b: &RoutePath) -> bool {
+    if let RoutePath::Exact(path) = a {
+        return matches(b, path);
+    }
+    if let RoutePath::Exact(path) = b {
+        return matches(a, path);
+    }
+    let a_children = matches!(a, RoutePath::Children(_));
+    let b_children = matches!(b, RoutePath::Children(_));
     let (a, a_prefix) = parts(a).expect("validated descriptor");
     let (b, b_prefix) = parts(b).expect("validated descriptor");
-    if a.len() != b.len() && !((a.len() < b.len() && a_prefix) || (b.len() < a.len() && b_prefix)) {
+    let minimum = (a.len() + usize::from(a_children)).max(b.len() + usize::from(b_children));
+    let maximum = (if a_prefix { usize::MAX } else { a.len() }).min(if b_prefix {
+        usize::MAX
+    } else {
+        b.len()
+    });
+    if minimum > maximum {
         return false;
     }
     a.iter()
@@ -99,7 +114,8 @@ fn matches(path: &RoutePath, request: &str) -> bool {
         .split('/')
         .filter(|s| !s.is_empty())
         .collect();
-    (segments.len() == request.len() || (prefix && segments.len() <= request.len()))
+    (!matches!(path, RoutePath::Children(_)) || segments.len() < request.len())
+        && (segments.len() == request.len() || (prefix && segments.len() <= request.len()))
         && segments
             .iter()
             .zip(request)
@@ -130,7 +146,7 @@ fn validate(route: &RouteDescriptor) -> Result<(), RegistrationError> {
 
 pub(super) fn register(
     requester: &Requester,
-    mut routes: Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>,
+    routes: Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>,
 ) -> Result<RegistrationLease, RegistrationError> {
     let host = requester
         .host
@@ -148,7 +164,15 @@ pub(super) fn register(
     ) {
         return Err(RegistrationError::UnknownRequester);
     }
-    let result = install(&host, requester.instance.0, &reader, &mut routes);
+    let result = install(
+        &host,
+        requester.instance.0,
+        &reader,
+        &mut routes
+            .into_iter()
+            .map(|(route, provider)| (route, Some(provider)))
+            .collect(),
+    );
     drop(instances);
     result
 }
@@ -156,7 +180,7 @@ fn install(
     host: &Arc<PluginHost>,
     owner: u64,
     reader: &str,
-    routes: &mut Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>,
+    routes: &mut Vec<(RouteDescriptor, Option<Arc<dyn RouteProvider>>)>,
 ) -> Result<RegistrationLease, RegistrationError> {
     for (route, _) in routes.iter() {
         validate(route)?;
@@ -226,9 +250,31 @@ impl PluginHost {
     /// Core-owned routes must reserve their descriptors in this same registry.
     pub fn register_core_surface_routes(
         self: &Arc<Self>,
-        mut routes: Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>,
+        routes: Vec<(RouteDescriptor, Arc<dyn RouteProvider>)>,
     ) -> Result<RegistrationLease, RegistrationError> {
-        install(self, 0, "", &mut routes)
+        install(
+            self,
+            0,
+            "",
+            &mut routes
+                .into_iter()
+                .map(|(route, provider)| (route, Some(provider)))
+                .collect(),
+        )
+    }
+
+    /// Reserves transport-owned handlers that remain outside provider dispatch.
+    /// Reservations participate in the same atomic collision and lifetime rules.
+    pub fn reserve_core_surface_routes(
+        self: &Arc<Self>,
+        routes: Vec<RouteDescriptor>,
+    ) -> Result<RegistrationLease, RegistrationError> {
+        install(
+            self,
+            0,
+            "",
+            &mut routes.into_iter().map(|route| (route, None)).collect(),
+        )
     }
 
     /// Transport performs peer/origin/key admission before calling this seam.
@@ -259,7 +305,7 @@ impl PluginHost {
             surfaces.routes.iter().find(|route| {
                 (route.owner == 0 || matches!(instances.get(&crate::identity::PluginInstanceId(route.owner)), Some(InstanceSlot::Live(entry)) if entry.publisher.bundled)) &&
                 route.descriptor.listener == listener && route.descriptor.websocket == websocket && route.descriptor.method == request.method && matches(&route.descriptor.path, &request.path)
-            }).map(|route| (route.id, route.provider.clone()))
+            }).and_then(|route| route.provider.as_ref().map(|provider| (route.id, provider.clone())))
         }?;
         let response = provider.respond(request).await;
         match &response {
@@ -326,6 +372,30 @@ mod tests {
         second.method = "GET".into();
         first.listener = ListenerRole::Dashboard;
         assert!(!collides(&first, &second));
+    }
+    #[test]
+    fn descendants_exclude_the_retired_base_without_hiding_real_collisions() {
+        let children = RoutePath::Children("/files/skin".into());
+        assert!(!matches(&children, "/files/skin"));
+        assert!(!matches(&children, "/files/skin/"));
+        assert!(matches(&children, "/files/skin/note.png"));
+        assert!(!intersects(
+            &children,
+            &RoutePath::Exact("/files/skin/".into())
+        ));
+        assert!(!intersects(
+            &children,
+            &RoutePath::Template("/files/{kind}".into())
+        ));
+        assert!(intersects(
+            &children,
+            &RoutePath::Template("/files/{kind}/{name}".into())
+        ));
+        assert!(intersects(&children, &RoutePath::Prefix("/files".into())));
+        assert!(intersects(
+            &children,
+            &RoutePath::Children("/files/skin/subdir".into())
+        ));
     }
     #[test]
     fn retired_and_malformed_matchers_fail_closed() {

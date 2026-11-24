@@ -7,7 +7,7 @@ fn skin_index_delegate(root: &Path, files: BeatmapFiles) -> ProductionRouteDeleg
     let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
     let unused = Arc::new(UnusedServices);
     ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-        PageService, unused.clone(), counters, Arc::new(Current { files: Some(files), bytes: None }),
+        PageService, unused.clone(), counters, Arc::new(Current { files: Some(files) }),
         unused.clone(), unused.clone(), unused,
         WebSocketEndpoints {
             v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
@@ -31,106 +31,6 @@ async fn legacy_skin_report_is_removed_without_metadata_or_upgrade() {
     assert_eq!(bounded!(axum::body::to_bytes(response.into_body(), 1024)).unwrap(), "Not Found");
 }
 
-#[tokio::test]
-async fn skin_and_beatmap_files_have_validators_conditional_precedence_head_and_unchanged_ranges() {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir(root.path().join("mania")).unwrap();
-    std::fs::write(root.path().join("mania/note.png"), b"abcdef").unwrap();
-    std::fs::write(root.path().join("audio.mp3"), b"abcdef").unwrap();
-    let delegate = skin_index_delegate(root.path(), BeatmapFiles {
-        skin_root: Some(root.path().to_owned()), songs_root: Some(root.path().to_owned()),
-        beatmap_file: Some("audio.mp3".into()), audio_file: Some("audio.mp3".into()), background_file: Some("mania/note.png".into()),
-        ready: true, ..Default::default()
-    });
-    for (endpoint, path) in [(Endpoint::SkinFile, "/files/skin/MANIA/NOTE.PNG"),
-        (Endpoint::BeatmapFile, "/files/beatmap/file"), (Endpoint::BeatmapAudio, "/files/beatmap/audio"),
-        (Endpoint::BeatmapBackground, "/files/beatmap/background"), (Endpoint::BeatmapPath, "/files/beatmap/audio.mp3")] {
-        assert_eq!(crate::server::routes::classify(&Method::HEAD, path), Some(endpoint));
-        let make = || Request::builder().uri(path);
-        let first = bounded!(delegate.file(endpoint, make().body(Body::empty()).unwrap()));
-        assert_eq!(first.status(), StatusCode::OK, "{path}");
-        let etag = first.headers()[header::ETAG].clone();
-        let modified = first.headers()[header::LAST_MODIFIED].clone();
-        assert!(!etag.to_str().unwrap().starts_with("W/"));
-        assert_eq!(first.headers()[header::CACHE_CONTROL], "no-cache");
-        assert_eq!(bounded!(axum::body::to_bytes(first.into_body(), usize::MAX)).unwrap(), b"abcdef".as_slice());
-        for header in [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE] {
-            let value = if header == header::IF_NONE_MATCH { &etag } else { &modified };
-            let response = bounded!(delegate.file(endpoint, make().header(header, value).body(Body::empty()).unwrap()));
-            assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
-            assert_eq!(response.headers()[header::ETAG], etag);
-            assert!(bounded!(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap().is_empty());
-        }
-        for condition in ["*".to_owned(), format!("\"unrelated\", W/{}", etag.to_str().unwrap())] {
-            let cached_head = bounded!(delegate.file(endpoint, make().method(Method::HEAD).header(header::IF_NONE_MATCH, condition).body(Body::empty()).unwrap()));
-            assert_eq!(cached_head.status(), StatusCode::NOT_MODIFIED);
-            assert!(bounded!(axum::body::to_bytes(cached_head.into_body(), usize::MAX)).unwrap().is_empty());
-        }
-        let unmatched = bounded!(delegate.file(endpoint, make().header(header::IF_NONE_MATCH, "\"different\"").header(header::IF_MODIFIED_SINCE, &modified).body(Body::empty()).unwrap()));
-        assert_eq!(unmatched.status(), StatusCode::OK, "ETag condition takes precedence");
-        let head = bounded!(delegate.file(endpoint, make().method(Method::HEAD).header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap()));
-        assert_eq!(head.status(), StatusCode::OK);
-        assert_eq!(head.headers()[header::CONTENT_LENGTH], "6");
-        assert_eq!(head.headers()[header::ETAG], etag);
-        assert!(bounded!(axum::body::to_bytes(head.into_body(), usize::MAX)).unwrap().is_empty());
-        let partial = bounded!(delegate.file(endpoint, make().header(header::RANGE, "bytes=1-2").body(Body::empty()).unwrap()));
-        assert_eq!(partial.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(bounded!(axum::body::to_bytes(partial.into_body(), usize::MAX)).unwrap(), b"bc".as_slice());
-    }
-}
-
-#[tokio::test]
-async fn lazer_file_etag_is_the_store_hash() {
-    let root = tempfile::tempdir().unwrap();
-    let hash = "b".repeat(64); let relative = format!("b/bb/{hash}");
-    std::fs::create_dir_all(root.path().join("b/bb")).unwrap();
-    std::fs::write(root.path().join(&relative), b"data").unwrap();
-    let delegate = skin_index_delegate(root.path(), BeatmapFiles { lazer: true, ready: true,
-        songs_root: Some(root.path().to_owned()), beatmap_file: Some(relative.clone().into()),
-        skin: Some(Arc::new(vosu_osu_model::memory::CurrentSkin { name: "skin".into(), base: None, builtin: None, files: [("skin.ini".into(), relative)].into() })),
-        ..Default::default()
-    });
-    for (endpoint, path) in [(Endpoint::BeatmapFile, "/files/beatmap/file")] {
-        let response = bounded!(delegate.file(endpoint, Request::builder().uri(path).body(Body::empty()).unwrap()));
-        assert_eq!(response.headers()[header::ETAG], format!("\"{hash}\""));
-    }
-}
-
-#[tokio::test]
-async fn game_files_are_sandboxed_but_counter_pages_are_not() {
-    let root = tempfile::tempdir().unwrap();
-    let set = root.path().join("songs/set");
-    std::fs::create_dir_all(&set).unwrap();
-    let page = b"<html><head></head><script>parent.alert(1)</script></html>";
-    std::fs::write(set.join("page.html"), page).unwrap();
-    std::fs::write(set.join("bg.svg"), b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>").unwrap();
-    let skin = root.path().join("skin");
-    std::fs::create_dir(&skin).unwrap();
-    std::fs::write(skin.join("page.html"), page).unwrap();
-    let counter = root.path().join("static/counter");
-    std::fs::create_dir_all(&counter).unwrap();
-    std::fs::write(counter.join("index.html"), page).unwrap();
-    let delegate = skin_index_delegate(root.path(), BeatmapFiles {
-        songs_root: Some(root.path().join("songs")), skin_root: Some(skin), skin_name: Some("fixture".into()),
-        static_root: Some(root.path().join("static")),
-        beatmap_file: Some("set/page.html".into()), audio_file: Some("set/page.html".into()), background_file: Some("set/bg.svg".into()),
-        ready: true, ..Default::default()
-    });
-    for path in ["/Songs/set/page.html", "/Songs/set/", "/files/beatmap/set/page.html", "/files/beatmap/set/bg.svg",
-        "/files/skin/page.html", "/files/beatmap/file", "/files/beatmap/audio", "/files/beatmap/background", "/backgroundImage"] {
-        let endpoint = crate::server::routes::classify(&Method::GET, path).unwrap();
-        for method in [Method::GET, Method::HEAD] {
-            let response = bounded!(delegate.file(endpoint, Request::builder().method(method.clone()).uri(path).body(Body::empty()).unwrap()));
-            assert_eq!(response.status(), StatusCode::OK, "{method} {path}");
-            assert_eq!(response.headers()[header::CONTENT_SECURITY_POLICY], "sandbox", "{method} {path}");
-        }
-    }
-    let html = bounded!(delegate.file(Endpoint::SongsFile, Request::builder().uri("/Songs/set/page.html").body(Body::empty()).unwrap()));
-    assert_eq!(html.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8", "the upstream-compatible type is kept");
-    let counter_page = bounded!(delegate.file(Endpoint::CounterStatic, Request::builder().uri("/counter/").body(Body::empty()).unwrap()));
-    assert_eq!(counter_page.status(), StatusCode::OK);
-    assert!(counter_page.headers().get(header::CONTENT_SECURITY_POLICY).is_none(), "counters must keep running script");
-}
 
 #[tokio::test]
 async fn removed_routes_attribute_only_installed_explicit_identity_or_local_provenance() {

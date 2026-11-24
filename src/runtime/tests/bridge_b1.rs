@@ -96,7 +96,6 @@ fn equivalent_state_publication_preserves_revision_and_snapshot() {
 
 #[tokio::test]
 async fn live_selection_promotes_file_and_checksum_before_api_cadence() {
-    use crate::server::service::CurrentBeatmapProvider;
     use md5::{Digest, Md5};
     let md5 = |bytes: &[u8]| Md5::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
 
@@ -158,9 +157,6 @@ async fn live_selection_promotes_file_and_checksum_before_api_cadence() {
         }).await.unwrap();
         assert!(Arc::ptr_eq(providers.load().focused().unwrap(), &state));
         assert_eq!(files.tool_context()["beatmap"]["checksum"], hash);
-        let actual = files.current_beatmap_bytes().unwrap().unwrap();
-        assert_eq!(actual.as_ref(), bytes);
-        assert_eq!(md5(&actual), hash);
         assert_eq!(providers.load().focused().unwrap().regular.menu.checksum.as_deref(), Some(hash.as_str()));
         if let Some(old) = previous {
             assert_ne!(old, hash);

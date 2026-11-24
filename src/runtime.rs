@@ -52,10 +52,9 @@ use crate::{
             TokioResolver,
         },
         service::{
-            BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, LegacyCalculateProvider,
+            BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
             PageDataProvider, ProductionRouteDelegate, ProductionServices, ReportInputProvider,
-            SnapshotStateProvider, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
-            WebSocketRelaySink,
+            UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
         },
         websocket::{
             Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
@@ -84,6 +83,7 @@ use vosu_core::{
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 use vosu_osu_state::{StateBundleSnapshot, StateWorkerError};
 
+mod adapters;
 pub(crate) mod bridge_b1;
 mod cli;
 mod config;

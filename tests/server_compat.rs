@@ -49,7 +49,7 @@ use vosu::{
         },
         pages::{PageLookup, PageService},
         routes::{
-            self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, PpQuery,
+            self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
             ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
         },
         runtime::{
@@ -62,6 +62,7 @@ use vosu::{
         },
     },
 };
+use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_core::report::escape_html;
 use vosu_net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast};
 use vosu_osu_model::{

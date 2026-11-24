@@ -14,6 +14,8 @@ pub enum RoutePath {
     Template(String),
     /// A segment-boundary prefix, including the prefix itself.
     Prefix(String),
+    /// Nonempty descendants only; excludes both the base and its trailing slash.
+    Children(String),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RouteDescriptor {
@@ -55,7 +57,9 @@ impl SurfaceRequest {
                 matches!(
                     name.as_str(),
                     "range" | "if-none-match" | "if-modified-since" | "if-range"
-                ) && !value.contains(['\r', '\n'])
+                ) && value
+                    .bytes()
+                    .all(|byte| byte == b'\t' || (byte >= 32 && byte != 127))
             })
     }
 }
@@ -96,7 +100,9 @@ impl SurfaceResponse {
                         | "cache-control"
                         | "location"
                         | "content-security-policy"
-                ) && !value.contains(['\r', '\n'])
+                ) && value
+                    .bytes()
+                    .all(|byte| byte == b'\t' || (byte >= 32 && byte != 127))
             })
             && match &self.body {
                 ResponseBody::File {
@@ -189,6 +195,10 @@ mod tests {
             "text/plain\r\nset-cookie: secret".into(),
         )];
         assert!(!response.valid_metadata());
+        for invalid in ["text/plain\0", "text/plain\u{7f}", "text/plain\u{1f}"] {
+            response.headers = vec![("content-type".into(), invalid.into())];
+            assert!(!response.valid_metadata());
+        }
         response.headers = vec![("content-type".into(), "x".repeat(MAX_METADATA_BYTES + 1))];
         assert!(!response.valid_metadata());
         response.headers = vec![("etag".into(), "x".into()); MAX_HEADERS + 1];

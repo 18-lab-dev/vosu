@@ -29,7 +29,7 @@ struct ProductionCalculation;
 impl CalculatePpProvider for ProductionCalculation {
     fn calculate_pp(
         &self,
-        _: super::super::routes::PpQuery,
+        _: vosu_adapter_upstream::calculate::PpQuery,
     ) -> ProviderFuture<'_, CalculateResult> {
         Box::pin(async { CalculateResult::NotReady })
     }

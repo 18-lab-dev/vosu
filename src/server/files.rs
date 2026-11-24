@@ -10,10 +10,8 @@ use std::path::{Path, PathBuf};
 use vosu_sys::fs::{SafeChild, SafePathError, SafeRelativePath, SafeRoot, decode_request_path};
 
 mod directory;
-mod skin;
 mod validators;
 
-pub use skin::{SkinFileIndex, SkinIndexCache};
 pub use validators::{FileValidators, representation_validators};
 
 pub use directory::{build_directory_index, directory_index, encode_path_segment, html_escape};

@@ -4,9 +4,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
-- Add unmounted bus-backed HTTP/WS providers with shared latest-only encoding
-  caches and per-connection selector demand. Remove idle hub polling and release
-  sampling demand on disconnect, receiver loss, filter replacement and shutdown.
+- Mount gosuMemory, streamCompanion and upstream v2/precise HTTP/WebSocket
+  projections through their explicit bundled plugin registrations and permanent
+  surface API. Share latest-only encodings and independent selector demand;
+  stream legacy game files through retained roots and keep calculation confined.
+  Remove the old root file/index and calculation serving paths. Core retains
+  peer/Origin/API-key policy, command framing, limits and listener ownership.
 - Remove the selected-v2 subscription feed, legacy skin metadata index and four
   extension-only config flags. API v1 subscriptions retain their own debounce;
   real selector demand owns collection. Keep bounded validated removed-route
@@ -14,7 +17,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Share the pure chart calculation engine from `vosu-osu-calc`, independently of state orchestration.
 - Derive streamCompanion strains, breaks, timing and kiai facts from authorized chart resources with bounded latest-only, joined workers; preserve the upstream empty `mapKiaiPoints` wire quirk.
 
-- Add the unmounted bus-backed upstream v2/precise projection crate, with
+- Add the bus-backed upstream v2/precise projection crate, with
   explicit private-path grants, source-faithful key slots and tournament
   readiness, upstream wire names and ADR 0021 field removals.
 
@@ -33,11 +36,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   add atomic route/feed registration and RAII demand/registration cleanup.
 - Add the bus-backed streamCompanion base projection and direct/DTO encoders,
   with explicit path grants and a chart-resource-derived input seam. The new
-  wire model omits extension-only press/release histories; production route
-  mounting remains unchanged until the adapter cutover.
+  wire model omits extension-only press/release histories.
 - Add the bus-backed gosuMemory builder and borrowing encoder, preserving
   state-specific values and tournament quirks without extension hit histories.
-  Production routes remain unchanged until the adapter cutover.
 - Add opaque declared-root file/directory operations and capability-checked
   chart-resource readers for bundled adapters, reusing M3 confinement and stream
   leases without changing API v1 resource membership or legacy routes.
@@ -45,7 +46,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
   cutover: retained declared-root reads, stable case/directory lookup, lazer
   legacy skin 404 and root-confined legacy calculation without changing its engine.
   Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
-  truncation marker. Production mounting remains with I0.
+  truncation marker. Production mounts all adapters through requester-bound routes.
 
 ## Unreleased — 2.0 M3
 

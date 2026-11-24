@@ -117,7 +117,7 @@
         let providers = super::super::routes::RouteProviders {
             authorization: Arc::new(AllowAll),
             state: Arc::new(SnapshotStateProvider::new(snapshots)),
-            calculation: Arc::new(LegacyCalculateProvider::new(Arc::new(Current::default()))),
+            calculation: Arc::new(DeclaredCalculateProvider::default()),
             delegate,
         };
         let binder = TokioBinder(AxumListenerFactory::new(providers));

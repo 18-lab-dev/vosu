@@ -5,7 +5,9 @@ pub mod chart;
 pub mod derived;
 pub mod dto;
 mod helpers;
+mod plugin;
 pub mod provider;
+pub use plugin::vosu_plugin_vtable;
 pub mod view;
 pub use builder::{build, encode};
 

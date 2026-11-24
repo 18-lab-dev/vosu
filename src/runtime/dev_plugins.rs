@@ -24,6 +24,13 @@ pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 /// it across instances is the whole point of `concurrent_dispatch`.
 const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
+pub(super) const REQUIRED: &[&str] = &[
+    "vosu.osu",
+    "vosu.adapter.upstream",
+    "vosu.adapter.gosumemory",
+    "vosu.adapter.streamcompanion",
+];
+
 /// A bundled plugin instance has no directory of its own on disk (unlike a
 /// `--plugin <dir>` development plugin): its data directory lives under the
 /// data root, named by its plugin id.
@@ -31,9 +38,8 @@ fn bundled_data_dir(paths: &Paths, plugin_id: &str) -> PathBuf {
     paths.data().join("plugins").join(plugin_id)
 }
 
-/// Loads the production-required osu! entry first, followed by optional bundled
-/// fixtures. Required-plugin failure aborts composition; optional fixtures keep
-/// warn-and-continue behavior. Array positions remain reserved even on failure.
+/// Loads required production plugins first, followed by optional fixtures.
+/// Array positions remain reserved even when an optional fixture fails.
 pub(super) fn load_bundled(
     host: &Arc<PluginHost>,
     paths: &Paths,
@@ -41,23 +47,24 @@ pub(super) fn load_bundled(
     pool: &Arc<WorkerPool>,
     bundled: &[plugin::BundledPlugin<'_>],
 ) -> std::io::Result<u64> {
-    if bundled.is_empty() {
+    if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
-            "required bundled plugin vosu.osu is missing",
+            "required bundled plugin set is incomplete: osu and all three adapters are required",
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {
-        // BUNDLED's first entry is the production-required plugin. Check the
-        // identity after parsing too, so omission/reordering cannot half-start.
+        // Required identities and positions are explicit, not linker inventory.
         let result = (|| {
             let loaded =
                 plugin::load_bundled(std::slice::from_ref(entry)).map_err(std::io::Error::other)?;
             let loaded = &loaded[0];
             let plugin_id = &loaded.manifest().id;
-            if index == 0 && plugin_id != "vosu.osu" {
-                return Err(std::io::Error::other(
-                    "required bundled plugin vosu.osu is missing",
-                ));
+            if let Some(required) = REQUIRED.get(index)
+                && plugin_id != required
+            {
+                return Err(std::io::Error::other(format!(
+                    "required bundled plugin {required} is missing"
+                )));
             }
             host.create_instance(
                 PluginInstanceId::new(index as u64),
@@ -68,9 +75,9 @@ pub(super) fn load_bundled(
             .map_err(std::io::Error::other)
         })();
         if let Err(error) = result {
-            if index == 0 {
+            if let Some(required) = REQUIRED.get(index) {
                 return Err(std::io::Error::other(format!(
-                    "required bundled plugin vosu.osu failed: {error}"
+                    "required bundled plugin {required} failed: {error}"
                 )));
             }
             logger.warn(format!(

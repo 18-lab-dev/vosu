@@ -83,6 +83,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
                 .unwrap(),
             ),
             hubs: AsyncMutex::new(None),
+            adapters: AsyncMutex::new(None),
             processor: AsyncMutex::new(None),
             relays: AsyncMutex::new(None),
             bridge: AsyncMutex::new(None),
@@ -153,20 +154,12 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
             .is_err()
         );
         assert!(!owner.plugins.has_enabled_matchers());
-        let entries = [
-            vosu_core::plugin::BundledPlugin {
-                manifest: vosu_osu::MANIFEST,
-                settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
-                namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
-                action_schemas: vosu_osu::ACTION_SCHEMAS,
-                vtable: vosu_osu::vosu_plugin_vtable,
-            },
-            broken,
-        ];
+        let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
+        entries.push(broken);
         assert_eq!(
             dev_plugins::load_bundled(&owner.plugins, &owner.paths, &owner.logger, &pool, &entries)
                 .unwrap(),
-            2
+            5
         );
         assert!(owner.plugins.has_enabled_matchers());
         owner.shutdown().await.unwrap();
@@ -175,7 +168,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 .0
                 .lock()
                 .unwrap()
-                .contains("optional bundled plugin at index 1 failed")
+                .contains("optional bundled plugin at index 4 failed")
         );
     })
     .await
@@ -292,6 +285,120 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
         drop(sink);
         drop(bridge);
         assert!(lifecycle.changed().await.is_err());
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let (owner, _) = owner(root.path()).await;
+        let pool = WorkerPool::new(2, 65536);
+        dev_plugins::load_bundled(
+            &owner.plugins,
+            &owner.paths,
+            &owner.logger,
+            &pool,
+            crate::plugins::BUNDLED,
+        )
+        .unwrap();
+        let (adapters, hubs) = adapters::Adapters::start(&owner.plugins, owner.config.clone())
+            .await
+            .unwrap();
+        let router = adapters.router(owner.plugins.clone());
+        for path in [
+            "/json",
+            "/json/sc",
+            "/json/v2",
+            "/json/v2/precise",
+            "/Songs/missing",
+            "/files/beatmap/file",
+            "/api/calculate/pp",
+        ] {
+            let request = axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            assert_eq!(
+                router.http(&request).await.status(),
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "{path}"
+            );
+        }
+        use vosu_surface::{
+            listener::ListenerRole,
+            routes::{ProviderResponse, RegistrationError, RouteDescriptor, RoutePath},
+        };
+        let requester = owner
+            .plugins
+            .surface_requester(vosu_core::plugin::PluginInstanceId::new(1))
+            .unwrap();
+        let conflict = requester.register_routes(vec![(
+            RouteDescriptor {
+                listener: ListenerRole::Overlay,
+                method: "GET".into(),
+                path: RoutePath::Exact("/api/v1/sessions".into()),
+                websocket: false,
+            },
+            Arc::new(crate::server::service::RegisteredProvider::Calculate(
+                Default::default(),
+            )),
+        )]);
+        assert!(matches!(conflict, Err(RegistrationError::Collision)));
+        let mut feeds = Vec::new();
+        for path in ["/ws", "/tokens", "/websocket/v2", "/websocket/v2/precise"] {
+            let request = axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let Some(ProviderResponse::Feed(feed)) = router.dispatch(&request, true).await else {
+                panic!("missing registered feed: {path}");
+            };
+            feeds.push(feed);
+        }
+        adapters.shutdown().await.unwrap();
+        assert!(feeds.iter().all(|feed| feed.state.is_closed()));
+        let request = axum::http::Request::builder()
+            .uri("/json/v2")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            router.http(&request).await.status(),
+            axum::http::StatusCode::NOT_FOUND
+        );
+        drop(feeds);
+        hubs.shutdown().await;
+        owner.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
+    tokio::time::timeout(WAIT, async {
+        for omitted in 0..dev_plugins::REQUIRED.len() {
+            let root = tempfile::tempdir().unwrap();
+            let (owner, _) = owner(root.path()).await;
+            let pool = WorkerPool::new(2, 65536);
+            let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
+            entries.remove(omitted);
+            assert!(
+                dev_plugins::load_bundled(
+                    &owner.plugins,
+                    &owner.paths,
+                    &owner.logger,
+                    &pool,
+                    &entries
+                )
+                .is_err(),
+                "required slot {omitted}"
+            );
+            assert!(!owner.plugins.has_enabled_matchers());
+            owner.shutdown().await.unwrap();
+        }
     })
     .await
     .unwrap();

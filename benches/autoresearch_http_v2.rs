@@ -21,13 +21,14 @@ use vosu::{
     server::{
         auth::AuthorizationPolicy,
         routes::{
-            CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, PpQuery, ProviderFuture,
+            CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
             RouteDelegate, RouteProviders, dispatch,
         },
         runtime::{AxumListenerFactory, ListenTarget, TcpListenerFactory},
         service::SnapshotStateProvider,
     },
 };
+use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,

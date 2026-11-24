@@ -23,9 +23,8 @@ pub struct ProductionRouteDelegate {
     connections: OverlayConnections,
     removed: RemovedNotices,
     tools: Option<Arc<dyn RouteExtension>>,
-    skin_index: Arc<Mutex<files::SkinIndexCache>>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
-    declared_game_files: Option<vosu_adapter_upstream::files::Provider>,
+    surface: Option<SurfaceRouter>,
 }
 
 impl ProductionRouteDelegate {
@@ -35,7 +34,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None, declared_game_files: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, api_v1: None, surface: None }
     }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
     pub fn removed_notices(&self) -> Vec<RemovedNotice> {
@@ -56,9 +55,8 @@ impl ProductionRouteDelegate {
         self.api_v1 = Some(router);
         self
     }
-    /// I0 installs the registered upstream requester at the atomic cutover.
-    pub fn with_declared_game_files(mut self, provider: vosu_adapter_upstream::files::Provider) -> Self {
-        self.declared_game_files = Some(provider);
+    pub fn with_surface(mut self, router: SurfaceRouter) -> Self {
+        self.surface = Some(router);
         self
     }
     pub fn services(&self) -> &ProductionServices {
@@ -523,10 +521,11 @@ impl ProductionRouteDelegate {
         path.to_owned()
     }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
-        if endpoint != Endpoint::CounterStatic
-            && let Some(provider) = &self.declared_game_files
-        {
-            return declared_game_response(provider, endpoint, request).await;
+        if endpoint != Endpoint::CounterStatic && let Some(surface) = &self.surface {
+            return surface.http(&request).await;
+        }
+        if endpoint != Endpoint::CounterStatic {
+            return surface_http_response(surface_not_ready());
         }
         if endpoint == Endpoint::CounterStatic
             && let Some(redirect) = self.alias_redirect(&request)
@@ -544,12 +543,7 @@ impl ProductionRouteDelegate {
             }
         });
         let target = request.uri().to_string();
-        let resolved = if endpoint == Endpoint::SkinFile && !current.lazer {
-            let mut index = self.skin_index.lock().unwrap_or_else(PoisonError::into_inner);
-            resolve_file_endpoint(endpoint, &current, path, &target, &mut index)
-        } else {
-            resolve_file_endpoint(endpoint, &current, path, &target, &mut files::SkinIndexCache::default())
-        };
+        let resolved = resolve_counter_endpoint(current.static_root.as_deref(), path, &target);
         let outcome = match resolved {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -572,23 +566,7 @@ impl ProductionRouteDelegate {
             )
             .await
         } else {
-            let mut response = if matches!(endpoint, Endpoint::SkinFile | Endpoint::BeatmapPath | Endpoint::BeatmapFile | Endpoint::BeatmapAudio | Endpoint::BeatmapBackground) {
-                game_resource_response(outcome, range, current.lazer, request.headers(), request.method() == Method::HEAD).await
-            } else {
-                resource_response(outcome, range).await
-            };
-            // Beatmap and skin folders hold whatever an imported archive contained,
-            // and an HTML or SVG file opened from them would otherwise run script on
-            // the overlay origin that counters and tool UIs share. `sandbox` alone
-            // removes that origin and script. Content types stay as they are for
-            // compatibility with the upstream API, which also rules out `nosniff`
-            // (it lets browsers block cross-origin embeds of the nonstandard types)
-            // and `default-src 'none'` (it can block media opened directly in a tab).
-            response.headers_mut().insert(
-                header::CONTENT_SECURITY_POLICY,
-                axum::http::HeaderValue::from_static("sandbox"),
-            );
-            response
+            unreachable!("game files were dispatched through the declared requester")
         }
     }
 
@@ -640,7 +618,12 @@ impl ProductionRouteDelegate {
         let connections = self.connections.clone();
         let overlay = socket_overlay(&request);
         let (hub, commands, client_namespace) = self.services.websocket.hub(endpoint);
-        let hub = hub.clone();
+        let feed = if !commands && let Some(surface) = &self.surface {
+            match surface.dispatch(&request, true).await {
+                Some(ProviderResponse::Feed(feed)) => feed,
+                _ => return not_found(),
+            }
+        } else { hub.surface_feed(commands) };
         let processor = Arc::clone(&self.services.websocket.processor);
         let relays = Arc::clone(&self.services.websocket.relays);
         let query = request.uri().query().map(str::to_owned);
@@ -675,9 +658,8 @@ impl ProductionRouteDelegate {
                 let _registration = connections.register(overlay);
                 bridge_socket(
                     socket,
-                    hub,
+                    feed,
                     processor,
-                    commands,
                     client_namespace,
                     relays,
                     (query.as_deref(), mutation, key_grant),
@@ -695,6 +677,9 @@ impl ProductionRouteDelegate {
 
 impl RouteDelegate for ProductionRouteDelegate {
     fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> { self.api_keys.clone() }
+    fn registered_http<'a>(&'a self, request: &'a Request<Body>) -> Option<ProviderFuture<'a, Response>> {
+        self.surface.as_ref().map(|surface| Box::pin(surface.http(request)) as ProviderFuture<'a, Response>)
+    }
     fn handle(
         &self,
         endpoint: Endpoint,

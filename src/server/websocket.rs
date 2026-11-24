@@ -19,6 +19,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 mod connection;
+mod surface;
 mod upgrade;
 
 pub use upgrade::{
@@ -219,32 +220,7 @@ pub trait StateDemand: Send + Sync {
 
 pub type ClientId = u64;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Outbound {
-    /// A state snapshot frame. The transport must call `write_completed`
-    /// after this frame's send future completes.
-    Text(Bytes),
-    /// A command response frame. This is control traffic and must not alter
-    /// state-frame backpressure bookkeeping.
-    Reply(Bytes),
-    Binary(Bytes),
-    Pong(Bytes),
-    Close {
-        code: u16,
-        reason: &'static str,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Inbound {
-    Text { data: Bytes, finished: bool },
-    Binary { data: Bytes, finished: bool },
-    Continuation { data: Bytes, finished: bool },
-    Ping(Bytes),
-    Pong(Bytes),
-    Close,
-    Error,
-}
+pub use vosu_surface::routes::{Inbound, Outbound};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FragmentKind {

@@ -11,11 +11,12 @@ use vosu::server::{
     auth::AuthorizationPolicy,
     origins::{OriginAuthorizer, Origins},
     routes::{
-        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PpQuery, ProviderFuture,
+        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, ProviderFuture,
         RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
     },
     websocket::UpgradeCallbackTracker,
 };
+use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_core::{
     api::SessionTarget,
     plugin::{self, PluginHost, PluginInstanceId},
