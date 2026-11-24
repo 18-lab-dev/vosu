@@ -90,7 +90,7 @@
       "required": [
         "smallTickMiss", "smallTickHit", "largeTickMiss", "largeTickHit",
         "smallBonus", "largeBonus", "ignoreMiss", "ignoreHit",
-        "comboBreak", "sliderTailHit", "sliderBreaks", "sliderEndHits", "legacyComboIncrease"
+        "comboBreak", "sliderTailHit", "sliderBreaks", "sliderEndHits", "legacyComboIncrease", "good"
       ],
       "additionalProperties": false,
       "properties": {
@@ -106,6 +106,7 @@
         "sliderTailHit": { "type": "integer", "minimum": 0 },
         "sliderBreaks": { "type": "integer", "minimum": 0 },
         "sliderEndHits": { "type": "integer", "minimum": 0 },
+        "good": { "type": "integer", "minimum": 0, "description": "1.x katu (1.2.0, additive)." },
         "legacyComboIncrease": { "type": ["integer", "null"] }
       }
     },
