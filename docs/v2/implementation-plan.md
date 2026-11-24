@@ -543,6 +543,216 @@ Exit: `python scripts/check-doc-links.py`; `python scripts/check-brand.py`.
 The owner delegated spec sign-off; A2b signed off 2026-11-24 under that
 authority. D17's live daemon-CPU outcome remains open, not a performance pass.
 
+### A3: contract amendments and frozen M3 interfaces (on `v2/main`, documentation only)
+
+Scope: all M3 plan §4/§10 recommendations, including approval questions 1–7,
+are **approved**, signed off 2026-11-24 under the owner's delegated authority.
+These are new M3 decisions, not inherited M2 sign-off. Normative homes:
+
+- MJ/R1: [plugin-abi.md](plugin-abi.md) §6.8 adds mandatory full bare
+  `ACTION_INVOKE.action`; exact action registry lookup, no last-dot inference.
+  F2 owns SDK/wire changes, every caller and two-action fixtures; A3 changes
+  no Rust type or C layout.
+- MK/ML, R3/R4: [catalog-v2.md](catalog-v2.md#bounded-action-schema-profile-a3)
+  freezes the bounded compiled-once action-schema profile, unsupported-keyword
+  rejection and budgets. No runtime `jsonschema`; dev-only differential oracle.
+  API/ABI validate before job/dispatch and before publishing success, with
+  `invalid_arguments`/`invalid_result`; default core deadline is 30 seconds.
+- MH/R15: API Id registry and ABI §6.5 require canonical indexed `entry_path`
+  proof for aliases/fallback, exclude truncated-away entries, retain confinement.
+- MI/R16: API Id registry and state-schema Resource references require cold
+  immutable snapshots of mutable stable assets; changed bytes/new id, old
+  representation or 410, never changed bytes under an old id.
+- ME/R14/R17/R18: API/ABI freeze transient-free restart identity, multi-owner
+  membership, deterministic CBOR/duplicate keys, request-owned stream leases,
+  exact cleanup and re-resolution after close. MF's prepared binding transaction
+  changes membership only with an accepted atomic state commit.
+- MM/R8/R9/R10 and MN/R11/R25: catalog records the transitional v2 tool loader,
+  fail-closed manifest preference and installed-provider-only grants. API
+  records exact live launch-session ownership, credential ordering, unchanged
+  peer/Origin/read policy, private CLI metadata/session routing, no new public
+  discovery route and no action API-key scope.
+- MO/R12: catalog Beatmap import action freezes local `.osz` `sourcePath`,
+  bounded validated source retention, selected-client non-overwriting stable
+  queue/lazer submission, cancellation boundary and exact completion results.
+- MP/R26/R29/R30: D1 activates root application `2.0.0-alpha.1`, updates its
+  lockfile package entry and host-range docs, not independently versioned SDK.
+  Executable semver alone selects the channel, never debug mode/sys crate
+  version. CLI/daemon share pure resolution before any migration/initialization.
+  Every config/data/cache root and runtime/broker root gains `prerelease/`;
+  system cache, logs/support, plugins/offsets and writable static/output roots
+  follow it. Normal release roots remain unchanged. The first alpha start may
+  import 1.x settings read-only once, never run the mutating initializer or
+  normal-root directory migration there, and never reread that source later.
+  Automatically imported writable paths into normal roots are rebased/excluded.
+  A deliberately configured user override may leave isolation, but must be
+  explicit in alpha's own config and documented as such; copied paths are not
+  overrides. Malformed source remains untouched. R26 amends the M3 exit below.
+- R5/R6/R20/R21/R22/R23/R24: API freezes initial no-focus `active` as HTTP 404,
+  upgraded active absence/rebind, final fixed-id removals then normal `1000`
+  closure, 416 `invalid_range`, 502 `provider_failed`, 504
+  `provider_timed_out`, GET-only tree index, DELETE 200/current job and no-store
+  action/job responses. Session documents transition coherently; stream hub
+  revisions are monotonic across rebinding, independent of state revisions.
+  Explicit pointer limits and decoded-token overlap govern.
+- R7: M3 `plugin_crashed` proves the production instance-loss seam. M5 proves
+  actual subprocess crash/kill and process cancellation grace; in-process
+  execution is not process-crash evidence.
+- R36: ABI §4 extends A2b's lock order with resources/invocations/jobs;
+  reserve, dispatch after unlock, then complete; no plugin callback under locks.
+- R33/R35/MQ: [verification](../testing/verification.md#m3-api-resources-and-actions)
+  freezes feature-bearing commands, nonzero test inventory and lifecycle/privacy
+  counterexamples. [Benchmarks](../testing/benchmarks.md#m3-d17-contract)
+  freezes M3 named cases, common-harness comparisons, cold identity costs and
+  live idle/subscribed evidence. M1 PlanMemory CPU and M2 performance findings
+  remain open until measured, not erased by M3 functional success.
+
+#### Frozen shared interface contracts
+
+The signatures below are Rust interface contracts for the owning units, not
+implemented declarations or an extra compatibility layer. Owners may choose
+module paths/private storage, but must preserve these types, ownership and
+operations; changed shared shapes require an explicit amendment. `Result<T, E>`
+uses each domain's structured error, never raw provider paths/credentials.
+Opaque ids are typed newtypes, not interchangeable strings.
+
+**S0/S1 — public state.** `SessionTarget = Active | Id(String)`;
+`CompiledApiSelection::compile(&[String]) -> Result<Self, SelectionError>`
+preserves caller order/absence, enforces 1–256 nonoverlapping pointers, 512 bytes
+and 32 decoded tokens, and compiles namespace-relative demand (including future
+public namespaces for `""`). `ApiSnapshot` contains `revision: u64` and an
+immutable `Arc<serde_json::Value>` public document; `SessionSummary` is API's
+exact summary shape.
+
+```text
+ApiStateSource::sessions(&self) -> Vec<SessionSummary>
+ApiStateSource::session(&self, target: &SessionTarget) -> Result<SessionSummary, ApiStateError>
+ApiStateSource::read(&self, target: &SessionTarget, selection: &CompiledApiSelection)
+    -> Result<ApiSnapshot, ApiStateError>
+ApiStateSource::subscribe(&self, target: SessionTarget, selection: CompiledApiSelection)
+    -> Result<ApiSubscription, ApiStateError>
+ApiStateSource::subscribe_sessions(&self, selection: CompiledApiSelection)
+    -> Result<ApiSubscription, ApiStateError>
+ApiSubscription::current(&self) -> Arc<ApiSnapshot>
+ApiSubscription::changed(&mut self) -> impl Future<Output = Result<Arc<ApiSnapshot>, ApiStateError>> + Send
+```
+
+`ApiSubscription` owns latest-value reception and a demand drop guard;
+`SubscriberId::Api` is distinct from plugin/surface consumers. Drop removes
+demand on every exit. Reads are `Audience::Api` with no demand. Events include
+absence/detach so S1 can produce final removals; no client means no periodic
+API task, JSON construction or per-publication clock query.
+
+**F0 — retained confinement (vosu-sys).**
+
+```text
+SafeRelativePath::parse(decoded: &str) -> Result<Self, SafePathError>
+SafeRoot::open(path: &Path) -> io::Result<Self>
+SafeRoot::open_child(&self, path: &SafeRelativePath) -> io::Result<SafeChild>
+SafeChild::file(&self) -> &File
+SafeChild::metadata(&self) -> &Metadata
+SafeChild::into_file(self) -> File
+```
+
+The parser consumes already-decoded text exactly once. Roots are retained
+directory capabilities, child metadata/identity comes from that same open
+object, never canonicalize then reopen. Windows uses normalized component
+containment; Unix rejects Windows-looking absolute roots. HTTP policy remains
+above this single opener; blocking operations run off Tokio workers.
+
+**F4/R1 — identity and prepared membership.** `ReferenceIdentity` contains
+plugin id, reference class, kind, original CBOR key, name and CBOR content_id;
+`ResourceId` is the authenticated public token. `ReferenceBinding` identifies
+session, namespace and pointer, with an owning plugin-instance generation.
+
+```text
+ResourceSecret::open_or_create(path: &Path) -> Result<Self, ResourceError>
+ResourceRegistry::prepare(&self, changes: &[ReferenceBindingChange])
+    -> Result<PreparedReferenceBindings, ResourceError>
+PreparedReferenceBindings::references(&self) -> &[ProjectedReference]
+ResourceRegistry::commit(&mut self, prepared: PreparedReferenceBindings)
+ResourceRegistry::lookup(&self, id: &ResourceId) -> Result<ResourceRecord, ResourceError>
+ResourceRegistry::retire_session(&mut self, session: &SessionId)
+```
+
+`ReferenceBindingChange` is replace/remove-subtree, not only leaf removal.
+Preparation is bounded and fallible; dropped preparation has no visible effect.
+Prepare and commit are serialized by `state_serial`; successful preparation
+reserves all capacity so commit is infallible and occurs only after final state
+validation, atomically with state. Lookup verifies authenticity first and returns
+unknown versus unpublished distinctly, with an owned live-owner snapshot.
+Initial centralized limits: 4,096 records, 16 MiB retained reference/key metadata,
+bounded resolution/index caches and pending operations/streams. Shared ownership
+counts one identity; pressure diagnostics and 410 eviction are explicit. Secret
+creation is atomic/private; malformed/unreadable existing secret fails startup,
+never silently rotates. Composition supplies its channel-aware storage path.
+
+**R0–R3 — lazy requests and leases.** `ResourceOwner` identifies exact plugin
+instance, session handle and generation; `ResourceRequest` is resolve/list/
+lookup/read with the ABI payload for that kind, and `ResourceReply` is the
+corresponding validated ABI variant (lookup success includes `entry_path`).
+
+```text
+ResourceRequests::request(&self, owner: ResourceOwner, request: ResourceRequest)
+    -> impl Future<Output = Result<ResourceReply, ResourceError>> + Send
+StreamLease::read(&self, offset: u64, len: u32)
+    -> impl Future<Output = Result<Bytes, ResourceError>> + Send
+StreamLease::close(self)
+```
+
+Host ids are unique for the instance lifetime; reserve before unlocked dispatch.
+The pending facility stores expected reply kind/generation, deadline and
+cancellation guard; dropping its future removes the entry. `StreamLease` is
+non-cloneable, closes exactly once on explicit close or drop and invalidates its
+resolution; no stream survives request ownership or crosses requests. Late
+replies cannot leak returned streams. File/index cache owns only successful
+validated results; teardown does not invoke callbacks under registry locks.
+
+**F2/F3/J0/J1 — actions, principals, invocations and jobs.**
+`ActionSessionMode = Required | Optional | None`;
+`ActionDescriptor` contains full bare id, provider instance, version/title,
+session mode, cli flag and shared compiled argument/result schemas.
+`Principal = Tool(LaunchSessionId) | Broker | Plugin(PluginInstanceId)` carries
+no cookie/raw token; composition authenticates and core rechecks authority.
+`InvocationPolicy` owns `deadline: Duration` (default 30 s).
+
+```text
+ActionRegistry::get(&self, action: &str) -> Option<Arc<ActionDescriptor>>
+CompiledActionSchema::compile(bytes: &[u8]) -> Result<Self, SchemaError>
+CompiledActionSchema::validate_arguments(&self, value: &Value) -> Result<(), ValidationError>
+CompiledActionSchema::validate_result(&self, value: &Value) -> Result<(), ValidationError>
+trait InvocationSink: Send + Sync {
+    fn progress(&self, progress: ActionProgress);
+    fn finish(&self, result: InvocationResult);
+}
+InvocationExecutor::invoke(&self, principal: Principal, action: Arc<ActionDescriptor>,
+    session: Option<SessionId>, arguments: Value, sink: Arc<dyn InvocationSink>)
+    -> Result<InvocationId, InvocationError>
+InvocationExecutor::cancel(&self, invocation: InvocationId)
+JobRegistry::create(&self, owner: Principal, action: String, session: Option<SessionId>)
+    -> Result<Job, JobError>
+JobRegistry::get(&self, principal: &Principal, id: &JobId) -> Result<Job, JobError>
+JobRegistry::cancel(&self, principal: &Principal, id: &JobId) -> Result<Job, JobError>
+JobRegistry::wait(&self, principal: &Principal, id: &JobId, after: u64, wait: Duration)
+    -> impl Future<Output = Result<Job, JobError>> + Send
+```
+
+`Job` is the exact API object (id/action/fixed session/state/revision/progress/
+result/error). A job sink applies progress/terminal events to its registry;
+a relay sink remaps caller/callee ids without making an HTTP job. Both enforce
+first-terminal-wins and validate results. Waiter guards release on every exit;
+caps are 8/job, 256 total; saturation returns current job. Jobs retain at most
+1,024 running/terminal entries, terminal retention 5 minutes, oldest terminal
+evicted first, never a running job. Background tasks hold `Weak` ownership,
+cancel/join safely and never join themselves. All outstanding queues/maps,
+including cancelled invocations and relay terminal outboxes, stay bounded;
+slot release follows ABI §6.8/§6.12, not receipt of cancellation.
+
+Exit: `python scripts/check-doc-links.py`; `python scripts/check-brand.py`;
+`jq empty docs/v2/schemas/*.json`; rustdoc with denied broken intra-doc links.
+No VM or production behavior change is part of A3.
+
+
 ### M1: plugin API, in-process host, osu! plugin behind the 1.x surfaces
 
 Scope:
@@ -909,15 +1119,19 @@ full pong queue, job states including `plugin_crashed`/`timed_out`, no
 `internal` pointer reachable by any route); `cargo test --workspace --lib --all-features --locked prop_`
 with new `prop_*` tests for API v1 pointer parsing, resource-id parsing, and
 tree path validation; `cargo test --locked --test server_compat` unchanged;
-`cargo test --locked --test daemon_smoke` extended to read
-`/api/v1/sessions` and fetch a resource; a browser test driving `vosu.invoke`,
-progress, and `AbortSignal` cancellation against the testkit, run by
-`python tests/tool_host_smoke.py`; a test that a prerelease build never
-reads or writes the 1.x config file; D17 M3 benches.
+`cargo test --locked --features test-harness --test daemon_smoke` extended to
+read `/api/v1/sessions` and fetch a resource; a real-browser test driving
+`vosu.invoke`, progress, and `AbortSignal` cancellation against the testkit, run
+by `python tests/tool_host_smoke.py --binary "$CARGO_TARGET_DIR/debug/vosu"
+--playwright-module "$VOSU_PLAYWRIGHT_MODULE"`; a real `2.0.0-alpha.1` startup/
+restart test proving no writes to normal 1.x roots, only a one-time read-only
+settings import and no subsequent source reads, with writable-path rebasing;
+D17 M3 benches. M3 `plugin_crashed` evidence exercises the production
+instance-loss lifecycle seam; real subprocess crash/kill proof remains M5.
 
-Risks: resource-id stability across restarts depends on the content identity
-the osu! plugin chooses (lazer store hash, stable path/size/mtime); the
-registry must stay bounded under churn of map selection.
+Risks: restart-stable ids require honest content identities and stable immutable
+snapshots; no old id may silently serve changed bytes. Registry and caches stay
+bounded under map-selection churn. Functional coverage is not a D17 pass.
 
 ### M4a: upstream adapters as projections
 

@@ -323,11 +323,94 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
   "tool command lines become commands that plugins provide" is implemented.
   `cli: false` exposes the action only to tools and other plugins.
 
+#### Bounded action-schema profile (A3)
+
+Argument and result assets are confined relative package paths, loaded and
+compiled once at plugin load. A schema is a JSON boolean or object. The complete
+runtime keyword set is:
+
+- `type`: one JSON type (`null`, `boolean`, `object`, `array`, `number`,
+  `integer`, `string`) or a nonempty duplicate-free array of those types;
+- `properties`, `required`, `additionalProperties` (boolean or schema);
+  absent `additionalProperties` means true, absent `required` means none;
+- `items` (one schema, not tuple syntax), `minItems`, `maxItems`;
+- `enum` (nonempty, JSON-deep-distinct values), `const`;
+- `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` (finite numbers);
+- `minLength`, `maxLength` (Unicode scalar counts, not UTF-8 bytes);
+- `$defs` and `$ref`, with references restricted to RFC 6901 fragments into
+  this same document's `$defs` (no network, files, anchors or dynamic refs).
+
+Nonnegative integer bounds are required for lengths/counts; invalid types,
+duplicate `required` names, empty type/enum sets, unresolved references and
+cycles fail plugin load. Standard JSON Schema type applicability applies:
+e.g. `properties` alone does not require an object; integer includes a number
+with no fractional part. Enum/const use JSON value equality (numeric 1 and 1.0
+are equal). Bounds may describe an empty set without being a malformed schema.
+`$ref` is compiled with its supported sibling constraints, not silently used
+instead of them. All constraints present must hold.
+
+Only `$schema` (2020-12), `$id`, `title`, `description`, `default`, `examples`,
+`deprecated`, `readOnly`, `writeOnly` and `$comment` are permitted annotations;
+they never change validation, base URI resolution or input values. Every other
+keyword is rejected at load, including `format`, `pattern`, `allOf`, `anyOf`,
+`oneOf`, `not`, conditionals, tuple/contains/uniqueItems, patternProperties and
+unevaluated keywords. Never silently ignore unsupported validation.
+
+Per schema asset: at most 256 KiB UTF-8, nesting depth 32, 4,096 schema nodes
+and 65,536 compiled nodes after local-reference expansion; at most 32 nested
+reference traversals. Per value: nesting depth 32, at most 65,536 visited value
+nodes and 1,048,576 validation work units. A unit is one schema-node evaluation,
+one enum/const deep-comparison node, one visited property/item, or one scanned
+Unicode scalar; meter all these, including failed candidates. Exhaustion is a
+validation error, never unchecked acceptance. These are centralized constants;
+compile rejects expansion overflow. ABI/HTTP byte caps still apply independently.
+Errors include schema/instance pointers, not raw sensitive values.
+
+Core uses no runtime `jsonschema`; dev-only offline `jsonschema` is the
+differential oracle for this profile. Invalid arguments fail before job creation
+with 400 `invalid_arguments`; invalid successful output becomes terminal
+`failed/invalid_result` (also for plugin calls). Core invocation policy defaults
+to 30 seconds; there is no manifest timeout field.
+
+#### Beatmap import action (A3)
+
+`vosu.osu.beatmap.import` is version `1.0.0`, `session="required"`, `cli=true`.
+Its argument is exactly `{"sourcePath": "<absolute host-native .osz path>"}`;
+no additional properties. This is an existing regular local source archive,
+not a destination, URL, upload or resource id.
+
+Its result is exactly one of
+`{"client":"stable","disposition":"queued","refreshRequired":true}` or
+`{"client":"lazer","disposition":"submitted","refreshRequired":false}`.
+These are application invariants as well as schema constraints; the bounded
+profile need not implement union combinators to express them.
+
+Open and validate the source once, retaining that validated representation to
+handoff. Bound compressed/expanded bytes and entry count; reject malformed ZIPs,
+CRC failures, traversal, absolute/prefixed names and archives without valid chart
+entries. Stable stages into the selected client's Songs directory, syncs and
+commits without overwrite; F5/restart remains game-owned. Lazer hands off to
+the selected attached client's executable/IPC context, never a globally guessed
+installation. No direct database/file-store writes, shell commands, automatic
+downloads or arbitrary writable destinations. Cancel before commit/handoff
+leaves no destination artifact; after that boundary success may win. Success
+means queued/submitted, not completed game installation. Error/result text
+avoids unnecessary source/destination path disclosure. Workers are owned,
+cancelled and joined/reaped, never abandoned or self-joined.
+
 ### `kind = "tool"`
 
-Tools are web-only in 2.0 ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)):
-the only additional section is `[ui]`. There is no `[service]`, `[cli]`,
-`[api]`, or `[permissions]`. 2.0 never reads `tool.toml`; see
+Tools are web-only in the final 2.0 host
+([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)): the only additional
+section is `[ui]`. There is no `[service]`, `[cli]`, `[api]`, or `[permissions]`
+in a v2 tool manifest. A3/MM/R9 permits the existing legacy `tool.toml` loader
+only during M3 through M7's replacement: prefer `manifest.toml` when present,
+and never fall back if it is invalid. Parse v2 identity/UI and
+`requires`/`optional`, resolving only currently loaded installed providers and
+versions (no installer/network resolver). Legacy tools receive no plugin-action
+grants from legacy permissions. Each action/job request rechecks its exact live
+launch session, enabled/trusted status and resolved capability. Revocation never
+transfers job ownership to another launch/tab. M7 removes this exception; see
 [First-start migration](#first-start-migration-from-1x).
 
 ```toml

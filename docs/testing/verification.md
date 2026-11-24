@@ -69,6 +69,82 @@ For M2 performance contracts use
 and the scoped commands in the [benchmark guide](benchmarks.md). Performance
 evidence and D17's decision belong there, not in a functional test pass.
 
+## M3 API, resources and actions
+
+A3 freezes the following exit commands for implementation/integration owners.
+These are required future evidence, not a claim that M3 targets already exist
+or have run. List each new integration target first and verify expected names
+and nonzero counts; a feature-gated zero-test success is not evidence.
+
+```sh
+cargo nextest run --locked -p vosu-plugin-api -p vosu-plugin-testkit -p vosu-sys -p vosu-core -p vosu-osu --all-features
+cargo nextest list --locked --features test-harness --test plugin_host --test state_bus --test osu_plugin --test api_v1_compat
+cargo nextest run --locked --features test-harness --test plugin_host --test state_bus --test osu_plugin --test api_v1_compat
+cargo test --locked --features test-harness --test daemon_smoke
+cargo test --locked --test state_api_compat
+cargo test --locked --test state_bus_compat
+cargo test --locked --test server_compat
+cargo test --locked --test performance_invariants
+cargo test --locked --test runtime_wakeups
+cargo test --locked --test config_compat
+cargo test --workspace --lib --all-features --locked prop_
+python tests/tool_host_smoke.py --binary "$CARGO_TARGET_DIR/debug/vosu" --playwright-module "$VOSU_PLAYWRIGHT_MODULE"
+RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps --all-features --locked
+python scripts/check-doc-links.py
+python scripts/check-brand.py
+jq empty docs/v2/schemas/*.json
+```
+
+`api_v1_compat` must inventory every route/method/status/body/header, overlay-only
+listener/CORS policy, absence/rebind/fixed detach, real saturated pong closure,
+no-store actions/jobs, 416/502/504 and GET-only tree index. Real host+ABI tests
+prove lazy zero-resolve publication, atomic rejected reference batches,
+multi-owner stable ids/restart secret/tamper/410, indexed alias proof/truncation,
+immutable old bytes/new id, file and stream validators/ranges/HEAD, exact close
+counts, and all cleanup paths (success, error, cancel, timeout, detach, loss,
+disconnect, shutdown). Fixtures use distinct path sentinels, ids, generations,
+byte patterns and caller/callee identities; privacy asserts authorized presence
+as well as API absence. Queue tests fill the actual queue; cancellation tests
+observe callee cancellation and retained terminal relay delivery. Use bounded
+waits/barriers, instance-owned hooks, and no ordering sleeps.
+
+Two same-argument actions must dispatch differently by `ACTION_INVOKE.action`.
+Schema tests reject unsupported keywords, cycles/depth/work overflow and invalid
+nested arguments/results, with the dev-only offline differential oracle.
+Job tests cover live launch ownership/revocation, broker authority, retention,
+waiter saturation, first-terminal races and 64-call relay-slot pressure.
+M3 `plugin_crashed` uses the production instance-loss seam; native subprocess
+crash/kill proof and process cancellation grace are M5, not simulated M3 proof.
+
+The browser phase must use a real launch exchange and testkit, actual API-v1
+subscribe/invoke/start/progress/abort traffic, no forbidden cross-origin headers,
+no token persistence/disclosure, and unchanged v1 bridge smoke; no silent skip.
+Alpha evidence uses an actual `2.0.0-alpha.1` binary, distinct normal/alpha
+fixtures, source byte/inventory comparison and restart after source mutation:
+one-time read-only import, no normal-root writes or subsequent source reads,
+rebased writable paths and isolated broker/secret/cache/offset/static state.
+Malformed sources stay untouched. Live import uses isolated test installations,
+never the user's real library.
+
+Native Windows exit commands (integration owner; A3 does not use/start a VM):
+
+```sh
+python scripts/vm-test.py --package vosu-sys --lib
+python scripts/vm-test.py --package vosu-core --lib
+python scripts/vm-test.py --package vosu-osu --lib
+python scripts/vm-test.py --test api_v1_compat
+python scripts/vm-test.py --test daemon_smoke
+python scripts/vm-test.py --test server_compat
+```
+
+Record Windows stable/lazer, Linux lazer and stable/Wine plus concurrent-client
+observations: selected-client roots/import, no overwrite/store mutation, joined
+handoff children, resource bytes/ranges, aliases and unchanged legacy APIs.
+Cross-compilation is not native evidence. D17 requires the separately named
+[M3 benchmark contract](benchmarks.md#m3-d17-contract); functional success does
+not close inherited M1/M2 performance findings.
+
+
 ## CI baseline
 
 `.github/workflows/ci.yml` runs these checks; `scripts/prepush.py` runs the same set locally and in the Windows VM before `scripts/land.py` moves `main` ([ADR 0018](../decisions/0018-enforce-rules-with-checks.md)):

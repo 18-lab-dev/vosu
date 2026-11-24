@@ -171,7 +171,7 @@ typedef enum vosu_opcode {
     VOSU_OP_RESOURCE_RESOLVE = 30,  /* host -> plugin, CBOR */
     VOSU_OP_RESOURCE_RESOLVED = 31, /* plugin -> host, CBOR, correlated: answers RESOURCE_RESOLVE, TREE_LIST, or TREE_LOOKUP */
     VOSU_OP_TREE_LIST = 32,         /* host -> plugin, CBOR */
-    VOSU_OP_TREE_LOOKUP = 33,       /* host -> plugin, CBOR */
+    VOSU_OP_TREE_LOOKUP = 33,       /* host -> plugin, CBOR; successful reply adds canonical indexed entry_path to file/stream shape (A3) */
     VOSU_OP_STREAM_READ = 34,       /* host -> plugin, CBOR */
     VOSU_OP_STREAM_CHUNK = 35,      /* plugin -> host, CBOR, correlated */
     VOSU_OP_ROOT_DECLARE = 36,      /* plugin -> host, CBOR */
@@ -185,7 +185,7 @@ typedef enum vosu_opcode {
      * outstanding ACTION_CALL. `invocation` disambiguates by construction:
      * a plugin only recognizes an incoming id as "my own call's reply"
      * when it matches one it itself assigned via ACTION_CALL. */
-    VOSU_OP_ACTION_INVOKE = 40,     /* host -> plugin, CBOR */
+    VOSU_OP_ACTION_INVOKE = 40,     /* host -> plugin, CBOR; mandatory action is full bare "<plugin-id>.<name>", never "action:" prefixed (A3) */
     VOSU_OP_ACTION_RESULT = 41,     /* bidirectional, CBOR; see above */
     VOSU_OP_ACTION_CANCEL = 42,     /* bidirectional, CBOR; see above */
     VOSU_OP_ACTION_PROGRESS = 43,   /* bidirectional, CBOR; see above */

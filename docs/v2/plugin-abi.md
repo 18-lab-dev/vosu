@@ -77,8 +77,19 @@ No field in any payload — flat or CBOR — is ever a raw pointer into the host
 
 The host serializes calls into one plugin instance (`dispatch`) onto one thread per instance by default, matching the existing single-worker-per-instance model. A plugin's manifest may declare `concurrent_dispatch = true` (§8) to opt into concurrent calls, which requires its `dispatch` implementation to be internally synchronized; the host then dispatches from its own worker pool instead of one dedicated thread. The one exception to per-instance serialization, regardless of `concurrent_dispatch`: a `VOSU_OP_READ_PLAN_RESULT` answering a `VOSU_READ_PLAN_SYNC` submission (§6.3, D5) is always delivered on the submitting thread itself, concurrently with whatever this instance's own serialized `dispatch` thread (or worker pool) is doing at that moment; a plugin using `VOSU_READ_PLAN_SYNC` is responsible for its own synchronization across that one concurrent delivery.
 
-**Host lock order (A2b).** When acquiring multiple host locks, core must use
-`focus -> state_serial -> instances -> sessions -> registry -> subscriptions`.
+**Host lock order (A2b, extended by A3/R36).** When acquiring multiple host
+locks, core must use
+`focus -> state_serial -> instances -> sessions -> registry -> resources -> subscriptions -> invocations -> jobs`.
+`registry` is the existing state/provider registry; `resources` is reference
+membership, pending resource operations and stream ownership; `invocations`
+includes relay slots/outboxes. Sub-locks within a position are never nested.
+Prepare publication bindings before committing state and resource membership
+under `state_serial`; notifications run after unlock. Reserve pending requests,
+invocations and job slots under locks, release all locks before dispatch/plugin
+callbacks, and reacquire only to complete. No callback, filesystem I/O, worker
+join or await runs under these locks; completions cannot acquire an earlier
+position while holding a later one. Cross-domain teardown gathers work first,
+then cancels/closes/notifies after unlock.
 
 - `dispatch` may block; for an in-process plugin it runs on a host worker thread dedicated to that instance (never the state-bus publisher thread, so a slow plugin cannot stall [ADR 0002](../decisions/0002-immutable-latest-only-snapshots.md)'s publication), and for a `process`-runtime plugin it runs inside `vosu plugin-host`, which shares no state with core — except, in both runtimes, a `VOSU_READ_PLAN_SYNC` result, delivered on the submitting thread itself rather than this dedicated thread (above). Even so, `dispatch` should return quickly for the high-frequency notification opcodes (`VOSU_OP_DEMAND_CHANGED`, `VOSU_OP_FOCUS_CHANGED`, `VOSU_OP_TIMER_FIRED`, `VOSU_OP_READ_PLAN_RESULT`, `VOSU_OP_SETTINGS_CHANGED`): real work triggered by one of these must be handed to the plugin's own thread and reported back asynchronously (another publish, another action result), never performed inline, because these can arrive often enough to queue up behind a slow handler. Opcodes that represent an actual unit of work (`VOSU_OP_ACTION_INVOKE`, `VOSU_OP_RESOURCE_RESOLVE`, `VOSU_OP_TREE_LIST`/`TREE_LOOKUP`, `VOSU_OP_STREAM_READ`, `VOSU_OP_SCAN_REQUEST`'s eventual result) may legitimately take longer, at the cost of only that one plugin instance's own throughput.
 - `create` may block briefly (it runs before the plugin is considered loaded) but must not perform unbounded I/O; a plugin needing slow first-run setup starts it in its own thread from `create` and reports readiness through normal state publication.
@@ -219,14 +230,40 @@ Resources follow [ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md) a
 
 **Minting a reference's id.** A `VOSU_VALUE_RESOURCE_REF`/`VOSU_VALUE_TREE_REF` (§6.6) carries `{"kind": string, "key": <CBOR>, "name": string, "content_id": <CBOR>}`: `kind` and `key` are the plugin's own lookup key (opaque to core, echoed back unchanged in a later resolve request); `name` is a file name whose extension both tells core which allowlisted type to assign ([`docs/v2/api-v1.md`](api-v1.md) owns the allowlist) and **is the published type for the lifetime of that id** — a single resource is typed once, at publish time, from `name`, and the served `Content-Type` always equals that published type, never a type derived later from wherever the resolved file actually lives; `content_id` is the content identity (a store hash, or a path+size+modification-time digest). Core mints the public id **the moment the field is published** — with no round trip to the plugin — from the inputs [`docs/v2/api-v1.md`](api-v1.md)'s id registry defines; the plugin only answers a resolve request the first time something actually requests that id's bytes or index, which may be much later or never.
 
+**A3/R14/R17 identity encoding.** The token authenticates version, reference
+class, plugin identity and the tuple, excluding all transient session, PID,
+handle and instance identities. Encode the tuple as the CBOR array
+`[kind, key, name, content_id]` using RFC 8949 §4.2.1 core deterministic
+encoding: definite lengths, shortest integers/lengths and preferred shortest
+floating representation (canonical NaN), recursively bytewise-lexicographically
+sorted encoded map keys. Reject duplicate map keys with equal deterministic
+encodings before minting, rather than overwriting them; reject unsupported
+CBOR values rather than inventing an identity. Retain the original opaque key
+for dispatch; canonical encoding is for identity only. Multiple current owners
+of an identical token are tracked separately; only loss of the last owner
+retires it (or explicit bounded-registry eviction). Stable mutable files use
+an immutable snapshot: changed bytes need a new id, old bytes or 410 under the
+old id, as [API v1](api-v1.md#id-registry) requires.
+
 **Resolving a reference.** A resource or tree reference is always published within a session (§6.6), so core always has one to name: on the first `GET`/`HEAD` for a minted id (or its tree index), core asks the plugin to resolve the `{kind, key}` it published, naming that session's handle so the right root is chosen — the session's own declared root first, then a plugin-wide root of the same name, per "File roots" above:
 
 - `VOSU_OP_RESOURCE_RESOLVE` (host → plugin, CBOR): `{"handle": u64, "kind": string, "key": <CBOR>}`.
 - `VOSU_OP_RESOURCE_RESOLVED` (plugin → host, CBOR, reply correlated by `correlation_id`; this is also the reply opcode for `TREE_LIST` and `TREE_LOOKUP` below — the host already knows which request a reply answers from its own pending-request table keyed by `correlation_id`, so one reply opcode suffices): `{"root": string, "path": string}` (a declared root plus a relative path inside it) or `{"stream": u64, "size": u64}` (a `vosu_resource_id` naming a bounded byte stream of the given total size, served through `STREAM_READ`/`STREAM_CHUNK` below — mandatory for a `process`-runtime plugin generating content, since it may not even share filesystem visibility with a root core could open directly) or `{"error": {"code": string, "message": string}}`.
 - `VOSU_OP_TREE_LIST` (host → plugin, CBOR): `{"handle": u64, "kind": string, "key": <CBOR>}` — list a tree's index. Reply (`RESOURCE_RESOLVED`): `{"entries": [{"path": string, "size": u64, "hash": string}], "truncated": bool, "revision": string}`, matching `docs/v2/api-v1.md`'s tree-index body; an entry with unknown content hashing omits `hash` entirely rather than sending it `null`. The whole reply is capped at `VOSU_FRAME_MAX_BYTES` (1 MiB, §3/§7.2): a plugin whose own listing is larger truncates its `entries` to fit and sets `truncated: true`, the same flag an index already uses for an incomplete listing, rather than the host ever splitting one `RESOURCE_RESOLVED` into several messages. Core assigns each entry's `type` itself, from `path`'s extension against the same allowlist as a single resource, when projecting the index to HTTP — the plugin never computes or sends a MIME type.
-- `VOSU_OP_TREE_LOOKUP` (host → plugin, CBOR): `{"handle": u64, "kind": string, "key": <CBOR>, "path": string}` — resolve one file within a tree by its relative path, using the plugin's own lookup rules (case folding, fallback matching, and so on). Reply (`RESOURCE_RESOLVED`): same shape as the `RESOURCE_RESOLVE` reply.
+- `VOSU_OP_TREE_LOOKUP` (host → plugin, CBOR): `{"handle": u64, "kind": string, "key": <CBOR>, "path": string}` — resolve a requested alias/fallback with plugin-owned matching. A successful `RESOURCE_RESOLVED` reply is either `{"root": string, "path": string, "entry_path": string}` or `{"stream": u64, "size": u64, "entry_path": string}`. `entry_path` is the canonical logical path in the previously validated cached tree index, not the physical root-relative path. Core requires membership, derives type from that indexed path, and still applies declared-root confinement. Omitted entries of a truncated index cannot be served. Error replies retain the ordinary error shape.
 - `VOSU_OP_STREAM_READ` (host → plugin, CBOR): `{"stream": u64, "offset": u64, "len": u32}` — read one byte range of a previously opened stream, `len` itself bounded by `VOSU_STREAM_CHUNK_MAX_BYTES` (`VOSU_FRAME_MAX_BYTES` − 64 bytes, `include/vosu_plugin.h`), strictly below the universal frame cap so a full-length reply's own CBOR map/key/byte-string-header overhead can never itself push the message over it; ranges may be requested in any order. `VOSU_OP_STREAM_CHUNK` (plugin → host, CBOR, reply correlated by `correlation_id`): `{"data": bytes}` (fewer bytes than requested, including zero, signals end of stream — a plugin whose source is larger than the requested range never answers with more than `len` bytes, keeping the reply within `VOSU_STREAM_CHUNK_MAX_BYTES`'s margin) or `{"error": {...}}`.
 - `VOSU_OP_STREAM_CLOSE` (host → plugin, CBOR, no reply): `{"stream": u64}` — core no longer needs this stream (evicted from its bounded resource registry, or the request that opened it ended); the plugin releases whatever backs it, and core drops any cached resolution for the id that stream answered, so the next request resolves it again from scratch rather than reusing a now-dead stream. A `STREAM_READ`/`STREAM_CHUNK` exchanged for a stream after its `STREAM_CLOSE` answers `VOSU_ERR_CANCELLED` instead of proceeding.
+
+A3/R18: each resolved stream is a request-owned lease, never a shared cached
+stream handle. Completion, cancellation, HTTP disconnect, failure, timeout,
+detach, instance loss and shutdown release pending slots and close each live
+lease exactly once where delivery remains possible. Close invalidates its
+resolution; another request must resolve a fresh lease and cannot be closed
+by this request. A short/zero chunk is EOF, never fabricated bytes.
+Pending resource/list/lookup/read requests are bounded, reserved before
+dispatch, correlated to instance, request kind and generation, and removed on
+every terminal path. Duplicate, late and wrong-instance replies cannot satisfy
+another request; host-generated request ids are never reused within an instance.
 
 A game plugin declares which common-namespace `field:` ids it fills in its manifest's `covers` list, and which core resource kinds it fills as reserved-name entries in its `[[resource_kinds]]` table (§8); [`docs/v2/catalog-v2.md`](catalog-v2.md) defines both declarations and what each covers, and this document does not restate them. Its own namespace's fields and resources need no separate coverage declaration, since publishing them is already licensed by `provides`. A `[[resource_kinds]]` entry also bounds which MIME-type families that kind may be typed as; [`docs/v2/api-v1.md`](api-v1.md) owns the allowlist itself (the family tokens are exactly `image`, `audio`, `video`, `chart-text`). The bare kind names `file`, `audio`, `background`, `set`, and `skin` always address the core kinds (`resource:chart.file`/`.audio`/`.background`/`.set`, `resource:skin`); they are forbidden only as the name of a plugin's *own* kind, which must use any other bare name and becomes `resource:<plugin-id>.<kind>` only inside a capability id (`docs/v2/catalog-v2.md` owns this grammar).
 
@@ -277,7 +314,7 @@ Core tracks, per session and per (namespace, pointer) selector, whether any subs
 
 An action's declaration — name, version, display title, argument/result JSON Schemas, whether it is session-scoped, and whether it is CLI-exposed — is an `[[actions]]` manifest entry defined by [`docs/v2/catalog-v2.md`](catalog-v2.md); this document only specifies the wire messages that invoke one.
 
-Core forwards an invocation with `VOSU_OP_ACTION_INVOKE` (host → plugin, CBOR): `{"invocation": u64, "session": u64|null, "caller": {"kind": "tool"|"plugin"|"cli", "id": string}, "args": <CBOR>}`. `session` is `null` for an action declared `session: "none"`; `caller.kind` is `"cli"` for a `vosux <plugin-id> <action>` invocation through the broker credential ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md); the broker path itself is `docs/v2/api-v1.md`'s concern), `"plugin"` for `VOSU_OP_ACTION_CALL` (§6.12), and `"tool"` otherwise.
+Core forwards an invocation with `VOSU_OP_ACTION_INVOKE` (host → plugin, CBOR): `{"invocation": u64, "action": "<plugin-id>.<name>", "session": u64|null, "caller": {"kind": "tool"|"plugin"|"cli", "id": string}, "args": <CBOR>}`. A3/R1 makes `action` mandatory, the full bare id used by `ACTION_CALL` and HTTP, never prefixed `action:`. Lookup is by exact registered id, never a last-dot split or a single-action fallback. `session` is null for `session="none"`; `caller.kind` is `cli` for broker calls, `plugin` for `ACTION_CALL`, and `tool` otherwise.
 
 The callee plugin answers asynchronously, never as `dispatch`'s return value:
 
@@ -287,6 +324,24 @@ The callee plugin answers asynchronously, never as `dispatch`'s return value:
 Both are **bidirectional**: plugin → host when the callee is answering core directly (a tool/CLI invocation), and host → plugin when core is relaying the callee's answer to the plugin that issued `VOSU_OP_ACTION_CALL` (§6.12) — core remaps the callee's own `invocation` id back to the caller's id as part of that relay, so each side only ever sees ids it recognizes as its own. `VOSU_OP_ACTION_CANCEL` is bidirectional the same way: host → plugin to ask a callee to stop, and plugin → host for a plugin cancelling its own outstanding `ACTION_CALL` (`{"invocation": u64}`, the caller's own id; core remaps and forwards it to the callee).
 
 Core may request early termination with `VOSU_OP_ACTION_CANCEL` (CBOR): `{"invocation": u64}`; a plugin that supports cancellation stops promptly and still sends exactly one `ACTION_RESULT` with `"status": "error", "code": "cancelled"` (the status `docs/v2/api-v1.md` maps to its own `"state": "cancelled"`). A plugin that ignores cancellation simply runs to completion — core does not forcibly interrupt an in-process plugin's action (it cannot safely do so) and, for a `process`-runtime plugin, only kills `vosu plugin-host` as a last resort after a configurable timeout, which also ends every other in-flight call to that plugin.
+
+A3/MK/ML: action schemas use the bounded profile in
+[catalog-v2.md](catalog-v2.md#bounded-action-schema-profile-a3), compiled once
+at load without runtime `jsonschema`. Validate arguments before dispatch and
+successful results before terminal publication; invalid results fail with
+`invalid_result`. The core invocation policy has a 30-second default deadline,
+injected into tests, independent of HTTP waits, with no manifest timeout field.
+First accepted terminal result wins; timeout synthesizes `timed_out` even if an
+in-process callee continues. Session detach requests cancellation without
+retargeting. Public jobs and plugin relay calls share invocation semantics,
+not storage: relay calls need no HTTP job. The 64-call relay slot stays reserved
+until terminal delivery to the live caller, not cancellation; a bounded terminal
+outbox survives dispatch pressure, while progress may coalesce. Caller destruction
+explicitly tears down its slots. Use one-shot deadlines and ingress-triggered
+retention cleanup, never a periodic sweep.
+M3 exercises `plugin_crashed` through the production instance-loss seam;
+native process-host crash/kill and cancellation grace remain M5, not an
+in-process crash claim.
 
 **Oversize core-authored action frames (G5/H4).** `ACTION_INVOKE`'s `args` and a relayed `ACTION_RESULT`'s or `ACTION_PROGRESS`'s remapped `invocation` id can each grow the encoded message past `VOSU_FRAME_MAX_BYTES` without any single CBOR value being at fault — a POST body up to API v1's own 1 MiB limit re-encodes larger as CBOR (a JSON `0.1` is 4 bytes, a CBOR `f64` is 9), and remapping a callee's own `invocation` id onto the caller's can widen a CBOR integer by up to 8 bytes. Core never sends such an oversize frame, in either of its two ways of producing an `ACTION_INVOKE`:
 

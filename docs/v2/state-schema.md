@@ -466,6 +466,20 @@ defines its own resource kinds (`resource:<plugin-id>.<kind>`, per the naming
 contract) places them in its own namespace using the same two shapes, never
 inside a core namespace's `resources` object.
 
+A3: reference projection and membership are part of the same atomic state
+transaction. A rejected batch changes neither revision nor membership.
+Ancestor/root replacement, null, removal and detach retire all affected
+bindings, without retiring an identical reference another live session owns.
+Minting performs no byte open/hash, plugin round trip or HTTP work.
+The opaque key/content identity uses [plugin-abi.md](plugin-abi.md) §6.5's
+deterministic encoding; public ids exclude transient session/instance facts.
+Mutable stable resources use cold-worker immutable snapshots: changed bytes
+get a new id; the old id serves old bytes or 410, never new bytes. Tree files
+require canonical indexed `entry_path` proof, including alias/fallback lookups;
+truncated-away members are not authority to serve. Published internal path
+strings are never root capabilities. [API v1](api-v1.md#id-registry) owns the
+HTTP identity, membership and cache rules.
+
 ## Sampling lanes
 
 ADR 0020's Publication section ties sampling rate to subscription demand: a

@@ -69,6 +69,53 @@ Intervals describe these rounds, not immunity to systematic fixture or host
 bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 `--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
 
+## M3 D17 contract
+
+A3 freezes these `api_v1_bench` cases for X1. This is an acceptance contract,
+not measured evidence or a claim that the target is already implemented:
+
+| Exact case | Production work |
+|---|---|
+| `api_v1/idle_no_clients` | Publication with no API clients; allocations, clocks and wakeups |
+| `api_v1/http_current_read` | Current API-audience read with no demand |
+| `api_v1/subscribe_regular` | Changed regular-lane selection and frame |
+| `api_v1/subscribe_precise` | Changed precise-lane selection and frame |
+| `api_v1/subscribe_slow_consumer` | Real latest-only bounded mailbox replacement |
+| `api_v1/active_rebind` | Focus transition and fresh initial frame |
+| `api_v1/reference_publish_unchanged` | Unchanged reference publication/identity reuse |
+| `api_v1/reference_publish_changed` | Changed reference transaction/membership |
+| `api_v1/resource_cached_range` | Cached file resolution and validated byte range |
+| `api_v1/stream_range` | Leased stream range and close |
+| `api_v1/job_progress_poll` | Progress revision and event-driven job waiter |
+| `api_v1/end_to_end` | Snapshot projection → atomic commit → actual API frame encoding |
+
+```sh
+cargo bench --locked -p vosu --bench api_v1_bench -- '^api_v1/'
+cargo bench --locked -p vosu --bench state_bus_bench -- 'end_to_end'
+cargo bench --locked -p vosu --bench hot_paths -- 'publication|serializers'
+```
+
+Pass one regex argument, record matched names/nonzero cases, exact commits/
+binaries/features/profiles/targets, independent target and Criterion directories,
+fixture contents and CPU pinning/exclusivity. Pair comparable M2/M3 and pre-M0/M3
+paths, interleave five rounds through `scripts/bench-compare.py`, reporting
+medians and 95% intervals, milestone and cumulative deltas. For new API work
+build a common harness against equivalent old selection/serialization with the
+same fixture; never filter an M2 binary for a nonexistent API-v1 case.
+Report non-exclusive shared-workstation runs as such, not official exclusive
+D17 evidence. Official evidence uses the approved pinned/exclusive workflow.
+
+Measure cold immutable resource snapshot/hash/filesystem cost separately from
+warmed commit/capture work. Allocation, wakeup and clock counts must cover the
+production no-client and slow-consumer paths, not disconnected helpers. Pair
+live idle and subscribed daemon CPU/capture measurements as well as synthetic
+benchmarks; record native Windows observations where available. The exit is no
+regression over 10% with non-overlapping 95% intervals per milestone and
+cumulatively on comparable paths; failures need correction and remeasurement,
+not a renamed baseline. Preserve the open M1 PlanMemory daemon-CPU finding and
+M2 performance status; tests alone cannot establish a D17 pass.
+
+
 ## Performance changes for M2
 
 `state_bus_bench` measures the production `BusPublisher` projection/diff/flat

@@ -112,6 +112,12 @@ already encodes, so no new frame shape is needed:
 Revisions on this document are independent of any session's own state
 revision.
 
+A3/R23: each identification, detach or focus transition publishes one coherent
+session document (including both focus flips), never an intermediate two-focus
+document. Session arrays have no ordering guarantee. Each subscription stream
+has an initial revision and a monotonically increasing hub-owned sequence,
+independent of session state revisions; rebinding `active` never resets it.
+
 ## Field subscriptions: `WS /api/v1/sessions/{id|active}/subscribe`
 
 Derived directly from 1.x's `/websocket/v2/subscribe`
@@ -148,12 +154,21 @@ previous session's values), and the revision counter continues from the
 hub's own sequence. This happens with no client message and does not close
 the connection.
 
+A3/R22: an initial `active` upgrade with no focused session is rejected with
+HTTP 404 `unknown_session`, like an HTTP read. Once upgraded successfully, loss
+of all focus reports selected values absent and keeps the connection subscribed;
+the next focus emits a fresh initial frame. An established fixed-id subscription
+whose session detaches sends a final update removing every previously present
+selected index, then closes normally with code `1000`. It never follows another
+session. A detach before establishment uses error 6, followed by close `1008`.
+
 ### Establishing a subscription
 
 The endpoint expects one text message within 5 seconds of the upgrade: a JSON
 array of 1–256 non-overlapping RFC 6901 JSON Pointers (each ≤512 bytes, ≤32
-decoded tokens), exactly 1.x's limits. Any other content, or no message within
-the deadline, fails the request. The selection is immutable: any later text
+decoded tokens). These explicit bounds govern decoded-token overlap checking.
+Any other content, or no message within the deadline, fails the request. The
+selection is immutable: any later text
 message receives `[2, 5, "subscription already established"]` and closes the
 connection with code `1008`, identically to 1.x.
 
@@ -244,9 +259,12 @@ Every API v1 error response is a JSON body:
 | 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` | id or path never valid for this server; `unknown_job` also for a job another tool session created, so its existence is not disclosed |
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
 | 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
+| 416 | `invalid_range` | malformed, multiple or unsatisfiable resource/tree-member byte range; includes `Content-Range: bytes */<size>` |
 | 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit, or a job-creation body within that limit whose CBOR re-encoding would exceed the plugin ABI's 1 MiB frame cap (`docs/v2/plugin-abi.md` §6.8) |
 | 429 | `too_many_jobs` | creating a job while 1024 jobs are still running |
 | 500 | `serialization_failed` | internal encode failure |
+| 502 | `provider_failed` | resource/tree provider failure, malformed reply, invalid indexed-member proof, or source open/read failure |
+| 504 | `provider_timed_out` | resource/tree resolution, listing, lookup or stream-read deadline elapsed |
 
 The 404/410 split on resource and tree ids follows directly from how ids are
 minted (below): verifying the HMAC is what proves an id was ever genuine. An
@@ -255,6 +273,12 @@ component) is indistinguishable from one that was never minted, so it is 404.
 An id that verifies but is not in the current bounded registry was genuine and
 has since rotated out (new publication, session ended, evicted for space); it
 is 410, telling a long-lived consumer not to keep retrying it.
+
+Provider errors never disclose private root/source paths. A valid tree with no
+matching indexed member returns 404 `unknown_resource`, not 502. Confirmed
+immutable-source invalidation retires the id and returns 410, not changed bytes.
+Provider failures are not `serialization_failed`; action failures after job
+creation are represented in the job, not as resource-provider HTTP statuses.
 
 ## Resources and trees
 
@@ -285,6 +309,7 @@ files are resources the state refers to, never "current file" lookups.
 `If-None-Match` (including weak comparisons, lists, and `*`) takes precedence
 over `If-Modified-Since`; a satisfied condition returns a bodyless 304. HEAD
 returns the same headers as GET with no body and ignores Range.
+The tree index route is GET only: HEAD returns 405 `method_not_allowed`.
 
 ### Id registry
 
@@ -296,22 +321,41 @@ extension of `name` against the allowlist below — core never re-derives it
 later, so the served `Content-Type` for that id is its published type for the
 id's whole lifetime, even if the underlying file later changes. Each tree
 entry is typed independently of its tree's own `name`, from that entry's own
-`path` in the index core builds (below). `content_id` is the plugin's own
-content identity (a content-store hash, or a path+size+modification-time
-digest) and feeds the ETag. Ids are stable across restarts, unguessable, and
+`path` in the validated index (below). `content_id` is the plugin's content
+identity and feeds the ETag. Mutable stable assets require an immutable
+snapshot, prepared on a cold worker when source facts change, not on capture
+ticks. Changed bytes require a new content identity and publication; an old id
+serves only its original representation or returns 410 after invalidation,
+never silently changed bytes. A path/size/mtime digest alone is not an immutable
+representation. Ids are stable across restarts, unguessable, and
 serve only from a bounded in-memory registry of currently published
 references — there is no route to browse a game folder, and core never
 serves a file that the current state or a published tree index did not
 reference. Registry capacity and eviction policy belong to the core
 implementation; this spec only fixes the observable 404/410 contract above.
 
+A3/R14/R17: token identity includes plugin identity, reference class and the
+deterministically encoded `(kind, key, name, content_id)` tuple; never public
+session id, PID, handle or instance generation. The canonical CBOR and duplicate
+key rules are in [plugin-abi.md](plugin-abi.md) §6.5. Identical references can
+have several live session owners; removing one owner does not retire the others.
+Authenticity is verified before membership lookup. The token alone is not
+authority to serve bytes.
+
+Tree members require a validated cached index before lookup. A successful
+`TREE_LOOKUP` includes `entry_path`, the canonical logical member in that index.
+The request may be an alias/fallback, but `entry_path` must be indexed, and its
+extension determines type policy. Entries omitted from a truncated index cannot
+be served through it. Declared-root confinement remains an additional mandatory
+check. Tree representations are revalidated, not immutable.
+
 Resolving an id to actual bytes is lazy: core asks the plugin to resolve
 `{kind, key}` to a root+path or a stream only on that id's **first HTTP
-request**, never at publish time, and caches the resolution for the
-registry's lifetime of the id. Once core closes a stream-backed
-resolution (`STREAM_CLOSE`, `docs/v2/plugin-abi.md`), it drops that cached
-resolution; the next request re-resolves from scratch rather than reusing a
-closed stream. Plugins resolve a key to either a declared root plus a
+request**, never at publish time. Successful file resolutions may be cached;
+failed opens are not cached as permanent failures. Stream resolutions are
+request-owned leases: close at request end invalidates that resolution, the next
+request resolves afresh, and no request can close another request's stream.
+Plugins resolve a key to either a declared root plus a
 relative path — opened with
 [ADR 0005](../decisions/0005-root-confined-file-serving.md)'s retained-handle
 confinement — or a bounded byte stream for generated or `process`-plugin
@@ -382,6 +426,13 @@ default 250) bounds how long this request waits for the job:
   (`state: "running"`) and `Location: /api/v1/jobs/{id}`, as for `wait=0`;
   use the job route below for its eventual outcome.
 
+Arguments are validated against the bounded action-schema profile in
+[catalog-v2.md](catalog-v2.md#bounded-action-schema-profile-a3) before job
+creation or dispatch; failure is 400 `invalid_arguments`. Successful results
+are validated before publication; invalid output terminates the job as
+`failed` with `invalid_result`, without exposing raw sensitive values.
+All action and job responses, including errors, use `Cache-Control: no-store`.
+
 ### Job object
 
 ```json
@@ -417,11 +468,21 @@ a plugin action that exceeds its timeout is `failed` with
 `code: "timed_out"`; a plugin host that crashes or is killed mid-invocation
 is `failed` with `code: "plugin_crashed"`.
 
+A3/ML: the core invocation policy defaults to a 30-second deadline, independent
+of HTTP `wait`; tests inject the same policy with bounded overrides. There is
+no per-action timeout manifest field. First accepted terminal result wins;
+timeout is terminal even when an in-process callee continues, and late results
+cannot resurrect a job. Cancellation is advisory, not a terminal transition.
+M3 proves `plugin_crashed` through the production instance-loss lifecycle seam;
+actual subprocess crash/kill and process cancellation grace are M5 evidence.
+
 ### `/api/v1/jobs/{id}`
 
 Job ids are server-wide, not nested under a session or its actions — the
 originating session (or `null`) is fixed at job creation and does not change
 if that session later ends.
+Detach requests cancellation of session-bound work; the terminal result or
+deadline resolves it. An invocation never retargets a newly focused `active`.
 
 - `GET /api/v1/jobs/{id}` returns the job immediately. With
   `after=<revision>&wait=<ms ≤ 30000>` it long-polls instead: the response
@@ -434,6 +495,8 @@ if that session later ends.
 - `DELETE /api/v1/jobs/{id}` requests cancellation. It is idempotent and
   advisory: the job may reach a terminal state before the request is
   observed, in which case that state stands.
+  DELETE returns `200` with the current job object, whether still running or
+  already terminal; it does not wait for cancellation to finish.
 - **Retention**: a terminal job stays readable for 5 minutes after it
   terminates, in a bounded registry of 1024 jobs (the oldest terminal job is
   evicted first once the registry is full); past that window, or once
@@ -445,6 +508,8 @@ if that session later ends.
   job (Authorization below). A tool session can read and cancel only jobs it
   created (another session's job is 404 `unknown_job`); the broker credential
   can read and cancel any job.
+  Ownership means the exact live launch-session record, not tool id or another
+  tab. Expired/revoked tokens lose access; jobs never transfer to a new launch.
 
 Job creation, polling, and cancellation requests are capped at the existing
 1 MiB POST body limit.
@@ -493,6 +558,17 @@ credential) never can:
 - **A plugin**, calling another plugin's action through the ABI
   (`docs/v2/plugin-abi.md`) entirely inside the host process; this never
   reaches the HTTP surface at all.
+
+A3/MM/MN/R25: action credentials are classified before generic authorization
+middleware rejects unrelated credentials. They never bypass peer/Origin
+policy, widen read access, or grant an API-key action scope. Transitional v2
+tool manifests resolve action grants only against loaded installed providers;
+legacy permissions grant none. The private loopback broker descriptor lists
+CLI-exposed action ids and session modes (not a new public discovery endpoint).
+The CLI uses `active` for required/optional, the session-less route for none,
+and rejects `--session` for none; no 404 probe-and-retry. Metadata is not
+authority: the server rechecks `cli=true`, loopback credentials and live grants,
+retaining no-proxy/no-redirect and loopback-origin enforcement.
 
 A request to an action route without a valid tool-session token or broker
 credential is 401 `unauthorized`. There is no API-key scope for actions:
