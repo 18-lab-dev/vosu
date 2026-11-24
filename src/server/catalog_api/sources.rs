@@ -154,9 +154,7 @@ pub(super) async fn credential(
         ));
     }
     if *method == Method::DELETE {
-        runtime
-            .delete_credential(record.identity.as_str())
-            .await?;
+        runtime.delete_credential(record.identity.as_str()).await?;
         return Ok(no_content());
     }
     let input = CredentialInput::from_body(body).map_err(CatalogError::from)?;
@@ -172,7 +170,10 @@ pub(super) async fn credential(
 /// dispatch provenance/CSRF check that already ran.
 pub(super) async fn trust(inner: &Inner, source: &str, body: &[u8]) -> ApiResult {
     let TrustBody { trusted } = parse(body)?;
-    let report = inner.runtime().set_trust(identity(source)?, trusted).await?;
+    let report = inner
+        .runtime()
+        .set_trust(identity(source)?, trusted)
+        .await?;
     let mut value = view(inner)?;
     value["revocation"] = revocation(&report);
     Ok(json(StatusCode::OK, &value))
@@ -218,10 +219,13 @@ pub(super) fn entries(inner: &Inner) -> ApiResult {
             } else {
                 "any"
             };
-            let size = entry.packages.get(package_target).map(|package| package.size);
-            let record = installed.iter().find(|record| {
-                record.package_kind() == candidate.kind && record.id == entry.id
-            });
+            let size = entry
+                .packages
+                .get(package_target)
+                .map(|package| package.size);
+            let record = installed
+                .iter()
+                .find(|record| record.package_kind() == candidate.kind && record.id == entry.id);
             json!({
                 "kind": kind_name(candidate.kind),
                 "id": entry.id,

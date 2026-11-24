@@ -296,6 +296,10 @@ mod catalog_fixture {
         /// One request through the production dispatch gate on the dashboard
         /// (`dashboard`) or overlay listener. `origin`/`csrf` are sent only
         /// when given; `extra` adds raw headers.
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "each request dimension is varied independently by the counterexamples"
+        )]
         pub async fn send(
             &self,
             dashboard: bool,
@@ -441,7 +445,8 @@ async fn catalog_routes_are_dashboard_only_exact_and_csrf_gated_before_side_effe
     }
     // Dashboard listener mutations without exact provenance + CSRF, or with a
     // key/bearer/tool token instead, never reach the handler.
-    let refusals: [(Option<&str>, Option<&str>, &[(&str, &str)]); 7] = [
+    type Refusal<'a> = (Option<&'a str>, Option<&'a str>, &'a [(&'a str, &'a str)]);
+    let refusals: [Refusal<'_>; 7] = [
         (Some(DASHBOARD), None, &[]),
         (Some(DASHBOARD), Some("wrong-csrf"), &[]),
         (None, Some(csrf.as_str()), &[]),

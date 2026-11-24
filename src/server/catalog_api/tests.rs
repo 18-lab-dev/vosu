@@ -19,14 +19,22 @@ fn encode(value: &str) -> String {
 
 #[test]
 fn segments_decode_exactly_once_and_reject_malformed_escapes() {
-    assert_eq!(decode_segment("acme%2Fplugins").as_deref(), Some("acme/plugins"));
+    assert_eq!(
+        decode_segment("acme%2Fplugins").as_deref(),
+        Some("acme/plugins")
+    );
     assert_eq!(
         decode_segment("https%3A%2F%2Fcatalog.example%2Fcatalog-v2.json").as_deref(),
         Some("https://catalog.example/catalog-v2.json")
     );
     // Double encoding stays one level encoded: a different exact identity.
-    assert_eq!(decode_segment("acme%252Fplugins").as_deref(), Some("acme%2Fplugins"));
-    for malformed in ["", "%", "%2", "%zz", "%+f", "%-1", "acme%2", "%C3%28", "%FF"] {
+    assert_eq!(
+        decode_segment("acme%252Fplugins").as_deref(),
+        Some("acme%2Fplugins")
+    );
+    for malformed in [
+        "", "%", "%2", "%zz", "%+f", "%-1", "acme%2", "%C3%28", "%FF",
+    ] {
         assert_eq!(decode_segment(malformed), None, "{malformed:?}");
     }
 }

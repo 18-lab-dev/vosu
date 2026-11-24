@@ -113,7 +113,14 @@ fn current(inner: &Inner) -> Prerequisites {
     if snapshot.generation() != generation {
         return unmatched;
     }
-    prerequisites(inner, generation, &records, &store.snapshot(), &snapshot, limit)
+    prerequisites(
+        inner,
+        generation,
+        &records,
+        &store.snapshot(),
+        &snapshot,
+        limit,
+    )
 }
 
 /// Blocking: reads the committed packages' manifests for the kept graph.
@@ -121,9 +128,8 @@ fn gather(inner: &Inner) -> Result<Inputs, ApiError> {
     let runtime = inner.runtime();
     let fetch = runtime.fetch().ok_or_else(ApiError::disabled)?;
     let store = runtime.installed().ok_or_else(ApiError::disabled)?;
-    let limit = (inner.services.package_limit)().ok_or_else(|| {
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "invalid package limit")
-    })?;
+    let limit = (inner.services.package_limit)()
+        .ok_or_else(|| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "invalid package limit"))?;
     let (generation, records) = fetch.sources().snapshot()?;
     let snapshot = fetch
         .sources()
@@ -210,11 +216,7 @@ pub(super) async fn install(inner: &Arc<Inner>, body: &[u8]) -> ApiResult {
                 inputs.prerequisites.clone(),
             )
         });
-        inner
-            .runtime()
-            .plans()
-            .insert(plan)
-            .map_err(ApiError::from)
+        inner.runtime().plans().insert(plan).map_err(ApiError::from)
     })
     .await
     .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "catalog worker failed"))??;

@@ -637,15 +637,17 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         Ok(None) => {}
     }
     // PUT (tool autostart) and every DELETE are mutations like POST.
-    let put_or_delete = (method == Method::PUT && endpoint == Endpoint::ToolManagement)
-        || method == Method::DELETE;
-    let mutation =
-        if method == Method::POST || put_or_delete || websocket_upgrade || endpoint == Endpoint::ApiKeys
-        {
-            MutationAuthorization::from_headers(request.headers())
-        } else {
-            MutationAuthorization::default()
-        };
+    let put_or_delete =
+        (method == Method::PUT && endpoint == Endpoint::ToolManagement) || method == Method::DELETE;
+    let mutation = if method == Method::POST
+        || put_or_delete
+        || websocket_upgrade
+        || endpoint == Endpoint::ApiKeys
+    {
+        MutationAuthorization::from_headers(request.headers())
+    } else {
+        MutationAuthorization::default()
+    };
     let trusted_management = providers
         .authorization
         .origins()
@@ -712,19 +714,20 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         },
         endpoint => {
             let (parts, body) = request.into_parts();
-            let body = if method == Method::POST || put_or_delete || endpoint == Endpoint::ToolOverlay {
-                match to_bytes(body, MAX_POST_BODY).await {
-                    Ok(body) => body,
-                    Err(_) => {
-                        return cors(json(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            error_json("payload too large"),
-                        ));
+            let body =
+                if method == Method::POST || put_or_delete || endpoint == Endpoint::ToolOverlay {
+                    match to_bytes(body, MAX_POST_BODY).await {
+                        Ok(body) => body,
+                        Err(_) => {
+                            return cors(json(
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                error_json("payload too large"),
+                            ));
+                        }
                     }
-                }
-            } else {
-                Bytes::new()
-            };
+                } else {
+                    Bytes::new()
+                };
             if broker_grant
                 .as_ref()
                 .is_some_and(|(broker, peer)| broker.authorize(&parts.headers, *peer) != Ok(true))
