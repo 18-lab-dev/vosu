@@ -193,3 +193,31 @@ fn numeric_boundary_bits_survive_cbor_decode_without_percent_inversion() {
         equivalent(&v);
     }
 }
+#[test]
+fn missing_physical_slots_use_only_pinned_wire_defaults() {
+    let mut d = document();
+    d["keys"]["overlay"]["k2"] = Value::Null;
+    let v = decoded(&d, "stable");
+    equivalent(&v);
+    let w = wire(&v);
+    assert_eq!(
+        w["gameplay"]["keyOverlay"]["k2"],
+        json!({"isPressed":false,"count":0})
+    );
+    assert_eq!(w["gameplay"]["keyOverlay"]["k1"]["count"], 11);
+    assert_eq!(w["gameplay"]["keyOverlay"]["m1"]["count"], 33);
+    assert_eq!(w["gameplay"]["keyOverlay"]["m2"]["count"], 44);
+}
+#[test]
+fn absent_profile_emits_empty_object_not_fabricated_user() {
+    let mut d = document();
+    d["profile"] = json!({
+        "userStatus":{"number":null},"banchoStatus":{"number":null},
+        "mode":{"number":null},"countryCode":{"number":null},
+        "id":null,"name":null,"rankedScore":null,"level":null,"accuracy":null,
+        "pp":null,"playCount":null,"globalRank":null,"backgroundColour":null
+    });
+    let v = decoded(&d, "lazer");
+    equivalent(&v);
+    assert_eq!(wire(&v)["userProfile"], json!({}));
+}

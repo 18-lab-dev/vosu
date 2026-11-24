@@ -1,6 +1,7 @@
 //! gosuMemory projection over the permanent authorized surface (no game-state bridge).
 mod helpers;
 pub mod model;
+mod number;
 pub mod view;
 mod wire;
 mod tourney;

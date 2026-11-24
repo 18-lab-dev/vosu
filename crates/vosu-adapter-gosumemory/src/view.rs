@@ -99,15 +99,27 @@ pub struct Beatmap {
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct OptionalFloat { pub number: Option<f64> }
+    #[serde(deserialize_with = "crate::number::optional")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Time { pub live: f64, pub first_hit_object: Option<i64>, pub last_object: f64, pub mp3_length: Option<f64> }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::optional")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Difficulty { pub original: f64, pub converted: f64 }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Stars { pub live: f64, pub total: f64 }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Bpm { pub realtime: f64, pub common: f64, pub min: f64, pub max: f64 }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Objects { pub circles: i64, pub sliders: i64, pub spinners: i64, pub holds: i64 }
 #[derive(Debug, Clone, Deserialize)]
@@ -138,9 +150,13 @@ pub struct Rank { pub current: String, pub max_this_play: String }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pp { pub current: f64, pub fc: f64, pub max_achievable: f64 }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Player { pub name: String, pub score: f64, pub combo: i64, pub max_combo: i64, pub mods: Mods, pub judgements: Judgements, pub team: i64, pub position: i64, pub is_passing: bool }
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct LeaderboardState { pub visible: bool, pub player: Player }
 #[derive(Debug, Clone, Deserialize)]
@@ -152,18 +168,32 @@ pub struct Series { pub name: String, pub data: Arc<[f64]> }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultScreen { pub name: String, pub score: f64, pub accuracy: f64, pub max_combo: i64, pub mods: Mods, pub statistics: Judgements, pub rank: String, pub created_at: String }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
     pub user_status: OptionalNumber, pub bancho_status: OptionalNumber, pub mode: OptionalNumber, pub country_code: OptionalNumber,
     pub id: Option<i64>, pub name: Option<String>, pub ranked_score: Option<f64>, pub level: Option<f64>, pub accuracy: Option<f64>,
     pub pp: Option<f64>, pub play_count: Option<i64>, pub global_rank: Option<i64>, pub background_colour: Option<String>,
+    #[serde(deserialize_with = "crate::number::optional")]
+    #[serde(deserialize_with = "crate::number::optional")]
+    #[serde(deserialize_with = "crate::number::optional")]
+    #[serde(deserialize_with = "crate::number::optional")]
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct Sides<T> { pub left: T, pub right: T }
 #[derive(Debug, Clone, Deserialize)]
+pub struct ScoreSides {
+    #[serde(deserialize_with = "crate::number::float")]
+    pub left: f64,
+    #[serde(deserialize_with = "crate::number::float")]
+    pub right: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Slot { pub name: Option<String>, pub score: f64, pub combo: Combo, pub mods: Mods, pub statistics: Judgements, pub team: i64, pub position: i64, pub is_failed: bool }
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tourney {
@@ -178,12 +208,18 @@ pub struct Client { pub team: String, pub user: TourneyUser, pub play: ClientPla
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TourneyUser { pub id: i64, pub name: String, pub country: String, pub accuracy: f64, pub ranked_score: f64, pub play_count: i64, pub global_rank: i64, #[serde(rename = "totalPP")] pub total_pp: f64 }
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientPlay {
     pub player_name: String, pub mode: Number, pub score: f64, pub accuracy: f64, pub combo: Combo,
     pub health_raw: HealthRaw, pub raw_judgements: Judgements, pub statistics: Statistics,
     pub hit_errors: HitErrors, pub mods: Mods, pub rank: Rank, pub unstable_rate: f64,
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
+    #[serde(deserialize_with = "crate::number::float")]
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct HitErrors { pub all: Arc<[f64]> }

@@ -14,6 +14,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add coherent, demand-free bundled adapter captures with identified session
   rosters, per-namespace revisions and independent foreground observations;
   add atomic route/feed registration and RAII demand/registration cleanup.
+- Add the bus-backed gosuMemory builder and borrowing encoder, preserving
+  state-specific values and tournament quirks without extension hit histories.
+  Production routes remain unchanged until the adapter cutover.
 
 ## Unreleased — 2.0 M3
 
