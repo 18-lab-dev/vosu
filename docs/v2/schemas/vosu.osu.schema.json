@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vosu.dev/schemas/v2/vosu.osu.schema.json",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "title": "vosu.osu",
   "description": "The official osu! plugin's namespace (ADR 0020): every osu!-specific datum 1.x exposed, restructured for clarity. See docs/v2/state-schema.md for the full 1.x-to-2.0 field mapping and the common-layer coverage this plugin declares.",
   "type": "object",
@@ -255,7 +255,24 @@
             }
           }
         },
-        "unstableRate": { "type": "number", "minimum": 0 }
+        "unstableRate": { "type": "number", "minimum": 0 },
+        "score": { "type": "number", "minimum": 0, "description": "1.2.0, additive: matches the lazer spectator client's `play.score` (R6)." },
+        "accuracy": { "type": "number", "description": "1.2.0, additive: matches the lazer spectator client's `play.accuracy` (R6, 0-100 as 1.x reports it)." },
+        "combo": { "$ref": "#/$defs/combo", "description": "1.2.0, additive: matches the lazer spectator client's `play.combo` (R6)." },
+        "judgements": {
+          "type": "object",
+          "description": "1.2.0, additive (R6): this client's own judgement breakdown, the same counts shape as `result.statistics`.",
+          "required": ["miss", "meh", "ok", "great", "perfect"],
+          "additionalProperties": false,
+          "properties": {
+            "miss": { "type": "integer", "minimum": 0 },
+            "meh": { "type": "integer", "minimum": 0 },
+            "ok": { "type": "integer", "minimum": 0 },
+            "great": { "type": "integer", "minimum": 0 },
+            "perfect": { "type": "integer", "minimum": 0 },
+            "good": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     }
   },
@@ -270,7 +287,9 @@
         "playCount": { "type": "integer", "minimum": 0 },
         "paused": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
         "focused": { "type": ["boolean", "null"], "description": "Windows-only: whether the client window has OS input focus. `null` elsewhere." },
-        "ipcId": { "type": ["number", "null"], "description": "D6, optional (1.1.0 bump, additive alongside `internal`): the tournament spectator client's IPC id, as 1.x stores it (`Option<f64>`); `null` or absent for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one." }
+        "ipcId": { "type": ["number", "null"], "description": "D6, optional (1.1.0 bump, additive alongside `internal`): the tournament spectator client's IPC id, as 1.x stores it (`Option<f64>`); `null` or absent for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one." },
+        "state": { "$ref": "#/$defs/numberName", "description": "1.2.0, additive (MA, R1): the verbatim 1.x `GameState` `{number,name}` pair this session is in, kept beside the coarse `vosu.status.status` for osu!-specific consumers (results/edit/select variants the common enum collapses).", "x-sampling-lane": { "lane": "precise", "activity": "always" } },
+        "server": { "type": ["string", "null"], "description": "1.2.0, additive (R7): 1.x `server`, the bancho host string; `null` when unknown." }
       }
     },
     "profile": {
@@ -485,7 +504,8 @@
               "meh": { "type": "integer", "minimum": 0 },
               "ok": { "type": "integer", "minimum": 0 },
               "great": { "type": "integer", "minimum": 0 },
-              "perfect": { "type": "integer", "minimum": 0 }
+              "perfect": { "type": "integer", "minimum": 0 },
+              "good": { "type": "integer", "minimum": 0, "description": "1.x `katu` (1.2.0, additive)." }
             }
           },
           "combo": { "$ref": "#/$defs/combo" },
@@ -560,7 +580,8 @@
             "sliderEndHits": { "type": "integer", "minimum": 0 },
             "smallTickHits": { "type": "integer", "minimum": 0 },
             "largeTickHits": { "type": "integer", "minimum": 0 },
-            "sliderBreaks": { "type": "integer", "minimum": 0 }
+            "sliderBreaks": { "type": "integer", "minimum": 0 },
+            "good": { "type": "integer", "minimum": 0, "description": "1.x `katu` (1.2.0, additive)." }
           }
         },
         "mods": { "$ref": "#/$defs/mods" },
@@ -781,6 +802,18 @@
             },
             { "type": "null" }
           ]
+        },
+        "skin": {
+          "type": "object",
+          "description": "1.2.0, additive (R7): skin-editor toggle settings; distinct from the asset-identity `vosu.osu.skin`/common `vosu.skin` this plugin also fills.",
+          "required": ["useDefaultSkinInEditor", "ignoreBeatmapSkins", "tintSliderBall", "useTaikoSkin"],
+          "additionalProperties": false,
+          "properties": {
+            "useDefaultSkinInEditor": { "type": "boolean" },
+            "ignoreBeatmapSkins": { "type": "boolean" },
+            "tintSliderBall": { "type": "boolean" },
+            "useTaikoSkin": { "type": "boolean" }
+          }
         }
       }
     },
@@ -978,6 +1011,24 @@
                   "properties": {
                     "data": { "type": ["string", "null"] },
                     "files": { "type": ["string", "null"] }
+                  }
+                },
+                { "type": "null" }
+              ]
+            },
+            "current": {
+              "description": "1.2.0, additive (R8, M4a-blocking): the current chart's folder/file names only, never a joined path (ADR 0021); `null` entirely when no chart is selected; each leaf independently `null` when the chart has none. Home for the 1.x `folders.beatmap`/`files.*`/`directPath.skin_folder` sources M4a's upstream adapter must echo byte-identically.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["beatmapFolder", "beatmapFile", "background", "audio", "skinFolder"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "beatmapFolder": { "type": ["string", "null"] },
+                    "beatmapFile": { "type": ["string", "null"] },
+                    "background": { "type": ["string", "null"] },
+                    "audio": { "type": ["string", "null"] },
+                    "skinFolder": { "type": ["string", "null"] }
                   }
                 },
                 { "type": "null" }

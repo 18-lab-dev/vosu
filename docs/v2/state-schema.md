@@ -124,6 +124,21 @@ A plugin that fills no part of this namespace omits `vosu.status` entirely
 has not yet determined the session's status, e.g. the first moment after
 attach.
 
+`GameState` maps onto `vosu.status.status` by this table (24 values, the
+nearest listed value for a client state with no exact match):
+
+| `GameState` | `vosu.status.status` |
+| --- | --- |
+| `Menu`, `Edit`, `Exit`, `Update`, `Busy`, `OptionsOffsetWizard`, `BeatmapImport`, `PackageUpdater`, `Benchmark`, `Tourney`, `Charts` | `menu` |
+| `SelectEdit`, `SelectPlay`, `SelectDrawings`, `Lobby`, `MatchSetup`, `SelectMulti`, `OnlineSelection` | `selection` |
+| `Play` | `play`, or `pause` while `global.paused` |
+| `ResultScreen`, `RankingVs`, `RankingTagCoop`, `RankingTeam` | `results` |
+| `Unknown` | `null` |
+
+Lazer's own `ipcState == 11` (the multiplayer/spectating screen) also maps
+to `selection`, matching 1.x reader gating's non-gameplay treatment of it
+(`crates/vosu-osu-state/src/context.rs:252-262`).
+
 ### `vosu.chart`
 
 Chart (beatmap, in osu! terms) metadata: `title`, `artist`, `difficultyName`,
@@ -221,29 +236,31 @@ carry the same values while subscribed, at different cadences.
 
 | 1.x path | 2.0 path(s) | Notes |
 | --- | --- | --- |
+| `client` | `vosu.client.variant` | New row (R7): the client-variant identity string, alongside `vosu.client`'s other core-filled leaves. |
 | `game.paused` | `vosu.osu.session.paused` | |
 | `game.focused` | `vosu.osu.session.focused` | Windows-only; `null` elsewhere, as in 1.x. |
 | `session.playTime` | `vosu.osu.session.playTime` | |
 | `session.playCount` | `vosu.osu.session.playCount` | Always `0` in 1.x; kept for shape parity. |
-| `state` | `vosu.status.status`, `vosu.osu.beatmap.status` | `state` was both the coarse status and `beatmap.status`'s numeric/name pair; 2.0 splits the coarse enum into the common namespace and keeps the raw `{number,name}` pair in `vosu.osu.beatmap.status` for osu!-specific consumers (results/edit/select variants the common enum collapses). |
+| `server` | `vosu.osu.session.server` | New field (1.2.0, R7): 1.x's bancho host string, `null` when unknown. |
+| `state` | `vosu.status.status`, `vosu.osu.session.state` | `state` was both the coarse status and the raw game-state enum; 2.0 splits it: the coarse value feeds the common namespace (the `GameState` → `vosu.status.status` table above), and the verbatim `{number,name}` pair is kept in the new `vosu.osu.session.state` field (1.2.0) for osu!-specific consumers (results/edit/select variants the common enum collapses). |
 | `rankedPlay` | `vosu.osu.rankedPlay` | |
 | `profile` (all fields) | `vosu.osu.profile` | No common-layer equivalent; osu!'s bancho identity model does not generalize. |
 | `beatmap.isKiai`, `.isBreak`, `.isConvert` | `vosu.osu.beatmap.isKiai`/`.isBreak`/`.isConvert` | |
-| `beatmap.time.*` | `vosu.osu.beatmap.time.*` | `live` also feeds `vosu.play.progress`; `rate` also feeds `vosu.play.rate`. |
-| `beatmap.status` | `vosu.osu.beatmap.status` | See `state` row above. |
+| `beatmap.time.*` | `vosu.osu.beatmap.time.*` | `live` also feeds `vosu.play.progress` (`clamp(live / lastObject, 0, 1)` during play, `null` when `lastObject <= 0`); `lastObject` also feeds `vosu.chart.length` (map ms, unaffected by rate); `rate` also feeds `vosu.play.rate`. |
+| `beatmap.status` | `vosu.osu.beatmap.status` | The ranked status (`{number,name}`), distinct from the coarse `state` row above. |
 | `beatmap.checksum`, `.id`, `.set` | `vosu.osu.beatmap.checksum`/`.id`/`.set` | |
 | `beatmap.mode` | `vosu.osu.beatmap.mode` | |
 | `beatmap.artist`, `.artistUnicode`, `.title`, `.titleUnicode`, `.mapper`, `.version` | same path under `vosu.osu.beatmap`, and `artist`/`title`/`mapper`/`version` additionally feed `vosu.chart.artist`/`.title`/`.charter`/`.difficultyName` | |
 | `beatmap.source`, `.tags` | `vosu.osu.beatmap.source`/`.tags` | No common-layer equivalent. |
-| `beatmap.stats.*` | `vosu.osu.beatmap.stats.*`; `bpm.common` also feeds `vosu.chart.bpm`; `objects.total` with the mode's key-count derivation feeds `vosu.chart.keyCount` for mania | |
+| `beatmap.stats.*` | `vosu.osu.beatmap.stats.*`; `cs.converted` also feeds `vosu.chart.keyCount` (`round(cs.converted)`) for mania (`beatmap.mode == 3`), `null` otherwise | `vosu.chart.bpm` is **not** fed by this row's rate-adjusted `bpm.common`: it is the rate-1.0 `BpmSummary.common` (`crates/vosu-osu-calc/src/beatmap/model.rs:659`), rounded to 4 decimals like 1.x (`fix_decimals_to`), since the schema states `bpm` is "unaffected by rate". |
 | `play.source` | `vosu.osu.play.source` | |
 | `play.failed` | `vosu.osu.play.failed` | |
 | `play.playerName` | `vosu.osu.play.playerName` | |
 | `play.mode` | `vosu.osu.play.mode` | |
 | `play.score` | `vosu.play.score` | |
-| `play.accuracy` | `vosu.play.accuracy`; `vosu.play.accuracyKind` is new, declaring the osu! formula per mode (`osu-standard`, `osu-taiko`, `osu-catch`, `osu-mania`) | |
-| `play.healthBar` | `vosu.osu.play.healthBar`; `.normal` also feeds `vosu.play.health` | |
-| `play.hits` (`Hits`/`LazerHits`) | `vosu.play.judgements` (the six-judgement breakdown) + `vosu.osu.play.statistics` (slider/hold ticks, bonuses, combo breaks, legacy combo increase) | See "Restructuring" above. |
+| `play.accuracy` | `vosu.play.accuracy` (= 1.x value `/ 100`, f64 division: 1.x is a 0-100 percent, 2.0 is 0-1); `vosu.play.accuracyKind` is new, declaring the osu! formula per mode (`osu-standard`, `osu-taiko`, `osu-catch`, `osu-mania`) | |
+| `play.healthBar` | `vosu.osu.play.healthBar`; `.normal` also feeds `vosu.play.health` (= `.normal / 100`, f64 division: 1.x's `healthBar.normal` is 0-100, 2.0 is 0-1) | |
+| `play.hits` (`Hits`/`LazerHits`) | `vosu.play.judgements` (the six-judgement breakdown) + `vosu.osu.play.statistics` (slider/hold ticks, bonuses, combo breaks, legacy combo increase) | See "Restructuring" above. `.katu` additionally feeds the new `statistics.good` (1.2.0, R5). |
 | `play.hitErrorArray` | `vosu.osu.play.hitErrors.all` | |
 | `play.pressHitErrors` | `vosu.osu.play.hitErrors.press` | |
 | `play.releaseHitErrors` | `vosu.osu.play.hitErrors.release` | |
@@ -258,13 +275,13 @@ carry the same values while subscribed, at different cadences.
 | `keys.k1`, `.k2`, `.m1`, `.m2` | removed; use `vosu.osu.keys.all` | See [`keys`](#keys-vosu-osu-keys). |
 | `keys.all` | `vosu.osu.keys.all` | |
 | `hitErrors`, `pressHitErrors`, `releaseHitErrors` (precise, tourney-nested) | `vosu.osu.tourney.clients[].play.hitErrors` | The precise document's top-level `tourney[]` becomes part of `vosu.osu.tourney.clients[]`; there is no separate precise document in 2.0 (ADR 0021). In 1.x this `tourney[]` is populated only by the stable manager path, which D6 defers (above); this row has no source to verify against until the stable manager aggregate lands and is excluded from the M2/M4a exits until then. |
-| `leaderboard[]` | `vosu.osu.leaderboard[]` | |
+| `leaderboard[]` | `vosu.osu.leaderboard[]` | Each entry's `statistics.katu` feeds the new `statistics.good` (1.2.0, R5). |
 | `performance.accuracy`, `.graph` | `vosu.osu.performance.accuracy`/`.graph` | |
-| `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. There is deliberately no common cross-game result summary until a second game plugin needs one; adding it then takes its own ADR. |
+| `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. `hits.katu` feeds the new `statistics.good` (1.2.0, R5). There is deliberately no common cross-game result summary until a second game plugin needs one; adding it then takes its own ADR. |
 | `folders.*`, `files.*`, `directPath.*` | removed; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. Unchanged in the upstream adapter. |
-| `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin` sub-object is replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`. |
+| `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin`'s asset-identity fields are replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`, and its toggle fields (`useDefaultSkinInEditor`, `ignoreBeatmapSkins`, `tintSliderBall`, `useTaikoSkin`) move to the new `vosu.osu.settings.skin` (1.2.0, R7). |
 | `room` | `vosu.osu.room` | |
-| `tourney` | `vosu.osu.tourney` | Published exactly where 1.x builds it (D6): `null` on the lazer multi-spectating path (`ipcState == 11`) before the first lobby read lands, matching 1.x's own "key omitted entirely until then" behavior (`src/api/v2/tourney.rs:28-35`; every upstream-compatible adapter that carries this field — upstream v2 and gosuMemory v1 — drops the key from its own output when this value is `null`, ADR 0021's D6 amendment); populated `clients[]` once that read lands; 1.x's default empty object (`scoreVisible: false`, `clients: []`, and so on) everywhere else. Only the stable tournament-manager aggregate is deferred, as a `temporary`-class pre-release divergence (`docs/v2/implementation-plan.md`'s M4a-or-later task and day-0 gate): until it lands, the osu! plugin takes 1.x's "no manager found" branch unconditionally on stable, and the `stable-tournament` oracle case is exempted from the M2/M4a byte-equality exits rather than passing it. |
+| `tourney` | `vosu.osu.tourney` | Published exactly where 1.x builds it (D6): `null` on the lazer multi-spectating path (`ipcState == 11`) before the first lobby read lands, matching 1.x's own "key omitted entirely until then" behavior (`src/api/v2/tourney.rs:28-35`; every upstream-compatible adapter that carries this field — upstream v2 and gosuMemory v1 — drops the key from its own output when this value is `null`, ADR 0021's D6 amendment); populated `clients[]` once that read lands; 1.x's default empty object (`scoreVisible: false`, `clients: []`, and so on) everywhere else. Lazer tourney clients additionally publish `score`, `accuracy`, `combo {current, max}`, and `judgements` (the miss/meh/ok/great/perfect/good counts shape, 1.2.0, R6) in `$defs/tourneyClientPlay`, matching `build_lazer_tourney`'s per-client hit data (`src/api/v2/tourney.rs:166-210`). Only the stable tournament-manager aggregate is deferred, as a `temporary`-class pre-release divergence (`docs/v2/implementation-plan.md`'s M4a-or-later task and day-0 gate): until it lands, the osu! plugin takes 1.x's "no manager found" branch unconditionally on stable, and the `stable-tournament` oracle case is exempted from the M2/M4a byte-equality exits rather than passing it. |
 | `GET /files/skin/` metadata (`client`, `name`, `files`, `builtin`, `base`, `entries[]`, `truncated`) | `vosu.skin.name` (common `name`); `vosu.osu.skin.{builtin,base,variant,files}`; `entries`/`truncated` are now the tree index at `vosu.skin.tree`'s `url` (`GET /api/v1/trees/{id}/`, ADR 0021) rather than a duplicated inline list | |
 
 ### `keys` (`vosu.osu.keys`)
@@ -349,9 +366,22 @@ when unknown or not applicable to the session's variant:
 | `internal.paths.stable.replays` | stable | |
 | `internal.paths.lazer.data` | lazer | Lazer's data root (no songs/skins folders; see below). |
 | `internal.paths.lazer.files` | lazer | Lazer's content-addressed file store. |
+| `internal.paths.current.beatmapFolder` | both | 1.x `folders.beatmap`/`menu.folder`: the current chart's own folder (stable) or songs-store entry (lazer). `null` when no chart is selected. |
+| `internal.paths.current.beatmapFile` | both | 1.x `files.beatmap`/`menu.filename`: the current chart's `.osu` file name within `beatmapFolder`. |
+| `internal.paths.current.background` | both | 1.x `files.background`: the current chart's background file name within `beatmapFolder`, `null` when it has none. |
+| `internal.paths.current.audio` | both | 1.x `files.audio`: the current chart's audio file name within `beatmapFolder`, `null` when it has none. |
+| `internal.paths.current.skinFolder` | both | 1.x `directPath.skin_folder`/`global.skin_folder`: the active skin's folder, `null` for a built-in skin or when unknown. |
 
 `internal.paths.stable` is `null` entirely on a lazer session and vice
-versa. A writer plugin or tool imports files through the
+versa. `internal.paths.current` (1.2.0, additive) holds folder/file **names**
+only, never the joined full path 1.x's `directPath.beatmap_file` etc. compute
+(ADR 0021 forbids a joined path the same way it forbids every other raw
+path outside this carve-out); it is `null` entirely when no chart is
+selected, and its leaves are independently `null` per the notes above. This
+is the home M4a's upstream adapter needs to echo 1.x's `folders`/`files`
+objects byte-identically (D2, R8) without state ever outgrowing the
+`vosu.osu.internal` carve-out to do it.
+A writer plugin or tool imports files through the
 `vosu.osu.beatmap.import` action (M3) rather than writing into `paths`
 directly; the install plan gains a field flagging a plugin whose resolved
 `requires`/`optional` names `field:vosu.osu.internal` or a descendant of it
@@ -407,8 +437,8 @@ when selecting it changes reader demand:
   the only such field, because it is computed from both lanes' data).
 - `activity` is `always` (the lane runs at its accelerated rate whenever
   demanded, in any status) or `gameplay` (accelerated demand applies only
-  while `vosu.status.status == "play"`; outside play the field still
-  publishes, at the lane's idle/configured cadence).
+  while `vosu.status.status` is `play` or `pause`; outside gameplay the
+  field still publishes, at the lane's idle/configured cadence).
 
 A property with no `x-sampling-lane` annotation needs no extra reader demand:
 subscribing to it does not change sampling behavior, equivalent to 1.x's
@@ -428,9 +458,12 @@ through `.pp`, `vosu.osu.leaderboard`, `.rankedPlay`, `.tourney`,
 `vosu.osu.beatmap.{isKiai,isBreak,stats.stars.live,time.rate,time.running}`,
 `vosu.osu.settings.{interfaceVisible,replayUIVisible}`, `vosu.osu.session.paused`)
 is `regular`/`gameplay`; `vosu.osu.play.unstableRate` is `both`/`gameplay`. The
-common `vosu.play.progress` and `.rate` inherit their source fields' lanes
-(`precise`/`always` and `regular`/`gameplay` respectively), since they are
-derived from the same underlying reads.
+common `vosu.play` schema annotates all eight of its own fields directly,
+each matching its 1.x source field's lane: `score`, `combo`, `maxCombo`,
+`accuracy`, `health`, `rate`, and `judgements` are `regular`/`gameplay`
+(matching `play.score`, `.combo.current`/`.max`, `.accuracy`,
+`.healthBar.normal`, `.rate`, and the hit-count fields); `progress` is
+`precise`/`always` (matching `beatmap.time.live`).
 
 `x-sampling-lane` is consumed by core's subscription compiler only: it is
 metadata for the two per-session lane flags core computes and gates on
@@ -449,7 +482,7 @@ published value (`docs/v2/api-v1.md`).
 | `vosu.chart.title`, `.artist`, `.difficultyName`, `.charter`, `.length`, `.bpm` | always | |
 | `vosu.chart.keyCount` | mania only | `null` for every other ruleset. |
 | `vosu.chart.resources` | always an object; populated when a chart is selected | Kinds with no file (e.g. no video) are omitted per kind, not nulled; `{}` when no chart is selected. |
-| `vosu.play.score`, `.combo`, `.maxCombo`, `.accuracy`, `.accuracyKind`, `.progress`, `.rate` | during play (including replay/spectate/autoplay) | `null` outside play. |
+| `vosu.play.score`, `.combo`, `.maxCombo`, `.accuracy`, `.accuracyKind`, `.progress`, `.rate` | during play (including replay/spectate/autoplay) | "During play" means `vosu.status.status` is `play` or `pause`; `null` outside it. |
 | `vosu.play.health` | during play, all rulesets except where the client itself reports none | |
 | `vosu.play.judgements` | during play | Always the full six-entry breakdown; a ruleset without a judgement (e.g. catch's hit window table) still reports `count: 0` for it, matching 1.x's all-zero `HitWindow` convention for catch. |
 | `vosu.skin.name` | always | |

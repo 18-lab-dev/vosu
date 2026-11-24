@@ -160,7 +160,7 @@ typedef enum vosu_opcode {
     VOSU_OP_SESSION_ATTACHED = 10,  /* host -> plugin, CBOR: adds "name"/"path"/"command_line"/"argv"? process facts (A1b/DA) */
     VOSU_OP_SESSION_DETACHED = 11,  /* host -> plugin, CBOR */
     VOSU_OP_SESSION_IDENTIFY = 12,  /* plugin -> host, CBOR */
-    VOSU_OP_FOCUS_CHANGED = 13,     /* host -> plugin, CBOR */
+    VOSU_OP_FOCUS_CHANGED = 13,     /* host -> plugin, CBOR: adds optional "foreground" (bool), Windows-only, ME */
     VOSU_OP_SESSION_DECLINE = 14,   /* plugin -> host, CBOR: {"handle"}; valid only before this plugin's own SESSION_IDENTIFY for the handle (refused with VOSU_ERR_INVALID_ARGUMENT after), so core offers this PID generation to the next plugin whose matcher accepts it, in install order, before dropping it (D6) */
 
     /* Scanning. */

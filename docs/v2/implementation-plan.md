@@ -426,6 +426,68 @@ the owner delegated sign-off on DA–DI (`m1-remainder-plan.md` §4) to the
 implementing agent. A1b signed off 2026-11-23 (owner delegated decisions
 to the implementing agent).
 
+### A2: state-schema and plugin-ABI amendment from M2 planning findings (on `v2/main`, documentation only)
+
+Scope: closes the spec defects and plan-text gaps `docs/v2/m2-plan.md`'s
+planning found while breaking the M2 milestone into landable units (that
+plan's §9 R1-R32), bundled per that plan's §4 design decisions (MA-MH):
+
+- [state-schema.md](state-schema.md): adds `vosu.osu.session.state`
+  (`$defs/numberName`, `precise`/`always`) beside the existing
+  `beatmap.status`, splitting the coarse `state` mapping row (MA, R1); adds
+  the `GameState` → `vosu.status.status` table (24 values, nearest-listed
+  rule, MB/R12); states the common-layer formulas — `vosu.play.accuracy`/
+  `.health` as the 1.x value divided by 100, `vosu.chart.bpm` as the
+  rate-1.0 `BpmSummary.common` rounded to 4 decimals, `vosu.chart.length` as
+  `beatmap.time.lastObject`, `vosu.chart.keyCount` as `round(cs.converted)`
+  for mania (MB, R2-R4); clarifies "during play"/"gameplay" activity as
+  `vosu.status.status` in `{play, pause}` (MB/MC, R10/R13); adds the missing
+  `client` → `vosu.client.variant`, `server` → `vosu.osu.session.server`,
+  and `settings.skin` mapping rows (MD(d,e), R7); notes the new `good` and
+  lazer-tourney-client fields and the `vosu.osu` schema bump to `1.2.0`
+  (MD(b,c), R5/R6/R31); aligns the sampling-lane prose with every field
+  `vosu.play.schema.json` actually annotates (MH); amends the "correctly
+  absent" plan-text wording to "`resources` is `{}`, `tree` is `null`" (MH,
+  R11); adds `internal.paths.current` documentation, the owner's open
+  decision from MD(f) resolved to ADD now (R8).
+- [plugin-abi.md](plugin-abi.md): `VOSU_OP_FOCUS_CHANGED` gains an additive
+  `"foreground": bool|absent` key, sent only where core has a real
+  OS-foreground source (Windows), so `vosu.osu.session.focused` can be
+  reproduced without exposing a foreground API (ME, R9); `SESSION_ATTACHED`'s
+  process facts (`name`/`path`/`command_line`/`argv`) are omitted entirely
+  for a non-owning plugin receiving it through `vosu.sessions` (MG, R17);
+  `activity: "gameplay"` now covers `play` or `pause` (MC, R10); the
+  publication edge cases abi:199-209 left unspecified — publish-before-
+  identify, an unknown/detached/foreign handle, missing intermediates,
+  descent into an array/scalar, `NULL` at `/resources`, `RESOURCE_REF`/
+  `TREE_REF` before M3, pointer/CBOR limits, NaN and bytes in JSON — are
+  now stated (MF, R19); `STATE_SUBSCRIBE`'s unspecified error cases — an
+  unexposed/unknown handle, or a non-`vosu.sessions` `session: null`
+  selector — answer `send`'s status with `VOSU_ERR_INVALID_ARGUMENT`,
+  nothing delivered, and an internal grant's subtree-only granularity is
+  stated (MG, R16/R18).
+- `include/vosu_plugin.h`: comment only, at `VOSU_OP_FOCUS_CHANGED = 13`
+  (ME).
+- `schemas/vosu.osu.schema.json`: version `1.1.0` → `1.2.0`, every change
+  additive per the schema's own versioning rule — `session.state`/
+  `.server`, `result.statistics.good`, leaderboard entry
+  `statistics.good`, `$defs/tourneyClientPlay`'s `score`/`accuracy`/
+  `combo`/`judgements`, `settings.skin`, and (owner's open decision,
+  resolved: ADD now) `internal.paths.current {beatmapFolder, beatmapFile,
+  background, audio, skinFolder}` — the 1.x `folders.beatmap`/`files.*`/
+  `directPath.skin_folder` sources M4a's upstream adapter must echo,
+  consistent with D2/D8 (MD(f), R8).
+- `docs/v2/catalog-v2.md`: the `[[provides]]` example's `version` and the
+  "additive amendments bump it from there" prose now read `1.2.0` (R31).
+- This document: the M2 scope text's "correctly absent" wording and the
+  D17 M2 bench definition, both per MH.
+
+Exit: `python scripts/check-doc-links.py`; `python scripts/check-brand.py`;
+`jq empty docs/v2/schemas/*.json`; the owner delegated sign-off on every
+`[spec]` decision in `docs/v2/m2-plan.md` §4 to the implementing agent,
+exactly as A1b's sign-off worked. A2 signed off 2026-11-23 (owner
+delegated decisions to the implementing agent).
+
 ### M1: plugin API, in-process host, osu! plugin behind the 1.x surfaces
 
 Scope:
@@ -597,8 +659,8 @@ Scope:
   `clients[]` once that read lands, 1.x's default empty object otherwise —
   with only the stable manager aggregate deferred as a temporary
   pre-release gap (D6, M4a-or-later task below). Resource references arrive in M3; until then the
-  manifest declares no `[[resource_kinds]]`, so `vosu.chart.resources` and
-  `vosu.skin.tree` are correctly absent.
+  manifest declares no `[[resource_kinds]]`, so `vosu.chart.resources` is
+  always `{}` and `vosu.skin.tree` is always `null` (R11), never absent.
 - Bridge B1 still feeds the 1.x surfaces; reader demand is the union of the
   1.x hub's demand and the bus demand.
 
@@ -618,7 +680,7 @@ are gated by `requires`/`optional` naming `field:vosu.osu.internal` or a
 descendant, never granted by `field:vosu.osu`; a concurrent regular/precise
 publisher test proving no snapshot mixes two batches.
 `cargo test --locked --test state_api_compat` and `--test server_compat`
-unchanged; `--test performance_invariants`; D17 M2 benches.
+unchanged; `--test performance_invariants`; the D17 M2 benches below.
 
 Risks: whole-array republication of growing hit-error arrays (§6.6 publishes
 arrays only as whole CBOR subtrees) may cost more than 1.x's shared vectors;
@@ -1480,9 +1542,13 @@ states what was adopted and why. Spec amendments land in A1.
   with the in-process executor, since `raw_snapshot_reads`
   (`benches/hot_paths.rs:236-264`) and the invariant
   (`tests/performance_invariants.rs:220-259`) read through `ProcessHandle`
-  directly; M2 onward adds an end-to-end bench (snapshot → osu! projection →
-  bus → `/json/v2` bytes and API v1 frames) compared with the 1.x
-  serializers, because `publication` (`benches/hot_paths.rs:442-498`)
+  directly; M2 adds an end-to-end bench measuring `end_to_end/bus` (osu!
+  projection → publication batch → bus commit → API-projected JSON + one
+  `STATE_UPDATE`) against `end_to_end/legacy` (1.x `v2` + precise
+  encoders), since in M2 `/json/v2` itself still comes from bridge B1 and
+  API v1 frames are M3's (R30); M4a re-runs the bench with the adapter
+  path, then comparing against the same 1.x serializers end to end,
+  because `publication` (`benches/hot_paths.rs:442-498`)
   measures only the 1.x hub; M1, M2, and M4a record daemon CPU per tick and
   read-to-frame latency with `examples/live_reader_bench.rs`. Bar: no
   regression above 10% of the median per milestone **and** cumulatively
