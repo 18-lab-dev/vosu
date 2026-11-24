@@ -74,6 +74,13 @@ try {
     . (Join-Path $PSScriptRoot 'windows-ci-env.ps1')
     $cargo = Import-VosuNativeToolchain
     Set-VosuCargoWorkEnv -WorkRoot $WorkRoot -Jobs $Jobs | Out-Null
+    # Extra process environment from `vm-test.py --env` (e.g. the D15
+    # fixture path); the scheduled task does not inherit the SSH session's.
+    if ($config.Env) {
+        foreach ($entry in $config.Env.PSObject.Properties) {
+            [Environment]::SetEnvironmentVariable($entry.Name, [string]$entry.Value, 'Process')
+        }
+    }
 
     $steps = New-Object 'System.Collections.Generic.List[object]'
     $exitCode = Invoke-VosuCargoStep -Name 'cargo-test' -CargoExe $cargo -WorkingDirectory $source `

@@ -21,7 +21,7 @@ CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 
 # Jobs whose `run:` steps are expected to run on an engineer's machine or in
 # the vosu-windows-pro VM via scripts/prepush.py / scripts/native-ci.ps1.
-GATED_JOBS = ("changes", "validation", "dashboard", "windows-native")
+GATED_JOBS = ("changes", "validation", "dashboard", "windows-native", "catalog-forge")
 
 # Commands that only make sense on a hosted runner (classification needing
 # GitHub event env, package installation, disk/cache bookkeeping, SDK cache

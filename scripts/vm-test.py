@@ -3,7 +3,7 @@
 
 Usage:
     python scripts/vm-test.py [--package P] [--test T] [--lib] [--timeout SECS]
-                               [--jobs N] [-- <test filter/args>]
+                               [--jobs N] [--env NAME=VALUE ...] [-- <test filter/args>]
 
 This is a lightweight lever, not the full prepush gate: it stages exactly
 HEAD plus the agent's uncommitted working tree into a unique directory under
@@ -76,13 +76,17 @@ def build_cargo_test_args(package, test, lib, extra):
     return args
 
 
-def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds):
+def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds, env=None):
     """The JSON config vm-test.ps1 reads via -ConfigPath.
 
     schtasks' own /TR value is capped at 261 characters, far too short for
     a command line carrying a full cargo argv (a test filter can be long,
     or contain spaces/quotes); writing it to a file next to the bundle
     keeps the scheduled command itself short and argument-content-free.
+
+    `env` holds extra process environment for the cargo step, e.g. the D15
+    fixture path scripts/test-catalog-forge.py --windows-vm stages; the
+    scheduled task does not inherit the SSH session's environment.
     """
     return {
         "WorkRoot": remote_dir,
@@ -92,7 +96,19 @@ def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, tim
         "CargoArgs": cargo_args,
         "Jobs": jobs,
         "TimeoutSeconds": timeout_seconds,
+        "Env": dict(env or {}),
     }
+
+
+def parse_env(pairs):
+    """`NAME=VALUE` strings to a dict; a malformed or duplicate name is an error."""
+    env = {}
+    for pair in pairs:
+        name, separator, value = pair.partition("=")
+        if not separator or not name or name in env or not name.replace("_", "").isalnum():
+            raise VmTestError(f"--env expects a unique NAME=VALUE, got {pair!r}")
+        env[name] = value
+    return env
 
 
 def remote_work_root(short_sha, token):
@@ -359,7 +375,9 @@ def run(args):
             create_bundle(bundle_path, sha)
             has_patch = create_uncommitted_patch(patch_path)
 
-            config = build_invocation_config(remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout)
+            config = build_invocation_config(
+                remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout, parse_env(args.env)
+            )
             config_path = local_tmp / "invocation.json"
             config_path.write_text(json.dumps(config), encoding="utf-8")
 
@@ -449,6 +467,13 @@ def parse_args(argv):
         type=int,
         default=DEFAULT_JOBS,
         help=f"CARGO_BUILD_JOBS cap in the VM (default {DEFAULT_JOBS} of 16 vCPUs)",
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="extra environment for the remote cargo step (repeatable)",
     )
     parser.add_argument(
         "extra",
