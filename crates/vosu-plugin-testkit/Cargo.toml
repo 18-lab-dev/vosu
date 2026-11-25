@@ -37,3 +37,10 @@ vosu-plugin-api = { path = "../vosu-plugin-api" }
 name = "api_v1_plugin"
 crate-type = ["cdylib"]
 required-features = ["test-harness"]
+
+# M5 P0's `runtime = "process"` fixture, staged per test by
+# `tests/plugin_host_native/support` and never linked into anything. It needs
+# no feature, so the frozen acceptance build runs without `--features`.
+[[example]]
+name = "testkit_process_plugin"
+crate-type = ["cdylib"]
