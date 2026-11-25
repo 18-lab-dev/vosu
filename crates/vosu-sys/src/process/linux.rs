@@ -1010,19 +1010,6 @@ pub fn process_cwd(pid: u32) -> Result<PathBuf, MemoryError> {
         .map_err(|error| backend("read /proc cwd", error))
 }
 
-pub fn process_root(pid: u32) -> Result<PathBuf, MemoryError> {
-    let executable = process_executable(pid)?;
-    Ok(root_for(Path::new("/proc"), pid, &executable))
-}
-
-fn root_for(proc_root: &Path, pid: u32, executable: &Path) -> PathBuf {
-    let parent = executable.parent().unwrap_or(Path::new("/"));
-    proc_root
-        .join(pid.to_string())
-        .join("root")
-        .join(parent.strip_prefix("/").unwrap_or(parent))
-}
-
 pub fn process_bitness(pid: u32) -> Result<ProcessBitness, MemoryError> {
     elf_bitness_at(&Path::new("/proc").join(pid.to_string()).join("exe"))
 }

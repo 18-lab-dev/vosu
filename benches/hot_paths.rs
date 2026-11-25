@@ -96,8 +96,11 @@ fn memory_error(message: &'static str) -> MemoryError {
     }
 }
 
+#[path = "support/region_walk_scans.rs"]
+mod region_walk_scans;
+
 fn process(bytes: Vec<u8>, base: usize, bitness: ProcessBitness) -> ProcessHandle {
-    ProcessHandle::new(
+    region_walk_scans::scanning_handle(
         Arc::new(SliceMemory {
             base,
             bytes: bytes.into(),

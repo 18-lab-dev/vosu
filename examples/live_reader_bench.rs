@@ -225,18 +225,32 @@ fn precise_failed(s: &RawPreciseSnapshot) -> bool {
         || s.key_overlay().is_some_and(std::result::Result::is_err)
         || s.hit_errors().is_some_and(std::result::Result::is_err)
 }
+#[path = "../benches/support/region_walk_scans.rs"]
+mod region_walk_scans;
 #[cfg(windows)]
 fn open(pid: u32) -> Result<ProcessHandle> {
     let memory = vosu_sys::process::WindowsProcessMemory::open(pid)?;
     let bitness = memory.bitness()?;
-    Ok(ProcessHandle::new(Arc::new(memory), bitness))
+    Ok(region_walk_scans::scanning_handle(
+        Arc::new(memory),
+        bitness,
+    ))
 }
 #[cfg(target_os = "linux")]
 fn open(pid: u32) -> Result<ProcessHandle> {
-    Ok(ProcessHandle::new(
+    Ok(region_walk_scans::scanning_handle(
         Arc::new(vosu_sys::process::open_process(pid)?),
         vosu_sys::process::process_bitness(pid)?,
     ))
+}
+/// The directory of core's `SESSION_ATTACHED` `path` fact for `pid` (the
+/// same native record the plan attachment registers).
+fn executable_dir(pid: u32) -> Result<PathBuf> {
+    let record = plan::native_record(pid)?;
+    Ok(Path::new(&record.path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default())
 }
 fn run<R: SynchronizedMemoryReader + 'static>(
     args: &Args,
@@ -273,7 +287,7 @@ fn run<R: SynchronizedMemoryReader + 'static>(
     let mut bundle = StateBundle::new_with_root(
         args.client,
         1,
-        lazer_version::process_executable_root(args.pid)?,
+        lazer_version::process_executable_root(args.pid, &executable_dir(args.pid)?)?,
         Arc::new(LiveStateCalculationBackend::new()),
     );
     bundle.set_calculate_pp(false);
@@ -407,7 +421,9 @@ fn execute() -> Result<()> {
     };
     match args.client {
         ClientType::Stable => {
-            if lazer_version::discover_for_process(args.pid).is_ok() {
+            if executable_dir(args.pid)
+                .is_ok_and(|dir| lazer_version::discover_for_process(args.pid, &dir).is_ok())
+            {
                 return Err(fail(
                     "--client stable does not match the lazer installation",
                 ));
@@ -435,7 +451,8 @@ fn execute() -> Result<()> {
             )
         }
         ClientType::Lazer => {
-            let executable_root = lazer_version::process_executable_root(args.pid)?;
+            let executable_root =
+                lazer_version::process_executable_root(args.pid, &executable_dir(args.pid)?)?;
             let version = lazer_version::discover_from_root(&executable_root)?;
             let channel = vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
                 .map_err(io::Error::other)?;

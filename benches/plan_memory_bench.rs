@@ -227,6 +227,8 @@ impl Drop for ExecutorHost {
 
 // Raw zero-fixture captures can retry signature resolution. Keep that region
 // walk identical to hot_paths; this bench isolates read-plan, not scan-broker cost.
+#[path = "support/region_walk_scans.rs"]
+mod region_walk_scans;
 struct FixtureScan(ProcessHandle);
 impl ScanBackend for FixtureScan {
     fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
@@ -243,7 +245,7 @@ fn counted_process(bitness: ProcessBitness) -> (ProcessHandle, Arc<std::sync::at
         ProcessHandle::with_scan_backend(
             Arc::new(memory),
             bitness,
-            Arc::new(FixtureScan(ProcessHandle::new(
+            Arc::new(FixtureScan(region_walk_scans::scanning_handle(
                 Arc::new(SliceMemory(vec![0; 64 * 1024])),
                 bitness,
             ))),

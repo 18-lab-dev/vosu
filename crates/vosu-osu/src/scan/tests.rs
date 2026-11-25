@@ -7,7 +7,7 @@ use std::time::Duration;
 use vosu_osu_reader::memory::StablePatterns;
 use vosu_osu_reader::process::{ProcessHandle, ScanBackend};
 use vosu_plugin_api::memory::{
-    MemoryError, Pattern, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
+    BatchScanResult, MemoryError, Pattern, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 
 use super::{MAX_OUTSTANDING_SCANS, PlanScanBackend, ScanWaiters};
@@ -687,9 +687,11 @@ fn stable_patterns_resolve_over_plan_backends_equals_the_region_walk() {
         image.extend(std::iter::repeat_n(0, gap));
     }
 
-    let region_walk_handle = ProcessHandle::new(
-        Arc::new(FlatMemory::new(image.clone(), base)),
+    let region_memory: Arc<dyn ProcessMemory> = Arc::new(FlatMemory::new(image.clone(), base));
+    let region_walk_handle = ProcessHandle::with_scan_backend(
+        Arc::clone(&region_memory),
         ProcessBitness::X86,
+        Arc::new(RegionWalkScans(region_memory)),
     );
     let expected = match StablePatterns::resolve(&region_walk_handle).expect("region walk resolves")
     {
@@ -719,9 +721,23 @@ fn stable_patterns_resolve_over_plan_backends_equals_the_region_walk() {
     assert_eq!(via_plans, expected);
 }
 
-/// A minimal `ProcessMemory` walking its readable regions directly
-/// (`ScanBackend`-less region walk), the oracle every `PlanScanBackend`
-/// test compares against.
+/// Core's own region walk (`vosu_sys::process::scanner`, what a
+/// `SCAN_REQUEST` runs) over a fixture memory: a reader `ProcessHandle` has
+/// no native fallback (M5 R1), so the oracle names it explicitly.
+struct RegionWalkScans(Arc<dyn ProcessMemory>);
+
+impl ScanBackend for RegionWalkScans {
+    fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
+        vosu_sys::process::scanner::scan_all(&*self.0, pattern)
+    }
+
+    fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
+        vosu_sys::process::scanner::scan_batch(&*self.0, patterns)
+    }
+}
+
+/// A minimal `ProcessMemory` whose readable regions core's region walk
+/// scans, the oracle every `PlanScanBackend` test compares against.
 struct FlatMemory {
     bytes: Vec<u8>,
     base: usize,

@@ -1,22 +1,25 @@
 //! `prop_scan_backend_matches_region_walk`: a [`ScanBackend`] that simply
-//! forwards to the same [`ProcessMemory`] the region walk already uses must
+//! forwards to core's region walk over the same [`ProcessMemory`] must
 //! yield identical results from `scan_all`/`scan_batch` on [`ProcessHandle`]
-//! (F6, plan:208). This pins the contract a real backend (one answering
-//! `SCAN_REQUEST` over a read plan, P3) must also satisfy.
+//! as that walk run directly (F6, plan:208). This pins the contract a real
+//! backend (one answering `SCAN_REQUEST` over a read plan, P3) must also
+//! satisfy.
 //!
 //! `scan_backend_routes_every_scan_method_through_the_backend` complements it
 //! with a backend whose output is deliberately unlike anything the region
-//! walk could produce, so a dropped `scans` field or an inverted `match` arm
-//! fails loudly instead of the echo backend's results happening to agree by
-//! construction.
+//! walk could produce, so a dropped `scans` field fails loudly instead of the
+//! echo backend's results happening to agree by construction, and
+//! `read_only_handle_refuses_scans_without_a_native_fallback` proves a
+//! handle without a backend never walks the target itself (M5 R1).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use proptest::prelude::*;
 use vosu_proptest::vosu_proptest_config;
 
+use super::test_scans::scanning_handle;
 use super::*;
-use vosu_sys::process::scanner::SCAN_CHUNK_SIZE;
+use vosu_sys::process::scanner::{self, SCAN_CHUNK_SIZE};
 
 /// One or more non-overlapping readable regions backed by in-memory byte
 /// buffers (bases spaced `REGION_STRIDE` apart, well past any generated
@@ -78,13 +81,13 @@ impl ProcessMemory for FixtureMemory {
     }
 }
 
-/// Forwards to the same backing `ProcessMemory` the region walk would use:
-/// its results are, by construction, the region walk's own results.
-struct EchoBackend {
+/// Core's region walk run directly over the fixture memory: the results a
+/// `SCAN_RESULT` carries, with no [`ProcessHandle`] in between.
+struct RegionWalk {
     memory: Arc<dyn ProcessMemory>,
 }
 
-impl ScanBackend for EchoBackend {
+impl RegionWalk {
     fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
         scanner::scan_all(&*self.memory, pattern)
     }
@@ -94,21 +97,20 @@ impl ScanBackend for EchoBackend {
     }
 }
 
-fn echo_fixture(memory: Arc<dyn ProcessMemory>) -> (ProcessHandle, ProcessHandle) {
-    let baseline = ProcessHandle::new(memory.clone(), ProcessBitness::X64);
-    let backend: Arc<dyn ScanBackend> = Arc::new(EchoBackend {
+fn echo_fixture(memory: Arc<dyn ProcessMemory>) -> (RegionWalk, ProcessHandle) {
+    let baseline = RegionWalk {
         memory: memory.clone(),
-    });
-    let injected = ProcessHandle::with_scan_backend(memory, ProcessBitness::X64, backend);
+    };
+    let injected = scanning_handle(memory, ProcessBitness::X64);
     (baseline, injected)
 }
 
-/// Asserts `scan_all`/`scan_batch` agree between the two handles built by
-/// [`echo_fixture`]; `scan_first`/`scan_first_valid` are intentionally
-/// excluded here (see those methods' doc comments on `ProcessHandle` for the
-/// two documented divergences with a backend).
+/// Asserts `scan_all`/`scan_batch` agree between the direct walk and the
+/// handle built by [`echo_fixture`]; `scan_first`/`scan_first_valid` are
+/// derived from `scan_all` (see those methods' doc comments on
+/// `ProcessHandle`).
 fn assert_scan_all_and_batch_agree(
-    baseline: &ProcessHandle,
+    baseline: &RegionWalk,
     injected: &ProcessHandle,
     pattern: &Pattern,
     noise_pattern: &Pattern,
@@ -330,4 +332,43 @@ fn scan_backend_routes_every_scan_method_through_the_backend() {
     // backend exactly once.
     assert_eq!(backend.scan_all_calls(), 5);
     assert_eq!(backend.scan_batch_calls(), 1);
+}
+
+/// Counterexample "scanner fallback bypasses broker": a handle without a
+/// backend refuses every scan method even though a native region walk over
+/// the same memory would find the needle, and reads still work.
+#[test]
+fn read_only_handle_refuses_scans_without_a_native_fallback() {
+    let mut bytes = vec![0u8; 32];
+    bytes[4..8].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+    let pattern = Pattern::parse("aa bb cc dd", false).unwrap();
+    let memory: Arc<dyn ProcessMemory> = Arc::new(FixtureMemory::single(0x2000, bytes));
+    assert_eq!(scanner::scan_all(&*memory, &pattern).unwrap(), vec![0x2004]);
+
+    let handle = ProcessHandle::new(memory, ProcessBitness::X64);
+    let refused = |error: MemoryError| {
+        assert!(
+            matches!(
+                error,
+                MemoryError::Backend {
+                    operation: "scan",
+                    ..
+                }
+            ),
+            "expected the no-backend refusal, got {error:?}"
+        );
+    };
+    refused(handle.scan_all(&pattern).unwrap_err());
+    refused(handle.scan_first(&pattern).unwrap_err());
+    refused(
+        handle
+            .scan_first_valid(&pattern, |_| panic!("no candidate may be offered"))
+            .unwrap_err(),
+    );
+    refused(
+        handle
+            .scan_batch(std::slice::from_ref(&pattern))
+            .unwrap_err(),
+    );
+    assert_eq!(handle.read_u32(0x2004).unwrap(), 0xDDCC_BBAA);
 }

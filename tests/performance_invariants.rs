@@ -217,8 +217,11 @@ fn fixture_error(message: &'static str) -> MemoryError {
     }
 }
 
+#[path = "../benches/support/region_walk_scans.rs"]
+mod region_walk_scans;
+
 fn fixture_handle(bytes: Vec<u8>, max_read: Arc<AtomicUsize>) -> ProcessHandle {
-    ProcessHandle::new(
+    region_walk_scans::scanning_handle(
         Arc::new(FixtureMemory {
             base: 0x1000,
             bytes: bytes.into(),
