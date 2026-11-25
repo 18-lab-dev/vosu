@@ -1,8 +1,6 @@
 //! Transport-independent WebSocket routing, publication, and connection lifecycle.
 
 use std::{
-    any::Any,
-    cell::RefCell,
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     sync::{
@@ -11,13 +9,15 @@ use std::{
     },
     time::Duration,
 };
+use vosu_adapter_support::filtered::Filter;
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+mod connection;
+mod surface;
 mod upgrade;
 
 pub use upgrade::{
@@ -39,7 +39,6 @@ pub enum Endpoint {
     StreamCompanion,
     V2,
     V2Precise,
-    V2Subscribe,
     Commands,
 }
 
@@ -52,7 +51,6 @@ impl Endpoint {
             "/tokens" => Some(Self::StreamCompanion),
             "/websocket/v2" => Some(Self::V2),
             "/websocket/v2/precise" => Some(Self::V2Precise),
-            "/websocket/v2/subscribe" => Some(Self::V2Subscribe),
             "/websocket/commands" => Some(Self::Commands),
             _ => None,
         }
@@ -64,7 +62,6 @@ impl Endpoint {
             Self::StreamCompanion => Some(Schema::StreamCompanion),
             Self::V2 => Some(Schema::V2),
             Self::V2Precise => Some(Schema::V2Precise),
-            Self::V2Subscribe => None,
             Self::Commands => None,
         }
     }
@@ -76,13 +73,6 @@ pub enum Schema {
     StreamCompanion,
     V2,
     V2Precise,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum Filter {
-    Field(String),
-    Nested { field: String, keys: Vec<Filter> },
 }
 
 /// Upper bounds for sharing filtered payloads between clients within one
@@ -144,59 +134,6 @@ impl SharedProjections {
     }
 }
 
-thread_local! {
-    /// Slots of the broadcast pass running on this thread, if any.
-    static PASS_LOCAL: RefCell<Option<Vec<Box<dyn Any>>>> = const { RefCell::new(None) };
-}
-
-/// Opens pass-local storage for one synchronous broadcast pass. Dropping it
-/// drops everything stored during the pass, so nothing derived from the
-/// captured snapshot outlives the pass, even when an encoder panics.
-pub(crate) struct BroadcastPass {
-    previous: Option<Vec<Box<dyn Any>>>,
-}
-
-impl BroadcastPass {
-    pub(crate) fn begin() -> Self {
-        Self {
-            previous: PASS_LOCAL.with(|slots| slots.replace(Some(Vec::new()))),
-        }
-    }
-}
-
-impl Drop for BroadcastPass {
-    fn drop(&mut self) {
-        let ended = PASS_LOCAL.with(|slots| slots.replace(self.previous.take()));
-        // Released after the borrow ends: a stored value's destructor may
-        // itself touch pass-local storage.
-        drop(ended);
-    }
-}
-
-/// Runs `f` with the current broadcast pass's slot of type `T`, which starts
-/// as `None`. Every projection in a pass is encoded from the same captured
-/// snapshot, so a `StateSnapshot` may keep work derived from that snapshot
-/// here for the next client; it must still check that a stored value belongs
-/// to the snapshot it is encoding. Returns `None` outside a pass, where no
-/// such scope exists, and on reentrant use, which must not alias the slot.
-pub(crate) fn with_pass_local<T: 'static, R>(f: impl FnOnce(&mut Option<T>) -> R) -> Option<R> {
-    PASS_LOCAL.with(|slots| {
-        let mut slots = slots.try_borrow_mut().ok()?;
-        let slots = slots.as_mut()?;
-        let position = match slots.iter().position(|slot| slot.is::<Option<T>>()) {
-            Some(position) => position,
-            None => {
-                slots.push(Box::new(None::<T>));
-                slots.len() - 1
-            }
-        };
-        let slot = slots[position]
-            .downcast_mut::<Option<T>>()
-            .expect("slot type was checked");
-        Some(f(slot))
-    })
-}
-
 /// One immutable state generation. Every projection in one broadcast pass is
 /// derived from the same captured object.
 pub trait StateSnapshot: Send + Sync + 'static {
@@ -205,42 +142,30 @@ pub trait StateSnapshot: Send + Sync + 'static {
     fn encode_filtered(&self, filters: &[Filter]) -> Result<Bytes, String>;
 }
 
-/// The state boundary used by all four schema hubs. Implementations normally
-/// capture the latest immutable `CombinedSnapshot`.
+/// The state boundary used by all four schema hubs.
 pub trait StateProvider: Send + Sync + 'static {
     fn poll_rate(&self, schema: Schema) -> Duration;
     fn subscribe(&self, schema: Schema) -> watch::Receiver<u64>;
     fn capture(&self, schema: Schema) -> Option<Arc<dyn StateSnapshot>>;
+    /// A lease belongs to exactly one state connection. Non-bus sources have no
+    /// sampling authority and return `None`.
+    fn demand(
+        &self,
+        _schema: Schema,
+        _filters: &[Filter],
+    ) -> Result<Option<Box<dyn StateDemand>>, String> {
+        Ok(None)
+    }
+}
+
+pub trait StateDemand: Send + Sync {
+    /// Rejection must leave the old subscription and wire plan intact.
+    fn replace_filters(&self, filters: &[Filter]) -> Result<(), String>;
 }
 
 pub type ClientId = u64;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Outbound {
-    /// A state snapshot frame. The transport must call `write_completed`
-    /// after this frame's send future completes.
-    Text(Bytes),
-    /// A command response frame. This is control traffic and must not alter
-    /// state-frame backpressure bookkeeping.
-    Reply(Bytes),
-    Binary(Bytes),
-    Pong(Bytes),
-    Close {
-        code: u16,
-        reason: &'static str,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Inbound {
-    Text { data: Bytes, finished: bool },
-    Binary { data: Bytes, finished: bool },
-    Continuation { data: Bytes, finished: bool },
-    Ping(Bytes),
-    Pong(Bytes),
-    Close,
-    Error,
-}
+pub use vosu_surface::routes::{Inbound, Outbound};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FragmentKind {
@@ -267,9 +192,13 @@ struct Client {
     control: mpsc::Sender<Outbound>,
     state: AtomicU8,
     last_generation: AtomicU64,
+    /// Lowest snapshot generation this client may receive next: the image its
+    /// last write acknowledgement observed. Set before it becomes writable.
+    fresh_from: AtomicU64,
     cleaned: AtomicBool,
     cancellation: CancellationToken,
     terminal: Arc<Mutex<Option<Outbound>>>,
+    demand: Mutex<Option<Box<dyn StateDemand>>>,
 }
 
 impl Client {
@@ -277,11 +206,13 @@ impl Client {
         if !self.cleaned.swap(true, Ordering::AcqRel) {
             self.state.store(CLIENT_CLOSED, Ordering::Release);
             *lock_unpoisoned(&self.terminal) = Some(terminal);
+            drop(lock_unpoisoned(&self.demand).take());
             self.cancellation.cancel();
         }
     }
     fn terminate_for_shutdown(&self, code: u16) {
         self.cleaned.store(true, Ordering::Release);
+        drop(lock_unpoisoned(&self.demand).take());
         self.state.store(CLIENT_CLOSED, Ordering::Release);
         *lock_unpoisoned(&self.terminal) = Some(Outbound::Close {
             code,
@@ -389,6 +320,7 @@ pub struct OutboundReceiver {
     cancellation: CancellationToken,
     terminal: Arc<Mutex<Option<Outbound>>>,
     terminated: bool,
+    connection: ConnectionControl,
 }
 
 impl OutboundReceiver {
@@ -448,6 +380,7 @@ impl OutboundReceiver {
 
 impl Drop for OutboundReceiver {
     fn drop(&mut self) {
+        self.connection.cleanup();
         let mut state = lock_unpoisoned(&self.data.state);
         state.closed = true;
         state.frame = None;
@@ -556,13 +489,21 @@ impl WebSocketHub {
             control,
             state: AtomicU8::new(CLIENT_OPEN),
             last_generation: AtomicU64::new(u64::MAX),
+            fresh_from: AtomicU64::new(0),
             cleaned: AtomicBool::new(false),
             cancellation: cancellation.clone(),
+            demand: Mutex::new(None),
             terminal: Arc::clone(&terminal),
         });
+        if publishes_state {
+            match self.0.provider.demand(self.0.schema, &[]) {
+                Ok(demand) => *lock_unpoisoned(&client.demand) = demand,
+                Err(_) => client.terminate_for_shutdown(GOING_AWAY),
+            }
+        }
         {
             let _write = lock_unpoisoned(&self.0.client_writes);
-            if self.0.accepting.load(Ordering::Acquire) {
+            if self.0.accepting.load(Ordering::Acquire) && !client.cleaned.load(Ordering::Acquire) {
                 let mut clients = HashMap::clone(&self.0.clients.load());
                 clients.insert(id, Arc::clone(&client));
                 self.0.clients.store(Arc::new(clients));
@@ -575,7 +516,7 @@ impl WebSocketHub {
             Connection {
                 id,
                 hub: self.clone(),
-                client,
+                client: Arc::clone(&client),
                 fragments: Fragments::default(),
             },
             OutboundReceiver {
@@ -584,6 +525,11 @@ impl WebSocketHub {
                 cancellation,
                 terminal,
                 terminated: false,
+                connection: ConnectionControl {
+                    id,
+                    client: Arc::clone(&client),
+                    hub: self.clone(),
+                },
             },
         )
     }
@@ -602,11 +548,40 @@ impl WebSocketHub {
         let next = self.0.wake.borrow().wrapping_add(1);
         self.0.wake.send_replace(next);
     }
-    fn wake_writable(&self) {
-        let Some(snapshot) = self.0.provider.capture(self.0.schema) else {
+    /// A transport finished writing `client`'s state frame. The generation
+    /// observed here bounds what the client may receive next, so a pass that
+    /// captured an older image before this acknowledgement cannot send it.
+    fn write_completed(&self, client: &Client) {
+        if client.state.load(Ordering::Acquire) != CLIENT_PENDING {
             return;
-        };
-        let generation = snapshot.generation();
+        }
+        let generation = self
+            .0
+            .clients
+            .load()
+            .values()
+            .any(|client| client.publishes_state)
+            .then(|| self.0.provider.capture(self.0.schema))
+            .flatten()
+            .map(|snapshot| snapshot.generation());
+        if let Some(generation) = generation {
+            client.fresh_from.fetch_max(generation, Ordering::Release);
+        }
+        if client
+            .state
+            .compare_exchange(
+                CLIENT_PENDING,
+                CLIENT_OPEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+            && let Some(generation) = generation
+        {
+            self.wake_writable(generation);
+        }
+    }
+    fn wake_writable(&self, generation: u64) {
         // An unconsumed change already carrying this ceiling makes `run` read
         // every client's state after this caller's OPEN transition: the SeqCst
         // fences pair with the one after `run` clears the flag. Re-sending it
@@ -631,20 +606,37 @@ impl WebSocketHub {
     /// cleared while holding the same lock used by `connect`, so no client can
     /// race into the hub after the seal point.
     pub async fn close_all(&self, code: u16) {
-        {
+        let clients = {
             let _write = lock_unpoisoned(&self.0.client_writes);
             self.0.accepting.store(false, Ordering::Release);
             let clients = self.0.clients.load_full();
             self.0.clients.store(Arc::new(HashMap::new()));
-            for client in clients.values() {
-                client.terminate_for_shutdown(code);
-            }
+            clients
+        };
+        for client in clients.values() {
+            client.terminate_for_shutdown(code);
         }
         self.wake();
     }
 
     pub fn shutdown(&self) {
         self.0.shutdown.cancel();
+        // Publication shutdown is not a transport Close command. Keep the
+        // caller's explicit close_all policy while releasing every demand lease.
+        let clients = {
+            let _write = lock_unpoisoned(&self.0.client_writes);
+            self.0.accepting.store(false, Ordering::Release);
+            let clients = self.0.clients.load_full();
+            self.0.clients.store(Arc::new(HashMap::new()));
+            clients
+        };
+        for client in clients.values() {
+            if !client.cleaned.swap(true, Ordering::AcqRel) {
+                client.state.store(CLIENT_CLOSED, Ordering::Release);
+                drop(lock_unpoisoned(&client.demand).take());
+                client.cancellation.cancel();
+            }
+        }
     }
 
     /// Runs the schema publication loop. Spawn exactly one per schema.
@@ -672,12 +664,8 @@ impl WebSocketHub {
             });
 
             if !has_state_clients {
-                next_send_at = tokio::time::Instant::now();
                 tokio::select! {
                     _ = self.0.shutdown.cancelled() => break,
-                    changed = state_events.changed() => {
-                        if changed.is_err() { break; }
-                    },
                     changed = local_wake.changed() => {
                         if changed.is_err() { break; }
                     },
@@ -685,7 +673,6 @@ impl WebSocketHub {
                         if changed.is_err() { break; }
                         self.writable_consumed();
                     },
-                    _ = tokio::time::sleep(Duration::from_millis(500)) => {},
                 }
                 continue;
             }
@@ -725,22 +712,38 @@ impl WebSocketHub {
                     force_delivery = false;
                     continue;
                 }
-                if cached.as_ref().is_none_or(|(seen, _)| *seen != generation) {
-                    match snapshot.encode_unfiltered() {
-                        Ok(bytes) => cached = Some((generation, bytes)),
-                        Err(_) => cached = None,
-                    }
+                // A client that became writable during this pass may have
+                // acknowledged a newer image than this capture: recapture
+                // rather than encode or send stale state to anyone.
+                if clients.values().any(|client| {
+                    client.publishes_state
+                        && client.state.load(Ordering::Acquire) == CLIENT_OPEN
+                        && client.fresh_from.load(Ordering::Acquire) > generation
+                }) {
+                    force_delivery = true;
+                    continue;
                 }
                 let mut projections = SharedProjections::default();
-                let _pass = BroadcastPass::begin();
                 for client in clients.values() {
                     if !client.publishes_state
                         || client.state.load(Ordering::Acquire) != CLIENT_OPEN
+                        || client.fresh_from.load(Ordering::Acquire) > generation
                     {
+                        // A client acknowledged after the check above waits
+                        // for its own pending writable wake.
                         continue;
                     }
                     let plan = client.filters.load();
                     let payload = if plan.filters.is_empty() {
+                        // Encode lazily for this pass's generation: a plain
+                        // client may become writable mid-pass, and bytes kept
+                        // from an earlier generation must never be sent.
+                        if cached.as_ref().is_none_or(|(seen, _)| *seen != generation) {
+                            cached = snapshot
+                                .encode_unfiltered()
+                                .ok()
+                                .map(|bytes| (generation, bytes));
+                        }
                         cached.as_ref().map(|(_, bytes)| bytes.clone())
                     } else if client.shares_plan.load(Ordering::Relaxed) {
                         projections.encode(snapshot.as_ref(), &plan)
@@ -763,184 +766,16 @@ impl WebSocketHub {
                     tokio::time::Instant::now() + self.0.provider.poll_rate(self.0.schema);
             }
         }
-    }
-}
-
-impl Connection {
-    pub fn id(&self) -> ClientId {
-        self.id
-    }
-
-    pub fn control_handle(&self) -> ConnectionControl {
-        ConnectionControl {
-            id: self.id,
-            client: Arc::clone(&self.client),
-            hub: self.hub.clone(),
-        }
-    }
-
-    pub fn set_filters(&self, filters: Vec<Filter>) {
-        self.client.set_filters(filters);
-        self.hub.mark_shared_plans();
-        self.hub.wake();
-    }
-
-    /// The transport writer must call this after its state send future completes.
-    pub fn write_completed(&self) {
-        if self
-            .client
-            .state
-            .compare_exchange(
-                CLIENT_PENDING,
-                CLIENT_OPEN,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
-        {
-            self.hub.wake_writable();
-        }
-    }
-
-    pub async fn send_text(&self, bytes: Bytes) -> bool {
-        let sent = self.client.send_control(Outbound::Reply(bytes)).await;
-        if !sent {
-            self.cleanup();
-        }
-        sent
-    }
-
-    /// Enqueues a control reply without waiting; callers on shared workers
-    /// must not let one full client queue stall unrelated clients.
-    pub fn try_send_text(&self, bytes: Bytes) -> bool {
-        self.client.state.load(Ordering::Acquire) != CLIENT_CLOSED
-            && self.client.control.try_send(Outbound::Reply(bytes)).is_ok()
-    }
-
-    /// Consumes a transport frame. Complete text/binary messages are returned
-    /// to the command processor; protocol/control frames are handled here.
-    pub async fn receive(&mut self, frame: Inbound) -> Option<Bytes> {
-        match frame {
-            Inbound::Ping(data) => {
-                if !self.client.send_control(Outbound::Pong(data)).await {
-                    self.cleanup();
-                }
-                None
-            }
-            Inbound::Pong(_) => None,
-            Inbound::Close | Inbound::Error => {
-                self.cleanup();
-                None
-            }
-            Inbound::Text { data, finished } => {
-                self.start_fragment(FragmentKind::Text, data, finished)
-            }
-            Inbound::Binary { data, finished } => {
-                self.start_fragment(FragmentKind::Binary, data, finished)
-            }
-            Inbound::Continuation { data, finished } => self.continue_fragment(data, finished),
-        }
-    }
-
-    pub fn cleanup(&self) {
-        self.finish(None);
-    }
-
-    fn finish(&self, terminal: Option<Outbound>) {
-        if !self.client.cleaned.load(Ordering::Acquire) {
-            match terminal {
-                Some(terminal) => self.client.terminate(terminal),
-                None => {
-                    if !self.client.cleaned.swap(true, Ordering::AcqRel) {
-                        self.client.state.store(CLIENT_CLOSED, Ordering::Release);
-                        self.client.cancellation.cancel();
-                    }
-                }
-            }
-            let _write = lock_unpoisoned(&self.hub.0.client_writes);
-            let mut clients = HashMap::clone(&self.hub.0.clients.load());
-            clients.remove(&self.id);
-            mark_shared_plans(&clients);
-            self.hub.0.clients.store(Arc::new(clients));
-            self.hub.wake();
-        }
-    }
-
-    fn start_fragment(&mut self, kind: FragmentKind, data: Bytes, finished: bool) -> Option<Bytes> {
-        if self.fragments.kind.is_some() {
-            self.close_with(PROTOCOL_ERROR, "Protocol error");
-            return None;
-        }
-        if data.len() > MAX_FRAME_BYTES {
-            self.close_with(MESSAGE_TOO_BIG, "Message too big");
-            return None;
-        }
-        if finished {
-            return Some(data);
-        }
-        self.fragments.kind = Some(kind);
-        self.fragments.bytes.extend_from_slice(&data);
-        None
-    }
-
-    fn continue_fragment(&mut self, data: Bytes, finished: bool) -> Option<Bytes> {
-        if self.fragments.kind.is_none() {
-            self.close_with(PROTOCOL_ERROR, "Protocol error");
-            return None;
-        }
-        if data.len() > MAX_FRAME_BYTES
-            || self.fragments.bytes.len().saturating_add(data.len()) > MAX_MESSAGE_BYTES
-        {
-            self.close_with(MESSAGE_TOO_BIG, "Message too big");
-            return None;
-        }
-        self.fragments.bytes.extend_from_slice(&data);
-        if finished {
-            self.fragments.kind = None;
-            return Some(Bytes::from(std::mem::take(&mut self.fragments.bytes)));
-        }
-        None
-    }
-
-    fn close_with(&mut self, code: u16, reason: &'static str) {
-        self.fragments = Fragments::default();
-        self.finish(Some(Outbound::Close { code, reason }));
-    }
-}
-
-impl ConnectionControl {
-    pub fn set_filters(&self, filters: Vec<Filter>) {
-        self.client.set_filters(filters);
-        self.hub.mark_shared_plans();
-        self.hub.wake();
-    }
-
-    /// Enqueues a control reply without waiting; a full recipient queue is
-    /// reported to the caller so that recipient can be cleaned up.
-    pub fn try_send_text(&self, bytes: Bytes) -> bool {
-        self.client.state.load(Ordering::Acquire) != CLIENT_CLOSED
-            && self.client.control.try_send(Outbound::Reply(bytes)).is_ok()
-    }
-
-    pub fn cleanup(&self) {
-        if !self.client.cleaned.swap(true, Ordering::AcqRel) {
-            self.client.state.store(CLIENT_CLOSED, Ordering::Release);
-            self.client.cancellation.cancel();
-        }
-        let _write = lock_unpoisoned(&self.hub.0.client_writes);
-        let mut clients = HashMap::clone(&self.hub.0.clients.load());
-        clients.remove(&self.id);
-        mark_shared_plans(&clients);
-        self.hub.0.clients.store(Arc::new(clients));
-        self.hub.wake();
-    }
-}
-
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.cleanup();
+        self.shutdown();
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod demand_tests;
+
+#[cfg(test)]
+#[path = "websocket/tests/stale_capture.rs"]
+mod stale_capture_tests;

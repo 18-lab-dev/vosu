@@ -89,14 +89,15 @@ pub use focus::{
     FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
     SyntheticForegroundSource,
 };
+pub(crate) use host::SurfaceRequester;
 pub use host::resource_requests::{
     MAX_PENDING_RESOURCE_REQUESTS, ResourceOwner, ResourceReply, ResourceRequest,
     ResourceRequestError, ResourceRequests,
 };
 pub use host::resources::RootCapability;
 pub use host::{
-    DiscoveryObserver, PackageRegistration, PluginHost, ProcessRecord, ProviderRegistration,
-    ValidationSnapshot,
+    DiagnosticSession, DiscoveryObserver, PackageRegistration, PluginHost, ProcessRecord,
+    ProviderRegistration, ValidationSnapshot,
 };
 pub use host_services::PluginHostHandler;
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
@@ -108,7 +109,7 @@ pub use matcher::{
 pub use read_plan::{
     DispatchThreadScope, ExecuteBytesError, FinishOutcome, MAX_OUTSTANDING_ASYNC_PLANS,
     ModuleResolver, OutstandingPlans, OutstandingPlansError, ReadPlanError, SyncReadPlanError,
-    deliver_sync, execute, execute_bytes, execute_into, on_dispatch_thread,
+    deliver_sync, execute, execute_bytes, execute_into, execute_sync_into, on_dispatch_thread,
 };
 pub use registry::{
     BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development, load_installed,

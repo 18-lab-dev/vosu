@@ -214,6 +214,143 @@ pub(super) fn player_screen(offsets: &LazerOffsets) -> (SparseMemory, usize, usi
 }
 
 #[test]
+fn precise_root_prefetch_publishes_only_a_valid_complete_snapshot() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    for valid in [true, false] {
+        let (mut memory, base, screen) = player_screen(&offsets);
+        if !valid {
+            memory.i64(base + 0x800, 0);
+        }
+        let memory = Arc::new(memory);
+        let mut decoder = decoder(memory.clone());
+        decoder.set_resolved_state(base, screen);
+        decoder.reset_capture_roots(true);
+        assert_eq!(decoder.prefetch_precise_roots().is_some(), valid);
+        assert_eq!(decoder.capture_roots_loaded.load(Ordering::Relaxed), valid);
+        assert_eq!(
+            decoder.validated_game_base.load(Ordering::Relaxed),
+            if valid { base } else { 0 }
+        );
+        assert_eq!(
+            decoder.capture_screen.load(Ordering::Relaxed),
+            if valid { screen } else { 0 }
+        );
+        if valid {
+            let expected = {
+                let mut scalar =
+                    decoder_with(Arc::new(ScalarOnly(memory.clone())), offsets.clone());
+                scalar.set_resolved_state(base, screen);
+                scalar.global_precise()
+            };
+            assert_eq!(
+                format!("{:?}", decoder.global_precise()),
+                format!("{expected:?}")
+            );
+        }
+    }
+}
+
+#[test]
+fn precise_menu_probe_reuses_connection_and_clock_without_rechecking() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let (memory, base, screen) = player_screen(&offsets);
+    let memory = Arc::new(memory);
+    let mut decoder = decoder(memory.clone());
+    decoder.set_resolved_state(base, screen);
+    decoder.reset_capture_roots(true);
+    decoder.prefetch_precise_roots().unwrap();
+    decoder.prefetch_precise_menu().unwrap();
+    let client = decoder.root(GameRoot::MultiplayerClient).unwrap();
+    let bindable = decoder
+        .ptr(
+            client
+                + offsets
+                    .osu_game_online_multiplayer_online_multiplayer_client
+                    .is_connected_k_backing_field,
+        )
+        .unwrap();
+    let clock = decoder.beatmap_clock().unwrap();
+    let probe = clock
+        + offsets
+            .osu_game_beatmaps_framed_beatmap_clock
+            .decoupled_track;
+    assert_eq!(memory.read_count(bindable + 0x40), 1);
+    assert_eq!(memory.read_count(probe), 1);
+    assert!(!decoder.check_multi_select(screen).unwrap());
+    assert_ne!(decoder.multi_room().unwrap(), 0);
+    assert_eq!(decoder.clock_current_time(clock).unwrap(), 99.0);
+    assert_eq!(memory.read_count(bindable + 0x40), 1);
+    assert_eq!(memory.read_count(probe), 1);
+    decoder.set_resolved_state(base, screen);
+    assert!(decoder.menu_global.multi.is_none());
+    assert!(decoder.menu_global.beatmap_time.is_none());
+}
+
+#[test]
+fn precise_player_probe_matches_classification_and_selected_clock() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    for with_drawable in [true, false] {
+        let (mut memory, base, screen) = player_screen(&offsets);
+        if !with_drawable {
+            memory.ptr(
+                screen
+                    + offsets
+                        .osu_game_screens_play_player
+                        .drawable_ruleset_k_backing_field,
+                0,
+            );
+        }
+        let memory = Arc::new(memory);
+        let mut scalar = decoder_with(Arc::new(ScalarOnly(memory.clone())), offsets.clone());
+        scalar.set_resolved_state(base, screen);
+        let player = scalar.player().unwrap();
+        let expected = (
+            scalar.check_spectator(screen).unwrap(),
+            scalar.check_watching_replay(screen, player).unwrap(),
+            scalar.current_time_for_player(player).unwrap(),
+        );
+        let mut batched = decoder(memory.clone());
+        batched.set_resolved_state(base, screen);
+        batched.reset_capture_roots(true);
+        batched.prefetch_precise_roots().unwrap();
+        assert!(batched.screen_bytes::<8>(screen, 0x3f0).is_some());
+        let api_reads = memory.read_count(screen + 0x3f0);
+        assert_eq!(batched.prefetch_precise_player(player).unwrap(), expected);
+        assert_eq!(memory.read_count(screen + 0x3f0), api_reads);
+    }
+}
+
+#[test]
+fn chained_collection_headers_preserve_list_and_inline_array_addresses() {
+    for inline in [false, true] {
+        let mut memory = SparseMemory::default();
+        let (root, list, items) = (0x1000, 0x2000, 0x3000);
+        memory.ptr(root, list);
+        memory.put(list + 8, [0; 12]);
+        if inline {
+            memory.i32(list + 8, 3);
+            memory.i32(list + 0x10, 10_000_001);
+        } else {
+            memory.ptr(list + 8, items);
+            memory.i32(list + 0x10, 3);
+        }
+        let decoder = decoder(Arc::new(memory));
+        assert_eq!(
+            decoder.chained_list_header(root, &[8]),
+            Some((list, 3, if inline { list + 0x10 } else { items + 0x10 })),
+        );
+    }
+    let mut memory = SparseMemory::default();
+    memory.ptr(0x1000, 0);
+    memory.put(8, [0; 12]);
+    assert!(
+        decoder(Arc::new(memory))
+            .chained_list_header(0x1000, &[8])
+            .is_none()
+    );
+}
+
+#[test]
 fn batched_global_matches_sequential_decoding_for_a_player_screen() {
     let offsets = LazerOffsets::embedded().unwrap();
     let decode = |batched: bool| {

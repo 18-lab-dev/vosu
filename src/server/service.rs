@@ -24,15 +24,10 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
-use vosu_osu_calc::engine::{
-    HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyRosuEngine,
-};
+use vosu_adapter_upstream::calculate::PpQuery;
 
-use crate::{
-    api::{self, ApiError, SnapshotManager},
-    counters::{
-        CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
-    },
+use crate::counters::{
+    CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
 };
 use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
 
@@ -41,15 +36,10 @@ use super::{
     files::{self, MissingKind, ResourceOutcome},
     pages::{DynamicPage, EmbeddedResponse, PageLookup, PageService, StaticFallback},
     routes::{
-        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, PpQuery,
-        ProviderFuture, ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate,
-        StateJsonProvider, StateRoute,
+        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
+        ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate, StateJsonProvider, StateRoute,
     },
-    v2_subscription::{
-        SubscriptionRequestError, V2SubscriptionHub, V2SubscriptionOutbound,
-        parse_subscription_request,
-    },
-    websocket::{self, ConnectionControl, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
+    websocket::{self, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
 };
 
 const JSON: &str = "application/json; charset=utf-8";
@@ -61,26 +51,22 @@ include!("service/routing.rs");
 include!("service/websocket_transport.rs");
 include!("service/dashboard.rs");
 include!("service/responses.rs");
+include!("service/surface.rs");
+include!("service/declared_calculate.rs");
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
-    use crate::server::routes::ModsInput;
     use vosu_proptest::bounded;
 
     #[derive(Default)]
     struct Current {
-        bytes: Option<Bytes>,
         files: Option<BeatmapFiles>,
     }
 
     impl CurrentBeatmapProvider for Current {
         fn files(&self) -> BeatmapFiles {
             self.files.clone().unwrap_or_default()
-        }
-        fn current_beatmap_bytes(&self) -> Result<Option<Bytes>, String> {
-            Ok(self.bytes.clone())
         }
     }
 
@@ -100,28 +86,11 @@ mod tests {
         }
     }
 
-    impl crate::server::v2_subscription::V2SubscriptionSnapshot for NoState {
-        fn revision(&self) -> u64 {
-            *self.events.borrow()
-        }
-
-        fn document(&self, _pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
-            Ok(None)
+    impl StateJsonProvider for NoState {
+        fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
+            Box::pin(async { CachedJson::NotReady })
         }
     }
-
-    impl crate::server::v2_subscription::V2SubscriptionProvider for NoState {
-        fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
-            self.events.clone()
-        }
-
-        fn capture(&self) -> Arc<dyn crate::server::v2_subscription::V2SubscriptionSnapshot> {
-            Arc::new(NoState {
-                events: self.events.clone(),
-            })
-        }
-    }
-
     struct CommandProviders;
 
     impl super::super::commands::SettingsProvider for CommandProviders {

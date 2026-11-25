@@ -7,12 +7,10 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu::api::ApiSchema;
-use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
-use vosu::runtime::{ProductionSnapshotEncoder, SnapshotEncoder};
 use vosu::server::websocket::{
-    Filter, Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
+    Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
+use vosu_adapter_support::filtered::Filter;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,
@@ -20,23 +18,38 @@ use vosu_osu_model::{
 };
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 
-pub const SCHEMAS: [(Schema, ApiSchema, &str); 4] = [
-    (Schema::V1, ApiSchema::V1, "v1"),
-    (Schema::V2, ApiSchema::V2, "v2"),
-    (Schema::V2Precise, ApiSchema::V2Precise, "v2_precise"),
+pub const SCHEMAS: [(Schema, Schema, &str); 4] = [
+    (Schema::V1, Schema::V1, "v1"),
+    (Schema::V2, Schema::V2, "v2"),
+    (Schema::V2Precise, Schema::V2Precise, "v2_precise"),
     (
         Schema::StreamCompanion,
-        ApiSchema::StreamCompanion,
+        Schema::StreamCompanion,
         "stream_companion",
     ),
 ];
 
-// Explicit frozen copy of hot_paths' single stable focused-instance fixture.
-// The 100-element history supplies present, distinct canonical array-index filters.
-pub fn fixture() -> CombinedSnapshot {
-    fixture_offset(0)
+#[path = "../tests/adapter_fixture/mod.rs"]
+mod adapter_fixture;
+pub struct Prepared {
+    pub state: Arc<StateBundleSnapshot>,
+    snapshots: [Arc<dyn StateSnapshot>; 4],
 }
-pub fn fixture_offset(offset: usize) -> CombinedSnapshot {
+impl Prepared {
+    pub fn snapshot(&self, schema: Schema) -> Arc<dyn StateSnapshot> {
+        self.snapshots[match schema {
+            Schema::V1 => 0,
+            Schema::StreamCompanion => 1,
+            Schema::V2 => 2,
+            Schema::V2Precise => 3,
+        }]
+        .clone()
+    }
+}
+pub fn encode(snapshot: &Prepared, schema: Schema, filters: &[Filter]) -> Result<Bytes, String> {
+    snapshot.snapshot(schema).encode_filtered(filters)
+}
+pub fn source_state(offset: usize) -> Arc<StateBundleSnapshot> {
     let regular = RegularState {
         global: Default::default(),
         settings: Default::default(),
@@ -79,30 +92,61 @@ pub fn fixture_offset(offset: usize) -> CombinedSnapshot {
         committed_hit_error_index: 0,
         unstable_rate: 0.0,
     };
-    let state = Arc::new(StateBundleSnapshot {
+    Arc::new(StateBundleSnapshot {
         source: ClientType::Stable,
         generation: 1,
         reset_epoch: 0,
         regular: Arc::new(regular),
         precise: Arc::new(precise),
-    });
-    let instance = ManagerInstanceSnapshot::new(
-        7,
+    })
+}
+pub fn fixture() -> Prepared {
+    fixture_offset(0)
+}
+pub fn fixture_offset(offset: usize) -> Prepared {
+    fixture_states(vec![(
         InstanceSettings {
             tournament_spectator: false,
             tournament_ipc_id: None,
             devserver_endpoint: None,
         },
         false,
-        state,
-    );
-    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        1,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [instance],
-    )))
+        source_state(offset),
+    )])
+}
+pub fn fixture_states(states: Vec<(InstanceSettings, bool, Arc<StateBundleSnapshot>)>) -> Prepared {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
+                let state = states[0].2.clone();
+                for (i, (settings, manager, state)) in states.into_iter().enumerate() {
+                    fixture
+                        .attach(settings, manager, i == 0)
+                        .publish(state, vosu_osu_state::Delivery::All)
+                        .unwrap();
+                }
+                let snapshots = [
+                    Schema::V1,
+                    Schema::StreamCompanion,
+                    Schema::V2,
+                    Schema::V2Precise,
+                ]
+                .map(|schema| {
+                    fixture.providers[match schema {
+                        Schema::V1 => 0,
+                        Schema::StreamCompanion => 1,
+                        Schema::V2 => 2,
+                        Schema::V2Precise => 3,
+                    }]
+                    .capture(schema)
+                    .unwrap()
+                });
+                Prepared { state, snapshots }
+            })
+            .join()
+            .unwrap()
+    })
 }
 
 pub fn nested(field: &str, keys: Vec<Filter>) -> Filter {
@@ -165,7 +209,7 @@ pub fn reference_offset(schema: Schema, index: usize, offset: usize) -> Bytes {
 pub struct Provider {
     pub generation: AtomicU64,
     event: watch::Sender<u64>,
-    snapshots: [Arc<CombinedSnapshot>; 3],
+    snapshots: [Prepared; 3],
 }
 impl Default for Provider {
     fn default() -> Self {
@@ -179,7 +223,7 @@ impl Provider {
         Self {
             generation: AtomicU64::new(0),
             event,
-            snapshots: [0, 100, 200].map(|offset| Arc::new(fixture_offset(offset))),
+            snapshots: [0, 100, 200].map(fixture_offset),
         }
     }
     pub fn publish(&self) -> u64 {
@@ -194,8 +238,7 @@ impl Provider {
 }
 struct Snapshot {
     generation: u64,
-    snapshot: Arc<CombinedSnapshot>,
-    schema: ApiSchema,
+    snapshot: Arc<dyn StateSnapshot>,
 }
 impl StateSnapshot for Snapshot {
     fn generation(&self) -> u64 {
@@ -205,9 +248,7 @@ impl StateSnapshot for Snapshot {
         self.encode_filtered(&[])
     }
     fn encode_filtered(&self, filters: &[Filter]) -> Result<Bytes, String> {
-        ProductionSnapshotEncoder
-            .encode(&self.snapshot, self.schema, filters)
-            .map_err(|e| e.to_string())
+        self.snapshot.encode_filtered(filters)
     }
 }
 impl StateProvider for Provider {
@@ -224,8 +265,7 @@ impl StateProvider for Provider {
         let generation = self.generation.load(Ordering::Acquire);
         Some(Arc::new(Snapshot {
             generation,
-            snapshot: self.snapshots[(generation % 3) as usize].clone(),
-            schema,
+            snapshot: self.snapshots[(generation % 3) as usize].snapshot(schema),
         }))
     }
 }
@@ -266,12 +306,7 @@ fn bench(c: &mut Criterion) {
                     .collect();
                 for (snapshot, expected) in provider.snapshots.iter().zip(&expected) {
                     for (plan, bytes) in plans.iter().zip(expected) {
-                        assert_eq!(
-                            ProductionSnapshotEncoder
-                                .encode(snapshot, api_schema, plan)
-                                .unwrap(),
-                            *bytes
-                        );
+                        assert_eq!(encode(snapshot, api_schema, plan).unwrap(), *bytes);
                     }
                 }
                 let (connections, mut receivers): (Vec<_>, Vec<_>) = plans
@@ -335,9 +370,7 @@ fn bench(c: &mut Criterion) {
                 .collect();
             for (i, plan) in plans.iter().enumerate() {
                 assert_eq!(
-                    ProductionSnapshotEncoder
-                        .encode(&snapshot, api_schema, plan)
-                        .unwrap(),
+                    encode(&snapshot, api_schema, plan).unwrap(),
                     reference(schema, if unique { i } else { 0 })
                 );
             }
@@ -346,11 +379,7 @@ fn bench(c: &mut Criterion) {
                 |b| {
                     b.iter(|| {
                         for plan in &plans {
-                            black_box(
-                                ProductionSnapshotEncoder
-                                    .encode(&snapshot, api_schema, plan)
-                                    .unwrap(),
-                            );
+                            black_box(encode(&snapshot, api_schema, plan).unwrap());
                         }
                     });
                 },

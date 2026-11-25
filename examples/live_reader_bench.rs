@@ -1,4 +1,9 @@
-//! Read-only production capture and opt-in B1/state-bus tick benchmark.
+//! Read-only production capture plus opt-in state-bus (`--bus`) and adapter
+//! output (`--adapter`) tick benchmarks. `--bus` stops at the bus commit and a
+//! surface notification; `--adapter` attributes read/reduce/projection/commit/
+//! surface-view/encode CPU and measures read-to-real-`/json/v2`-frame latency.
+#[path = "live_reader_bench/adapter.rs"]
+mod adapter;
 #[path = "live_reader_bench/bus.rs"]
 mod bus;
 #[path = "live_reader_bench/plan.rs"]
@@ -8,7 +13,7 @@ use std::{
     error::Error,
     hint::black_box,
     io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -30,36 +35,40 @@ use vosu_osu_state::{
     RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
     StateBundle, state_backend::LiveStateCalculationBackend,
 };
+use vosu_sys::platform::{PathResolver, Paths, SystemPathResolver};
 use vosu_sys::process::ReadStatus;
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(message.into()).into()
 }
-fn daemon_cache_root() -> io::Result<std::path::PathBuf> {
-    #[cfg(windows)]
-    {
-        let executable = std::env::current_exe()?;
-        let directory = executable
-            .parent()
-            .ok_or_else(|| io::Error::other("example executable has no parent"))?;
-        let daemon = if directory.file_name().is_some_and(|name| name == "examples") {
-            directory
-                .parent()
-                .ok_or_else(|| io::Error::other("examples directory has no parent"))?
-        } else {
-            directory
-        };
-        Ok(
-            vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
-                .map_err(io::Error::other)?
-                .root(daemon.join(".cache")),
-        )
+
+/// Resolve roots as the daemon beside Cargo's `examples` directory would.
+struct DaemonPathResolver;
+
+impl PathResolver for DaemonPathResolver {
+    fn current_exe(&self) -> io::Result<PathBuf> {
+        let executable = SystemPathResolver.current_exe()?;
+        Ok(daemon_executable(&executable))
     }
-    #[cfg(not(windows))]
-    vosu_sys::platform::Paths::system_cache_root(
-        vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
-            .map_err(io::Error::other)?,
-    )
+
+    fn launch_dir(&self) -> io::Result<PathBuf> {
+        SystemPathResolver.launch_dir()
+    }
+
+    fn env_var(&self, name: &str) -> Option<std::ffi::OsString> {
+        SystemPathResolver.env_var(name)
+    }
+}
+
+fn daemon_executable(executable: &Path) -> PathBuf {
+    // Windows stores data beside the daemon executable, one level above a
+    // Cargo example. Linux's XDG roots do not depend on the executable path.
+    match executable.parent() {
+        Some(parent) if parent.file_name().is_some_and(|name| name == "examples") => {
+            parent.with_file_name("vosu")
+        }
+        _ => executable.to_path_buf(),
+    }
 }
 struct Args {
     pid: u32,
@@ -68,15 +77,21 @@ struct Args {
     cycles: usize,
     memory: String,
     bus: bool,
+    adapter: bool,
+    submissions: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 impl Args {
     fn parse(mut values: impl Iterator<Item = String>) -> Result<Self> {
         let (mut pid, mut client, mut warmup, mut cycles) = (None, None, 100, 1000);
         let mut memory = "native".to_owned();
-        let mut bus = false;
+        let (mut bus, mut adapter) = (false, false);
         while let Some(flag) = values.next() {
-            if flag == "--bus" {
-                bus = true;
+            match flag.as_str() {
+                "--bus" => bus = true,
+                "--adapter" => adapter = true,
+                _ => {}
+            }
+            if matches!(flag.as_str(), "--bus" | "--adapter") {
                 continue;
             }
             let value = values
@@ -105,6 +120,9 @@ impl Args {
         if cycles == 0 {
             return Err(fail("cycles must be positive"));
         }
+        if bus && adapter {
+            return Err(fail("choose one of --bus or --adapter"));
+        }
         Ok(Self {
             pid: pid
                 .filter(|pid| *pid != 0)
@@ -114,6 +132,8 @@ impl Args {
             cycles,
             memory,
             bus,
+            adapter,
+            submissions: None,
         })
     }
 }
@@ -142,6 +162,7 @@ struct Measurement {
     max_ns: f64,
     reads_per_cycle: Option<f64>,
     bytes_per_cycle: Option<f64>,
+    plans_per_cycle: f64,
     errors: usize,
 }
 fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
@@ -150,6 +171,9 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         errors += usize::from(cycle());
     }
     let mut times = [0.0_f64; 9];
+    let plans_before = args.submissions.as_ref().map_or(0, |counter| {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    });
     for time in &mut times {
         let start = Instant::now();
         for _ in 0..args.cycles {
@@ -157,6 +181,9 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         }
         *time = start.elapsed().as_nanos() as f64 / args.cycles as f64;
     }
+    let plans_after = args.submissions.as_ref().map_or(0, |counter| {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    });
     times.sort_by(f64::total_cmp);
     Measurement {
         warmup: args.warmup,
@@ -167,6 +194,7 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         max_ns: times[8],
         reads_per_cycle: None,
         bytes_per_cycle: None,
+        plans_per_cycle: (plans_after - plans_before) as f64 / (9 * args.cycles) as f64,
         errors,
     }
 }
@@ -269,24 +297,26 @@ fn run<R: SynchronizedMemoryReader + 'static>(
         request.plan = transition.next_capture;
     }
     let state_start = context.status;
-    if args.bus {
-        let result = bus::measure_ticks(
-            args,
-            bus::Readers {
-                regular: &mut regular,
-                precise: &mut precise,
-                synchronization: &synchronization,
-                context,
-            },
-            &mut bundle,
-            &mut request,
-            &rt,
-            attachment.ok_or_else(|| fail("bus host missing"))?,
-        )?;
-        println!(
-            "{}",
-            serde_json::json!({"product":"vosu","client_version":version,"client":if args.client == ClientType::Lazer {"lazer"} else {"stable"},"memory":args.memory,"pid":args.pid,"calculate_pp":false,"state":format!("{state_start} -> {}", bundle.snapshot().precise.status),"bus":result})
-        );
+    if args.bus || args.adapter {
+        let readers = bus::Readers {
+            regular: &mut regular,
+            precise: &mut precise,
+            synchronization: &synchronization,
+            context,
+        };
+        let attachment = attachment.ok_or_else(|| fail("bus host missing"))?;
+        let (key, result) = if args.adapter {
+            let result =
+                adapter::measure_ticks(args, readers, &mut bundle, &mut request, &rt, attachment)?;
+            ("adapter", result)
+        } else {
+            let result =
+                bus::measure_ticks(args, readers, &mut bundle, &mut request, &rt, attachment)?;
+            ("bus", result)
+        };
+        let mut output = serde_json::json!({"product":"vosu","client_version":version,"client":if args.client == ClientType::Lazer {"lazer"} else {"stable"},"memory":args.memory,"pid":args.pid,"calculate_pp":false,"state":format!("{state_start} -> {}", bundle.snapshot().precise.status)});
+        output[key] = result;
+        println!("{output}");
         return Ok(());
     }
     let setup_ns = start.elapsed().as_nanos();
@@ -346,9 +376,19 @@ fn main() {
     }
 }
 fn execute() -> Result<()> {
-    let args = Args::parse(std::env::args().skip(1))?;
+    let mut args = Args::parse(std::env::args().skip(1))?;
     let start = Instant::now();
-    let attachment = if args.bus {
+    let attachment = if args.adapter {
+        let variant = if args.client == ClientType::Lazer {
+            "lazer"
+        } else {
+            "stable"
+        };
+        Some(plan::Attachment::with_adapter(
+            plan::native_record(args.pid)?,
+            variant,
+        )?)
+    } else if args.bus {
         Some(plan::Attachment::with_bus(plan::native_record(args.pid)?)?)
     } else if args.memory == "plan" {
         Some(plan::Attachment::new(
@@ -358,6 +398,9 @@ fn execute() -> Result<()> {
     } else {
         None
     };
+    args.submissions = attachment
+        .as_ref()
+        .map(|attachment| attachment.submissions.clone());
     let process = match &attachment {
         Some(attachment) if args.memory == "plan" => attachment.process.clone(),
         _ => open(args.pid)?,
@@ -394,7 +437,11 @@ fn execute() -> Result<()> {
         ClientType::Lazer => {
             let executable_root = lazer_version::process_executable_root(args.pid)?;
             let version = lazer_version::discover_from_root(&executable_root)?;
-            let cache = daemon_cache_root()?.join("offsets");
+            let channel = vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
+                .map_err(io::Error::other)?;
+            let cache = Paths::resolve(&DaemonPathResolver, channel)?
+                .bundled_plugin_data_dir("vosu.osu")
+                .join("offsets");
             let asset = vosu::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| fail("embedded offsets missing"))?;
             let loader = LazerOffsetLoader::new(
@@ -428,6 +475,20 @@ fn execute() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_daemon_beside_cargo_examples() {
+        for profile in ["debug", "release"] {
+            let root = Path::new("target").join(profile);
+            let executable = root.join("examples").join("live_reader_bench.exe");
+            assert_eq!(
+                daemon_executable(&executable).parent(),
+                Some(root.as_path())
+            );
+        }
+        let standalone = Path::new("installed").join("live_reader_bench.exe");
+        assert_eq!(daemon_executable(&standalone), standalone);
+    }
     fn args(extra: &[&str]) -> Result<Args> {
         Args::parse(
             ["--pid", "123", "--client", "lazer"]
@@ -446,6 +507,9 @@ mod tests {
         assert_eq!(args(&[]).unwrap().cycles, 1000);
         assert!(args(&["--bus"]).unwrap().bus);
         assert!(args(&["--bus", "--cycles", "3"]).unwrap().bus);
+        assert!(args(&["--adapter"]).unwrap().adapter);
+        assert!(!args(&["--adapter"]).unwrap().bus);
+        assert!(args(&["--bus", "--adapter"]).is_err());
     }
     #[test]
     fn retains_failed_cycles() {

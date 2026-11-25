@@ -1,0 +1,17 @@
+kind = "plugin"
+manifest_version = 1
+id = "vosu.adapter.gosumemory"
+name = "gosuMemory adapter"
+version = "2.0.0-alpha.1"
+host = ">=2.0.0-alpha.1, <3.0.0"
+abi_version = 1
+runtime = "in-process"
+
+[[requires]]
+id = "field:vosu.osu"
+version = "^1.3.0"
+
+# Private path names are JSON echo data only, never filesystem authority.
+[[requires]]
+id = "field:vosu.osu.internal.paths"
+version = "^1.3.0"

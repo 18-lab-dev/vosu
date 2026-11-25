@@ -1,14 +1,56 @@
-use serde_json::Value;
-use std::{collections::BTreeSet, fs, sync::Arc};
-use tokio::sync::watch;
-use vosu::api::{self, ApiError, CombinedSnapshot};
-use vosu::server::v2_subscription::{
-    V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
-};
-use vosu_proptest::bounded;
+use serde_json::{Value, json};
+use std::{collections::BTreeSet, fs};
+use vosu::server::routes::CachedJson;
 #[path = "state_api_compat/oracle.rs"]
 mod oracle;
 use oracle::*;
+#[path = "state_api_compat/bus.rs"]
+mod bus;
+#[path = "state_api_compat/extensions.rs"]
+mod extensions;
+#[path = "state_bus_compat/seeds.rs"]
+#[expect(
+    dead_code,
+    reason = "Shared nonzero seeds; the state-bus coverage helper is unused here"
+)]
+mod seeds;
+#[path = "state_api_compat/tournament.rs"]
+mod tournament;
+
+/// The pinned corpus's spelling of a typed not-ready outcome. It is accepted
+/// only for the no-client case; the HTTP envelope is pinned by server_compat.
+const NOT_READY_CORPUS: &[u8] = br#"{"error":"not_ready"}"#;
+
+/// Exactly one `game.focused` member is platform-conditional: Windows reports
+/// the all-osu-session foreground OR, other platforms omit it. No other bytes
+/// of the committed expectation are rewritten.
+fn platform_expected(schema: &str, expected: Vec<u8>) -> Vec<u8> {
+    const FOCUSED: &str = r#""game":{"focused":true,"paused":"#;
+    if schema != "v2" || expected == NOT_READY_CORPUS {
+        return expected;
+    }
+    let text = String::from_utf8(expected).expect("v2 oracle is UTF-8");
+    assert_eq!(text.matches(FOCUSED).count(), 1, "one focused game member");
+    assert_eq!(text.matches(r#""focused""#).count(), 1, "no other focus");
+    if cfg!(target_os = "windows") {
+        text.into_bytes()
+    } else {
+        text.replacen(FOCUSED, r#""game":{"paused":"#, 1)
+            .into_bytes()
+    }
+}
+
+/// Rejects the counterexample in which an absent or unpublished session
+/// produces a not-ready placeholder that happens to equal an expectation.
+fn ready(case: &str, schema: &str, outcome: CachedJson) -> Vec<u8> {
+    match outcome {
+        CachedJson::Ready(bytes) => {
+            assert_ne!(bytes.as_ref(), NOT_READY_CORPUS, "{case}/{schema}");
+            bytes.to_vec()
+        }
+        other => panic!("{case}/{schema}: sourced replay was not ready: {other:?}"),
+    }
+}
 
 const EXPECTED_REVISIONS: Revisions = Revisions {
     upstream_source: "2359305a63f2aaebb201bc8d2eee58177f52590e",
@@ -50,7 +92,7 @@ const REQUIRED_COVERAGE: &[&str] = &[
 ];
 
 #[test]
-fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
+fn committed_source_oracles_match_bus_adapters_byte_for_byte() {
     let root = fixture_root();
     let inventory: Inventory = serde_json::from_slice(
         &fs::read(root.join("inventory.json")).expect("inventory must exist"),
@@ -113,54 +155,48 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
         );
     }
 
+    let mut images = BTreeSet::new();
     for case in inventory.cases {
         let input: Input = serde_json::from_slice(
             &fs::read(root.join(&case.input)).expect("input fixture must exist"),
         )
         .expect("input fixture must be valid");
         assert_eq!(input.id, case.id);
-        let snapshot = manager(&input);
+        let replay = replay(&input);
+        assert_eq!(
+            replay.instances.len(),
+            if input.source.is_none() {
+                0
+            } else if input.tournament.as_deref() == Some("stable") {
+                4
+            } else {
+                1
+            }
+        );
+        if input.source.is_some() {
+            let image = bus::published(&replay, &input);
+            assert!(
+                images.insert(image.to_string()),
+                "{}: bus image duplicates another case's input",
+                case.id
+            );
+        }
         for schema in ["v1", "v2", "v2-precise", "sc"] {
             let expected_path = case
                 .expected
                 .get(schema)
                 .unwrap_or_else(|| panic!("{} missing {schema}", case.id));
             let expected = fs::read(root.join(expected_path)).expect("expected fixture must exist");
-            #[cfg(not(target_os = "windows"))]
-            let expected = if schema == "v2" {
-                let mut value: Value =
-                    serde_json::from_slice(&expected).expect("expected v2 fixture must be valid");
-                if let Some(game) = value.get_mut("game").and_then(Value::as_object_mut) {
-                    game.remove("focused");
-                }
-                serde_json::to_vec(&value).expect("normalized v2 fixture must encode")
+            let outcome = replay.fixture.outcome(schema);
+            let actual = if input.source.is_none() {
+                // The only accepted not-ready result: no client was ever attached.
+                assert_eq!(outcome, CachedJson::NotReady, "{}/{schema}", case.id);
+                assert_eq!(expected, NOT_READY_CORPUS, "{}/{schema}", case.id);
+                NOT_READY_CORPUS.to_vec()
             } else {
-                expected
+                ready(&case.id, schema, outcome)
             };
-            let mut actual: Value = serde_json::from_slice(&encode(schema, &snapshot))
-                .expect("actual output must be valid");
-            strip_vosu_extensions(&mut actual);
-            if matches!(schema, "v2" | "v2-precise") {
-                let object = actual.as_object_mut().expect("v2 output must be an object");
-                if schema == "v2-precise" {
-                    if let Some(keys) = object.get_mut("keys").and_then(Value::as_object_mut) {
-                        keys.shift_remove("all");
-                    }
-                    if let Some(tourney) = object.get_mut("tourney").and_then(Value::as_array_mut) {
-                        for entry in tourney {
-                            entry
-                                .get_mut("keys")
-                                .and_then(Value::as_object_mut)
-                                .expect("v2 precise tournament keys must be an object")
-                                .shift_remove("all");
-                        }
-                    }
-                } else {
-                    // Mode-agnostic keys are a vosu extension to the source schema.
-                    object.shift_remove("keys");
-                }
-            }
-            let actual = serde_json::to_vec(&actual).expect("normalized output must encode");
+            let expected = platform_expected(schema, expected);
             assert_eq!(
                 String::from_utf8_lossy(&actual),
                 String::from_utf8_lossy(&expected),
@@ -169,102 +205,56 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
             );
         }
     }
+    assert_eq!(images.len(), 12, "every sourced case reached the bus");
 }
 
-struct ParitySnapshot {
-    snapshot: Arc<CombinedSnapshot>,
+#[test]
+fn guards_reject_vacuous_not_ready_and_unpublished_sources() {
+    // A sourced case whose producer never published must not pass as parity.
+    let fixture = adapter_fixture::Fixture::new(vosu_osu_model::enums::ClientType::Stable);
+    for schema in ["v1", "v2", "v2-precise", "sc"] {
+        let outcome = fixture.outcome(schema);
+        assert_eq!(outcome, CachedJson::NotReady, "{schema}");
+        assert!(
+            std::panic::catch_unwind(|| ready("unpublished", schema, outcome)).is_err(),
+            "{schema}: a not-ready result must not be accepted for a sourced case"
+        );
+        assert!(
+            std::panic::catch_unwind(|| ready(
+                "placeholder",
+                schema,
+                CachedJson::Ready(NOT_READY_CORPUS.into())
+            ))
+            .is_err()
+        );
+    }
+    drop(fixture);
+    // The focus expectation is a single member edit, never a JSON rewrite.
+    let tampered = br#"{"game":{"focused":true,"paused":false},"x":{"focused":true}}"#.to_vec();
+    assert!(std::panic::catch_unwind(|| platform_expected("v2", tampered)).is_err());
+    let unchanged = br#"{"a":1.0,"b":{"c":"d"}}"#.to_vec();
+    assert_eq!(platform_expected("v1", unchanged.clone()), unchanged);
 }
 
-impl V2SubscriptionSnapshot for ParitySnapshot {
-    fn revision(&self) -> u64 {
-        self.snapshot.manager().revision()
-    }
-
-    fn document(&self, pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
-        match vosu::runtime::ProductionSnapshotEncoder::subscription_document(
-            &self.snapshot,
-            pointers,
-        ) {
-            Ok(value) => Ok(Some(value)),
-            Err(ApiError::NotReady) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-}
-
-struct ParityProvider {
-    snapshot: Arc<CombinedSnapshot>,
-    publication: watch::Sender<u64>,
-}
-
-impl ParityProvider {
-    fn new(snapshot: CombinedSnapshot) -> Arc<Self> {
-        let revision = snapshot.manager().revision();
-        let (publication, _) = watch::channel(revision);
-        Arc::new(Self {
-            snapshot: Arc::new(snapshot),
-            publication,
-        })
-    }
-}
-
-impl V2SubscriptionProvider for ParityProvider {
-    fn subscribe(&self) -> watch::Receiver<u64> {
-        self.publication.subscribe()
-    }
-
-    fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
-        Arc::new(ParitySnapshot {
-            snapshot: Arc::clone(&self.snapshot),
-        })
-    }
-}
-
-#[tokio::test]
-async fn v2_subscription_emitted_values_match_parsed_v2_wire_values() {
-    let root = fixture_root();
-    let inventory: Inventory = serde_json::from_slice(
-        &fs::read(root.join("inventory.json")).expect("inventory must exist"),
-    )
-    .expect("inventory must be valid");
-
-    for case in inventory.cases {
-        let input: Input = serde_json::from_slice(
-            &fs::read(root.join(&case.input)).expect("input fixture must exist"),
-        )
-        .expect("input fixture must be valid");
-        let snapshot = manager(&input);
-        let expected = match api::v2::encode(&snapshot) {
-            Ok(bytes) => Some(
-                serde_json::from_slice::<Value>(&bytes).expect("encoded v2 must be valid JSON"),
-            ),
-            Err(ApiError::NotReady) => None,
-            Err(error) => panic!("v2 encoding failed for {}: {error}", case.id),
-        };
-        let provider = ParityProvider::new(snapshot);
-        let hub = V2SubscriptionHub::new(provider, std::time::Duration::ZERO);
-        let runner = tokio::spawn({
-            let hub = hub.clone();
-            async move { bounded!(hub.run()) }
-        });
-        let (connection, mut receiver) = hub.connect();
-        connection.subscribe(vec![String::new()]).unwrap();
-        let frame = match bounded!(receiver.recv()).unwrap() {
-            V2SubscriptionOutbound::Text(bytes) => {
-                serde_json::from_slice::<Value>(&bytes).expect("subscription frame must be valid")
-            }
-            frame => panic!("unexpected subscription frame for {}: {frame:?}", case.id),
-        };
-        match expected {
-            Some(expected) => assert_eq!(
-                frame.pointer("/2/0/1"),
-                Some(&expected),
-                "subscription emitted-value parity failed for {}",
-                case.id
-            ),
-            None => assert_eq!(frame, serde_json::json!([0, 1, []])),
-        }
-        hub.shutdown();
-        bounded!(runner).unwrap();
-    }
+#[test]
+fn real_sc_calculation_retains_one_object_combo_and_zero_padded_strains() {
+    let input: Input =
+        serde_json::from_slice(&fs::read(fixture_root().join("sc-equal-bpm/input.json")).unwrap())
+            .unwrap();
+    // Same resource bytes as the pinned ZeroEngine case, deliberately with the
+    // unmodified production engine. Never make real output fit the stub oracle.
+    let replay = replay_with_engine(&input, None);
+    let bytes = encode("sc", &replay);
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(wire["maxCombo"], 1);
+    let strains = wire["mapStrains"].as_object().unwrap();
+    assert_eq!(
+        strains.keys().cloned().collect::<Vec<_>>(),
+        (0..=10_000)
+            .step_by(400)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(strains.values().all(|value| value.as_f64() == Some(0.0)));
+    assert_eq!(replay.fixture.chart.counts().parses, 1);
 }

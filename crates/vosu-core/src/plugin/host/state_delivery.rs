@@ -140,9 +140,16 @@ impl PluginHost {
                     return vosu_status::VOSU_OK;
                 }
                 delivery.watchers.insert(who);
+                // Identification is recorded before `open_bus_session`. A
+                // session not yet open would refuse the watcher's immediate
+                // subscription; `state_session_identified` announces it to
+                // this (now registered) watcher once its bus state exists.
                 sessions
                     .identified_sessions()
                     .filter(|(_, owner, _)| owner.as_str() != plugin)
+                    .filter(|(handle, _, _)| {
+                        self.state.store.current(SessionKey(handle.0)).is_some()
+                    })
                     .filter_map(|(handle, _, _)| sessions.public_attachment(handle))
                     .collect::<Vec<_>>()
             };
@@ -532,6 +539,7 @@ impl PluginHost {
 
     pub(super) fn state_session_identified(&self, handle: SessionHandle) {
         let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
+        self.surface_roster_changed();
         let (attached, owner) = {
             let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
             (

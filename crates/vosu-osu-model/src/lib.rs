@@ -9,6 +9,7 @@ pub mod memory;
 pub mod names;
 #[path = "root.rs"]
 mod root;
+pub mod source;
 pub mod states;
 
 pub use root::*;

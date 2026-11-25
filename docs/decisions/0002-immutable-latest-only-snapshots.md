@@ -21,7 +21,7 @@ Reduce mutable worker state into immutable, `Arc`-shared snapshots. Pair manager
 
 Use process generations and reset epochs to identify the state lineage, and calculation keys to reject asynchronous results for an obsolete lineage or beatmap. Share regular and precise components independently so unchanged data and schema encodings can be reused by pointer identity and semantic revision.
 
-The contracts are implemented in [`api/snapshot.rs`](../../src/api/snapshot.rs), [`state/bundle.rs`](../../crates/vosu-osu-state/src/bundle.rs), [`state/bundle/calculation.rs`](../../crates/vosu-osu-state/src/bundle/calculation.rs), and [`state/worker.rs`](../../crates/vosu-osu-state/src/worker.rs).
+The contracts are implemented in [`server/bus_provider.rs`](../../src/server/bus_provider.rs) (M4a replacement; see amendment below), [`state/bundle.rs`](../../crates/vosu-osu-state/src/bundle.rs), [`state/bundle/calculation.rs`](../../crates/vosu-osu-state/src/bundle/calculation.rs), and [`state/worker.rs`](../../crates/vosu-osu-state/src/worker.rs).
 
 ## Consequences
 
@@ -42,3 +42,13 @@ The contracts are implemented in [`api/snapshot.rs`](../../src/api/snapshot.rs),
 
 - [Architecture](../architecture/overview.md)
 - [Benchmarks](../testing/benchmarks.md) — snapshot and encoding results characterize measured builds and machines, not a latency promise.
+
+## M4a amendment (2026-11-24)
+
+The root `CombinedSnapshot` transport described above is replaced, not renamed,
+by coherent selected bus capture and adapter-owned immutable typed views.
+The [permanent surface contract](../v2/adapter-surfaces.md) preserves one
+focus/session/roster cut, semantic revision caching, shared unfiltered bytes
+and latest-only delivery with one in-flight frame/client. It does not carry
+reader/state snapshots across surface, and one-shot reads create no demand.
+The old snapshot implementation and both B1 directions are deleted at cutover.

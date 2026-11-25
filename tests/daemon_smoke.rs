@@ -362,27 +362,14 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         r#"{"error":"osu is not ready/running"}"#
     );
 
-    let (mut subscription, mut buffered) =
-        bounded!(websocket_connect(port, "/websocket/v2/subscribe", None));
-    bounded!(subscription.write_all(&masked_frame(0x1, br#"["/play/score"]"#))).unwrap();
-    let (opcode, payload) = bounded!(read_server_frame(&mut subscription, &mut buffered));
-    assert_eq!(opcode, 0x1, "initial subscription message must be text");
-    let initial: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-    let initial = initial
-        .as_array()
-        .expect("initial subscription frame must be an array");
-    assert_eq!(initial.len(), 3);
-    assert_eq!(initial[0], 0);
-    assert!(initial[1].as_u64().is_some(), "revision must be an integer");
-    assert_eq!(initial[2], serde_json::json!([]));
-
-    bounded!(subscription.write_all(&masked_frame(0x8, &1000_u16.to_be_bytes()))).unwrap();
-    let (opcode, payload) = bounded!(read_server_frame(&mut subscription, &mut buffered));
-    assert_eq!(opcode, 0x8, "daemon must complete the WebSocket close");
-    assert!(
-        payload.is_empty() || payload.starts_with(&1000_u16.to_be_bytes()),
-        "unexpected close payload: {payload:?}"
-    );
+    for path in ["/websocket/v2/subscribe", "/files/skin/"] {
+        let (socket, _) = bounded!(websocket_connect_with_bearer(port, path, None, None, 404));
+        drop(socket);
+        let removed = bounded!(client.get(format!("{base}{path}")).send()).unwrap();
+        assert_eq!(removed.status(), 404);
+        assert!(!removed.headers().contains_key(reqwest::header::UPGRADE));
+        assert_eq!(bounded!(removed.text()).unwrap(), "Not Found");
+    }
 
     let catalog = bounded!(
         client
@@ -893,7 +880,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             .header("X-Vosu-CSRF", csrf)
             .json(&serde_json::json!({
                 "SHOW_MP_COMMANDS": true,
-                "V2_SUBSCRIPTION_DEBOUNCE": 1.125
+                "API_V1_SUBSCRIPTION_DEBOUNCE": 1.125
             }))
             .send()
     )
@@ -914,7 +901,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
     assert_eq!(
         persisted
-            .get("V2_SUBSCRIPTION_DEBOUNCE")
+            .get("API_V1_SUBSCRIPTION_DEBOUNCE")
             .and_then(toml::Value::as_float),
         Some(1.125)
     );

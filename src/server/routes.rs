@@ -17,7 +17,6 @@ use axum::{
     http::{HeaderName, HeaderValue, Method, StatusCode, header},
     response::Response,
 };
-use serde_json::Value;
 
 use super::{
     auth::{AuthorizationDecision, AuthorizationPolicy, MutationAuthorization, RequestHeaders},
@@ -83,8 +82,14 @@ pub enum Endpoint {
     WsTokens,
     WsV2,
     WsV2Precise,
-    WsV2Subscribe,
+    Removed(RemovedFeature),
     WsCommands,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RemovedFeature {
+    SelectedV2Feed,
+    LegacySkinIndex,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,38 +103,7 @@ pub trait StateJsonProvider: Send + Sync {
     fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson>;
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ModsInput {
-    Bits(u32),
-    Json(Value),
-    Acronyms(String),
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct PpQuery {
-    pub path: Option<String>,
-    pub lazer: Option<bool>,
-    pub mode: Option<u8>,
-    pub ar: Option<f64>,
-    pub cs: Option<f64>,
-    pub hp: Option<f64>,
-    pub od: Option<f64>,
-    pub clock_rate: Option<f64>,
-    pub passed_objects: Option<u32>,
-    pub combo: Option<u32>,
-    pub n_misses: Option<u32>,
-    pub n100: Option<u32>,
-    pub n300: Option<u32>,
-    pub n50: Option<u32>,
-    pub n_geki: Option<u32>,
-    pub n_katu: Option<u32>,
-    pub mods: Option<ModsInput>,
-    pub accuracy: Option<f64>,
-    pub slider_end_hits: Option<u32>,
-    pub small_tick_hits: Option<u32>,
-    pub large_tick_hits: Option<u32>,
-    pub hitresult_priority: Option<u8>,
-}
+use vosu_adapter_upstream::calculate::PpQuery;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CalculateResult {
@@ -145,6 +119,12 @@ pub trait CalculatePpProvider: Send + Sync {
 /// Implemented by page, counter, file, report, and WebSocket slices. This module
 /// owns only classification, method enforcement, body limiting, and envelopes.
 pub trait RouteDelegate: Send + Sync {
+    fn registered_http<'a>(
+        &'a self,
+        _request: &'a Request,
+    ) -> Option<ProviderFuture<'a, Response>> {
+        None
+    }
     fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> {
         None
     }
@@ -442,6 +422,13 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
 
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    if let Some(endpoint @ Endpoint::Removed(_)) = classify(&method, &path) {
+        let _ = providers
+            .delegate
+            .handle(endpoint, request, Bytes::new())
+            .await;
+        return cors(not_found());
+    }
     let websocket_upgrade = request
         .headers()
         .get_all(header::CONNECTION)
@@ -470,7 +457,6 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::WsTokens
                     | Endpoint::WsV2
                     | Endpoint::WsV2Precise
-                    | Endpoint::WsV2Subscribe
                     | Endpoint::ToolOverlay
                     | Endpoint::WsCommands
             )
@@ -698,6 +684,11 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             request.headers_mut().insert(header::HOST, host);
         }
     }
+    if matches!(endpoint, Endpoint::State(_) | Endpoint::CalculatePp)
+        && let Some(response) = providers.delegate.registered_http(&request)
+    {
+        return cors(response.await);
+    }
     let response = match endpoint {
         Endpoint::State(route) => match providers.state.cached_json(route).await {
             CachedJson::Ready(body) => json(StatusCode::OK, body),
@@ -846,7 +837,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/tokens" if get => Some(WsTokens),
         "/websocket/v2" if get => Some(WsV2),
         "/websocket/v2/precise" if get => Some(WsV2Precise),
-        "/websocket/v2/subscribe" if get => Some(WsV2Subscribe),
+        "/websocket/v2/subscribe" => Some(Removed(RemovedFeature::SelectedV2Feed)),
+        "/files/skin/" => Some(Removed(RemovedFeature::LegacySkinIndex)),
+        "/files/skin" => None,
         "/websocket/commands" if get => Some(WsCommands),
         "/api/dashboard/status" if get => Some(DashboardStatus),
         _ if get && path.starts_with("/api/counters/details/") => Some(CounterDetails),
@@ -890,106 +883,6 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         _ if get => Some(CounterStatic),
         _ => None,
     }
-}
-
-impl PpQuery {
-    pub fn parse(raw: Option<&str>) -> Result<Self, String> {
-        let mut result = Self::default();
-        for (key, value) in url::form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
-            let value = value.into_owned();
-            macro_rules! parse {
-                ($field:ident, $ty:ty) => {
-                    result.$field =
-                        Some(value.parse::<$ty>().map_err(|_| format!("invalid {key}"))?)
-                };
-            }
-            macro_rules! count {
-                ($field:ident) => {
-                    result.$field = Some(parse_js_u32(&value, &key)?)
-                };
-            }
-            match key.as_ref() {
-                "path" => result.path = Some(value),
-                "lazer" => parse!(lazer, bool),
-                "mode" => parse!(mode, u8),
-                "ar" => parse!(ar, f64),
-                "cs" => parse!(cs, f64),
-                "hp" => parse!(hp, f64),
-                "od" => parse!(od, f64),
-                "clockRate" => parse!(clock_rate, f64),
-                "passedObjects" => count!(passed_objects),
-                "combo" => count!(combo),
-                "nMisses" => count!(n_misses),
-                "n100" => count!(n100),
-                "n300" => count!(n300),
-                "n50" => count!(n50),
-                "nGeki" => count!(n_geki),
-                "nKatu" => count!(n_katu),
-                "acc" => parse!(accuracy, f64),
-                "sliderEndHits" => count!(slider_end_hits),
-                "smallTickHits" => count!(small_tick_hits),
-                "largeTickHits" => count!(large_tick_hits),
-                "hitresultPriority" => {
-                    result.hitresult_priority = Some(
-                        parse_js_u32(&value, &key)?
-                            .try_into()
-                            .map_err(|_| format!("invalid {key}"))?,
-                    )
-                }
-                "mods" => result.mods = Some(parse_mods(&value)?),
-                _ => {}
-            }
-        }
-        Ok(result)
-    }
-}
-
-fn parse_js_u32(value: &str, key: &str) -> Result<u32, String> {
-    let value = value.trim();
-    let number = if value.is_empty() {
-        0.0
-    } else if let Some(digits) = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-    {
-        u64::from_str_radix(digits, 16)
-            .map(|value| value as f64)
-            .map_err(|_| format!("invalid {key}"))?
-    } else if let Some(digits) = value
-        .strip_prefix("0b")
-        .or_else(|| value.strip_prefix("0B"))
-    {
-        u64::from_str_radix(digits, 2)
-            .map(|value| value as f64)
-            .map_err(|_| format!("invalid {key}"))?
-    } else if let Some(digits) = value
-        .strip_prefix("0o")
-        .or_else(|| value.strip_prefix("0O"))
-    {
-        u64::from_str_radix(digits, 8)
-            .map(|value| value as f64)
-            .map_err(|_| format!("invalid {key}"))?
-    } else {
-        value.parse::<f64>().map_err(|_| format!("invalid {key}"))?
-    };
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u32::MAX as f64 {
-        return Err(format!("invalid {key}"));
-    }
-    Ok(number as u32)
-}
-
-fn parse_mods(value: &str) -> Result<ModsInput, String> {
-    if let Ok(bits) = value.parse::<u32>() {
-        return Ok(ModsInput::Bits(bits));
-    }
-    if matches!(value.trim_start().chars().next(), Some('{' | '[')) {
-        let json: Value = serde_json::from_str(value).map_err(|_| "invalid mods".to_owned())?;
-        if json.is_object() || json.is_array() {
-            return Ok(ModsInput::Json(json));
-        }
-        return Err("mods JSON must be an object or array".to_owned());
-    }
-    Ok(ModsInput::Acronyms(value.to_owned()))
 }
 
 #[cfg(test)]

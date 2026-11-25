@@ -23,6 +23,7 @@ pub struct SessionState {
     pub key: SessionKey,
     pub revision: u64,
     namespaces: Vec<(Arc<str>, StateValue)>,
+    namespace_revisions: Vec<(Arc<str>, u64)>,
     api_encoding: ApiEncoding,
 }
 
@@ -51,8 +52,31 @@ impl SessionState {
         Self {
             key,
             revision,
+            namespace_revisions: namespaces
+                .iter()
+                .map(|(ns, _)| (ns.clone(), revision))
+                .collect(),
             namespaces,
             api_encoding: ApiEncoding::default(),
+        }
+    }
+
+    pub fn namespace_revision(&self, ns: &str) -> Option<u64> {
+        self.namespace_revisions
+            .iter()
+            .find(|(name, _)| name.as_ref() == ns)
+            .map(|(_, rev)| *rev)
+    }
+
+    pub(super) fn retain_namespace_revisions(
+        &mut self,
+        previous: &Self,
+        touched: &[(Arc<str>, Pointer)],
+    ) {
+        for (ns, revision) in &mut self.namespace_revisions {
+            if !touched.iter().any(|(changed, _)| changed == ns) {
+                *revision = previous.namespace_revision(ns).unwrap_or(*revision);
+            }
         }
     }
 

@@ -4,16 +4,12 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
+use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
 
 use bytes::Bytes;
 use tokio::sync::watch;
-use vosu::api::{
-    ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerSnapshot, SnapshotManager,
-};
-use vosu::server::websocket::{
-    Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
-};
+use vosu::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset, ScoringMode,
@@ -413,12 +409,19 @@ fn plan_memory_stable_capture_backend_call_count() {
     ] {
         counter.store(0, Ordering::Relaxed);
     }
+    let submissions_before = attachment.submissions.load(Ordering::Relaxed);
     assert_eq!(
         format!("{:?}", stable_fixture::capture(&mut native)),
         format!("{:?}", stable_fixture::capture(&mut plan))
     );
     let native_regular_calls = native_calls.load(Ordering::Relaxed);
     let plan_regular_calls = plan_calls.load(Ordering::Relaxed);
+    let submissions = attachment.submissions.load(Ordering::Relaxed) - submissions_before;
+    assert!(submissions > 0);
+    assert!(
+        submissions <= 13,
+        "regular fixture plan budget: {submissions}"
+    );
     eprintln!(
         "stable regular: native calls={native_regular_calls} ops={} health={}; plan calls={plan_regular_calls} ops={} health={}",
         native_ops.load(Ordering::Relaxed),
@@ -661,11 +664,11 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         panic!("lazer amplitudes were not ready");
     };
     assert_eq!((values.len(), values[39]), (40, 39.0));
-    assert_eq!(lazer_memory.batch_calls.load(Ordering::Relaxed), 0);
-    assert_eq!(lazer_memory.batch_requests.load(Ordering::Relaxed), 0);
+    assert_eq!(lazer_memory.batch_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(lazer_memory.batch_requests.load(Ordering::Relaxed), 40);
     assert_eq!(
         lazer_memory.forbidden_exact_calls.load(Ordering::Relaxed),
-        40
+        0
     );
 }
 
@@ -707,34 +710,6 @@ fn unchanged_map_key_reuses_parse_and_calculation() {
     assert!(Arc::ptr_eq(&first, &second));
     assert_eq!(cache.parse_count(), 1);
     assert_eq!(calculations.load(Ordering::Relaxed), 1);
-}
-#[test]
-fn combined_snapshot_caches_encoding_and_publishes_latest_only() {
-    let settings = ApiRuntimeSettings::default();
-    let snapshot =
-        CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(1, settings)));
-    let encodes = AtomicUsize::new(0);
-    let first = snapshot
-        .encode_unfiltered(ApiSchema::V2, |_| {
-            encodes.fetch_add(1, Ordering::Relaxed);
-            Ok(Bytes::from_static(b"{\"generation\":1}"))
-        })
-        .unwrap();
-    let second = snapshot
-        .encode_unfiltered(ApiSchema::V2, |_| {
-            encodes.fetch_add(1, Ordering::Relaxed);
-            Ok(Bytes::from_static(b"must-not-run"))
-        })
-        .unwrap();
-    assert_eq!(encodes.load(Ordering::Relaxed), 1);
-    assert_eq!(first.as_ptr(), second.as_ptr());
-    assert_eq!(snapshot.cached(ApiSchema::V2).unwrap().unwrap(), first);
-
-    let manager = SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(0, settings)));
-    for revision in 1..=1_000 {
-        manager.publish(Arc::new(ManagerSnapshot::not_ready(revision, settings)));
-    }
-    assert_eq!(manager.load().manager().revision(), 1_000);
 }
 
 struct TestSnapshot {
@@ -937,5 +912,11 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
     bounded!(runner).unwrap();
 }
 
+#[path = "../benches/support/adapter/mod.rs"]
+mod adapter;
+#[path = "performance/adapter.rs"]
+mod adapter_cost;
+#[path = "adapter_fixture/mod.rs"]
+mod adapter_fixture;
 #[path = "performance/api_v1.rs"]
 mod api_v1_cost;

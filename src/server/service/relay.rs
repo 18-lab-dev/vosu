@@ -1,7 +1,24 @@
+trait RelayControl: Send + Sync {
+    fn try_send_text(&self, bytes: Bytes) -> bool;
+    fn close(&self);
+    fn apply_filters(&self, filters: Vec<vosu_adapter_support::filtered::Filter>);
+}
+impl RelayControl for websocket::ConnectionControl {
+    fn try_send_text(&self, bytes: Bytes) -> bool { self.try_send_text(bytes) }
+    fn close(&self) { self.cleanup(); }
+    fn apply_filters(&self, filters: Vec<vosu_adapter_support::filtered::Filter>) { self.set_filters(filters); }
+}
+impl RelayControl for Arc<dyn vosu_surface::routes::FeedControl> {
+    fn try_send_text(&self, bytes: Bytes) -> bool { self.as_ref().try_send_text(bytes) }
+    fn close(&self) { self.as_ref().close(); }
+    fn apply_filters(&self, filters: Vec<vosu_adapter_support::filtered::Filter>) {
+        if let Ok(bytes) = serde_json::to_vec(&filters) { let _ = self.replace_filters(Bytes::from(bytes)); }
+    }
+}
 struct RelayClient {
     channel: u64,
     client: CommandClient,
-    control: ConnectionControl,
+    control: Arc<dyn RelayControl>,
 }
 
 /// Production relay transport. WebSocket-originated events return to the
@@ -111,7 +128,7 @@ impl WebSocketRelaySink {
         &self,
         channel: u64,
         client: CommandClient,
-        control: ConnectionControl,
+        control: impl RelayControl + 'static,
     ) -> RelayRegistration {
         let client_id = client.id;
         self.clients
@@ -122,7 +139,7 @@ impl WebSocketRelaySink {
                 RelayClient {
                     channel,
                     client,
-                    control,
+                    control: Arc::new(control),
                 },
             );
         RelayRegistration {
@@ -190,11 +207,11 @@ async fn run_relay_worker(
                         // A closed connection and a full control queue are both
                         // terminal for this recipient; registration teardown
                         // will remove it without blocking unrelated clients.
-                        control.cleanup();
+                        control.close();
                     }
                 }
                 CommandAction::ApplyFilters(filters) => {
-                    control.set_filters(filters);
+                    control.apply_filters(filters);
                 }
                 CommandAction::NoAck => {}
             }
@@ -216,7 +233,6 @@ pub struct WebSocketEndpoints {
     pub v2: WebSocketHub,
     pub precise: WebSocketHub,
     pub commands: WebSocketHub,
-    pub subscriptions: V2SubscriptionHub,
     pub processor: Arc<CommandProcessor>,
     pub relays: Arc<WebSocketRelaySink>,
 }

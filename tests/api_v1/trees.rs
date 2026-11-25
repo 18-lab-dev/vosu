@@ -342,16 +342,6 @@ fn resources_real_osu_stable_and_lazer_direct_redirect_trees_mutation_and_privac
                 assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
                 assert_eq!(response.bytes().await.unwrap().as_ref(), IMAGE);
             }
-            // The same exact mapping is accepted by the transitional legacy
-            // lazer policy; neither policy may expose the physical hash path.
-            if lazer {
-                let skin = vosu_osu_model::memory::CurrentSkin {
-                    name: "R5 skin 975201".into(), builtin: None, base: None,
-                    files: BTreeMap::from([("background.png".into(), "c/hashimage".into())]),
-                };
-                assert_eq!(vosu_osu::resources::legacy_skin::lookup(Some(&skin), "BACKGROUND.PNG"), Some("c/hashimage"));
-                assert_eq!(vosu_osu::resources::legacy_skin::lookup(Some(&skin), "../background.png"), None);
-            }
             let changed = b"osu file format v14\n// mutation-generation-975204-much-longer\n";
             let path = source.path().join(if lazer { "a/hashchart" } else { "map.osu" });
             std::fs::write(path, changed).unwrap();

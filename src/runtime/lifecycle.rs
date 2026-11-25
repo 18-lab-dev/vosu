@@ -1,7 +1,8 @@
 use super::*;
 
 #[path = "api_v1.rs"]
-mod api_v1;
+pub(super) mod api_v1;
+use super::signals::run_signal_cancellation;
 
 /// Process-wide resource owner. Every long-lived production service is retained
 /// here and joined in reverse dependency order.
@@ -10,7 +11,6 @@ pub struct ProductionRuntime {
     changes: broadcast::Receiver<ConfigChanged>,
     logger: Logger,
     paths: Paths,
-    snapshots: Arc<SnapshotProviders>,
     shutdown_token: CancellationToken,
     signal_task: AsyncMutex<Option<JoinHandle<io::Result<()>>>>,
     startup_readiness: Option<StartupReadiness>,
@@ -36,10 +36,9 @@ pub struct ProductionRuntime {
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
     hubs: AsyncMutex<Option<WebSocketHubs>>,
+    adapters: AsyncMutex<Option<Arc<adapters::Adapters>>>,
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
-    bridge: AsyncMutex<Option<bridge_b1::LegacyBridgeTask>>,
-    bridge_installed: AsyncMutex<Option<vosu_surface::Installed>>,
     ordinary_role: bool,
     tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
     discovery: AsyncMutex<Option<vosu_core::plugin::DiscoveryService>>,
@@ -66,6 +65,7 @@ impl ProductionRuntime {
         &self,
         destroy: impl Future<Output = io::Result<()>>,
     ) -> io::Result<()> {
+        let mut result = Ok(());
         self.shutdown_token.cancel();
         self.api_v1.shutdown();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
@@ -83,26 +83,24 @@ impl ProductionRuntime {
         // `foreground_changed`), which must not race a plugin instance
         // tearing down under it.
         if let Some(discovery) = self.discovery.lock().await.take() {
-            tokio::task::spawn_blocking(move || discovery.stop())
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("discovery shutdown task failed: {error}"))
-                })?;
+            result = result.and(
+                tokio::task::spawn_blocking(move || discovery.stop())
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("discovery shutdown task failed: {error}"))
+                    }),
+            );
         }
         #[cfg(windows)]
         if let Some(foreground) = self.foreground.lock().await.take() {
-            tokio::task::spawn_blocking(move || foreground.stop())
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("foreground poller shutdown task failed: {error}"))
-                })?;
+            result = result.and(
+                tokio::task::spawn_blocking(move || foreground.stop())
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("foreground poller shutdown task failed: {error}"))
+                    }),
+            );
         }
-        destroy.await?;
-        if let Some(bridge) = self.bridge.lock().await.take() {
-            bridge.shutdown().await;
-        }
-        self.bridge_installed.lock().await.take();
-        self.state_host.lock().await.take();
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
@@ -123,6 +121,13 @@ impl ProductionRuntime {
         if let Some(listener) = dashboard_listener {
             listener.join().await;
         }
+        // Adapter consumers stop before plugin destroy; neither failure may
+        // skip the remaining joins.
+        if let Some(adapters) = self.adapters.lock().await.take() {
+            result = result.and(adapters.shutdown().await);
+        }
+        result = result.and(destroy.await);
+        self.state_host.lock().await.take();
         if let Some(processor) = self.processor.lock().await.take() {
             processor.shutdown().await;
         }
@@ -133,14 +138,16 @@ impl ProductionRuntime {
             counters.shutdown().await;
         }
         let signal_result = match self.signal_task.lock().await.take() {
-            Some(task) => task
-                .await
-                .map_err(|error| io::Error::other(format!("signal task failed: {error}")))?,
+            Some(task) => task.await.unwrap_or_else(|error| {
+                Err(io::Error::other(format!("signal task failed: {error}")))
+            }),
             None => Ok(()),
         };
-        let config_result = self.config.shutdown().await;
-        let logger_result = self.logger.shutdown().await;
-        signal_result.and(config_result).and(logger_result)
+        // Do not short-circuit cleanup after a task panic: even retained
+        // config Arcs must have their blocking worker joined before runtime drop.
+        result = result.and(signal_result);
+        result = result.and(self.config.shutdown().await);
+        result.and(self.logger.shutdown().await)
     }
 
     async fn compose(&mut self) -> io::Result<()> {
@@ -193,20 +200,53 @@ impl ProductionRuntime {
             });
         }
         let beatmap = Arc::new(RuntimeBeatmap {
-            snapshots: self.snapshots.snapshot_manager(),
             counters: Arc::clone(&counters),
         });
         let counter_facade = Arc::new(RuntimeCounterFacade {
             counters: Arc::clone(&counters),
         });
+        let api_keys_path = self.paths.config().join("api-keys.toml");
+        let logger = Some(self.logger.clone());
+        // `ApiKeys::load` now retries a transient missing read of
+        // `api-keys.toml` (Windows, bounded ~50ms) through
+        // `vosu_sys::platform::read_published`; run it in
+        // `spawn_blocking` rather than on this async worker.
+        let api_keys = tokio::task::spawn_blocking(move || {
+            crate::server::api_keys::ApiKeys::load(api_keys_path, logger)
+        })
+        .await
+        .map_err(io::Error::other)?;
+        let (adapters, hubs) =
+            adapters::Adapters::start(&self.plugins, Arc::clone(&self.config)).await?;
+        *self.adapters.get_mut() = Some(adapters.clone());
+        let context_files = adapters.files.clone();
+        let context_host = self.plugins.clone();
+        let tools = crate::tools::ToolHost::new(
+            self.paths.config().join("tools"),
+            self.paths.data().join("tools"),
+            self.paths.cache().join("tools"),
+            crate::tools::ExtraRoots {
+                dev: self.dev_tools.clone(),
+            },
+            self.origins.overlay(),
+            self.origins.dashboard(),
+            Arc::new(move || tool_context::tool_context(&context_files, &context_host)),
+        )
+        .await;
+        let tools = match tools {
+            Ok(tools) => tools,
+            Err(error) => {
+                hubs.shutdown().await;
+                return Err(error);
+            }
+        };
+        tools.set_counters(Arc::clone(&counters));
+        if let Some(catalog) = self.catalog.get_mut() {
+            catalog.attach_web_hosts(tools.clone(), Arc::clone(&counters));
+        }
+        *self.tools.get_mut() = Some(tools.clone());
         let relays = Arc::new(WebSocketRelaySink::new());
         let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
-        let hubs = WebSocketHubs::start(
-            self.snapshots.clone(),
-            self.snapshots.clone(),
-            duration_from_millis_saturating(config.v2_subscription_debounce),
-        );
-        let dashboard_lifecycle = Arc::new(arc_swap::ArcSwapOption::empty());
         let services = ProductionServices::with_native_report_probe(
             PageService,
             Arc::new(RuntimePages {
@@ -228,13 +268,12 @@ impl ProductionRuntime {
                 #[cfg(not(target_os = "linux"))]
                 login_state: Arc::new(AsyncMutex::new(config.start_at_login)),
             }),
-            // Bound to the installed B1 bridge's lifecycle below.
             Arc::new(RuntimeReportInput {
                 config: Arc::clone(&self.config),
-                snapshots: self.snapshots.snapshot_manager(),
+                plugins: Arc::clone(&self.plugins),
                 counters: Arc::clone(&counters),
-                logs: self.paths.data().join("logs"),
-                lifecycle: Arc::clone(&dashboard_lifecycle),
+                files: adapters.files.clone(),
+                logs: vosu_core::logging::logs_dir(&self.paths),
             }),
             Arc::new(RuntimeUpdater::production(
                 program,
@@ -247,52 +286,21 @@ impl ProductionRuntime {
                 v2: hubs.v2.clone(),
                 precise: hubs.v2_precise.clone(),
                 commands: hubs.v1.clone(),
-                subscriptions: hubs.v2_subscription.clone(),
                 processor: processor.clone(),
                 relays: relays.clone(),
             },
         );
-        let context_beatmap = beatmap.clone();
-        let tools = crate::tools::ToolHost::new(
-            self.paths.config().join("tools"),
-            self.paths.data().join("tools"),
-            self.paths.cache().join("tools"),
-            crate::tools::ExtraRoots {
-                dev: self.dev_tools.clone(),
-            },
-            self.origins.overlay(),
-            self.origins.dashboard(),
-            Arc::new(move || context_beatmap.tool_context()),
-        )
-        .await?;
-        tools.set_counters(Arc::clone(&counters));
-        if let Some(catalog) = self.catalog.get_mut() {
-            catalog.attach_web_hosts(tools.clone(), Arc::clone(&counters));
-        }
-        *self.tools.get_mut() = Some(tools.clone());
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {
                 inner: self.authorizer.clone(),
                 origins: Arc::clone(&self.origins),
                 dashboard: false,
             }),
-            state: Arc::new(SnapshotStateProvider::new(
-                self.snapshots.snapshot_manager(),
-            )),
-            calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
+            state: adapters.clone(),
+            calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
             delegate: Arc::new({
-                let api_keys_path = self.paths.config().join("api-keys.toml");
-                let logger = Some(self.logger.clone());
-                // `ApiKeys::load` now retries a transient missing read of
-                // `api-keys.toml` (Windows, bounded ~50ms) through
-                // `vosu_sys::platform::read_published`; run it in
-                // `spawn_blocking` rather than on this async worker.
-                let api_keys = tokio::task::spawn_blocking(move || {
-                    crate::server::api_keys::ApiKeys::load(api_keys_path, logger)
-                })
-                .await
-                .map_err(io::Error::other)?;
                 let delegate = ProductionRouteDelegate::new(services)
+                    .with_surface(adapters.router(self.plugins.clone()))
                     .with_api_keys(Arc::new(api_keys))
                     .with_tools(tools.clone())
                     .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
@@ -376,27 +384,11 @@ impl ProductionRuntime {
             )
         ));
         *self.dashboard_listener.get_mut() = Some(dashboard_listener);
-        let bridge = bridge_b1::LegacyBridge::new(
-            self.config.subscribe_current(),
-            hubs.v2_subscription.demand(),
-            self.snapshots.clone(),
-            self.logger.clone(),
-        );
         *self.counters.get_mut() = Some(counters);
         *self.listener.get_mut() = Some(listener);
         *self.hubs.get_mut() = Some(hubs);
         *self.processor.get_mut() = Some(processor);
         *self.relays.get_mut() = Some(relays);
-        let installed = vosu_surface::install(bridge.clone()).map_err(io::Error::other)?;
-        dashboard_lifecycle.store(Some(Arc::new(bridge.lifecycle())));
-        *self.bridge_installed.get_mut() = Some(installed);
-        *self.bridge.get_mut() = Some(bridge.start(self.plugins.subscribe_foreground()));
-        self.snapshots.set_poll_rates(
-            poll_duration(config.poll_rate),
-            poll_duration(config.precise_data_poll_rate),
-        );
-        // Discovery starts only after B1 is installed and its manager task is
-        // owned by this runtime. All subsequent exits use ordered shutdown.
         let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger)
             .ok_or_else(|| {
                 let message = "required osu! discovery did not start";
@@ -415,6 +407,7 @@ impl ProductionRuntime {
             let origins = Arc::clone(&self.origins);
             *self.tray.get_mut() = Some(vosu_core::desktop::tray::start(
                 Arc::new(move || format!("{}/", origins.dashboard())),
+                vosu_core::logging::logs_dir(&self.paths),
                 self.shutdown_token.clone(),
             ));
         }
@@ -599,17 +592,6 @@ impl RuntimeHooks for ProductionRuntime {
                             self.logger.update_debug(effective.debug_log);
                             self.api_v1.reload(&effective);
                             self.authorizer.reload(&effective.allowed_ips, &effective.server_ip);
-                            self.snapshots.set_poll_rates(
-                                poll_duration(effective.poll_rate),
-                                poll_duration(effective.precise_data_poll_rate),
-                            );
-                            if let Some(hubs) = self.hubs.lock().await.as_ref() {
-                                hubs.v2_subscription.set_debounce(
-                                    duration_from_millis_saturating(
-                                        effective.v2_subscription_debounce,
-                                    ),
-                                );
-                            }
                             match listen_target(&effective) {
                                 Ok(target) => {
                                     let mut listener = self.listener.lock().await;
@@ -676,59 +658,6 @@ impl RuntimeHooks for ProductionRuntime {
     }
 }
 
-pub(super) async fn cancel_on_signal(
-    shutdown: CancellationToken,
-    signal: impl Future<Output = io::Result<()>>,
-) -> io::Result<()> {
-    let result = tokio::select! {
-        () = shutdown.cancelled() => Ok(()),
-        result = signal => result,
-    };
-    shutdown.cancel();
-    result
-}
-
-pub(super) async fn run_signal_cancellation(shutdown: CancellationToken) -> io::Result<()> {
-    cancel_on_signal(shutdown, shutdown_signal()).await
-}
-
-#[cfg(unix)]
-pub(super) async fn shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        received = interrupt.recv() => {
-            received.ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "SIGINT stream closed"))
-        }
-        received = terminate.recv() => {
-            received.ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM stream closed"))
-        }
-    }
-}
-
-#[cfg(windows)]
-pub(super) async fn shutdown_signal() -> io::Result<()> {
-    use tokio::signal::windows::ctrl_break;
-
-    let mut break_signal = ctrl_break()?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        received = break_signal.recv() => {
-            received.ok_or_else(|| io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "CTRL_BREAK stream closed",
-            ))
-        }
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(super) async fn shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
-}
-
 #[derive(Debug)]
 pub(super) struct StartupOwnerConflict;
 
@@ -775,10 +704,12 @@ pub async fn run_cli() -> io::Result<()> {
         super::cli::CommandInvocation::InvalidInput => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "vosu command flags must be standalone arguments without values",
+                "invalid command arguments; see vosu --help",
             ));
         }
     }
+    #[cfg(windows)]
+    vosu_sys::platform::detach_private_console();
     let args = StartupArgs::parse(raw_args.clone());
     let startup_flags = StartupFlags {
         update: args.get("update").and_then(StartupValue::as_boolean),
@@ -856,7 +787,7 @@ pub async fn run_cli() -> io::Result<()> {
         }
     }
     let logger = Logger::new(
-        paths.data().join("logs"),
+        vosu_core::logging::logs_dir(&paths),
         LoggerOptions {
             debug_log: config.current().debug_log,
             ..LoggerOptions::default()
@@ -894,17 +825,6 @@ pub async fn run_cli() -> io::Result<()> {
         }
     }
     let current = config.current();
-    let snapshots = Arc::new(SnapshotProviders::new(
-        Arc::new(ManagerSnapshot::not_ready(
-            0,
-            ApiRuntimeSettings {
-                enable_key_overlay: current.enable_key_overlay,
-                enable_mania_key_hit_errors: current.enable_mania_key_hit_errors,
-                enable_hit_offsets: current.enable_hit_offsets,
-            },
-        )),
-        Arc::new(ProductionSnapshotEncoder),
-    ));
     let changes = config.subscribe();
     let shutdown_token = CancellationToken::new();
     let signal_task = tokio::spawn(run_signal_cancellation(shutdown_token.clone()));
@@ -931,7 +851,6 @@ pub async fn run_cli() -> io::Result<()> {
         changes,
         logger,
         paths: paths.clone(),
-        snapshots,
         shutdown_token,
         signal_task: AsyncMutex::new(Some(signal_task)),
         startup_readiness,
@@ -949,15 +868,14 @@ pub async fn run_cli() -> io::Result<()> {
         api_v1: api_v1::ApiV1Service::new(&plugin_host, &current),
         plugins: plugin_host,
         state_host: AsyncMutex::new(Some(state_host)),
+        adapters: AsyncMutex::new(None),
         plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
         origins,
         hubs: AsyncMutex::new(None),
         processor: AsyncMutex::new(None),
-        bridge: AsyncMutex::new(None),
         relays: AsyncMutex::new(None),
-        bridge_installed: AsyncMutex::new(None),
         ordinary_role,
         tray: AsyncMutex::new(None),
         discovery: AsyncMutex::new(None),

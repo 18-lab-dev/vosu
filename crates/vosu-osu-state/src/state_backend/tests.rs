@@ -1,4 +1,5 @@
 use super::*;
+use vosu_osu_calc::beatmap::{BeatmapEngine, EngineOutput, EngineRequest};
 
 const OSU: &str = r#"osu file format v14
 

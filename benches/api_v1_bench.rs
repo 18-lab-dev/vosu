@@ -1,3 +1,5 @@
+#[path = "../tests/adapter_fixture/mod.rs"]
+mod adapter_fixture;
 #[path = "support/api_e2e.rs"]
 mod api_e2e;
 use criterion::{Criterion, criterion_group, criterion_main};

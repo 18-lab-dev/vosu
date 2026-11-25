@@ -1,3 +1,4 @@
+use super::lifecycle::api_v1;
 use super::*;
 
 /// Feature-gated constructor inputs for exercising the exact production
@@ -25,6 +26,9 @@ pub struct TestProductionComposition {
     processor: Option<Arc<CommandProcessor>>,
     relays: Option<Arc<WebSocketRelaySink>>,
     counters: Option<Arc<ReloadableCounterService>>,
+    adapters: Arc<adapters::Adapters>,
+    plugins: Arc<PluginHost>,
+    logger: Logger,
 }
 
 #[cfg(feature = "test-harness")]
@@ -54,6 +58,14 @@ impl TestProductionComposition {
             if let Some(counters) = self.counters.take() {
                 counters.shutdown().await;
             }
+            self.adapters.shutdown().await.expect("chart shutdown");
+            let plugins = self.plugins.clone();
+            tokio::task::spawn_blocking(move || {
+                plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+            })
+            .await
+            .expect("plugin shutdown");
+            self.logger.shutdown().await.expect("logger shutdown");
         })
         .await
         .expect("test production composition did not shut down within 30s");
@@ -69,24 +81,13 @@ pub async fn start_test_production_composition(
 ) -> io::Result<TestProductionComposition> {
     let config = options.config.current();
     fs::create_dir_all(&options.static_root)?;
+    let plugin_data = options.settings_root.join("plugins");
     let counters = Arc::new(ReloadableCounterService::production(
         options.static_root,
         options.settings_root,
         options.cache_root.clone(),
     ));
-    let snapshots = Arc::new(SnapshotProviders::new(
-        Arc::new(ManagerSnapshot::not_ready(
-            0,
-            ApiRuntimeSettings {
-                enable_key_overlay: config.enable_key_overlay,
-                enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-                enable_hit_offsets: config.enable_hit_offsets,
-            },
-        )),
-        Arc::new(ProductionSnapshotEncoder),
-    ));
     let beatmap = Arc::new(RuntimeBeatmap {
-        snapshots: snapshots.snapshot_manager(),
         counters: Arc::clone(&counters),
     });
     let counter_facade = Arc::new(RuntimeCounterFacade {
@@ -94,7 +95,33 @@ pub async fn start_test_production_composition(
     });
     let relays = Arc::new(WebSocketRelaySink::new());
     let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
-    let hubs = WebSocketHubs::start(snapshots.clone(), snapshots.clone(), Duration::ZERO);
+    let logger = Logger::new(
+        &options.logs_root,
+        LoggerOptions::default(),
+        Arc::new(StdoutConsole),
+    )?;
+    let settings = Arc::new(PluginSettingsService::new(Arc::new(
+        ConfigSettingsBridgeB2::new(options.config.clone()),
+    )));
+    let plugins = api_v1::resource_host(logger.clone(), settings, &plugin_data).await?;
+    let loaded = vosu_core::plugin::load_bundled(
+        crate::application_version(),
+        &super::dev_plugins::source_snapshot(&plugins, crate::plugins::BUNDLED, &[]),
+        crate::plugins::BUNDLED,
+    )
+    .map_err(io::Error::other)?;
+    let pool = vosu_core::plugin::WorkerPool::new(4, vosu_core::plugin::DEFAULT_QUEUE_CAPACITY);
+    for (index, plugin) in loaded.iter().enumerate() {
+        plugins
+            .create_instance(
+                vosu_core::plugin::PluginInstanceId::new(index as u64),
+                plugin,
+                plugin_data.join(plugin.manifest().id.as_str()),
+                Some(pool.clone()),
+            )
+            .map_err(io::Error::other)?;
+    }
+    let (adapters, hubs) = adapters::Adapters::start(&plugins, options.config.clone()).await?;
     let endpoints = options
         .network
         .endpoints()
@@ -129,9 +156,9 @@ pub async fn start_test_production_composition(
         Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
         Arc::new(RuntimeReportInput {
             config: Arc::clone(&options.config),
-            snapshots: snapshots.snapshot_manager(),
+            plugins: Arc::clone(&plugins),
+            files: adapters.files.clone(),
             counters: Arc::clone(&counters),
-            lifecycle: Arc::default(),
             logs: options.logs_root,
         }),
         options.updater,
@@ -141,7 +168,6 @@ pub async fn start_test_production_composition(
             v2: hubs.v2.clone(),
             precise: hubs.v2_precise.clone(),
             commands: hubs.v1.clone(),
-            subscriptions: hubs.v2_subscription.clone(),
             processor: processor.clone(),
             relays: relays.clone(),
         },
@@ -151,9 +177,11 @@ pub async fn start_test_production_composition(
             &config.allowed_ips,
             &config.server_ip,
         )),
-        state: Arc::new(SnapshotStateProvider::new(snapshots.snapshot_manager())),
-        calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
-        delegate: Arc::new(ProductionRouteDelegate::new(services)),
+        state: adapters.clone(),
+        calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
+        delegate: Arc::new(
+            ProductionRouteDelegate::new(services).with_surface(adapters.router(plugins.clone())),
+        ),
     };
     let listener = match ListenerOwner::start(providers, options.target).await {
         Ok(listener) => listener,
@@ -178,5 +206,8 @@ pub async fn start_test_production_composition(
         processor: Some(processor),
         relays: Some(relays),
         counters: Some(counters),
+        adapters,
+        plugins,
+        logger,
     })
 }

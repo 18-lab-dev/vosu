@@ -157,6 +157,50 @@ impl LazerMemory {
         Some(valid)
     }
 
+    #[cfg(any(windows, test))]
+    /// The base check and two independent object spans fit one dependent plan.
+    /// Publish no cache entry unless every speculative read and type check succeeds.
+    pub(super) fn prefetch_precise_roots(&self) -> Option<()> {
+        if self.process.pointer_size() != 8 || self.current_screen == 0 {
+            return None;
+        }
+        let base = self.game_base_address()?;
+        let (root_first, root_len) = self.root_span()?;
+        let (screen_first, screen_len) = self.screen_span;
+        if screen_len == 0 {
+            return None;
+        }
+        let mut roots = [0u8; ROOT_SPAN_LIMIT];
+        let roots = roots.get_mut(..root_len)?;
+        let mut screen = [0u8; SCREEN_SPAN_WORDS * 8];
+        let screen = screen.get_mut(..screen_len)?;
+        let mut vtable = [0u8; 8];
+        self.process
+            .read_chains(
+                &mut [
+                    crate::process::ChainReadRequest::new(base, &[0], &mut vtable),
+                    crate::process::ChainReadRequest::new(add(base, root_first).ok()?, &[], roots),
+                    crate::process::ChainReadRequest::new(
+                        add(self.current_screen, screen_first).ok()?,
+                        &[],
+                        screen,
+                    ),
+                ],
+                self.process.bitness(),
+            )
+            .ok()?;
+        if le_i64(&vtable) as usize != self.offsets.effective_game_base_vtable()
+            || !self.store_roots(roots, root_first)
+        {
+            return None;
+        }
+        self.validated_game_base.store(base, Ordering::Relaxed);
+        self.capture_roots_loaded.store(true, Ordering::Relaxed);
+        self.store_screen(self.current_screen, screen);
+        self.capture_screen_pending.store(false, Ordering::Relaxed);
+        Some(())
+    }
+
     /// `(first offset, length)` of the span covering every root; `None` when untrusted offsets
     /// overflow, which leaves each root to its own checked read.
     fn root_span(&self) -> Option<(usize, usize)> {
@@ -223,7 +267,11 @@ impl LazerMemory {
         self.i32(add(screen, offset)?)
     }
 
-    fn screen_bytes<const N: usize>(&self, screen: usize, offset: usize) -> Option<[u8; N]> {
+    pub(super) fn screen_bytes<const N: usize>(
+        &self,
+        screen: usize,
+        offset: usize,
+    ) -> Option<[u8; N]> {
         if screen == 0 {
             return None;
         }
@@ -266,18 +314,18 @@ impl LazerMemory {
         if self.process.read_exact(address, &mut bytes[..len]).is_err() {
             return false;
         }
-        for (word, bytes) in self
-            .capture_screen_words
-            .iter()
-            .zip(bytes[..len].chunks_exact(8))
-        {
+        self.store_screen(screen, &bytes[..len]);
+        true
+    }
+
+    fn store_screen(&self, screen: usize, bytes: &[u8]) {
+        for (word, bytes) in self.capture_screen_words.iter().zip(bytes.chunks_exact(8)) {
             word.store(
                 u64::from_le_bytes(bytes.try_into().unwrap()),
                 Ordering::Relaxed,
             );
         }
         self.capture_screen.store(screen, Ordering::Relaxed);
-        true
     }
 
     pub(super) fn api(&self) -> Result<usize, MemoryError> {

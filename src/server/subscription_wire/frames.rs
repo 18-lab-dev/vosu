@@ -7,8 +7,6 @@ use serde_json::{
     ser::{Formatter, Serializer},
 };
 
-use crate::api::ApiError;
-
 /// Selected values retain absence separately from explicit JSON null.
 pub type Extraction = Arc<[Option<Value>]>;
 
@@ -62,8 +60,8 @@ pub fn store_baseline(
     }
 }
 
-/// Number spelling identical to `crate::api::JsFormatter`, which `crate::api` exports only to
-/// tests; frames are serialized straight into a [`FrameArena`] rather than through
+/// Number spelling identical to `vosu_adapter_support::json::JsFormatter`;
+/// pointer frames serialize straight into a [`FrameArena`] rather than through
 /// `encode_dto`'s per-frame growing `Vec`.
 struct FrameFormatter;
 
@@ -149,7 +147,7 @@ impl FrameArena {
         kind: &'static [u8],
         revision: u64,
         write: impl FnOnce(&mut FrameWriter<'_>) -> serde_json::Result<()>,
-    ) -> Result<Bytes, ApiError> {
+    ) -> serde_json::Result<Bytes> {
         if self
             .revision
             .as_ref()
@@ -158,7 +156,7 @@ impl FrameArena {
             let mut digits = Vec::new();
             FrameFormatter
                 .write_u64(&mut digits, revision)
-                .map_err(|error| ApiError::serialization(error.to_string()))?;
+                .map_err(serde_json::Error::io)?;
             self.revision = Some((revision, digits));
         }
         let digits = self.revision.as_ref().map_or(&[][..], |(_, digits)| digits);
@@ -173,13 +171,13 @@ impl FrameArena {
             Ok(()) => Ok(buffer.split().freeze()),
             Err(error) => {
                 buffer.clear();
-                Err(ApiError::serialization(error.to_string()))
+                Err(error)
             }
         }
     }
 
     /// `[0,revision,[[id,value],...]]` with every present value.
-    pub fn initial(&mut self, revision: u64, state: &[impl Selected]) -> Result<Bytes, ApiError> {
+    pub fn initial(&mut self, revision: u64, state: &[impl Selected]) -> serde_json::Result<Bytes> {
         self.encode(b"[0,", revision, |frame| {
             frame.pairs(
                 state
@@ -198,7 +196,7 @@ impl FrameArena {
         revision: u64,
         current: &[impl Selected],
         changed: &[usize],
-    ) -> Result<Bytes, ApiError> {
+    ) -> serde_json::Result<Bytes> {
         self.encode(b"[1,", revision, |frame| {
             frame.pairs(
                 changed
@@ -220,7 +218,7 @@ impl FrameArena {
 }
 
 #[cfg(test)]
-pub(crate) fn initial_frame(revision: u64, state: &[Option<Value>]) -> Result<Bytes, ApiError> {
+pub(crate) fn initial_frame(revision: u64, state: &[Option<Value>]) -> serde_json::Result<Bytes> {
     FrameArena::default().initial(revision, state)
 }
 
@@ -229,13 +227,14 @@ pub(crate) fn update_frame(
     revision: u64,
     baseline: &[Option<Value>],
     current: &[Option<Value>],
-) -> Result<Bytes, ApiError> {
+) -> serde_json::Result<Bytes> {
     let mut changed = Vec::new();
     changes(baseline, current, &mut changed);
     FrameArena::default().update(revision, current, &changed)
 }
 
 pub fn error_frame(code: u16, message: &'static str) -> Bytes {
-    crate::api::v2::encode_dto(&(2_u8, code, message))
+    vosu_adapter_support::json::encode(&(2_u8, code, message), 0)
+        .map(Bytes::from)
         .unwrap_or_else(|_| Bytes::from_static(b"[2,4,\"state serialization failed\"]"))
 }

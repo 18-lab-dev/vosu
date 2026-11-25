@@ -1,10 +1,7 @@
-api -> model
-runtime -> api
 runtime -> counters
 runtime -> plugins
 runtime -> server
 runtime -> tools
-server -> api
 server -> assets
 server -> counters
 tools -> counters

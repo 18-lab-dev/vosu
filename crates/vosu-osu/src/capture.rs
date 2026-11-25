@@ -1,4 +1,4 @@
-//! Shared capture implementation for the plugin and the interim 1.x supervisor.
+//! Session-owned capture preparation and worker startup.
 use std::{
     future::Future,
     path::PathBuf,
@@ -37,55 +37,6 @@ pub struct CaptureTarget {
     pub settings: InstanceSettings,
     pub is_tournament_manager: bool,
     pub lazer_offsets: Option<Arc<LazerOffsets>>,
-}
-
-/// Selects the API-visible state for a publication.
-///
-/// API consumers keep the regular component of the last API-cadence capture,
-/// except that selection changes are promoted before notifying live subscribers.
-/// This keeps current-file routes and API checksums on the subscription's selection.
-/// Generation and reset-epoch changes are also promoted immediately so regular
-/// transitions and their precise resets stay atomic.
-pub fn api_state(
-    previous: Option<&Arc<StateBundleSnapshot>>,
-    live: &Arc<StateBundleSnapshot>,
-    delivery: Delivery,
-) -> Arc<StateBundleSnapshot> {
-    let Some(previous) = previous.filter(|previous| {
-        previous.source == live.source
-            && previous.generation == live.generation
-            && previous.reset_epoch == live.reset_epoch
-            && (Arc::ptr_eq(&previous.regular, &live.regular)
-                || (previous.regular.menu.checksum == live.regular.menu.checksum
-                    && previous.regular.menu.filename == live.regular.menu.filename
-                    && previous.regular.menu.folder == live.regular.menu.folder
-                    && previous.regular.menu.audio_filename == live.regular.menu.audio_filename
-                    && previous.regular.menu.background_filename
-                        == live.regular.menu.background_filename
-                    && previous.regular.global.songs_folder == live.regular.global.songs_folder))
-    }) else {
-        return Arc::clone(live);
-    };
-    match delivery {
-        Delivery::All => Arc::clone(live),
-        Delivery::Precise if Arc::ptr_eq(&previous.regular, &live.regular) => Arc::clone(live),
-        Delivery::Precise => Arc::new(StateBundleSnapshot {
-            regular: Arc::clone(&previous.regular),
-            ..StateBundleSnapshot::clone(live)
-        }),
-        Delivery::Live => Arc::clone(previous),
-    }
-}
-
-pub fn equivalent_state_snapshots(
-    current: &StateBundleSnapshot,
-    next: &StateBundleSnapshot,
-) -> bool {
-    current.source == next.source
-        && current.generation == next.generation
-        && current.reset_epoch == next.reset_epoch
-        && Arc::ptr_eq(&current.regular, &next.regular)
-        && Arc::ptr_eq(&current.precise, &next.precise)
 }
 
 pub fn poll_duration(milliseconds: f64) -> Duration {
@@ -284,6 +235,3 @@ where
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod prop_worker;

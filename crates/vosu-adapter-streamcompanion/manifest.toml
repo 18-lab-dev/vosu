@@ -1,0 +1,24 @@
+kind = "plugin"
+manifest_version = 1
+id = "vosu.adapter.streamcompanion"
+name = "streamCompanion adapter"
+version = "2.0.0-alpha.1"
+host = ">=2.0.0-alpha.1, <3.0.0"
+abi_version = 1
+runtime = "in-process"
+
+[[requires]]
+id = "field:vosu.osu"
+version = "^1.3.0"
+
+[[requires]]
+id = "field:vosu.osu.internal.paths"
+version = "^1.3.0"
+
+[[requires]]
+id = "field:vosu.chart.resources.file"
+version = "^1.0.0"
+
+[[requires]]
+id = "resource:chart.file"
+version = "^1.0.0"

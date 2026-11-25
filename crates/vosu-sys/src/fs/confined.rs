@@ -85,6 +85,42 @@ impl SafeRoot {
     pub fn open_child(&self, path: &SafeRelativePath) -> Result<SafeChild, SafePathError> {
         native::open_child(&self.file, path.as_path())
     }
+    pub(super) fn from_directory(file: fs::File) -> Self {
+        Self { file }
+    }
+    pub fn directory(
+        &self,
+        path: &SafeRelativePath,
+    ) -> Result<super::SafeDirectory, SafePathError> {
+        super::SafeDirectory::new(self.open_child(path)?)
+    }
+    /// Calculation-only spelling conversion. The result is still opened under
+    /// this retained root; canonicalization never authorizes an absolute open.
+    pub fn relative_absolute(
+        &self,
+        spelling: &Path,
+    ) -> Result<(SafeRelativePath, usize), SafePathError> {
+        if !spelling.is_absolute() {
+            return Err(SafePathError::InvalidComponent);
+        }
+        #[cfg(windows)]
+        for component in spelling.components() {
+            if let Component::Normal(name) = component {
+                let name = name.to_str().ok_or(SafePathError::InvalidEncoding)?;
+                // Canonicalization must not erase an ADS or Win32 spelling alias
+                // before the retained relative open validates it.
+                if name.contains(':') || name.ends_with(['.', ' ']) {
+                    return Err(SafePathError::InvalidComponent);
+                }
+            }
+        }
+        let root = native::root_path(&self.file)?;
+        let child = spelling.canonicalize()?;
+        let relative = native::strip_root(&root, &child).ok_or(SafePathError::EscapesRoot)?;
+        let path =
+            SafeRelativePath::parse(relative.to_str().ok_or(SafePathError::InvalidEncoding)?)?;
+        Ok((path, root.components().count()))
+    }
 }
 
 /// Content and metadata obtained from the same opened object.
@@ -92,6 +128,13 @@ impl SafeRoot {
 pub struct SafeChild {
     pub file: fs::File,
     pub metadata: fs::Metadata,
+}
+
+impl SafeChild {
+    /// Final spelling of this retained object, never an instruction to reopen it.
+    pub fn canonical_path(&self) -> Result<PathBuf, SafePathError> {
+        native::root_path(&self.file)
+    }
 }
 
 /// Percent-decode a request path exactly once. `+` remains a literal plus because

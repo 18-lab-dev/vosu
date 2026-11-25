@@ -1,4 +1,5 @@
 //! Latest-only state-bus publication, independent of the interim B1 bridge.
+pub(crate) mod tournament;
 use crate::project::{self, Caches, Projection, Projector, SessionFacts};
 use std::sync::{
     Arc, Mutex,
@@ -67,6 +68,8 @@ pub struct BusPublisher<H: HostServices + Send + Sync + 'static = VtableHostServ
     handle: u64,
     identified: Arc<AtomicBool>,
     foreground: AtomicU8,
+    pub(crate) tournament: std::sync::OnceLock<(Arc<tournament::Tournament>, u64)>,
+    aggregate: Mutex<Option<crate::project::StableTourney>>,
     inner: Mutex<Shared>,
     projections: &'static [Projection],
     pub(crate) resources: std::sync::OnceLock<Arc<crate::resources::publication::Publication>>,
@@ -78,6 +81,8 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             handle,
             identified,
             foreground: AtomicU8::new(encode_foreground(facts.foreground)),
+            tournament: std::sync::OnceLock::new(),
+            aggregate: Mutex::new(None),
             resources: std::sync::OnceLock::new(),
             inner: Mutex::new(Shared {
                 inner: Some(BusPublisherInner {
@@ -108,6 +113,44 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
     }
     pub fn republish_session_fields(&self) {
         self.enqueue(None, true);
+    }
+    /// Bench/test quiescence: the resource worker applied its current epoch,
+    /// that revision is committed, and no thread holds or awaits the mailbox.
+    /// Reads the resource state before the mailbox lock; neither is nested.
+    #[cfg(feature = "bench-harness")]
+    pub(crate) fn settled(&self) -> bool {
+        let resources = self.resources.get().map(|r| r.prepared());
+        let shared = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        shared.pending.is_none()
+            && !shared.refresh
+            && shared.inner.as_ref().is_some_and(|inner| {
+                resources.is_none_or(|(revision, prepared)| {
+                    prepared && inner.resource_revision == revision
+                })
+            })
+    }
+    pub(crate) fn deactivate(&self) {
+        self.identified.store(false, Ordering::Release);
+    }
+    pub(crate) fn set_tournament(&self, aggregate: crate::project::StableTourney) {
+        let mut current = self
+            .aggregate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if current
+            .as_ref()
+            .is_some_and(|current| current.revision >= aggregate.revision)
+        {
+            return;
+        }
+        let changed = current.as_ref().is_none_or(|current| {
+            current.bytes != aggregate.bytes || current.availability != aggregate.availability
+        });
+        *current = Some(aggregate);
+        drop(current);
+        if changed {
+            self.republish_session_fields();
+        }
     }
 
     fn enqueue(&self, snapshot: Option<Arc<StateBundleSnapshot>>, refresh: bool) {
@@ -165,6 +208,11 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
                 if force || reset || inner.retry || resource_changed || !unchanged {
+                    inner.caches.stable_tourney = self
+                        .aggregate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     inner.projector.prepare(&snapshot);
                     // Retain the attempted snapshot so a refresh after an unwind
                     // can retry even the first publication.
@@ -275,28 +323,13 @@ impl<H: HostServices + Send + Sync + 'static> SnapshotPublisher<Arc<StateBundleS
         snapshot: Arc<StateBundleSnapshot>,
         _: Delivery,
     ) -> Result<(), StateWorkerError> {
+        if self.identified.load(Ordering::Acquire)
+            && let Some((tournament, handle)) = self.tournament.get()
+        {
+            tournament.observe(*handle, &snapshot);
+        }
         self.enqueue(Some(snapshot), false);
         Ok(())
-    }
-}
-/// The legacy sink always receives its publication first. Bus refusals are
-/// handled by BusPublisher and never turn a successful B1 write into failure.
-pub(crate) struct FanoutPublisher {
-    pub b1: Option<crate::bridge_b1::B1Publisher>,
-    pub bus: Arc<crate::publish::BusPublisher<crate::publish::SessionHost>>,
-}
-impl SnapshotPublisher<Arc<StateBundleSnapshot>> for FanoutPublisher {
-    fn publish(
-        &self,
-        snapshot: Arc<StateBundleSnapshot>,
-        delivery: Delivery,
-    ) -> Result<(), StateWorkerError> {
-        let result = self
-            .b1
-            .as_ref()
-            .map_or(Ok(()), |b1| b1.publish(Arc::clone(&snapshot), delivery));
-        let _ = self.bus.publish(snapshot, delivery);
-        result
     }
 }
 

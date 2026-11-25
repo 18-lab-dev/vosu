@@ -64,6 +64,7 @@ fn roots_require_host_native_absolute_directories() {
     assert!(SafeRoot::open(file.path()).is_err());
 }
 
+#[cfg(not(windows))]
 #[test]
 fn retained_root_and_child_survive_pathname_replacement() {
     let parent = tempfile::tempdir().unwrap();
@@ -85,6 +86,40 @@ fn retained_root_and_child_survive_pathname_replacement() {
     fs::create_dir(&original).unwrap();
     fs::write(original.join("value"), b"replacement-root").unwrap();
     assert_eq!(read(&root, "value"), "retained-original");
+    fs::rename(moved.join("value"), moved.join("old-value")).unwrap();
+    fs::write(moved.join("value"), b"replacement-child").unwrap();
+    let mut content = String::new();
+    child.file.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "retained-original");
+    assert_eq!(child.metadata.len(), 17);
+    assert_eq!(read(&root, "value"), "replacement-child");
+}
+
+// Windows refuses to rename a directory while any file beneath it is open, so
+// the root is replaced before the retained child is opened. The child is then
+// renamed and replaced inside the moved root, which its share-delete open allows.
+#[cfg(windows)]
+#[test]
+fn retained_root_and_child_survive_pathname_replacement() {
+    let parent = tempfile::tempdir().unwrap();
+    let original = parent.path().join("root");
+    let moved = parent.path().join("moved");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("value"), b"retained-original").unwrap();
+    let root = SafeRoot::open(&original).unwrap();
+    assert!(
+        root.open_child(&SafeRelativePath::parse(".").unwrap())
+            .unwrap()
+            .metadata
+            .is_dir()
+    );
+    fs::rename(&original, &moved).unwrap();
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("value"), b"replacement-root").unwrap();
+    assert_eq!(read(&root, "value"), "retained-original");
+    let mut child = root
+        .open_child(&SafeRelativePath::parse("value").unwrap())
+        .unwrap();
     fs::rename(moved.join("value"), moved.join("old-value")).unwrap();
     fs::write(moved.join("value"), b"replacement-child").unwrap();
     let mut content = String::new();
@@ -250,4 +285,80 @@ fn stripping_first_component_does_not_reparse_unix_suffix() {
             .as_path(),
         Path::new("")
     );
+}
+
+#[test]
+fn directory_cursor_and_absolute_selection_retain_the_opened_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = dir.path().join("original");
+    let moved = dir.path().join("moved");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("original.osu"), b"original-content").unwrap();
+    let root = SafeRoot::open(&original).unwrap();
+    let mut cursor = root
+        .directory(&SafeRelativePath::parse("").unwrap())
+        .unwrap();
+    fs::rename(&original, &moved).unwrap();
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("foreign.osu"), b"foreign-content").unwrap();
+    let mut names = Vec::new();
+    for _ in 0..8 {
+        let Some(name) = cursor.next_name().unwrap() else {
+            break;
+        };
+        names.push(name);
+    }
+    assert_eq!(names, vec![std::ffi::OsString::from("original.osu")]);
+    assert_eq!(read(&root, "original.osu"), "original-content");
+    assert!(
+        root.relative_absolute(&original.join("foreign.osu"))
+            .is_err()
+    );
+    let (child, _) = root.relative_absolute(&moved.join("original.osu")).unwrap();
+    assert_eq!(child.as_path(), Path::new("original.osu"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn retained_directory_metadata_refuses_symlink_escape() {
+    let inside = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.osu"), b"secret").unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.osu"),
+        inside.path().join("escape.osu"),
+    )
+    .unwrap();
+    let root = SafeRoot::open(inside.path()).unwrap();
+    let mut cursor = root
+        .directory(&SafeRelativePath::parse("").unwrap())
+        .unwrap();
+    assert_eq!(cursor.next_name().unwrap(), Some("escape.osu".into()));
+    assert!(
+        cursor
+            .open_child(&SafeRelativePath::parse("escape.osu").unwrap())
+            .is_err()
+    );
+    assert!(
+        root.relative_absolute(&inside.path().join("escape.osu"))
+            .is_err()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn calculation_absolute_spelling_cannot_normalize_ads_or_trailing_aliases() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("chart.osu"), b"inside").unwrap();
+    let root = SafeRoot::open(dir.path()).unwrap();
+    for name in ["chart.osu.", "chart.osu ", "chart.osu:secret"] {
+        assert!(
+            root.relative_absolute(&dir.path().join(name)).is_err(),
+            "{name}"
+        );
+    }
+    let (relative, _) = root
+        .relative_absolute(&dir.path().join("chart.osu"))
+        .unwrap();
+    assert_eq!(relative.as_path(), Path::new("chart.osu"));
 }

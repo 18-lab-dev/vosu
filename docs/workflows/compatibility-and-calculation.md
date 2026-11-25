@@ -10,11 +10,11 @@ tags: [compatibility, api, websocket, calculation, parity]
 
 ## Public projections
 
-The API surface intentionally contains four schemas: gosuMemory-compatible v1, streamCompanion-compatible state, vosu v2, and v2 precise. All are built from the atomic `CombinedSnapshot` owned by `SnapshotManager`; do not add route-level reads of regular, precise, focus, or lifecycle state.
+The four legacy wire schemas are ordinary bundled bus projections. Capture one authorized immutable selection before decoding adapter-owned views; do not add root-owned game DTOs, independent focused reads or typed snapshot side channels.
 
-WebSocket hubs keep compatibility connections separate from selected-field v2 subscriptions. Recent commit `9b67c55` added the selected-field endpoint; `1f28910` hardened close handshakes; `cb676ee` added precise keypress state and timestamps. Each hub bounds pending state output and keeps control replies separate from state-frame accounting.
+WebSocket hubs retain schema-local latest-only delivery and separate control replies from state-frame accounting. API v1 owns pointer subscriptions and independent demand; the retired selected-field v2 endpoint does not upgrade or fall through.
 
-The compatibility models preserve the flat `hitErrors`/`hitErrorArray` arrays and add sibling `pressHitErrors` and `releaseHitErrors` arrays. Internally the reducer retains aggregate, press, and release streams; lazer mania hold aggregates can reclassify a prior press through `release_correction`. Keep these classifications consistent across v1, stream companion, v2, precise, play, and tournament projections without replacing the original wire arrays (`src/model/states.rs`, `src/state/bundle/reducer.rs`, `src/model/api/`, `tests/state_api_compat.rs`).
+Internally the reducer retains aggregate, press, and release hit-error streams; lazer mania hold aggregates can reclassify a prior press through `release_correction`. Those source facts do not authorize extra legacy wire fields. Adapter DTO, direct and filtered writers obey the exact ADR 0021 removal inventory while preserving legitimate upstream hit-error arrays (`crates/vosu-osu-state/src/bundle/`, `tests/state_api_compat.rs`).
 
 osu!stable mania classification (`StableManiaHitErrorState` in `src/state/bundle/gameplay.rs`) matches each error to an unused map judgement whose target plus the error equals an unused replay key transition in the same lane (lanes reversed under Mirror). Only the judgement time is monotonic: stable records same-millisecond judgements in input order, not object order. An error without a match waits at most `STABLE_MANIA_MATCH_GRACE_MS` of replay time or `STABLE_MANIA_MATCH_MAX_WAIT` of wall time and is then published as a press, so one unexplained error can never withhold the rest of the play. The stable reader reads a .NET list's size before its items pointer, because a growing list publishes the new array before the new size.
 

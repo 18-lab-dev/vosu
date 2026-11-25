@@ -1,3 +1,7 @@
+use serde::Serialize;
+use std::borrow::Cow;
+use vosu_adapter_support::filtered::*;
+
 #[test]
 fn command_filters_preserve_last_write_precedence_at_each_depth() {
     use crate::server::commands::{CommandAction, CommandClient, Relay, RelaySink};
@@ -340,16 +344,16 @@ fn filtered_nonfinite_numbers_remain_values_until_json_encoding() {
 fn v2_custom_number_serialization_preserves_nonfinite_projection_semantics() {
     #[derive(Serialize)]
     struct Sessions {
-        direct: crate::model::api::v2::Session,
-        nested: crate::model::api::v2::Session,
+        direct: vosu_adapter_upstream::dto::Session,
+        nested: vosu_adapter_upstream::dto::Session,
     }
 
     let source = serialize_projection_value(&Sessions {
-        direct: crate::model::api::v2::Session {
+        direct: vosu_adapter_upstream::dto::Session {
             play_time: f64::NAN,
             play_count: 0,
         },
-        nested: crate::model::api::v2::Session {
+        nested: vosu_adapter_upstream::dto::Session {
             play_time: f64::INFINITY,
             play_count: 0,
         },
@@ -607,125 +611,6 @@ fn selected_serialization_projects_like_the_full_document_for_every_serde_shape(
 
 /// A focused stable snapshot whose four documents contain strings, nonfinite
 /// floats and tourney instances; `title` distinguishes publications.
-fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
-    use vosu_osu_model::states::{HitErrorArray, KeypressButton};
-    use vosu_osu_state::{PreciseState, RegularState};
-
-    let mut regular = RegularState {
-        global: Default::default(),
-        settings: Default::default(),
-        beatmap: Default::default(),
-        menu: Default::default(),
-        bass_density: Default::default(),
-        gameplay: Default::default(),
-        result_screen: Default::default(),
-        tourney: Default::default(),
-        user: Default::default(),
-        lazer_multi_spectating: Default::default(),
-        ranked_play: Default::default(),
-        room: Default::default(),
-    };
-    regular.menu.title = Some(title.into());
-    let precise = PreciseState {
-        catcher: None,
-        status: 2,
-        play_time: f64::NAN,
-        mode: 0,
-        key_overlay: Arc::new(Vec::new()),
-        keypresses: Arc::new(
-            (1..=4)
-                .map(|index| KeypressButton {
-                    name: Arc::from(format!("K{index}")),
-                    is_pressed: index % 2 == 0,
-                    count: index,
-                    pressed_at: (index % 2 == 0).then_some(f64::INFINITY),
-                    released_at: None,
-                })
-                .collect(),
-        ),
-        hit_errors: Arc::new(HitErrorArray { all: vec![1.0, f64::NAN, -2.5, f64::NEG_INFINITY, 7.0], press: vec![f64::NAN], release: Vec::new(), key: None, offsets: Vec::new() }),
-        total_hit_errors: f64::INFINITY,
-        committed_hit_error_index: 0,
-        unstable_rate: f64::NAN,
-    };
-    let state = Arc::new(StateBundleSnapshot {
-        source: ClientType::Stable,
-        generation: 1,
-        reset_epoch: 0,
-        regular: Arc::new(regular),
-        precise: Arc::new(precise),
-    });
-    let instance = |pid, ipc: Option<f64>| {
-        ManagerInstanceSnapshot::new(
-            pid,
-            vosu_osu_model::launch::InstanceSettings {
-                tournament_spectator: ipc.is_some(),
-                tournament_ipc_id: ipc,
-                devserver_endpoint: None,
-            },
-            ipc.is_none(),
-            Arc::clone(&state),
-        )
-    };
-    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        2,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [instance(7, None), instance(8, Some(f64::NAN)), instance(9, Some(2.5))],
-    )))
-}
-
-#[test]
-fn selected_serialization_projects_like_the_full_document_for_all_schemas() {
-    let snapshot = all_schema_snapshot("狐 \"kitsune\"\n\\尾😀");
-    assert_selection_preserves_projection(&crate::api::v1::build(&snapshot).unwrap(), 3);
-    assert_selection_preserves_projection(&crate::api::v2::build(&snapshot).unwrap(), 3);
-    assert_selection_preserves_projection(&crate::api::sc::build(&snapshot).unwrap(), 3);
-    assert_selection_preserves_projection(&crate::api::precise::build(&snapshot).unwrap(), 3);
-}
-
-#[test]
-fn distinct_plans_in_one_pass_encode_as_they_do_alone_for_all_schemas() {
-    use crate::server::websocket::BroadcastPass;
-
-    let snapshot = all_schema_snapshot("狐 \"kitsune\"\n\\尾😀");
-    for (schema, document) in [
-        (ApiSchema::V1, serialize_projection_value(&crate::api::v1::build(&snapshot).unwrap())),
-        (ApiSchema::V2, serialize_projection_value(&crate::api::v2::build(&snapshot).unwrap())),
-        (
-            ApiSchema::StreamCompanion,
-            serialize_projection_value(&crate::api::sc::build(&snapshot).unwrap()),
-        ),
-        (
-            ApiSchema::V2Precise,
-            serialize_projection_value(&crate::api::precise::build(&snapshot).unwrap()),
-        ),
-    ] {
-        // Repeated rounds keep reaching every property, so later plans in the
-        // pass project from properties serialized whole once enough partial
-        // walks have gone into them.
-        let lists = probing_filter_lists(&document.unwrap(), 2);
-        let encode = |filters: &[Filter]| {
-            ProductionSnapshotEncoder
-                .encode(&snapshot, schema, filters)
-                .unwrap()
-        };
-        let alone: Vec<_> = lists.iter().map(|filters| encode(filters)).collect();
-        let _pass = BroadcastPass::begin();
-        for round in 0..4 {
-            for (filters, alone) in lists.iter().zip(&alone) {
-                assert_eq!(
-                    &encode(filters),
-                    alone,
-                    "{schema:?} round {round}: {}",
-                    serde_json::to_string(filters).unwrap()
-                );
-            }
-        }
-    }
-}
-
 #[test]
 fn properties_are_shared_whole_only_once_their_walks_have_cost_as_much() {
     #[derive(Serialize)]
@@ -825,49 +710,6 @@ fn large_text_beside_a_cheap_selection_is_never_shared_whole() {
 }
 
 #[test]
-fn broadcast_pass_reuses_documents_only_for_the_same_publication_and_schema() {
-    use crate::server::websocket::BroadcastPass;
-
-    let first = all_schema_snapshot("first");
-    let second = all_schema_snapshot("second");
-    // A distinct snapshot object over the same immutable publication.
-    let first_again = CombinedSnapshot::from_manager(Arc::clone(first.manager()));
-    let filters = [Filter::Field("beatmap".into()), Filter::Field("menu".into())];
-    let schemas = [ApiSchema::V1, ApiSchema::V2];
-    let encode = |snapshot: &CombinedSnapshot, schema| {
-        ProductionSnapshotEncoder
-            .encode(snapshot, schema, &filters)
-            .unwrap()
-    };
-    // Encoded outside any pass, so every document is built afresh.
-    let expected = |snapshot: &CombinedSnapshot| schemas.map(|schema| encode(snapshot, schema));
-    let (first_expected, second_expected) = (expected(&first), expected(&second));
-    for (first, second) in first_expected.iter().zip(&second_expected) {
-        assert_ne!(first, second, "the publications must be distinguishable");
-    }
-    let references = Arc::strong_count(first.manager());
-
-    let pass = BroadcastPass::begin();
-    for (snapshot, expected) in [
-        (&first, &first_expected),
-        (&second, &second_expected),
-        (&first_again, &first_expected),
-        (&first, &first_expected),
-    ] {
-        for (schema, expected) in schemas.into_iter().zip(expected) {
-            assert_eq!(&encode(snapshot, schema), expected, "{schema:?}");
-        }
-    }
-    drop(pass);
-    assert_eq!(
-        Arc::strong_count(first.manager()),
-        references,
-        "nothing derived from a publication outlives its broadcast pass"
-    );
-}
-
-
-#[test]
 fn unshareable_property_keeps_successful_subtrees_available() {
     struct Failing(std::sync::Arc<std::sync::atomic::AtomicUsize>);
     impl Serialize for Failing {
@@ -906,180 +748,169 @@ fn unshareable_property_keeps_successful_subtrees_available() {
     assert!(!document.is_shared("parent"));
 }
 
-fn subscription_pointer_cases(document: &serde_json::Value) -> Vec<Vec<String>> {
-    fn visit(value: &serde_json::Value, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
-        out.push(path.clone());
-        if path.len() >= 5 { return; }
-        match value {
-            serde_json::Value::Object(object) => for (key, value) in object {
-                path.push(key.clone()); visit(value, path, out); path.pop();
-            },
-            serde_json::Value::Array(array) => for (index, value) in array.iter().take(8).enumerate() {
-                path.push(index.to_string()); visit(value, path, out); path.pop();
-            },
-            _ => {}
-        }
-    }
-    let mut cases = Vec::new();
-    visit(document, &mut Vec::new(), &mut cases);
-    cases.extend([
-        vec!["missing".into()], vec!["/escaped~key".into()],
-        vec!["keys".into(), "all".into(), "01".into()],
-        vec!["keys".into(), "all".into(), "length".into()],
-        vec!["keys".into(), "all".into(), "999999".into()],
-        vec!["client".into(), "0".into()],
-    ]);
-    cases
+#[cfg(test)]
+pub(crate) fn serialize_projection_value<T>(value: &T) -> Result<ProjectionValue, String>
+where
+    T: Serialize,
+{
+    let json =
+        serde_json::to_value(value).map_err(|error| error.to_string())?;
+    let typed =
+        serde_value::to_value(value).map_err(|error| error.to_string())?;
+    Ok(projection_value_from_serializations(json, &typed))
 }
 
-fn subscription_pointer_text(pointer: &[String]) -> String {
-    pointer.iter().map(|token| format!("/{}", token.replace('~', "~0").replace('/', "~1"))).collect()
-}
-
-fn random_subscription_set(cases: &[Vec<String>], seed: &mut u64) -> Vec<Vec<String>> {
-    let mut selected = Vec::new();
-    for _ in 0..12 {
-        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let pointer = &cases[(*seed >> 32) as usize % cases.len()];
-        if !selected.contains(pointer) { selected.push(pointer.clone()); }
-    }
-    selected
-}
-
-#[test]
-fn subscription_projection_matches_full_document_for_random_pointer_unions() {
-    let snapshot = all_schema_snapshot("狐 \"kitsune\"\n\\尾😀");
-    let full = crate::api::v2::document(&snapshot).unwrap();
-    let cases = subscription_pointer_cases(&full);
-    let mut seed = 0x51ec710_u64;
-    for iteration in 0..512 {
-        let selected = if iteration == 0 { vec![Vec::new()] }
-            else { random_subscription_set(&cases, &mut seed) };
-        let pointers: Vec<_> = selected.iter().map(Vec::as_slice).collect();
-        let projected = ProductionSnapshotEncoder::subscription_document(&snapshot, &pointers).unwrap();
-        for pointer in &selected {
-            let text = subscription_pointer_text(pointer);
-            let expected = full.pointer(&text).map(|value| serde_json::to_vec(value).unwrap());
-            let actual = projected.pointer(&text).map(|value| serde_json::to_vec(value).unwrap());
-            assert_eq!(actual, expected, "union {selected:?}, pointer {text}");
+#[cfg(test)]
+pub(crate) fn projection_value_from_serializations(
+    json: serde_json::Value,
+    typed: &serde_value::Value,
+) -> ProjectionValue {
+    let typed = unwrap_serde_value(typed);
+    match json {
+        serde_json::Value::Null
+            if matches!(
+                typed,
+                serde_value::Value::F32(value) if !value.is_finite()
+            ) || matches!(
+                typed,
+                serde_value::Value::F64(value) if !value.is_finite()
+            ) =>
+        {
+            ProjectionValue::NonFiniteNumber
+        }
+        serde_json::Value::Null => ProjectionValue::Null,
+        serde_json::Value::Bool(value) => ProjectionValue::Bool(value),
+        serde_json::Value::Number(value) => ProjectionValue::Number(value),
+        serde_json::Value::String(value) => ProjectionValue::String(value),
+        serde_json::Value::Array(values) => {
+            let typed_values = match typed {
+                serde_value::Value::Seq(values) => Some(values.as_slice()),
+                _ => None,
+            };
+            ProjectionValue::Array(
+                values
+                    .into_iter()
+                    .enumerate()
+                    .map(
+                        |(index, value)| match typed_values.and_then(|values| values.get(index)) {
+                            Some(typed) => projection_value_from_serializations(value, typed),
+                            None => projection_value_from_json(value),
+                        },
+                    )
+                    .collect(),
+            )
+        }
+        serde_json::Value::Object(object) => {
+            let typed_object = match typed {
+                serde_value::Value::Map(object) => Some(object),
+                _ => None,
+            };
+            ProjectionValue::Object(
+                object
+                    .into_iter()
+                    .map(|(key, value)| {
+                        let typed_value = typed_object.and_then(|object| {
+                            object.iter().find_map(|(candidate, value)| {
+                                matches!(candidate, serde_value::Value::String(candidate) if candidate == &key)
+                                    .then_some(value)
+                            })
+                        });
+                        let value = match typed_value {
+                            Some(typed) => projection_value_from_serializations(value, typed),
+                            None => projection_value_from_json(value),
+                        };
+                        (Cow::Owned(key), value)
+                    })
+                    .collect(),
+            )
         }
     }
 }
 
-#[tokio::test]
-async fn subscription_projection_keeps_initial_delta_not_ready_and_error_frames_identical() {
-    use crate::server::v2_subscription::{
-        V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
-    };
-    struct Provider {
-        state: Mutex<(u64, Arc<CombinedSnapshot>)>,
-        event: watch::Sender<u64>,
-        legacy: bool,
-    }
-    struct Snapshot { revision: u64, state: Arc<CombinedSnapshot>, legacy: bool }
-    impl V2SubscriptionSnapshot for Snapshot {
-        fn revision(&self) -> u64 { self.revision }
-        fn document(&self, pointers: &[&[String]]) -> Result<Option<serde_json::Value>, ApiError> {
-            if self.revision == 4 { return Err(ApiError::serialization("injected failure")); }
-            let result = if self.legacy { crate::api::v2::document(&self.state) }
-                else { ProductionSnapshotEncoder::subscription_document(&self.state, pointers) };
-            match result {
-                Ok(value) => Ok(Some(value)),
-                Err(ApiError::NotReady) => Ok(None),
-                Err(error) => Err(error),
-            }
-        }
-    }
-    impl V2SubscriptionProvider for Provider {
-        fn subscribe(&self) -> watch::Receiver<u64> { self.event.subscribe() }
-        fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
-            let (revision, state) = &*self.state.lock().unwrap();
-            Arc::new(Snapshot { revision: *revision, state: Arc::clone(state), legacy: self.legacy })
-        }
-    }
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::{Message, protocol::{CloseFrame, frame::coding::CloseCode}};
-    let initial = Arc::new(all_schema_snapshot("initial"));
-    let changed = Arc::new(all_schema_snapshot("changed"));
-    let missing = Arc::new(CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        3, None, false, ApiRuntimeSettings::default(), [],
-    ))));
-    let full = crate::api::v2::document(&initial).unwrap();
-    let cases = subscription_pointer_cases(&full);
-    let mut seed = 0xc01ec7_u64;
-    for iteration in 0..32 {
-        let overlay_pointers: &[&str] = match iteration {
-            1 => &["/keys/all", "/beatmap/mode", "/beatmap/time/live", "/state", "/game/paused", "/beatmap/checksum"],
-            2 => &["/state/number", "/game/paused", "/beatmap/time/live", "/keys/all", "/play/mode/number", "/play/mods", "/directPath/beatmapFile", "/settings/mania/scrollSpeed", "/settings/mania/scrollDirection/number", "/settings/audio/offset/universal", "/settings/keybinds", "/client"],
-            _ => &[],
+#[cfg(test)]
+pub(crate) fn unwrap_serde_value(mut value: &serde_value::Value) -> &serde_value::Value {
+    loop {
+        value = match value {
+            serde_value::Value::Newtype(inner) | serde_value::Value::Option(Some(inner)) => inner,
+            _ => return value,
         };
-        let mut selected: Vec<Vec<String>> = if iteration == 0 { vec![Vec::new()] }
-            else { vec![vec!["beatmap".into(), "title".into()]] };
-        selected.extend(overlay_pointers.iter().map(|pointer| pointer.split('/').skip(1).map(str::to_owned).collect()));
-        for pointer in random_subscription_set(&cases, &mut seed) {
-            if selected.iter().all(|existing| {
-                !existing.starts_with(&pointer) && !pointer.starts_with(existing)
-            }) { selected.push(pointer); }
-        }
-        let pointers: Vec<_> = selected.iter().map(|pointer| subscription_pointer_text(pointer)).collect();
-        let providers: Vec<_> = [true, false].into_iter().map(|legacy| Arc::new(Provider {
-            state: Mutex::new((1, Arc::clone(&initial))), event: watch::channel(1).0, legacy,
-        })).collect();
-        let hubs: Vec<_> = providers.iter().map(|provider| V2SubscriptionHub::new(provider.clone(), Duration::ZERO)).collect();
-        let mut clients = Vec::new();
-        let mut runners = Vec::new();
-        let mut bridges = Vec::new();
-        for hub in &hubs {
-            let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
-            let address = listener.local_addr().unwrap();
-            let hub_for_bridge = hub.clone();
-            bridges.push(tokio::spawn(async move {
-                let (stream, _) = bounded!(listener.accept()).unwrap();
-                stream.set_nodelay(true).unwrap();
-                let mut socket = bounded!(tokio_tungstenite::accept_async(stream)).unwrap();
-                let request = bounded!(socket.next()).unwrap().unwrap().into_data();
-                let pointers = crate::server::v2_subscription::parse_subscription_request(&request).unwrap();
-                let (connection, mut receiver) = hub_for_bridge.connect();
-                connection.subscribe(pointers).unwrap();
-                while let Some(frame) = bounded!(receiver.recv()) {
-                    let acknowledge = matches!(frame, V2SubscriptionOutbound::Text(_));
-                    let message = match frame {
-                        V2SubscriptionOutbound::Text(bytes) | V2SubscriptionOutbound::Error(bytes) => Message::Text(bytes.try_into().unwrap()),
-                        V2SubscriptionOutbound::Pong(bytes) => Message::Pong(bytes),
-                        V2SubscriptionOutbound::Close { code } => Message::Close(Some(CloseFrame { code: CloseCode::from(code), reason: "".into() })),
-                    };
-                    let closing = message.is_close();
-                    bounded!(socket.send(message)).unwrap();
-                    if acknowledge { connection.write_completed(); }
-                    if closing { break; }
-                }
-            }));
-            let (mut socket, _) = bounded!(tokio_tungstenite::connect_async(format!("ws://{address}/websocket/v2/subscribe"))).unwrap();
-            bounded!(socket.send(Message::Text(serde_json::to_string(&pointers).unwrap().into()))).unwrap();
-            clients.push(socket);
-            runners.push(tokio::spawn({ let hub = hub.clone(); async move { bounded!(hub.run()) } }));
-        }
-        for (revision, snapshot) in [(1, &initial), (2, &changed), (3, &missing), (4, &initial)] {
-            if revision != 1 {
-                for provider in &providers {
-                    *provider.state.lock().unwrap() = (revision, Arc::clone(snapshot));
-                    provider.event.send_replace(revision);
+    }
+}
+
+
+#[cfg(test)]
+pub(crate) fn project_filters(value: &ProjectionValue, filters: &[Filter]) -> ProjectionValue {
+    let mut projected = Vec::new();
+    for filter in filters {
+        match filter {
+            Filter::Field(field) => {
+                if let Some(value) = javascript_property(value, field) {
+                    if let Some((_, existing)) = projected.iter_mut().find(|(key, _)| key == field)
+                    {
+                        *existing = value;
+                    } else {
+                        projected.push((Cow::Owned(field.clone()), value));
+                    }
                 }
             }
-            let mut frames = Vec::new();
-            for socket in &mut clients {
-                let frame = tokio::time::timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap();
-                frames.push(frame);
+            Filter::Nested { field, keys } => {
+                if let Some(value) = javascript_property(value, field)
+                    .filter(|value| value != &ProjectionValue::Null)
+                {
+                    let value = project_filters(&value, keys);
+                    if let Some((_, existing)) = projected.iter_mut().find(|(key, _)| key == field)
+                    {
+                        *existing = value;
+                    } else {
+                        projected.push((Cow::Owned(field.clone()), value));
+                    }
+                }
             }
-            assert_eq!(frames[0], frames[1], "revision {revision}, selection {selected:?}");
         }
-        let mut closes = Vec::new();
-        for socket in &mut clients {
-            closes.push(tokio::time::timeout(Duration::from_secs(2), socket.next()).await.unwrap().unwrap().unwrap());
+    }
+    ProjectionValue::Object(projected)
+}
+
+#[cfg(test)]
+pub(crate) fn javascript_property(value: &ProjectionValue, key: &str) -> Option<ProjectionValue> {
+    javascript_property_ref(value, key).map(Cow::into_owned)
+}
+#[cfg(test)]
+pub(crate) fn canonicalize_javascript_keys(value: ProjectionValue) -> ProjectionValue {
+    match value {
+        ProjectionValue::Object(object) => {
+            let mut indices = Vec::new();
+            let mut others = Vec::new();
+            for (key, value) in object {
+                let value = canonicalize_javascript_keys(value);
+                if let Some(index) = javascript_array_index(&key) {
+                    indices.push((index, key, value));
+                } else {
+                    others.push((key, value));
+                }
+            }
+            indices.sort_by_key(|(index, _, _)| *index);
+            ProjectionValue::Object(
+                indices
+                    .into_iter()
+                    .map(|(_, key, value)| (key, value))
+                    .chain(others)
+                    .collect(),
+            )
         }
-        assert_eq!(closes[0], closes[1]);
-        for hub in hubs { hub.shutdown(); }
-        for runner in runners { bounded!(runner).unwrap(); }
-        for bridge in bridges { bounded!(bridge).unwrap(); }
+        ProjectionValue::Array(values) => ProjectionValue::Array(
+            values
+                .into_iter()
+                .map(canonicalize_javascript_keys)
+                .collect(),
+        ),
+        ProjectionValue::SparseArray { length, elements } => ProjectionValue::SparseArray {
+            length,
+            elements: elements
+                .into_iter()
+                .map(|(index, value)| (index, canonicalize_javascript_keys(value)))
+                .collect(),
+        },
+        value => value,
     }
 }

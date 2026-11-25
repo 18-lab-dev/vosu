@@ -1,0 +1,30 @@
+[package]
+name = "vosu-adapter-upstream"
+version = "2.0.0-alpha.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes = "=1.12.1"
+ciborium = "=0.2.2"
+serde = { version = "=1.0.228", features = ["derive", "rc"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+url = "2.5.8"
+vosu-osu-calc = { path = "../vosu-osu-calc" }
+vosu-adapter-support = { path = "../vosu-adapter-support" }
+vosu-osu-model = { path = "../vosu-osu-model" }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
+vosu-surface = { path = "../vosu-surface" }
+
+[dev-dependencies]
+semver = "=1.0.28"
+tempfile = "3.26.0"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "time", "macros", "sync"] }
+vosu-core = { path = "../vosu-core" }
+vosu-osu = { path = "../vosu-osu" }
+vosu-osu-state = { path = "../vosu-osu-state" }

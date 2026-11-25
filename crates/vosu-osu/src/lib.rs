@@ -12,19 +12,19 @@
 //! plugin's own 2-worker Tokio runtime (DG): every identified session gets
 //! a `ProcessHandle`, and a lazer session's offset resolver is started on
 //! that runtime (DH: cached under `data_dir`), never inline on a dispatch
-//! thread. P5 owns the B1 publication/control bridge and session reader threads.
-//! M2 adds per-session
-//! state-bus fan-out and the union of legacy and bus sampling demand. Production
-//! registration and its bundled namespace schema live in `src/plugins.rs`.
+//! thread. The plugin owns state-bus publication and session reader threads.
+//! Per-session publication and selector-driven sampling stay plugin-owned;
+//! bundled registration and its namespace schema live in `src/plugins.rs`.
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
 pub mod actions;
-pub mod bridge_b1;
 pub mod capture;
 pub mod classify;
 pub mod demand;
+#[cfg(feature = "bench-harness")]
+pub mod fixtures;
 pub mod memory;
 pub mod plugin;
 pub mod project;

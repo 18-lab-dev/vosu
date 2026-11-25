@@ -7,7 +7,7 @@
 //! a `ProcessHandle` backed by P3's `PlanProcessMemory`/`PlanScanBackend`,
 //! and a lazer session's offset resolver is started on that runtime, never
 //! inline on a dispatch thread. P5 adds session-owned capture workers and
-//! the interim B1 publication/control bridge.
+//! state-bus publication and selector-driven sampling.
 //!
 //! Generic over `H: HostServices` (default [`VtableHostServices`]) and `G:
 //! OffsetGenerator` (default [`EmbeddedOffsetGenerator`]), exactly like
@@ -51,7 +51,6 @@ use vosu_plugin_api::{
     SessionAttached, SessionDecline, SessionDetached, TimerFired, VtableHostServices, vosu_status,
 };
 
-use crate::bridge_b1::{B1Event, B1Inputs};
 use crate::classify::{
     self, AttachDecision, AttachFacts, Identified, PendingIdentify, Platform, RootResolver,
     to_process_bitness,
@@ -75,6 +74,7 @@ struct PendingControls {
     regular: bool,
     precise: bool,
     collect_errors: bool,
+    tourney: (bool, bool),
 }
 
 #[derive(Default)]
@@ -126,6 +126,7 @@ struct PluginState {
     // Only live, not-yet-registered handles. IDENTIFY may synchronously cause
     // focus/demand deliveries before register_session has inserted the session.
     pending_controls: HashMap<u64, PendingControls>,
+    tournament: Arc<crate::publish::tournament::Tournament>,
     #[cfg(test)]
     settings_before_send: Option<std::sync::mpsc::SyncSender<()>>,
 }
@@ -290,6 +291,11 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                                         .is_some_and(|rest| rest.starts_with('/'))
                             })
                 });
+                let tourney = crate::demand::tournament_lanes(
+                    &changed.selectors,
+                    changed.regular,
+                    changed.precise,
+                );
                 let mut state = self.state.lock().expect("plugin state mutex poisoned");
                 if let Some(session) = state.sessions.get(&changed.handle)
                     && let Some(publication) = session.publication.get()
@@ -299,12 +305,17 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                         changed.precise,
                         collect_errors,
                     );
+                    publication.demand.tournament.request(tourney.0, tourney.1);
                 } else if state.live_handles.contains(&changed.handle) {
                     let controls = state.pending_controls.entry(changed.handle).or_default();
                     controls.regular = changed.regular;
                     controls.precise = changed.precise;
                     controls.collect_errors = collect_errors;
+                    controls.tourney = tourney;
                 }
+                let tournament = state.tournament.clone();
+                drop(state);
+                tournament.demand_changed();
                 Ok(())
             }
             Message::FocusChanged(changed) => {
@@ -313,6 +324,9 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                     if let Some(session) = state.sessions.get(&changed.handle)
                         && let Some(publication) = session.publication.get()
                     {
+                        session
+                            .selected
+                            .store(changed.focused, std::sync::atomic::Ordering::Release);
                         // Only atomics under PluginState; republish can re-enter
                         // the host and therefore runs after releasing the guard.
                         publication
@@ -333,6 +347,13 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                 if let Some(bus) = bus {
                     bus.republish_session_fields();
                 }
+                let tournament = self
+                    .state
+                    .lock()
+                    .expect("plugin state mutex poisoned")
+                    .tournament
+                    .clone();
+                tournament.focus_changed();
                 Ok(())
             }
             // Every other opcode this concurrent dispatch call could see has
@@ -726,7 +747,13 @@ fn finish_identify<H: HostServices>(
     version: String,
     named: bool,
 ) -> Result<bool, PluginError> {
-    match host.identify_session(handle, "osu", variant, name, &version, false) {
+    let priority = state
+        .lock()
+        .expect("plugin state mutex poisoned")
+        .sessions
+        .get(&handle)
+        .is_some_and(|session| session.is_tournament_manager());
+    match host.identify_session(handle, "osu", variant, name, &version, priority) {
         // The host may have removed the handle before its queued detach
         // reaches us. This is not a malformed attach, and must not register
         // a reader for an identification the host never accepted.

@@ -1235,3 +1235,6 @@ async fn cli_broker_auth_sessions_and_authority() {
     bounded!(host.shutdown());
     assert!(host.cli_sessions.lock().is_empty());
 }
+
+#[path = "tests/context_permissions.rs"]
+mod context_permissions;

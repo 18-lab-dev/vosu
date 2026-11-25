@@ -1,9 +1,8 @@
 //! Session-owned capture task. No task retains its owning session.
 use super::OsuSession;
 use crate::{
-    bridge_b1::{B1Event, B1Phase, B1Publisher, B1SessionKey, B1Sink},
     capture::{CaptureTarget, create_state_worker, initialize_state_worker},
-    publish::FanoutPublisher,
+    publish::BusPublisher,
 };
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -18,12 +17,7 @@ pub(super) type CaptureControls = (
 );
 
 impl OsuSession {
-    pub async fn start_capture(
-        self: &Arc<Self>,
-        sink: Option<Arc<B1Sink>>,
-        warn: LogWarn,
-        error: LogWarn,
-    ) {
+    pub async fn start_capture(self: &Arc<Self>, warn: LogWarn, error: LogWarn) {
         let mut task = self.capture.lock().await;
         if task.is_some() || self.lifecycle.is_cancelled() {
             return;
@@ -31,17 +25,10 @@ impl OsuSession {
         let session = Arc::downgrade(self);
         let cancel = self.lifecycle_token();
         let mut settings = self.osu_settings.subscribe();
-        let (_fallback_inputs, fallback_receiver) =
-            watch::channel(crate::bridge_b1::B1Inputs::default());
-        let mut inputs = sink
-            .as_ref()
-            .map_or(fallback_receiver, |sink| sink.inputs());
         let publication = self
             .publication
             .get()
             .expect("publication configured before capture");
-        publication.hub.send_replace(inputs.borrow().demand);
-        let hub = publication.hub.clone();
         let demand = publication.demand.receiver();
         let mut bus_demand = publication.demand.bus_receiver();
         let bus = Arc::clone(&publication.bus);
@@ -50,50 +37,22 @@ impl OsuSession {
         let offset_waiting = Arc::clone(&self.offset_waiting);
         #[cfg(test)]
         let controls = self.capture_controls.clone();
-        let key = B1SessionKey {
-            pid: self.pid,
-            generation: self.generation,
-        };
+        let pid = self.pid;
+        let generation = self.generation;
         let client = self.client;
-        let instance_settings = self.settings.clone();
         *task = Some(tokio::spawn(async move {
             if cancel.is_cancelled() {
                 return;
             }
-            send(
-                &sink,
-                B1Event::Attached {
-                    key,
-                    client,
-                    settings: instance_settings,
-                    is_tournament_manager: false,
-                },
-            );
-            // Stable also remains in this legacy dashboard phase until its
-            // first publication; it never has lazer offsets to mark ready.
-            send(
-                &sink,
-                B1Event::Phase {
-                    key,
-                    phase: B1Phase::ResolvingOffsets,
-                },
-            );
             let (reader_tx, reader) = watch::channel(reader_settings(
-                *inputs.borrow_and_update(),
                 *settings.borrow_and_update(),
                 bus_demand.borrow_and_update().collect_errors,
             ));
             #[cfg(test)]
             controls.send_replace(Some((reader.clone(), demand.clone())));
             let publisher: Arc<dyn SnapshotPublisher<Arc<StateBundleSnapshot>>> =
-                Arc::new(FanoutPublisher {
-                    b1: sink
-                        .as_ref()
-                        .map(|sink| B1Publisher::new(key, Arc::clone(sink))),
-                    bus,
-                });
+                Arc::clone(&bus) as Arc<BusPublisher<_>>;
             let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
-            let mut starting = false;
             let last_probe_error = Arc::new(Mutex::new(None::<String>));
             let initialize = async {
                 if client == vosu_osu_model::enums::ClientType::Lazer {
@@ -111,17 +70,6 @@ impl OsuSession {
                 Duration::from_secs(1),
                 || {
                     let target = target(&session);
-                    if target.as_ref().is_some_and(|target| {
-                        target.client == vosu_osu_model::enums::ClientType::Lazer
-                            && target.lazer_offsets.is_some()
-                    }) && !starting
-                    {
-                        starting = true;
-                        send(&sink, B1Event::Phase {
-                            key,
-                            phase: B1Phase::StartingReader,
-                        });
-                    }
                     let reader = reader.clone();
                     let demand = demand.clone();
                     let publisher = Arc::clone(&publisher);
@@ -142,14 +90,14 @@ impl OsuSession {
                             }
                             None => Ok(None),
                         };
-                        report_probe(&result, &last_probe_error, key.pid, &warn);
+                        report_probe(&result, &last_probe_error, pid, &warn);
                         result
                     }
                 },
                 |failure| {
                     error(format!(
                         "State initialization stopped for PID {} ({client:?}, generation {}): {failure}",
-                        key.pid, key.generation
+                        pid, generation
                     ))
                 },
             ).await
@@ -158,7 +106,6 @@ impl OsuSession {
             let mut initialized = false;
             let mut worker = None;
             let mut settings_open = true;
-            let mut inputs_open = true;
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => break,
@@ -169,26 +116,17 @@ impl OsuSession {
                     changed = settings.changed(), if settings_open => {
                         settings_open = changed.is_ok();
                         if settings_open {
-                            reader_tx.send_replace(reader_settings(*inputs.borrow(), *settings.borrow_and_update(), bus_demand.borrow().collect_errors));
-                        }
-                    }
-                    changed = inputs.changed(), if inputs_open => {
-                        inputs_open = changed.is_ok();
-                        if inputs_open {
-                            let current = *inputs.borrow_and_update();
-                            reader_tx.send_replace(reader_settings(current, *settings.borrow(), bus_demand.borrow().collect_errors));
-                            hub.send_replace(current.demand);
+                            reader_tx.send_replace(reader_settings(*settings.borrow_and_update(), bus_demand.borrow().collect_errors));
                         }
                     }
                     changed = bus_demand.changed() => {
                         if changed.is_err() { break; }
-                        reader_tx.send_replace(reader_settings(*inputs.borrow(), *settings.borrow(), bus_demand.borrow_and_update().collect_errors));
+                        reader_tx.send_replace(reader_settings(*settings.borrow(), bus_demand.borrow_and_update().collect_errors));
                     }
                 }
             }
             // A selected cancellation can race completion of reader preparation.
-            // Finish the cancellation-aware initializer before detaching so no
-            // newly spawned reader or publication can outlive Detached.
+            // Join the initializer and reader before session teardown completes.
             if !initialized {
                 worker = initialize.await;
             }
@@ -199,28 +137,22 @@ impl OsuSession {
                 let _ =
                     tokio::task::spawn_blocking(move || runtime.block_on(worker.shutdown())).await;
             }
-            send(&sink, B1Event::Detached { key });
         }));
     }
 }
 
-fn send(sink: &Option<Arc<B1Sink>>, event: B1Event) {
-    if let Some(sink) = sink {
-        sink.send(event);
-    }
-}
-
 pub(super) fn reader_settings(
-    inputs: crate::bridge_b1::B1Inputs,
     settings: crate::settings::OsuSettings,
     collect_errors: bool,
 ) -> vosu_osu_state::ReaderSettings {
-    let mut reader = inputs.reader_settings(settings);
-    // 2.0 has no ENABLE_* gates. This changes collection only; the root
-    // 1.x adapters still apply the original B1 configuration when serializing.
-    reader.enable_hit_offsets |= collect_errors;
-    reader.enable_mania_key_hit_errors |= collect_errors;
-    reader
+    vosu_osu_state::ReaderSettings {
+        calculate_pp: settings.calculate_pp,
+        poll_rate: settings.poll_rate,
+        precise_data_poll_rate: settings.precise_data_poll_rate,
+        show_mp_commands: settings.show_mp_commands,
+        read_mania_scroll_speed: settings.read_mania_scroll_speed,
+        collect_hit_errors: collect_errors,
+    }
 }
 
 fn target(session: &Weak<OsuSession>) -> Option<CaptureTarget> {
@@ -232,7 +164,7 @@ fn target(session: &Weak<OsuSession>) -> Option<CaptureTarget> {
         process: session.process.clone(),
         root: session.root.clone(),
         settings: session.settings.clone(),
-        is_tournament_manager: false,
+        is_tournament_manager: session.is_tournament_manager(),
         lazer_offsets: session.lazer_offsets(),
     })
 }

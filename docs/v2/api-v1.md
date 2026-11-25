@@ -210,10 +210,9 @@ pending snapshot replaces an older unsent one for both data and control
 frames. A connection whose pong queue is full closes with code `1011` rather
 than pinning the reader. Frames and assembled messages are limited to 1 MiB,
 matching the WebSocket API's general limit. Debounce applies per active
-producing lane as 1.x's does; the configuration knob is a new
-`API_V1_SUBSCRIPTION_DEBOUNCE` (default 1 ms), independent of
-`V2_SUBSCRIPTION_DEBOUNCE`, since the two protocols run on separate hubs with
-separate client populations.
+producing lane; `API_V1_SUBSCRIPTION_DEBOUNCE` (default 1 ms) remains the
+API v1 delivery setting. The selected-v2 protocol and its independent
+`V2_SUBSCRIPTION_DEBOUNCE` setting are retired by ADR 0021.
 
 ## HTTP state reads
 
@@ -615,6 +614,22 @@ routes with them:
 `/websocket/v2/subscribe` is removed; API v1's field-subscription protocol
 above replaces it for every first-party consumer
 ([ADR 0022](../decisions/0022-install-resolver-and-2-0-transition.md)).
+
+The normative [adapter inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
+enumerates removals separately for each endpoint, including nested tournament
+copies. The regular v2 `keys` object is absent entirely; precise upstream
+`k1`/`k2`/`m1`/`m2` and legitimate all-hit histories remain. Both removed exact
+routes (`/websocket/v2/subscribe` and `/files/skin/`) return ordinary 404 without
+upgrade or static fallthrough. Lazer legacy skin lookup is 404; API v1 skin
+trees remain supported. Legacy calculation accepts only a relative child of
+the selected session's declared songs root or an absolute spelling confined
+inside that session's declared roots. The separate calculation engine/query
+contract is unchanged.
+
+Bundled capture and file authority follow [the permanent surface contract](adapter-surfaces.md).
+An active-session change never rebinds an already selected file response.
+Removed-route attribution is bounded, advisory and based on validated overlay
+identity only; API v1 never discloses the private path grant used for echoes.
 
 ## Worked examples
 

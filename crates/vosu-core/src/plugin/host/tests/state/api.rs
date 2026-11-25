@@ -361,7 +361,7 @@ fn api_projection_never_uses_plugin_internal_grants() {
         .register_versioned(
             "vosu.osu",
             "vosu.osu",
-            &semver::Version::parse("1.2.0").unwrap(),
+            &semver::Version::parse("1.3.0").unwrap(),
             vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -369,7 +369,7 @@ fn api_projection_never_uses_plugin_internal_grants() {
             )),
         )
         .unwrap();
-    let manifest = vosu_plugin_api::manifest::PackageManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='osu.json'\n").and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='osu.json'\n").and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     let public_id = summary_id(&host.api_state_source().sessions().unwrap().remove(0));
     host.state.store.close_session(SessionKey(handle));

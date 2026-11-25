@@ -888,6 +888,8 @@ impl SettingsSchemaSource for PluginHost {
     }
 }
 
+mod diagnostics;
+pub use diagnostics::DiagnosticSession;
 mod action_delivery;
 mod actions;
 mod api;
@@ -903,6 +905,7 @@ mod scans;
 mod state;
 mod state_delivery;
 mod surface;
+pub(crate) use surface::SurfaceRequester;
 
 #[cfg(test)]
 mod tests;

@@ -440,7 +440,9 @@ class ComparatorTests(unittest.TestCase):
         self.assertEqual("keys", mismatches[0].comparator)
         self.assertEqual("/play", mismatches[0].pointer)
 
-    def test_documented_vosu_extensions_preserve_shared_field_comparison(self) -> None:
+    def test_removed_vosu_extensions_are_reported_never_exempted(self) -> None:
+        # ADR 0021 removed the 1.x extensions from every adapter wire. A live
+        # comparison must report any reappearance, nested copies included.
         cases = (
             ("v1", {"gameplay": {"hits": {"hitErrorArray": [2]}}},
              {"gameplay": {"hits": {"hitErrorArray": [2],
@@ -472,12 +474,11 @@ class ComparatorTests(unittest.TestCase):
                 source = Sample("source", schema, 1, source_payload)
                 vosu = Sample("vosu", schema, 2, vosu_payload)
                 for active in (False, True):
-                    self.assertEqual([], compare_pair(
-                        source, vosu, 300, active_override=active))
-                # Missing legacy fields must not be hidden by the extension policy.
-                source_payload["required"] = 1
-                self.assertEqual(["keys"], [
-                    item.comparator for item in compare_pair(source, vosu, 300)])
+                    comparators = [
+                        item.comparator for item in compare_pair(
+                            source, vosu, 300, active_override=active)]
+                    self.assertTrue(comparators)
+                    self.assertEqual({"keys"}, set(comparators))
 
         source = Sample("source", "precise", 1, {"pressHitErrors": [1]})
         vosu = Sample("vosu", "precise", 2, {"pressHitErrors": [2]})

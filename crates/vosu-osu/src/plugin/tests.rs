@@ -7,6 +7,7 @@ use vosu_plugin_api::{Bitness, DetachReason, SessionIdentify, TimerSet};
 
 use super::*;
 mod import_actions;
+mod tournament;
 
 #[derive(Default, Clone)]
 struct RecordingHost {
@@ -143,7 +144,7 @@ fn decline_is_sent_before_any_identify() {
     let (plugin, _data_dir) = hermetic(host, Platform::Windows);
     let mut message = attached(1, 100, "osu!.exe", Bitness::X86);
     message.argv = None;
-    message.command_line = Some("osu!.exe --tournament".to_owned());
+    message.command_line = Some("osu!.exe --debug-client-id=1".to_owned());
     plugin
         .dispatch(Message::SessionAttached(message), 0)
         .unwrap();

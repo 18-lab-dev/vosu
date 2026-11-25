@@ -11,11 +11,12 @@ use vosu::server::{
     auth::AuthorizationPolicy,
     origins::{OriginAuthorizer, Origins},
     routes::{
-        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PpQuery, ProviderFuture,
+        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, ProviderFuture,
         RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
     },
     websocket::UpgradeCallbackTracker,
 };
+use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_core::{
     api::SessionTarget,
     plugin::{self, PluginHost, PluginInstanceId},
@@ -153,7 +154,7 @@ impl Harness {
         pid: u32,
     ) -> (u64, std::sync::mpsc::Receiver<PublisherEvent>) {
         let manifest = format!(
-            "{}\n[[provides]]\nid='field:{id}'\nversion='1.2.0'\nschema='state.json'\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
+            "{}\n[[provides]]\nid='field:{id}'\nversion='1.3.0'\nschema='state.json'\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
             manifest(id)
         );
         publisher::register_manifest(id, &manifest);
@@ -161,7 +162,7 @@ impl Harness {
         let schema = if id == "vosu.osu" {
             include_str!("../../docs/v2/schemas/vosu.osu.schema.json").to_owned()
         } else {
-            format!(r#"{{"title":"{id}","version":"1.2.0","type":"object","properties":{{}}}}"#)
+            format!(r#"{{"title":"{id}","version":"1.3.0","type":"object","properties":{{}}}}"#)
         };
         self.load(&manifest, &[&schema], &[], publisher::vosu_plugin_vtable);
         self.host.process_appeared(record(pid, id));

@@ -38,7 +38,7 @@ fn selected_error_subtrees_enable_collection_without_an_effective_precise_lane()
             .unwrap();
         let receiver = publication.demand.bus_receiver();
         assert_eq!(receiver.borrow().collect_errors, collect, "{ns}{pointer}");
-        assert!(!receiver.borrow().lanes.precise);
+        assert!(!publication.demand.receiver().borrow().precise);
     }
 }
 
@@ -93,8 +93,8 @@ fn identify_reentrant_controls_are_retained_until_session_registration() {
     let session = plugin.state.lock().unwrap().sessions[&61106].clone();
     let publication = session.publication.get().unwrap();
     let receiver = publication.demand.bus_receiver();
-    assert!(receiver.borrow().lanes.regular);
-    assert!(receiver.borrow().lanes.precise);
+    assert!(publication.demand.receiver().borrow().regular);
+    assert!(publication.demand.receiver().borrow().precise);
     assert!(receiver.borrow().collect_errors);
     assert!(
         !publication.bus.update_foreground(Some(true)),
@@ -136,7 +136,7 @@ fn precise_only_demand_does_not_opt_in_to_error_collection() {
             )
             .unwrap();
         let receiver = publication.demand.bus_receiver();
-        assert!(receiver.borrow().lanes.precise);
+        assert!(publication.demand.receiver().borrow().precise);
         assert_eq!(receiver.borrow().collect_errors, collect, "{ns}{pointer}");
     }
     publication.demand.set_bus(false, true);

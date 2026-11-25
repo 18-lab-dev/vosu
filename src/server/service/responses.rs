@@ -1,26 +1,3 @@
-#[derive(serde::Serialize)]
-struct SkinMetadata<'a> {
-    client: Option<&'static str>,
-    name: &'a Option<String>,
-    files: bool,
-    builtin: Option<&'a str>,
-    base: Option<&'a str>,
-    #[serde(flatten)]
-    index: &'a files::SkinFileIndex,
-}
-
-fn skin_metadata<'a>(selected: &'a BeatmapFiles, index: &'a files::SkinFileIndex) -> SkinMetadata<'a> {
-    let skin = selected.skin.as_deref();
-    SkinMetadata {
-        client: selected.skin_client,
-        name: &selected.skin_name,
-        files: if selected.lazer { skin.is_some_and(|s| !s.files.is_empty()) }
-            else { selected.skin_root.as_ref().is_some_and(|p| p.is_dir()) },
-        builtin: skin.and_then(|s| s.builtin.as_deref()),
-        base: if selected.lazer { skin.and_then(|s| s.base.as_deref()) } else { selected.skin_client.map(|_| "legacy") },
-        index,
-    }
-}
 
 #[derive(Debug)]
 enum FileRouteError {
@@ -39,172 +16,27 @@ fn file_route_error_response(error: FileRouteError) -> Response {
     }
 }
 
-fn resolve_file_endpoint(
-    endpoint: Endpoint,
-    selected: &BeatmapFiles,
+fn resolve_counter_endpoint(
+    root: Option<&Path>,
     path: &str,
     target: &str,
-    skin_index: &mut files::SkinIndexCache,
 ) -> Result<ResourceOutcome, FileRouteError> {
-    let outcome = match endpoint {
-        Endpoint::BackgroundImage | Endpoint::BeatmapBackground => resolve_exact(
-            selected.songs_root.as_deref(),
-            selected.background_file.as_deref(),
-            selected_missing(selected),
-        )?,
-        Endpoint::BeatmapAudio => resolve_exact(
-            selected.songs_root.as_deref(),
-            selected.audio_file.as_deref(),
-            selected_missing(selected),
-        )?,
-        Endpoint::BeatmapFile => resolve_exact(
-            selected.songs_root.as_deref(),
-            selected.beatmap_file.as_deref(),
-            selected_missing(selected),
-        )?,
-        Endpoint::SongsFile => files::resolve_encoded_resource(
-            selected.songs_root.as_deref(),
-            path.strip_prefix("/Songs/").unwrap_or_default(),
-            target,
-            root_missing(selected.songs_root.as_deref(), selected),
-        )?,
-        Endpoint::BeatmapPath => files::resolve_encoded_resource(
-            selected.songs_root.as_deref(),
-            path.strip_prefix("/files/beatmap/").unwrap_or_default(),
-            target,
-            root_missing(selected.songs_root.as_deref(), selected),
-        )?,
-        Endpoint::SkinFile if selected.lazer => {
-            let encoded = path.strip_prefix("/files/skin/").unwrap_or_default();
-            let name = vosu_sys::fs::decode_request_path(encoded)?.replace('\\', "/");
-            let Some(relative) = vosu_osu::resources::legacy_skin::lookup(selected.skin.as_deref(), &name) else {
-                return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
-            };
-            let mut outcome = files::resolve_resource(selected.songs_root.as_deref(), relative, target, MissingKind::NotFound)?;
-            if let ResourceOutcome::File(file) = &mut outcome {
-                file.content_type = files::content_type(Path::new(&name));
-            }
-            outcome
-        }
-        Endpoint::SkinFile => skin_index.resolve_folder(
-            selected.skin_root.as_deref(), selected.skin_name.as_deref(),
-            path.strip_prefix("/files/skin/").unwrap_or_default(), target, selected_missing(selected),
-        )?,
-        Endpoint::CounterStatic => {
-            let relative = path.trim_start_matches('/');
-            if path.ends_with('/') {
-                let index_path = format!("{relative}index.html");
-                match files::resolve_encoded_counter_resource(
-                    selected.static_root.as_deref(),
-                    &index_path,
-                    target,
-                    MissingKind::NotFound,
-                )? {
-                    outcome @ (ResourceOutcome::File(_) | ResourceOutcome::Missing(_)) => outcome,
-                    ResourceOutcome::DirectoryIndex { .. } | ResourceOutcome::Redirect { .. } => {
-                        ResourceOutcome::Missing(MissingKind::NotFound)
-                    }
-                }
-            } else {
-                files::resolve_encoded_counter_resource(
-                    selected.static_root.as_deref(),
-                    relative,
-                    target,
-                    MissingKind::NotFound,
-                )?
+    let relative = path.trim_start_matches('/');
+    let outcome = if path.ends_with('/') {
+        let index_path = format!("{relative}index.html");
+        match files::resolve_encoded_counter_resource(root, &index_path, target, MissingKind::NotFound)? {
+            outcome @ (ResourceOutcome::File(_) | ResourceOutcome::Missing(_)) => outcome,
+            ResourceOutcome::DirectoryIndex { .. } | ResourceOutcome::Redirect { .. } => {
+                ResourceOutcome::Missing(MissingKind::NotFound)
             }
         }
-        _ => unreachable!(),
+    } else {
+        files::resolve_encoded_counter_resource(root, relative, target, MissingKind::NotFound)?
     };
     Ok(outcome)
 }
 
-fn root_missing(root: Option<&Path>, files: &BeatmapFiles) -> MissingKind {
-    if root.is_none() {
-        MissingKind::NotReady
-    } else {
-        selected_missing(files)
-    }
-}
-
-fn selected_missing(files: &BeatmapFiles) -> MissingKind {
-    if files.ready {
-        MissingKind::NotFound
-    } else {
-        MissingKind::NotReady
-    }
-}
-
-fn resolve_exact(
-    root: Option<&Path>,
-    relative: Option<&Path>,
-    missing: MissingKind,
-) -> Result<ResourceOutcome, vosu_sys::fs::SafePathError> {
-    let (Some(root), Some(relative)) = (root, relative) else {
-        return Ok(ResourceOutcome::Missing(missing));
-    };
-    let Some(relative) = relative.to_str() else {
-        return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
-    };
-    match files::resolve_resource(Some(root), relative, relative, missing)? {
-        outcome @ (ResourceOutcome::File(_) | ResourceOutcome::Missing(_)) => Ok(outcome),
-        ResourceOutcome::DirectoryIndex { .. } | ResourceOutcome::Redirect { .. } => {
-            Ok(ResourceOutcome::Missing(MissingKind::NotFound))
-        }
-    }
-}
-
-fn conditional_response(mut response: Response, validators: &files::FileValidators, headers: &axum::http::HeaderMap, head: bool) -> Response {
-    use axum::body::HttpBody as _;
-    if validators.not_modified(headers) {
-        response = Response::builder().status(StatusCode::NOT_MODIFIED).body(Body::empty()).expect("304 response");
-    } else if head {
-        if !response.headers().contains_key(header::CONTENT_LENGTH)
-            && let Some(length) = response.body().size_hint().exact()
-        {
-            response.headers_mut().insert(header::CONTENT_LENGTH, length.into());
-        }
-        *response.body_mut() = Body::empty();
-    }
-    validators.apply(response.headers_mut());
-    response
-}
-
-async fn game_resource_response(outcome: ResourceOutcome, range: Option<String>, lazer: bool, headers: &axum::http::HeaderMap, head: bool) -> Response {
-    let validators = match &outcome {
-        ResourceOutcome::File(file) => Some(files::FileValidators::for_file(file, lazer)),
-        _ => None,
-    };
-    if let Some(validators) = &validators
-        && validators.not_modified(headers)
-    {
-        return conditional_response(Response::new(Body::empty()), validators, headers, head);
-    }
-    if head && let ResourceOutcome::File(file) = &outcome {
-        let plan = files::plan_file_response(file, None).expect("a full response has no invalid range");
-        let mut response = Response::builder().status(plan.status)
-            .header(header::CONTENT_TYPE, plan.content_type)
-            .header(header::CONTENT_LENGTH, plan.content_length)
-            .body(Body::empty()).expect("HEAD response");
-        if let Some(ranges) = plan.accept_ranges {
-            response.headers_mut().insert(header::ACCEPT_RANGES, ranges.parse().expect("static range unit"));
-        }
-        return conditional_response(response, validators.as_ref().expect("file validators"), headers, true);
-    }
-    let range = (!head).then_some(range).flatten();
-    let mut response = resource_response(outcome, range).await;
-    if let Some(validators) = &validators {
-        response = conditional_response(response, validators, headers, head);
-    } else if head {
-        use axum::body::HttpBody as _;
-        if let Some(length) = response.body().size_hint().exact() {
-            response.headers_mut().insert(header::CONTENT_LENGTH, length.into());
-        }
-        *response.body_mut() = Body::empty();
-    }
-    response
-}
-
+#[cfg(test)]
 async fn resource_response(outcome: ResourceOutcome, range: Option<String>) -> Response {
     resource_response_with_counter_path(outcome, range, None).await
 }
@@ -635,10 +467,4 @@ fn internal_error(message: impl ToString) -> Response {
         StatusCode::INTERNAL_SERVER_ERROR,
         json!({ "error": message.to_string() }),
     )
-}
-fn calculation_error(status: StatusCode, message: impl ToString) -> CalculateResult {
-    CalculateResult::Failed {
-        status,
-        body: json_bytes(json!({ "error": message.to_string() })),
-    }
 }

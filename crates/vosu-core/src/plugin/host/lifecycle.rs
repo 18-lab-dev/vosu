@@ -211,6 +211,7 @@ impl PluginHost {
     /// the rest of discovery.
     pub fn foreground_changed(&self) {
         self.recompute_focus();
+        self.surface_roster_changed();
     }
 
     /// Finishes a detach once `sessions` has already removed `handle` and

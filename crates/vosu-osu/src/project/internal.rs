@@ -48,7 +48,11 @@ pub(super) fn project(
             c.null()
         }
         c.text("current");
-        if m.folder.is_none() && m.filename.is_none() {
+        if m.folder.is_none()
+            && m.filename.is_none()
+            && m.background_filename.is_none()
+            && m.audio_filename.is_none()
+        {
             c.null()
         } else {
             c.map(4);

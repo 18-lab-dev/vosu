@@ -29,7 +29,8 @@ pub(super) fn project(s: &StateBundleSnapshot, sink: &mut dyn ProjectionSink) {
     });
     sink.put_cbor(P::OsuPerformanceGraph, &mut |b| {
         let graph = &s.regular.beatmap.graph;
-        map(b, 2);
+        map(b, 3);
+        field(b, "primary", &graph.primary);
         text(b, "series");
         array(b, graph.series.len());
         for series in &graph.series {

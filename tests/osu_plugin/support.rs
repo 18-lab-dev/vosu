@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use vosu_core::plugin::{self, PluginHost, PluginInstanceId, ProcessRecord};
-use vosu_osu::bridge_b1::{B1Event, B1Inputs, B1Phase, B1SessionKey};
 use vosu_plugin_api::{
     ConcurrentPlugin, Init, Message, PluginError, VtableHostServices, vosu_status,
 };
@@ -24,7 +23,7 @@ static TEST_AVAILABLE: Condvar = Condvar::new();
 static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
 
 // A Send + Sync ownership token, not a thread-affine MutexGuard: Harness is
-// shared with producers, but the process-wide B1 slot stays exclusive until
+// shared with producers, but the fixture dispatch instrumentation stays exclusive until
 // all its fields (including runtime tasks) have been dropped.
 struct TestLease;
 impl TestLease {
@@ -111,104 +110,6 @@ impl ConcurrentPlugin for ObservedPlugin {
     }
 }
 vosu_plugin_api::export_plugin!(bundled concurrent ObservedPlugin);
-
-#[derive(Default)]
-pub struct EventOrder {
-    pub attached: Option<usize>,
-    pub starting: Option<usize>,
-    pub resolving: Option<usize>,
-    pub reading: Option<usize>,
-    pub first_publish: Option<usize>,
-}
-#[derive(Default)]
-pub struct Events {
-    pub attached: BTreeSet<B1SessionKey>,
-    pub identified: BTreeMap<
-        B1SessionKey,
-        (
-            vosu_osu_model::enums::ClientType,
-            vosu_osu_model::launch::InstanceSettings,
-        ),
-    >,
-    pub phases: BTreeMap<B1SessionKey, Vec<B1Phase>>,
-    pub published: BTreeMap<B1SessionKey, usize>,
-    pub latest: BTreeMap<B1SessionKey, Arc<vosu_osu_state::StateBundleSnapshot>>,
-    pub detached: BTreeSet<B1SessionKey>,
-    pub late_publish: bool,
-    sequence: usize,
-    pub order: BTreeMap<B1SessionKey, EventOrder>,
-}
-pub struct Sink {
-    pub events: Mutex<Events>,
-    changed: Condvar,
-    pub inputs: tokio::sync::watch::Sender<B1Inputs>,
-}
-impl Sink {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            events: Mutex::new(Events::default()),
-            changed: Condvar::new(),
-            inputs: tokio::sync::watch::channel(B1Inputs::default()).0,
-        })
-    }
-    pub fn until(&self, timeout: Duration, predicate: impl Fn(&Events) -> bool) {
-        let deadline = Instant::now() + timeout;
-        let mut events = self.events.lock().unwrap();
-        while !predicate(&events) {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "B1 event deadline expired");
-            events = self.changed.wait_timeout(events, remaining).unwrap().0;
-        }
-    }
-}
-impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
-    fn send(&self, event: B1Event) {
-        let mut events = self.events.lock().unwrap();
-        let sequence = events.sequence;
-        events.sequence += 1;
-        match event {
-            B1Event::Attached {
-                key,
-                client,
-                settings,
-                ..
-            } => {
-                events.order.entry(key).or_default().attached = Some(sequence);
-                assert!(events.identified.insert(key, (client, settings)).is_none());
-                assert!(events.attached.insert(key));
-            }
-            B1Event::Phase { key, phase } => {
-                let order = events.order.entry(key).or_default();
-                match phase {
-                    B1Phase::ResolvingOffsets => &mut order.resolving,
-                    B1Phase::StartingReader => &mut order.starting,
-                    B1Phase::Reading => &mut order.reading,
-                }
-                .get_or_insert(sequence);
-                events.phases.entry(key).or_default().push(phase);
-            }
-            B1Event::Publish { key, live, .. } => {
-                events.latest.insert(key, live);
-                events
-                    .order
-                    .entry(key)
-                    .or_default()
-                    .first_publish
-                    .get_or_insert(sequence);
-                events.late_publish |= events.detached.contains(&key);
-                *events.published.entry(key).or_default() += 1;
-            }
-            B1Event::Detached { key } => {
-                assert!(events.attached.remove(&key));
-                assert!(events.detached.insert(key));
-            }
-        }
-        self.changed.notify_all();
-    }
-    fn inputs(&self) -> tokio::sync::watch::Receiver<B1Inputs> {
-        self.inputs.subscribe()
-    }
-}
 
 pub struct Memory {
     base: usize,
@@ -308,13 +209,11 @@ pub struct Harness {
     pub settings: Arc<plugin::settings::PluginSettingsService>,
     pub schema: plugin::settings::SettingsSchema,
     pub id: String,
-    pub sink: Arc<Sink>,
     pub memory: Arc<Memory>,
     pub memories: Vec<Arc<Memory>>,
     pub pids: Vec<u32>,
     pub foreground: Arc<plugin::SyntheticForegroundSource>,
     config: Arc<vosu_core::config::ConfigStore>,
-    _installed: Option<vosu_surface::Installed>,
     _dirs: Vec<tempfile::TempDir>,
     _runtime: tokio::runtime::Runtime,
     _lease: TestLease,
@@ -401,7 +300,7 @@ impl Harness {
             &[vosu_osu::OSU_NAMESPACE_SCHEMA][..]
         } else {
             // Synthetic plugin identities cannot provide the reserved real
-            // namespace. These B1 lifecycle fixtures retain common coverage.
+            // namespace. These lifecycle fixtures retain common coverage.
             // Real-id schema registration is also covered by tests/state_bus.rs
             // (K8) and real_manifest_registers_its_namespace_schema.
             manifest
@@ -432,9 +331,6 @@ impl Harness {
             }],
         )
         .unwrap();
-        let sink = Sink::new();
-        let installed =
-            vosu_surface::install(sink.clone() as Arc<vosu_osu::bridge_b1::B1Sink>).unwrap();
         host.create_instance(
             PluginInstanceId::new(1),
             &loaded[0],
@@ -458,20 +354,15 @@ impl Harness {
             settings,
             schema: plugin::settings::SettingsSchema::parse(vosu_osu::SETTINGS_SCHEMA).unwrap(),
             id: id.into(),
-            sink,
             memory,
             memories,
             pids,
             foreground,
             config,
-            _installed: Some(installed),
             _dirs: dirs,
             _runtime: runtime,
             _lease: lease,
         }
-    }
-    pub fn remove_b1(&mut self) {
-        self._installed.take();
     }
     pub fn subscriber(
         &self,

@@ -53,7 +53,7 @@ fn session() -> (SchemaRegistry, SessionState) {
     reg.register_versioned(
         "vosu.osu",
         "vosu.osu",
-        &semver::Version::new(1, 2, 0),
+        &semver::Version::new(1, 3, 0),
         vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
         include_str!("../../../../../docs/v2/schemas/vosu.osu.schema.json"),
     )

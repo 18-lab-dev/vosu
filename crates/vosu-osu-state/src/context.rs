@@ -300,7 +300,7 @@ impl PollIntervalUpdates {
                     regular: duration_from_millis_saturating(value.poll_rate),
                     precise: duration_from_millis_saturating(value.precise_data_poll_rate),
                     subscription: (!subscribed.is_empty()).then(|| SubscriptionPolling {
-                        interval: duration_from_millis_saturating(value.v2_subscription_debounce),
+                        interval: Duration::from_millis(1),
                         demand: subscribed,
                     }),
                 }

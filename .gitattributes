@@ -5,3 +5,6 @@
 /THIRD_PARTY_NOTICES.md -text
 /**/THIRD_PARTY_LICENSES.txt -text
 /assets/** -text
+# The API v1 fixture plugin publishes these files and tests assert their exact
+# sizes and served bytes, so a Windows checkout must not convert line endings.
+/tests/fixtures/api-v1-plugin/** -text

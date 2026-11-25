@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Duration};
 const RESOURCE_OPERATION_DEADLINE: Duration = Duration::from_secs(5);
 use vosu_core::{config::Config, plugin::PluginHost};
 
-pub(super) async fn resource_host(
+pub(in crate::runtime) async fn resource_host(
     logger: vosu_core::logging::Logger,
     settings: Arc<vosu_core::plugin::settings::PluginSettingsService>,
     data: &std::path::Path,

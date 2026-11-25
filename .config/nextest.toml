@@ -28,3 +28,14 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 [[profile.default.overrides]]
 filter = 'package(vosu-sys) & test(=platform::windows::tests::concurrent_readers_never_observe_missing_file)'
 slow-timeout = { period = "150s", terminate-after = 4 }
+
+# `vosu-core` updater::tests::prop_crash_recovery_settles_to_old_or_new_with_no_leftovers
+# is a fixed-seed property test: a fixed number of cases, each replaying a full
+# update lifecycle with injected crashes against real files. On GitHub's
+# hosted windows-latest runner it measured 77.7s (Rust CI run 45440559274,
+# passing under the earlier 60s x 5 bound), and was killed by the 60s default
+# above in run 45445620102. The work is fixed, not an open-ended wait, so it
+# gets about 3x its measured time: 60s x 4 periods = 240s.
+[[profile.default.overrides]]
+filter = 'package(vosu-core) & test(=updater::tests::prop_crash_recovery_settles_to_old_or_new_with_no_leftovers)'
+slow-timeout = { period = "60s", terminate-after = 4 }

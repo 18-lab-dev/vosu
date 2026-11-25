@@ -23,7 +23,7 @@ pub fn bench(c: &mut Criterion, group: &str, case: &str) {
             manifest,
             settings_schema: Some(include_str!("../../crates/vosu-osu/settings.schema.json")),
             namespace_schemas: &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")],
-            action_schemas: &[],
+            action_schemas: vosu_osu::ACTION_SCHEMAS,
             vtable: publisher::vosu_plugin_vtable,
         }],
     )

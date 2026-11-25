@@ -39,7 +39,6 @@ use std::sync::atomic::AtomicBool;
 pub(crate) struct SessionPublication {
     pub bus: Arc<crate::publish::BusPublisher<crate::publish::SessionHost>>,
     pub demand: crate::demand::SessionDemand,
-    pub hub: tokio::sync::watch::Sender<vosu_osu_state::SubscriptionDemand>,
 }
 mod capture;
 #[cfg(any(test, feature = "test-harness"))]
@@ -87,6 +86,9 @@ pub struct OsuSession {
     resolver: tokio::sync::Mutex<Option<LazerResolverHandle>>,
     capture: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     pub(crate) osu_settings: tokio::sync::watch::Sender<OsuSettings>,
+    manager: AtomicBool,
+    pub(crate) selected: Arc<AtomicBool>,
+    pub(crate) tournament: std::sync::OnceLock<Arc<crate::publish::tournament::Tournament>>,
     pub(crate) publication: std::sync::OnceLock<SessionPublication>,
 }
 
@@ -128,6 +130,9 @@ impl OsuSession {
             resolver: tokio::sync::Mutex::new(None),
             capture: tokio::sync::Mutex::new(None),
             osu_settings: tokio::sync::watch::channel(OsuSettings::default()).0,
+            manager: AtomicBool::new(false),
+            selected: Arc::new(AtomicBool::new(false)),
+            tournament: std::sync::OnceLock::new(),
             publication: std::sync::OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-harness"))]
@@ -135,14 +140,19 @@ impl OsuSession {
         session
     }
 
+    pub(crate) fn set_tournament_manager(&self, manager: bool) {
+        self.manager
+            .store(manager, std::sync::atomic::Ordering::Release);
+    }
+    pub(crate) fn is_tournament_manager(&self) -> bool {
+        self.manager.load(std::sync::atomic::Ordering::Acquire)
+    }
     pub(crate) fn configure_publication<
         H: vosu_plugin_api::HostServices + Send + Sync + 'static,
     >(
         &self,
         host: Arc<H>,
-        runtime: &tokio::runtime::Handle,
     ) {
-        let (hub, receiver) = tokio::sync::watch::channel(Default::default());
         let bus = Arc::new(crate::publish::BusPublisher::new(
             crate::publish::SessionHost(host),
             self.handle,
@@ -158,8 +168,7 @@ impl OsuSession {
             self.publication
                 .set(SessionPublication {
                     bus,
-                    demand: crate::demand::SessionDemand::new(receiver, runtime),
-                    hub,
+                    demand: crate::demand::SessionDemand::new(),
                 })
                 .is_ok(),
             "publication is installed once before session registration"
@@ -182,6 +191,12 @@ impl OsuSession {
     /// [`Self::join_resolver`].
     pub fn cancel(&self) {
         self.lifecycle.cancel();
+        if let Some(publication) = self.publication.get() {
+            publication.bus.deactivate();
+        }
+        if let Some(tournament) = self.tournament.get() {
+            tournament.detach(self.handle);
+        }
         if let Some(publication) = self.publication.get() {
             publication.demand.cancel();
             if let Some(resources) = publication.bus.resources.get() {

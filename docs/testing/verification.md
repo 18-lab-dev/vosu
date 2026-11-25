@@ -11,12 +11,12 @@ tags: [testing, ci, parity, benchmarks, release]
 ## Fast selection by change
 
 - API projection/routing: affected tests plus `cargo test --locked --test state_api_compat` and/or `server_compat`; add `daemon_smoke` for startup/serving changes.
-- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; keep `state_api_compat` unchanged to guard the B1-served 1.x APIs.
+- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; `state_api_compat` replays the source oracle through the bus-backed adapters, so a projection change must keep its bytes.
 - Configuration/counters: affected unit tests plus `cargo test --locked --test config_compat`; cover flat typed TOML parsing, precedence `vosu.toml > vosu.env > tosu.env > defaults`, canonical replacement before legacy removal, malformed startup/reload preservation of last-good state, watcher handling, and atomic writes.
 - Process/memory: affected tests plus `cargo test --locked --test process_memory -- --nocapture` on every affected native OS.
 - Updater/release: `updater_compat`, native `updater_native`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` for package/startup changes.
 - Calculation/state: `vosu-pp` tests, `performance_invariants`, `state_bus_invariants`, and `state_api_compat`/`server_compat` when observable schemas or timing can change; for v2 stats, cover parsed/missing maps, modes, mods, clock rate, and catch timing-window semantics. The oracle-backed `live_contracts` and `oracle_parity` tests require the crate’s `oracle-debug` feature. Live parity is optional ([ADR 0011](../decisions/0011-live-parity-optional.md)).
-- Compatibility payloads: assert the original `hitErrors`/`hitErrorArray` arrays plus additive sibling `pressHitErrors` and `releaseHitErrors` arrays across v1, stream companion, v2, precise, play, and tournament fixtures; include the lazer mania hold release-correction case.
+- Compatibility payloads: assert the original `hitErrors`/`hitErrorArray` arrays across v1, stream companion, v2, precise, play, and tournament fixtures, and the absence of every ADR 0021 extension member (`pressHitErrors`, `releaseHitErrors`, `keyHitErrors`, `hitOffsets`, `keys.all`, `catcher`) at every nesting level while the bus holds nonempty source facts; include the lazer mania hold release-correction case.
 - Untrusted-input and crash-recovery logic (ZIP preflight, updater recovery, API-state selection, served paths, JSON Pointers): `cargo test --workspace --lib --all-features --locked prop_`. These property tests use a fixed seed; `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores new cases, and the nightly workflow runs 20,000 cases per property. A failure persists its seed to `proptest-regressions/lib-prop-failures.txt`; commit that file with the fix.
 - Lazer offsets: `python scripts/lazer-offset-canary.py [--tag <release>-lazer]` stages the generator on the client's own runtime exactly as the daemon does and fails naming any template field it cannot resolve. The nightly workflow runs it against the newest lazer release.
 - Dashboard and tool host: `tests/tool_host_smoke.py` and `tests/dashboard_smoke.py` against a `--features test-harness` debug build; CI's `dashboard` job runs them when UI paths change, and the nightly workflow also runs the catalog-art and tool-catalog smokes.
@@ -68,6 +68,61 @@ For M2 performance contracts use
 `cargo nextest run --locked --features test-harness --test performance_invariants --test state_bus_invariants`
 and the scoped commands in the [benchmark guide](benchmarks.md). Performance
 evidence and D17's decision belong there, not in a functional test pass.
+
+## M4a contract and adapter acceptance
+
+A4 resolves the approved choices in the
+[source/removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
+and [P0/R0 surface contract](../v2/adapter-surfaces.md). Since the production
+cutover, `state_api_compat` drives the actual producer → ABI/bus → authorized
+surface → adapter registration and compares raw emitted bytes, preserving the
+source pin and fixture inventory; no B1 ingress remains.
+Do not strip extensions or normalize regular keys away. Nonempty extension
+source facts must exist while the wire keys are absent. Restore schema
+renames on adapter output; schema-only divergences authorize no wire skip.
+
+Required cases cover four distinct physical slots vs logical actions,
+pending/ready/missing-score tournament states, stable aggregate on every stable
+session, nonselected Windows foreground, common null vs out-of-play raw values,
+numeric inverse boundaries/properties, denied private siblings, and no demand
+from HTTP reads. P0/R0 tests additionally cover foreign registration,
+method/matcher collisions, coherent focus/roster cuts, stale root generations,
+same-open-object bytes/metadata, close-once cancellation and native confinement.
+Provider invariants exercise 100-client shared bytes, cache bounds and eviction,
+1,000-update coalescing, RAII demand and zero unchanged-chart parses.
+All waits have explicit finite timeouts and barriers, never ordering sleeps.
+
+```sh
+# A4 docs and unchanged schema contract
+python scripts/check-doc-links.py
+python scripts/check-brand.py
+jq empty docs/v2/schemas/*.json
+# Offline JSON Schema validation through the existing fixture suite
+cargo test --locked --test state_bus_compat
+# P0/P1/R0 implementation gates (after those units land)
+cargo nextest run --locked -p vosu-surface -p vosu-core -p vosu-osu --all-features
+cargo test --locked --features test-harness --test state_bus --test plugin_host --test osu_plugin --test api_v1_compat
+cargo test --locked --test state_api_compat --test server_compat --test state_bus_compat
+cargo test --locked --test performance_invariants --test runtime_wakeups --test config_compat
+cargo test --locked --features test-harness --test daemon_smoke
+# Native Windows, pending when the VM is occupied; never substitute cross-Clippy
+python scripts/vm-test.py --test state_api_compat
+python scripts/vm-test.py --test server_compat
+python scripts/vm-test.py --package vosu-core --lib
+python scripts/vm-test.py --package vosu-sys --lib
+```
+
+Main lists expected names/nonzero counts before the integrated gate; native
+Windows evidence names keys, multi-session foreground/tournament and root
+confinement cases. No VM lifecycle action is implied by these instructions.
+Use `flock /tmp/vosu-smoke.lock` for smokes. D17 names and measurement policy
+are [frozen separately](benchmarks.md#m4a-d17-contract), not passed by functional
+tests. M4b owns live captures/golden tooling and M8 owns migration execution.
+
+The exit run of these commands, with exact counts, the native Windows results
+and the native-only symlink-privilege and flake observations, is recorded in
+the [M4a outcome](../v2/implementation-plan.md#m4a-outcome). The D17 status is
+in the [benchmark guide](benchmarks.md#m4a-d17-status-at-the-exit).
 
 ## M3 API, resources and actions
 
@@ -135,7 +190,7 @@ shutdown. A test-only forwarding `HostServices` wrapper counts every production
 osu plugin `ACTION_RESULT` before host acceptance, including rejected duplicates.
 J3 also fixes the registration boundary: the plugin's action-target session is
 installed before `SESSION_IDENTIFY` publishes it; rejection rolls that preparation
-back. Capture/B1 still starts only after acceptance, and B2 settings delivery is
+back. Capture still starts only after acceptance, and B2 settings delivery is
 still serialized by the same plugin-state lock. A re-entrant identify/action
 regression tests the formerly missing-target window deterministically.
 
@@ -174,13 +229,39 @@ to select an explicitly installed browser executable. Alpha fixtures compare
 all normal-root file names/bytes before and after import, then poison the old
 config and restart at the imported port without consulting it.
 
-Host evidence (2026-11-24): daemon smoke 2/2, API-v1 compatibility 33/33,
-plugin host 8/8 and alpha bootstrap 1/1 passed. The affected-crate all-feature
-nextest run passed 687 tests (3 pre-existing ignored tests); the retained curl
-and required Chromium browser phases passed. All 232 script tests plus 47
-subtests, formatting, workspace Linux/Windows cross-Clippy, pinned actionlint
-1.7.12 and applicable repository checks passed. Native Windows and all four
-live-client combinations below remain **pending**, not inferred from host tests.
+Exit evidence (2026-11-24, after merging `v2/main`):
+
+- **Linux.** The full workspace nextest run passed 2,517 tests (6 skipped).
+  Formatting, workspace and Windows cross-Clippy, every `check-*.py`, and every
+  `scripts/test_*.py` suite passed. So did the tool-host smoke (retained curl
+  phase plus the required Chromium phase) and the dashboard smoke. Listed
+  targets: `api_v1_compat` 33, `daemon_smoke` 2, `plugin_host` 8,
+  `osu_plugin` 8, `state_bus` 6, `prerelease_bootstrap` 1.
+- **Native Windows (`vm-test.py`).** `api_v1_compat` 33/33, `server_compat`,
+  `vosu-core` lib 574/574 and `vosu-osu` lib 196 passed (1 ignored).
+  `daemon_smoke` ran 0 tests because the target is Linux-only. `vosu-sys` lib
+  passed 59 under `vm-test.py`; its two Windows file-symlink tests fail with
+  error 1314 there, because the LIMITED scheduled task lacks
+  `SeCreateSymbolicLinkPrivilege`. At High integrity (the `prepush.py` native
+  context) `vosu-sys` passed 61/61.
+- **Live Windows.** A release `2.0.0-alpha.1` binary ran from an isolated
+  program folder in the VM, against the VM's own test installations. Stable
+  passed 51/51 resource, range, HEAD, 304/416, 307, tree, skin-alias, 410
+  retirement and legacy checks. Its import returned `queued`, added one
+  byte-identical archive to the selected Songs folder, and left all 436
+  existing files unchanged. Lazer passed 33/38; the five misses come from the
+  built-in intro map and built-in skin, which have no background and no
+  indexed skin files. Its import returned `submitted` to the selected
+  executable, and the handoff child was reaped. The game-side import was not
+  observed within 30 s. Concurrent clients kept fixed ids, and one owner's
+  detach did not retire the other's resources. A selected-destination import
+  on a just-identified stable session returned `target_gone`, so that case
+  is unproven. The raw evidence is under
+  `/home/user/gh/vecosystem/evidence/m3-exit/`.
+- **Pending.** Linux lazer and stable/Wine live runs: their isolated
+  installations exist only in the Linux VM, which cannot run beside the
+  Windows VM. Also pending: live source mutation, gameplay traversal, and
+  the M3 D17 decision.
 
 #### Final API-v1 route inventory
 
@@ -357,6 +438,42 @@ MSVC SDK caching is independent of Cargo.lock and restricted to x86_64. Prepared
 ## Evidence workflows
 
 `tools/live-parity/` is an optional interactive diagnostic, not a normal unit test or a required check ([ADR 0011](../decisions/0011-live-parity-optional.md)). Use it to investigate a suspected divergence from upstream: validate configuration, capture a controlled client lifecycle, compare, and generate diffs. It requires pinned artifacts, distinct loopback ports, and supported platform/client combinations. Dated captures, release gates, and native runs are kept in the [verification history](verification-history.md) as evidence for their recorded source generations.
+
+### Live parity for the bus-backed adapters
+
+Since M4a the compared vosu endpoints are the three bundled adapter
+projections mounted through the permanent surface: HTTP `/json`, `/json/sc`,
+`/json/v2`, `/json/v2/precise` and the `/ws`, `/tokens`, `/websocket/v2`,
+`/websocket/v2/precise` feeds. The tool attests the 2.0 workspace package
+version and compares the adapters' real bytes against the pinned upstream
+reference with no extension exemption: ADR 0021 removed every 1.x extension
+member (the `adr0021-*` rows of the
+[divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md)), so any
+reappearance, including nested tournament copies, is a `keys` mismatch. The
+generated vosu configuration no longer writes the retired
+`ENABLE_KEY_OVERLAY` or `V2_SUBSCRIPTION_DEBOUNCE`; real feed selectors drive
+precise demand. Only the owner starts a capture, with a validated
+configuration, distinct loopback ports and a supported native pair, traversing
+menu → active play → paused → result → client exit:
+
+```sh
+python tools/live-parity/run.py config-schema
+python tools/live-parity/run.py check-config --config "$PARITY_CONFIG"
+python tools/live-parity/run.py capture --config "$PARITY_CONFIG" --out "$CAPTURE"
+python tools/live-parity/run.py compare --capture "$CAPTURE" --report "$REPORT"
+python tools/live-parity/run.py diff --capture "$CAPTURE" --out-dir "$DIFF_DIR"
+```
+
+A capture remains diagnostic evidence for its recorded build only; it neither
+replaces nor relaxes the deterministic gate. That gate is `state_api_compat`
+(committed source oracle replayed through producer → ABI → bus → surface →
+adapter bytes), `server_compat` (the mounted production listener matrix) and
+`daemon_smoke` with `test-harness`. Fix a reported mismatch in the owning
+adapter or record an approved ledger row with exact route and member scope;
+never add a comparator exemption. M4b owns the pilot/full golden capture
+commands and owner artifacts; until they exist, report missing captures as
+pending M4b/release evidence, never as a pass. The 1.x captures in the
+verification history attest vosu 1.2.5 only.
 
 Native-reference mode also accepts the exact compressed upstream Linux 4.26.2
 ELF (SHA-256 `fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f`).
@@ -560,21 +677,21 @@ passed with 198 historical removals acknowledged by an existing trailer.
 Standalone checks passed for 18 workspace members on Linux and Windows
 **xwin**, which is not native Windows execution. No VM action was taken.
 
-### Native Windows evidence: pending
+### Native Windows evidence
 
-**Pending; not run for this outcome.** The VM is busy. V7 neither starts nor
-uses it, and no native path/metadata/consumer completion claim is made.
-Main will run and record results for these exact host-side commands when the
-already-running VM is available:
+Main ran both commands natively in the Windows agent VM on 2026-11-24, over
+`2c349eb`, using the staged HEAD and `--jobs 16`:
 
 ```sh
-taskset -c 0-7,16-23 nice -n 10 python scripts/vm-test.py --package vosu-plugin-api --lib -- manifest
-taskset -c 0-7,16-23 nice -n 10 python scripts/vm-test.py --test catalog_v2_compat
+python scripts/vm-test.py --jobs 16 --package vosu-plugin-api --lib -- manifest
+python scripts/vm-test.py --jobs 16 --test catalog_v2_compat
 ```
 
-M6a remains pending native evidence and the main-owned integrated landing gate.
-Neither cross-Clippy nor portable platform-policy tests replace native Windows
-filesystem, confined asset and manifest/metadata precedence behavior.
+Results: `manifest` **59 passed**, the same count the Linux lib filter lists.
+`catalog_v2_compat` (all features) **23 passed**. Zero failures and zero
+ignored. These runs cover native Windows filesystem, confined-asset and
+manifest/metadata precedence behavior; cross-Clippy alone did not. The
+main-owned integrated landing gate is still required.
 
 ## M6b contract and evidence obligations
 

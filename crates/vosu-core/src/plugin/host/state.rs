@@ -121,15 +121,7 @@ impl PluginHost {
     pub(super) fn close_bus_sessions_for(&self, plugin_id: &str) {
         let detached = {
             let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
-            let handles = sessions
-                .identified_sessions()
-                .filter(|(_, owner, _)| owner.as_str() == plugin_id)
-                .map(|(handle, _, _)| handle)
-                .collect::<Vec<_>>();
-            handles
-                .into_iter()
-                .filter_map(|handle| sessions.detach(handle, vosu_plugin_api::DetachReason::Lost))
-                .collect::<Vec<_>>()
+            sessions.detach_owner(plugin_id)
         };
         for event in detached {
             self.surface_session_detaching(SessionKey(event.handle));
@@ -144,6 +136,8 @@ pub(super) struct Publisher {
     pub(super) grant: crate::state::PublisherGrant,
     pub(super) version: String,
     pub(super) read_grant: crate::state::InternalGrant,
+    pub(super) read_fields: Vec<String>,
+    pub(super) read_resources: Vec<String>,
     pub(super) bundled: bool,
     pub(super) _registration: SchemaRegistration,
 }
