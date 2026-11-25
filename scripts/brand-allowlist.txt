@@ -30,7 +30,7 @@ docs/quickstart.md 1 upstream names the upstream tosu compatibility target for n
 docs/features.md 1 third-party-catalog names the upstream tosu.app community overlay catalog behind the Available page
 docs/security.md 2 upstream describes the upstream tosu catalog network dependency
 docs/testing/benchmarks.md 73 history records historical released-tosu comparison measurements
-docs/testing/verification.md 5 upstream tosu.env migration precedence and the pinned upstream reference release used by live parity
+docs/testing/verification.md 6 upstream tosu.env migration precedence, the pinned upstream reference release used by live parity, and the M5 X0 parity corpus pin's upstream revision
 docs/testing/verification-history.md 8 history dated parity captures against the pinned upstream tosu reference build
 docs/workflows/compatibility-and-calculation.md 1 upstream references the upstream tosu compatibility target
 docs/workflows/runtime-and-config.md 3 upstream references legacy tosu.env migration handling
@@ -58,6 +58,7 @@ crates/vosu-core/src/updater/tests_release.rs 2 migration updater test fixture r
 tests/config_compat.rs 2 migration compatibility test covering the legacy tosu.env migration input
 tests/daemon_smoke.rs 6 migration daemon smoke test covering the legacy tosu config-root migration
 tests/state_api_compat/oracle.rs 2 parity source-oracle revision document uses the upstream tosu field name as parity evidence
+tests/plugin_host_native/parity.rs 1 parity M5 X0 parity records the source-oracle corpus pin's upstream tosu revision
 tests/updater_compat.rs 2 migration updater compatibility test fixture rejecting the former tosu release asset name
 tests/fixtures/oracle/inventory.json 1 provenance pinned oracle inventory fixture recording the upstream tosu revision
 tools/oracle/** 63 provenance pinned calculator oracle tooling, reference fork, and input fixtures recording the upstream tosu revision and Creator metadata
