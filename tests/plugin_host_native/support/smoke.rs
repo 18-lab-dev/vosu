@@ -37,7 +37,7 @@ struct Run {
 
 impl Run {
     fn testkit(fault: &str, trigger: Option<u32>) -> Self {
-        let root = tempfile::tempdir().unwrap();
+        let root = super::scratch();
         let staged = Artifact::Testkit.stage(&root.path().join("package"), &[]);
         let fixture = Fixture::new(&root.path().join("receipts"));
         fixture.control(&staged, fault, trigger, None);
@@ -49,8 +49,19 @@ impl Run {
         }
     }
 
+    /// Creates the instance and records how long startup took, the evidence
+    /// for the startup-deadline budget.
     fn create(&self) -> Result<(), HostError> {
-        self.host.create(1, &self.host.load(&self.staged.dir))
+        let loaded = self.host.load(&self.staged.dir);
+        let started = Instant::now();
+        let result = self.host.create(1, &loaded);
+        println!(
+            "RECORD create {} in {:?} ({})",
+            self.staged.dir.display(),
+            started.elapsed(),
+            if result.is_ok() { "ready" } else { "failed" }
+        );
+        result
     }
 
     fn receipt(&self, probe: &str) -> Receipt {
@@ -76,7 +87,7 @@ fn startup_stage(result: Result<(), HostError>) -> String {
 
 #[test]
 fn support_artifacts_stage_the_prepared_cargo_libraries_per_test() {
-    let root = tempfile::tempdir().unwrap();
+    let root = super::scratch();
     for artifact in [Artifact::Testkit, Artifact::Osu] {
         let source = artifact.library();
         let first = artifact.stage(&root.path().join(format!("{artifact:?}-a")), &[]);
@@ -367,7 +378,7 @@ fn support_fault_corrupt_frame_ends_the_channel() {
 /// own target's distinct bytes through core.
 #[test]
 fn support_distinct_data_source_targets_read_their_own_bytes() {
-    let root = tempfile::tempdir().unwrap();
+    let root = super::scratch();
     let host = Host::new(root.path());
     let targets = [
         ("a", 0x7FFF_F0A1_u32, 0x1111_2222_3333_4444_u64),
@@ -424,7 +435,7 @@ fn support_distinct_data_source_targets_read_their_own_bytes() {
 /// loading path for the fixture package itself.
 #[test]
 fn support_osu_process_plugin_reaches_ready_in_the_plugin_host() {
-    let root = tempfile::tempdir().unwrap();
+    let root = super::scratch();
     let library = Artifact::Osu.library();
     let file_name = library.file_name().unwrap().to_str().unwrap();
     let package = root.path().join("package");

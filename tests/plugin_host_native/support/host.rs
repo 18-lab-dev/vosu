@@ -95,9 +95,30 @@ pub struct Host {
     targets: std::sync::Mutex<Vec<u32>>,
 }
 
+/// Runs `vosu plugin-host` once per test process, with no descriptors, which
+/// refuses at once (exit 70) without starting a daemon. On Windows the first
+/// execution of a never-seen image hash is evaluated before it runs (the
+/// VM's Smart App Control evaluation mode: about 3 s for a fresh 31 MB
+/// executable). Without this, every test in a run's first parallel wave paid
+/// that one-time cost for the freshly built `vosu.exe` inside the plugin
+/// host's 5-second startup deadline: they all took 3.3–4.3 s to start, against
+/// about 60 ms afterwards.
+fn prime_executable() {
+    static PRIMED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    PRIMED.get_or_init(|| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_vosu"))
+            .arg("plugin-host")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(70), "{output:?}");
+    });
+}
+
 impl Host {
     /// A host whose logs and instance data live under `root`.
     pub fn new(root: &Path) -> Self {
+        prime_executable();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let host = {
             let _enter = runtime.enter();

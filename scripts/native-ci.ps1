@@ -60,7 +60,7 @@ $overallExit = $overallExit -bor (Invoke-Step 'cargo-clippy' @(
 # builds in this guest; it never runs Cargo itself. Without them the test
 # step does not run, so prepush.py finds no 'cargo-test-workspace' result.
 $fixturesExit = Invoke-VosuPluginHostFixtures -CargoExe $cargo -WorkingDirectory $source `
-    -LogDir $logs -Steps $steps -Target 'x86_64-pc-windows-msvc'
+    -LogDir $logs -Steps $steps -Target 'x86_64-pc-windows-msvc' -ScratchRoot 'V:\agent-desktop\tmp'
 $overallExit = $overallExit -bor $fixturesExit
 if ($fixturesExit -eq 0) {
     $overallExit = $overallExit -bor (Invoke-Step 'cargo-test-workspace' @(
@@ -83,6 +83,7 @@ if ($Repeat) {
                 '--target', 'x86_64-pc-windows-msvc', $filter))
     }
 }
+Remove-VosuPluginHostScratch
 
 $summary = [ordered]@{
     commit = $actual

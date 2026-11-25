@@ -1023,6 +1023,40 @@ RECEIPT artifact=<name> sha256=<hex> path=<staged path>
 Native Windows builds the same example targets in the guest after staging.
 Linux artifacts are never copied there.
 
+Windows charges two first-time costs to each fresh library, both measured in
+the VM.
+
+- **Image evaluation of each never-seen hash.** The VM runs Smart App Control
+  in evaluation mode with user-mode code integrity, and it evaluates an image
+  on its first load. A fresh 0.8 MB DLL took 0.5–1.1 s to load, even in a
+  Defender-excluded directory. A copy of the same hash at another path then
+  loaded in about 12 ms.
+- **Defender on-access scans in unexcluded directories.** The first read of
+  a fresh file took 1.6–3 s for 194 MB and 0.2 s for 0.8 MB, against about
+  50 ms excluded. The vm-test work roots (`V:\bt\vmt-*`, temporary directory
+  included) are not excluded.
+
+Both costs landed inside the plugin host's 5-second startup deadline. A run's
+first wave of parallel tests took 3.3–5.5 s to create and some timed out,
+while later creates took about 50 ms. The first-wave times were nearly equal,
+because every test waited on the same one-time evaluation of the freshly
+built `vosu.exe` on its first execution: a fresh 31 MB executable took about
+3 s to start the first time, even in an excluded directory.
+
+Three measures remove these costs from the deadline:
+
+- `support::host` runs `vosu plugin-host` once per test process before the
+  first host. It has no descriptors, so it refuses at once with exit 70. This
+  was the decisive fix: in three full native runs afterwards, every create
+  took 52–117 ms.
+- On Windows, `scripts/plugin-host-fixtures.py` loads and frees each staged
+  library once (`PRIMED ... first_load_ms=` in its log), so each build's
+  library hash is evaluated before any test runs.
+- `native-ci.ps1` and `vm-test.ps1` export `VOSU_PLUGIN_HOST_SCRATCH_DIR`, a
+  unique directory under the excluded `V:\agent-desktop\tmp`.
+  `support::scratch` places each test's packages, receipts and instance data
+  there. Unset, it uses the system temporary directory.
+
 **Per-run isolation.** Each test stages its own copy of the testkit library,
 and writes a control file, `testkit-fixture.control`, beside that copy. The
 library's load-time constructor finds the file through its own module path

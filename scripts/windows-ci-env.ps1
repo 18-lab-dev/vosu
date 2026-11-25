@@ -146,6 +146,14 @@ function Invoke-VosuPluginHostFixtures {
     .PARAMETER Target
     Must match the test build's own --target, so the libraries come from the
     same target directory layout.
+    .PARAMETER ScratchRoot
+    A directory Defender's real-time scanning excludes (the VM's
+    V:\agent-desktop\tmp). Each plugin-host test stages its own fresh copy of
+    a fixture library; in an unexcluded directory the on-access scan of every
+    copy (measured 1.6-3 s for 194 MB, 0.2 s for 0.8 MB, against about 50 ms
+    excluded) runs inside the 5-second startup deadline under parallel load.
+    A unique subdirectory is exported as VOSU_PLUGIN_HOST_SCRATCH_DIR;
+    remove it with Remove-VosuPluginHostScratch.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$CargoExe,
@@ -153,6 +161,7 @@ function Invoke-VosuPluginHostFixtures {
         [Parameter(Mandatory = $true)][string]$LogDir,
         [Parameter(Mandatory = $true)]$Steps,
         [string]$Target,
+        [string]$ScratchRoot,
         [int]$TimeoutSeconds = 0
     )
     $python = (Get-Command python.exe -ErrorAction Stop).Source
@@ -166,10 +175,26 @@ function Invoke-VosuPluginHostFixtures {
         -WorkingDirectory $WorkingDirectory -Arguments $arguments -LogDir $LogDir -Steps $Steps `
         -TimeoutSeconds $TimeoutSeconds
     if ($exitCode -eq 0) {
+        if ($ScratchRoot) {
+            $scratch = Join-Path $ScratchRoot ('plugin-host-' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+            $env:VOSU_PLUGIN_HOST_SCRATCH_DIR = $scratch
+        }
         foreach ($line in Get-Content $envFile) {
             $name, $value = $line -split '=', 2
             Set-Item -Path ('Env:\' + $name) -Value $value
         }
     }
     return $exitCode
+}
+
+function Remove-VosuPluginHostScratch {
+    <#
+    .SYNOPSIS
+    Best-effort removal of the scratch directory Invoke-VosuPluginHostFixtures
+    created, if any.
+    #>
+    if ($env:VOSU_PLUGIN_HOST_SCRATCH_DIR) {
+        Remove-Item -Recurse -Force $env:VOSU_PLUGIN_HOST_SCRATCH_DIR -ErrorAction SilentlyContinue
+    }
 }

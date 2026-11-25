@@ -35,6 +35,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,6 +109,36 @@ def env_lines(paths):
     return [f"{name}={path}" for name, path in paths.items()]
 
 
+def prime_image(path):
+    """Windows only: loads and frees `path` once, returning the load time in
+    milliseconds, or None elsewhere.
+
+    Windows evaluates every never-seen image hash on its first load (the VM
+    runs Smart App Control in evaluation mode with user-mode code integrity):
+    a fresh 0.8 MB DLL took 0.5-1.1 s to load even in a Defender-excluded
+    directory, while a same-hash copy at another path took about 12 ms. Each
+    test loads its own copy of these libraries inside the plugin host's
+    5-second startup deadline, so the one-time per-build evaluation happens
+    here instead. Neither fixture runs code at load without a control file
+    beside it, and none exists beside the staged copy."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LoadLibraryExW.restype = wintypes.HMODULE
+    kernel32.LoadLibraryExW.argtypes = (wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD)
+    kernel32.FreeLibrary.argtypes = (wintypes.HMODULE,)
+    started = time.monotonic()
+    handle = kernel32.LoadLibraryExW(str(path), None, 0)
+    elapsed = (time.monotonic() - started) * 1000
+    if not handle:
+        raise FixtureError(f"loading {path} failed with error {ctypes.get_last_error()}")
+    kernel32.FreeLibrary(handle)
+    return elapsed
+
+
 def prepare(target=None, cargo="cargo"):
     """Builds and stages every fixture; returns {variable: staged path}."""
     paths = {}
@@ -120,6 +151,9 @@ def prepare(target=None, cargo="cargo"):
             raise FixtureError(f"building {example} failed with exit {completed.returncode}")
         staged = stage(select_library(completed.stdout, example))
         print(f"ARTIFACT name={example} sha256={sha256(staged)} path={staged}", file=sys.stderr, flush=True)
+        primed = prime_image(staged)
+        if primed is not None:
+            print(f"PRIMED name={example} first_load_ms={primed:.0f}", file=sys.stderr, flush=True)
         paths[variable] = staged
     return paths
 

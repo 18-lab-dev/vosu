@@ -23,3 +23,20 @@ pub mod fixture;
 pub mod host;
 #[path = "smoke.rs"]
 mod smoke;
+
+/// A fresh per-test scratch directory for staged packages, receipts and
+/// instance data. `VOSU_PLUGIN_HOST_SCRATCH_DIR` places it under a chosen
+/// root: the Windows VM gates point it at a directory Defender excludes,
+/// because an on-access scan of each freshly staged library (measured
+/// 1.6–3 s for 194 MB, 0.2 s for 0.8 MB, against about 50 ms excluded)
+/// otherwise lands inside the 5-second startup deadline under parallel load.
+/// Unset, it is the system temporary directory.
+pub fn scratch() -> tempfile::TempDir {
+    match std::env::var_os("VOSU_PLUGIN_HOST_SCRATCH_DIR") {
+        Some(root) => {
+            std::fs::create_dir_all(&root).unwrap();
+            tempfile::tempdir_in(root).unwrap()
+        }
+        None => tempfile::tempdir().unwrap(),
+    }
+}

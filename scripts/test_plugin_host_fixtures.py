@@ -121,5 +121,11 @@ class StageAndEnvTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class PrimeImageTests(unittest.TestCase):
+    def test_priming_is_windows_only(self):
+        with unittest.mock.patch.object(fixtures.os, "name", "posix"):
+            self.assertIsNone(fixtures.prime_image(Path("/nonexistent.so")))
+
+
 if __name__ == "__main__":
     unittest.main()
