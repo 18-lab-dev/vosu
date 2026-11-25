@@ -2838,6 +2838,8 @@ states what was adopted and why. Spec amendments land in A1.
   with `PlanMemory`. `scripts/sdk-package.py verify` checks the packaged
   `.crate` outside the workspace, including an isolated registry-requirement
   consumer and probes proving the removed private surface does not resolve.
+  Hosted CI's validation job and `prepush.py` run it whenever
+  `scripts/ci-changes.py`'s `sdk` flag finds an SDK-relevant path.
 - **D12 Bridge path.** The 2.0 bridge is served at
   `/tools/_host/v2/bridge.js`; the v1 path is removed in M7. Why: every
   official tool is rebuilt and 1.x user tools are disabled by the migration

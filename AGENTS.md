@@ -114,6 +114,7 @@ python scripts/land.py [--topic <name>]
   - actionlint when workflows changed;
   - Windows MSVC cross-Clippy;
   - the dashboard smokes when UI paths changed;
+  - `python scripts/sdk-package.py verify` (the packaged SDK, its isolated consumer and private-surface probes) when `scripts/ci-changes.py`'s `sdk_changed` finds an SDK-relevant path (the SDK crate, the workspace `Cargo.toml`/`Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, workflows, or the verifier and gate scripts); hosted CI's validation job uses the same `sdk` flag;
   - native Windows Clippy, nextest tests, and doctests in the VM through `scripts/native-ci.ps1`, but only when `scripts/windows_sensitivity.py` finds the diff against `--base` Windows-sensitive (the native process/platform boundary, updater staging, process/platform-specific modules, the plugin host's native-library loading, Cargo/toolchain manifests, `.cargo/`, `.github/workflows/`, `scripts/native-ci.ps1`/`prepush.py` itself, any `windows`/`win32`-named or `.ps1` path, or an added/removed `cfg(windows)`/`target_os`/`windows_sys`/`unsafe` diff line) or `--force-native` is passed; otherwise it records `not_applicable` with a reason and skips the VM entirely. Hosted CI's `windows-native` job still runs for every Rust change regardless, so this only narrows the slower local VM phase.
 
   It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped and the native phase is applicable; report that lifecycle action.

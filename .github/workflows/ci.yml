@@ -32,6 +32,7 @@ jobs:
       code: ${{ steps.changes.outputs.code }}
       native: ${{ steps.changes.outputs.native }}
       ui: ${{ steps.changes.outputs.ui }}
+      sdk: ${{ steps.changes.outputs.sdk }}
       week: ${{ steps.week.outputs.week }}
       verified: ${{ steps.verified.outputs.verified }}
     steps:
@@ -165,6 +166,12 @@ jobs:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
         run: cargo doc --workspace --no-deps --all-features --locked
+      # AF.9: package vosu-plugin-api and test it, an isolated consumer and
+      # private-surface probes outside the workspace. Only when
+      # scripts/ci-changes.py's `sdk` flag finds an SDK-relevant path.
+      - name: Verify the packaged SDK from outside the workspace
+        if: needs.changes.outputs.verified != 'true' && needs.changes.outputs.sdk == 'true'
+        run: python scripts/sdk-package.py verify
       - name: Warm build for cache refresh (already verified on ci/<topic>)
         if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
         env:

@@ -192,6 +192,24 @@ class CiDriftTest(unittest.TestCase):
         missing = uncovered_commands(tampered, covered_commands())
         self.assertIn("cargo foo --not-a-real-check", missing)
 
+    def test_sdk_package_step_runs_only_for_sdk_changes_and_records_failure(self):
+        prepush = _load_module("prepush_sdk_package_test", ROOT / "scripts/prepush.py")
+        self.assertTrue(prepush.sdk_changed(None))
+        self.assertTrue(prepush.sdk_changed(["crates/vosu-plugin-api/src/lib.rs"]))
+        self.assertFalse(prepush.sdk_changed(["crates/vosu-core/src/lib.rs"]))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with unittest.mock.patch.object(prepush, "run") as run:
+                result = prepush.run_sdk_package(root, False)
+            run.assert_not_called()
+            self.assertEqual((result.status, result.required), ("not_applicable", False))
+            with unittest.mock.patch.object(prepush, "run", return_value=(1, "", "rejected", 1.0)) as run:
+                result = prepush.run_sdk_package(root, True)
+            self.assertEqual(run.call_args.args[0], prepush.SDK_PACKAGE_CMD)
+            self.assertEqual((result.status, result.required), ("failed", True))
+        land = _load_module("land_sdk_package_test", ROOT / "scripts/land.py")
+        self.assertIn("sdk-package", land.EXPECTED_STEPS)
+
     def test_tool_host_requires_browser_module_and_gate_passes_it(self):
         prepush = _load_module("prepush_x0_test", ROOT / "scripts/prepush.py")
         with tempfile.TemporaryDirectory() as temporary:
