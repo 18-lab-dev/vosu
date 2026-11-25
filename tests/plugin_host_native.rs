@@ -13,6 +13,8 @@
 
 #[path = "plugin_host_native/broker.rs"]
 mod broker;
+#[path = "plugin_host_native/crash.rs"]
+mod crash;
 #[path = "plugin_host_native/lifecycle.rs"]
 mod lifecycle;
 #[path = "plugin_host_native/relay.rs"]

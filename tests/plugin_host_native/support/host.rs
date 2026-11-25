@@ -184,6 +184,12 @@ impl Host {
         )
     }
 
+    /// Enters this host's runtime, for calls that start core timers (an
+    /// action invocation's deadline).
+    pub fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
+        self.runtime.enter()
+    }
+
     pub fn dispatch(&self, id: u64, message: &Message) -> Result<(), HostError> {
         let _enter = self.runtime.enter();
         self.host
