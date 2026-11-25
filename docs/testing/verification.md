@@ -1088,9 +1088,25 @@ and the D17 names are in the
 the child modules in `tests/plugin_host_native/`:
 
 - `relay`, `broker`, `lifecycle`, `state`, `resources`, `actions`, `parity`,
-  `crash`, `backpressure`, `sync` and `restart`;
+  `crash`, `backpressure`, `sync`, `restart` and `approval`;
 - the security modules `linux_security`, `windows_job` and `parent_death`;
 - `support/`.
+
+**Approval smoke (M5 U0).** `approval` starts a real daemon with P0's
+testkit as a `--plugin` process package and drives the dashboard's
+`/api/plugins` routes: approve and persist, a denied prompt, revoke, a changed
+library refused on restart, near-miss mutations without the dashboard origin
+or CSRF token, and a noninteractive start. The daemon is the release build
+named by `VOSU_PLUGIN_APPROVAL_DAEMON` (staged by
+`python scripts/plugin-host-fixtures.py --release-daemon`, or
+`python scripts/vm-test.py --release-daemon` in the Windows VM), otherwise the
+debug `vosu`, and each test prints which one it ran. Only a release-daemon run
+is the prerelease release evidence. Two cases are `#[ignore]` and run with
+`-- --ignored approval_`: `approval_release_daemon_refuses_in_process_without_the_test_harness`
+needs `VOSU_PLUGIN_APPROVAL_DAEMON`, and
+`approval_stable_release_daemon_refuses_every_plugin` needs
+`VOSU_PLUGIN_APPROVAL_STABLE_DAEMON`, a release build whose version has no
+prerelease part.
 
 Every test name starts with its module path, so each filter in the M5 plan
 (`relay`, `broker`, `lifecycle`, and so on) matches a nonzero set. Main lists

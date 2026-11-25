@@ -11,6 +11,8 @@
     reason = "fixtures write scratch packages and compile sources, and bounded marker waits sleep between checks"
 )]
 
+#[path = "plugin_host_native/approval.rs"]
+mod approval;
 #[path = "plugin_host_native/broker.rs"]
 mod broker;
 #[path = "plugin_host_native/lifecycle.rs"]

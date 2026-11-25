@@ -154,6 +154,10 @@ function Invoke-VosuPluginHostFixtures {
     excluded) runs inside the 5-second startup deadline under parallel load.
     A unique subdirectory is exported as VOSU_PLUGIN_HOST_SCRATCH_DIR;
     remove it with Remove-VosuPluginHostScratch.
+    .PARAMETER ReleaseDaemon
+    Also build and stage the release daemon (no test-harness) the
+    plugin_host_native approval module runs, exported as
+    VOSU_PLUGIN_APPROVAL_DAEMON (plugin-host-fixtures.py --release-daemon).
     #>
     param(
         [Parameter(Mandatory = $true)][string]$CargoExe,
@@ -162,13 +166,15 @@ function Invoke-VosuPluginHostFixtures {
         [Parameter(Mandatory = $true)]$Steps,
         [string]$Target,
         [string]$ScratchRoot,
-        [int]$TimeoutSeconds = 0
+        [int]$TimeoutSeconds = 0,
+        [switch]$ReleaseDaemon
     )
     $python = (Get-Command python.exe -ErrorAction Stop).Source
     $envFile = Join-Path $LogDir 'plugin-host-fixtures.env'
     Remove-Item $envFile -ErrorAction SilentlyContinue
     $arguments = @('scripts\plugin-host-fixtures.py')
     if ($Target) { $arguments += @('--target', $Target) }
+    if ($ReleaseDaemon) { $arguments += @('--release-daemon') }
     $arguments += @('--env-file', $envFile)
     $env:CARGO = $CargoExe
     $exitCode = Invoke-VosuCargoStep -Name 'plugin-host-fixtures' -CargoExe $python `

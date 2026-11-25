@@ -812,7 +812,8 @@ game, not any real supported or planned integration.
 ## API placement
 
 Every `/api/catalog/*` route this spec defines — install, plan confirmation,
-sources list/replace, credential, trust, and private-network — is
+sources list/replace, credential, trust, and private-network — and every
+`/api/plugins` process-plugin approval and management route (A5.5 below) is
 dashboard-listener only, like other 1.x management mutations
 (`docs/tools/protocol.md`), and requires dashboard-origin provenance plus
 `X-Vosu-CSRF` on every `POST`/`DELETE` ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)).
@@ -1194,7 +1195,13 @@ shape. There is no second approval store.
 
 A `generation` that is not the plugin's current generation is 409
 `generation_changed`. A stale button therefore never acts on a different
-generation or a similarly named plugin.
+generation or a similarly named plugin. The generation is the supervisor's
+count of starts (initial load, automatic and manual restart). It only grows
+within a daemon run, and core compares it under the same supervisor lock that
+begins the next generation or marks the plugin stopped
+(`PluginHost::restart_process_generation`/`stop_process_generation`), so an
+automatic restart that lands between the dashboard's read and the request
+refuses the request instead of letting it act.
 
 Restart and stop apply to `process` instances. For an in-process plugin they
 are 409 `requires_daemon_restart`, consistent with A6b.7's "revocation pending
@@ -1212,6 +1219,33 @@ no approving user stays `approval_required`. Core logs one WARN per load
 attempt naming the plugin and stating that approval needs the dashboard. M5
 has no CLI approval, no environment-variable approval and no automatic
 approval.
+
+**Implementation (M5 U0, 2026-11-25).**
+
+- **Where.** The approval prompt and the plugin list are the "Plugins"
+  section at the top of the dashboard's Tools page
+  (`assets/server/dashboard-plugins.js`). Bundled plugins are folded into one
+  summary line; `--plugin` packages are listed with their state, reason and
+  actions. Cancelling the prompt sends nothing.
+- **Listener and credentials.** On the overlay listener, and when no
+  dashboard origin is configured, every `/api/plugins` route is 404. A
+  mutation without the dashboard origin or with a missing or wrong
+  `X-Vosu-CSRF` is 403. An API key never authorizes these routes: no key
+  scope covers them.
+- **Other refusals.** 400 `invalid_request` (a body that is not exactly the
+  documented shape, or a digest that is not 64 lowercase hex digits); 404
+  `unknown_plugin` (no loaded plugin has that id) or `unknown_route`; 409
+  `busy` (a generation is already starting); 500 `approval_not_saved` (the
+  store could not be written; nothing starts) or `start_failed`. A start the
+  gate refuses is not an error response: the returned view shows the plugin
+  `approval_required`.
+- **Listing.** A package that failed to load is listed with `id: null`,
+  `state: "failed"`, `reason: "load"` and the error as `detail`, so a refused
+  `--plugin` directory (including a stable build's refusal) is visible.
+- **Noninteractive.** `VOSU_DASHBOARD=off` belongs to M7. In M5 a
+  noninteractive start is one where no approval arrives: the plugin stays
+  `approval_required` and the WARN above is logged.
+- **Provenance.** Every M5 `--plugin` package has development provenance.
 
 **What the prompt shows.** The prompt is not a catalog installer. It shows:
 
