@@ -46,6 +46,10 @@ pub enum PackageOrigin {
     Bundled,
     /// A `--plugin <dir>` development package (§7.1).
     Development,
+    /// A catalog-installed package. `official` is current §7.1 policy's
+    /// `TrustTier::Official` decision for its exact installed source
+    /// identity; a trusted user source is `false`.
+    Installed { official: bool },
 }
 
 /// The one way a validated package is allowed to run.

@@ -3,23 +3,22 @@
 //! Catalog `icon_url`/`banner_url`/`preview` URLs often point at release
 //! downloads that redirect to storage serving `application/octet-stream`,
 //! which browsers refuse to render as SVG. The dashboard therefore loads card
-//! art through `GET /api/tools/catalog/art?url=<listed URL>`: vosu fetches
-//! only URLs listed by the currently loaded catalog, through the catalog
-//! download client (HTTPS only, public destinations, bounded redirects and
-//! size), decides the image type from the content and the URL's extension,
-//! and serves it with a type the browser accepts. Every response, success or
-//! error, is a sandboxed inert document if opened directly.
-use super::catalog::{Catalog, client};
-use super::*;
+//! art through `GET /api/catalog/art?url=<listed URL>`: vosu fetches only
+//! URLs listed by the current validated catalog snapshot, exactly as
+//! written there, through the public-only, credential-free artwork client
+//! (HTTPS only, public destinations, bounded redirects and size, even when
+//! the catalog came from a private or credentialed source), decides the
+//! image type from the content and the URL's extension, and serves it with a
+//! type the browser accepts. Every response, success or error, is a
+//! sandboxed inert document if opened directly.
+use super::{Inner, network::MAX_ART_BYTES};
 use axum::{
     body::{Body, Bytes},
     http::{HeaderValue, StatusCode, header},
     response::Response,
 };
-use sha2::{Digest, Sha256};
+use std::{collections::VecDeque, sync::Arc};
 
-/// Same limit as catalog art elsewhere: one image, at most 1 MiB.
-pub(super) const MAX_ART_BYTES: u64 = 1024 * 1024;
 const CACHE_BYTES: usize = 16 * 1024 * 1024;
 const CACHE_ENTRIES: usize = 256;
 /// Sent on every art response: opened directly, the document gets an opaque
@@ -118,19 +117,18 @@ pub(super) fn classify(url: &str, body: &[u8]) -> Result<ArtKind, String> {
     Ok(kind)
 }
 
-/// Fetched art for one catalog revision, least recently used first. A new
-/// revision drops everything: a release can serve new bytes at the same URL.
+/// Fetched art for one catalog snapshot epoch, least recently used first. A
+/// new publication drops everything: a release can serve new bytes at the
+/// same URL.
 #[derive(Default)]
 pub(super) struct ArtCache {
-    revision: [u8; 32],
+    revision: u64,
     entries: VecDeque<(String, ArtKind, Bytes)>,
     bytes: usize,
-    #[cfg(test)]
-    pub(super) client: Option<vosu_net::StreamingClient>,
 }
 
 impl ArtCache {
-    fn get(&mut self, revision: [u8; 32], url: &str) -> Option<(ArtKind, Bytes)> {
+    pub(super) fn get(&mut self, revision: u64, url: &str) -> Option<(ArtKind, Bytes)> {
         if self.revision != revision {
             self.entries.clear();
             self.bytes = 0;
@@ -143,7 +141,7 @@ impl ArtCache {
         self.entries.push_back(entry);
         Some(found)
     }
-    fn insert(&mut self, revision: [u8; 32], url: String, kind: ArtKind, body: Bytes) {
+    pub(super) fn insert(&mut self, revision: u64, url: String, kind: ArtKind, body: Bytes) {
         if self.revision != revision {
             return;
         }
@@ -167,35 +165,6 @@ impl ArtCache {
     }
 }
 
-fn listed(catalog: &Catalog, url: &str) -> bool {
-    let url = Some(url);
-    catalog
-        .tools
-        .iter()
-        .any(|tool| tool.icon_url.as_deref() == url || tool.banner_url.as_deref() == url)
-        || catalog.overlays.iter().any(|overlay| {
-            overlay.icon_url.as_deref() == url
-                || overlay.banner_url.as_deref() == url
-                || overlay.preview.as_deref() == url
-        })
-        || catalog.shadowed.iter().any(|entry| {
-            ["icon_url", "banner_url", "preview"]
-                .iter()
-                .any(|key| entry[*key].as_str() == url)
-        })
-}
-
-fn revision(catalog: &Catalog) -> [u8; 32] {
-    let content = serde_json::to_vec(&(
-        &catalog.published,
-        &catalog.tools,
-        &catalog.overlays,
-        &catalog.shadowed,
-    ))
-    .unwrap_or_default();
-    Sha256::digest(content).into()
-}
-
 fn art_response(status: StatusCode, content_type: &'static str, body: Bytes) -> Response {
     Response::builder()
         .status(status)
@@ -210,7 +179,7 @@ fn art_response(status: StatusCode, content_type: &'static str, body: Bytes) -> 
         .header(header::CONTENT_DISPOSITION, "inline")
         .header(header::REFERRER_POLICY, "no-referrer")
         // The URL stays the same across catalog releases; the browser asks
-        // again and vosu answers from its own revision-keyed cache.
+        // again and vosu answers from its own epoch-keyed cache.
         .header(
             header::CACHE_CONTROL,
             HeaderValue::from_static("private, no-cache"),
@@ -227,59 +196,70 @@ fn art_error(status: StatusCode, message: impl Into<String>) -> Response {
     )
 }
 
-impl ToolHost {
-    fn art_client(&self) -> vosu_net::StreamingClient {
-        #[cfg(test)]
-        if let Some(client) = self.art.lock().client.clone() {
-            return client;
-        }
-        client(MAX_ART_BYTES)
-    }
+/// The current snapshot epoch when `url` is listed by one of its entries.
+fn listed(inner: &Inner, url: &str) -> Option<u64> {
+    let snapshot = inner
+        .runtime()
+        .fetch()?
+        .sources()
+        .candidate_snapshot()
+        .ok()??;
+    let wanted = Some(url);
+    snapshot
+        .candidates()
+        .any(|candidate| {
+            [
+                &candidate.entry.icon_url,
+                &candidate.entry.banner_url,
+                &candidate.entry.preview,
+            ]
+            .iter()
+            .any(|value| value.as_deref() == wanted)
+        })
+        .then(|| inner.epoch(&snapshot))
+}
 
-    /// `GET /api/tools/catalog/art?url=<URL>`: catalog art for dashboard
-    /// cards. URLs not listed by the loaded catalog are 404; fetch, size and
-    /// type failures are 502.
-    pub(super) async fn catalog_art(&self, query: Option<&str>) -> Response {
-        let Some(url) = query.and_then(|query| {
-            url::form_urlencoded::parse(query.as_bytes())
-                .find(|(key, _)| key == "url")
-                .map(|(_, value)| value.into_owned())
-        }) else {
-            return art_error(StatusCode::NOT_FOUND, "Not Found");
-        };
-        let revision = {
-            let catalog = self.catalog.lock();
-            if !listed(&catalog, &url) {
-                return art_error(StatusCode::NOT_FOUND, "Not Found");
-            }
-            revision(&catalog)
-        };
-        if let Some((kind, body)) = self.art.lock().get(revision, &url) {
-            return art_response(StatusCode::OK, kind.content_type(), body);
+/// `GET /api/catalog/art?url=<URL>`: URLs not listed by the current snapshot
+/// are 404; fetch, size and type failures are 502.
+pub(super) async fn serve(inner: &Arc<Inner>, query: Option<&str>) -> Response {
+    let Some(url) = query.and_then(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .find(|(key, _)| key == "url")
+            .map(|(_, value)| value.into_owned())
+    }) else {
+        return art_error(StatusCode::NOT_FOUND, "Not Found");
+    };
+    let Some(revision) = listed(inner, &url) else {
+        return art_error(StatusCode::NOT_FOUND, "Not Found");
+    };
+    if let Some((kind, body)) = inner.art.lock().get(revision, &url) {
+        return art_response(StatusCode::OK, kind.content_type(), body);
+    }
+    let fetched = async {
+        let (status, body) = inner
+            .services
+            .network
+            .art(&url, &inner.services.cancel)
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(format!("art request returned HTTP {status}"));
         }
-        let fetched = async {
-            let response = self
-                .art_client()
-                .request_bytes(&url, "vosu-catalog-art", &self.cancel)
-                .await
-                .map_err(|e| e.to_string())?;
-            if !(200..300).contains(&response.status) {
-                return Err(format!("art request returned HTTP {}", response.status));
-            }
-            let kind = classify(&url, &response.body)?;
-            Ok::<_, String>((kind, response.body))
+        if body.len() as u64 > MAX_ART_BYTES {
+            return Err(format!("response exceeds {MAX_ART_BYTES} bytes"));
         }
-        .await;
-        match fetched {
-            Ok((kind, body)) => {
-                self.art.lock().insert(revision, url, kind, body.clone());
-                art_response(StatusCode::OK, kind.content_type(), body)
-            }
-            Err(message) => art_error(StatusCode::BAD_GATEWAY, message),
+        let kind = classify(&url, &body)?;
+        Ok::<_, String>((kind, body))
+    }
+    .await;
+    match fetched {
+        Ok((kind, body)) => {
+            inner.art.lock().insert(revision, url, kind, body.clone());
+            art_response(StatusCode::OK, kind.content_type(), body)
         }
+        Err(message) => art_error(StatusCode::BAD_GATEWAY, message),
     }
 }
 
 #[cfg(test)]
-#[path = "catalog_art_tests.rs"]
+#[path = "art_tests.rs"]
 mod tests;

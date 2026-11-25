@@ -1,32 +1,64 @@
 #!/usr/bin/env python3
-"""Exercise two mixed catalog sources against an isolated test-harness daemon.
+"""Catalog v2 management against an isolated test-harness daemon.
 
-Optional --playwright-module points to an installed playwright index.mjs for
-headless dark/light screenshots. Only test ports 25150/25151 are used.
+Two static catalog-v2 sources served from one exact loopback listener carry
+a tool, an overlay, a user process plugin naming the D8 internal-path
+carve-out, a real in-process plugin (the testkit cdylib beside the binary)
+and a catalog game plugin whose matcher names a process this smoke starts.
+The HTTP phase proves the route contracts; the required browser phase
+(tests/tool_catalog_browser.mjs) drives the dashboard in Chromium: the
+exact trust warning before every grant, write-only credentials, the private
+network toggle, plan review with approval and D8 disclosure, one
+confirmation, job outcome and load reports, uninstall preview, the game
+offer and the pending-restart banner. Only test ports 25150/25151 are used.
 """
 import argparse
 import functools
-import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
-import re
+import shutil
 import signal
 import subprocess
 import tempfile
 import threading
-import zipfile
-from tool_host_smoke import ROOT, DASHBOARD, channel_root, curl, wait_for
+import time
+from tool_host_smoke import ROOT, channel_root, curl, wait_for
+from catalog_v2_fixture import Catalog, api, dashboard_headers, facts, set_sources
+
+GAME_PROCESS = 'vosufixgame'
+USERNAME = 'sentinel-user-4f81'
+PASSWORD = 'sentinel-pass-c2d9'
+
+
+class Quiet(SimpleHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+
+def wait_job(job, timeout=45):
+    def done():
+        status, body = curl(f'/api/catalog/jobs/{job}', dashboard=True)
+        assert status == 200, body
+        state = json.loads(body)
+        return state if state['status'] != 'running' else None
+    return wait_for(done, timeout=timeout)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/vosu')
     parser.add_argument('--evidence', type=Path, default=Path('/tmp/vosu-tools-evidence/catalog'))
-    parser.add_argument('--playwright-module', type=Path)
+    parser.add_argument('--playwright-module', type=Path,
+                        default=Path(os.environ['VOSU_PLAYWRIGHT_MODULE']) if os.environ.get('VOSU_PLAYWRIGHT_MODULE') else None)
     args = parser.parse_args()
+    if not args.playwright_module:
+        raise SystemExit('--playwright-module (or VOSU_PLAYWRIGHT_MODULE) is required: the browser phase is not optional')
     binary = args.binary.resolve(strict=True)
+    library = binary.parent / ('vosu_plugin_testkit.dll' if os.name == 'nt' else 'libvosu_plugin_testkit.so')
+    if not library.is_file():
+        raise SystemExit(f'{library} is missing: run `cargo build -p vosu-plugin-testkit --all-features --locked` first')
     args.evidence.mkdir(parents=True, exist_ok=True)
     evidence = []
     with tempfile.TemporaryDirectory(prefix='vosu-catalog-smoke-') as temporary:
@@ -34,7 +66,7 @@ def main():
         environment = dict(os.environ)
         for variable in ['DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS']:
             environment.pop(variable, None)
-        environment['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', str(args.evidence.resolve() / 'browser-cache'))
+        environment['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get('PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
         for variable, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
                                     ('XDG_DATA_HOME', 'data'), ('XDG_CACHE_HOME', 'cache'),
                                     ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
@@ -50,192 +82,91 @@ SERVER_IP = "127.0.0.1"
 SERVER_PORT = 25150
 DASHBOARD_IP = "127.0.0.1"
 DASHBOARD_PORT = 25151
-ALLOWED_IPS = "127.0.0.1,localhost,absolute"
+ALLOWED_IPS = "127.0.0.1,localhost"
 ''')
         packages = root / 'packages'
         packages.mkdir()
-        handler = functools.partial(SimpleHTTPRequestHandler, directory=str(packages))
-        server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=str(packages)))
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f'http://tools.invalid:{port}'
-        sources = [{'source': f'{base}/{name}/catalog.json', 'enabled': True} for name in ['first', 'second']]
-        (config / 'tools').mkdir()
-        (config / 'tools/catalog-sources.json').write_text(json.dumps(sources))
-        environment['VOSU_TOOL_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
-        for name in ['first', 'second']:
-            (packages / name).mkdir()
-
-        def package(archive):
-            return {'url': f'{base}/{archive.name}', 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'size': archive.stat().st_size}
-
-        def tool(tool_id, version):
-            archive = packages / f'{tool_id}-{version}.zip'
-            fixture = ROOT / 'tests/fixtures/tool-host'
-            with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as target:
-                for path in fixture.rglob('*'):
-                    if not path.is_file():
-                        continue
-                    data = path.read_bytes()
-                    if path.name == 'tool.toml':
-                        data = data.replace(b'version = "1.0.0"', f'version = "{version}"'.encode()).replace(b'id = "fixture"', f'id = "{tool_id}"'.encode())
-                    target.writestr(path.relative_to(fixture).as_posix(), data)
-            return {'id': tool_id, 'name': 'Catalog service fixture', 'version': version,
-                    'description': 'A packaged fixture for isolated catalog acceptance checks.',
-                    'author': '18-LAB', 'homepage': None, 'protocol': 1,
-                    'interfaces': ['ui', 'service'], 'requires': [], 'packages': {'any': package(archive)}}
-
-        def publish(version):
-            fixture = tool('fixture', version)
-            second = tool('fixture-two', '1.0.0')
-            archive = packages / f'fixture-overlay-{version}.zip'
-            with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as target:
-                target.writestr('index.html', f'<!doctype html><h1>Overlay {version}</h1>')
-                target.writestr('settings.json', '[]')
-                target.writestr('metadata.txt', f'Name: Catalog overlay fixture\nAuthor: 18-LAB\nVersion: {version}\n')
-            overlay = {'id': 'fixture-overlay', 'name': 'Catalog overlay fixture', 'version': version,
-                       'description': 'An atomic overlay update fixture.', 'author': '18-LAB',
-                       'homepage': None, 'resolution': [640, 120], 'preview': None,
-                       'requires_tools': [{'id': 'fixture', 'version': '>=1.0.0'}], 'package': package(archive)}
-            base_catalog = {'catalog_version': 1, 'published': '2026-10-21T00:00:00Z'}
-            (packages / 'first/catalog.json').write_text(json.dumps({**base_catalog, 'tools': [fixture], 'overlays': [overlay]}))
-            (packages / 'second/catalog.json').write_text(json.dumps({**base_catalog, 'tools': [fixture, second]}))
-
-        publish('1.0.0')
+        environment['VOSU_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
+        host_range, target = facts(binary)
+        catalog = Catalog(packages, port, host_range, target)
+        first, second = catalog.source('first'), catalog.source('second')
+        catalog.publish('first',
+                        tools=[catalog.tool('catalog-tool', 'Catalog tool fixture')],
+                        overlays=[catalog.overlay('catalog-overlay', 'Catalog overlay fixture')],
+                        plugins=[
+                            catalog.plugin('acme.paths', 'process', b'process fixture',
+                                           requires=[{'id': 'field:vosu.osu.internal.paths', 'version': '^1'}]),
+                            catalog.plugin('acme.echo', 'in-process', library.read_bytes()),
+                            catalog.plugin('acme.game', 'process', b'game fixture',
+                                           provides=[{'id': f'game:{GAME_PROCESS}', 'version': '*'}],
+                                           matcher={'process_names': [GAME_PROCESS]}),
+                        ])
+        catalog.publish('second', tools=[catalog.tool('second-tool', 'Second source tool')])
+        game = root / GAME_PROCESS
+        shutil.copy(shutil.which('sleep'), game)
+        processes = []
         with (args.evidence / 'daemon.log').open('w') as log:
             daemon = subprocess.Popen([str(binary), '--update=false'], cwd=root, env=environment,
                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
             try:
                 wait_for(lambda: curl('/api/tools', dashboard=True)[0] == 200)
-                status, page = curl('/tools', dashboard=True)
-                assert status == 200
-                context = json.loads(re.search(r'<script[^>]*id="vosu-context"[^>]*>(.*?)</script>', page, re.S).group(1))
-                headers = {'Origin': DASHBOARD, 'X-Vosu-CSRF': context['csrf']}
-
-                def action(path, body=None):
-                    status, response = curl(path, dashboard=True, method='POST', headers=headers, data=body or {})
-                    assert status == 200, (status, response)
-                    job = json.loads(response)['job_id']
-                    def completed():
-                        status, response = curl(f'/api/tools/catalog/jobs/{job}', dashboard=True)
-                        assert status == 200
-                        result = json.loads(response)
-                        assert result['status'] != 'failed', result
-                        return result if result['status'] == 'completed' else None
-                    return wait_for(completed, timeout=45)
-
-                status, response = curl('/api/tools/catalog/sources', dashboard=True, method='POST', headers=headers, data={'sources': sources})
-                assert status == 200, response
-                status, response = curl('/api/tools/catalog', dashboard=True)
-                catalog = json.loads(response)
-                assert status == 200 and len(catalog['tools']) == 2 and len(catalog['overlays']) == 1
-                assert len(catalog['shadowed']) == 1 and catalog['shadowed'][0]['source'] == sources[1]['source']
-                assert catalog['tools'][0]['source'] == sources[0]['source']
-                assert all(source['status'] == 'ok' for source in catalog['sources'])
-                assert curl('/api/tools/fixture/install', dashboard=True, method='POST', data={})[0] == 403
-                evidence.append('Two mixed sources merged in order; later duplicate shadowed; CSRF enforced; sources atomically saved')
-                for changed in [list(reversed(sources)), [{**sources[0], 'enabled': False}, sources[1]], []]:
-                    assert curl('/api/tools/catalog/sources', dashboard=True, method='POST', headers=headers, data={'sources': changed})[0] == 200
-                    _, response = curl('/api/tools/catalog', dashboard=True)
-                    merged = json.loads(response)
-                    if changed:
-                        assert merged['tools'][0]['source'] == sources[1]['source']
-                    else:
-                        assert not merged['tools'] and not merged['overlays']
-                assert curl('/api/tools/catalog/sources', dashboard=True, method='POST', headers=headers, data={'sources': sources})[0] == 200
-                assert json.loads((config / 'tools/catalog-sources.json').read_text()) == sources
-                evidence.append('Source reorder, disable, remove-all, and restore persist and change winning entries')
-                action('/api/tools/fixture/install')
-                status, response = curl('/api/tools/fixture', dashboard=True)
-                view = json.loads(response)
-                assert status == 200 and view['source'] == 'user' and not view['trusted'] and not view['update_available']
-                evidence.append('Non-official source tool installs as user/untrusted')
-                assert curl('/api/tools/fixture/trust', dashboard=True, method='POST', headers=headers, data={})[0] == 200
-                status, response = curl('/api/tools/fixture/start', dashboard=True, method='POST', headers=headers, data={})
-                assert status == 200, response
-                _, response = curl('/api/tools/fixture', dashboard=True)
-                old_pid = json.loads(response)['process']['pid']
-                data_dir = Path(view['data']['data_dir'])
-                data_dir.mkdir(parents=True, exist_ok=True)
-                (data_dir / 'retained').write_text('keep me')
-                action('/api/tools/fixture-two/install')
-                _, response = curl('/api/tools/fixture-two', dashboard=True)
-                assert json.loads(response)['source'] == 'user' and not json.loads(response)['trusted']
-                evidence.append('Unique tool from second source installed independently and remains untrusted')
-                action('/api/tools/catalog/overlays/fixture-overlay/install', {'install_tools': True})
-                settings = config / 'settings/fixture-overlay.settings.values.toml'
-                settings.parent.mkdir(parents=True, exist_ok=True)
-                settings.write_text('text = "preserved"\n')
-                publish('2.0.0')
-                status, response = curl('/api/tools/catalog', dashboard=True)
-                catalog = json.loads(response)
-                assert status == 200 and catalog['tools'][0]['update_available'] and catalog['overlays'][0]['update_available']
-                if args.playwright_module:
-                    subprocess.run(['node', str(ROOT / 'tests/tool_catalog_browser.mjs'), str(args.playwright_module.resolve()), str(args.evidence.resolve())], check=True, env=environment)
-                action('/api/tools/fixture/update')
-                _, response = curl('/api/tools/fixture', dashboard=True)
-                updated = json.loads(response)
-                assert updated['version'] == '2.0.0' and updated['status'] == 'running' and updated['process']['pid'] != old_pid
-                evidence.append('Tool update 2.0.0: badge shown; approved running service restarted with new PID')
-                action('/api/tools/catalog/overlays/fixture-overlay/update', {'install_tools': True})
-                assert settings.read_text() == 'text = "preserved"\n'
-                assert curl('/fixture-overlay/')[0] == 200 and '2.0.0' in curl('/fixture-overlay/')[1]
-                evidence.append('Overlay install/update verified; index replaced atomically and canonical settings values preserved')
-                action('/api/tools/fixture/uninstall', {'remove_data': False})
-                assert (data_dir / 'retained').read_text() == 'keep me'
-                evidence.append('Dashboard uninstall keep-data retained saved data')
-                for arguments in [['--sources'], ['--install', 'fixture']]:
-                    cli = subprocess.run([str(binary), 'x', *arguments], cwd=root, env=environment, text=True, capture_output=True, timeout=45)
-                    assert cli.returncode == 0, cli.stdout + cli.stderr
-                    evidence.append('vosux via vosu x: ' + cli.stdout.strip())
-                publish('3.0.0')
-                for arguments in [['--update', 'fixture'], ['--uninstall', 'fixture', '--remove-data']]:
-                    cli = subprocess.run([str(binary), 'x', *arguments], cwd=root, env=environment, text=True, capture_output=True, timeout=45)
-                    assert cli.returncode == 0, cli.stdout + cli.stderr
-                    evidence.append('vosux via vosu x: ' + cli.stdout.strip())
-                assert not data_dir.exists()
-                # A catalog-only rename migrates state without changing the
-                # strict manifest accepted by older hosts.
-                base_catalog = {'catalog_version': 1, 'published': '2026-10-27T00:00:00Z'}
-                old = tool('old', '1.0.0')
-                (packages / 'first/catalog.json').write_text(json.dumps({**base_catalog, 'tools': [old]}))
-                action('/api/tools/old/install')
-                assert curl('/api/tools/old/trust', dashboard=True, method='POST', headers=headers, data={})[0] == 200
-                assert curl('/api/tools/old/disable', dashboard=True, method='POST', headers=headers, data={})[0] == 200
-                assert curl('/api/tools/old/autostart', dashboard=True, method='PUT', headers=headers, data={'autostart': False})[0] == 200
-                _, response = curl('/api/tools/old', dashboard=True)
-                old_view = json.loads(response)
-                old_data = Path(old_view['data']['data_dir'])
-                old_data.mkdir(parents=True, exist_ok=True)
-                (old_data / 'retained').write_bytes(b'unchanged\0data')
-                old_settings = config / 'tools/settings/old.json'
-                old_settings.parent.mkdir(parents=True, exist_ok=True)
-                old_settings.write_text('{"text":"private setting","number":42}\n')
-                replacement = {**tool('new', '1.0.0'), 'replaces': ['old']}
-                (packages / 'first/catalog.json').write_text(json.dumps({**base_catalog, 'tools': [replacement]}))
-                status, response = curl('/api/tools/catalog', dashboard=True)
-                renamed_catalog = json.loads(response)
-                offered = next(entry for entry in renamed_catalog['tools'] if entry['id'] == 'new')
-                assert status == 200 and offered['replacement_of'] == 'old'
-                _, response = curl('/api/tools/old', dashboard=True)
-                if args.playwright_module:
-                    subprocess.run(['node', str(ROOT / 'tests/tool_catalog_browser.mjs'), str(args.playwright_module.resolve()), str(args.evidence.resolve()), 'rename'], check=True, env=environment)
-                assert json.loads(response)['update_available'] and json.loads(response)['update_target'] == 'new'
-                for attempt in range(2):
-                    cli = subprocess.run([str(binary), 'x', '--update', 'old'], cwd=root, env=environment, text=True, capture_output=True, timeout=45)
-                    assert cli.returncode == 0, cli.stdout + cli.stderr
-                _, response = curl('/api/tools/new', dashboard=True)
-                renamed = json.loads(response)
-                assert renamed['trusted'] and not renamed['enabled'] and renamed['autostart'] is False
-                assert (Path(renamed['data']['data_dir']) / 'retained').read_bytes() == b'unchanged\0data'
-                assert (config / 'tools/settings/new.json').read_text() == '{"text":"private setting","number":42}\n'
-                assert curl('/api/tools/old', dashboard=True)[0] != 200
-                assert not old_data.exists() and not old_settings.exists()
-                assert not (config / 'tools/tool-replacement.json').exists()
-                evidence.append('Same-source old → new offered as update; vosux applies it twice idempotently; data/settings/trust/enabled/autostart migrated intact; old id removed')
+                headers = dashboard_headers()
+                view = set_sources(headers, [first, second])
+                assert [s['source'] for s in view['sources']] == [first, second], view
+                assert not any(s['trusted'] or s['private_network'] or s['has_credential'] for s in view['sources'])
+                # A6b.4: list replacement cannot grant trust or private access.
+                status, body = curl('/api/catalog/sources', dashboard=True, method='POST', headers=headers,
+                                    data={'sources': [{'source': first, 'enabled': True, 'trusted': True}]})
+                assert status == 400, body
+                # Mutations need dashboard provenance and CSRF; overlay listener has no catalog routes.
+                assert curl('/api/catalog/refresh', dashboard=True, method='POST', data={})[0] == 403
+                assert curl('/api/catalog/sources')[0] == 404
+                # The removed 1.x immediate install route installs nothing.
+                assert curl('/api/tools/catalog-tool/install', dashboard=True, method='POST', headers=headers, data={})[0] == 400
+                view = api('refresh', headers, 'POST')
+                assert [s['status'] for s in view['sources']] == ['ok', 'ok'], view
+                entries = api('entries', headers)['entries']
+                assert {e['id'] for e in entries} == {'catalog-tool', 'catalog-overlay', 'acme.paths', 'acme.echo', 'acme.game', 'second-tool'}
+                evidence.append('Two static v2 sources fetched through S0 validation; list replacement cannot smuggle trust; '
+                                'CSRF, listener and removed 1.x install route refused')
+                # The D8 disclosure on the real daemon, where vosu.osu is bundled.
+                plan = api('install', headers, 'POST', {'kind': 'plugin', 'id': 'acme.paths', 'source': first})
+                assert plan['errors'] == [] and plan['adds'][0]['requires_internal_paths'] is True, plan
+                assert plan['adds'][0]['needs_approval'] and plan['adds'][0]['runtime'] == 'process'
+                evidence.append('acme.paths plan: native process plugin, user trust, approval required, D8 requires_internal_paths true')
+                # Write-only credential: 204, presence only.
+                path = f'sources/{first.replace(":", "%3A").replace("/", "%2F")}/credential'
+                status, body = curl(f'/api/catalog/{path}', dashboard=True, method='POST', headers=headers,
+                                    data={'kind': 'basic', 'username': USERNAME, 'password': PASSWORD})
+                assert status == 204 and body == '', (status, body)
+                assert api(path, headers) == {'has_credential': True, 'available': True}
+                assert curl(f'/api/catalog/{path}', dashboard=True, method='DELETE', headers=headers)[0] == 204
+                evidence.append('Credential POST/DELETE 204 with presence-only GET')
+                processes.append(subprocess.Popen([str(game), '600'], cwd=root))
+                subprocess.run(['node', str(ROOT / 'tests/tool_catalog_browser.mjs'), str(args.playwright_module.resolve()),
+                                str(args.evidence.resolve()), first, second, USERNAME, PASSWORD],
+                               check=True, env=environment)
+                evidence.append('Browser: trust warning before every grant (cancel keeps untrusted; no remembered bypass), '
+                                'write-only credential, private toggle, plan review with approval + D8, one confirmation, '
+                                'load reports, uninstall preview, game offer, pending-restart banner')
+                installed = api('installed', headers)['packages']
+                assert {(p['id'], p['installed_for']) for p in installed} == {('acme.paths', 'requested'), ('acme.echo', 'requested'), ('catalog-overlay', 'requested')}, installed
+                assert (root / 'data').exists()
+                status = api('status', headers)
+                assert 'acme.echo' in status['pending_restart'], status
+                log_text = (args.evidence / 'daemon.log').read_text(errors='replace')
+                for secret in [USERNAME, PASSWORD]:
+                    assert secret not in log_text
+                evidence.append('Installed graph after the browser flow: process plugin, in-process plugin and overlay; '
+                                'the untrusted running in-process plugin is pending restart; sentinels absent from the log')
                 daemon.send_signal(signal.SIGTERM)
-                assert daemon.wait(timeout=15) == 0
+                assert daemon.wait(timeout=20) == 0
             finally:
+                for process in processes:
+                    process.kill()
                 if daemon.poll() is None:
                     daemon.terminate()
                     try:

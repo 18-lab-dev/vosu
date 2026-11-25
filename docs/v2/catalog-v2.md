@@ -777,7 +777,7 @@ game, not any real supported or planned integration.
   shape tools already use, so every web-only entry kind shares one schema.
 
   The package limit is the `MAX_PACKAGE_MIB` setting in `vosu.toml`, also on
-  the dashboard's Settings page under Advanced: default 512, range 64–4096.
+  the dashboard's Settings page under Advanced: default 512, integer range 1–4096.
   It bounds both a package's compressed `size` and its expanded size, as
   1.x's fixed `MAX_PACKAGE` did; the 10,000-entry archive limit stays fixed.
   Like every setting, it changes only through a dashboard-origin save. The
@@ -818,6 +818,58 @@ dashboard-listener only, like other 1.x management mutations
 `X-Vosu-CSRF` on every `POST`/`DELETE` ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)).
 `<source>`, `<plan_id>`, and `<id>` path segments are percent-encoded, since a
 source string routinely contains `/` (`owner/repo`, or a full URL).
+
+Decode each path segment exactly once; malformed encoding and near-miss paths
+do not broaden a route. API keys, broker/tool tokens and overlay provenance
+never substitute for dashboard provenance and CSRF. The frozen
+[M6b service and route inventory](implementation-plan.md#m6b-frozen-service-interfaces)
+defines the core-owned handlers; M7 moves presentation, not this authority.
+
+**H0 route inventory (`src/server/catalog_api`).** Exact paths and methods;
+a near miss (trailing slash, extra or empty segment, wrong case, malformed
+`%XX`, a raw `/` inside a segment) is `404`, a known path with another
+method `405`, and every route is `404` on the overlay listener. Bodies
+refuse unknown fields with a fixed `400` that never echoes the input. Every
+response carries `Cache-Control: no-store` (art: `private, no-cache`) and
+errors are fixed redacted diagnostics `{"error"}`.
+
+| Method and path | Result |
+| --- | --- |
+| `GET /api/catalog/status` | Disabled stores, `pending_restart`, `restart_required`, the last operation's `load_reports` |
+| `GET /api/catalog/sources` | Exact sources with `enabled`, `order`, `official`, `trusted`, `private_network`, `has_credential`, `form`, fetch `status`/`message` |
+| `POST /api/catalog/sources` `{"sources":[{"source","enabled"}]}` | Replace the ordered list (A6b.4); plus the T0 revocation report |
+| `GET`/`POST`/`DELETE /api/catalog/sources/<source>/credential` | `{"has_credential","available"}` / `204` / `204` |
+| `POST /api/catalog/sources/<source>/trust` `{"trusted"}` | Dedicated trust flag; revocation report |
+| `POST /api/catalog/sources/<source>/private-network` `{"allowed"}` | Dedicated exact-host private flag |
+| `POST /api/catalog/refresh` | One explicit S0/F0 fetch and SDK-validated publication |
+| `GET /api/catalog/entries` | Every validated candidate (alternatives included) with support, size and installed state |
+| `POST /api/catalog/install` `{"kind","id","source"}` | A registered, reviewable plan (`409` when sources changed or were never fetched) |
+| `POST /api/catalog/plans/<plan_id>/confirm` `{"approve":[…]}` | `{"job_id"}`; P0 status codes |
+| `GET /api/catalog/jobs/<job_id>` | The catalog `{id,status,phase,tool,error}` envelope |
+| `GET /api/catalog/installed` | Installed records (kind, id, version, exact source, `installed_for`, runtime, approval presence) |
+| `POST /api/catalog/uninstall/preview` `{"kind","id","source"}` | The U0 removal closure, or `409` with `detail.dependents` |
+| `POST /api/catalog/uninstall` `{"kind","id","source","remove_data"}` | `{"job_id"}` |
+| `POST /api/catalog/promote` `{"kind","id","source"}` | `{"promoted"}` |
+| `GET /api/catalog/offers`, `POST /api/catalog/offers/<offer_id>/accept` | G0 offers; a requested-reason plan |
+| `GET /api/catalog/art?url=` | Listed art only, inert sandboxed document |
+
+Plan prerequisites pin S0's single source generation (it advances on every
+source, order, enabled, trust, private and credential change) for each of
+those generations, the installed-record generation, the checked package cap
+(whose value is its revision), and a SHA-256 fingerprint over the source
+records, the installed document and the candidate-snapshot epoch; a new
+publication at an unchanged generation is a new epoch. Confirmation
+recomputes them from memory only.
+
+**Removal of running in-process plugins (H0, accepted under A6b.7).** The
+plugin host has no safe per-plugin teardown, so U0's runtime seam cannot
+stop a loaded in-process plugin's instances before its directory moves.
+Tool processes are stopped; a loaded plugin keeps running, its package
+directory is removed (on Windows a library the OS holds open makes the move
+fail and the whole removal roll back), and it is reported in
+`restart_required` until the daemon restarts. Data removal is refused for a
+plugin that is still loaded. Plugin settings stored in `vosu.toml` are not
+removed (M7 owns plugin settings).
 
 ## Resolver algorithm
 
@@ -868,22 +920,21 @@ strict and needs no user choice:
    to every source form ADR 0023 adds: a GitHub URL spelling of an official
    repository is not itself the official identity, matching 1.x's existing
    "tagged, differently cased, HTTPS … spellings are not aliases" rule).
-2. **Then source order.** Among remaining candidates, the one whose source
-   appears earliest in the user's ordered, enabled source list wins (1.x's
-   existing "earlier sources win" shadowing rule, extended from tool/overlay
-   ids to capability ids).
-3. **Then catalog order.** Within one source, the first matching entry in
-   that catalog's `plugins` array wins.
+2. **Then source order.** Among remaining candidates, try sources in the
+   user's ordered, enabled source list.
+3. **Then catalog order.** Within one source, try matching entries in
+   that catalog's `plugins` array in order.
 
-This is deterministic and needs no prompt, matching ADR 0022.
+This is deterministic ranked search, not a greedy irrevocable choice or a
+newest-version sort: choose the first complete satisfying assignment.
 
 ### Version solving
 
 A capability requirement resolves to a *plugin*, and a plugin is installed at
 one version, so solving works per plugin, not per capability id:
 
-1. Start the frontier at the requested items (the tool/overlay/plugin the
-   user asked to install) plus every plugin already installed and kept.
+1. Start the frontier at the requested items plus **all kept installed
+   consumers**, including tools and overlays, not only plugins.
 2. For each requirement (`requires`, and `optional` only when a satisfying
    provider is already built-in, already selected, or already installed — an
    unmet `optional` is dropped silently, never an error, and never triggers a
@@ -903,6 +954,24 @@ one version, so solving works per plugin, not per capability id:
    generalized from tool ids to capability ids).
 6. The output is a dependency-first install order (dependencies before
    dependents), like 1.x `Catalog::order`.
+
+**A6b.5 (approved 2026-11-24):** use bounded deterministic backtracking in
+the ranking above, with one assignment per plugin across all requirements
+on all its capabilities. Backtrack on a dead end rather than fail merely
+because the first ranked candidate fails later. Retain installed plugin
+versions unless explicitly updated or visibly replaced by the approved plan.
+Compute satisfied optional edges to a deterministic fixed point using only
+built-in, installed and required-selected providers; optional edges never
+initiate selection/download. Central candidate/search-work bounds must be
+documented and enforced by the solver; exhausting them is a
+`resolution-limit` error, with empty `adds`, not a partial solution.
+
+Core's pure solver caps each invocation at 4096 catalog candidates, 256 graph
+nodes, 256 required edges and 100000 search-work units (requirement visits,
+candidate probes and dependency-graph traversal). Work is shared across all
+backtracking branches, not reset on a failed branch. These bounds are centralized
+in `catalog::resolver`; crossing any bound returns `resolution-limit` with no
+adds or resolved edges.
 
 ### Install plan
 
@@ -961,17 +1030,104 @@ failed (conflict or cycle messages, see above); `adds` is then empty and the
 plan cannot be confirmed. Confirming returns `{"job_id"}`, polled exactly as
 1.x catalog jobs are.
 
+**A6b.6/.8 (approved 2026-11-24):** the registry holds at most 64 pending
+plans, each with a 10-minute TTL; expire on ingress/access, not a sweep timer.
+Only one catalog operation may run. Plans pin immutable catalog entries,
+hashes/sizes, app version, target, checked package byte limit, installed
+fingerprint and source/order/trust/private/credential generations.
+Confirmation rechecks all of these under the operation gate and consumes
+the plan once; it never recomputes an unseen replacement plan.
+Approvals bind exact plugin id/source/version/hash/runtime, not a future
+artifact with the same id. Missing/extraneous approval IDs or a plan with
+errors return 400; stale/already-consumed/busy return 409; unknown/expired
+IDs return 404. Capacity refusal is busy (409), not silent eviction of a
+live plan. A successful confirmation returns the existing `{"job_id"}`.
+
+`MAX_PACKAGE_MIB` defaults to 512; it is an integer in `1..=4096`, converted
+with checked multiplication by 1,048,576. Solver and streaming use the same
+pinned cap. A larger positive catalog size remains document-valid but
+unsupported for installation at that cap.
+
+The core `catalog::plans` handoff is `CatalogExecutor::start(CatalogOperation)`.
+Its immutable `ConfirmedPlan` pins complete validated entries, selected target,
+byte cap and exact T0 approval records. The executor owns its bounded workers,
+cancellation and shutdown joins, and holds the operation guard until commit or
+rollback is finished. Dropping unfinished work fails the catalog job and releases
+the gate. Source/config/installed mutations share that operation gate. Polling
+retains the catalog `{id,status,phase,tool,error}` envelope (terminal status
+`completed`/`failed`, phase `finished`), not an API-v1 action job. Completed jobs
+and consumed plan tombstones are lazily retained for ten minutes and bounded at
+64; capacity pressure returns 409 rather than silently evicting live records.
+
+Prepare **every** package before publication: public-only unauthenticated
+streaming, exact compressed size/hash, ZIP preflight, confined assets and
+SDK asset-backed manifest/schema/catalog equality. Journal same-filesystem
+directory and installed-record replacements; failure rolls back the
+unpublished batch, and crash recovery runs before discovery/load.
+Expose/load only a completely committed dependency graph. No partial
+dependency install may become visible because a later root failed.
+
+**I0 implementation contract (`vosu-core::catalog::install`).** ZIP preflight
+also refuses a repeated entry name and any two names that one supported OS
+would merge or alter: case-insensitive collisions, Windows device names
+(`CON`, `NUL`, `COM1`… with any extension) and a trailing dot or space. The
+downloaded archive is hashed and extracted from one retained handle; package
+assets are read only from the staged tree, refusing links/reparse points,
+missing files and traversal. A plugin package must contain the
+`[targets.<host target>]` library, a tool its `ui.root/ui.entry`, an overlay
+its root `index.html`. Installation never overwrites a package directory the
+catalog did not install, nor one installed from another source, and does not
+perform `replaces` data migration: an add whose `replaces` names an installed
+package fails with no change. The installed-records generation is the single
+commit point: recovery rolls forward when it matches the journal's next
+generation, rolls back when it matches the previous one, and otherwise refuses
+rather than guessing. After commit, each plugin is authorized against current
+source policy and approval; a `process` plugin is recorded and reported as
+requiring the M5 process runtime and is never loaded in-process instead.
+
+**K0 composition contract (`vosu-core::catalog::runtime`, root
+`src/runtime/catalog.rs`).** One daemon-lifetime `CatalogRuntime` owns the
+composed services. Startup order: `CatalogFetchService::open` (S0 recovery
+reconciles C0 credential membership first), `InstalledStore::open` (I0 crash
+recovery), one executor and the G0 offer service registered as the plugin
+host's discovery observer, then the committed graph loads under current
+policy; discovery starts only afterwards and routes after that. Shutdown
+removes the observer, then cancels and joins the executor before plugins are
+destroyed. A corrupt or unrecoverable source or installed store is never
+rewritten: that feature is disabled and reported, and the daemon keeps
+running. Schema registration provenance comes from the loader: the bundled
+array and a package installed from an exact official identity register
+`TrustedOfficial` (so the official `x-visibility` rule works), every other
+installed source and the debug `--plugin` override register as third-party.
+Source removal and untrust run under the shared operation gate: T0's cleared
+approvals are durably published (a new installed generation) **before** the
+source change, then running in-process plugins whose authority was removed
+get the daemon-lifetime "revocation pending restart" marker; re-trust never
+clears it, only a daemon restart does. While installed records are unreadable,
+a trust-lowering change is refused rather than risking a resurrected approval.
+G0 refreshes after every source
+publication or mutation and every installed change with the installed
+generation P0 pins. Install roots, until M7 replaces the legacy web hosts:
+records and journal in `<data>/catalog`; plugin package trees in
+`<data>/catalog/plugins/<id>` with durable data kept outside them in
+`<data>/plugins/<id>` (the bundled convention); tools in the legacy tool
+host's user root `<data>/tools`, served by that host after a rescan; overlays
+in the static folder resolved at startup, served by the existing overlay
+host. The overlay root is pinned for the daemon lifetime: after a runtime
+static-folder change, catalog overlays keep installing into the startup folder
+until restart. I0 never overwrites a directory it did not install, and its
+`.stage-*`/`.vosu-backup-*` transaction names differ from the legacy
+installers'; the tool host ignores hidden directories.
+
 ### Dependency-only autoremove
 
 Each installed plugin's origin is recorded as `installed_for: "requested"` (the
 user chose to install it directly, including when accepted from game
 detection below) or `"dependency"` (the resolver added it). Built-in
 providers carry no such record at all: they are never installed, so they are
-never counted or removed. This flag is the only persisted state for a
-catalog-installed plugin; its current reference count is always recomputed
-from the currently-installed set's manifests at resolution time (requires a
-fresh graph walk, not an incrementally-maintained counter, so it cannot drift
-out of sync with what is actually installed).
+never counted or removed. Persist origin/provenance and approval records
+alongside this flag, but **never persist reference counts**: reconstruct
+the selected-provider graph from current validated installed manifests.
 
 Uninstalling a tool, overlay, or `installed_for: "requested"` plugin removes
 it, then recomputes every remaining plugin's reference count; any
@@ -979,6 +1135,43 @@ it, then recomputes every remaining plugin's reference count; any
 too, recursively (its own now-unreferenced dependency-only plugins are
 removed next). A `"requested"` plugin is never auto-removed regardless of its
 reference count; only an explicit uninstall of it removes it.
+
+Explicitly requesting an installed dependency promotes it to `"requested"`.
+Refuse explicit removal of a provider still required by a kept consumer,
+naming the dependents; optional edges may be dropped. Count only actually
+resolved optional edges, not every matching provider. Recursive
+dependency-only removal preserves durable settings/data and is one serialized,
+recoverable operation (A6b.7).
+
+**U0 implementation contract (`vosu-core::catalog::installed`).** A
+reference is a resolved edge of the installed graph. The graph is rebuilt for
+every uninstall from each committed package's current manifest, which must
+still match its record's kind, id and version; otherwise the uninstall is
+refused rather than guessed. Edges follow the resolver's rule for kept
+installed consumers: built-in first, then the first installed provider in
+record order, and optional edges only when such a provider exists. A required
+edge to the explicit target does not block removal if another kept installed
+package satisfies the same requirement, because the consumer then selects that
+package. Every dependency-only plugin with no incoming edge is removed in
+recomputed rounds, including one that was already unreferenced. Tools,
+overlays and requested plugins never are. The resolver's 256-node and
+256-required-edge bounds also apply here. Exceeding them refuses the uninstall
+with `resolution-limit`.
+
+`UninstallService` takes the shared catalog operation gate and runs install
+recovery first. Refusals return synchronously with no job and no change: not
+installed from that exact source (404), still required with named dependents
+(409), or a graph that cannot be resolved (409). Otherwise a catalog polling
+job stops the closure's runtime activity, consumers first, and ends the dropped
+optional grants. It then moves each package directory to a same-root backup
+through the install journal and publishes the records without those packages
+as the single commit point. A failure or crash before that point restores
+every directory; after it, recovery removes the backups. Only package
+directories are journaled. Data and settings are removed only for the explicit
+target, and only when the request sets `remove_data`. A file the operating
+system still holds open, such as a loaded DLL on Windows, can make a move fail;
+the whole removal then rolls back. Promoting an explicitly requested installed
+dependency publishes only its `installed_for` record, with a new generation.
 
 ### Game detection
 
@@ -992,6 +1185,20 @@ matcher). When a running process matches an uninstalled catalog game plugin,
 the dashboard offers "Add support for `<name>`"; accepting it runs the
 normal install plan flow above with `reason: "requested"`.
 
+Catalog matchers add discovery interest only as bounded hint names: on Linux
+the short `process_names`, `comm_hints` and `linux_name_contains` entries, on
+Windows the `process_names` entries, at most 64 names in total (a budget
+separate from installed plugins) and, on Linux, only into the kernel/CN_PROC
+table capacity installed plugins leave free. Catalog content never widens the
+enumeration-cost pre-filter to unfiltered and never displaces installed
+interest; only installed plugins keep `plugin-abi.md` §6.1's widening rule. Detection is
+degraded for a catalog entry with only `process_path_patterns`/
+`command_line_patterns`, or whose hints exceed the budget: it is matched only
+against processes discovery already observes for another reason (admitted by
+another hint, or while an installed matcher has widened the filter). A
+process an installed, enabled game plugin already matched still produces the
+offer; the management view flags it as `installed_match`.
+
 ## Sources and credentials
 
 ### Source forms
@@ -1003,9 +1210,28 @@ A source string is one of:
   Codeberg, or a self-hosted GitLab, Gitea, or Forgejo instance.
 - An HTTPS URL ending in `/catalog-v2.json` on any web server.
 
+**A6b.2 (approved 2026-11-24):** URL forms require HTTPS and reject userinfo,
+query and fragment. Static classification uses the parsed path ending
+exactly `/catalog-v2.json` (no extra trailing slash). Repository URLs select
+latest; only GitHub shorthand supports tag pinning. One trailing slash and
+an optional `.git` suffix are repository-fetch conveniences, never identity
+aliases. Encode tags as URL path components and the entire nested GitLab
+project path as one project-ID component.
+
+Keep the verbatim configured string as the settings/credential/officialness
+key; parsing, URL case/default-port normalization, tags and HTTPS aliases
+never transfer authority. At most 32 sources, no duplicate exact identities.
+Replacement accepts source/enabled/order only, not trust/private flags.
+Dedicated routes change those flags. Disabling retains saved settings but
+fetches nothing and contributes no candidates. Removal purges associated
+trust/private/credentials, invalidates fetches/plans, and re-add starts
+untrusted with private permission false (fixed officials remain trusted and
+never receive private permission). Cross-store mutations require durable
+rollback/recovery, not hidden partial success (A6b.4).
+
 ### Forge detection
 
-Detection runs once per source, cached until the source string changes:
+Successful detection is cached for that exact source's lifetime:
 
 1. Host is exactly `github.com` → GitHub forge, no probe.
 2. Host is exactly `gitlab.com` → GitLab forge, no probe.
@@ -1024,6 +1250,14 @@ Detection runs once per source, cached until the source string changes:
    is fetched as a plain static HTTPS URL (HTTP Basic credential only, no
    forge API).
 
+Probes never authenticate, including when a credential is saved. Each has a
+5-second **total** deadline and a bounded JSON body with `version`; a
+cross-origin redirect cannot establish forge identity. The source's own
+exact-host private permission also applies to probes. Failed detection is
+retried only on explicit refresh or relevant source/private-setting edit;
+there is no periodic retry or permanent hidden blacklist. Removal/edit
+invalidates success and failure state and rejects stale completions.
+
 ### Per-forge private asset retrieval
 
 - **GitHub**: `GET /repos/<owner>/<repo>/releases/latest` (or
@@ -1032,25 +1266,40 @@ Detection runs once per source, cached until the source string changes:
   its `url` field (the API asset endpoint, not `browser_download_url`) with
   `Accept: application/octet-stream` and the same bearer header. The API
   response is a redirect to presigned storage; the downloader follows it
-  itself (`src/net/streaming.rs`'s existing no-auto-redirect client) and drops
+  itself (`vosu-net`'s existing no-auto-redirect client) and drops
   `Authorization` once the redirect target's origin differs, per origin
   scoping below.
-- **GitLab**: `GET /api/v4/projects/<url-encoded path>/releases/<tag-or-permalink/latest>`
+- **GitLab**: `GET /api/v4/projects/<encoded-project>/releases/<tag>` or
+  `/api/v4/projects/<encoded-project>/releases/permalink/latest`
   with `Authorization: Bearer <token>`; find the release's asset link whose
   name is `catalog-v2.json`; GET its `direct_asset_url` with the same bearer
   header, dropped on an origin change.
 - **Gitea-compatible**: `GET /api/v1/repos/<owner>/<repo>/releases/latest`
-  (or `/tags/<tag>`) with `Authorization: token <token>`; find the asset named
+  (or `/releases/tags/<tag>`) with `Authorization: token <token>`; find the asset named
   `catalog-v2.json`; GET its `browser_download_url` with the same header,
   dropped on an origin change.
 - **Static HTTPS source**: GET the literal configured URL; attach HTTP Basic
   auth only when a `basic` credential is configured for that exact source.
 
+Asset names are exact and case-sensitive; reject zero or multiple matching
+`catalog-v2.json` assets. Bound metadata bytes, asset count and text lengths;
+do not paginate indefinitely or guess another release/asset. Validate every
+initial returned asset URL before requesting it, not only its redirects.
+A foreign origin never receives the source credential. Distinguish malformed
+source, undetected forge, credential required/rejected, unsupported host/target,
+unavailable source, invalid catalog and resolution conflict without upstream
+body/URL leakage. A 404 alone does not prove a private repository exists:
+offer credential guidance without asserting existence.
+
 ### Credentials
 
 `catalog-credentials.toml` in the config root, one array-of-tables per
 credentialed source, replaced atomically in the same directory (0600 on
-Linux, matching ADR 0015's `api-keys.toml` handling):
+Linux, matching ADR 0015's `api-keys.toml` handling).
+The root is channel-aware and separate from release/install roots. Windows
+inherits the destination directory ACL; this is not encryption, DPAPI, a
+keyring or a custom owner-only DACL. A broadly readable portable config
+directory retains its security limitations.
 
 ```toml
 [[sources]]
@@ -1083,31 +1332,64 @@ Credentials, once set, are invisible to plugins, tools, and overlays; catalog
 (ADR 0023), regardless of origin, even when the catalog/release-metadata
 fetch that produced them used a credential.
 
+**A6b.3/.4 (approved 2026-11-24):** credential documents are at most
+256 KiB with at most 32 exact-source entries; each field is at most 8 KiB
+UTF-8 and mutation bodies at most 32 KiB. Reject invalid/control-bearing
+header tokens (including CR/LF), never truncate. Forge sources accept tokens,
+static sources Basic pairs only. Secret types have no derived Debug or
+general Serialize; only the private persistence path serializes them.
+No masked previews, usernames, presigned query strings, upstream response
+bodies or full request URLs enter responses/logs/reports/caches/browser storage.
+
+Serialize mutations; create same-directory NamedTempFile with Unix 0600
+from creation, write/flush/sync, close replacement handle, then use shared
+`atomic_replace`, preserving destination security metadata. Read with
+`read_published` or the documented same-writer lock. Publish memory only
+after durable success. Missing means no credential; malformed/unreadable
+means all credential use is disabled with redacted diagnostic and no rewrite.
+An explicit validated replacement may repair the store; deletion of an
+unknown credential is idempotent only while the source exists. Mutation
+invalidates source fetch/plan generations; an already-sent request cannot
+be recalled. Removal must not resurrect credentials on re-add.
+
 ### Origin scoping on redirects
 
-"Origin" is `(scheme, host, port)`. A credential header (`Authorization`,
-`PRIVATE-TOKEN`, HTTP Basic) attaches only to a request whose target origin
-equals the source's exact configured origin. The fetch client parses `3xx`
-`Location` itself (no automatic redirect following, as 1.x already does for
-package downloads) and drops every credential header before re-requesting
-whenever the new origin differs from the one the header was sent to. This
-applies to the catalog/release-metadata fetch and the forge's own asset
-response; it never applies to `packages`/`icon_url`/`banner_url` downloads,
-which carry no credential at all per the previous section.
+A credential's network origin is `(scheme, host, effective port)`, distinct
+from its verbatim source identity. **A6b.1 (approved 2026-11-24):** GitHub
+shorthand and repository URLs on `https://github.com` derive exactly
+`https://api.github.com:443` for release metadata/API catalog asset requests.
+Static GitHub-host URLs retain their literal origin. Other forges use their
+repository origin. There is no arbitrary API-host override, enterprise-host
+inference or credential transfer between source spellings.
+
+Credentials attach only at the approved initial origin. Any redirect origin
+change strips **all** credential headers permanently for that chain:
+A→B→A never reattaches. Check the initial asset URL separately. Use typed
+immutable purpose (`Probe`, `SourceMetadata`, `CatalogAsset`, `Package`,
+`Artwork`, updater/counter), never ambient authenticated client state.
+Probes, packages, artwork, updater and counter requests never carry source
+credentials. Same-host package/art requests remain public-only; inaccessible
+private artifacts fail honestly and need public/presigned HTTPS URLs.
 
 ### Private networks
 
 A source gains an optional `private_network: bool` (default `false`),
 settable only by the user for their own added source:
 `POST /api/catalog/sources/<source>/private-network {"allowed": true|false}`.
-When `true`, catalog and credentialed-asset requests to that source's own
-exact configured host may target a private or reserved destination; HTTPS
+When `true`, catalog, unauthenticated forge-probe and source-asset requests
+to that source's own exact configured host may target a private or reserved destination; HTTPS
 remains mandatory and certificate validation still uses the OS trust store
 (so an installed internal CA is honored). The exception never extends to
 `packages`/`icon_url`/`banner_url` URLs, even when they resolve to the same
 host, and never extends to any other source's host (ADR 0023). This narrows,
 for that one host, the private-destination rule `AGENTS.md` otherwise states
 for all downloads.
+
+Same host on another port remains host-eligible but is a different credential
+origin. No suffix, subdomain, CNAME-target-name or foreign redirect-host grant.
+Before each connection/hop validate all DNS answers (including mapped IPv6),
+reject empty/mixed forbidden answers, and pin resolved addresses; preserve
+no-proxy/manual redirects, public roots and TLS hostname/certificate checks.
 
 ### Trust
 
@@ -1126,6 +1408,16 @@ exactly as ADR 0019's eligibility table describes for "a source the user
 explicitly trusts". Untrusted-source plugins remain eligible only for
 `runtime = "process"`, after the same per-plugin approval 1.x already
 requires for user tools (the install plan's `needs_approval` above).
+
+**A6b.7/.8 (approved 2026-11-24):** trust changes immediately invalidate
+plans and block new loads under current policy. Previously source-trusted
+process plugins stop and require approval if now user-trust; revoking their
+approval also blocks subsequent loads. Running in-process code cannot be
+safely unloaded: mark disabled for next load, report **revocation pending
+restart**, and leave restart to the user; no automatic daemon restart.
+Credential/private permission/hash integrity grants no author trust.
+The backend checks provenance/CSRF but cannot attest what a human read:
+caller-supplied `warning_shown` is not authority.
 
 #### Process-plugin approval and management (A5.5, approved 2026-11-24)
 

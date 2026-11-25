@@ -89,6 +89,7 @@ DASHBOARD_PORT = 24051.0
 ALLOWED_IPS = \"127.0.0.1,localhost,absolute\"
 
 STATIC_FOLDER_PATH = \"./static\"
+MAX_PACKAGE_MIB = 512
 ";
 
 #[test]
@@ -119,6 +120,7 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "DASHBOARD_PORT",
             "STATIC_FOLDER_PATH",
             "ALLOWED_IPS",
+            "MAX_PACKAGE_MIB",
         ]
     );
 }

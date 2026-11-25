@@ -21,6 +21,7 @@ pub struct Config {
     pub dashboard_port: f64,
     pub static_folder_path: String,
     pub allowed_ips: String,
+    pub max_package_mib: f64,
 }
 
 impl Default for Config {
@@ -42,11 +43,24 @@ impl Default for Config {
             dashboard_port: 24_051.0,
             static_folder_path: "./static".to_owned(),
             allowed_ips: "127.0.0.1,localhost,absolute".to_owned(),
+            max_package_mib: 512.0,
         }
     }
 }
 
 impl Config {
+    /// Checked local package cap shared by resolver and download preparation.
+    /// Invalid programmatic values fail closed rather than saturating a cast.
+    pub fn max_package_bytes(&self) -> Option<u64> {
+        if !self.max_package_mib.is_finite()
+            || self.max_package_mib.fract() != 0.0
+            || !(1.0..=4096.0).contains(&self.max_package_mib)
+        {
+            return None;
+        }
+        (self.max_package_mib as u64).checked_mul(1_048_576)
+    }
+
     /// Effective API v1 hub debounce after configuration validation.
     pub fn api_v1_subscription_debounce_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs_f64(self.api_v1_subscription_debounce / 1_000.0)
@@ -71,6 +85,7 @@ pub enum ConfigKey {
     DashboardPort,
     StaticFolderPath,
     AllowedIps,
+    MaxPackageMib,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,7 +122,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 16] = [
+const SCHEMA_ITEMS: [ConfigItem; 17] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -204,6 +219,12 @@ const SCHEMA_ITEMS: [ConfigItem; 16] = [
         ConfigDefault::String("127.0.0.1,localhost,absolute"),
         None,
     ),
+    item(
+        ConfigKey::MaxPackageMib,
+        "MAX_PACKAGE_MIB",
+        ConfigDefault::Number(512.0),
+        Some(1.0),
+    ),
 ];
 
 const fn item(
@@ -226,7 +247,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 16] = [
+pub const BINDING_ORDER: [&str; 17] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -243,6 +264,7 @@ pub const BINDING_ORDER: [&str; 16] = [
     "DASHBOARD_PORT",
     "ALLOWED_IPS",
     "STATIC_FOLDER_PATH",
+    "MAX_PACKAGE_MIB",
 ];
 
 /// A blank line is inserted after each of these bindings.

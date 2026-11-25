@@ -1,0 +1,21 @@
+[
+  {
+    "source": "acme/preferred",
+    "catalog": {
+      "catalog_version": 2,
+      "name": "Preferred",
+      "published": "2026-11-24T00:00:00Z",
+      "tools": [{"id":"root","name":"Root","version":"1.0.0","host":"^2.0.0","requires":[{"id":"field:acme.provider","version":"^1"}],"optional":[{"id":"field:acme.unused","version":"^1"}],"packages":{"any":{"url":"https://example.org/root.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":20}}}],
+      "plugins": [{"id":"acme.provider","name":"Provider","version":"9.0.0","host":"^2.0.0","runtime":"process","provides":[{"id":"field:acme.provider","version":"1.0.0","schema_version":"1.0.0","lanes":[]}],"requires":[{"id":"field:acme.missing","version":"^1"}],"packages":{"x86_64-unknown-linux-gnu":{"url":"https://example.org/dead.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":30}}}]
+    }
+  },
+  {
+    "source": "acme/alternate",
+    "catalog": {
+      "catalog_version": 2,
+      "name": "Alternate",
+      "published": "2026-11-24T00:00:00Z",
+      "plugins": [{"id":"acme.provider","name":"Provider","version":"1.0.0","host":"^2.0.0","runtime":"process","provides":[{"id":"field:acme.provider","version":"1.0.0","schema_version":"1.0.0","lanes":[]}],"packages":{"x86_64-unknown-linux-gnu":{"url":"https://example.org/good.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","size":40}}}]
+    }
+  }
+]

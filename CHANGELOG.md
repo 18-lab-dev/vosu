@@ -2,6 +2,116 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M6b
+
+- Manage catalogs through catalog v2 in the dashboard. Settings › Catalog
+  sources edits the ordered source list (all source forms), shows each
+  source's fetch status, and has per-source **Trusted** (the exact trust
+  warning before every grant), **Private network** and write-only
+  **Credential…** controls. Tools and plugins on the Tools page and overlays
+  on the Available page install only through a reviewed install plan
+  confirmed once: native code, runtime, trust, required approvals, the
+  install-path disclosure and plan errors are shown first, then the job
+  outcome with each package's load result. Catalog-installed packages can be
+  uninstalled after a preview of the dependencies that go with them, or kept
+  when nothing needs them. Game-support offers for a running game open the
+  same plan. A "Restart vosu to finish" notice names in-process plugins
+  whose removal or revoked trust takes effect only after a restart.
+- Add the dashboard-only `/api/catalog/*` routes (sources, credentials,
+  trust, private network, refresh, entries, install plans and confirmation,
+  jobs, installed packages, uninstall preview/start, promote, offers, art,
+  status); every `POST`/`DELETE` requires dashboard provenance and CSRF.
+- Remove the 1.x immediate catalog install path: `/api/tools/catalog*`,
+  `POST /api/tools/<id>/install|update|uninstall`, the overlay catalog
+  install routes and the `vosux --sources`, `--install`, `--update` and
+  `--uninstall` options. Tools installed by 1.x keep loading; the 1.x
+  source list is no longer rewritten at startup. Test-harness builds use
+  `VOSU_CATALOG_TEST_SOCKET` instead of `VOSU_TOOL_CATALOG_TEST_SOCKET`.
+- Add the D15 catalog-forge gate (`scripts/test-catalog-forge.py`, required in
+  `prepush.py` and CI): a pinned Forgejo behind a throwaway internal CA that is
+  installed only in the test container's OS trust store, exercising private
+  exact-host access, token/Basic receipt and storage, real-forge redirects,
+  foreign-host and same-host package/art denial, and missing-CA/wrong-name
+  failures through the production client. Native Windows store and owner
+  live-forge evidence remain pending.
+- Compose the catalog services once at daemon startup: source/credential and
+  install-journal recovery run before discovery, installed catalog plugins load
+  under current source trust, and catalog game offers follow discovery.
+  Official catalog plugins now register their namespace schemas with official
+  provenance instead of failing as untrusted. Untrusting or removing a source
+  durably clears revoked approvals first and keeps running in-process code
+  "revocation pending restart" until vosu restarts, even after re-trust.
+  Corrupt catalog stores disable their feature without being rewritten.
+- Fetch catalog-v2 release assets through bounded GitHub API, nested-project
+  GitLab, Gitea/Forgejo and literal static protocols with exact asset selection,
+  initial-origin rejection and request-local credentials. Reconcile credential
+  membership before exposing the core fetch service; disabled/failed sources
+  contribute no candidates. Real-CA/owner-forge D15 evidence remains pending.
+- Classify credential kind through the shared source parser, including uppercase
+  HTTPS static URLs, without normalizing exact credential identities.
+- Add exact-identity catalog source settings and HTTPS source parsing, with
+  dedicated trust/private-network mutations and journaled credential-purge
+  recovery. Preserve legacy source lists and migration markers for M8.
+- Add a bounded exact-source credential store in the channel-aware config root,
+  with write-only inputs, redacted presence/errors, serialized durable mutation
+  generations and source-removal purge hooks. Malformed stores are disabled
+  without rewriting; explicit validated replacement repairs them. Persistence
+  follows existing same-directory atomic writes, Unix 0600 temporary/final files
+  and inherited Windows directory ACLs, not a keyring or encrypted secret store.
+  Native Windows ACL/replacement evidence remains pending.
+- Add pure current-source native trust policy and exact artifact approvals.
+  Revocation clears process approvals and reports running in-process code as
+  disabled pending user restart; actual runtime handoff remains M5/W4 work.
+- Resolve catalog capability graphs with bounded deterministic ranked backtracking,
+  retained installed consumers, one version per plugin, dependency-first output,
+  and optional grants that never initiate installation.
+- Detect unknown catalog forges through bounded unauthenticated origin-pinned
+  probes; cache success for the source lifetime and retry failures only on
+  refresh or relevant edits. Publish generation-checked SDK-validated candidate
+  snapshots without discarding alternatives or reusing failed-source entries.
+- Review immutable bounded catalog plans before single-use confirmation, with
+  artifact-bound approvals, stale snapshot refusal, lazy ten-minute expiry,
+  serialized catalog operations and the existing catalog-job polling envelope.
+  Add the dashboard/config `MAX_PACKAGE_MIB` integer setting (1–4096, default
+  512), pinning the same checked byte cap for resolution and executor downloads.
+  Package installation is handed to M6b I0, not implemented by plan creation.
+- Offer "add support" for running games matched by uninstalled catalog game
+  plugins from enabled sources, using the existing discovery service and the
+  runtime process matcher (catalog hints alone never match; overlapping catalog
+  alternatives are allowed). Offers are bounded, never download, approve or
+  trust anything, and vanish on process exit, PID reuse, source changes or
+  install; accepting one builds a normal requested install plan for its exact
+  source. Catalog entries add at most 64 bounded pre-filter hint names and
+  never widen or displace the Linux process-event filter, so path-only entries
+  detect only processes already observed. Native Windows observation evidence
+  remains pending.
+- Install confirmed catalog plans through the core executor: every package is
+  downloaded public-only and credential-free, checked for exact size and
+  SHA-256 from the same handle, ZIP-preflighted into same-filesystem staging
+  (now also refusing duplicate entries and Windows case/device-name/trailing-dot
+  collisions), and verified against its catalog entry with the SDK
+  (manifest, schemas, lanes, target library/UI) before anything is published.
+  The dependency-first graph and its provenance/approval/`installed_for` records
+  commit through a journal with all-or-rollback recovery before discovery/load.
+  Committed plugins load only under current trust policy; process plugins
+  report "requires M5 process runtime". Native Windows rename/reparse/locked-file
+  and crash-recovery evidence remains pending; root composition, routes and the
+  legacy catalog-v1 install cutover are not part of this change.
+- Uninstall catalog packages through a core uninstall service. The installed
+  provider graph is rebuilt from the committed packages' current manifests with
+  the resolver's own provider selection; no reference count is stored. Removing
+  a provider that a kept package still requires is refused, and the refusal
+  names every dependent; resolved optional grants are dropped instead.
+  Dependency-only plugins that nothing references any more are removed
+  recursively. Built-ins and requested plugins are never removed automatically.
+  Runtime activity stops before the removal is committed. The whole removal
+  commits or rolls back through the install journal, including recovery after a
+  crash. Data and settings are kept unless the user explicitly chooses to remove
+  the uninstalled package's own data. Explicitly requesting an installed
+  dependency promotes it to requested without downloading it again. Native
+  Windows removal evidence is still pending, and routes and root composition are
+  not part of this change.
+
 ## Unreleased — 2.0 M5
 
 - Add the internal `vosu plugin-host` command, which core starts once per

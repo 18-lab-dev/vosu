@@ -116,12 +116,12 @@ impl OsuSession {
                     changed = settings.changed(), if settings_open => {
                         settings_open = changed.is_ok();
                         if settings_open {
-                            reader_tx.send_replace(reader_settings(*settings.borrow_and_update(), bus_demand.borrow().collect_errors));
+                            publish_reader(&reader_tx, reader_settings(*settings.borrow_and_update(), bus_demand.borrow().collect_errors));
                         }
                     }
                     changed = bus_demand.changed() => {
                         if changed.is_err() { break; }
-                        reader_tx.send_replace(reader_settings(*settings.borrow(), bus_demand.borrow_and_update().collect_errors));
+                        publish_reader(&reader_tx, reader_settings(*settings.borrow(), bus_demand.borrow_and_update().collect_errors));
                     }
                 }
             }
@@ -153,6 +153,20 @@ pub(super) fn reader_settings(
         read_mania_scroll_speed: settings.read_mania_scroll_speed,
         collect_hit_errors: collect_errors,
     }
+}
+
+/// Notifies reader workers only when the effective settings differ: a bus
+/// demand change that leaves `collect_hit_errors` as it was must not look
+/// like a settings change, nor wake every reader to reapply identical values.
+fn publish_reader(
+    tx: &watch::Sender<vosu_osu_state::ReaderSettings>,
+    next: vosu_osu_state::ReaderSettings,
+) {
+    tx.send_if_modified(|current| {
+        let changed = *current != next;
+        *current = next;
+        changed
+    });
 }
 
 fn target(session: &Weak<OsuSession>) -> Option<CaptureTarget> {

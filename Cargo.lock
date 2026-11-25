@@ -3641,6 +3641,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
+ "url",
  "vosu-net",
  "vosu-plugin-api",
  "vosu-plugin-testkit",
@@ -3657,6 +3658,7 @@ dependencies = [
 name = "vosu-net"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "futures-util",
  "libc",
@@ -3890,15 +3892,20 @@ name = "vosu-test-harness"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "bytes",
  "futures-util",
  "parking_lot",
  "reqwest",
+ "rustls",
+ "semver",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tokio-util",
+ "url",
  "vosu",
  "vosu-core",
  "vosu-net",

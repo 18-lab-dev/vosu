@@ -642,6 +642,8 @@ python -m unittest discover -s scripts -p 'test_*.py'
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
+# D15 real Forgejo behind an internal CA (podman locally; CI sets VOSU_X1_CONTAINER_ENGINE=docker):
+python scripts/test-catalog-forge.py
 cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 # UI paths changed: build with --features test-harness, then
 python tests/tool_host_smoke.py --binary target/debug/vosu --playwright-module <playwright/index.mjs>
@@ -918,6 +920,194 @@ Results: `manifest` **59 passed**, the same count the Linux lib filter lists.
 ignored. These runs cover native Windows filesystem, confined-asset and
 manifest/metadata precedence behavior; cross-Clippy alone did not. The
 main-owned integrated landing gate is still required.
+
+## M6b contract and evidence obligations
+
+A6b freezes contracts over baseline `2c349eb`; it does **not** implement
+private fetching, persistence, solving, installation or M5 process execution.
+A6b.1–A6b.8 were approved 2026-11-24; .7 specifically leaves restart to
+the user with an honest **revocation pending restart** state.
+The [interface inventory and baseline ledger](../v2/implementation-plan.md#m6b-frozen-service-interfaces),
+[catalog contract](../v2/catalog-v2.md#sources-and-credentials) and
+[ADR 0023](../decisions/0023-authenticated-catalog-sources.md) are normative.
+
+### Required paired counterexamples
+
+The IDs below are required scenario identities, not claims of existing test
+functions or observed passes. X0/X1 extend existing `catalog_v2_compat`,
+`server_compat` and `network_integration`, retaining the M6a corpus.
+Each rejection has a minimally different positive control and independently
+specified expected graph/header/bytes. List actual tests and nonzero matches,
+then record exact command/filter/features/target/count and commit.
+
+| ID / owner | Positive and discriminating negative |
+| --- | --- |
+| A6b.1 / N0,F0 | Private GitHub release/API asset receives scoped Bearer + octet-stream Accept; initial foreign asset and API→storage→API receive no token after origin change. Static github.com retains literal origin; no enterprise/API override. |
+| A6b.2 / S0,F0 | Literal static URL/no probe; GitHub latest/tag; nested encoded GitLab path; ordered unauthenticated GitLab→Gitea probes. Reject userinfo/query/fragment/HTTP, duplicate matching asset, cross-origin probe identity; failure retries only on explicit refresh/edit and stale completion cannot publish. |
+| A6b.3 / C0,N0 | Token/Basic positive receipt, 256 KiB/32-entry/8 KiB field/32 KiB body bounds and boundary+1 rejects. Malformed/unreadable input stays unchanged with credentials disabled; explicit validated repair succeeds. Failed sync/replace never changes memory/file. |
+| A6b.4 / C0,S0 | Disable retains settings but no candidates; removal/re-add purges secrets/trust/private. Reject list-injected flags, aliases inheriting officialness and partial cross-store success; native replacement/concurrent set/delete and alpha-root isolation. |
+| A6b.5 / R0,U0 | First-ranked complete solution, later candidate after early dead end, one plugin satisfying multiple capabilities, kept installed tools/overlays, optional fixed point. Conflict/cycle/search-limit returns empty adds; built-ins never add/refcount/install/replaces/remove. |
+| A6b.6 / P0,I0 | Exact artifact approval and one confirmation/job; reject changed hash/source/runtime/generation/cap/target, missing/extraneous approve IDs, replay/concurrent confirm, expired/65th plan. Fault/crash at each directory/record journal boundary restores coherent graph before load. |
+| A6b.7 / T0,U0 | Current source trust/load check, process stop and reapproval, in-process pending user restart. Named required-dependent removal refused; requested promotion/diamond/chain autoremove preserves data/settings; absent optional never counts. |
+| A6b.8 / P0,H0 | 512 default, checked integer 1..=4096, solver/download same cap; oversized entry still catalog-valid. Browser sees exact warning before each trust grant, no remembered bypass or warning_shown authority. |
+| D8 / P0 | Resolved internal subtree requirement true; whole namespace, lookalike and unsatisfied optional false; no change to trust/native approval. |
+| D18 / G0 | Same real matcher semantics for installed/catalog alternatives, PID-generation invalidation, no pre-click package load/download; overlaps allowed until enabled registration. |
+| Route boundary / H0 | Every inventory method/path/listener, source encoded slash once, wrong/double decoding/near miss; absent/wrong CSRF, overlay/API-key/broker/tool tokens never authorize management. Credentials return 204/no-store, all views write-only. |
+
+Secret-disclosure evidence is meaningful only after the authenticated fixture
+received three **distinct** token/username/password sentinels. Then assert
+absence from all list/plan/job/status/error/log/report/cache/browser-storage
+surfaces, including malicious upstream error text and presigned query URLs.
+Fixture recorders keep sensitive headers in memory; retained artifacts contain
+redacted assertions, never credentials/full presigned URLs.
+
+### D15 real TLS fixture workflow
+
+X1 must implement the bounded `scripts/test-catalog-forge.py` runner and wire
+its actual invocation into local/hosted gates before using it as evidence.
+Provision a pinned real Gitea/Forgejo private repository/release with exactly
+named catalog asset behind a named private HTTPS host and fixture internal CA.
+Read-only fixture token and fixture state are instance-owned. Fail explicitly
+if container, production TLS path, certificate provisioning or endpoint
+prerequisites are missing; missing prerequisites are not zero-test success.
+
+Main provisions CA trust **only in an isolated test environment**: install
+into that environment's OS trust store, run the unmodified production client
+builder, then remove the CA/container/private key/token and retain cleanup
+receipts. Native Windows installs/removes the CA in the guest OS store with
+its native runner; staging source via vm-test does not provision trust.
+Workers do not change host/system trust, run private probes or control VMs.
+
+Required order/controls: missing CA fails; OS-installed CA with correct
+hostname succeeds; wrong hostname still fails; public roots still work.
+Private flag false fails, true permits only configured exact host for
+catalog/probe/asset. Same-host changed port may keep private permission but
+strips credential; foreign/subdomain/suffix/CNAME-target grant fails.
+Mixed DNS/empty DNS/mapped IPv6 and per-hop pinning are exercised. Package/art
+on the **same** private host remain public-only and credential-free; a
+catalog exception never authorizes an artifact exception. Redirect A→B→A
+stays stripped. Record production-client header/address decisions, not only
+mock request objects. HTTP loopback allowance and per-client
+`add_root_certificate` do not prove OS trust-store/internal-CA support.
+
+#### X1 implementation: `scripts/test-catalog-forge.py`
+
+The runner is the `catalog-forge` step of `scripts/prepush.py` and the
+`catalog-forge` job of `ci.yml` (required by `CI required` for every code
+change). Run it directly after `source scripts/dev-env.sh` with
+`CARGO_TARGET_DIR` exported; it needs rootless `podman` (or
+`--engine docker`/`VOSU_X1_CONTAINER_ENGINE=docker`), `openssl` and `cargo`.
+Hosted CI uses Docker because every hosted Ubuntu image runs a Docker daemon
+while rootless podman is not part of every `ubuntu-latest` image; the script,
+pinned images and container commands are identical for both engines.
+
+1. Fails (never skips) when the engine, `openssl`, `cargo`, the
+   digest-pinned `codeberg.org/forgejo/forgejo:17.0.2-rootless` image or the
+   `scripts/ci-container` runner image is unavailable.
+2. Builds `cargo test --locked --workspace --all-features --test
+   network_integration --no-run` and requires its ignored `forge::`/`os_store::`
+   listing to equal the runner's exact inventory.
+3. Generates a throwaway EC CA and leaves for exactly `forge.vosu-x1.test` and
+   `mirror.vosu-x1.test` (the CA key is deleted once the leaves are signed),
+   starts Forgejo on an `--internal` network and provisions it through its
+   API from a container on that network: private repositories with
+   real releases, a `catalog-v2.json` attachment, a package attachment,
+   external assets that make Forgejo itself issue the redirects, a
+   read-only collaborator and a `read:repository` token (provisioning checks
+   anonymous 404, token read 200 and token write 403).
+4. Runs the test binary in the runner image as container `…-trusted` with
+   the CA mounted into `/usr/local/share/ca-certificates/` and
+   `update-ca-certificates --fresh`, then as `…-untrusted` with the same
+   image and command but no CA. The test process is the forge's TLS front end
+   (network aliases `forge`, `mirror`, `wrong`.vosu-x1.test; ports 443/8443)
+   and records each ClientHello SNI/outcome and each request's path, Accept,
+   status and credential *classification*; it forwards forge-host requests
+   to Forgejo. A DNS recorder wraps the production system resolver.
+5. Requires the exact passing test names/count per phase, fails if any
+   captured output contains the token, username, password or owner password,
+   writes redacted `trusted.log`, `untrusted.log`, `forge.log` and
+   `summary.json` under `$CARGO_TARGET_DIR/catalog-forge/<run>/`, and removes
+   every `vosu-x1-<run>-*` container and network in `finally` (also on
+   failure/SIGTERM), recording the empty leftover lists in `summary.json`.
+
+Tests (all `#[ignore]`d; `cargo test -p vosu-test-harness --test
+network_integration` runs only the 5 `harness::` tests, and running the
+ignored ones outside the runner fails with `D15 forge prerequisite missing`):
+
+| Phase | Test | Discriminates |
+| --- | --- | --- |
+| trusted | `forge::trusted::production_client_trusts_the_installed_ca_for_the_exact_forge_name_only` | `StreamingClient::production()`: flag false refused before TLS; OS-store CA accepted; `wrong.vosu-x1.test` (same leaf) fails `NotValidForName` with no request |
+| trusted | `forge::trusted::private_source_is_refused_by_default_then_fetched_with_its_exact_flag` | `CatalogFetchService` refresh: no connection without the flag; with it, exact probe/metadata/asset sequence from the real release JSON, token received only on metadata/asset; token only in 0600 `catalog-credentials.toml`, absent from other files and diagnostics |
+| trusted | `forge::trusted::static_basic_credential_is_received_and_kept_out_of_storage` | static literal URL, one request with the exact Basic username/password, no probes; both absent elsewhere |
+| trusted | `forge::trusted::real_forge_same_origin_redirect_keeps_the_credential` | Forgejo's own 303 to the same origin keeps the token |
+| trusted | `forge::trusted::real_forge_cross_port_redirect_strips_the_credential_for_the_whole_chain` | Forgejo 303 to `:8443`, 302 back: token, none, none; Forgejo answers the final private request 404 |
+| trusted | `forge::trusted::foreign_hosts_are_denied_at_redirect_and_initial_asset` | redirect to the validly certified mirror is resolved then refused (no ClientHello); a foreign initial asset is `UnsafeAsset` before any lookup |
+| trusted | `forge::trusted::package_and_art_on_the_private_source_host_stay_public_and_credential_free` | package/icon URLs on the private source host fail `Destination` under public purposes even when offered the token; `Package`/`Artwork` cannot take source authority; identical URL under `CatalogAsset` reaches the forge |
+| trusted | `forge::trusted::rejected_token_is_reported_without_echo` | wrong token reaches Forgejo as an unrecognized value, 401 becomes `CredentialRequired`, never echoed |
+| trusted | `os_store::trusted::installed_ca_trusts_the_exact_fixture_name_only` | loopback leaf trusted only for the exact name |
+| untrusted | `forge::untrusted::missing_ca_rejects_the_real_forge_before_any_request_or_credential` | `UnknownIssuer`, every handshake fails `UnknownCA`, Forgejo receives nothing |
+| untrusted | `os_store::untrusted::missing_ca_rejects_the_fixture_leaf_before_any_request` | same, loopback |
+
+Each test also asserts the store precondition: `SSL_CERT_FILE`/`SSL_CERT_DIR`
+unset and, on Linux, the CA present/absent in
+`/etc/ssl/certs/ca-certificates.crt` with public roots retained. Mutation
+checks run while implementing X1: making credential stripping host-only,
+widening the private exception to any host and accepting invalid
+certificates each failed the trusted phase. Mixed/empty DNS answers,
+IPv4-mapped IPv6 and per-hop pinning remain covered by `vosu-net` unit tests,
+not this fixture; public-root *connections* are not exercised offline.
+
+Native Windows (main, VM already running; never started by the script):
+
+```sh
+python scripts/test-catalog-forge.py --windows-vm
+```
+
+It generates the same CA/leaves, copies them to `V:\x1\<run>`, imports the CA
+into `Cert:\LocalMachine\Root`, runs `python scripts/vm-test.py --package
+vosu-test-harness --test network_integration --env
+VOSU_X1_FIXTURE=V:\x1\<run>\fixture.json -- --ignored --test-threads=1
+os_store::trusted::`, removes the CA (verified with `Test-Path`), runs the
+`os_store::untrusted::` phase, and removes the CA and directory in `finally`.
+Each phase must report exactly one passing test.
+
+### Owner forge scopes and outstanding exits
+
+Owner-authorized one-time D15 checks remain separate from CI fixtures:
+GitHub private API asset→presigned redirect, GitLab nested private project,
+Codeberg Gitea-compatible behavior and one self-hosted Gitea/Forgejo.
+Inject tokens out of band; never commit/echo them. Scope guidance must match
+the actual forge/version and token type: GitHub fine-grained repository
+Contents read (classic private-repository tokens may require broader `repo`);
+GitLab repository/release API read (`read_api`, scoped to the intended project);
+Gitea/Forgejo repository-read scope where that version supports scoped tokens.
+Codeberg/older forge token capabilities and actual minimal accepted scopes
+must be verified, not labeled read-only from token syntax alone. Record
+forge/version, source form, documented scope names, endpoint/header-strip
+results and receipt IDs, never token values. A 404 is not private-existence
+evidence. Unavailable owner credentials leave the corresponding rows pending.
+
+At this contract landing, native Windows persistence/ACL/rename/TLS, real
+OS-CA forge, browser request/job flows, owner D15 and M5 real-process exits
+are **pending**, not waived. M5 A5.1's owner security decision is still
+external; no process execution substitute or §7.3 weakening is approved.
+M7 owns final bundled host/presentation extraction and legacy-tool deletion;
+M8 owns one-time migration/day-0. Neither is completed by freezing these seams.
+
+### A6b documentation acceptance
+
+Run in the assigned `m6b-a6b` checkout after `source scripts/dev-env.sh`,
+with `CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m6b-a6b`:
+
+```sh
+taskset -c 0-7,16-23 nice -n 10 python scripts/check-doc-links.py
+taskset -c 0-7,16-23 nice -n 10 python scripts/check-brand.py
+```
+
+Observed: 66 maintained Markdown files, zero missing local paths; 114
+tracked files with historical-brand occurrences, zero brand errors.
+Documentation-only change: no runtime tests added or run, no VM/network/CA
+operations, no native/browser/owner-forge or performance evidence claimed.
 
 ## S1 vosulay supervisor evidence (D16)
 

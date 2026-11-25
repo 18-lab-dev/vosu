@@ -109,14 +109,15 @@ pub use host::resource_requests::{
 };
 pub use host::resources::RootCapability;
 pub use host::{
-    DiagnosticSession, PackageRegistration, PluginHost, ProcessRecord, ProviderRegistration,
-    ValidationSnapshot,
+    DiagnosticSession, DiscoveryObserver, PackageRegistration, PluginHost, ProcessRecord,
+    ProviderRegistration, ValidationSnapshot,
 };
 pub use host_services::PluginHostHandler;
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{
     CandidateProcess, CompiledMatcher, MatchOutcome, MatchPlatform, MatcherEngine, MatcherError,
-    OverlapError, PluginId, Prefilter, RegisterError, overlaps,
+    OBSERVER_PREFILTER_BUDGET, OverlapError, PluginId, Prefilter, RegisterError, host_platform,
+    overlaps,
 };
 pub use read_plan::{
     DispatchThreadScope, ExecuteBytesError, FinishOutcome, MAX_OUTSTANDING_ASYNC_PLANS,
@@ -124,7 +125,7 @@ pub use read_plan::{
     deliver_sync, execute, execute_bytes, execute_into, execute_sync_into, on_dispatch_thread,
 };
 pub use registry::{
-    BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development,
+    BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development, load_installed,
 };
 #[cfg(target_os = "linux")]
 pub use scan::LinuxModuleTable;

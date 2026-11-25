@@ -8,6 +8,7 @@ pub mod auth;
 pub(crate) mod broker;
 pub mod bus_provider;
 pub mod catalog;
+pub mod catalog_api;
 pub mod files;
 pub mod ids;
 pub mod origins;

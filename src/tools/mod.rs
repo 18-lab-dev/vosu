@@ -4,7 +4,6 @@ pub mod action_authority;
 mod action_authority_tests;
 pub mod capabilities;
 mod catalog;
-mod catalog_art;
 mod cli;
 mod http;
 pub mod manifest;
@@ -148,11 +147,6 @@ pub struct ToolHost {
     cancel: CancellationToken,
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
     context: Arc<dyn Fn() -> Value + Send + Sync>,
-    catalog: Mutex<catalog::Catalog>,
-    catalog_jobs: Mutex<BTreeMap<String, catalog::Job>>,
-    catalog_operation: tokio::sync::Mutex<()>,
-    /// Card art fetched for the dashboard, keyed by the loaded catalog.
-    art: Mutex<catalog_art::ArtCache>,
     /// Installed overlays: the catalog install root and `GET /tools/_host/v1/overlays`.
     counters: Mutex<Option<Arc<crate::counters::ReloadableCounterService>>>,
 }
@@ -269,13 +263,8 @@ impl ToolHost {
             cancel: CancellationToken::new(),
             watcher: Mutex::new(None),
             context,
-            catalog: Mutex::new(catalog::Catalog::default()),
-            catalog_jobs: Mutex::new(BTreeMap::new()),
-            catalog_operation: tokio::sync::Mutex::new(()),
-            art: Mutex::new(catalog_art::ArtCache::default()),
             counters: Mutex::new(None),
         });
-        host.migrate_catalog_state().map_err(io::Error::other)?;
         host.recover_replacement().map_err(io::Error::other)?;
         host.rescan().await;
         Ok(host)
@@ -487,15 +476,6 @@ impl ToolHost {
             })
             .map(|e| e.id.clone())
             .collect::<Vec<_>>();
-        // Installed from a catalog (and so uninstallable from the
-        // dashboard), known from the install record rather than from a
-        // catalog that may be unreachable.
-        let managed = entry.source != "dev"
-            && self
-                .saved
-                .lock()
-                .get(&entry.id)
-                .is_some_and(|saved| saved.official || saved.catalog_source.is_some());
         let service = m.and_then(|m| m.service.as_ref());
         let interfaces = [
             m.is_some_and(|m| m.ui.is_some()).then_some("ui"),
@@ -514,13 +494,11 @@ impl ToolHost {
         let cli = m
             .and_then(|m| m.cli.as_ref())
             .map(|cli| json!({"usage":format!("vosux {}",entry.id),"summary":cli.summary}));
-        let update_available = self.update_available(&entry.id, m.map(|m| m.version.as_str()));
-        let mut view = json!({"update_available":update_available,"managed":managed,"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"banner_url":m.and_then(|m| m.banner.as_ref()).map(|_| format!("{}/tools/{}/_banner",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":service.map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}});
+        let mut view = json!({"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"banner_url":m.and_then(|m| m.banner.as_ref()).map(|_| format!("{}/tools/{}/_banner",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":service.map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}});
         view["service_role"] = json!(service.map(|s| &s.role));
         view["interfaces"] = json!(interfaces);
         view["autostart"] = json!(autostart);
         view["starts_with_vosu"] = json!(starts_with_vosu);
-        view["update_target"] = json!(self.update_target(&entry.id));
         if let Some((requires, optional)) = capabilities {
             view["requires"] = requires;
             view["optional"] = optional;
@@ -668,6 +646,46 @@ impl ToolHost {
             self.stop(&entry).await;
         }
     }
+    /// Catalog v2 installation's web-package handoff (M6b I0/K0): v2 tools
+    /// commit into this host's user root and are served after this rescan
+    /// until M7 replaces the legacy host.
+    pub async fn rescan_installed(self: &Arc<Self>) {
+        self.rescan().await;
+    }
+    /// The overlay host whose installed overlays `GET /tools/_host/v1/overlays`
+    /// lists.
+    pub fn set_counters(&self, counters: Arc<crate::counters::ReloadableCounterService>) {
+        *self.counters.lock() = Some(counters);
+    }
+    /// U0 removal (M6b H0): stop a catalog-installed tool's process and end
+    /// its sessions before its package directory moves.
+    pub async fn stop_installed(&self, id: &str) {
+        self.cli_sessions.lock().retain(|_, s| s.tool != id);
+        self.sessions.lock().retain(|_, session| session.tool != id);
+        self.codes.lock().retain(|_, code| code.tool != id);
+        if let Ok(entry) = self.entry(id) {
+            self.stop_serialized(&entry, true).await;
+        }
+    }
+    /// U0 removal of the explicit target's durable data (user choice only).
+    pub async fn remove_installed_data(&self, id: &str) -> io::Result<()> {
+        if !manifest::valid_id(id) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let data = self.data.parent().unwrap_or(&self.data).join("tool-data");
+        let paths = [data.join(id), self.cache.join(id)];
+        tokio::task::spawn_blocking(move || {
+            for path in paths {
+                match fs::remove_dir_all(&path) {
+                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
     async fn rescan(self: &Arc<Self>) {
         let _gate = self.gate.lock().await;
         if let Err(error) = self.recover_replacement() {
@@ -684,6 +702,10 @@ impl ToolHost {
                     .flatten()
                     .filter_map(Result::ok)
                     .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    // Installer transaction directories (`.stage-*`, catalog
+                    // `.vosu-backup-*`, legacy `.extract-*`) are never tools;
+                    // a hidden name is never a valid tool id either.
+                    .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
                     .map(|e| e.path())
                     .collect()
             };

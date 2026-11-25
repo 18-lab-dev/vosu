@@ -23,6 +23,7 @@ pub struct ProductionRouteDelegate {
     connections: OverlayConnections,
     removed: RemovedNotices,
     tools: Option<Arc<dyn RouteExtension>>,
+    catalog: Option<crate::server::catalog_api::CatalogApi>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
     surface: Option<SurfaceRouter>,
     #[cfg(feature = "test-harness")]
@@ -36,7 +37,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, api_v1: None, surface: None, #[cfg(feature = "test-harness")] adapter_capture: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, catalog: None, api_v1: None, surface: None, #[cfg(feature = "test-harness")] adapter_capture: None }
     }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
     pub fn removed_notices(&self) -> Vec<RemovedNotice> {
@@ -51,6 +52,11 @@ impl ProductionRouteDelegate {
     }
     pub fn with_tools(mut self, tools: Arc<dyn RouteExtension>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+    /// M6b H0 dashboard-only catalog management facade.
+    pub fn with_catalog(mut self, catalog: crate::server::catalog_api::CatalogApi) -> Self {
+        self.catalog = Some(catalog);
         self
     }
     pub fn with_api_v1(mut self, router: crate::server::api_v1::router::ApiV1Router) -> Self {
@@ -90,6 +96,10 @@ impl ProductionRouteDelegate {
             },
             Endpoint::ToolManagement => match &self.tools {
                 Some(tools) => Arc::clone(tools).dashboard(request, body).await,
+                None => not_found(),
+            },
+            Endpoint::Catalog => match &self.catalog {
+                Some(catalog) => catalog.handle(request, body).await,
                 None => not_found(),
             },
             Endpoint::State(_) | Endpoint::CalculatePp => {
