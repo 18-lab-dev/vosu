@@ -29,6 +29,8 @@ use crate::plugin::execution::{
 };
 use crate::plugin::host_services::PluginHostHandler;
 
+pub(crate) mod channel;
+
 const BOUND: Duration = Duration::from_secs(20);
 const GENERATION: u64 = 11;
 
@@ -131,6 +133,11 @@ struct Handler {
     changed: Condvar,
     hook: Mutex<Option<MessageHook>>,
     endpoint: OnceLock<std::sync::Weak<dyn ProcessEndpoint>>,
+    broker: crate::plugin::scan::ScanWorkerPool,
+    /// Blocks every SYNC plan until it opens (a plan stuck in a read).
+    sync_hold: Mutex<Option<Arc<Gate>>>,
+    /// The plan of every SYNC result the handler dispatched, in order.
+    sync_done: Mutex<Vec<u64>>,
 }
 
 impl Handler {
@@ -142,6 +149,9 @@ impl Handler {
             changed: Condvar::new(),
             hook: Mutex::new(None),
             endpoint: OnceLock::new(),
+            broker: crate::plugin::scan::ScanWorkerPool::new(2),
+            sync_hold: Mutex::new(None),
+            sync_done: Mutex::new(Vec::new()),
         })
     }
 
@@ -178,6 +188,10 @@ impl PluginHostHandler for Handler {
         payload: &[u8],
         _: u32,
     ) -> Option<vosu_status> {
+        let hold = self.sync_hold.lock().unwrap().clone();
+        if let Some(gate) = hold {
+            gate.wait();
+        }
         let endpoint = self.endpoint.get()?.upgrade()?;
         let plan = u64::from_le_bytes(payload[..8].try_into().unwrap());
         let result = sync_result(plan).encode_payload().unwrap();
@@ -187,12 +201,23 @@ impl PluginHostHandler for Handler {
             correlation_id: 0,
             payload: &result,
         });
+        self.sync_done.lock().unwrap().push(plan);
+        self.changed.notify_all();
         Some(vosu_status::VOSU_OK)
     }
 
     fn instance_lost(&self, _: PluginInstanceId, cause: LossCause) {
         self.losses.lock().unwrap().push(cause);
         self.changed.notify_all();
+    }
+
+    fn submit_broker_work(
+        &self,
+        instance: PluginInstanceId,
+        job: crate::plugin::host_services::BrokerJob,
+    ) -> Result<(), crate::plugin::host_services::BrokerJob> {
+        self.broker.submit(instance.0, job);
+        Ok(())
     }
 }
 
@@ -241,6 +266,7 @@ fn start_harness(status: vosu_status, startup: Duration) -> Harness {
         deadline: Instant::now() + startup,
         ingress: PluginIngress::new(id, Arc::clone(&dyn_handler)),
         loss: InstanceLoss::new(id, LossState::new(), &dyn_handler),
+        sync_budget: BOUND,
     };
     let started = Started {
         endpoint: core,
@@ -781,5 +807,135 @@ fn a_sixty_fifth_unanswered_request_is_one_channel_loss() {
     assert_eq!(harness.handler.wait_for(&harness.handler.losses, 1), 1);
     assert_eq!(harness.losses(), vec![LossCause::ChannelFailed]);
     gate.open();
+    endpoint.terminate();
+}
+
+/// M5 B0 counterexample: a result a broker worker computed for one
+/// generation's `SYNC` request never reaches another generation's child,
+/// even when the host routes it to the newer endpoint (an instance id the
+/// newer generation reuses). The old request is answered on its own
+/// channel; the new child receives nothing for it.
+#[test]
+fn read_plan_sync_result_of_an_old_generation_never_reaches_a_new_child() {
+    let mut old = start_harness(vosu_status::VOSU_OK, BOUND);
+    let old_endpoint = old.ready();
+    let mut new = start_harness(vosu_status::VOSU_OK, BOUND);
+    let new_endpoint = new.ready();
+    old.handler
+        .endpoint
+        .set(Arc::downgrade(&new_endpoint))
+        .unwrap();
+    let (header, payload) = sync_submit(7);
+    old.child
+        .sender
+        .send_acknowledged(1, &header, &payload)
+        .unwrap();
+    assert_eq!(old.recv(), private(op::STATUS, 1));
+    assert_eq!(
+        old.buffer.bytes(),
+        (vosu_status::VOSU_ERR_BACKEND as u32).to_le_bytes(),
+        "the old request is refused, never answered OK without its result"
+    );
+    let (header, payload) = public(&timer_set());
+    new.child
+        .sender
+        .send_acknowledged(1, &header, &payload)
+        .unwrap();
+    assert_eq!(
+        new.recv(),
+        private(op::STATUS, 1),
+        "the new child's next frame is its own STATUS, never the stale result"
+    );
+    assert!(old.losses().is_empty() && new.losses().is_empty());
+    old_endpoint.terminate();
+    new_endpoint.terminate();
+}
+
+/// M5 B0: a `SYNC` plan's result is written exactly once even when the
+/// budget timer races it: here the timer wins, and the late result is
+/// discarded without a `REPLY_NEXT`.
+#[test]
+fn read_plan_sync_result_after_core_timed_out_is_discarded() {
+    let (core, child) = pair();
+    let process = Arc::new(ScriptedProcess::default());
+    let handler = Handler::new(vosu_status::VOSU_OK);
+    let dyn_handler: Arc<dyn PluginHostHandler> = handler.clone();
+    let id = PluginInstanceId::new(6);
+    let create = Create {
+        generation: GENERATION,
+        plugin_id: "acme.fixture".to_owned(),
+        library: "/opt/acme/lib.so".into(),
+        library_sha256: [7; 32],
+        concurrent_dispatch: false,
+        sync_budget_ms: 100,
+        init: vosu_plugin_api::Init {
+            plugin_id: "acme.fixture".to_owned(),
+            settings: CborValue::Map(Vec::new()),
+            data_dir: "/tmp".into(),
+        },
+    }
+    .encode()
+    .unwrap();
+    let start = Start {
+        generation: GENERATION,
+        plugin_id: "acme.fixture".to_owned(),
+        create,
+        deadline: Instant::now() + BOUND,
+        ingress: PluginIngress::new(id, Arc::clone(&dyn_handler)),
+        loss: InstanceLoss::new(id, LossState::new(), &dyn_handler),
+        sync_budget: Duration::from_millis(100),
+    };
+    let started = Started {
+        endpoint: core,
+        process: process.clone(),
+    };
+    let mut harness = Harness {
+        launch: Some(std::thread::spawn(move || {
+            supervision::start(started, start)
+        })),
+        child,
+        process,
+        handler,
+        buffer: PayloadBuffer::new(),
+    };
+    let endpoint = harness.ready();
+    harness
+        .handler
+        .endpoint
+        .set(Arc::downgrade(&endpoint))
+        .unwrap();
+    let gate = Gate::new();
+    *harness.handler.sync_hold.lock().unwrap() = Some(Arc::clone(&gate));
+    // The handler's SYNC path blocks first (a plan stuck in one native
+    // read), then dispatches its result.
+    let (header, payload) = sync_submit(9);
+    harness
+        .child
+        .sender
+        .send_acknowledged(1, &header, &payload)
+        .unwrap();
+    assert_eq!(harness.recv(), private(op::STATUS, 1));
+    assert_eq!(
+        harness.buffer.bytes(),
+        (vosu_status::VOSU_ERR_TIMED_OUT as u32).to_le_bytes()
+    );
+    gate.open();
+    assert_eq!(
+        harness.handler.wait_for(&harness.handler.sync_done, 1),
+        1,
+        "the late result was dispatched to the endpoint"
+    );
+    let (header, payload) = public(&timer_set());
+    harness
+        .child
+        .sender
+        .send_acknowledged(2, &header, &payload)
+        .unwrap();
+    assert_eq!(
+        harness.recv(),
+        private(op::STATUS, 2),
+        "no REPLY_NEXT follows the timer's answer"
+    );
+    assert!(harness.losses().is_empty());
     endpoint.terminate();
 }

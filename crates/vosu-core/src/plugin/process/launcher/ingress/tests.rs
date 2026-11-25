@@ -1,6 +1,6 @@
 //! Core's ingress lanes over a real channel, the child played by the test.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{CborValue, LogLevel, LogRecord, Message, TimerSet, vosu_opcode};
@@ -10,11 +10,15 @@ use super::super::super::fake_plugin::{Gate, channel_pair};
 use super::*;
 use crate::identity::PluginInstanceId;
 use crate::plugin::host_services::PluginHostHandler;
+use crate::plugin::scan::ScanWorkerPool;
 
 const BOUND: Duration = Duration::from_secs(20);
 
 /// Core's handler: blocks the first message of `block_on` until `gate`
-/// opens, records everything, and answers SYNC plans with `sync`.
+/// opens, records everything, and answers SYNC plans with `sync` — after
+/// `sync_block` opens when `block_sync` is set, else after a three-way
+/// rendezvous. Broker work runs on `broker`'s workers, or is refused
+/// without one.
 struct Handler {
     block_on: u32,
     blocked_once: AtomicBool,
@@ -23,6 +27,11 @@ struct Handler {
     sync_gate: Arc<Gate>,
     sync_overlap: Mutex<Vec<bool>>,
     sync: vosu_status,
+    block_sync: bool,
+    sync_block: Arc<Gate>,
+    sync_calls: AtomicUsize,
+    broker: Option<ScanWorkerPool>,
+    brokered: AtomicUsize,
 }
 
 impl PluginHostHandler for Handler {
@@ -36,10 +45,28 @@ impl PluginHostHandler for Handler {
     }
 
     fn handle_read_plan_sync(&self, _: PluginInstanceId, _: &[u8], _: u32) -> Option<vosu_status> {
+        self.sync_calls.fetch_add(1, Ordering::SeqCst);
+        if self.block_sync {
+            self.sync_block.wait();
+            return Some(self.sync);
+        }
         self.sync_gate.arrive();
         let overlap = self.sync_gate.wait_arrivals(3, Duration::from_secs(5));
         lock(&self.sync_overlap).push(overlap);
         Some(self.sync)
+    }
+
+    fn submit_broker_work(
+        &self,
+        instance: PluginInstanceId,
+        job: crate::plugin::host_services::BrokerJob,
+    ) -> Result<(), crate::plugin::host_services::BrokerJob> {
+        let Some(broker) = &self.broker else {
+            return Err(job);
+        };
+        self.brokered.fetch_add(1, Ordering::SeqCst);
+        broker.submit(instance.0, job);
+        Ok(())
     }
 }
 
@@ -51,16 +78,40 @@ struct Lanes {
     buffer: PayloadBuffer,
 }
 
+/// How [`start_with`] configures the handler and the SYNC budget.
+struct Setup {
+    block_on: vosu_opcode,
+    sync: vosu_status,
+    block_sync: bool,
+    broker_workers: Option<usize>,
+    budget: Duration,
+}
+
 fn start(block_on: vosu_opcode, sync: vosu_status) -> Lanes {
+    start_with(Setup {
+        block_on,
+        sync,
+        block_sync: false,
+        broker_workers: Some(4),
+        budget: BOUND,
+    })
+}
+
+fn start_with(setup: Setup) -> Lanes {
     let (core, child) = channel_pair();
     let handler = Arc::new(Handler {
-        block_on: block_on as u32,
+        block_on: setup.block_on as u32,
         blocked_once: AtomicBool::new(false),
         gate: Gate::new(),
         handled: Mutex::new(Vec::new()),
         sync_gate: Gate::new(),
         sync_overlap: Mutex::new(Vec::new()),
-        sync,
+        sync: setup.sync,
+        block_sync: setup.block_sync,
+        sync_block: Gate::new(),
+        sync_calls: AtomicUsize::new(0),
+        broker: setup.broker_workers.map(ScanWorkerPool::new),
+        brokered: AtomicUsize::new(0),
     });
     let dyn_handler: Arc<dyn PluginHostHandler> = handler.clone();
     let ingress = Ingress::start(
@@ -69,6 +120,7 @@ fn start(block_on: vosu_opcode, sync: vosu_status) -> Lanes {
         Arc::clone(&core.ledger),
         Arc::new(StatusGate::default()),
         1,
+        setup.budget,
     )
     .unwrap();
     Lanes {
@@ -168,8 +220,8 @@ fn log_records_past_the_budget_are_dropped_while_requests_are_answered() {
     lanes.ingress.shutdown();
 }
 
-/// SYNC submissions run on their own workers: a blocked ordinary handler
-/// delays none of them, and several run at once.
+/// SYNC submissions run on the broker's workers (M5 B0): a blocked
+/// ordinary handler delays none of them, and several run at once.
 #[test]
 fn sync_requests_run_beside_a_blocked_ordinary_lane() {
     let mut lanes = start(
@@ -189,7 +241,7 @@ fn sync_requests_run_beside_a_blocked_ordinary_lane() {
         "a refused SYNC plan is answered by its STATUS"
     );
     assert_eq!(*lock(&lanes.handler.sync_overlap), vec![true; 3]);
-    assert_eq!(lanes.ingress.sync_workers(), 3);
+    assert_eq!(lanes.handler.brokered.load(Ordering::SeqCst), 3);
     for id in 2..=4 {
         assert_eq!(lanes.ledger.kind(id), None, "closed before the reply");
     }
@@ -210,5 +262,94 @@ fn an_ok_sync_without_a_result_is_never_answered_ok() {
     }
     lanes.submit(Some((9, RequestKind::Sync)), &sync_submit());
     assert_eq!(lanes.status(), (9, vosu_status::VOSU_ERR_BACKEND));
+    lanes.ingress.shutdown();
+}
+
+/// M5 B0: a SYNC plan blocked past its budget is answered
+/// `VOSU_ERR_TIMED_OUT` by core's own timer, once: when the blocked
+/// handler finally returns, nothing more is written for that request, and
+/// the ordinary lane kept answering throughout.
+#[test]
+fn read_plan_sync_past_its_budget_is_answered_timed_out_by_core_once() {
+    let mut lanes = start_with(Setup {
+        block_on: vosu_opcode::VOSU_OP_LOG_RECORD,
+        sync: vosu_status::VOSU_ERR_TARGET_GONE,
+        block_sync: true,
+        broker_workers: Some(4),
+        budget: Duration::from_millis(150),
+    });
+    lanes.submit(Some((1, RequestKind::Sync)), &sync_submit());
+    assert!(lanes.handler.sync_block.wait_arrivals(1, BOUND), "blocked");
+    lanes.submit(Some((2, RequestKind::Status)), &timer_set());
+    let mut answered = [lanes.status(), lanes.status()];
+    answered.sort_unstable_by_key(|(id, _)| *id);
+    assert_eq!(
+        answered,
+        [
+            (1, vosu_status::VOSU_ERR_TIMED_OUT),
+            (2, vosu_status::VOSU_OK)
+        ],
+        "the timer answers the blocked plan; the ordinary lane drains beside it"
+    );
+    assert_eq!(lanes.ledger.kind(1), None, "closed by the timer");
+    assert_eq!(lanes.ingress.expired_sync(), 1);
+    lanes.handler.sync_block.open();
+    // The handler returns TARGET_GONE now; only the next request's STATUS
+    // may follow.
+    lanes.submit(Some((3, RequestKind::Status)), &timer_set());
+    assert_eq!(lanes.status(), (3, vosu_status::VOSU_OK));
+    assert_eq!(lanes.handler.sync_calls.load(Ordering::SeqCst), 1);
+    lanes.ingress.shutdown();
+}
+
+/// M5 B0: a SYNC plan still queued behind a busy broker when its budget
+/// expires is answered `VOSU_ERR_TIMED_OUT` and never starts afterwards.
+#[test]
+fn read_plan_sync_answered_by_the_timer_never_starts() {
+    let mut lanes = start_with(Setup {
+        block_on: vosu_opcode::VOSU_OP_LOG_RECORD,
+        sync: vosu_status::VOSU_ERR_TARGET_GONE,
+        block_sync: true,
+        broker_workers: Some(1),
+        budget: Duration::from_millis(150),
+    });
+    lanes.submit(Some((1, RequestKind::Sync)), &sync_submit());
+    assert!(lanes.handler.sync_block.wait_arrivals(1, BOUND));
+    lanes.submit(Some((2, RequestKind::Sync)), &sync_submit());
+    let mut answered = [lanes.status(), lanes.status()];
+    answered.sort_unstable_by_key(|(id, _)| *id);
+    assert_eq!(
+        answered,
+        [1, 2].map(|id| (id, vosu_status::VOSU_ERR_TIMED_OUT))
+    );
+    lanes.handler.sync_block.open();
+    lanes.submit(Some((3, RequestKind::Status)), &timer_set());
+    assert_eq!(lanes.status(), (3, vosu_status::VOSU_OK));
+    // Request 2 reached the broker but its job found it answered: a probe
+    // queued behind it on the one worker runs only after it.
+    let (ran_tx, ran_rx) = std::sync::mpsc::sync_channel(1);
+    lanes.handler.broker.as_ref().unwrap().submit(1, move || {
+        ran_tx.send(()).unwrap();
+    });
+    ran_rx.recv_timeout(BOUND).unwrap();
+    assert_eq!(lanes.handler.sync_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(lanes.handler.brokered.load(Ordering::SeqCst), 2);
+    lanes.ingress.shutdown();
+}
+
+/// A handler without broker workers cannot run a SYNC plan: the ordinary
+/// worker refuses it with `VOSU_ERR_BACKEND`, and the reader never writes.
+#[test]
+fn read_plan_sync_without_broker_workers_is_refused_backend() {
+    let mut lanes = start_with(Setup {
+        block_on: vosu_opcode::VOSU_OP_LOG_RECORD,
+        sync: vosu_status::VOSU_OK,
+        block_sync: false,
+        broker_workers: None,
+        budget: BOUND,
+    });
+    lanes.submit(Some((4, RequestKind::Sync)), &sync_submit());
+    assert_eq!(lanes.status(), (4, vosu_status::VOSU_ERR_BACKEND));
+    assert_eq!(lanes.handler.sync_calls.load(Ordering::SeqCst), 0);
     lanes.ingress.shutdown();
 }

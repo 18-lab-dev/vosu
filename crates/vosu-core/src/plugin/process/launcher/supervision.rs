@@ -9,6 +9,7 @@
 //! the watcher, the one reaper, records. A loss core did not request
 //! (`Ready` phase only) is reported once through [`InstanceLoss`].
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -19,7 +20,7 @@ use super::super::channel::{Endpoint, Receiver, RecvError, SendError, Sender, Te
 use super::super::control::{Failed, Ready, StartupFailure, StartupStage};
 use super::super::frame::{FrameHeader, Ledger, PRIVATE_OPCODE_BIT, control};
 use super::super::ring::PayloadBuffer;
-use super::ingress::{Ingress, StatusGate, claim_sync_reply};
+use super::ingress::{Ingress, StatusGate, SyncClaim, claim_sync_reply};
 use super::platform::{HostProcess, Started};
 use crate::plugin::error::HostError;
 use crate::plugin::execution::descriptor::check_header;
@@ -36,7 +37,13 @@ pub(super) struct Start {
     pub deadline: Instant,
     pub ingress: PluginIngress,
     pub loss: InstanceLoss,
+    /// The `SYNC` budget sent in `CREATE`: core answers a plan still
+    /// unanswered after it `VOSU_ERR_TIMED_OUT` (§7.6).
+    pub sync_budget: Duration,
 }
+
+/// The next endpoint identity ([`claim_sync_reply`]).
+static NEXT_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -333,8 +340,10 @@ pub(super) fn start(
         plugin_id: start.plugin_id,
     });
     let gate = Arc::new(StatusGate::default());
-    // The endpoint's identity for SYNC reply claims: unique while it lives.
-    let identity = Arc::as_ptr(&shared) as usize;
+    // The endpoint's identity for SYNC reply claims: never reused while
+    // core runs, so a broker worker still answering an older generation's
+    // request can never be mistaken for one of this endpoint's.
+    let identity = NEXT_IDENTITY.fetch_add(1, Ordering::Relaxed);
     let mut threads = Vec::with_capacity(2);
     let ingress = Ingress::start(
         start.ingress,
@@ -342,6 +351,7 @@ pub(super) fn start(
         Arc::clone(&ledger),
         Arc::clone(&gate),
         identity,
+        start.sync_budget,
     )
     .map(Arc::new);
     let watcher = spawn_thread("vosu-plugin-exit", {
@@ -476,7 +486,7 @@ struct ChildEndpoint {
     ledger: Arc<Ledger>,
     gate: Arc<StatusGate>,
     /// This endpoint's identity for [`claim_sync_reply`].
-    identity: usize,
+    identity: u64,
     ingress: Option<Arc<Ingress>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -510,17 +520,25 @@ impl ProcessEndpoint for ChildEndpoint {
             flags: message.flags,
             correlation: message.correlation_id,
         };
-        // An accepted SYNC plan's result, delivered by the ingress SYNC
-        // worker handling it: REPLY_NEXT routes it to the child's waiter.
-        if message.opcode == vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32
-            && let Some(request) = claim_sync_reply(self.identity)
-        {
-            self.ledger.close(request);
-            return match self.sender.send_reply(request, &header, message.payload) {
-                Ok(()) => vosu_status::VOSU_OK,
-                Err(SendError::Oversize { .. }) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
-                Err(_) => vosu_status::VOSU_ERR_NOT_READY,
-            };
+        // An accepted SYNC plan's result, delivered by the broker worker
+        // handling it: REPLY_NEXT routes it to the child's waiter. The
+        // budget timer may have answered the request first; a worker
+        // answering another endpoint's request delivers nothing here.
+        if message.opcode == vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32 {
+            match claim_sync_reply(self.identity) {
+                SyncClaim::Ordinary => {}
+                SyncClaim::Reply(request) => {
+                    if self.ledger.close(request).is_none() {
+                        return vosu_status::VOSU_ERR_TIMED_OUT;
+                    }
+                    return match self.sender.send_reply(request, &header, message.payload) {
+                        Ok(()) => vosu_status::VOSU_OK,
+                        Err(SendError::Oversize { .. }) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+                        Err(_) => vosu_status::VOSU_ERR_NOT_READY,
+                    };
+                }
+                SyncClaim::Foreign => return vosu_status::VOSU_ERR_TARGET_GONE,
+            }
         }
         {
             let state = lock(&self.shared.state);

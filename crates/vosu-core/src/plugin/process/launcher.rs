@@ -13,9 +13,10 @@
 //! a **ring reader**, which handles lifecycle frames and hands every public
 //! plugin → host frame to the instance's **ingress** workers
 //! (`ingress`): one ordinary worker answering each acknowledged frame
-//! with core's `STATUS` in ring order, and on-demand `SYNC` workers that
-//! answer an accepted `VOSU_READ_PLAN_SYNC` plan with `REPLY_NEXT` and its
-//! result (§7.6 A5.2). An exit or channel failure that core did not request
+//! with core's `STATUS` in ring order, while each `VOSU_READ_PLAN_SYNC`
+//! plan runs on the host's bounded broker workers and is answered with
+//! `REPLY_NEXT` and its result, or core's own `VOSU_ERR_TIMED_OUT` at its
+//! budget (§7.6 A5.2, M5 B0). An exit or channel failure that core did not request
 //! is reported once through [`InstanceLoss`](crate::plugin::InstanceLoss). Controlled destroy sends
 //! `DESTROY`, waits up to its grace (5 s) for the OS exit, then kills and
 //! reaps the child.
@@ -25,11 +26,10 @@
 //! U0) gates them. Tests and fixtures install it through
 //! `PluginHost::install_process_launcher`.
 //!
-//! **`SYNC` execution.** A `SYNC` worker runs the host's own synchronous
-//! read-plan path through `PluginIngress::deliver`, exactly as an
-//! in-process `send` would on the submitting thread. M5 B0 owns moving that
-//! execution onto the broker's bounded work workers; the transport (lanes,
-//! ledger, `REPLY_NEXT` routing and the child's waiter) is complete here.
+//! **`SYNC` execution (M5 B0).** A broker worker runs the host's own
+//! synchronous read-plan path through `PluginIngress::deliver`, exactly as
+//! an in-process `send` would on the submitting thread, on the same fair
+//! pool and cached session memory as asynchronous plans and scans.
 
 mod ingress;
 mod platform;
@@ -130,6 +130,7 @@ impl ProcessHostLauncher {
                 deadline,
                 ingress: launch.ingress,
                 loss: launch.loss,
+                sync_budget: Duration::from_millis(u64::from(SYNC_BUDGET_MS)),
             },
         )
     }
@@ -160,3 +161,5 @@ fn library_digest(path: &Path) -> Result<[u8; 32], StartupFailure> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::channel::{ChannelChild, ChannelLauncher};

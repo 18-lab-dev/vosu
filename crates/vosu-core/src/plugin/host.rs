@@ -794,6 +794,18 @@ impl PluginHostHandler for PluginHost {
     fn instance_lost(&self, instance: PluginInstanceId, cause: super::execution::LossCause) {
         self.process_instance_lost(instance, cause);
     }
+
+    /// The shared background pool's `instance` sub-queue: bounded by the
+    /// channel's 64 status/`SYNC` requests (§7.6) beside the plan and scan
+    /// admission caps, and served round-robin with every other instance.
+    fn submit_broker_work(
+        &self,
+        instance: PluginInstanceId,
+        job: super::host_services::BrokerJob,
+    ) -> Result<(), super::host_services::BrokerJob> {
+        self.background_pool.submit(instance.0, job);
+        Ok(())
+    }
 }
 
 /// Background task spawned once per [`PluginHost`] (module doc comment,

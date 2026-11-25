@@ -120,6 +120,16 @@ impl PluginIngress {
     pub fn deliver(&self, message: MessageRef<'_>) -> vosu_status {
         host_services::route_message(self.handler.as_ref(), self.instance, message)
     }
+
+    /// Queues `job` on the host's bounded broker workers under this
+    /// instance ([`PluginHostHandler::submit_broker_work`]); `Err` returns
+    /// it unrun when the host has none.
+    pub(crate) fn submit_broker_work(
+        &self,
+        job: host_services::BrokerJob,
+    ) -> Result<(), host_services::BrokerJob> {
+        self.handler.submit_broker_work(self.instance, job)
+    }
 }
 
 /// Why a process instance was lost.
