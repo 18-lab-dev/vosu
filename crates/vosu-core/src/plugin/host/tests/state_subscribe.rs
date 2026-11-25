@@ -195,7 +195,7 @@ fn subscribe_gets_immediate_baseline_then_changes_only() {
         };
         entry
             .instance
-            .dispatch_task(Box::new(move |_, _| {
+            .dispatch_task(Box::new(move |_| {
                 tx.send(()).unwrap();
             }))
             .unwrap();
@@ -349,7 +349,7 @@ fn full_queue_never_loses_the_latest_value() {
         };
         entry
             .instance
-            .dispatch_task(Box::new(move |_, _| {
+            .dispatch_task(Box::new(move |_| {
                 entered_tx.send(()).unwrap();
                 release_rx.recv_timeout(RECV_TIMEOUT).unwrap();
             }))
@@ -363,7 +363,7 @@ fn full_queue_never_loses_the_latest_value() {
         else {
             panic!("live subscriber")
         };
-        entry.instance.dispatch_task(Box::new(|_, _| {})).unwrap();
+        entry.instance.dispatch_task(Box::new(|_| {})).unwrap();
     }
     for value in 1..=100 {
         publish(
@@ -494,7 +494,7 @@ fn subscription_replacement_clears_queued_old_keys() {
         };
         entry
             .instance
-            .dispatch_task(Box::new(move |_, _| {
+            .dispatch_task(Box::new(move |_| {
                 entered_tx.send(()).unwrap();
                 release_rx.recv_timeout(RECV_TIMEOUT).unwrap();
             }))
@@ -588,7 +588,7 @@ fn block_subscriber(host: &Host, who: u64) -> std::sync::mpsc::SyncSender<()> {
         };
         entry
             .instance
-            .dispatch_task(Box::new(move |_, _| {
+            .dispatch_task(Box::new(move |_| {
                 entered_tx.send(()).unwrap();
                 release_rx.recv_timeout(RECV_TIMEOUT).unwrap();
             }))
@@ -645,7 +645,7 @@ fn slow_sessions_watcher_coalesces_unannounced_churn() {
         };
         entry
             .instance
-            .dispatch_task(Box::new(move |_, _| {
+            .dispatch_task(Box::new(move |_| {
                 fence_tx.send(()).unwrap();
             }))
             .unwrap();
@@ -721,7 +721,7 @@ fn fence(host: &Host, who: u64) {
         };
         entry
             .instance
-            .dispatch_task(Box::new(move |_, _| {
+            .dispatch_task(Box::new(move |_| {
                 tx.send(()).unwrap();
             }))
             .unwrap();

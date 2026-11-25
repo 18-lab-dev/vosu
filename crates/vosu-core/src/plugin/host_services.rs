@@ -1,7 +1,10 @@
 //! Host vtable `send` entry: routes every plugin -> host message
 //! (`vosu_host_services::send`) into host-owned Rust code
-//! (`docs/v2/plugin-abi.md` §1, §3, §5).
+//! (`docs/v2/plugin-abi.md` §1, §3, §5). A process instance's ingress
+//! (`super::execution::PluginIngress`) routes through the same
+//! [`route_message`], so both backends validate identically.
 
+use super::execution::MessageRef;
 use crate::identity::PluginInstanceId;
 use std::ffi::c_void;
 use std::sync::Arc;
@@ -27,7 +30,7 @@ pub trait PluginHostHandler: Send + Sync {
 
     /// Fast path for `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC`
     /// set (D5): `payload`/`flags` are still raw, undecoded bytes.
-    /// `decode_and_handle` tries this before `Message::decode` so a
+    /// [`route_message`] tries this before `Message::decode` so a
     /// steady-state synchronous read plan allocates nothing on the host
     /// side either (D17; `crate::plugin::read_plan::execute_into`'s own
     /// doc comment). `None` falls back to the ordinary decode-and-`handle`
@@ -52,6 +55,13 @@ pub trait PluginHostHandler: Send + Sync {
     ) -> Option<vosu_status> {
         let _ = (instance, opcode, payload);
         None
+    }
+
+    /// A process instance's child or channel was lost
+    /// (`super::execution::InstanceLoss::report`, first report only). A
+    /// handler that owns no instance registry has nothing to retire.
+    fn instance_lost(&self, instance: PluginInstanceId, cause: super::execution::LossCause) {
+        let _ = (instance, cause);
     }
 }
 
@@ -112,31 +122,57 @@ fn decode_and_handle(ctx: &HostContext, raw: &vosu_message) -> vosu_status {
         // `payload.len` bytes for the duration of this call.
         unsafe { std::slice::from_raw_parts(raw.payload.data, raw.payload.len as usize) }
     };
-    let Ok(opcode) = vosu_opcode::try_from(raw.opcode) else {
+    route_message(
+        ctx.handler.as_ref(),
+        ctx.instance,
+        MessageRef {
+            opcode: raw.opcode,
+            flags: raw.flags,
+            correlation_id: raw.correlation_id,
+            payload,
+        },
+    )
+}
+
+/// Validates and routes one plugin -> host message, whichever backend
+/// carried it: the §3 frame cap, opcode and flag policy, then the
+/// synchronous read-plan and borrowed-publication fast paths before the
+/// ordinary decode.
+pub(crate) fn route_message(
+    handler: &dyn PluginHostHandler,
+    instance: PluginInstanceId,
+    message: MessageRef<'_>,
+) -> vosu_status {
+    let MessageRef {
+        opcode,
+        flags,
+        correlation_id,
+        payload,
+    } = message;
+    if payload.len() > VOSU_FRAME_MAX_BYTES as usize {
+        return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+    }
+    let Ok(opcode) = vosu_opcode::try_from(opcode) else {
         return vosu_status::VOSU_ERR_UNSUPPORTED;
     };
-    if vosu_plugin_api::validate_flags(opcode, raw.flags).is_err() {
+    if vosu_plugin_api::validate_flags(opcode, flags).is_err() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
     }
     if opcode == vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT
-        && raw.flags & VOSU_READ_PLAN_SYNC != 0
-        && let Some(status) = ctx
-            .handler
-            .handle_read_plan_sync(ctx.instance, payload, raw.flags)
+        && flags & VOSU_READ_PLAN_SYNC != 0
+        && let Some(status) = handler.handle_read_plan_sync(instance, payload, flags)
     {
         return status;
     }
     if matches!(
         opcode,
         vosu_opcode::VOSU_OP_PUBLISH_FIELD | vosu_opcode::VOSU_OP_PUBLISH_BATCH
-    ) && let Some(status) = ctx.handler.handle_publish(ctx.instance, opcode, payload)
+    ) && let Some(status) = handler.handle_publish(instance, opcode, payload)
     {
         return status;
     }
-    match Message::decode(opcode, raw.flags, payload) {
-        Ok(message) => ctx
-            .handler
-            .handle(ctx.instance, message, raw.correlation_id),
+    match Message::decode(opcode, flags, payload) {
+        Ok(message) => handler.handle(instance, message, correlation_id),
         Err(_) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
     }
 }

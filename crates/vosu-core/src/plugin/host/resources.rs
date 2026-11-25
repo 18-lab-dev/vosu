@@ -451,7 +451,7 @@ impl PluginHost {
         let message = super::OwnedMessage::from_message(message, id)
             .map_err(|_| ResourceRequestError::InvalidRequest)?;
         let weak = self.self_ref.clone();
-        let task = Box::new(move |vtable: &vosu_plugin_api::vosu_plugin_vtable, ctx| {
+        let task = Box::new(move |target: &crate::plugin::dispatch::DispatchTarget| {
             let Some(host) = weak.upgrade() else {
                 return;
             };
@@ -466,7 +466,7 @@ impl PluginHost {
             }
             drop(host);
             // No host lock is held across this re-entrant plugin callback.
-            if message.call(vtable, ctx) != vosu_status::VOSU_OK
+            if message.call(target) != vosu_status::VOSU_OK
                 && let Some(host) = weak.upgrade()
             {
                 host.resource_state

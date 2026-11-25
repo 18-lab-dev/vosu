@@ -11,7 +11,7 @@ use std::time::Duration;
 use super::{InstanceSlot, PluginHost};
 use crate::plugin::{
     PluginInstanceId,
-    dispatch::{OwnedMessage, PluginCtx},
+    dispatch::{DispatchTarget, OwnedMessage},
     session::SessionHandle,
 };
 use crate::state::{
@@ -19,7 +19,7 @@ use crate::state::{
 };
 use vosu_plugin_api::{
     FocusChanged, Message, SessionAttached, SessionDetached, StateSubscribe, VOSU_FRAME_MAX_BYTES,
-    vosu_plugin_vtable, vosu_status,
+    vosu_status,
 };
 
 pub(super) struct DeliveryState {
@@ -766,9 +766,9 @@ impl PluginHost {
     fn submit_state_slot(&self, who: PluginInstanceId, key: SessionKey, slot: Arc<Mutex<Slot>>) {
         let weak = self.self_ref.clone();
         let job_slot = slot.clone();
-        let task = Box::new(move |vtable: &vosu_plugin_vtable, ctx: PluginCtx| {
+        let task = Box::new(move |target: &DispatchTarget| {
             if let Some(host) = weak.upgrade() {
-                host.drain_state_slot(who, key, &job_slot, vtable, ctx);
+                host.drain_state_slot(who, key, &job_slot, target);
             }
         });
         let result = {
@@ -806,8 +806,7 @@ impl PluginHost {
         who: PluginInstanceId,
         key: SessionKey,
         slot: &Arc<Mutex<Slot>>,
-        vtable: &vosu_plugin_vtable,
-        ctx: PluginCtx,
+        target: &DispatchTarget,
     ) {
         let (attached, focus, entries, demand, detached) = {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
@@ -828,7 +827,7 @@ impl PluginHost {
         };
         let send = |message: Message| {
             if let Ok(message) = OwnedMessage::from_message(&message, 0) {
-                message.call(vtable, ctx);
+                message.call(target);
             }
         };
         if let Some(attached) = attached {

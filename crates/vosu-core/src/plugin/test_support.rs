@@ -20,6 +20,12 @@ use vosu_sys::process::{ProcessBitness, ProcessMemory};
 
 use super::host::read_plans;
 
+mod process;
+pub use process::{
+    LaunchBehavior, LaunchRecord, RecordedFrame, RecordingEndpoint, RecordingLauncher,
+    host_target_triple, write_development_package,
+};
+
 /// Substitutes the process [`PluginHost::session_memory`] would otherwise
 /// open from the real OS for `pid` with an already-built `memory`/`bitness`
 /// pair — e.g. a byte buffer wrapped in a test [`ProcessMemory`] impl, with
