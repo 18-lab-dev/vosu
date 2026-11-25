@@ -193,15 +193,17 @@ cargo test --locked --test performance_invariants --test runtime_wakeups
 None of these commands was run by A5. Record results only from an approved
 exclusive schedule.
 
-### M5 P1 candidate result and draft Windows bar (proposed; not approved)
+### M5 P1 candidate result and Windows bar (approved 2026-11-25)
 
-**This is the candidate result proposed to Main for approval under A5.6.**
-It is exploratory: other agents shared the CPUs and the VM, so it is not D17
-evidence and not an approved bar. The full method, every table and the
-contention record are in
-[brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result).
-The production variants `production_sync` and `production_async` do not
-exist yet; they need B0 and E0.
+**Main approved the proposal below on 2026-11-25 under A5.6.** The
+measurements stay the exploratory candidate result: other agents shared the
+CPUs and the VM, so they are not D17 evidence. The approved bar gates a later
+exclusive run of the production variants. The full method, every table and
+the contention record are in
+[brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result),
+with the accepted method deviations. The production variants
+`production_sync` and `production_async` do not exist yet; they need B0 and
+the E0 launcher.
 
 The `brokered_reads_bench` runner now runs on Linux and Windows:
 
@@ -242,7 +244,7 @@ all five rounds; it was lower in 0, 1 or 2 of them. Its median p50 was 3–26%
 above `section`. Criterion's 95% intervals for set C do not overlap, with the
 pipe higher. Every result hash matched.
 
-**Proposed for approval:**
+**Approved (2026-11-25):**
 
 - **Windows transport.** The unnamed section and events stay the production
   transport. The pipe fails the frozen tie rule and stays measurement-only.
@@ -253,13 +255,13 @@ pipe higher. Every result hash matched.
   `load_other_busy_cpus`, and reruns any round in which other work kept 2 or
   more CPUs busy.
 - **Windows reference.** 167.2 µs for precise and 129.7 µs for regular are
-  reported alongside the gate and never replace it. They are twice the
-  median `section` p50 over the eight quiet rounds (83.6 µs and 64.9 µs).
+  reported alongside the gate and do not gate. They are twice the median
+  `section` p50 over the eight quiet rounds (83.6 µs and 64.9 µs).
 
 Contention moved the absolute Windows numbers by up to 6×: in one busy round
 `section` had a regular-shape p50 of 11.2 µs, most likely (an inference, not
 profiled) because the busy guest avoided waking halted vCPUs.
-That is why only the same-run ratio is proposed as the gate.
+That is why only the same-run ratio is the gate.
 
 ## M4a D17 contract
 

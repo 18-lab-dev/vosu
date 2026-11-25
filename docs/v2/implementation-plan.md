@@ -1838,6 +1838,34 @@ No unit makes a length exception. Every file stays at or below 1,000 lines.
 The [D17 contract](../testing/benchmarks.md#m5-d17-contract) records the
 D17 names, metrics and bars.
 
+#### M5 landing decisions and open obligations (2026-11-25)
+
+Main accepted these E0 and P1 results on 2026-11-25:
+
+- **FAILED before CREATE.** A child that fails §7.3 before it has read
+  `CREATE` reports `FAILED` with generation 0, which no real generation uses
+  (plugin-abi.md §7.6).
+- **Build identity.** It is `vosu/<package version>/plugin-host-1`. On
+  Linux, core execs `/proc/self/exe`, so the child is always the running
+  image. On Windows, a replacement image with the *same* version is not
+  detected. This residual is accepted because the updater always installs a
+  different version, so an in-place update is always caught as
+  `executable_updated`.
+- **Private exit statuses 74–76.** These join the frozen 70–73
+  (plugin-abi.md §7.6).
+- **P1.** The Windows transport stays the unnamed section and events, the
+  pipe stays measurement-only, and the Windows D17 bar and P1's method
+  deviations are adopted ([brokered reads](brokered-reads.md#decision-and-windows-bar-approved-2026-11-25)).
+
+E0 landed the child lifecycle and a test-installed launcher. These pieces
+are open obligations with named owners, not completed work:
+
+| Owner | Open obligation |
+| --- | --- |
+| T1, B0 | The child refuses a `VOSU_READ_PLAN_SYNC` submission with `VOSU_ERR_UNSUPPORTED` until the `REPLY_NEXT` path exists. The 64-per-instance local admission caps are not yet applied before the write; core still enforces them. Child dispatch is one serial worker even under `concurrent_dispatch`. The child's delivery queue is a bounded FIFO that blocks the ring reader when full, so a full queue ends as a 2-second stall loss rather than T1's coalescing queue. Core's ring reader delivers each plugin → host message to the handler on its own thread. |
+| U0 | The launcher computes `library_sha256` from the library at launch; U0 passes the approved digest instead. Production composition installs `ProcessHostLauncher` only after the approval flow (A5.5). |
+| C0 | `HostError::ProcessStartupFailed` carries the formatted `stage … (code)` text. C0 consumes the structured startup failure (`StartupFailure`, `StartupStage::is_crash_class`) to decide restarts and the `failed` latch. |
+
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
 Scope: the unified manifest (catalog-v2.md "Package manifest v2", "Shared

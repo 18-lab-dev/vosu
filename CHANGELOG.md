@@ -2,6 +2,18 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M5
+
+- Add the internal `vosu plugin-host` command, which core starts once per
+  `runtime = "process"` plugin instance. It runs before any daemon service,
+  drops privileges (Linux) or runs inside a kill-on-close job (Windows)
+  before loading the plugin, and loads only a library whose SHA-256 matches.
+  A malformed or foreign command line exits at once without starting the
+  daemon. Process plugins are not yet loadable from the command line.
+- Child processes the daemon starts now go through one creation path, so a
+  plugin host's inherited channel handles never leak into other children on
+  Windows.
+
 ## Unreleased — 2.0 M4a
 
 - Remove vosu-only `/json/v2` fields `beatmap.time.rate`, `beatmap.time.running`

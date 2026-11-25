@@ -537,15 +537,18 @@ This section freezes the private contract between core and one `vosu plugin-host
 **Launch.** Core starts the exact executable generation it is running. On Linux it executes `/proc/self/exe`. On Windows it uses the image path captured at startup, and the build check below catches an updater replacement.
 
 - `argv[1]` is exactly `plugin-host`. `src/main.rs` dispatches it before `vosux`, before any Tokio runtime or thread exists, and before any daemon service, listener, updater, discovery, ownership lock or log file.
-- The remaining arguments are exactly three:
-  - the compile-time build identity of the executable;
-  - on Linux, the core PID;
-  - the inherited endpoint values.
-- A missing, extra, duplicate or malformed argument, a build identity other than the child's own, or an endpoint that is not an open inherited descriptor or handle of the expected kind and of the fixed trusted size makes the process exit before it maps anything. It starts no normal daemon.
+- The remaining arguments are exactly these, in order (E0, accepted 2026-11-25):
+  - the compile-time build identity of the executable, `vosu/<package version>/plugin-host-1`;
+  - on Linux only, the core PID in canonical decimal (no sign, no leading zero, at most `i32::MAX`);
+  - the inherited endpoint values: on Linux exactly `3,4,5,6` (host → plugin mapping and doorbell, then plugin → host), on Windows `h2p=<section>:<event>,p2h=<section>:<event>` (§7.4).
+
+  The full command line is therefore `vosu plugin-host <identity> <core pid> 3,4,5,6` on Linux and `vosu plugin-host <identity> h2p=…,p2h=…` on Windows.
+- The child checks the argument shape first, then the build identity. A missing, extra, duplicate, empty or malformed argument exits with `arguments` (70) even when the identity also differs; a well-formed command line with another build identity exits with `generation` (71). An endpoint that is not an open inherited descriptor or handle of the expected kind and of the fixed trusted size exits with `endpoints` (73). All of these exit before the child maps anything, and none starts a normal daemon, listener, updater, discovery, lock, log or configuration file.
+- **Build identity residual (accepted 2026-11-25).** The identity names the package version. On Linux the child is always the running image because core execs `/proc/self/exe`. On Windows core starts the image path captured at startup, so a replacement image with the *same* version is not detected. This is accepted because the updater always installs a different version, so every in-place update is refused as `generation` (`executable_updated`).
 - Linux core spawns plugin hosts only from a dedicated launcher thread that lives until shutdown has reaped every plugin host. `PR_SET_PDEATHSIG` fires when the *thread* that created the child exits, so spawning from a transient pool thread would kill healthy children.
 - The child's environment is inherited and is not a secret boundary. Its standard handles are the null device. Plugin diagnostics use `VOSU_OP_LOG_RECORD`.
 
-**Private frames.** These use the §7.2 frame layout. A frame is private iff `opcode & 0x8000_0000` is set. Every public ABI opcode is below that bit, so a plugin `send` naming any such opcode is refused locally with `VOSU_ERR_UNSUPPORTED`, exactly as an unknown opcode is in-process.
+**Private frames.** These use the §7.2 frame layout. A frame is private iff `opcode & 0x8000_0000` is set; the header reserves that bit as `VOSU_OPCODE_PRIVATE_BIT` and the SDK exports it under the same name. Every public ABI opcode is below that bit, so a plugin `send` naming any such opcode is refused locally with `VOSU_ERR_UNSUPPORTED`, exactly as an unknown opcode is in-process.
 
 A private frame always has `flags = 0`. Its `correlation_id` field carries the private request ID, or 0 for lifecycle frames. A public frame's `correlation_id` and payload are never rewritten, reused or wrapped.
 
@@ -562,6 +565,14 @@ A private frame always has `flags = 0`. Its `correlation_id` field carries the p
 
 Any other private opcode, nonzero private flags, an `ACK_NEXT` or `REPLY_NEXT` not immediately followed by a public frame of the required direction, or a lifecycle frame out of order is a protocol violation. Examples of out-of-order frames: `READY` twice, `READY` after `FAILED`, or `DESTROYED` without a `DESTROY`. Request IDs are `u64` values allocated by the child, strictly increasing within one generation and never reused. Core replies only to the latest generation's IDs. A reply for an unknown or expired ID is discarded and counted, never delivered.
 
+**Lifecycle payloads (E0, accepted 2026-11-25).** `CREATE`, `READY` and `FAILED` are CBOR maps with exactly the keys above; a missing or unknown key is a protocol violation by the sender.
+
+- `CREATE`: `generation` (`u64`, starting at 1, never reused while core runs), `plugin_id` (text), `library` (text path), `library_sha256` (a byte string of exactly 32 bytes), `concurrent_dispatch` (bool), `sync_budget_ms` (`u32`), and `init`, the same `{"plugin_id", "settings", "data_dir"}` map the in-process `create` receives. The child passes its re-encoding of `init` to `create`, which equals the in-process bytes. A `CREATE` whose encoding would exceed `VOSU_FRAME_MAX_BYTES` is the `create` stage (`init_too_large`), detected by core before spawn.
+- `READY`: `generation`, `struct_size`, `abi_version` (`u32` each). Core checks the generation and the header with the same minimum-size and major-version checks an in-process load uses; a mismatch is the `abi` stage.
+- `FAILED`: `generation`, `stage` (text), `code` (text of at most 64 bytes), `errno` (`i32`, omitted when none), `message` (text of at most 512 bytes; the child truncates it at a character boundary). A child may name only the stages it detects: `security`, `approval`, `library`, `abi` and `create`. A `FAILED` naming any other stage, or over either cap, is a violation. A failure before the child read `CREATE` (the Linux `security` stage) carries generation **0**, which no real generation uses; core accepts 0 or its own generation.
+
+Child-reported codes: `security` uses the §7.3 codes; `approval` is `digest_mismatch`; `library` is `not_absolute`, `open_failed`, `read_failed`, `load_failed` (including a missing `vosu_plugin_entry_v1`) or `missing_entry` (the entry returned null); `abi` is `abi_mismatch`, `descriptor_too_small` or `missing_required_function`; `create` is `create_rejected` (null `create`) or `init_invalid`.
+
 **Startup.** The child performs these steps in order:
 
 1. Parse its arguments.
@@ -569,11 +580,13 @@ Any other private opcode, nonzero private flags, an `ACK_NEXT` or `REPLY_NEXT` n
 3. Validate and map its endpoints.
 4. Run §7.3 on Linux. On Windows, job assignment happened before resume.
 5. Read `CREATE`.
-6. Open the library and verify its SHA-256 against `library_sha256` from that open object, holding it so it cannot be replaced until loading finishes. On Linux the library is loaded through the opened descriptor. On Windows a deny-write share handle is held across `LoadLibrary`.
+6. Open the library at its absolute path and compute its SHA-256 by reading that open object, then compare it with `library_sha256`. The object stays open until loading finishes. On Linux the loader opens `/proc/self/fd/<n>` of the descriptor that was hashed, so a rename or replacement of the path cannot substitute other bytes. On Windows the file is opened with read sharing only (no write or delete sharing), and that handle stays open across `LoadLibrary`; an open writer makes the open fail with stage `library`.
 7. Load the library, resolve `vosu_plugin_entry_v1`, and validate `abi_version`, `struct_size` and the required functions with the same pure checks an in-process load uses.
-8. Call `create`.
+8. Start the ring reader, so that acknowledged sends made from `create` receive their status, then call `create`.
 9. Start its dispatch workers.
 10. Send `READY`.
+
+The library stays mapped until the process exits, because plugin threads may outlive `destroy`.
 
 Core never `dlopen`s or `LoadLibrary`s a process-runtime library, not even to validate it, because constructors run at load. Core may read the library's bytes only to compute the approval digest. The child never parses `manifest.toml`; core sends the SDK-validated fields.
 
@@ -586,12 +599,14 @@ Core publishes the instance only after `READY`. No session offer, action invocat
 | `security` (codes `security_unavailable`, `not_single_threaded`, `drop_failed`, `readback_mismatch`; §7.3 "Fail closed"), `approval` (digest mismatch), `library`, `abi` | `FAILED` frame, then exit | `failed`, not retried, not a crash |
 | `create` (non-OK `create`, or init over the frame cap), `timeout`, `crash` (exit before `READY` without `FAILED`) | `FAILED`, deadline, or OS exit | On the initial load: `failed`, waiting for a manual restart. During an automatic restart: one crash event (below), and backoff continues. |
 
-Before the channel is mapped, the child reports its stage only through its exit status. Exit codes 70 (`arguments`), 71 (`generation`), 72 (`parent`) and 73 (`endpoints`) are private to the shared executable generation and are not a public interface.
+Before the channel is mapped, the child reports its stage only through its exit status. Exit codes 70 (`arguments`), 71 (`generation`), 72 (`parent`) and 73 (`endpoints`) are private to the shared executable generation and are not a public interface. After the channel exists the child also uses 74 (it reported `FAILED`), 75 (the channel ended without a controlled `DESTROY`: core gone, a core protocol violation or a stalled write) and 76 (a waiter backstop expired), accepted 2026-11-25. Core takes the stage from `FAILED` when one arrived and maps only 70–73 to a stage; any other exit before `READY` is `crash`.
+
+**Exit before `READY`.** When a child exits during startup, core first reads every frame the child completed before its exit (a `FAILED` written just before exiting names the stage), then settles the startup: the reported stage, else the stage of exit codes 70–73, else `crash`. Its channel then refuses every further write.
 
 **Acknowledged sends (A5.2).** Each status below is identical to what the same call returns in-process.
 
 - **Local refusal.** `send` first applies exactly the in-process pre-handler checks: payload size and null data, unknown opcode (including the private range), unrecognized flags, SDK decode of the payload, `SYNC` submission from the instance's own dispatch thread, and the per-instance caps (64 asynchronous plans, 64 scans, 64 action calls, 64 timers). A check that fails returns that status without writing a frame or reserving a waiter.
-- **Acknowledgement.** Every other plugin → host opcode except `VOSU_OP_LOG_RECORD`, whose status is `VOSU_OK` whenever it decodes, is status-acknowledged. Publication validation is included. The child reserves one of at most **64 waiters per instance** (shared by status and `SYNC`, separate from the async caps). It writes `ACK_NEXT` and the unmodified public frame back to back under the single producer lock, releases the lock, and blocks the calling thread until core's reply.
+- **Acknowledgement.** Every other plugin → host opcode except `VOSU_OP_LOG_RECORD`, whose status is `VOSU_OK` whenever it decodes, is status-acknowledged. Publication validation is included. The child reserves one of at most **64 waiters per instance** (shared by status and `SYNC`, separate from the async caps). It writes `ACK_NEXT` and the unmodified public frame back to back under the single producer lock, so no other sender's frame can come between them, releases the lock, and blocks the calling thread until core's reply. When the second frame must wait for ring space, the writer first wakes a parked consumer, since the `ACK_NEXT` already published may be all it has to read. An oversize payload is refused before either frame is written. A host → plugin opcode a plugin sends has no effect in-process and returns `VOSU_OK` there; the child returns `VOSU_OK` for it without writing.
 - **Overload.** A 65th concurrent waiter is refused with `VOSU_ERR_INVALID_ARGUMENT` before any write. This is the documented overload status of §5.
 - **Core's reply.** Core validates the frame exactly as in-process. It answers `STATUS`, or for an accepted `SYNC` plan, `REPLY_NEXT` and then the result. A non-OK status means nothing was applied and no later public message follows: a refused read plan, scan or call produces no result, ever. For an accepted asynchronous operation, the `STATUS` always precedes its later result on the same ring.
 - **`SYNC` reads.** Core enforces the §6.3 budget (`sync_budget_ms`) and answers `STATUS VOSU_ERR_TIMED_OUT` itself on expiry. The waiting thread, not the ring reader, dispatches a `SYNC` result before `send` returns.
@@ -613,7 +628,7 @@ It never calls plugin code, never blocks on a plugin lock, and never inserts int
 2. Stop admitting new work.
 3. Send `DESTROY`.
 
-The child runs `destroy` exactly as in-process destruction does (including §4's 4.5-second worker-join budget), joins its threads, sends `DESTROYED` and exits 0. Core waits up to **5 seconds** after writing `DESTROY` for the OS exit, then kills it (`SIGKILL`, or `TerminateJobObject`) and reaps it. Session, demand, root, resource, job and relay cleanup follows the in-process instance-removal path. A controlled teardown is never a crash, never restarts, and logs `destroy_timeout` if it needed the kill. Uninstall and revocation also unregister the plugin's schemas, matchers and actions exactly once. Daemon shutdown tears down every process instance concurrently, and no restart fires after shutdown begins.
+The child stops routing frames to dispatch when it reads `DESTROY`, lets the dispatch worker finish what was already queued and joins it, then runs `destroy` exactly as in-process destruction does (including §4's 4.5-second worker-join budget), sends `DESTROYED` and exits 0; its ring reader keeps serving status replies for sends `destroy` makes. Core waits up to **5 seconds** after writing `DESTROY` for the OS exit, then kills it (`SIGKILL`, or `TerminateJobObject`) and reaps it. Session, demand, root, resource, job and relay cleanup follows the in-process instance-removal path. A controlled teardown is never a crash, never restarts, and logs `destroy_timeout` if it needed the kill. Uninstall and revocation also unregister the plugin's schemas, matchers and actions exactly once. Daemon shutdown tears down every process instance concurrently, and no restart fires after shutdown begins.
 
 **Loss identity.** One owner per generation coalesces into exactly one loss, using the first observed reason:
 

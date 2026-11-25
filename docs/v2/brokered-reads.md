@@ -437,13 +437,18 @@ In the quiet rounds the median `section` p50 was 83.6 µs for precise and
   Windows bar from these runs would mostly measure the guest's idle state.
   A same-run ratio does not.
 
-### Proposed decision and draft Windows bar (for Main's approval)
+### Decision and Windows bar (approved 2026-11-25)
+
+Main approved this proposal on 2026-11-25 under A5.6. The measurements above
+remain the exploratory candidate result (shared CPUs and VM), not D17
+evidence: the bar below is gated by a later exclusive run of the production
+variants.
 
 1. **Windows transport: keep the unnamed section and auto-reset events**
    (A5.6's default). The pipe fails the frozen tie rule in every set, so it
    stays measurement-only, and no secure-handoff amendment is requested. W0's
    final mechanics can proceed on T0's section and event endpoints.
-2. **Draft Windows D17 bar.** This is A5.6's frozen form with `section` as
+2. **Windows D17 bar (adopted).** This is A5.6's frozen form with `section` as
    the denominator: for each shape, the median over five paired rounds of
    `production_sync p50 / section p50`, both from the same invocation, is
    at most 2.0. It is a gate only on these conditions:
@@ -454,17 +459,26 @@ In the quiet rounds the median `section` p50 was 83.6 µs for precise and
      rerun, not counted.
 3. **Historical Windows reference.** Report twice this experiment's quiet
    `section` p50 alongside the gate, the way the Linux prototype's 21.540 and
-   13.126 µs are: **167.2 µs for precise and 129.7 µs for regular**. It never
-   replaces the same-run ratio.
+   13.126 µs are: **167.2 µs for precise and 129.7 µs for regular**. It is
+   reported, never gates, and never replaces the same-run ratio.
 4. **Linux.** The Linux bar is unchanged (`production_sync` at most 2.0×
    same-run `shm`). As data, the T0 ring alone already costs 1.30–1.38× `shm`
    before any relay or executor work is added.
+5. **Accepted method deviations.** Main accepted these with the decision:
+   the Linux `ring` reference variant (T0's ring over a memfd and an
+   eventfd); the prototype variants keeping their original CPU accounting
+   method; the `cold_*` names for the separately reported cold-startup
+   metrics; `wakeups` meaning each OS's own context-switch count (voluntary
+   `ru_nvcsw` on Linux, per-thread `ContextSwitches`, preemptions included,
+   on Windows; see Method); and Criterion storage selected
+   through `output_directory`.
 
 ## Open questions
 
-- **Windows transport** is now measured as a candidate; see the [Windows
-  transport candidates](#windows-transport-candidates-m5-p1-candidate-result)
-  section above.
+- **Windows transport** is decided (unnamed section and events, approved
+  2026-11-25); see the [Windows transport
+  candidates](#windows-transport-candidates-m5-p1-candidate-result) section
+  above.
 - **Only two plan shapes were measured.** `capture_regular`'s round-trip count
   is a structural estimate (see Method), not instrumented; if the real
   `process`-runtime read path ends up issuing fields across many more
