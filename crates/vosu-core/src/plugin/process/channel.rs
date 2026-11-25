@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use vosu_sys::plugin_process::{Doorbell, RingObjects, SharedRegion};
 
-use super::frame::{FrameHeader, FramePolicy, MAX_PAYLOAD_BYTES, encode_head};
+use super::frame::{FrameHeader, FramePolicy, HEAD_BYTES, MAX_PAYLOAD_BYTES, encode_head};
 use super::ring::{PayloadBuffer, RingConsumer, RingError, RingProducer};
 
 /// The longest a legal frame waits for space in a full ring before the
@@ -52,6 +52,9 @@ pub enum Termination {
     PeerViolation,
     /// A doorbell operation failed.
     Os,
+    /// [`Closer::peer_exited`]: the peer process is gone. The receiver
+    /// still returns every frame the peer completed, then this.
+    PeerExited,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,7 +159,8 @@ impl Shared {
             1 => Some(Termination::Closed),
             2 => Some(Termination::Stalled),
             3 => Some(Termination::PeerViolation),
-            _ => Some(Termination::Os),
+            4 => Some(Termination::Os),
+            _ => Some(Termination::PeerExited),
         }
     }
 
@@ -168,6 +172,7 @@ impl Shared {
             Termination::Stalled => 2,
             Termination::PeerViolation => 3,
             Termination::Os => 4,
+            Termination::PeerExited => 5,
         };
         if self
             .termination
@@ -248,6 +253,25 @@ impl Sender {
         self.send_within(header, payload, FULL_RING_WAIT)
     }
 
+    /// Writes an `ACK_NEXT` frame carrying `request` and then the public
+    /// frame it acknowledges, back to back under the one producer lock, so
+    /// no other sender's frame can come between them (§7.6). The pair
+    /// shares one backpressure window. An oversize payload is refused
+    /// before either frame is written.
+    pub fn send_acknowledged(
+        &self,
+        request: u64,
+        header: &FrameHeader,
+        payload: &[u8],
+    ) -> Result<(), SendError> {
+        let ack = FrameHeader {
+            opcode: super::frame::control::ACK_NEXT,
+            flags: 0,
+            correlation: request,
+        };
+        self.send_frames(&[(&ack, &[]), (header, payload)], FULL_RING_WAIT)
+    }
+
     /// [`send`](Self::send) with an explicit backpressure window.
     pub(super) fn send_within(
         &self,
@@ -255,20 +279,66 @@ impl Sender {
         payload: &[u8],
         window: Duration,
     ) -> Result<(), SendError> {
-        let head = encode_head(header, payload.len())
-            .map_err(|_| SendError::Oversize { len: payload.len() })?;
+        self.send_frames(&[(header, payload)], window)
+    }
+
+    /// Writes `frames` (at most two) in order under one hold of the
+    /// producer lock, then rings the peer once if its consumer is parked.
+    fn send_frames(
+        &self,
+        frames: &[(&FrameHeader, &[u8])],
+        window: Duration,
+    ) -> Result<(), SendError> {
+        let mut heads = [[0_u8; HEAD_BYTES]; 2];
+        assert!(frames.len() <= heads.len(), "at most two frames per write");
+        for ((header, payload), head) in frames.iter().zip(heads.iter_mut()) {
+            *head = encode_head(header, payload.len())
+                .map_err(|_| SendError::Oversize { len: payload.len() })?;
+        }
         let shared = &*self.shared;
         let deadline = Instant::now().checked_add(window);
         let mut producer = lock(&shared.producer);
+        for ((_, payload), head) in frames.iter().zip(heads.iter()) {
+            self.write_one(&mut producer, head, payload, deadline)?;
+        }
+        let parked = producer
+            .consumer_parked()
+            .map_err(|error| self.violation(error))?;
+        drop(producer);
+        if parked {
+            self.ring_peer()?;
+        }
+        Ok(())
+    }
+
+    /// Writes one frame with the producer lock held, parking until
+    /// `deadline` for space.
+    fn write_one(
+        &self,
+        producer: &mut RingProducer,
+        head: &[u8; HEAD_BYTES],
+        payload: &[u8],
+        deadline: Option<Instant>,
+    ) -> Result<(), SendError> {
+        let shared = &*self.shared;
         loop {
             if let Some(cause) = shared.termination() {
                 return Err(SendError::Terminated(cause));
             }
             if producer
-                .try_write(&head, payload)
+                .try_write(head, payload)
                 .map_err(|error| self.violation(error))?
             {
-                break;
+                return Ok(());
+            }
+            // A frame this hold already published (the first of a pair)
+            // may be all a parked peer consumer has to read before it frees
+            // space: ring it before parking.
+            if producer
+                .consumer_parked()
+                .map_err(|error| self.violation(error))?
+            {
+                self.ring_peer()?;
             }
             // Full: capture the epoch, ask for a ring, then recheck, so a
             // consumer that freed space just before seeing the flag (and
@@ -288,17 +358,13 @@ impl Sender {
                 return Err(SendError::Stalled);
             }
         }
-        let parked = producer
-            .consumer_parked()
-            .map_err(|error| self.violation(error))?;
-        drop(producer);
-        if parked {
-            shared.outbound_bell.ring().map_err(|error| {
-                shared.fail(Termination::Os);
-                SendError::Os(error)
-            })?;
-        }
-        Ok(())
+    }
+
+    fn ring_peer(&self) -> Result<(), SendError> {
+        self.shared.outbound_bell.ring().map_err(|error| {
+            self.shared.fail(Termination::Os);
+            SendError::Os(error)
+        })
     }
 
     fn violation(&self, error: RingError) -> SendError {
@@ -344,7 +410,16 @@ impl Receiver {
     ) -> Result<Option<FrameHeader>, RecvError> {
         loop {
             if let Some(cause) = self.shared.termination() {
-                return Err(RecvError::Terminated(cause));
+                if cause != Termination::PeerExited {
+                    return Err(RecvError::Terminated(cause));
+                }
+                // The peer can publish nothing more: drain what it did,
+                // without parking, then report the end.
+                return match self.consumer.try_read(buffer, &mut *self.policy) {
+                    Ok(Some((header, _))) => Ok(Some(header)),
+                    Ok(None) => Err(RecvError::Terminated(cause)),
+                    Err(error) => Err(RecvError::PeerViolation(error)),
+                };
             }
             if self.shared.space_waiters.load(Ordering::SeqCst) > 0 {
                 self.shared.announce_space();
@@ -420,6 +495,14 @@ pub struct Closer {
 impl Closer {
     pub fn close(&self) -> io::Result<()> {
         self.shared.terminate(Termination::Closed)
+    }
+
+    /// Ends the channel because the peer process exited: senders fail at
+    /// once, and the receiver drains the frames the peer completed before
+    /// failing with [`Termination::PeerExited`]. Idempotent; a cause
+    /// already recorded wins.
+    pub fn peer_exited(&self) -> io::Result<()> {
+        self.shared.terminate(Termination::PeerExited)
     }
 
     /// Why the channel ended, if it has.
