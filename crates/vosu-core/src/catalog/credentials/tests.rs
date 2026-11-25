@@ -365,6 +365,17 @@ fn icacls(args: &[&std::ffi::OsStr]) {
 fn windows_directory_acl_inheritance_and_existing_security_metadata_survive_replacement() {
     use std::ffi::OsStr;
     let (root, store) = setup();
+    // The temporary directory's own ACL depends on the machine: hosted CI's
+    // temp root carries no inheritable ACE, so a new file there has only
+    // explicit ones. Grant one inheritable ACE on the store directory first,
+    // so the test checks that replacement keeps inherited metadata rather
+    // than whatever the runner's temp root happens to propagate.
+    icacls(&[
+        root.path().as_os_str(),
+        OsStr::new("/grant"),
+        OsStr::new("*S-1-5-32-545:(OI)(CI)(RX)"),
+        OsStr::new("/q"),
+    ]);
     store.set(FORGE, token(TOKEN)).unwrap();
     let path = root.path().join("catalog-credentials.toml");
     let acl = root.path().join("acl.txt");
