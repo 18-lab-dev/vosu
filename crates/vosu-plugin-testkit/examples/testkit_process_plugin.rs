@@ -8,7 +8,9 @@
 //! nothing is keyed by PID. Each step writes a receipt naming the run's
 //! nonce and this process's PID:
 //!
-//! - `constructor` (with the security readback on Linux) and `create`;
+//! - `constructor` (with the security readback) and `create`;
+//! - `descendant` when the control names one, and `security`: the same
+//!   readback again after this plugin started a thread of its own (M5 N0);
 //! - `dispatch` for every delivered message (`opcode=`);
 //! - `attach`/`read`/`detach` for sessions: each attached session gets one
 //!   asynchronous read plan of the control's `read` range, and its result
@@ -21,7 +23,9 @@
 //! The fault modes are listed in [`control::Fault`]. Dispatch-time faults
 //! fire once, on the first delivery of the control's `trigger` opcode, and
 //! write their receipt (`crash`, `blocked`/`released`, `stall`, `corrupt`)
-//! before acting.
+//! before acting. [`Fault::WriteBlock`] starts in `create` and writes
+//! `write_flood`, `write_blocked` and, if a blocked send ever returns,
+//! `write_returned`.
 //!
 //! The library compiles its modules directly and never links the testkit
 //! rlib, which exports the legacy echo plugin's entry symbol.
@@ -30,6 +34,8 @@
 mod control;
 #[path = "testkit_process_plugin/native.rs"]
 mod native;
+#[path = "testkit_process_plugin/tree.rs"]
+mod tree;
 
 use control::{Control, Fault};
 use vosu_plugin_api::{
@@ -41,24 +47,33 @@ struct TestkitProcessPlugin {
     host: VtableHostServices,
     control: &'static Control,
     fired: bool,
+    /// Never waited on or killed here: the test owns its fate.
+    _descendant: Option<std::process::Child>,
 }
 
 impl Plugin for TestkitProcessPlugin {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
         let control = control::get().ok_or(PluginError(vosu_status::VOSU_ERR_INVALID_ARGUMENT))?;
         control.receipt("create", &format!("plugin={}", init.plugin_id));
+        let descendant = control
+            .spawn
+            .as_deref()
+            .and_then(|argv| tree::spawn_descendant(control, argv));
+        tree::security_probe(control);
         match control.fault {
             Fault::CreateCrash => native::crash(),
             Fault::CreateBlock => {
                 let released = control.wait_release();
                 control.receipt("create_released", &format!("released={released}"));
             }
+            Fault::WriteBlock => tree::start_write_block(host, control),
             _ => {}
         }
         Ok(Self {
             host,
             control,
             fired: false,
+            _descendant: descendant,
         })
     }
 
@@ -157,6 +172,7 @@ impl TestkitProcessPlugin {
             | Fault::ConstructorCrash
             | Fault::CreateCrash
             | Fault::CreateBlock
+            | Fault::WriteBlock
             | Fault::CancelIgnored
             | Fault::DestroyIgnored => {}
         }

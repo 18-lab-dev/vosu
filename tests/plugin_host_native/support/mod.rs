@@ -14,15 +14,32 @@
 //! `smoke` proves each testkit fault mode actually triggers under the
 //! production launcher. The crash, stall and loss end-to-end assertions
 //! belong to the X0/C0 modules.
+//!
+//! M5 N0's core-death trees: [`tree`] (a core of either kind, its plugin
+//! host, descendant and outside control), [`daemon`] (the real daemon as
+//! core), [`tracked`] (pidfd and handle identities) and, on Windows,
+//! [`jobs`] (job, token and handle-table readbacks).
 
 #[path = "artifacts.rs"]
 pub mod artifacts;
+#[path = "daemon.rs"]
+pub mod daemon;
 #[path = "fixture.rs"]
 pub mod fixture;
 #[path = "host.rs"]
 pub mod host;
+#[cfg(windows)]
+#[path = "jobs.rs"]
+pub mod jobs;
+#[cfg(target_os = "linux")]
+#[path = "refusal.rs"]
+pub mod refusal;
 #[path = "smoke.rs"]
 mod smoke;
+#[path = "tracked.rs"]
+pub mod tracked;
+#[path = "tree.rs"]
+pub mod tree;
 
 /// A fresh per-test scratch directory for staged packages, receipts and
 /// instance data. `VOSU_PLUGIN_HOST_SCRATCH_DIR` places it under a chosen

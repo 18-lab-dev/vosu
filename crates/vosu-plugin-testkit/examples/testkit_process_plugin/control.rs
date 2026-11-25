@@ -13,6 +13,9 @@
 //!   fault; required for those faults.
 //! - `read`: `<address>:<length>` read from each attached session
 //!   (default `0:8`).
+//! - `spawn`: the argument vector, separated by U+001F, of a descendant
+//!   process `create` starts before anything else it does (M5 N0's
+//!   core-death trees). It writes a `descendant` receipt naming the child.
 //!
 //! Receipts are appended as one line each to `<probe>-<pid>` and, in order,
 //! to `journal-<pid>` in `dir`. A line is
@@ -61,10 +64,21 @@ pub enum Fault {
     /// `create` waits for `release-<pid>` before it returns (C0's startup
     /// deadline evidence).
     CreateBlock,
+    /// `create` starts a thread that waits for `release-<pid>` and then
+    /// sends `VOSU_OP_LOG_RECORD`s until one send stays blocked on a full
+    /// plugin → host ring (M5 N0: core death during a blocked write). A
+    /// watchdog writes `write_blocked` once a send has waited
+    /// [`WRITE_BLOCKED_AFTER`].
+    WriteBlock,
 }
 
+/// How long one send must wait for ring space before the
+/// [`Fault::WriteBlock`] watchdog reports it blocked. Far below the 2 s
+/// full-ring window after which the plugin host gives up on its own.
+pub const WRITE_BLOCKED_AFTER: Duration = Duration::from_millis(250);
+
 impl Fault {
-    pub const NAMES: [(&'static str, Self); 11] = [
+    pub const NAMES: [(&'static str, Self); 12] = [
         ("none", Self::None),
         ("constructor_crash", Self::ConstructorCrash),
         ("create_crash", Self::CreateCrash),
@@ -76,6 +90,7 @@ impl Fault {
         ("destroy_ignored", Self::DestroyIgnored),
         ("ring_stall", Self::RingStall),
         ("corrupt_frame", Self::CorruptFrame),
+        ("write_block", Self::WriteBlock),
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -106,6 +121,8 @@ pub struct Control {
     pub fault: Fault,
     pub trigger: Option<u32>,
     pub read: (u64, u32),
+    /// The descendant's argument vector (`spawn`), program first.
+    pub spawn: Option<Vec<String>>,
 }
 
 static CONTROL: OnceLock<Option<Control>> = OnceLock::new();
@@ -146,6 +163,7 @@ fn read_control(library: &Path) -> Option<Control> {
     let mut fault = Fault::None;
     let mut trigger = None;
     let mut read = (0, 8);
+    let mut spawn = None;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let (key, value) = line.split_once('=')?;
         match key {
@@ -158,6 +176,13 @@ fn read_control(library: &Path) -> Option<Control> {
             "read" => {
                 let (address, length) = value.split_once(':')?;
                 read = (address.parse().ok()?, length.parse().ok()?);
+            }
+            "spawn" => {
+                let argv: Vec<String> = value.split('\u{1f}').map(str::to_owned).collect();
+                if !Path::new(&argv[0]).is_absolute() {
+                    return None;
+                }
+                spawn = Some(argv);
             }
             // An unknown or malformed key is a test setup error: refuse
             // the whole control rather than run a different scenario.
@@ -173,6 +198,7 @@ fn read_control(library: &Path) -> Option<Control> {
         fault,
         trigger,
         read,
+        spawn,
     })
 }
 
