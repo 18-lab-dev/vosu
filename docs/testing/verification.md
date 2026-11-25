@@ -1364,3 +1364,30 @@ unconfined for a short time, and anything it starts in that window is outside
 the job. The plugin-host spawn does not have this race: it creates the child
 suspended and assigns the job before resume (plugin-abi.md §7.4). Tool spawns
 do take the process-wide inheritance gate.
+
+### M5 T1 and B0 unit evidence (2026-11-25)
+
+Recorded by Main from the unit reports. Results from a unit's own checkout,
+before integration.
+
+- **T1 (relay).**
+  - Linux: `cargo test --locked -p vosu-core --lib plugin::process` passed
+    114, and the native `plugin_host_native relay` filter passed 5.
+  - Native Windows (`vm-test.py`): `relay` passed 5, and `plugin::process`
+    passed 115.
+- **B0 (broker).**
+  - Each `broker_*` test runs against real x64 and x86 target processes with
+    distinct bytes, on Linux and native Windows.
+  - Linux: `cargo test --locked -p vosu-core --lib read_plan` passed 75,
+    `plugin_host_native broker` passed 5 (and 5 consecutive clean runs), and
+    `--test process_memory` passed 8.
+  - Native Windows: `read_plan` passed 75, and `broker` plus `relay` passed
+    10.
+  - The cases cover the B0 counterexamples:
+    - a multi-stage chain is one transport submission;
+    - foreign handles and raw PIDs are refused;
+    - refusals happen before any read and match the in-process runtime;
+    - a cancelled ID stays reserved until its execution finishes;
+    - an old child's result never completes a new child's waiter.
+- **Integrated head.** Workspace nextest through
+  `scripts/plugin-host-fixtures.py` passed 2862 (6 skipped).
