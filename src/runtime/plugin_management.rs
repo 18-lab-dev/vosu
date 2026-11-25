@@ -175,8 +175,12 @@ pub(super) struct PluginManagement {
     actions: Arc<tokio::sync::Mutex<()>>,
     /// Library digests for listing, keyed by path and invalidated by size
     /// or modification time. An approval and every start hash afresh.
-    digests: Mutex<HashMap<PathBuf, (u64, Option<SystemTime>, Sha256Digest)>>,
+    digests: Mutex<HashMap<PathBuf, CachedDigest>>,
 }
+
+/// A library's size and modification time when it was hashed, and its
+/// digest.
+type CachedDigest = (u64, Option<SystemTime>, Sha256Digest);
 
 /// An error response: a stable `code` and a message for people.
 fn refusal(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
