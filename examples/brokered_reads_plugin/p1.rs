@@ -237,11 +237,9 @@ impl P1 {
         let count = command.number("samples") as usize;
         let mut samples = Vec::with_capacity(count);
         let usage = Usage::begin();
-        let cursors = rings.cursors();
-        for _ in 0..count {
+        let census = chunked(rings, count as u64, || {
             samples.push(run.round_trip(host, results));
-        }
-        let census = rings.since(cursors)?;
+        })?;
         let window = Usage::end().since(usage);
         run.measured.add(window);
         run.measured_census.add(census);
@@ -294,12 +292,10 @@ impl P1 {
             .ok_or("no such run")?;
         let iterations = command.number("iterations");
         let usage = Usage::begin();
-        let cursors = rings.cursors();
         let mut elapsed = 0u128;
-        for _ in 0..iterations {
+        let census = chunked(rings, iterations, || {
             elapsed += run.round_trip(host, results);
-        }
-        let census = rings.since(cursors)?;
+        })?;
         run.measured.add(Usage::end().since(usage));
         run.measured_census.add(census);
         run.measured_round_trips += iterations;
@@ -321,6 +317,29 @@ impl P1 {
             .with("loop_allocations", run.measured.allocations);
         Ok(census_fields(reply, "loop", &run.measured_census))
     }
+}
+
+/// Round trips per census window: a ring holds 2 MiB, and one round trip
+/// writes at most a few KiB, so a window never wraps past bytes the census
+/// still has to read.
+const CENSUS_CHUNK: u64 = 256;
+
+/// Runs `round_trip` `count` times, counting the rings' frames every
+/// [`CENSUS_CHUNK`] round trips (between round trips, outside their own
+/// timing).
+fn chunked(rings: &Rings, count: u64, mut round_trip: impl FnMut()) -> Result<Census, String> {
+    let mut census = Census::default();
+    let mut done = 0;
+    while done < count {
+        let cursors = rings.cursors();
+        let chunk = CENSUS_CHUNK.min(count - done);
+        for _ in 0..chunk {
+            round_trip();
+        }
+        census.add(rings.since(cursors)?);
+        done += chunk;
+    }
+    Ok(census)
 }
 
 pub fn census_fields(fields: Fields, prefix: &str, census: &Census) -> Fields {
