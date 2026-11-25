@@ -119,9 +119,12 @@ def check(metadata, rules_path=RULES):
                 errors.append(
                     f"M5: SDK edge vosu-plugin-api -> {target} puts native code below the SDK"
                 )
-            if source == "vosu-osu-state" and target == "vosu-sys":
+            if source in {"vosu-osu-reader", "vosu-osu-state"} and target == "vosu-sys":
+                # Normal, build and optional (feature-gated) edges all land
+                # here; only a dev-dependency is skipped above.
                 errors.append(
-                    "M5: vosu-osu-state -> vosu-sys revives the removed native read-type edge"
+                    f"M5: {source} -> vosu-sys revives a removed native edge; route reads/scans "
+                    "through the plugin ABI and publication through vosu-net (R0/R1)"
                 )
     for name in sorted(names - allowed_crates):
         errors.append(

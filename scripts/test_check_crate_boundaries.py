@@ -124,15 +124,18 @@ class CrateBoundariesTests(unittest.TestCase):
             errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
             self.assertTrue(any("M4a:" in error for error in errors))
 
-    def test_m5_rejects_native_sdk_and_state_edges_even_if_recorded(self):
+    def test_m5_rejects_native_sdk_reader_and_state_edges_even_if_recorded(self):
         sdk_targets = ["vosu-core", "vosu-net", "vosu-surface", "vosu-sys"]
         cases = [("vosu-plugin-api", target) for target in sdk_targets]
         cases.append(("vosu-osu-state", "vosu-sys"))
+        cases.append(("vosu-osu-reader", "vosu-sys"))
         for source, target in cases:
-            for kind in [None, "build"]:
-                with self.subTest(source=source, target=target, kind=kind):
+            for kind, optional in [(None, False), ("build", False), (None, True)]:
+                with self.subTest(source=source, target=target, kind=kind, optional=optional):
                     crate = package(source, [(target, True)])
                     crate["dependencies"][0]["kind"] = kind
+                    # A feature-gated edge is still a production edge (R1).
+                    crate["dependencies"][0]["optional"] = optional
                     meta = metadata([crate, package(target, [])])
                     self.rules.write_text(f"{source} -> {target}\n", encoding="utf-8")
                     errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)

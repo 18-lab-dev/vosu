@@ -1,4 +1,6 @@
-//! Shared hardened outbound networking primitives.
+//! Shared hardened outbound networking primitives, plus the atomic file
+//! publish/read convention ([`publish`]) for crates above the native
+//! boundary.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(
@@ -12,6 +14,7 @@
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
+pub mod publish;
 pub mod streaming;
 
 pub use streaming::{

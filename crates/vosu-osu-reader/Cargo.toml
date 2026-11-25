@@ -32,7 +32,6 @@ tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 vosu-net = { path = "../vosu-net" }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
-vosu-sys = { path = "../vosu-sys" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -44,3 +43,6 @@ sha2 = "=0.11.0"
 [dev-dependencies]
 proptest = "1.12"
 vosu-proptest = { path = "../vosu-proptest" }
+# Test-only (M5 R1): core's region walk as the reference scan backend and the
+# gated spawn the offset-generator test injects. Production has no vosu-sys edge.
+vosu-sys = { path = "../vosu-sys" }

@@ -330,7 +330,7 @@ fn missing_path_never_reads_a_relative_deps_json() {
         &host,
         0,
         Path::new(""),
-        |_pid| Err(LazerVersionError::MissingProcessRoot),
+        |_pid, _dir| Err(LazerVersionError::MissingProcessRoot),
         |_root| panic!("must never read a relative root when executable_root is empty"),
     );
     assert_eq!(version, "");
@@ -346,7 +346,7 @@ fn non_empty_executable_root_reaches_the_root_fallback() {
         &host,
         0,
         Path::new("/some/osu/root"),
-        |_pid| Err(LazerVersionError::MissingProcessRoot),
+        |_pid, _dir| Err(LazerVersionError::MissingProcessRoot),
         |_root| Ok("2026.1101.0".to_owned()),
     );
     assert_eq!(version, "2026.1101.0");

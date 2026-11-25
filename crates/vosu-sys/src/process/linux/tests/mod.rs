@@ -1048,28 +1048,6 @@ fn persistent_fallback_failure_zeroes_prior_direct_successes() {
 }
 
 #[test]
-fn root_for_resolves_an_appimage_mount_relative_to_the_target_proc_root() {
-    let fixture = fixture();
-    let executable = add_process(
-        fixture.path(),
-        30,
-        2,
-        b"osu!\0",
-        "1000-2000 rw-p 0 00:00 0\n",
-    );
-
-    assert_eq!(
-        root_for(
-            fixture.path(),
-            30,
-            Path::new("/tmp/.mount_osu/usr/bin/osu!")
-        ),
-        fixture.path().join("30/root/tmp/.mount_osu/usr/bin"),
-    );
-    assert!(executable.exists());
-}
-
-#[test]
 fn reads_native_self_process_memory() {
     let value = Box::new(0x1234_5678_9abc_def0_u64);
     let memory = LinuxProcessMemory::new(std::process::id());

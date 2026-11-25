@@ -169,7 +169,13 @@ impl<H: HostServices + Send + Sync + Clone + 'static> OsuPlugin<H, EmbeddedOffse
         root_resolver: RootResolver,
         data_dir: PathBuf,
     ) -> Self {
-        let generator = EmbeddedOffsetGenerator::new(data_dir.join("offset-generator"));
+        // The reader has no vosu-sys edge (M5 R1); this composer injects the
+        // process-wide creation gate (plugin-abi.md §7.4) the generator's
+        // children must go through.
+        let generator = EmbeddedOffsetGenerator::new(
+            data_dir.join("offset-generator"),
+            vosu_sys::process_spawn::spawn_tokio,
+        );
         Self::with_generator(host, platform, root_resolver, data_dir, generator)
     }
 }
@@ -789,17 +795,18 @@ fn log_error<H: HostServices + Send + Sync + 'static>(host: &Arc<H>) -> LogWarn 
 /// DF: lazer's version comes from `osu!.deps.json`. On Linux this first
 /// tries the target's own filesystem view
 /// (`vosu_osu_reader::memory::lazer_version::discover_for_process`, which
-/// reads through `/proc/<pid>/root/...`) so a sandboxed/Flatpak lazer is
-/// still found exactly as 1.x did (review #4); it falls back to the
-/// daemon-view `executable_root` fact only when that pid-based lookup
-/// failed and `executable_root` is non-empty — an empty `executable_root`
-/// never falls back to a relative, cwd-dependent read (review #1). A read
-/// failure (missing/corrupt file, unknown root) identifies with `""`
-/// rather than failing the attach (R10).
+/// reads the attach `path` fact's directory through `/proc/<pid>/root/...`)
+/// so a sandboxed/Flatpak lazer is still found exactly as 1.x did (review
+/// #4); it falls back to the daemon-view `executable_root` fact itself
+/// only when that lookup failed and `executable_root` is non-empty — an
+/// empty `executable_root` never falls back to a relative, cwd-dependent
+/// read (review #1). A read failure (missing/corrupt file, unknown root)
+/// identifies with `""` rather than failing the attach (R10). Both steps
+/// use only core's attach facts; neither queries the target process.
 type LazerVersionError = vosu_osu_reader::memory::lazer_version::LazerVersionError;
-/// Injectable process-based lazer version lookup (P3 review #1's test
+/// Injectable process-view lazer version lookup (P3 review #1's test
 /// seam): production always passes `discover_for_process`.
-type DiscoverForProcess = fn(u32) -> Result<String, LazerVersionError>;
+type DiscoverForProcess = fn(u32, &Path) -> Result<String, LazerVersionError>;
 /// Injectable root-based lazer version lookup, the same seam's other
 /// half: production always passes `discover_from_root`.
 type DiscoverFromRoot = fn(&Path) -> Result<String, LazerVersionError>;
@@ -827,7 +834,7 @@ fn resolve_lazer_version_with(
     discover_for_process: DiscoverForProcess,
     discover_from_root: DiscoverFromRoot,
 ) -> String {
-    let result = discover_for_process(pid).or_else(|process_error| {
+    let result = discover_for_process(pid, executable_root).or_else(|process_error| {
         if executable_root.as_os_str().is_empty() {
             Err(process_error)
         } else {

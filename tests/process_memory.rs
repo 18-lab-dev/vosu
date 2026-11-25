@@ -115,8 +115,11 @@ impl ProcessMemory for SparseMemory {
     }
 }
 
+#[path = "../benches/support/region_walk_scans.rs"]
+mod region_walk_scans;
+
 fn handle(memory: SparseMemory, bitness: ProcessBitness) -> ProcessHandle {
-    ProcessHandle::new(Arc::new(memory), bitness)
+    region_walk_scans::scanning_handle(Arc::new(memory), bitness)
 }
 
 #[test]

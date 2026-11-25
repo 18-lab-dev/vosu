@@ -8,12 +8,15 @@
 //! started after offsets already installed), cancel-is-synchronous
 //! (`cancel`, safe on a dispatch thread), and join-on-detach/destroy
 //! (`join_resolver`, which only ever runs off a dispatch thread — see
-//! `plugin.rs`'s `handle_detached` and `Drop`). `executable_root` reads
-//! live through the pid (`vosu_osu_reader::memory::lazer_version::
-//! process_executable_root`), exactly as `Instance::executable_root` did,
-//! rather than the daemon-view fact frozen at attach time: a lazer
-//! install can move its managed assemblies between retries, and this
-//! keeps retry_pending's repeated resolution attempts current.
+//! `plugin.rs`'s `handle_detached` and `Drop`). `executable_root` resolves
+//! through `vosu_osu_reader::memory::lazer_version::process_executable_root`
+//! from core's attach facts alone (the pid and the `path` fact's
+//! directory; M5 R1 removed the module-table/`/proc/<pid>/exe` query): on
+//! Linux the target's own `/proc/<pid>/root` view of that directory, as
+//! `Instance::executable_root` read it. A running process's executable
+//! directory cannot change, and each retry re-reads the files under it, so
+//! retry_pending's repeated resolution attempts stay current when a lazer
+//! install moves its managed assemblies between retries.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -314,11 +317,11 @@ impl GenerationIdentity for OsuSession {
         installed
     }
 
-    /// A live `/proc`/module-enumeration read through `pid` (ported from
-    /// `Instance::executable_root`), not the daemon-view fact frozen at
-    /// attach time: a retry needs the target's current root.
+    /// The target's own view of the attach `path` fact's directory (ported
+    /// from `Instance::executable_root`; on Linux through `/proc/<pid>/root`),
+    /// with no process or module query.
     fn executable_root(&self) -> Result<PathBuf, LazerLoadError> {
-        process_executable_root(self.pid).map_err(|error| {
+        process_executable_root(self.pid, &self.executable_root).map_err(|error| {
             LazerLoadError::Unavailable(
                 "unknown".into(),
                 format!("version discovery failed: {error}"),
