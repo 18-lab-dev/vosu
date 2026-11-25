@@ -40,6 +40,9 @@ pub enum HostError {
     InProcessRefused {
         reason: &'static str,
     },
+    /// `--plugin <dir>` in a stable release build (catalog-v2.md A5.5):
+    /// only debug and prerelease builds accept development packages.
+    DevelopmentRefused,
     /// `create` returned `NULL`.
     CreateRejected,
     /// `concurrent_dispatch = true` but no shared worker pool was supplied.
@@ -117,6 +120,10 @@ impl fmt::Display for HostError {
             ),
             Self::MissingRequiredFunction => write!(f, "create, dispatch, or destroy is missing"),
             Self::InProcessRefused { reason } => write!(f, "in-process runtime refused: {reason}"),
+            Self::DevelopmentRefused => write!(
+                f,
+                "stable release builds refuse `--plugin <dir>`; use a debug or prerelease build"
+            ),
             Self::CreateRejected => write!(f, "create returned NULL"),
             Self::ConcurrentPoolMissing => write!(
                 f,

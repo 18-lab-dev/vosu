@@ -16,18 +16,24 @@ use crate::plugin::error::HostError;
 use crate::plugin::host_services::{self, PluginHostHandler};
 
 /// A `runtime = "process"` package's executable part: the confined,
-/// canonical library path for this host's target. Core never maps it; the
-/// child loads it with `descriptor::load_library` after its platform
-/// boundary.
+/// canonical library path for this host's target, and the SHA-256 of the
+/// exact `manifest.toml` bytes it was validated from (the approval binding,
+/// catalog-v2.md A5.5). Core never maps the library; the child loads it
+/// with `descriptor::load_library` after its platform boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessPackage {
     root: PathBuf,
     library: PathBuf,
+    manifest_sha256: [u8; 32],
 }
 
 impl ProcessPackage {
-    pub(crate) fn new(root: PathBuf, library: PathBuf) -> Self {
-        Self { root, library }
+    pub(crate) fn new(root: PathBuf, library: PathBuf, manifest_sha256: [u8; 32]) -> Self {
+        Self {
+            root,
+            library,
+            manifest_sha256,
+        }
     }
 
     /// The canonical package directory.
@@ -38,6 +44,12 @@ impl ProcessPackage {
     /// The canonical library path, already confined to [`Self::root`].
     pub fn library(&self) -> &Path {
         &self.library
+    }
+
+    /// The SHA-256 of the `manifest.toml` bytes this package was validated
+    /// from.
+    pub fn manifest_sha256(&self) -> &[u8; 32] {
+        &self.manifest_sha256
     }
 }
 

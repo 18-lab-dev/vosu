@@ -13,6 +13,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use sha2::Digest as _;
 use vosu_plugin_api::{PluginManifest, Runtime, vosu_plugin_vtable};
 
 use super::error::HostError;
@@ -182,26 +183,41 @@ pub fn load_bundled(
 }
 
 /// Loads one development package from `--plugin <dir>` (§7.1, the
-/// `--tool <dir>` analog, `src/tools/mod.rs::development_roots`). Release
-/// builds refuse every such package outright rather than silently
-/// downgrading it. A debug build (`debug_build` is `cfg!(debug_assertions)`
-/// at the call site) grants a `runtime = "in-process"` request the local
-/// development trust and loads its library here; a `runtime = "process"`
-/// request is validated identically but returned as a process package
-/// whose library core never maps.
+/// `--tool <dir>` analog, `src/tools/mod.rs::development_roots`), under the
+/// build policy of catalog-v2.md A5.5:
+///
+/// - **Debug** (`debug_build` is `cfg!(debug_assertions)` at the call
+///   site): a `runtime = "in-process"` request gets the documented
+///   developer exception and its library is loaded here.
+/// - **Prerelease release** (not debug, and `application_version`, the
+///   executable's own version, has a semver prerelease part): every
+///   package is `user` trust. An `in-process` request is refused with
+///   [`HostError::InProcessRefused`] before any asset is read; it is never
+///   rewritten to `process`.
+/// - **Stable release**: every package is refused with
+///   [`HostError::DevelopmentRefused`].
+///
+/// A `runtime = "process"` request is validated identically in every
+/// allowed build and returned as a process package whose library core
+/// never maps. It runs only after approval, which the launcher installed
+/// by composition enforces (`plugin::approval`).
 pub fn load_development(
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
     dir: &Path,
     debug_build: bool,
 ) -> Result<LoadedPlugin, HostError> {
-    if !debug_build {
-        return Err(HostError::InProcessRefused {
-            reason: "release builds trust only bundled and officially sourced plugins in-process; `--plugin <dir>` is refused",
-        });
+    if !debug_build && application_version.pre.is_empty() {
+        return Err(HostError::DevelopmentRefused);
     }
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
     let manifest = parse_plugin(&text, application_version, snapshot, false)?;
+    if !debug_build && manifest.runtime == Runtime::InProcess {
+        return Err(HostError::InProcessRefused {
+            reason: "a release build runs `--plugin` packages as user trust, which never grants in-process; request `runtime = \"process\"`",
+        });
+    }
+    let manifest_sha256: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
     let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
@@ -247,7 +263,9 @@ pub fn load_development(
         // this development tier accepts (§7.1), the whole reason this path
         // is refused outside debug builds.
         Runtime::InProcess => Execution::Local(unsafe { descriptor::load_library(&library_path) }?),
-        Runtime::Process => Execution::Process(ProcessPackage::new(root, library_path)),
+        Runtime::Process => {
+            Execution::Process(ProcessPackage::new(root, library_path, manifest_sha256))
+        }
     };
     Ok(LoadedPlugin {
         manifest,
