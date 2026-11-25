@@ -17,12 +17,12 @@ sdk = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sdk)
 
 ROOT = Path(__file__).resolve().parents[1]
-PREFIX = "vosu-plugin-api-1.0.0-alpha.0"
+PREFIX = "vosu-plugin-api-1.0.0-alpha.1"
 GLOBS = sdk.include_globs((sdk.CRATE_DIR / "Cargo.toml").read_text(encoding="utf-8"))
 NORMALIZED = """[package]
 edition = "2024"
 name = "vosu-plugin-api"
-version = "1.0.0-alpha.0"
+version = "1.0.0-alpha.1"
 description = "SDK"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
