@@ -92,6 +92,38 @@ class InvocationConfigTests(unittest.TestCase):
         decoded = json.loads(json.dumps(config))
         self.assertEqual(decoded["CargoArgs"], ["test", "--", extra_filter])
 
+    def test_plugin_host_fixtures_default_off_and_round_trip(self):
+        config = vm_test.build_invocation_config(
+            "V:\\bt\\vmt-abc-123", "deadbeefcafef00d", ["test"], has_patch=False, jobs=8, timeout_seconds=1200
+        )
+        self.assertIs(config["PluginHostFixtures"], False)
+        config = vm_test.build_invocation_config(
+            "V:\\bt\\vmt-abc-123", "deadbeefcafef00d", ["test"], has_patch=False, jobs=8, timeout_seconds=1200,
+            plugin_host_fixtures=True,
+        )
+        self.assertIs(json.loads(json.dumps(config))["PluginHostFixtures"], True)
+
+
+class PluginHostFixtureSelectionTests(unittest.TestCase):
+    def test_selections_that_can_run_the_root_native_target_prepare_fixtures(self):
+        for package, test in [(None, None), (None, "plugin_host_native"), ("vosu", None), ("vosu", "plugin_host_native")]:
+            self.assertTrue(vm_test.needs_plugin_host_fixtures(package, test, False), (package, test))
+
+    def test_other_selections_do_not(self):
+        for package, test, lib in [
+            ("vosu-sys", None, True),
+            (None, None, True),
+            ("vosu-core", None, False),
+            (None, "process_memory", False),
+        ]:
+            self.assertFalse(vm_test.needs_plugin_host_fixtures(package, test, lib), (package, test, lib))
+
+    def test_runner_prepares_fixtures_before_the_test_step(self):
+        runner = Path(__file__).with_name("vm-test.ps1").read_text(encoding="utf-8")
+        prepare = runner.index("Invoke-VosuPluginHostFixtures")
+        self.assertLess(prepare, runner.index("-Name 'cargo-test'"))
+        self.assertIn("$config.PluginHostFixtures", runner)
+
 
 class NamingTests(unittest.TestCase):
     def test_remote_work_root_is_under_bt_and_unique_per_token(self):

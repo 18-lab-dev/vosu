@@ -1,0 +1,1 @@
+{"title":"test.p0.testkit","version":"1.0.0","type":"object","properties":{"marker":{"type":"string","maxLength":128,"x-sampling-lane":{"lane":"regular","activity":"always"}}}}

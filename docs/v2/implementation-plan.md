@@ -1947,6 +1947,13 @@ are open obligations with named owners, not completed work:
 | U0 | The launcher computes `library_sha256` from the library at launch; U0 passes the approved digest instead. Production composition installs `ProcessHostLauncher` only after the approval flow (A5.5). |
 | C0 | `HostError::ProcessStartupFailed` carries the formatted `stage … (code)` text. C0 consumes the structured startup failure (`StartupFailure`, `StartupStage::is_crash_class`) to decide restarts and the `failed` latch. |
 
+**Dev-profile measure (P0, 2026-11-25).** The workspace builds `sha2` at
+`opt-level = 3` in the dev profile (`[profile.dev.package.sha2]`). Core and
+the plugin host each hash a process library before loading it, the child
+inside the 5-second startup deadline. Unoptimized, hashing the 241 MB debug
+osu! fixture library took 4.9 s; optimized, it took 0.11 s. Release builds
+were already optimized, so production behavior is unchanged.
+
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
 Scope: the unified manifest (catalog-v2.md "Package manifest v2", "Shared

@@ -42,3 +42,10 @@ proptest = "1.12"
 vosu-proptest = { path = "../vosu-proptest" }
 vosu-osu-calc = { path = "../vosu-osu-calc" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# M5 P0's external osu! process-runtime fixture: the bundled producer as a
+# separately staged `cdylib`, development and test only.
+[[example]]
+name = "osu_process_plugin"
+crate-type = ["cdylib"]
+required-features = ["test-harness"]
