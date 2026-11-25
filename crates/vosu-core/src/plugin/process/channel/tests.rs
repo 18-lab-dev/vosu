@@ -398,6 +398,96 @@ fn close_wakes_a_parked_receiver_and_a_parked_sender() {
 }
 
 #[test]
+fn a_peer_exit_still_delivers_every_frame_the_peer_completed() {
+    let Pair { core, child, .. } = pair();
+    for correlation in 1..=3 {
+        child
+            .sender
+            .send(&to_host(correlation), &payload(correlation, 64))
+            .unwrap();
+    }
+    // The child is gone before core read anything.
+    drop(child);
+    core.closer.peer_exited().unwrap();
+    let receiver = service(core.receiver);
+    let (frames, error) = bounded(move || receiver.join().unwrap());
+    let correlations: Vec<u64> = frames
+        .iter()
+        .map(|(header, _)| header.correlation)
+        .collect();
+    assert_eq!(correlations, [1, 2, 3]);
+    for (header, bytes) in &frames {
+        assert_eq!(*bytes, payload(header.correlation, 64));
+    }
+    assert!(matches!(
+        error,
+        RecvError::Terminated(Termination::PeerExited)
+    ));
+    assert!(matches!(
+        core.sender.send(&to_plugin(1), b"x"),
+        Err(SendError::Terminated(Termination::PeerExited))
+    ));
+    // A later close keeps the first cause.
+    core.closer.close().unwrap();
+    assert_eq!(core.closer.termination(), Some(Termination::PeerExited));
+}
+
+#[test]
+fn a_peer_exit_wakes_a_parked_receiver() {
+    let Pair { core, .. } = pair();
+    let receiver = service(core.receiver);
+    core.closer.peer_exited().unwrap();
+    let (frames, error) = bounded(move || receiver.join().unwrap());
+    assert!(frames.is_empty());
+    assert!(matches!(
+        error,
+        RecvError::Terminated(Termination::PeerExited)
+    ));
+}
+
+#[test]
+fn an_acknowledged_pair_is_never_split_by_another_sender() {
+    let Pair {
+        mut core, child, ..
+    } = pair();
+    let ack_sender = child.sender.clone();
+    let ack = thread::spawn(move || {
+        for request in 1..=200_u64 {
+            ack_sender
+                .send_acknowledged(request, &to_host(request), &payload(request, 4096))
+                .unwrap();
+        }
+    });
+    let plain_sender = child.sender.clone();
+    let plain = thread::spawn(move || {
+        for correlation in 1_000..1_200_u64 {
+            plain_sender
+                .send(&to_host(correlation), &payload(correlation, 4096))
+                .unwrap();
+        }
+    });
+    let mut buffer = PayloadBuffer::new();
+    let mut acknowledged = Vec::new();
+    let mut pending = None;
+    for _ in 0..600 {
+        let header = recv_one(&mut core.receiver, &mut buffer);
+        if header.opcode == super::super::frame::control::ACK_NEXT {
+            assert!(pending.is_none(), "two ACK_NEXT in a row");
+            pending = Some(header.correlation);
+        } else if let Some(request) = pending.take() {
+            // The direction policy already refuses any other pairing; the
+            // frame after ACK_NEXT is exactly the one it acknowledges.
+            assert_eq!(header.correlation, request);
+            assert_eq!(buffer.bytes(), payload(request, 4096));
+            acknowledged.push(request);
+        }
+    }
+    ack.join().unwrap();
+    plain.join().unwrap();
+    assert_eq!(acknowledged, (1..=200).collect::<Vec<_>>());
+}
+
+#[test]
 fn stale_and_spurious_rings_are_harmless_hints() {
     let Pair {
         mut core,

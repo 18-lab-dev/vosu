@@ -88,6 +88,13 @@ pub enum vosu_opcode {
     VOSU_OP_STATE_UPDATE = 71,
 }
 
+/// The reserved private-opcode bit (`include/vosu_plugin.h`
+/// `VOSU_OPCODE_PRIVATE_BIT`, A5.2): set only in the private supervision
+/// frames between core and a `vosu plugin-host` process, never in a
+/// [`vosu_opcode`], so `vosu_opcode::try_from` refuses every opcode
+/// carrying it.
+pub const VOSU_OPCODE_PRIVATE_BIT: u32 = 1 << 31;
+
 impl TryFrom<u32> for vosu_opcode {
     type Error = ();
 

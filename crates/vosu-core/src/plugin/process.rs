@@ -14,6 +14,14 @@
 //!   channel objects, and the child's adoption of them (§7.3, §7.6).
 //! - `windows_launch` (Windows only): core's launch of one confined child
 //!   with both directions' objects inherited, and the child's attach (W0).
+//! - [`control`]: the `CREATE`/`READY`/`FAILED` payloads, startup stages and
+//!   the child's private exit statuses (§7.6, M5 E0).
+//! - [`entry`]: the `vosu plugin-host` child entry `src/main.rs` dispatches
+//!   to before any runtime exists; `bootstrap` (Linux/Windows) is the child
+//!   after its channel exists: `CREATE`, verified library load, `create`,
+//!   `READY`, controlled destroy.
+//! - `launcher` (Linux/Windows): core's `ProcessLauncher` that starts one
+//!   child per instance through `linux`/`windows_launch` and supervises it.
 //!
 //! The OS objects (mapping and doorbell per direction) come from
 //! `vosu_sys::plugin_process::RingObjects`, whose module documents the
@@ -32,8 +40,14 @@
 //! payloads are never re-encoded.
 
 #[cfg(any(target_os = "linux", windows))]
+mod bootstrap;
+#[cfg(any(target_os = "linux", windows))]
 pub mod channel;
+pub mod control;
+pub mod entry;
 pub mod frame;
+#[cfg(any(target_os = "linux", windows))]
+pub mod launcher;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod ring;

@@ -8,7 +8,9 @@
 //! a bounded local snapshot, and every length in it is checked against the
 //! universal 1 MiB cap before anything is allocated or indexed.
 
-use vosu_plugin_api::{VOSU_FRAME_MAX_BYTES, VOSU_READ_PLAN_SYNC, vosu_opcode};
+use vosu_plugin_api::{
+    VOSU_FRAME_MAX_BYTES, VOSU_OPCODE_PRIVATE_BIT, VOSU_READ_PLAN_SYNC, vosu_opcode,
+};
 
 /// The `total_len` prefix.
 pub const PREFIX_BYTES: usize = 4;
@@ -22,8 +24,9 @@ pub const MAX_PAYLOAD_BYTES: usize = VOSU_FRAME_MAX_BYTES as usize;
 pub const MAX_FRAME_BYTES: usize = HEAD_BYTES + MAX_PAYLOAD_BYTES;
 
 /// Set in every transport-private control opcode and in no public ABI
-/// opcode (A5.2). Private frames never reach plugin code.
-pub const PRIVATE_OPCODE_BIT: u32 = 0x8000_0000;
+/// opcode (A5.2, `include/vosu_plugin.h` `VOSU_OPCODE_PRIVATE_BIT`).
+/// Private frames never reach plugin code.
+pub const PRIVATE_OPCODE_BIT: u32 = VOSU_OPCODE_PRIVATE_BIT;
 
 /// Transport-private control opcodes (A5.2, `plugin-abi.md` §7.6).
 pub mod control {

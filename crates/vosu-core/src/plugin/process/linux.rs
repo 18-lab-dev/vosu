@@ -68,7 +68,7 @@ impl HostSpawner {
         Self::with_executable(PathBuf::from(SELF_EXECUTABLE), build_identity.into())
     }
 
-    fn with_executable(executable: PathBuf, build_identity: String) -> io::Result<Self> {
+    pub(crate) fn with_executable(executable: PathBuf, build_identity: String) -> io::Result<Self> {
         Ok(Self {
             launcher: PluginHostLauncher::start()?,
             executable,
