@@ -938,6 +938,42 @@ The following required cases are frozen by name:
 
 An ordinary run that skips the ignored Linux case does not complete N0.
 
+**N0 packaged Linux drop procedure.** `linux_packaged_capability_drop` and
+its controls perform exactly these steps. L0's unprivileged native tests
+(`vosu-sys` `plugin_process::linux`, `vosu-core`
+`plugin::process::linux`) do not replace any of them.
+
+1. Confirm with `getcap` that `VOSU_PLUGIN_HOST_PACKAGED_BINARY` carries the
+   setup capabilities (`cap_sys_ptrace`, plus `cap_bpf`, `cap_perfmon` and
+   `cap_sys_resource` in the process-event profile). Start that daemon and
+   confirm its own `/proc/<pid>/status` `CapEff` is nonzero. Without both,
+   the test fails; it never passes against an uncapable binary.
+2. Load P0's testkit process plugin through the approved path (A5.5).
+   Identify the plugin host as the daemon's child whose `argv[1]` is
+   `plugin-host`, and hold it by a pidfd.
+3. Read the host's security state twice: from the testkit constructor probe
+   (marker `<probe>-<pid>`, written with the probe's own
+   `/proc/self/status` readback before any plugin code beyond the
+   constructor runs), and again after the plugin has created its threads.
+4. Assert `CapInh`, `CapPrm`, `CapEff` and `CapAmb` are 0, `NoNewPrivs` is 1,
+   `Seccomp` is 2, the user-namespace probe fails with `EPERM`, and no UID is
+   0. Record `CapBnd` without asserting it. Because the launcher sets
+   `no_new_privs` before `execve` (plugin-abi.md §7.3 "Launch"), the host's
+   earliest observation already shows `NoNewPrivs: 1` and zero sets.
+5. Refusal control: run the daemon in an environment that refuses the
+   filter (for example a wrapper seccomp filter that denies `seccomp`).
+   Expect a `FAILED` frame with stage `security` and code
+   `security_unavailable`, the plugin `failed` and not retried, no
+   constructor marker, and the host reaped as its pidfd shows.
+6. Core-only death: `SIGKILL` only the daemon, both while the host is live
+   and during its bootstrap. The host must be gone as its pidfd shows, never
+   judged by PID absence.
+
+The cgroup v2 descendant-cleanup evaluation (plugin-abi.md §7.3
+"Descendant cleanup follow-up") is a separate N0 receipt. A plugin host's
+own process group is not a qualifying option: it does not survive a
+core-only kill, and descendants can leave it with `setsid`.
+
 **Fixture artifacts.** P0 owns two `crate-type = ["cdylib"]` example targets:
 
 - `crates/vosu-plugin-testkit/examples/testkit_process_plugin.rs`;
