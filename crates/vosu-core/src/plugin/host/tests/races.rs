@@ -130,7 +130,7 @@ mod gated_timer_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled GatedTimerPlugin);
+    vosu_plugin_internal::export_plugin!(bundled GatedTimerPlugin);
 }
 
 /// The new-finding P2 race, closed: a `TIMER_SET` the plugin makes
@@ -264,7 +264,7 @@ mod race_gated_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled RaceGatedPlugin);
+    vosu_plugin_internal::export_plugin!(bundled RaceGatedPlugin);
 }
 
 /// The race this finding's fix closes: `destroy_all` must not drop a

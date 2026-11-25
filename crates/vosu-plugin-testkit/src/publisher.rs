@@ -309,4 +309,4 @@ impl Drop for PublisherPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled concurrent PublisherPlugin);
+vosu_plugin_internal::export_plugin!(bundled concurrent PublisherPlugin);

@@ -48,44 +48,6 @@ fn decode_message(message: *const vosu_message) -> Result<(Message, u64), vosu_s
     Ok((message, raw.correlation_id))
 }
 
-/// Checked before [`decode_message`] on every `dispatch` call, behind the
-/// unpublished `unstable-sync-reads` feature: if `message` is a
-/// `VOSU_OP_READ_PLAN_RESULT` this thread's own [`PlanMemory::read_flat`]
-/// call is waiting for, hands its still-raw payload and flags straight to
-/// `sdk::plan_memory::intercept_raw`, which validates it exactly as
-/// [`decode_message`] would before ever copying it in — no
-/// `Message::decode` (and so no owned `ReadPlanResult`/`Vec<ReadResult>`)
-/// ever runs for it (D17). `None` for anything else (including a
-/// `VOSU_OP_READ_PLAN_RESULT` this thread was not expecting, or one an
-/// ordinary [`PlanMemory::read`] call is waiting for instead), so
-/// `dispatch` falls through to the normal decode-and-forward path, which
-/// `run_dispatch`'s own (typed) `intercept` still covers. `Some(status)`
-/// is `intercept_raw`'s own outcome unchanged: `VOSU_OK` once copied, or
-/// `VOSU_ERR_INVALID_ARGUMENT` for a result that matched this plan but
-/// failed validation.
-///
-/// [`PlanMemory::read_flat`]: crate::sdk::plan_memory::PlanMemory::read_flat
-/// [`PlanMemory::read`]: crate::sdk::plan_memory::PlanMemory::read
-#[cfg(feature = "unstable-sync-reads")]
-fn try_intercept_sync_raw(message: *const vosu_message) -> Option<vosu_status> {
-    if message.is_null() {
-        return None;
-    }
-    // SAFETY: see `decode_message`'s identical borrow of `message` for the
-    // duration of this call.
-    let raw = unsafe { &*message };
-    if vosu_opcode::try_from(raw.opcode) != Ok(vosu_opcode::VOSU_OP_READ_PLAN_RESULT) {
-        return None;
-    }
-    if raw.payload.data.is_null() {
-        return None;
-    }
-    // SAFETY: see `decode_message`'s identical borrow of `raw.payload`.
-    let payload =
-        unsafe { core::slice::from_raw_parts(raw.payload.data, raw.payload.len as usize) };
-    crate::sdk::plan_memory::intercept_raw(payload, raw.flags)
-}
-
 /// `Plugin`'s serialized context: `Mutex` is this SDK's own lock
 /// (`docs/v2/plugin-abi.md` §9), independent of whatever the manifest's
 /// `concurrent_dispatch` declares.
@@ -119,27 +81,13 @@ pub extern "C" fn create_serialized<T: Plugin>(
 }
 
 /// Runs one decoded message, plus its `correlation_id`, through `call`,
-/// under `catch_unwind`, after first giving the `unstable-sync-reads`
-/// feature's `PlanMemory` a chance to intercept a
-/// `VOSU_OP_READ_PLAN_RESULT` meant for it (D5) — see
-/// `sdk::plan_memory`'s module doc comment for why this has to happen
-/// here, before `call` (the plugin's own `on_message`) ever sees it.
+/// under `catch_unwind`.
 fn run_dispatch(
     decoded: Message,
     correlation_id: u64,
     call: impl FnOnce(Message, u64) -> Result<(), crate::sdk::plugin::PluginError>,
 ) -> vosu_status {
-    #[cfg(feature = "unstable-sync-reads")]
-    if let Message::ReadPlanResult(result) = &decoded
-        && crate::sdk::plan_memory::intercept(result)
-    {
-        return vosu_status::VOSU_OK;
-    }
-    #[cfg(feature = "unstable-sync-reads")]
-    crate::sdk::plan_memory::ON_DISPATCH_THREAD.with(|cell| cell.set(true));
     let result = panic::catch_unwind(AssertUnwindSafe(|| call(decoded, correlation_id)));
-    #[cfg(feature = "unstable-sync-reads")]
-    crate::sdk::plan_memory::ON_DISPATCH_THREAD.with(|cell| cell.set(false));
     match result {
         Ok(Ok(())) => vosu_status::VOSU_OK,
         Ok(Err(err)) => err.0,
@@ -153,10 +101,6 @@ pub extern "C" fn dispatch_serialized<T: Plugin>(
 ) -> u32 {
     if plugin_ctx.is_null() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
-    }
-    #[cfg(feature = "unstable-sync-reads")]
-    if let Some(status) = try_intercept_sync_raw(message) {
-        return status as u32;
     }
     let (decoded, correlation_id) = match decode_message(message) {
         Ok(decoded) => decoded,
@@ -212,10 +156,6 @@ pub extern "C" fn dispatch_concurrent<T: ConcurrentPlugin>(
     if plugin_ctx.is_null() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
     }
-    #[cfg(feature = "unstable-sync-reads")]
-    if let Some(status) = try_intercept_sync_raw(message) {
-        return status as u32;
-    }
     let (decoded, correlation_id) = match decode_message(message) {
         Ok(decoded) => decoded,
         Err(status) => return status as u32,
@@ -258,42 +198,23 @@ pub fn vtable_for_concurrent<T: ConcurrentPlugin>() -> crate::vosu_plugin_vtable
     }
 }
 
-/// One macro call generates either a plain `vosu_plugin_vtable()` function
-/// for the root crate's explicit `BUNDLED` array (D13) to call directly,
-/// or `vosu_plugin_entry_v1` for an external `cdylib` build — the call
-/// site says which, explicitly, rather than a `#[cfg(feature = "bundled")]`
-/// inside this `macro_rules!`: that `cfg` is evaluated in the crate that
-/// invokes the macro, so a downstream crate without its own `bundled`
-/// feature would get an `unexpected_cfgs` warning (`-D warnings` failure)
-/// for a feature it never declared, and a bundled plugin crate that forgot
-/// to enable it would silently export a `#[no_mangle] vosu_plugin_entry_v1`
-/// instead (M2) — two such crates linked into one executable would then
-/// collide.
+/// Generates `vosu_plugin_entry_v1`, the one exported symbol a `cdylib`
+/// plugin needs (`docs/v2/plugin-abi.md` §9).
 ///
-/// Write `export_plugin!(bundled MyPlugin)` for the bundled form,
-/// `export_plugin!(MyPlugin)` for the `cdylib` form, each for a type
-/// implementing [`Plugin`] (serialized, `&mut self`); prefix either with
-/// `concurrent` for one implementing [`ConcurrentPlugin`] instead (`&self`,
-/// D22) — `export_plugin!(bundled concurrent MyPlugin)` or
-/// `export_plugin!(concurrent MyPlugin)`. This differs from
-/// `docs/v2/plugin-abi.md` §9's sketch, which shows one spelling for both
-/// `Plugin`/`ConcurrentPlugin` and says the macro "picks the dispatch path
-/// from which trait the plugin's type implements": Rust has no stable,
-/// non-fragile way for one `macro_rules!` invocation to query which trait
-/// an arbitrary type implements, so this SDK asks the plugin author to say
-/// which once, explicitly, at the call site instead.
+/// Write `export_plugin!(MyPlugin)` for a type implementing [`Plugin`]
+/// (serialized, `&mut self`), or `export_plugin!(concurrent MyPlugin)` for
+/// one implementing [`ConcurrentPlugin`] instead (`&self`, D22). This
+/// differs from `docs/v2/plugin-abi.md` §9's sketch, which shows one
+/// spelling for both and says the macro "picks the dispatch path from which
+/// trait the plugin's type implements": Rust has no stable, non-fragile way
+/// for one `macro_rules!` invocation to query which trait an arbitrary type
+/// implements, so the plugin author says which once, explicitly, at the
+/// call site instead.
+///
+/// [`Plugin`]: crate::Plugin
+/// [`ConcurrentPlugin`]: crate::ConcurrentPlugin
 #[macro_export]
 macro_rules! export_plugin {
-    (bundled concurrent $ty:ty) => {
-        pub fn vosu_plugin_vtable() -> $crate::vosu_plugin_vtable {
-            $crate::__vtable_for_concurrent::<$ty>()
-        }
-    };
-    (bundled $ty:ty) => {
-        pub fn vosu_plugin_vtable() -> $crate::vosu_plugin_vtable {
-            $crate::__vtable_for_serialized::<$ty>()
-        }
-    };
     (concurrent $ty:ty) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn vosu_plugin_entry_v1() -> *const $crate::vosu_plugin_vtable {

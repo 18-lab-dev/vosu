@@ -30,6 +30,7 @@ EXPECTED_STEPS = {
     "actionlint",
     "xwin-clippy",
     "standalone-crates",
+    "sdk-package",
     "dashboard",
     "native-clippy",
     "native-test-workspace",

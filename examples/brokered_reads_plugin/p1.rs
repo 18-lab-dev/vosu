@@ -18,9 +18,10 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use vosu_plugin_api::{
-    HostServices, Message, PlanBase, PlanMemory, ReadPlanResult, ReadResult, StageRef,
-    SyncReadBuffers, VtableHostServices, vosu_opcode, vosu_read_result_kind, vosu_status,
+    HostServices, Message, PlanBase, ReadPlanResult, ReadResult, StageRef, VtableHostServices,
+    vosu_opcode, vosu_read_result_kind, vosu_status,
 };
+use vosu_plugin_internal::{PlanMemory, SyncReadBuffers};
 
 use crate::census::{Census, Rings};
 use crate::os::Usage;

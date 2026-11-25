@@ -16,9 +16,10 @@ use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 use vosu_plugin_api::{
-    HostServices, Init, Message, PlanBase, PlanMemory, PlanMemoryError, Plugin, PluginError,
-    ReadPlanCancel, ReadPlanResult, SessionIdentify, Stage, VtableHostServices, vosu_status,
+    HostServices, Init, Message, PlanBase, Plugin, PluginError, ReadPlanCancel, ReadPlanResult,
+    SessionIdentify, Stage, VtableHostServices, vosu_status,
 };
+use vosu_plugin_internal::{PlanMemory, PlanMemoryError};
 
 /// One outcome [`ReadPlanPlugin`] observed or produced, in order.
 #[derive(Debug)]
@@ -290,4 +291,4 @@ impl Plugin for ReadPlanPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled ReadPlanPlugin);
+vosu_plugin_internal::export_plugin!(bundled ReadPlanPlugin);

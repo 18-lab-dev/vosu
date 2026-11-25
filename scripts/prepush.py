@@ -162,13 +162,22 @@ def workflows_changed(paths):
     return paths is None or any(path.startswith(".github/workflows/") for path in paths)
 
 
-def ui_changed(paths):
-    if paths is None:
-        return True
+def _ci_changes():
     spec = importlib.util.spec_from_file_location("ci_changes", ROOT / "scripts" / "ci-changes.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.classify(paths)[2]
+    return module
+
+
+def ui_changed(paths):
+    if paths is None:
+        return True
+    return _ci_changes().classify(paths)[2]
+
+
+def sdk_changed(paths):
+    """ci.yml's `sdk` flag; unknown changes fail safe to running the step."""
+    return paths is None or _ci_changes().sdk_changed(paths)
 
 
 def run_actionlint(log_dir, applicable):
@@ -213,6 +222,8 @@ XWIN_CLIPPY_CMD = ["cargo", "xwin", "clippy", "--workspace", "--all-targets", "-
 ACTIONLINT_CMD_TEXT = "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml"
 DASHBOARD_BUILD_CMD = ["cargo", "build", "--locked", "--features", "test-harness"]
 STANDALONE_CRATES_CMD = [sys.executable, "scripts/check-standalone-crates.py"]
+SDK_PACKAGE_CMD = [sys.executable, "scripts/sdk-package.py", "verify"]
+SDK_PACKAGE_NOT_APPLICABLE_REASON = "no SDK-relevant path changed (scripts/ci-changes.py sdk_changed)"
 
 # Literal commands this file runs, for scripts/test_gate_tooling.py's ci.yml
 # drift check. The dictionary values use real argv tokens, not shell-globbed
@@ -227,6 +238,7 @@ COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --bin
 COMMAND_MANIFEST["dashboard-browser"] = "python tests/dashboard_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST.update(NATIVE_COMMANDS)
 COMMAND_MANIFEST["standalone-crates"] = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
+COMMAND_MANIFEST["sdk-package"] = " ".join("python" if token == sys.executable else token for token in SDK_PACKAGE_CMD)
 # ci.yml's fixture preparation steps (scripts/plugin-host-fixtures.py) ahead of
 # each nextest run: run_test_linux() runs the Linux one, native-ci.ps1 the
 # Windows one. The env-file path differs per machine, so the drift test
@@ -304,6 +316,21 @@ def run_standalone_crates(log_dir, applicable):
     if not applicable:
         return StepResult(name, False, "not_applicable", command=command, log_tail=STANDALONE_CRATES_NOT_APPLICABLE_REASON)
     exit_code, stdout, stderr, wall = run(STANDALONE_CRATES_CMD, env_overrides=CARGO_ENV, extra_env_unset=("C_INCLUDE_PATH",))
+    log_path = log_dir / f"{name}.log"
+    log_path.write_text(f"$ {command}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n", encoding="utf-8")
+    status = "passed" if exit_code == 0 else "failed"
+    return StepResult(name, True, status, exit_code, round(wall, 3), command, stdout + stderr)
+
+
+def run_sdk_package(log_dir, applicable):
+    """ci.yml's packaged-SDK verification (AF.9): package vosu-plugin-api and
+    test it, an isolated consumer and private-surface probes outside the
+    workspace. Gated like hosted CI on SDK-relevant paths."""
+    name = "sdk-package"
+    command = COMMAND_MANIFEST[name]
+    if not applicable:
+        return StepResult(name, False, "not_applicable", command=command, log_tail=SDK_PACKAGE_NOT_APPLICABLE_REASON)
+    exit_code, stdout, stderr, wall = run(SDK_PACKAGE_CMD, env_overrides=CARGO_ENV)
     log_path = log_dir / f"{name}.log"
     log_path.write_text(f"$ {command}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n", encoding="utf-8")
     status = "passed" if exit_code == 0 else "failed"
@@ -445,7 +472,7 @@ def main():
         help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, catalog-forge, "
         "doc-linux, doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
         "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, standalone-crates, "
-        "dashboard, native). "
+        "sdk-package, dashboard, native). "
         "land.py refuses evidence that skipped a required step.",
     )
     parser.add_argument("--start-vm", action="store_true", help="Start the Windows VM if it is currently stopped.")
@@ -535,6 +562,13 @@ def main():
         applicable = windows_sensitivity.windows_sensitive(paths, changed_diff(args.base))
         print(f"running standalone-crates ... (applicable={applicable})")
         results.append(run_standalone_crates(log_dir, applicable))
+
+    if "sdk-package" in skip:
+        results.append(StepResult("sdk-package", True, "skipped", command=COMMAND_MANIFEST["sdk-package"]))
+    else:
+        applicable = sdk_changed(paths)
+        print(f"running sdk-package ... (applicable={applicable})")
+        results.append(run_sdk_package(log_dir, applicable))
 
     if "dashboard" in skip:
         results.append(StepResult("dashboard", True, "skipped", command="dashboard smokes"))

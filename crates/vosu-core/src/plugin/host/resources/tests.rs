@@ -311,7 +311,7 @@ mod reentrant {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled Reentrant);
+    vosu_plugin_internal::export_plugin!(bundled Reentrant);
 }
 
 #[test]

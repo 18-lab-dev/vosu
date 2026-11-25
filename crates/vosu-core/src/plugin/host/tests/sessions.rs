@@ -245,7 +245,7 @@ mod gated_matcher_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled GatedMatcherPlugin);
+    vosu_plugin_internal::export_plugin!(bundled GatedMatcherPlugin);
 }
 
 /// F3: a process discovered while a plugin id is still `Creating` must

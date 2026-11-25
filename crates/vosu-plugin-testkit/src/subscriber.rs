@@ -230,4 +230,4 @@ impl Drop for SubscriberPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled SubscriberPlugin);
+vosu_plugin_internal::export_plugin!(bundled SubscriberPlugin);

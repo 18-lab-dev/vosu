@@ -180,4 +180,4 @@ impl Plugin for SessionPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled SessionPlugin);
+vosu_plugin_internal::export_plugin!(bundled SessionPlugin);

@@ -5,8 +5,8 @@ mod parse;
 mod snapshot;
 pub use detect::{DetectedSource, DetectionError, MAX_PROBE_BYTES};
 pub use snapshot::{
-    CandidateSnapshot, FetchedCatalog, MAX_CATALOG_BYTES, MAX_SNAPSHOT_CANDIDATES, SnapshotError,
-    SourceCandidate, SourceFailure, SourceFetchTicket, SourceSnapshot,
+    CandidateSnapshot, FetchedCatalog, MAX_SNAPSHOT_CANDIDATES, SnapshotError, SourceCandidate,
+    SourceFailure, SourceFetchTicket, SourceSnapshot,
 };
 mod store;
 pub use context::{SourceCatalog, validate_catalogs};

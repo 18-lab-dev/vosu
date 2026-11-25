@@ -1,11 +1,11 @@
 //! `PlanProcessMemory`: a `ProcessMemory` implementation backed entirely by
 //! `VOSU_READ_PLAN_SYNC` read plans (D5, P3 — `docs/v2/plugin-abi.md`
 //! §6.3). Every `read_exact`/`read_many` call goes through
-//! [`vosu_plugin_api::PlanMemory::read_flat`]'s zero-allocation path (F4,
+//! [`vosu_plugin_internal::PlanMemory::read_flat`]'s zero-allocation path (F4,
 //! D17) with thread-local scratch (a [`SyncReadBuffers`] and, for
 //! `read_many`, a reused `Vec<PlanOp>`), copying a successful op's bytes
 //! straight into the caller's own `dst` — never
-//! [`vosu_plugin_api::PlanMemory::read`]'s allocating variant, and never an
+//! [`vosu_plugin_internal::PlanMemory::read`]'s allocating variant, and never an
 //! intermediate owned `Vec<u8>` on the success path.
 //!
 //! A read plan's encoded submission and worst-case result are both capped
@@ -30,11 +30,12 @@ use vosu_plugin_api::memory::{
     ProcessMemory, ReadRequest, read_indirect_many_default,
 };
 use vosu_plugin_api::{
-    FlatReadResults, HostServices, PlanBase, PlanMemory, PlanMemoryError, PlanOp, StageBase,
-    StageRef, SyncReadBuffers, VOSU_READ_PLAN_MAX_BYTES, VtableHostServices, vosu_plan_id,
-    vosu_read_error_code, vosu_read_plan_result_header, vosu_read_plan_submit_header,
-    vosu_read_result_flat, vosu_read_result_kind, vosu_session_id, vosu_stage_header, vosu_status,
+    HostServices, PlanBase, PlanOp, StageBase, StageRef, VOSU_READ_PLAN_MAX_BYTES,
+    VtableHostServices, vosu_plan_id, vosu_read_error_code, vosu_read_plan_result_header,
+    vosu_read_plan_submit_header, vosu_read_result_flat, vosu_read_result_kind, vosu_session_id,
+    vosu_stage_header, vosu_status,
 };
+use vosu_plugin_internal::{FlatReadResults, PlanMemory, PlanMemoryError, SyncReadBuffers};
 
 thread_local! {
     /// Reused across every `read_exact`/`read_many` call this reader

@@ -38,4 +38,4 @@ impl ConcurrentPlugin for ProcessOsu {
     }
 }
 
-vosu_plugin_api::export_plugin!(concurrent ProcessOsu);
+vosu_plugin_internal::export_plugin!(concurrent ProcessOsu);

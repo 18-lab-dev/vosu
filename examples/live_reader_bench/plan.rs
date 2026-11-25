@@ -225,7 +225,7 @@ impl Attachment {
                     &[]
                 },
                 action_schemas: &[],
-                vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
+                vtable: || vosu_plugin_internal::vtable_for::<ReaderPlugin>(),
             }],
         )?;
         let creating = CREATE

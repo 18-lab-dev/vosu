@@ -168,4 +168,4 @@ impl Plugin for ScanPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled ScanPlugin);
+vosu_plugin_internal::export_plugin!(bundled ScanPlugin);

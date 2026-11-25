@@ -145,7 +145,6 @@ impl HostServices for VtableHostServices {
         }
     }
 
-    #[cfg(feature = "unstable-sync-reads")]
     fn send_flat(
         &self,
         opcode: crate::vosu_opcode,

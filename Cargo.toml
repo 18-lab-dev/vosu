@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-internal", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -77,7 +77,7 @@ default = ["linux-process-events"]
 linux-process-events = ["vosu-sys/linux-process-events", "vosu-core/linux-process-events"]
 test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/test-harness", "vosu-osu-state/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness", "dep:base64"]
 # Diagnostic-only; never included in packaged release feature sets.
-read-plan-profile = ["vosu-plugin-api/read-plan-profile"]
+read-plan-profile = ["vosu-plugin-internal/read-plan-profile"]
 [dependencies]
 vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
 vosu-adapter-gosumemory = { path = "crates/vosu-adapter-gosumemory" }
@@ -112,6 +112,7 @@ vosu-adapter-support = { path = "crates/vosu-adapter-support" }
 vosu-pp = { path = "crates/vosu-pp" }
 vosu-core = { path = "crates/vosu-core" }
 vosu-plugin-api = { path = "crates/vosu-plugin-api" }
+vosu-plugin-internal = { path = "crates/vosu-plugin-internal" }
 vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", optional = true }
 vosu-osu = { path = "crates/vosu-osu" }
 vosu-osu-calc = { path = "crates/vosu-osu-calc" }

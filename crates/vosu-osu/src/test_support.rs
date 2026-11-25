@@ -198,7 +198,7 @@ impl FakeHost {
         alive: Arc<AtomicBool>,
     ) -> Self {
         PENDING_DELIVERY.with(|cell| *cell.borrow_mut() = Some(Box::new(deliver)));
-        let vt = vosu_plugin_api::__vtable_for_serialized::<HarnessPlugin>();
+        let vt = vosu_plugin_internal::vtable_for::<HarnessPlugin>();
         let noop = noop_host_services();
         let init = init_bytes();
         // SAFETY: `noop`/`init` are valid for this call's duration; `vt`

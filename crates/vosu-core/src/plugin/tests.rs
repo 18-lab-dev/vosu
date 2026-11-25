@@ -132,7 +132,7 @@ mod serial_recorder {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled SerialRecorder);
+    vosu_plugin_internal::export_plugin!(bundled SerialRecorder);
 }
 
 #[test]
@@ -206,7 +206,7 @@ mod concurrent_recorder {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled concurrent ConcurrentRecorder);
+    vosu_plugin_internal::export_plugin!(bundled concurrent ConcurrentRecorder);
 }
 
 #[test]
@@ -297,7 +297,7 @@ mod stack_churn_sender {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled StackChurnSender);
+    vosu_plugin_internal::export_plugin!(bundled StackChurnSender);
 }
 
 #[inline(never)]
@@ -439,7 +439,7 @@ mod concurrent_destroy_guard {
             }
         }
     }
-    vosu_plugin_api::export_plugin!(bundled concurrent ConcurrentDestroyGuard);
+    vosu_plugin_internal::export_plugin!(bundled concurrent ConcurrentDestroyGuard);
 }
 
 #[test]
@@ -515,7 +515,7 @@ mod slow_destroy {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }
-    vosu_plugin_api::export_plugin!(bundled SlowDestroy);
+    vosu_plugin_internal::export_plugin!(bundled SlowDestroy);
 }
 
 #[test]
@@ -587,7 +587,7 @@ mod slow_destroy_sends_late {
             );
         }
     }
-    vosu_plugin_api::export_plugin!(bundled SlowDestroySendsLate);
+    vosu_plugin_internal::export_plugin!(bundled SlowDestroySendsLate);
 }
 
 #[test]
@@ -746,7 +746,7 @@ mod blocking_plugin {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled BlockingPlugin);
+    vosu_plugin_internal::export_plugin!(bundled BlockingPlugin);
 }
 
 #[test]

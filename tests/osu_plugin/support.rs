@@ -111,7 +111,7 @@ impl ConcurrentPlugin for ObservedPlugin {
         result
     }
 }
-vosu_plugin_api::export_plugin!(bundled concurrent ObservedPlugin);
+vosu_plugin_internal::export_plugin!(bundled concurrent ObservedPlugin);
 
 pub struct Memory {
     base: usize,
@@ -207,7 +207,7 @@ impl ProcessMemory for Memory {
 pub struct Harness {
     pub host: Arc<PluginHost>,
     pub settings: Arc<plugin::settings::PluginSettingsService>,
-    pub schema: plugin::settings::SettingsSchema,
+    pub schema: vosu_plugin_api::manifest::settings::SettingsSchema,
     pub id: String,
     pub memory: Arc<Memory>,
     pub memories: Vec<Arc<Memory>>,
@@ -365,7 +365,10 @@ impl Harness {
         Self {
             host,
             settings,
-            schema: plugin::settings::SettingsSchema::parse(vosu_osu::SETTINGS_SCHEMA).unwrap(),
+            schema: vosu_plugin_api::manifest::settings::SettingsSchema::parse(
+                vosu_osu::SETTINGS_SCHEMA,
+            )
+            .unwrap(),
             id: id.into(),
             memory,
             memories,

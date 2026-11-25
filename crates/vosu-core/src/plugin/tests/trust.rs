@@ -104,7 +104,7 @@ mod dummy_plugin {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled Dummy);
+    vosu_plugin_internal::export_plugin!(bundled Dummy);
 }
 
 #[test]

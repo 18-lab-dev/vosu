@@ -8,9 +8,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use vosu_plugin_api::memory::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
-use vosu_plugin_api::{
-    PlanBase, PlanMemoryError, PlanOp, ReadResult, Stage, StageBase, vosu_status,
-};
+use vosu_plugin_api::{PlanBase, PlanOp, ReadResult, Stage, StageBase, vosu_status};
+use vosu_plugin_internal::PlanMemoryError;
 use vosu_plugin_testkit::read_plan::{ReadPlanCommand, ReadPlanEvent, ReadPlanPluginConfig};
 
 use super::super::super::super::registry;
@@ -403,8 +402,8 @@ impl ProcessMemory for AlwaysOkMemory {
 /// `PluginHost::deliver_sync_result_raw`'s direct target dispatch), submits
 /// a second synchronous plan the same way, immediately, nested inside
 /// that very `on_message` call — exactly the case P1 of the F4 review
-/// describes: any C plugin, or an SDK plugin calling
-/// `HostServices::submit_read_plan_sync` directly, can reach this without
+/// describes: any C plugin, or an SDK plugin sending a
+/// `ReadPlanSubmit { sync: true, .. }` itself, can reach this without
 /// ever touching `PlanMemory` at all.
 mod nested_sync_plugin {
     use std::collections::HashMap;
@@ -571,7 +570,7 @@ mod nested_sync_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled NestedSyncPlugin);
+    vosu_plugin_internal::export_plugin!(bundled NestedSyncPlugin);
 }
 
 #[test]

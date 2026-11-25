@@ -2,8 +2,8 @@ use super::*;
 use crate::catalog::{
     credentials::{CredentialError, CredentialPresence, CredentialStore},
     sources::{
-        CandidateSnapshot, FetchedCatalog, MAX_CATALOG_BYTES, SnapshotError, SourceFailure,
-        SourceLifecycle, SourceStore, SourceStoreError,
+        CandidateSnapshot, FetchedCatalog, SnapshotError, SourceFailure, SourceLifecycle,
+        SourceStore, SourceStoreError,
     },
 };
 use semver::Version;
@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use vosu_net::streaming::{
     Deadlines, DownloadLimits, NetworkError, RequestPolicy, StreamingClient,
 };
+use vosu_plugin_api::catalog::MAX_CATALOG_BYTES;
 use vosu_plugin_api::manifest::{NamespaceRevision, Registration};
 
 struct CredentialLifecycle(Arc<CredentialStore>);

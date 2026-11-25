@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use vosu_net::streaming::{
     AddressResolver, Deadlines, DestinationPolicy, DownloadLimits, ResolverFuture, StreamingClient,
 };
+use vosu_plugin_api::catalog::MAX_CATALOG_BYTES;
 struct Lifecycle;
 impl SourceLifecycle for Lifecycle {
     fn reconcile_sources(&self, _: &[String]) -> Result<(), SourceStoreError> {

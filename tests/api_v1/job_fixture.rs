@@ -126,7 +126,7 @@ impl Plugin for Fixture {
         Ok(())
     }
 }
-vosu_plugin_api::export_plugin!(bundled Fixture);
+vosu_plugin_internal::export_plugin!(bundled Fixture);
 
 pub fn load(
     h: &Harness,

@@ -42,7 +42,7 @@ async fn resource_route_uses_production_provider_composition() {
                 settings_schema: None,
                 namespace_schemas: &[schema],
                 action_schemas: &[],
-                vtable: vosu_plugin_api::__vtable_for_serialized::<
+                vtable: vosu_plugin_internal::vtable_for::<
                     vosu_plugin_testkit::fixture::ApiFixturePlugin,
                 >,
             }],

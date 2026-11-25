@@ -4,8 +4,8 @@ use vosu_plugin_api::{catalog::Catalog, manifest::PackageManifest};
 
 fn schema(name: &str) -> jsonschema::Validator {
     let text = match name {
-        "manifest" => include_str!("../../../docs/v2/schemas/manifest.schema.json"),
-        "catalog" => include_str!("../../../docs/v2/schemas/catalog-v2.schema.json"),
+        "manifest" => include_str!("../../docs/v2/schemas/manifest.schema.json"),
+        "catalog" => include_str!("../../docs/v2/schemas/catalog-v2.schema.json"),
         _ => unreachable!(),
     };
     let schema: Value = serde_json::from_str(text).unwrap();

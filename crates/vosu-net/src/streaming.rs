@@ -530,7 +530,7 @@ mod archive;
 
 pub use archive::{
     StagedTree, extract_zip_atomic, extract_zip_atomic_validated, extract_zip_staged,
-    portable_component, rename_directory_no_replace,
+    rename_directory_no_replace,
 };
 pub use archive::{open_preflighted_zip, preflight_zip_entries, validate_zip_entry};
 

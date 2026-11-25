@@ -1,12 +1,11 @@
 //! Host-side settings (`docs/v2/plugin-abi.md` §6.9, D19): the
-//! `settings.json`/`settings.schema.json` shape (`docs/tools/protocol.md`,
-//! the overlay/tool settings format §6.9 reuses verbatim), schema
-//! validation, the `SettingsStorage` trait core owns, and **bridge B2**
-//! (`docs/v2/implementation-plan.md` D19, M1→M8): serves `vosu.osu`'s five
-//! osu!-specific keys from the existing `vosu.toml` values until the M8
-//! migration moves them into real per-plugin settings storage and removes
-//! them from `vosu.toml`. Delete this bridge whole in M8 — do not add a
-//! second plugin id to it.
+//! `SettingsStorage` trait core owns, validated change delivery, and
+//! **bridge B2** (`docs/v2/implementation-plan.md` D19, M1→M8): serves
+//! `vosu.osu`'s five osu!-specific keys from the existing `vosu.toml` values
+//! until the M8 migration moves them into real per-plugin settings storage
+//! and removes them from `vosu.toml`. Delete this bridge whole in M8 — do
+//! not add a second plugin id to it. The `settings.schema.json` document
+//! itself is the SDK's `vosu_plugin_api::manifest::settings::SettingsSchema`.
 //!
 //! §6.9 defines no plugin-initiated settings "read"/"write" wire opcode:
 //! the plugin's initial effective settings arrive in `create`'s own
@@ -18,150 +17,24 @@
 //! the `SETTINGS_CHANGED` message to broadcast) — not a decoded ABI
 //! opcode; recorded as a spec gap in this phase's handoff notes.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use serde::Deserialize;
 use serde_json::{Map, Value};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
+use vosu_plugin_api::manifest::settings::{SettingsSchema, SettingsSchemaError};
 use vosu_plugin_api::{CborValue, Message, SettingsChanged};
 
 use crate::config::{Config, ConfigChanged, ConfigStore};
 
-/// One `settings.json`/`settings.schema.json` entry
-/// (`docs/tools/protocol.md`, the overlay settings format): `uniqueID`,
-/// `type`, and the entry's own default `value`. Other overlay fields
-/// (`title`, `description`, `options`, `uniqueCheck`) are display-only for
-/// this phase's validation and storage concerns, so they are accepted but
-/// not modeled here.
-#[derive(Debug, Clone, Deserialize)]
-struct SettingEntry {
-    #[serde(rename = "uniqueID")]
-    unique_id: String,
-    #[serde(rename = "type")]
-    kind: SettingKind,
-    #[serde(default)]
-    value: Value,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum SettingKind {
-    Text,
-    Color,
-    Number,
-    Checkbox,
-    Button,
-    Options,
-    Commands,
-    Textarea,
-    Password,
-    Header,
-}
-
-impl SettingKind {
-    /// `button`/`header` are layout-only entries: the overlay settings
-    /// format has no value for them, so they never appear in an effective
-    /// settings object.
-    fn is_value_bearing(self) -> bool {
-        !matches!(self, Self::Button | Self::Header)
-    }
-
-    /// Whether `value`'s JSON type matches what this entry's `type`
-    /// declares (§6.9: core validates submitted settings against the
-    /// schema before storing them).
-    fn accepts(self, value: &Value) -> bool {
-        match self {
-            Self::Checkbox => value.is_boolean(),
-            Self::Number => value.is_number(),
-            Self::Text | Self::Color | Self::Textarea | Self::Password | Self::Options => {
-                value.is_string()
-            }
-            Self::Commands => value.is_array(),
-            Self::Button | Self::Header => true,
-        }
-    }
-}
-
-/// Every way a `settings.schema.json`/submitted value fails to parse or
-/// validate.
+/// Every way settings storage, a `settings.schema.json` document or a
+/// submitted value fails.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum SettingsError {
-    #[error("settings_schema is not valid JSON: {0}")]
-    Json(String),
-    #[error("settings_schema must be a JSON array of setting entries")]
-    NotArray,
-    #[error("settings_schema entry {0:?} reuses an earlier entry's uniqueID")]
-    DuplicateId(String),
-    #[error("setting {0:?} is not declared in this plugin's settings_schema")]
-    UnknownKey(String),
-    #[error("setting {0:?}'s value does not match its declared type")]
-    TypeMismatch(String),
+    #[error(transparent)]
+    Schema(#[from] SettingsSchemaError),
     #[error("plugin {0:?} has no settings storage bridge")]
     NotBridged(String),
-}
-
-/// A parsed, validated `settings.schema.json` (§6.9, §8's `settings_schema`
-/// manifest field).
-#[derive(Debug, Clone)]
-pub struct SettingsSchema {
-    entries: Vec<SettingEntry>,
-}
-
-impl SettingsSchema {
-    /// Parses and validates `text` (the `settings.schema.json` file's
-    /// contents): an array of entries, every `uniqueID` distinct.
-    pub fn parse(text: &str) -> Result<Self, SettingsError> {
-        let value: Value =
-            serde_json::from_str(text).map_err(|e| SettingsError::Json(e.to_string()))?;
-        let Value::Array(raw) = value else {
-            return Err(SettingsError::NotArray);
-        };
-        let mut entries = Vec::with_capacity(raw.len());
-        let mut seen = HashSet::new();
-        for item in raw {
-            let entry: SettingEntry =
-                serde_json::from_value(item).map_err(|e| SettingsError::Json(e.to_string()))?;
-            if !seen.insert(entry.unique_id.clone()) {
-                return Err(SettingsError::DuplicateId(entry.unique_id));
-            }
-            entries.push(entry);
-        }
-        Ok(Self { entries })
-    }
-
-    /// Every value-bearing entry's own declared default.
-    pub fn defaults(&self) -> Map<String, Value> {
-        self.entries
-            .iter()
-            .filter(|entry| entry.kind.is_value_bearing())
-            .map(|entry| (entry.unique_id.clone(), entry.value.clone()))
-            .collect()
-    }
-
-    /// Validates `overrides` against this schema and returns the merged
-    /// effective settings object: defaults with `overrides` applied.
-    /// Every key in `overrides` must name a value-bearing entry and match
-    /// its declared type, matching §6.9's "core owns storage" validation.
-    pub fn merge(
-        &self,
-        overrides: &Map<String, Value>,
-    ) -> Result<Map<String, Value>, SettingsError> {
-        let mut effective = self.defaults();
-        for (key, value) in overrides {
-            let entry = self
-                .entries
-                .iter()
-                .find(|entry| entry.kind.is_value_bearing() && &entry.unique_id == key)
-                .ok_or_else(|| SettingsError::UnknownKey(key.clone()))?;
-            if !entry.kind.accepts(value) {
-                return Err(SettingsError::TypeMismatch(key.clone()));
-            }
-            effective.insert(key.clone(), value.clone());
-        }
-        Ok(effective)
-    }
 }
 
 /// Core-owned settings storage for one plugin id (§6.9: "core owns
@@ -444,71 +317,6 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-
-    fn schema() -> SettingsSchema {
-        SettingsSchema::parse(
-            r#"[
-                {"uniqueID":"ENABLED","type":"checkbox","value":true},
-                {"uniqueID":"LABEL","type":"text","value":"hello"},
-                {"uniqueID":"RATE","type":"number","value":150.0},
-                {"uniqueID":"NOTE","type":"header"}
-            ]"#,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn defaults_exclude_header_and_button_entries() {
-        let defaults = schema().defaults();
-        assert_eq!(defaults.len(), 3);
-        assert!(!defaults.contains_key("NOTE"));
-    }
-
-    #[test]
-    fn merge_applies_overrides_on_top_of_defaults() {
-        let mut overrides = Map::new();
-        overrides.insert("RATE".into(), Value::from(42.0));
-        let effective = schema().merge(&overrides).unwrap();
-        assert_eq!(effective.get("RATE"), Some(&Value::from(42.0)));
-        assert_eq!(effective.get("ENABLED"), Some(&Value::Bool(true)));
-    }
-
-    #[test]
-    fn merge_rejects_unknown_keys() {
-        let mut overrides = Map::new();
-        overrides.insert("NOPE".into(), Value::from(1));
-        assert_eq!(
-            schema().merge(&overrides).unwrap_err(),
-            SettingsError::UnknownKey("NOPE".into())
-        );
-    }
-
-    #[test]
-    fn merge_rejects_type_mismatches() {
-        let mut overrides = Map::new();
-        overrides.insert("ENABLED".into(), Value::from("not a bool"));
-        assert_eq!(
-            schema().merge(&overrides).unwrap_err(),
-            SettingsError::TypeMismatch("ENABLED".into())
-        );
-    }
-
-    #[test]
-    fn parse_rejects_duplicate_unique_ids() {
-        let text = r#"[{"uniqueID":"A","type":"checkbox","value":true},{"uniqueID":"A","type":"text","value":"x"}]"#;
-        assert_eq!(
-            SettingsSchema::parse(text).unwrap_err(),
-            SettingsError::DuplicateId("A".into())
-        );
-    }
-
-    #[test]
-    fn parse_rejects_a_non_array_document() {
-        assert_eq!(
-            SettingsSchema::parse(r#"{"not": "an array"}"#).unwrap_err(),
-            SettingsError::NotArray
-        );
-    }
 
     /// A test-local stand-in for bridge B2's own five `vosu.toml` keys
     /// (mirroring `config/schema.rs`'s own defaults), now that the bridge

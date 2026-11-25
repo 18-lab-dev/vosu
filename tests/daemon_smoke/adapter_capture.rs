@@ -11,6 +11,11 @@ const HEADER: &str = "x-vosu-test-capture";
 const ENV: &str = "VOSU_TEST_ADAPTER_CAPTURE";
 const CAPABILITY: &str = "9d4c1b0a8f7e6d5c4b3a29180f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c";
 const UNKNOWN: &str = "/__vosu_test/v1/unknown-sibling?schema=v2";
+// `src/runtime/discovery.rs`: a `test-harness` daemon launched with this set
+// discovers through a source that sees no process, so a game client already
+// running on the test host cannot attach to these no-client assertions.
+const ISOLATED_DISCOVERY_ENV: &str = "VOSU_TEST_ISOLATED_DISCOVERY";
+const ISOLATED_BACKEND_LOG: &str = "Process events backend: isolated (test harness)";
 
 struct Daemon {
     root: TempDir,
@@ -37,6 +42,7 @@ fn command(root: &Path, capability: Option<&str>) -> (Command, u16) {
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
         .env("VOSU_PROCESS_EVENTS", "poll")
+        .env(ISOLATED_DISCOVERY_ENV, "1")
         .env_remove(ENV)
         .stdout(log.try_clone().unwrap())
         .stderr(log);
@@ -86,6 +92,27 @@ impl Daemon {
     }
 }
 
+/// Whether any regular file under `root` contains `needle`.
+#[cfg(feature = "test-harness")]
+fn tree_contains(root: &Path, needle: &[u8]) -> bool {
+    let mut pending = vec![root.to_owned()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file()
+                && fs::read(entry.path())
+                    .is_ok_and(|bytes| memchr::memmem::find(&bytes, needle).is_some())
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[tokio::test]
 async fn adapter_capture_route_exists_only_with_the_harness_feature_and_a_capability() {
     for capability in [None, Some(CAPABILITY)] {
@@ -112,7 +139,7 @@ async fn adapter_capture_route_exists_only_with_the_harness_feature_and_a_capabi
         // Not even dead code ships: the featureless executable contains none
         // of the endpoint's path, header or environment names.
         let executable = fs::read(env!("CARGO_BIN_EXE_vosu")).unwrap();
-        for marker in [PATH, HEADER, ENV] {
+        for marker in [PATH, HEADER, ENV, ISOLATED_DISCOVERY_ENV] {
             assert!(
                 memchr::memmem::find(&executable, marker.as_bytes()).is_none(),
                 "featureless executable contains {marker}"
@@ -129,6 +156,16 @@ async fn adapter_capture_endpoint_policy_on_the_real_daemon() {
     assert_eq!(HEADER, endpoint::CAPABILITY_HEADER.as_str());
     assert_eq!(ENV, endpoint::CAPABILITY_ENV);
     let daemon = Daemon::launch(Some(CAPABILITY)).await;
+    // The no-client assertions below hold only because discovery is isolated
+    // from the host's processes; prove the daemon really took that source.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !tree_contains(daemon.root.path(), ISOLATED_BACKEND_LOG.as_bytes()) {
+        assert!(
+            Instant::now() < deadline,
+            "the daemon did not log its isolated discovery source"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let get = reqwest::Method::GET;
     for (schema, route) in [
         ("v1", "/json"),

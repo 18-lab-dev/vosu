@@ -120,7 +120,7 @@ impl Publisher {
         assert_eq!(self.host.send(&message, correlation), vosu_status::VOSU_OK);
     }
 }
-vosu_plugin_api::export_plugin!(bundled Publisher);
+vosu_plugin_internal::export_plugin!(bundled Publisher);
 mod adapter {
     use super::*;
     pub struct Adapter;
@@ -132,7 +132,7 @@ mod adapter {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled Adapter);
+    vosu_plugin_internal::export_plugin!(bundled Adapter);
 }
 struct Storage;
 impl plugin::settings::SettingsStorage for Storage {

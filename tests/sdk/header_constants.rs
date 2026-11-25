@@ -1,9 +1,10 @@
-//! Pins every opcode, enum value, flag bit, and buffer-size constant this
-//! crate defines to the literal values `include/vosu_plugin.h` declares
+//! Pins every opcode, enum value, flag bit, and buffer-size constant
+//! `vosu-plugin-api` defines to the literal values `include/vosu_plugin.h` declares
 //! (minor 2): parses the header's own `typedef enum`/`#define` text at test
 //! time, rather than trusting that a hand check made once stays true, so a
-//! header edit that disagrees with this crate's Rust constants fails here
-//! even if nobody touches `tests/layout.rs`'s struct-layout assertions.
+//! header edit that disagrees with the SDK's Rust constants fails here
+//! even if nobody touches its `tests/layout.rs` struct-layout assertions.
+//! Workspace-only (the header is not in the SDK package, AF.9).
 
 use std::collections::HashMap;
 
@@ -207,7 +208,7 @@ fn parse_defines(source: &str) -> HashMap<String, u32> {
 
 fn header_source() -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = format!("{manifest_dir}/../../include/vosu_plugin.h");
+    let path = format!("{manifest_dir}/include/vosu_plugin.h");
     strip_block_comments(&std::fs::read_to_string(&path).expect("read include/vosu_plugin.h"))
 }
 

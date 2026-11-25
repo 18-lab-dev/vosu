@@ -162,50 +162,21 @@ pub trait HostServices {
         self.send(&Message::TimerSet(TimerSet { timer, interval_ms }), 0)
     }
 
-    /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set (§6.3, D5),
-    /// behind the unpublished `unstable-sync-reads` feature: never call
-    /// this directly. [`crate::PlanMemory`] is the one sanctioned caller
-    /// — it routes the matching `VOSU_OP_READ_PLAN_RESULT` to a per-plan
-    /// slot before the plugin's own `on_message` ever sees it (M5); a
-    /// synchronous result sent any other way would instead reach
-    /// `on_message` like any other message, which §6.3 says never
-    /// happens, and a published build must not be able to construct that
-    /// contradiction at all (D11).
-    #[cfg(feature = "unstable-sync-reads")]
-    fn submit_read_plan_sync(
-        &self,
-        plan: vosu_plan_id,
-        handle: vosu_session_id,
-        root: PlanBase,
-        stages: Vec<Stage>,
-    ) -> vosu_status {
-        self.send(
-            &Message::ReadPlanSubmit(ReadPlanSubmit {
-                plan,
-                handle,
-                root,
-                stages,
-                sync: true,
-            }),
-            0,
-        )
-    }
-
     /// `VOSU_OP_TIMER_CANCEL` (§6.11).
     fn cancel_timer(&self, timer: vosu_timer_id) -> vosu_status {
         self.send(&Message::TimerCancel(TimerCancel { timer }), 0)
     }
 
-    /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set, already
-    /// flat-encoded (`crate::sdk::plan_memory`'s own zero-allocation path,
-    /// D17): sends `payload` verbatim, skipping the `Message` enum/
-    /// `encode_payload` round trip this trait's other methods go through.
-    /// This default implementation instead decodes `payload` back into a
-    /// typed [`Message`] and calls [`Self::send`] — correct, but
-    /// allocating, for a `HostServices` implementation with no faster
-    /// path of its own; [`crate::VtableHostServices`] overrides this to
-    /// pass `payload` straight to the vtable instead.
-    #[cfg(feature = "unstable-sync-reads")]
+    /// Sends an already-encoded `opcode` payload (for example a
+    /// [`crate::PublishBatchWriter`] batch or an
+    /// [`crate::encode_read_plan_submit_into`] plan) verbatim, skipping the
+    /// `Message` enum/`encode_payload` round trip this trait's other
+    /// methods go through (D17). This default implementation instead
+    /// decodes `payload` back into a typed [`Message`] and calls
+    /// [`Self::send`] — correct, but allocating, for a `HostServices`
+    /// implementation with no faster path of its own;
+    /// [`crate::VtableHostServices`] overrides this to pass `payload`
+    /// straight to the vtable instead.
     fn send_flat(
         &self,
         opcode: crate::vosu_opcode,

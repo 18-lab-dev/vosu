@@ -19,11 +19,10 @@ use super::{
 use semver::Version;
 use std::{collections::HashMap, sync::Arc};
 use vosu_plugin_api::{
-    catalog::{Catalog, CatalogEntry, EntrySupport},
+    catalog::{Catalog, CatalogEntry, EntrySupport, MAX_CATALOG_BYTES},
     manifest::{NamespaceRevision, PackageKind, Registration},
 };
 
-pub const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_SNAPSHOT_CANDIDATES: usize = 8192;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

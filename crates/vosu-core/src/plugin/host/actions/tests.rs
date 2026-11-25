@@ -108,7 +108,7 @@ mod fixture {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled ActionPlugin);
+    vosu_plugin_internal::export_plugin!(bundled ActionPlugin);
 }
 
 fn instance(host: &Arc<PluginHost>, id: u64, name: &str, grants: &str) -> mpsc::Receiver<Message> {

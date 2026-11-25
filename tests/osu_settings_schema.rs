@@ -1,11 +1,9 @@
 //! Proves `vosu_osu::SETTINGS_SCHEMA` (the real `settings.schema.json` P1
 //! embeds, replacing bridge B2's own hard-coded one, P0) actually gets
-//! past `vosu_core`'s own `SettingsSchema::parse` — `vosu-osu` has no
-//! dependency on `vosu-core` (`scripts/crate-boundaries.txt`), so nothing
-//! inside that crate can run its schema through the real validator. A
-//! rejection here would otherwise first show up at runtime once P0's
-//! `load_bundled` refuses a bad schema (`C3`'s production `BUNDLED`
-//! entry).
+//! past the SDK's `SettingsSchema::parse`, the one parser the host's
+//! `load_bundled` (`C3`'s production `BUNDLED` entry), catalog install and
+//! `vosu-package-check` all use. A rejection here would otherwise first
+//! show up at runtime once `load_bundled` refuses a bad schema.
 //!
 //! Also pins the schema's defaults to `vosu_osu_state::ReaderSettings::
 //! default()` (the same five D19 keys bridge B2 used to serve,
@@ -14,8 +12,8 @@
 //! the two crates is caught here rather than only once `vosu-osu` is
 //! wired into production settings storage.
 
-use vosu_core::plugin::settings::SettingsSchema;
 use vosu_osu_state::ReaderSettings;
+use vosu_plugin_api::manifest::settings::SettingsSchema;
 
 #[test]
 fn vosu_osu_settings_schema_parses_and_matches_reader_settings_defaults() {

@@ -163,7 +163,7 @@ impl ExecutorHost {
         )
     }
     fn with_memory(bitness: ProcessBitness, memory: Arc<dyn ProcessMemory>) -> Self {
-        let vtable = vosu_plugin_api::__vtable_for_serialized::<Intercept>();
+        let vtable = vosu_plugin_internal::vtable_for::<Intercept>();
         static HOST: vosu_host_services = vosu_host_services {
             struct_size: size_of::<vosu_host_services>() as u32,
             abi_version: vosu_plugin_api::VOSU_PLUGIN_ABI_MAJOR,
