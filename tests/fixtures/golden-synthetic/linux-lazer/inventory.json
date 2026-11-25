@@ -2,7 +2,7 @@
   "format": "vosu-golden-inventory-v1",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
   "platform": "linux-lazer",
-  "normalization_version": 1,
+  "normalization_version": 2,
   "files": [
     {
       "path": "assets.json",
@@ -102,7 +102,7 @@
     {
       "path": "manifest.json",
       "bytes": 3982,
-      "sha256": "8a974a460c6173fc2e4a621f1c5ffcf76654dc6bc2aca68d0e91dc7a51ee565c"
+      "sha256": "13f1050ce79628fe947854ec149a1c627cbca7a7af7bac230b86db99dc3a6fb6"
     }
   ],
   "privacy_scan": {

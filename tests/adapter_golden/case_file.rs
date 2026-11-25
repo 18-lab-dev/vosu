@@ -11,7 +11,14 @@ use super::{
     },
 };
 use serde_json::Value;
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
+
+/// The route prefixes whose closing `/` ends a token in a request target
+/// (`GOLDEN_CONTRACT.md` §7 `root-prefix`, normalization version 2).
+const ROUTE_PREFIXES: [&str; 3] = ["/Songs/", "/files/beatmap/", "/files/skin/"];
 
 const BARRIERS: [&str; 4] = ["no-client", "menu", "paused", "result"];
 
@@ -171,6 +178,66 @@ fn percent_decode(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A synthetic root sits in a request target only where `root-prefix`
+/// (§7, normalization version 2) puts one: at a token boundary, which in a
+/// request target includes the closing `/` of a route prefix
+/// (`/Songs//vosu-golden/osu/…`, `/Songs/C%3A%5Cvosu-golden%5Cosu!%5C…`). A
+/// root inside a path segment was never rewritten from an attested root, so
+/// the case is refused, and a case carrying a root lists `root-prefix`.
+/// Spellings are compared percent-decoded, case-folded and with `\` as `/`;
+/// a Windows root also matches its device and admin-share forms.
+pub fn request_roots(
+    request: &str,
+    roots: &BTreeMap<String, String>,
+    normalized: &[String],
+) -> Result<(), String> {
+    let line = request.split("\r\n").next().unwrap_or_default();
+    let target = line.split(' ').nth(1).unwrap_or_default();
+    // Route prefixes are unencoded ASCII, so the decoded view keeps their length.
+    let boundary = ROUTE_PREFIXES
+        .iter()
+        .find(|prefix| target.starts_with(**prefix))
+        .map(|prefix| prefix.len());
+    let view = percent_decode(target).to_lowercase().replace('\\', "/");
+    let mut forms = Vec::new();
+    for root in roots.values() {
+        let bare = root.to_lowercase().replace('\\', "/");
+        let bare = bare.trim_end_matches('/');
+        if let Some(below) = bare.strip_prefix("c:/") {
+            forms.extend(["//?/", "//./"].map(|device| format!("{device}{bare}")));
+            forms.extend(["localhost", "127.0.0.1"].map(|host| format!("//{host}/c$/{below}")));
+        }
+        forms.push(bare.to_owned());
+    }
+    forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+    let path_char = |c: char| c.is_ascii_alphanumeric() || "_.!~$/%-".contains(c);
+    let slot_char = |c: char| c.is_ascii_alphanumeric() || "!._-".contains(c);
+    let (mut index, mut found) = (0, false);
+    while let Some(rest) = view.get(index..).filter(|rest| !rest.is_empty()) {
+        // A form starting inside the route prefix (its closing `/`) is a
+        // relative path below the route, not a root.
+        let form = forms.iter().find(|form| {
+            rest.starts_with(form.as_str()) && !rest[form.len()..].starts_with(slot_char)
+        });
+        let Some(form) = form.filter(|_| boundary.is_none_or(|end| index >= end)) else {
+            index += rest.chars().next().map_or(1, char::len_utf8);
+            continue;
+        };
+        if Some(index) != boundary && view[..index].chars().next_back().is_some_and(path_char) {
+            return Err(format!(
+                "request target carries synthetic root {form:?} inside a path segment, where \
+                 root-prefix never puts one"
+            ));
+        }
+        found = true;
+        index += form.len();
+    }
+    if found && !normalized.iter().any(|rule| rule == "root-prefix") {
+        return Err("request target carries a synthetic root but root-prefix is not listed".into());
+    }
+    Ok(())
 }
 
 /// Validator placeholders appear only in conditional request headers, and

@@ -2,7 +2,7 @@
   "format": "vosu-golden-inventory-v1",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
   "platform": "windows-stable",
-  "normalization_version": 1,
+  "normalization_version": 2,
   "files": [
     {
       "path": "assets.json",
@@ -102,7 +102,7 @@
     {
       "path": "manifest.json",
       "bytes": 3991,
-      "sha256": "cea29b7136d5a747d9402c7c62b861fe474edc63b34f19acbe5d0ebc3233d103"
+      "sha256": "f478bf2c3f9f866ab3cfb399f7af9bfefb46801df5257f368ec0081d7d622d6b"
     }
   ],
   "privacy_scan": {

@@ -20,13 +20,13 @@ from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION
 import parity_golden as golden_mod
 import parity_golden_ledger as golden_ledger
 from parity_golden_rules import (
-    RULE_IDS, GoldenError, Root, RootRewriter, apply_timestamp_pointers, check_approved_rules,
-    rewrite_cbor_text,
+    NORMALIZATION_VERSION, RULE_IDS, GoldenError, Root, RootRewriter, apply_timestamp_pointers,
+    check_approved_rules, rewrite_cbor_text,
 )
 
 PIN = PINNED_SOURCE_REVISION
-CONTRACT = "Normalization version: 1\n\n| Rule ID | Scope |\n|---|---|\n" + "".join(
-    f"| `{rule}` | exact |\n" for rule in RULE_IDS)
+CONTRACT = (f"Normalization version: {NORMALIZATION_VERSION}\n\n| Rule ID | Scope |\n|---|---|\n"
+            + "".join(f"| `{rule}` | exact |\n" for rule in RULE_IDS))
 WIN_ROOT = "C:\\Users\\vosu\\AppData\\Local\\osulazer\\"
 SYN_ROOT = "C:\\vosu-golden\\osu!\\"
 DATE_A = "Mon, 24 Nov 2026 10:00:00 GMT"
@@ -259,8 +259,11 @@ class CandidateLayoutTests(GoldenTestCase):
             check_approved_rules(missing)
         with self.assertRaisesRegex(GoldenError, "unimplemented"):
             check_approved_rules(CONTRACT + "| `any-time-key` | every time key |\n")
-        with self.assertRaisesRegex(GoldenError, "version 2"):
-            check_approved_rules(CONTRACT.replace("version: 1", "version: 2"))
+        # A contract still at the previous version is refused.
+        stale = NORMALIZATION_VERSION - 1
+        with self.assertRaisesRegex(GoldenError, f"version {stale} differs"):
+            check_approved_rules(CONTRACT.replace(
+                f"version: {NORMALIZATION_VERSION}", f"version: {stale}"))
 
     def test_cli_writes_candidate_outside_repository(self) -> None:
         path = self.root / "cli-capture.json"

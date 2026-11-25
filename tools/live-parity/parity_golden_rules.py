@@ -15,7 +15,7 @@ from urllib.parse import quote, unquote
 
 from route_security import ROUTE_PREFIXES
 
-NORMALIZATION_VERSION = 1
+NORMALIZATION_VERSION = 2
 
 RULE_IDS = (
     "header-date",
@@ -28,7 +28,7 @@ RULE_IDS = (
 )
 
 # (case family, record part, JSON Pointer) scopes approved for
-# client-timestamp-pointer. Version 1 approves none.
+# client-timestamp-pointer. Version 2 approves none.
 CLIENT_TIMESTAMP_POINTERS: tuple[tuple[str, str, str], ...] = ()
 
 DATE_PLACEHOLDER = "<golden:date>"

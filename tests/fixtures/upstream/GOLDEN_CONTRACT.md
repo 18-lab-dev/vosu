@@ -310,7 +310,17 @@ is a string; a number, boolean, null or absent member at a scoped location is
 never touched. `golden` checks that its implemented rule IDs equal the first
 column of this table exactly.
 
-Normalization version: 1
+Normalization version: 2
+
+Version 2 (1 → 2) widens `root-prefix`: in a request target the closing `/`
+of a route prefix ends a token, so an absolute root spelled right after it is
+rewritten, while a root inside a path segment is still never rewritten and
+fails the privacy scan. The counterexamples are `golden`'s
+`test_absolute_root_right_after_a_route_prefix_is_replaced` and
+`adapter_golden`'s `golden_gates_take_a_request_root_only_at_a_token_boundary`:
+`adapter_golden` refuses a fixture whose request target carries a synthetic
+root anywhere `root-prefix` cannot put one, or carries one without listing
+`root-prefix` in the case's `normalized` rules.
 
 | Rule ID | Scope | Replacement | Retained local invariant |
 |---|---|---|---|
@@ -320,7 +330,7 @@ Normalization version: 1
 | `root-prefix` | Exact token-bounded occurrences of an attested private absolute root prefix: raw, JSON-escaped (one and two levels, including nested JSON strings), percent-encoded and Windows forward-slash spellings, in request lines, bodies, frames, headers and dump CBOR text strings. In a request target the closing `/` of a route prefix (`/Songs/`, `/files/beatmap/`, `/files/skin/`) ends a token, so an absolute path spelled right after it (`/Songs//root/…`, `/Songs/C%3A%5C…`) starts at a token boundary | The synthetic root assigned to that attested root (below) | The path below the root is kept verbatim; only the changed body's `content-length` or frame length is recomputed (§6); any remaining private prefix fails the privacy scan |
 | `envelope-identity-ordinal` | Session, roster, resource and process identity fields of vosu dump envelopes only; ordinalized by the capture endpoint, verified by `golden` | Stable ordinals | Equal inputs map to equal ordinals and distinct inputs to distinct ordinals; selected session, roster order and foreground/generation relations preserved |
 | `raw-capability-redaction` | Request header `X-Vosu-Test-Capture` in private raw evidence, redacted by `golden-capture` | `<redacted>` | `golden` rejects any occurrence of the header or its value in a capture or candidate; dump calls are not route records |
-| `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 1: none.** |
+| `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 2: none.** |
 
 Synthetic roots: one distinct root per attested root, named after its
 declared slot as `C:\vosu-golden\<name>\` on Windows or `/vosu-golden/<name>/`
@@ -370,7 +380,7 @@ tests/fixtures/upstream/<pin>/
 
 `<pin>` is the full 40-hex Cargo `source-commit`. Platform directories are
 exactly the `SUPPORTED_MATRIX` pairs. A platform manifest records its format,
-`normalization_version` (initially 1), `provenance` (`captured` or
+`normalization_version` (currently 2, §7), `provenance` (`captured` or
 `synthetic`), pin, platform and client variant/version, vosu commit, harness
 build attestation hash, scenario set, slot-to-synthetic-root mapping, case
 counts by family and the review receipt reference. It contains no private
