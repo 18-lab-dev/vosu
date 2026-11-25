@@ -143,14 +143,10 @@ future evidence, not a claim that the targets or subcommands exist yet.
 ```sh
 # L1 tooling exit, at the integrated head. VOSU_GOLDEN_HARNESS_BUILD=1 lets the real-daemon
 # golden-capture test build HEAD's harness vosu from the clean tree (never a prebuilt one);
-# without it that test skips and says so. Its daemons discover osu! processes, so it fails
-# while one is visible: run it in a private PID namespace with its own /proc. The rest of the
-# suite runs on the host: its build and git trust tests need the real owners of the system
-# tools, which the user namespace maps to nobody.
-python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py'
-(cd tools/live-parity && VOSU_GOLDEN_HARNESS_BUILD=1 \
-    unshare --user --map-current-user --pid --fork --mount-proc -- \
-    python -m unittest -v test_live_parity_golden_capture.RealHarnessDaemonTests)
+# without it that test skips and says so. Its daemons discover osu! processes, so after the
+# build (whose protected-tool checks need the real owners of git and cargo) the test re-runs
+# itself in a private PID namespace with its own /proc, where no host game is visible.
+VOSU_GOLDEN_HARNESS_BUILD=1 python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
 cargo test --locked --features test-harness --test adapter_golden
 cargo test --locked --features test-harness --test daemon_smoke adapter_capture
 cargo test --locked --features test-harness --test server_compat adapter_capture

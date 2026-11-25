@@ -72,6 +72,8 @@ def free_port() -> int:
 
 
 HARNESS_BUILD_ENV = "VOSU_GOLDEN_HARNESS_BUILD"
+# The built daemon (path, commit, features) handed to the test's own namespaced re-run.
+ISOLATED_HARNESS_ENV = "VOSU_GOLDEN_HARNESS_ISOLATED"
 
 
 def head_harness_binary() -> tuple[Path, str, list[str]]:
@@ -685,15 +687,35 @@ class OperatorFindingTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the local end-to-end runs on Linux")
 class RealHarnessDaemonTests(CaptureTestCase):
-    """HEAD's `cargo build --locked --features test-harness` vosu daemon, built by the test."""
+    """HEAD's `cargo build --locked --features test-harness` vosu daemon, built by the test.
+
+    As in the rehearsal, the build runs here, where the protected-tool checks see the real
+    owners of git and cargo; the daemons then run in a private PID namespace (the test
+    re-enters itself through `unshare`), since both discover osu! processes and would
+    read a game the host runs."""
 
     def test_end_to_end_with_the_real_harness_daemon(self) -> None:
+        isolated = os.environ.get(ISOLATED_HARNESS_ENV)
+        if isolated is None:
+            binary, commit, features = head_harness_binary()
+            self.assertEqual(commit, self.commit)
+            unshare = shutil.which("unshare")
+            if unshare is None:
+                self.fail("the real daemons run in a private PID namespace: install util-linux unshare")
+            spec = json.dumps({"binary": str(binary), "commit": commit, "features": features})
+            inner = subprocess.run(
+                [unshare, *rehearsal.ISOLATION, "--", sys.executable, "-m", "unittest", "-v",
+                 f"{Path(__file__).stem}.{type(self).__name__}"],
+                cwd=Path(__file__).parent, env={**os.environ, ISOLATED_HARNESS_ENV: spec},
+                text=True, capture_output=True, timeout=1800)
+            self.assertEqual((inner.returncode, inner.stderr.count(" ... ok")), (0, 1),
+                             inner.stderr[-6000:])
+            return
+        self.assertEqual(os.getpid(), 1, f"{ISOLATED_HARNESS_ENV} is set only by this test")
         running = sorted(gc.daemon_mod._running_osu_processes())
-        if running and os.environ.get(HARNESS_BUILD_ENV) == "1":  # The real daemons would
-            # find that game and read its memory.
-            self.fail(f"an osu! client is visible (PIDs {running}); run this test in a private "
-                      f"PID namespace: unshare {' '.join(rehearsal.ISOLATION)} -- <command>")
-        binary, commit, features = head_harness_binary()
+        self.assertEqual(running, [], "an osu! client is visible inside the namespace")
+        spec = json.loads(isolated)
+        binary, commit, features = Path(spec["binary"]), spec["commit"], spec["features"]
         self.assertEqual(commit, self.commit)
         scenario = gc.ScenarioSet("test-real-daemon", ("no-client",), NO_CLIENT_CASES)
         cfg = self.config(scenario, vosu_command=[str(binary)])
