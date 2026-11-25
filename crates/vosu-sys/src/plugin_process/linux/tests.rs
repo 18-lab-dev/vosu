@@ -415,7 +415,10 @@ fn plugin_host_reaches_the_a5_1_postcondition_with_only_its_endpoints() {
     // The spawn set no_new_privs before exec: the exec granted nothing.
     assert_eq!(get(&report, "pre.NoNewPrivs"), "1");
     assert_eq!(hex(&report, "pre.CapEff"), 0);
-    assert_eq!(get(&report, "pre.Seccomp"), "0");
+    // The spawn installs no filter of its own: before its §7.3 drop the
+    // child has exactly the seccomp mode it inherited from this process (0
+    // on a plain host, 2 inside a container that filters every process).
+    assert_eq!(get(&report, "pre.Seccomp"), own_seccomp_mode());
     assert_eq!(get(&report, "own_group"), "true");
 
     // Parent death armed and parent verified after exec (A5.8).
@@ -683,4 +686,15 @@ fn invalid_commands_are_refused_before_forking() {
             Err(SpawnError::InvalidCommand(_))
         ));
     }
+}
+
+/// This test process's own `Seccomp:` mode from `/proc/self/status`.
+fn own_seccomp_mode() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("Seccomp:"))
+        .expect("procfs reports Seccomp")
+        .trim()
+        .to_owned()
 }
