@@ -8,8 +8,12 @@
 //! a bounded local snapshot, and every length in it is checked against the
 //! universal 1 MiB cap before anything is allocated or indexed.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
 use vosu_plugin_api::{
-    VOSU_FRAME_MAX_BYTES, VOSU_OPCODE_PRIVATE_BIT, VOSU_READ_PLAN_SYNC, vosu_opcode,
+    VOSU_FRAME_MAX_BYTES, VOSU_OPCODE_PRIVATE_BIT, VOSU_READ_PLAN_MAX_BYTES, VOSU_READ_PLAN_SYNC,
+    vosu_opcode, vosu_status,
 };
 
 /// The `total_len` prefix.
@@ -150,21 +154,130 @@ pub enum PolicyViolation {
     RequestId { id: u64, previous: u64 },
     #[error("opcode {opcode:#x} breaks the pairing its preceding control frame requires")]
     Pairing { opcode: u32 },
+    #[error("STATUS carries {raw}, which is no vosu_status")]
+    Status { raw: u32 },
+    #[error("public opcode {opcode:#x} arrived without the ACK_NEXT its status needs")]
+    Unacknowledged { opcode: u32 },
+    #[error("VOSU_OP_LOG_RECORD is never acknowledged")]
+    AcknowledgedLog,
+    #[error("request {id} would exceed the {MAX_REQUESTS} live status and SYNC requests")]
+    RequestCap { id: u64 },
+    #[error("SYNC result of {len} bytes exceeds the {VOSU_READ_PLAN_MAX_BYTES}-byte read-plan cap")]
+    SyncResultSize { len: usize },
 }
 
-/// Checks each frame's validated header before its payload is copied.
+/// The concurrent status and `SYNC` waiters of one instance (A5.2): one
+/// shared cap, separate from the asynchronous request caps.
+pub const MAX_REQUESTS: usize = 64;
+
+/// What one acknowledged plugin → host frame waits for (§7.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestKind {
+    /// A `STATUS` reply.
+    Status,
+    /// A `VOSU_READ_PLAN_SYNC` submission: `REPLY_NEXT` and its result, or
+    /// a non-OK `STATUS`.
+    Sync,
+}
+
+/// The live acknowledged requests of one channel, shared by the side that
+/// receives frames (its [`DirectionPolicy`]) and the side that answers or
+/// awaits them. At most [`MAX_REQUESTS`] are live at once.
+///
+/// - Core opens an entry when its policy admits an acknowledged frame
+///   (a 65th is the child's protocol violation: the child refuses its own
+///   65th waiter before writing) and closes it before writing the reply,
+///   so the child's next request can never meet a full ledger.
+/// - The child opens an entry when it reserves a waiter, before writing,
+///   and closes it on the reply or a release; its policy reads the kind to
+///   pair `STATUS` and `REPLY_NEXT` with the request they answer.
+#[derive(Debug, Default)]
+pub struct Ledger {
+    live: Mutex<HashMap<u64, RequestKind>>,
+}
+
+impl Ledger {
+    fn lock(&self) -> MutexGuard<'_, HashMap<u64, RequestKind>> {
+        // Every critical section is one map operation: a panicking holder
+        // cannot leave it half-updated.
+        self.live.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Opens `id`. False when [`MAX_REQUESTS`] are already live or `id` is.
+    pub fn open(&self, id: u64, kind: RequestKind) -> bool {
+        let mut live = self.lock();
+        if live.len() >= MAX_REQUESTS || live.contains_key(&id) {
+            return false;
+        }
+        live.insert(id, kind);
+        true
+    }
+
+    /// The live request `id`'s kind; `None` for an unknown or closed id.
+    pub fn kind(&self, id: u64) -> Option<RequestKind> {
+        self.lock().get(&id).copied()
+    }
+
+    /// Closes `id`, returning its kind if it was live.
+    pub fn close(&self, id: u64) -> Option<RequestKind> {
+        self.lock().remove(&id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// Checks each frame's validated header before its payload is copied, and
+/// the payloads whose validity depends on their bytes after the copy.
 pub trait FramePolicy: Send {
     fn admit(&mut self, header: &FrameHeader, payload_len: usize) -> Result<(), PolicyViolation>;
+
+    /// Runs after the payload of an admitted frame was copied, before the
+    /// frame is consumed.
+    fn admit_payload(
+        &mut self,
+        header: &FrameHeader,
+        payload: &[u8],
+    ) -> Result<(), PolicyViolation> {
+        let _ = (header, payload);
+        Ok(())
+    }
+
+    /// The request ledger this policy shares, if it keeps one.
+    fn ledger(&self) -> Option<Arc<Ledger>> {
+        None
+    }
 }
 
 /// The frozen policy for one direction: public ABI opcodes valid that way
 /// with their defined flags, the A5.2 private set with its payload and
-/// correlation rules, and the `ACK_NEXT`/`REPLY_NEXT` pairing.
+/// correlation rules, and the request pairing:
+///
+/// - host → plugin: a `STATUS` carries a real `vosu_status`, and a
+///   `REPLY_NEXT` is followed by one `READ_PLAN_RESULT` within the 64 KiB
+///   read-plan cap;
+/// - with a ledger ([`with_ledger`](Self::with_ledger), every production
+///   channel), plugin → host: every public frame except
+///   `VOSU_OP_LOG_RECORD` follows its own `ACK_NEXT` (a `LOG_RECORD` never
+///   does), and at most [`MAX_REQUESTS`] acknowledged frames are unanswered
+///   at once; host → plugin: a `STATUS` is never `VOSU_OK` for a `SYNC`
+///   request (an accepted `SYNC` is answered by `REPLY_NEXT`), and a
+///   `REPLY_NEXT` never answers a status request. A reply naming an
+///   unknown or expired id is admitted: the router discards and counts it.
 #[derive(Debug)]
 pub struct DirectionPolicy {
     direction: Direction,
     expect: Expect,
     last_request: Option<u64>,
+    /// `Some` when this policy accounts requests (`with_ledger`).
+    ledger: Option<Arc<Ledger>>,
+    /// The kind of the request the `STATUS` being admitted answers.
+    status_kind: Option<RequestKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,13 +290,30 @@ enum Expect {
 }
 
 impl DirectionPolicy {
-    /// The policy for frames received in `direction`.
+    /// The structural policy for frames received in `direction`, without
+    /// request accounting: for a channel nobody answers requests on.
     pub fn new(direction: Direction) -> Self {
         Self {
             direction,
             expect: Expect::Any,
             last_request: None,
+            ledger: None,
+            status_kind: None,
         }
+    }
+
+    /// The full policy, sharing a fresh [`Ledger`] through
+    /// [`FramePolicy::ledger`] with the side that answers or awaits the
+    /// requests it pairs.
+    pub fn with_ledger(direction: Direction) -> Self {
+        Self {
+            ledger: Some(Arc::new(Ledger::default())),
+            ..Self::new(direction)
+        }
+    }
+
+    fn kind(&self, id: u64) -> Option<RequestKind> {
+        self.ledger.as_ref().and_then(|ledger| ledger.kind(id))
     }
 
     fn admit_private(
@@ -238,10 +368,57 @@ impl DirectionPolicy {
                 self.last_request = Some(header.correlation);
                 self.expect = Expect::PublicFrame;
             }
-            REPLY_NEXT => self.expect = Expect::ReadPlanResult,
+            STATUS => self.status_kind = self.kind(header.correlation),
+            REPLY_NEXT => {
+                if self.kind(header.correlation) == Some(RequestKind::Status) {
+                    return Err(PolicyViolation::Pairing { opcode });
+                }
+                self.expect = Expect::ReadPlanResult;
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Plugin → host: the `ACK_NEXT` pairing every public frame obeys, and
+    /// the [`MAX_REQUESTS`] cap. `acknowledged` is whether an `ACK_NEXT`
+    /// immediately preceded this frame.
+    fn admit_request(
+        &mut self,
+        header: &FrameHeader,
+        acknowledged: bool,
+    ) -> Result<(), PolicyViolation> {
+        let Some(ledger) = self.ledger.as_ref() else {
+            return Ok(());
+        };
+        if self.direction != Direction::PluginToHost {
+            return Ok(());
+        }
+        let log = header.opcode == vosu_opcode::VOSU_OP_LOG_RECORD as u32;
+        match (acknowledged, log) {
+            (false, true) => Ok(()),
+            (true, true) => Err(PolicyViolation::AcknowledgedLog),
+            (false, false) => Err(PolicyViolation::Unacknowledged {
+                opcode: header.opcode,
+            }),
+            (true, false) => {
+                let id = self
+                    .last_request
+                    .expect("an ACK_NEXT recorded its id before the frame it pairs");
+                let sync = header.opcode == vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT as u32
+                    && header.flags & VOSU_READ_PLAN_SYNC != 0;
+                let kind = if sync {
+                    RequestKind::Sync
+                } else {
+                    RequestKind::Status
+                };
+                if ledger.open(id, kind) {
+                    Ok(())
+                } else {
+                    Err(PolicyViolation::RequestCap { id })
+                }
+            }
+        }
     }
 
     fn admit_public(&self, header: &FrameHeader) -> Result<(), PolicyViolation> {
@@ -322,11 +499,38 @@ impl FramePolicy for DirectionPolicy {
                 opcode: header.opcode,
             });
         }
+        if expect == Expect::ReadPlanResult && payload_len > VOSU_READ_PLAN_MAX_BYTES as usize {
+            return Err(PolicyViolation::SyncResultSize { len: payload_len });
+        }
         if header.is_private() {
             self.admit_private(header, payload_len)
         } else {
-            self.admit_public(header)
+            self.admit_public(header)?;
+            self.admit_request(header, expect == Expect::PublicFrame)
         }
+    }
+
+    fn admit_payload(
+        &mut self,
+        header: &FrameHeader,
+        payload: &[u8],
+    ) -> Result<(), PolicyViolation> {
+        if header.opcode != control::STATUS {
+            return Ok(());
+        }
+        // `admit` already fixed this private payload at exactly 4 bytes.
+        let raw = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        let status = vosu_status::try_from(raw).map_err(|_| PolicyViolation::Status { raw })?;
+        if status == vosu_status::VOSU_OK && self.status_kind == Some(RequestKind::Sync) {
+            return Err(PolicyViolation::Pairing {
+                opcode: header.opcode,
+            });
+        }
+        Ok(())
+    }
+
+    fn ledger(&self) -> Option<Arc<Ledger>> {
+        self.ledger.clone()
     }
 }
 

@@ -1210,16 +1210,33 @@ core-only kill, and descendants can leave it with `setsid`.
   build.
 
 Each target has a non-bundled `runtime = "process"` manifest under
-`tests/fixtures/plugin_host/{testkit,osu}/`, with its schema, settings and
-action assets. The bundled osu! manifest stays target-free and in-process.
+`tests/fixtures/plugin_host/{testkit,osu}/`. The testkit's namespace and
+action assets live beside its manifest. The osu! fixture stages the bundled
+plugin's own settings, namespace and action schema files, and its manifest
+differs from the bundled one only in `runtime` and `[targets]`. The bundled
+osu! manifest stays target-free and in-process. The osu! fixture keeps the
+official `vosu.osu` identity that parity needs. The ordinary development
+loader refuses that identity, so loading it for parity needs an approved
+official path (X0).
 
-The preparation helper builds both targets with
-`--message-format=json-render-diagnostics`. It takes the `cdylib` path from
-the matching `compiler-artifact` record and never guesses a file name or a
-hash suffix. It exports two absolute paths:
+The preparation helper, `scripts/plugin-host-fixtures.py`, builds both
+targets with `--message-format=json-render-diagnostics`. It takes the
+`cdylib` path from the matching `compiler-artifact` record and never guesses
+a file name or a hash suffix. It copies each library to
+`<artifact dir>/plugin-host-fixtures/`, so the later `--all-features
+--examples` build of the same example cannot replace the bytes under test,
+and prints `ARTIFACT name=<example> sha256=<hex> path=<copy>`. It exports two
+absolute paths:
 
 - `VOSU_PLUGIN_HOST_TESTKIT_LIBRARY`;
 - `VOSU_PLUGIN_HOST_OSU_LIBRARY`.
+
+Run a native test under it, for example
+`python scripts/plugin-host-fixtures.py -- cargo test --locked --features test-harness --test plugin_host_native -- --list`.
+With `--env-file <path>` it appends the variables in the `$GITHUB_ENV`
+format instead. ci.yml runs it before each nextest step, and so do
+`prepush.py`'s `test-linux` step, `native-ci.ps1` and `vm-test.py` (whenever
+the selected tests can include `plugin_host_native`).
 
 The native target reads these variables and fails, rather than skips, when a
 variable is unset or names a missing file. It never runs Cargo.
@@ -1234,15 +1251,109 @@ RECEIPT artifact=<name> sha256=<hex> path=<staged path>
 Native Windows builds the same example targets in the guest after staging.
 Linux artifacts are never copied there.
 
-**Per-run isolation.** The test daemon gets a per-test
-`VOSU_PLUGIN_HOST_FIXTURE_DIR`, which the plugin host inherits.
+Windows charges two first-time costs to each fresh library, both measured in
+the VM.
 
-- The testkit's constructor, `create`, crash, stall and security probes write
-  markers named `<probe>-<pid>` into that directory.
-- Barriers and acknowledgements use files or the ABI in that directory. There
-  is no global PID-keyed registry and no ordering sleep.
+- **Image evaluation of each never-seen hash.** The VM runs Smart App Control
+  in evaluation mode with user-mode code integrity, and it evaluates an image
+  on its first load. A fresh 0.8 MB DLL took 0.5–1.1 s to load, even in a
+  Defender-excluded directory. A copy of the same hash at another path then
+  loaded in about 12 ms.
+- **Defender on-access scans in unexcluded directories.** The first read of
+  a fresh file took 1.6–3 s for 194 MB and 0.2 s for 0.8 MB, against about
+  50 ms excluded. The vm-test work roots (`V:\bt\vmt-*`, temporary directory
+  included) are not excluded.
+
+Both costs landed inside the plugin host's 5-second startup deadline. A run's
+first wave of parallel tests took 3.3–5.5 s to create and some timed out,
+while later creates took about 50 ms. The first-wave times were nearly equal,
+because every test waited on the same one-time evaluation of the freshly
+built `vosu.exe` on its first execution: a fresh 31 MB executable took about
+3 s to start the first time, even in an excluded directory.
+
+Three measures remove these costs from the deadline:
+
+- `support::host` runs `vosu plugin-host` once per test process before the
+  first host. It has no descriptors, so it refuses at once with exit 70. This
+  was the decisive fix: in three full native runs afterwards, every create
+  took 52–117 ms.
+- On Windows, `scripts/plugin-host-fixtures.py` loads and frees each staged
+  library once (`PRIMED ... first_load_ms=` in its log), so each build's
+  library hash is evaluated before any test runs.
+- `native-ci.ps1` and `vm-test.ps1` export `VOSU_PLUGIN_HOST_SCRATCH_DIR`, a
+  unique directory under the excluded `V:\agent-desktop\tmp`.
+  `support::scratch` places each test's packages, receipts and instance data
+  there. Unset, it uses the system temporary directory.
+
+**Per-run isolation.** Each test stages its own copy of the testkit library,
+and writes a control file, `testkit-fixture.control`, beside that copy. The
+library's load-time constructor finds the file through its own module path
+before `create`. The file names the run's nonce, its receipt directory, its
+fault mode, the trigger opcode, and the range each attached session reads.
+Parallel tests therefore never share a control file or an environment
+variable. This replaces the earlier per-test `VOSU_PLUGIN_HOST_FIXTURE_DIR`
+variable: tests that drive a `PluginHost` in the test process share one
+process environment.
+
+- The testkit's constructor, `create`, dispatch, crash, stall and security
+  probes append receipts named `<probe>-<pid>` to that directory, plus an
+  ordered `journal-<pid>`. Every line carries the run's nonce. A line with
+  another nonce fails the test.
+- Barriers and acknowledgements use files or the ABI in that directory. A
+  blocked dispatch waits for `release-<pid>` holding the nonce. There is no
+  global PID-keyed registry and no ordering sleep.
 - A "constructor ran" claim needs a marker that names the child PID. A "never
   ran" claim needs the marker's absence and the absence of a leftover PID.
+
+The testkit fault modes are `constructor_crash`, `create_crash`,
+`dispatch_crash`, `dispatch_abort`, `dispatch_block`, `cancel_ignored`,
+`destroy_ignored`, `ring_stall` (the child stops itself: `SIGSTOP`, or
+`NtSuspendProcess`) and `corrupt_frame` (the child publishes a
+length-mismatched frame into its own plugin → host ring and wakes core).
+Distinct data-source targets come from per-package plugin ids and process
+names. Each instance reads its own target's bytes through one read plan per
+attached session. The `support::smoke` tests prove that each mode triggers
+under the production launcher.
+
+The `*_crash` modes end the child at once, for deterministic fixtures. Linux
+uses `abort` (`SIGABRT`). Windows terminates the process itself with the
+fail-fast status `0xC0000409`. `dispatch_abort` calls the real
+`std::process::abort` on both platforms. It is the mode that proves real
+crash handling.
+
+**Open item (owner C0): Windows Error Reporting holds crashed plugin hosts.**
+A real Windows fail-fast (`std::process::abort`) is held by Windows Error
+Reporting for several seconds before the process exits. In the guest,
+Application Error 1000 (exception `0xc0000409`, faulting module
+`testkit_process_plugin.dll`) was followed 3–4 s later by WER 1001. A
+constructor or `create` crash therefore reached core as a startup `timeout`,
+not a `crash`. That is a production misclassification, not only a fixture
+effect. Candidate mechanisms, for C0 to evaluate and choose:
+
+- `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` on the plugin-host job;
+- child-side `SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)`
+  or `WerSetFlags`;
+- whether `__fastfail`, which `std::process::abort` uses, bypasses both.
+
+P0 does not implement a fix. C0/X0 prove it with `dispatch_abort`, and with an
+equivalent real-abort startup case if C0 adds one.
+
+**Open item (owners C0 for startup-deadline semantics, X0 for native
+evidence): a first load of a newly installed plugin DLL on Windows.** In
+production the plugin host is the daemon's own executable, which Windows has
+already evaluated. A newly installed or updated plugin DLL has not been
+evaluated. Its first `LoadLibrary` gets the image evaluation described above,
+inside the 5-second startup deadline. A first start can therefore fail
+spuriously as `timeout`, and a large DLL or concurrent first loads make that
+more likely.
+
+P0 measured this in the VM only with a 0.8 MB DLL. A never-seen hash took
+0.5–1.1 s to load, even in a Defender-excluded directory. A copy of the same
+hash then loaded in about 12 ms. The first-load time of a realistic release
+plugin DLL, and the effect of several concurrent first loads, were not
+measured. The test harness avoids the cost by loading each staged library
+once before the tests run. That is not a production answer, and P0 does not
+change the deadline.
 
 **Process identity.** A death proof reads a pidfd, or a process handle and its
 exit status. It never relies on PID absence alone.
@@ -1313,3 +1424,30 @@ unconfined for a short time, and anything it starts in that window is outside
 the job. The plugin-host spawn does not have this race: it creates the child
 suspended and assigns the job before resume (plugin-abi.md §7.4). Tool spawns
 do take the process-wide inheritance gate.
+
+### M5 T1 and B0 unit evidence (2026-11-25)
+
+Recorded by Main from the unit reports. Results from a unit's own checkout,
+before integration.
+
+- **T1 (relay).**
+  - Linux: `cargo test --locked -p vosu-core --lib plugin::process` passed
+    114, and the native `plugin_host_native relay` filter passed 5.
+  - Native Windows (`vm-test.py`): `relay` passed 5, and `plugin::process`
+    passed 115.
+- **B0 (broker).**
+  - Each `broker_*` test runs against real x64 and x86 target processes with
+    distinct bytes, on Linux and native Windows.
+  - Linux: `cargo test --locked -p vosu-core --lib read_plan` passed 75,
+    `plugin_host_native broker` passed 5 (and 5 consecutive clean runs), and
+    `--test process_memory` passed 8.
+  - Native Windows: `read_plan` passed 75, and `broker` plus `relay` passed
+    10.
+  - The cases cover the B0 counterexamples:
+    - a multi-stage chain is one transport submission;
+    - foreign handles and raw PIDs are refused;
+    - refusals happen before any read and match the in-process runtime;
+    - a cancelled ID stays reserved until its execution finishes;
+    - an old child's result never completes a new child's waiter.
+- **Integrated head.** Workspace nextest through
+  `scripts/plugin-host-fixtures.py` passed 2862 (6 skipped).

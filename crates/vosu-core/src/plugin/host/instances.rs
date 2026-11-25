@@ -375,6 +375,20 @@ impl PluginHost {
         }
     }
 
+    /// Reserves `instance`'s delivery of one brokered work result (M5 B0):
+    /// see [`PluginInstance::reserve_work_result`].
+    pub(super) fn reserve_work_result(
+        &self,
+        instance: PluginInstanceId,
+        class: crate::plugin::outbox::SlotClass,
+    ) -> Result<crate::plugin::outbox::OutboxSlot, HostError> {
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        match instances.get(&instance) {
+            Some(InstanceSlot::Live(entry)) => entry.instance.reserve_work_result(class),
+            _ => Err(HostError::UnknownInstance),
+        }
+    }
+
     pub(super) fn dispatch_to(&self, plugin_id: &str, message: &Message) {
         let Ok(owned) = OwnedMessage::from_message(message, 0) else {
             return;

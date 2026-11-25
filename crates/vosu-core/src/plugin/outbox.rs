@@ -1,5 +1,14 @@
 //! Capacity-reserved, FIFO terminal delivery on the instance's dispatch workers.
 //! Reserve before accepting work. No host or outbox lock spans plugin callbacks.
+//!
+//! Terminal results of brokered work (asynchronous read plans §6.3, scans
+//! §6.4) reserve from their own classes, one per admission cap, so neither
+//! competes with action or resource terminals for [`MAX_OUTBOX_SLOTS`]. A
+//! work-result slot is released when its message is taken for dispatch,
+//! before the plugin sees it: §6.3 frees a plan's slot when its result is
+//! delivered, so a plugin that resubmits from inside its result callback,
+//! or a process child that frees its local slot on receipt, never meets a
+//! slot core still counts.
 use super::dispatch::{DispatchTarget, InFlightTracker, Job, OwnedMessage};
 use super::dispatch_queue::DispatchQueue;
 use super::error::HostError;
@@ -11,6 +20,32 @@ use vosu_plugin_api::vosu_status;
 pub const MAX_OUTBOX_SLOTS: usize = 128;
 pub type Delivery = oneshot::Receiver<vosu_status>;
 
+/// The reservation classes of one instance's outbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SlotClass {
+    /// Action, relay and resource terminals: [`MAX_OUTBOX_SLOTS`].
+    Terminal,
+    /// An asynchronous `READ_PLAN_RESULT`: the 64-plan admission cap.
+    PlanResult,
+    /// A `SCAN_RESULT`: the 64-scan admission cap.
+    ScanResult,
+}
+
+impl SlotClass {
+    const fn capacity(self) -> usize {
+        match self {
+            Self::Terminal => MAX_OUTBOX_SLOTS,
+            Self::PlanResult => super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS,
+            Self::ScanResult => super::scan::MAX_OUTSTANDING_SCANS,
+        }
+    }
+
+    /// Released when the message is taken for dispatch (module docs).
+    const fn releases_at_dispatch(self) -> bool {
+        !matches!(self, Self::Terminal)
+    }
+}
+
 pub(crate) struct ReservedOutbox {
     state: Mutex<State>,
     queue: Weak<DispatchQueue>,
@@ -19,14 +54,34 @@ pub(crate) struct ReservedOutbox {
 }
 #[derive(Default)]
 struct State {
+    /// Reserved [`SlotClass::Terminal`] slots.
     used: usize,
+    /// Reserved [`SlotClass::PlanResult`] and [`SlotClass::ScanResult`] slots.
+    work_used: [usize; 2],
     running: bool,
     closed: bool,
     messages: VecDeque<(OwnedMessage, oneshot::Sender<vosu_status>, OutboxSlot)>,
 }
+impl State {
+    fn used_mut(&mut self, class: SlotClass) -> &mut usize {
+        match class {
+            SlotClass::Terminal => &mut self.used,
+            SlotClass::PlanResult => &mut self.work_used[0],
+            SlotClass::ScanResult => &mut self.work_used[1],
+        }
+    }
+}
 /// One terminal-delivery reservation. Dropping an unused slot releases capacity.
 pub struct OutboxSlot {
     outbox: Weak<ReservedOutbox>,
+    class: SlotClass,
+}
+impl std::fmt::Debug for OutboxSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutboxSlot")
+            .field("class", &self.class)
+            .finish_non_exhaustive()
+    }
 }
 impl ReservedOutbox {
     pub(crate) fn new(
@@ -42,13 +97,20 @@ impl ReservedOutbox {
         })
     }
     pub(crate) fn reserve(self: &Arc<Self>) -> Result<OutboxSlot, HostError> {
+        self.reserve_class(SlotClass::Terminal)
+    }
+    pub(crate) fn reserve_class(
+        self: &Arc<Self>,
+        class: SlotClass,
+    ) -> Result<OutboxSlot, HostError> {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.closed || state.used == MAX_OUTBOX_SLOTS {
+        if state.closed || *state.used_mut(class) == class.capacity() {
             return Err(HostError::DispatchQueueFull);
         }
-        state.used += 1;
+        *state.used_mut(class) += 1;
         Ok(OutboxSlot {
             outbox: Arc::downgrade(self),
+            class,
         })
     }
     pub(crate) fn close(&self) {
@@ -74,9 +136,15 @@ impl ReservedOutbox {
             let Some((message, reply, slot)) = next else {
                 return;
             };
+            let held = if slot.class.releases_at_dispatch() {
+                drop(slot);
+                None
+            } else {
+                Some(slot)
+            };
             let status = message.call(&self.target);
             let _ = reply.send(status);
-            drop(slot);
+            drop(held);
         }
     }
 }
@@ -130,7 +198,7 @@ impl Drop for OutboxSlot {
     fn drop(&mut self) {
         if let Some(outbox) = self.outbox.upgrade() {
             let mut state = outbox.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.used -= 1;
+            *state.used_mut(self.class) -= 1;
         }
     }
 }

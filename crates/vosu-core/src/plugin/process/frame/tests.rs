@@ -218,6 +218,133 @@ fn reply_next_must_be_followed_by_a_read_plan_result() {
     ));
 }
 
+fn status(policy: &mut DirectionPolicy, id: u64, raw: u32) -> Result<(), PolicyViolation> {
+    let status = header(STATUS, 0, id);
+    policy.admit(&status, 4)?;
+    policy.admit_payload(&status, &raw.to_le_bytes())
+}
+
+/// T1: a child's policy pairs every reply with the waiter it names.
+#[test]
+fn status_is_a_real_status_and_never_ok_for_a_sync_request() {
+    let mut policy = DirectionPolicy::with_ledger(Direction::HostToPlugin);
+    let ledger = policy.ledger().unwrap();
+    assert!(ledger.open(1, RequestKind::Status));
+    assert!(ledger.open(2, RequestKind::Sync));
+    assert_eq!(status(&mut policy, 1, vosu_status::VOSU_OK as u32), Ok(()));
+    assert_eq!(
+        status(&mut policy, 2, vosu_status::VOSU_ERR_TIMED_OUT as u32),
+        Ok(()),
+        "a refused SYNC request is answered by STATUS"
+    );
+    assert_eq!(
+        status(&mut policy, 2, vosu_status::VOSU_OK as u32),
+        Err(PolicyViolation::Pairing { opcode: STATUS }),
+        "an accepted SYNC request is answered by REPLY_NEXT, never STATUS OK"
+    );
+    assert_eq!(
+        status(&mut policy, 1, 9_999),
+        Err(PolicyViolation::Status { raw: 9_999 })
+    );
+    // An unknown or expired id is admitted; the router discards it.
+    assert_eq!(status(&mut policy, 77, vosu_status::VOSU_OK as u32), Ok(()));
+}
+
+#[test]
+fn reply_next_answers_only_a_sync_request_within_the_read_plan_cap() {
+    let result = op(vosu_opcode::VOSU_OP_READ_PLAN_RESULT);
+    let mut policy = DirectionPolicy::with_ledger(Direction::HostToPlugin);
+    let ledger = policy.ledger().unwrap();
+    assert!(ledger.open(1, RequestKind::Status));
+    assert!(ledger.open(2, RequestKind::Sync));
+    assert_eq!(
+        policy.admit(&header(REPLY_NEXT, 0, 1), 0),
+        Err(PolicyViolation::Pairing { opcode: REPLY_NEXT })
+    );
+    let mut policy = DirectionPolicy::with_ledger(Direction::HostToPlugin);
+    let ledger = policy.ledger().unwrap();
+    assert!(ledger.open(2, RequestKind::Sync));
+    assert_eq!(policy.admit(&header(REPLY_NEXT, 0, 2), 0), Ok(()));
+    assert_eq!(policy.admit(&header(result, 0, 0), 64 * 1024), Ok(()));
+    assert_eq!(policy.admit(&header(REPLY_NEXT, 0, 2), 0), Ok(()));
+    assert_eq!(
+        policy.admit(&header(result, 0, 0), 64 * 1024 + 1),
+        Err(PolicyViolation::SyncResultSize { len: 64 * 1024 + 1 })
+    );
+    let mut policy = DirectionPolicy::with_ledger(Direction::HostToPlugin);
+    assert_eq!(
+        policy.admit(&header(REPLY_NEXT, 0, 9), 0),
+        Ok(()),
+        "an expired id is discarded by the router, not a violation"
+    );
+}
+
+#[test]
+fn every_public_frame_but_a_log_record_is_acknowledged() {
+    let publish = op(vosu_opcode::VOSU_OP_PUBLISH_BATCH);
+    let log = op(vosu_opcode::VOSU_OP_LOG_RECORD);
+    let submit = op(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT);
+    let mut policy = DirectionPolicy::with_ledger(Direction::PluginToHost);
+    let ledger = policy.ledger().unwrap();
+    assert_eq!(policy.admit(&header(log, 0, 0), 8), Ok(()));
+    assert_eq!(
+        policy.admit(&header(publish, 0, 0), 16),
+        Err(PolicyViolation::Unacknowledged { opcode: publish })
+    );
+    let mut policy = DirectionPolicy::with_ledger(Direction::PluginToHost);
+    assert_eq!(policy.admit(&header(ACK_NEXT, 0, 1), 0), Ok(()));
+    assert_eq!(
+        policy.admit(&header(log, 0, 0), 8),
+        Err(PolicyViolation::AcknowledgedLog)
+    );
+    let mut policy = DirectionPolicy::with_ledger(Direction::PluginToHost);
+    let ledger_sync = policy.ledger().unwrap();
+    assert_eq!(policy.admit(&header(ACK_NEXT, 0, 1), 0), Ok(()));
+    assert_eq!(policy.admit(&header(publish, 0, 0), 16), Ok(()));
+    assert_eq!(policy.admit(&header(ACK_NEXT, 0, 2), 0), Ok(()));
+    assert_eq!(
+        policy.admit(&header(submit, VOSU_READ_PLAN_SYNC, 0), 56),
+        Ok(())
+    );
+    assert_eq!(ledger_sync.kind(1), Some(RequestKind::Status));
+    assert_eq!(ledger_sync.kind(2), Some(RequestKind::Sync));
+    assert!(ledger.is_empty(), "each policy has its own ledger");
+}
+
+/// T1: the 65th unanswered request reaches core only from a child that
+/// skipped its own local overload refusal.
+#[test]
+fn the_sixty_fifth_unanswered_request_is_a_violation() {
+    let publish = op(vosu_opcode::VOSU_OP_PUBLISH_BATCH);
+    let mut policy = DirectionPolicy::with_ledger(Direction::PluginToHost);
+    let ledger = policy.ledger().unwrap();
+    for id in 1..=MAX_REQUESTS as u64 {
+        assert_eq!(policy.admit(&header(ACK_NEXT, 0, id), 0), Ok(()));
+        assert_eq!(policy.admit(&header(publish, 0, 0), 16), Ok(()));
+    }
+    assert_eq!(ledger.len(), 64);
+    assert_eq!(policy.admit(&header(ACK_NEXT, 0, 65), 0), Ok(()));
+    assert_eq!(
+        policy.admit(&header(publish, 0, 0), 16),
+        Err(PolicyViolation::RequestCap { id: 65 })
+    );
+    // Core closes a request before writing its reply: the next one fits.
+    let mut policy = DirectionPolicy::with_ledger(Direction::PluginToHost);
+    let ledger = policy.ledger().unwrap();
+    for id in 1..=MAX_REQUESTS as u64 {
+        assert_eq!(policy.admit(&header(ACK_NEXT, 0, id), 0), Ok(()));
+        assert_eq!(policy.admit(&header(publish, 0, 0), 16), Ok(()));
+    }
+    assert_eq!(ledger.close(3), Some(RequestKind::Status));
+    assert_eq!(policy.admit(&header(ACK_NEXT, 0, 65), 0), Ok(()));
+    assert_eq!(policy.admit(&header(publish, 0, 0), 16), Ok(()));
+    assert!(
+        DirectionPolicy::new(Direction::PluginToHost)
+            .ledger()
+            .is_none()
+    );
+}
+
 proptest! {
     #![proptest_config(vosu_proptest::vosu_proptest_config())]
 
@@ -262,6 +389,33 @@ proptest! {
         let mut policy = DirectionPolicy::new(direction);
         for (opcode, flags, correlation, len) in frames {
             let _ = policy.admit(&header(opcode, flags, correlation), len);
+        }
+    }
+
+    /// With request accounting, arbitrary frames never panic and never
+    /// leave more than 64 requests live.
+    #[test]
+    fn prop_accounting_policy_total_and_bounded(
+        frames in proptest::collection::vec(
+            (
+                prop_oneof![0_u32..=72, 0x8000_0010_u32..=0x8000_0012],
+                prop_oneof![Just(0_u32), Just(1)],
+                0..80_u64,
+                0..=8_usize,
+            ),
+            0..256,
+        ),
+        to_host in any::<bool>(),
+    ) {
+        let direction = if to_host { Direction::PluginToHost } else { Direction::HostToPlugin };
+        let mut policy = DirectionPolicy::with_ledger(direction);
+        let ledger = policy.ledger().unwrap();
+        for (opcode, flags, correlation, len) in frames {
+            let frame = header(opcode, flags, correlation);
+            if policy.admit(&frame, len).is_ok() && len >= 4 {
+                let _ = policy.admit_payload(&frame, &[0; 8][..len]);
+            }
+            prop_assert!(ledger.len() <= MAX_REQUESTS);
         }
     }
 }

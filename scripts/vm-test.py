@@ -76,13 +76,23 @@ def build_cargo_test_args(package, test, lib, extra):
     return args
 
 
-def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds):
+def needs_plugin_host_fixtures(package, test, lib):
+    """Whether the selected cargo test can include the root plugin_host_native
+    target, which reads fixture libraries prepared in the guest beforehand
+    (scripts/plugin-host-fixtures.py) and never builds them itself."""
+    return not lib and package in (None, "vosu") and test in (None, "plugin_host_native")
+
+
+def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds,
+                            plugin_host_fixtures=False):
     """The JSON config vm-test.ps1 reads via -ConfigPath.
 
     schtasks' own /TR value is capped at 261 characters, far too short for
     a command line carrying a full cargo argv (a test filter can be long,
     or contain spaces/quotes); writing it to a file next to the bundle
     keeps the scheduled command itself short and argument-content-free.
+    `PluginHostFixtures` makes vm-test.ps1 build and stage the plugin-host
+    fixture libraries in the guest before the test run.
     """
     return {
         "WorkRoot": remote_dir,
@@ -92,6 +102,7 @@ def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, tim
         "CargoArgs": cargo_args,
         "Jobs": jobs,
         "TimeoutSeconds": timeout_seconds,
+        "PluginHostFixtures": plugin_host_fixtures,
     }
 
 
@@ -359,7 +370,10 @@ def run(args):
             create_bundle(bundle_path, sha)
             has_patch = create_uncommitted_patch(patch_path)
 
-            config = build_invocation_config(remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout)
+            config = build_invocation_config(
+                remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout,
+                plugin_host_fixtures=needs_plugin_host_fixtures(args.package, args.test, args.lib),
+            )
             config_path = local_tmp / "invocation.json"
             config_path.write_text(json.dumps(config), encoding="utf-8")
 

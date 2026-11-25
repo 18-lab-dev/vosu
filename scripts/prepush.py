@@ -223,35 +223,68 @@ COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --bin
 COMMAND_MANIFEST["dashboard-browser"] = "python tests/dashboard_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST.update(NATIVE_COMMANDS)
 COMMAND_MANIFEST["standalone-crates"] = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
+# ci.yml's fixture preparation steps (scripts/plugin-host-fixtures.py) ahead of
+# each nextest run: run_test_linux() runs the Linux one, native-ci.ps1 the
+# Windows one. The env-file path differs per machine, so the drift test
+# compares it as an `<env-file>` placeholder.
+COMMAND_MANIFEST["plugin-host-fixtures"] = "python scripts/plugin-host-fixtures.py --env-file <env-file>"
+COMMAND_MANIFEST["native-plugin-host-fixtures"] = (
+    "python scripts/plugin-host-fixtures.py --target x86_64-pc-windows-msvc --env-file <env-file>"
+)
+
+
+def prepare_plugin_host_fixtures(log_dir):
+    """Builds and stages the plugin-host fixture libraries the root native
+    test needs (the test never runs Cargo itself). Returns (exit code, log
+    text, {variable: path})."""
+    env_file = log_dir / "plugin-host-fixtures.env"
+    env_file.unlink(missing_ok=True)
+    cmd = [sys.executable, "scripts/plugin-host-fixtures.py", "--env-file", str(env_file)]
+    exit_code, stdout, stderr, _ = run(cmd, env_overrides=LINUX_ENV)
+    log = f"$ {' '.join(cmd)}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n"
+    variables = {}
+    if exit_code == 0:
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            name, _, value = line.partition("=")
+            variables[name] = value
+    return exit_code, log, variables
 
 
 def run_test_linux(log_dir):
-    """ci.yml's "Test workspace..." step. Runs inside the ubuntu-latest-parity
-    container (scripts/ci-container/) via a nextest archive when podman is on
-    PATH, which is what catches a failure specific to that distribution's
-    packages (e.g. the uutils-coreutils `sleep` class of failure, run
-    45295358591) instead of only hosted CI. Falls back to a plain host run,
-    noted in the evidence, when podman is unavailable."""
+    """ci.yml's "Test workspace..." step, after its fixture preparation step.
+    Runs inside the ubuntu-latest-parity container (scripts/ci-container/)
+    via a nextest archive when podman is on PATH, which is what catches a
+    failure specific to that distribution's packages (e.g. the
+    uutils-coreutils `sleep` class of failure, run 45295358591) instead of
+    only hosted CI. Falls back to a plain host run, noted in the evidence,
+    when podman is unavailable."""
     name = "test-linux"
     cmd = next(cmd for step_name, cmd, _, _ in LINUX_STEPS if step_name == name)
     command = " ".join(cmd)
     log_path = log_dir / f"{name}.log"
+    fixture_exit, fixture_log, fixtures = prepare_plugin_host_fixtures(log_dir)
+    if fixture_exit != 0:
+        log_path.write_text(fixture_log, encoding="utf-8")
+        return StepResult(name, True, "failed", fixture_exit, command=command, log_tail=fixture_log)
     if ci_container.podman_path() is None:
-        result = run_linux_step(name, cmd, log_dir, LINUX_ENV)
+        result = run_linux_step(name, cmd, log_dir, {**LINUX_ENV, **fixtures})
         note = "podman not found on PATH; ran on the host, not the ubuntu-latest-parity container.\n\n"
-        log_path.write_text(note + log_path.read_text(encoding="utf-8"), encoding="utf-8")
+        log_path.write_text(fixture_log + note + log_path.read_text(encoding="utf-8"), encoding="utf-8")
         result.log_tail = (note + result.log_tail)[-4000:]
         return result
     try:
-        outcome = ci_container.run(root=ROOT, cargo_target_dir=CARGO_ENV["CARGO_TARGET_DIR"])
+        outcome = ci_container.run(root=ROOT, cargo_target_dir=CARGO_ENV["CARGO_TARGET_DIR"], extra_env=fixtures)
     except RuntimeError as error:
-        log_path.write_text(f"$ {command}\n\ncontainer orchestration failed: {error}\n", encoding="utf-8")
+        log_path.write_text(f"{fixture_log}$ {command}\n\ncontainer orchestration failed: {error}\n", encoding="utf-8")
         return StepResult(name, True, "failed", command=command, log_tail=f"container orchestration failed: {error}")
     note = (
         f"ran in the ubuntu-latest-parity container (image build {outcome['image_build_seconds']:.1f}s, "
         f"archive {outcome['archive_seconds']:.1f}s, container run {outcome['container_seconds']:.1f}s)\n\n"
     )
-    log_path.write_text(f"$ {command}\n\n{note}--- stdout ---\n{outcome['stdout']}\n--- stderr ---\n{outcome['stderr']}\n", encoding="utf-8")
+    log_path.write_text(
+        f"{fixture_log}$ {command}\n\n{note}--- stdout ---\n{outcome['stdout']}\n--- stderr ---\n{outcome['stderr']}\n",
+        encoding="utf-8",
+    )
     status = "passed" if outcome["exit_code"] == 0 else "failed"
     return StepResult(name, True, status, outcome["exit_code"], round(outcome["wall_seconds"], 3), command, note + outcome["stdout"] + outcome["stderr"])
 

@@ -7,14 +7,15 @@
 //! 7. Load it, resolve `vosu_plugin_entry_v1` and validate the descriptor
 //!    with the same pure checks an in-process load uses
 //!    (`execution::descriptor::load_library`).
-//! 8. Start the ring reader, then call `create`.
-//! 9. Start the dispatch worker.
+//! 8. Start the ring reader (`super::relay`), then call `create`.
+//! 9. Start the dispatch workers: one, or the pool under
+//!    `concurrent_dispatch`.
 //! 10. Send `READY`.
 //!
 //! Any failure in 6–8 is reported as `FAILED` with its stage, and the child
 //! exits without running anything further. Then the main thread waits for
-//! the controlled `DESTROY` (runs `destroy` once every queued dispatch
-//! finished, joins the worker, sends `DESTROYED`, exits 0) or for the
+//! the controlled `DESTROY` (runs `destroy` once every queued delivery was
+//! dispatched, joins the workers, sends `DESTROYED`, exits 0) or for the
 //! channel to end (exits at once, without `destroy`).
 
 mod library;
@@ -32,7 +33,7 @@ use super::frame::{FrameHeader, control};
 use super::ring::PayloadBuffer;
 use crate::plugin::dispatch::PluginCtx;
 use crate::plugin::error::HostError;
-use crate::plugin::execution::descriptor;
+use crate::plugin::execution::{DispatchTarget, descriptor};
 
 /// How long the child waits for `CREATE`: the same 5-second startup bound
 /// core applies from spawn, after which core has killed this process anyway.
@@ -89,6 +90,7 @@ pub(super) fn run(endpoint: Endpoint) -> i32 {
         sender,
         mut receiver,
         closer,
+        ledger,
     } = endpoint;
     let mut buffer = PayloadBuffer::new();
     let create = match receiver.recv_until(&mut buffer, Instant::now().checked_add(CREATE_WAIT)) {
@@ -136,7 +138,15 @@ pub(super) fn run(endpoint: Endpoint) -> i32 {
         );
     };
 
-    let runtime = services::Runtime::start(sender.clone(), closer.clone(), receiver);
+    let runtime = services::Runtime::start(
+        Endpoint {
+            sender: sender.clone(),
+            receiver,
+            closer: closer.clone(),
+            ledger,
+        },
+        Duration::from_millis(u64::from(create.sync_budget_ms)),
+    );
     let vtable = code.vtable;
     let create_fn = vtable.create.expect("check_descriptor verified create");
     // SAFETY: `services::HOST_SERVICES` is a process-wide static and the
@@ -161,8 +171,10 @@ pub(super) fn run(endpoint: Endpoint) -> i32 {
         );
     }
     let ctx = PluginCtx(plugin_ctx);
-    let dispatch = vtable.dispatch.expect("check_descriptor verified dispatch");
-    let runtime = runtime.start_dispatch(ctx, dispatch);
+    let runtime = runtime.start_dispatch(
+        DispatchTarget::Local { vtable, ctx },
+        create.concurrent_dispatch,
+    );
     let ready = Ready {
         generation,
         struct_size: vtable.struct_size,

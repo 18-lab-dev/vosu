@@ -21,7 +21,13 @@
 //!   after its channel exists: `CREATE`, verified library load, `create`,
 //!   `READY`, controlled destroy.
 //! - `launcher` (Linux/Windows): core's `ProcessLauncher` that starts one
-//!   child per instance through `linux`/`windows_launch` and supervises it.
+//!   child per instance through `linux`/`windows_launch` and supervises it;
+//!   its `ingress` serves the plugin → host direction off the ring reader.
+//! - The child's relay (Linux/Windows, M5 T1): `relay` (the plugin's
+//!   `send`, the ring reader and the dispatch workers), `waiters` (the 64
+//!   shared status and `SYNC` waiters), `admission` (the per-instance caps
+//!   enforced before writing) and `delivery` (the non-blocking, semantically
+//!   coalescing delivery queue).
 //!
 //! The OS objects (mapping and doorbell per direction) come from
 //! `vosu_sys::plugin_process::RingObjects`, whose module documents the
@@ -37,19 +43,30 @@
 //! boundary: the sender copies the caller's payload into the ring, and the
 //! receiver copies it out into its aligned buffer before any decoder or
 //! `dispatch` sees it. Nothing ever points into the wrapping ring. Flat
-//! payloads are never re-encoded.
+//! payloads are never re-encoded. A received buffer then moves (by swap,
+//! not copy) to its waiter, delivery entry or core ingress item.
 
+#[cfg(any(target_os = "linux", windows))]
+mod admission;
 #[cfg(any(target_os = "linux", windows))]
 mod bootstrap;
 #[cfg(any(target_os = "linux", windows))]
 pub mod channel;
 pub mod control;
+#[cfg(any(target_os = "linux", windows))]
+mod delivery;
 pub mod entry;
+#[cfg(all(test, any(target_os = "linux", windows)))]
+mod fake_plugin;
 pub mod frame;
 #[cfg(any(target_os = "linux", windows))]
 pub mod launcher;
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(any(target_os = "linux", windows))]
+mod relay;
 pub mod ring;
+#[cfg(any(target_os = "linux", windows))]
+mod waiters;
 #[cfg(windows)]
 pub mod windows_launch;

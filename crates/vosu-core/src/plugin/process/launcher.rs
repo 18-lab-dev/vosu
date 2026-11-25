@@ -8,12 +8,16 @@
 //! endpoints and returns [`HostError::ProcessStartupFailed`] naming the
 //! §7.6 stage; nothing was published, so nothing needs rolling back here.
 //!
-//! Each instance then has two supervision threads, never holding a host
-//! lock: an **exit watcher**, the one thread that waits on and reaps the
-//! process, and a **ring reader**, which handles lifecycle frames and
-//! answers each acknowledged plugin → host frame with core's `STATUS`
-//! (§7.6 A5.2). An exit or channel failure that core did not request is
-//! reported once through [`InstanceLoss`](crate::plugin::InstanceLoss). Controlled destroy sends
+//! Each instance then has supervision threads that never hold a host lock:
+//! an **exit watcher**, the one thread that waits on and reaps the process;
+//! a **ring reader**, which handles lifecycle frames and hands every public
+//! plugin → host frame to the instance's **ingress** workers
+//! (`ingress`): one ordinary worker answering each acknowledged frame
+//! with core's `STATUS` in ring order, while each `VOSU_READ_PLAN_SYNC`
+//! plan runs on the host's bounded broker workers and is answered with
+//! `REPLY_NEXT` and its result, or core's own `VOSU_ERR_TIMED_OUT` at its
+//! budget (§7.6 A5.2, M5 B0). An exit or channel failure that core did not request
+//! is reported once through [`InstanceLoss`](crate::plugin::InstanceLoss). Controlled destroy sends
 //! `DESTROY`, waits up to its grace (5 s) for the OS exit, then kills and
 //! reaps the child.
 //!
@@ -22,10 +26,12 @@
 //! U0) gates them. Tests and fixtures install it through
 //! `PluginHost::install_process_launcher`.
 //!
-//! **Interim until M5 B0/T1.** The ring reader delivers each plugin → host
-//! message to core's handler inline, and `VOSU_READ_PLAN_SYNC` submissions
-//! are refused by the child, so no `REPLY_NEXT` is ever sent.
+//! **`SYNC` execution (M5 B0).** A broker worker runs the host's own
+//! synchronous read-plan path through `PluginIngress::deliver`, exactly as
+//! an in-process `send` would on the submitting thread, on the same fair
+//! pool and cached session memory as asynchronous plans and scans.
 
+mod ingress;
 mod platform;
 mod supervision;
 
@@ -124,6 +130,7 @@ impl ProcessHostLauncher {
                 deadline,
                 ingress: launch.ingress,
                 loss: launch.loss,
+                sync_budget: Duration::from_millis(u64::from(SYNC_BUDGET_MS)),
             },
         )
     }
@@ -154,3 +161,5 @@ fn library_digest(path: &Path) -> Result<[u8; 32], StartupFailure> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::channel::{ChannelChild, ChannelLauncher};

@@ -745,6 +745,9 @@ struct PlansState {
     /// cancelled job to pile up there until a worker happens to reach
     /// it.
     queue_tickets: HashMap<vosu_plan_id, u64>,
+    /// M5 B0: each admitted plan's reserved result delivery, released the
+    /// moment its slot is (cancel, detach) or handed to the delivering job.
+    result_slots: HashMap<vosu_plan_id, super::outbox::OutboxSlot>,
 }
 
 /// Tracks one plugin instance's asynchronous (non-`VOSU_READ_PLAN_SYNC`)
@@ -771,6 +774,27 @@ impl OutstandingPlans {
     /// [`MAX_OUTSTANDING_ASYNC_PLANS`] or reuse an id that is already
     /// outstanding, before any read executes.
     pub fn begin(&self, plan: vosu_plan_id, handle: u64) -> Result<(), OutstandingPlansError> {
+        self.admit(plan, handle, None)
+    }
+
+    /// [`Self::begin`], holding `result` — the plan's reserved delivery —
+    /// until [`Self::finish_with_result`] hands it back, or a cancel or
+    /// detach frees the plan's slot and drops it with it (§6.3).
+    pub(crate) fn begin_with_result(
+        &self,
+        plan: vosu_plan_id,
+        handle: u64,
+        result: super::outbox::OutboxSlot,
+    ) -> Result<(), OutstandingPlansError> {
+        self.admit(plan, handle, Some(result))
+    }
+
+    fn admit(
+        &self,
+        plan: vosu_plan_id,
+        handle: u64,
+        result: Option<super::outbox::OutboxSlot>,
+    ) -> Result<(), OutstandingPlansError> {
         let mut state = self.lock();
         if state.outstanding.contains_key(&plan) || state.cancelled.contains(&plan) {
             return Err(OutstandingPlansError::AlreadyOutstanding);
@@ -779,6 +803,9 @@ impl OutstandingPlans {
             return Err(OutstandingPlansError::CapExceeded);
         }
         state.outstanding.insert(plan, handle);
+        if let Some(result) = result {
+            state.result_slots.insert(plan, result);
+        }
         Ok(())
     }
 
@@ -814,12 +841,16 @@ impl OutstandingPlans {
     /// worker happens to reach it.
     #[must_use]
     pub fn cancel(&self, plan: vosu_plan_id) -> Option<u64> {
-        let mut state = self.lock();
-        if state.outstanding.remove(&plan).is_some() {
+        let (ticket, _released_after_unlock) = {
+            let mut state = self.lock();
+            state.outstanding.remove(&plan)?;
             state.cancelled.insert(plan);
-            return state.queue_tickets.remove(&plan);
-        }
-        None
+            (
+                state.queue_tickets.remove(&plan),
+                state.result_slots.remove(&plan),
+            )
+        };
+        ticket
     }
 
     /// F1: the host layer calls this once it has confirmed, through
@@ -854,6 +885,7 @@ impl OutstandingPlans {
     /// [`Self::cancel`] does.
     #[must_use]
     pub fn cancel_session(&self, handle: u64) -> Vec<(vosu_plan_id, u64)> {
+        let mut released = Vec::new();
         let mut state = self.lock();
         let ids: Vec<vosu_plan_id> = state
             .outstanding
@@ -865,11 +897,27 @@ impl OutstandingPlans {
         for id in ids {
             state.outstanding.remove(&id);
             state.cancelled.insert(id);
+            released.extend(state.result_slots.remove(&id));
             if let Some(ticket) = state.queue_tickets.remove(&id) {
                 tickets.push((id, ticket));
             }
         }
+        drop(state);
+        drop(released);
         tickets
+    }
+
+    /// [`Self::finish`], handing back the reserved delivery
+    /// [`Self::begin_with_result`] took when the result is to be delivered.
+    pub(crate) fn finish_with_result(
+        &self,
+        plan: vosu_plan_id,
+    ) -> Option<super::outbox::OutboxSlot> {
+        let slot = self.lock().result_slots.remove(&plan);
+        match self.finish(plan) {
+            FinishOutcome::Deliver => slot,
+            FinishOutcome::Cancelled => None,
+        }
     }
 
     /// Call once `plan`'s execution has actually finished: removes it from

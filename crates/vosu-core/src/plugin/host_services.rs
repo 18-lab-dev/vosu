@@ -63,7 +63,26 @@ pub trait PluginHostHandler: Send + Sync {
     fn instance_lost(&self, instance: PluginInstanceId, cause: super::execution::LossCause) {
         let _ = (instance, cause);
     }
+
+    /// Queues `job` on this host's bounded broker workers, in `instance`'s
+    /// own fair sub-queue (`docs/v2/plugin-abi.md` §7.6, M5 B0): a
+    /// `process`-runtime instance's `VOSU_READ_PLAN_SYNC` submission
+    /// executes there, the worker standing in for the child's submitting
+    /// thread, never on its channel's reader or ordinary ingress worker.
+    /// Returns `job` unrun when this handler has no broker workers; core's
+    /// ingress then refuses the submission with `VOSU_ERR_BACKEND`.
+    fn submit_broker_work(
+        &self,
+        instance: PluginInstanceId,
+        job: BrokerJob,
+    ) -> Result<(), BrokerJob> {
+        let _ = instance;
+        Err(job)
+    }
 }
+
+/// One unit of work [`PluginHostHandler::submit_broker_work`] runs.
+pub type BrokerJob = Box<dyn FnOnce() + Send + 'static>;
 
 /// `host_ctx` passed to `create`: outlives the instance exactly as
 /// `vosu_plugin_vtable::create`'s doc comment requires, so

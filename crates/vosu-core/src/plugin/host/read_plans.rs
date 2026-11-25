@@ -21,17 +21,18 @@
 //! with `scans.rs` (that field's own doc comment: both opcodes' work is
 //! off the hot path, so splitting worker threads between two pools buys
 //! nothing but doubles the idle OS threads every `PluginHost` keeps
-//! parked) — and delivers its result through the normal dispatch queue
-//! ([`PluginHost::dispatch_to_instance`]); a `VOSU_READ_PLAN_SYNC`
+//! parked) — and delivers its result through a plan-result slot of the
+//! instance's reserved outbox, taken before admission (M5 B0, `outbox.rs`),
+//! never a generic dispatch queue that could be full; a `VOSU_READ_PLAN_SYNC`
 //! submission instead delivers its result through a direct, non-queued
 //! plugin call on the submitting thread itself, before this call (and so
 //! `send`) returns — §4's one documented exception to per-instance
-//! serialization. The job this spawns captures only a `Weak<PluginHost>`
-//! (P1-2), upgraded once, only to deliver: a strong `Arc` here would let a
-//! background-pool worker end up being the thread that drops the last
-//! `PluginHost` reference, which self-joins (`ScanWorkerPool::drop` joins
-//! every worker, including whichever one is running) and aborts or hangs
-//! instead of shutting down. `submit_read_plan_async` also validates a
+//! serialization. For a `process`-runtime instance that "submitting
+//! thread" is a broker worker of this same pool, which core's ingress
+//! queues the submission on (§7.6, [`PluginHost::submit_broker_work`]).
+//! The async job holds no `PluginHost` reference at all (P1-2): a strong
+//! `Arc` there could make a pool worker drop the last reference and
+//! self-join. `submit_read_plan_async` also validates a
 //! dependent stage's `ref_op` width synchronously, before admission (P1-3):
 //! an async plan has no synchronous caller left to report
 //! `VOSU_ERR_INVALID_ARGUMENT` to once a worker discovers this, so it must
@@ -70,8 +71,10 @@ use std::time::{Duration, Instant};
 use vosu_plugin_api::memory::{MemoryError, ProcessBitness, ProcessMemory};
 use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_opcode, vosu_status};
 
+use super::super::dispatch::OwnedMessage;
+use super::super::outbox::SlotClass;
 use super::super::read_plan::{
-    self, DispatchThreadScope, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
+    self, DispatchThreadScope, ModuleResolver, OutstandingPlans, SyncReadPlanError,
 };
 use super::super::scan::ScanWorkerPool;
 use super::super::session::SessionHandle;
@@ -593,10 +596,11 @@ impl PluginHost {
     }
 
     /// The owning plugin and pid for `handle`, checked against
-    /// `plugin_id`. `docs/v2/implementation-plan.md`'s own edge case ("A
-    /// read plan for a detached handle answers `VOSU_ERR_TARGET_GONE`")
-    /// covers an unknown handle the same way as a genuinely detached one,
-    /// since `SessionRegistry::owner_and_pid` reports both as `None`.
+    /// `plugin_id`. §5's UnknownHandle rule (A2b): a handle the registry
+    /// issued and then retired (a detached session) answers
+    /// `VOSU_ERR_TARGET_GONE`; one it never issued answers
+    /// `VOSU_ERR_INVALID_ARGUMENT` — the same rule `STATE_SUBSCRIBE`,
+    /// publication and resource requests apply, never one status for both.
     /// `pub(super)`: `host::scans`'s own §6.4 session resolution is the
     /// same ownership check (module doc comment), so it calls this
     /// directly instead of re-deriving it.
@@ -610,7 +614,8 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         match sessions.owner_and_pid(handle) {
-            None => Err(vosu_status::VOSU_ERR_TARGET_GONE),
+            None if sessions.was_issued(handle) => Err(vosu_status::VOSU_ERR_TARGET_GONE),
+            None => Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT),
             Some((owner, _)) if owner != plugin_id => Err(vosu_status::VOSU_ERR_PERMISSION_DENIED),
             Some((_, pid)) => Ok(pid),
         }
@@ -815,8 +820,18 @@ impl PluginHost {
         if !read_plan::ref_op_width_ok(&submit, pointer_width) {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
+        // M5 B0: the result's delivery is reserved before admission, from
+        // this instance's own plan-result outbox class (`outbox.rs`), so an
+        // admitted plan's result is never dropped behind a full dispatch
+        // queue — which would leak a process child's local slot — and
+        // reaches exactly this instance, never a later one reusing its id.
+        // `OutstandingPlans` holds it, so a cancel or detach frees it with
+        // the plan's slot.
+        let Ok(result_slot) = self.reserve_work_result(instance, SlotClass::PlanResult) else {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        };
         let plan = submit.plan;
-        if let Err(error) = outstanding.begin(plan, handle.0) {
+        if let Err(error) = outstanding.begin_with_result(plan, handle.0, result_slot) {
             return error.into();
         }
         // N3: deterministic test seam for the race this method's own
@@ -827,13 +842,6 @@ impl PluginHost {
         #[cfg(test)]
         run_async_submit_race_hook_for_tests(pid);
         let deadline_duration = self.read_plan_deadline();
-        // P1-2: a `Weak` reference, upgraded only to deliver. A strong
-        // `Arc<PluginHost>` here could let a background-pool worker end
-        // up being the thread that drops the last reference — which
-        // self-joins (`ScanWorkerPool::drop` joins every worker,
-        // including whichever one is running this very job) and aborts
-        // or hangs instead of shutting down cleanly.
-        let host = self.self_ref.clone();
         let spawned_outstanding = Arc::clone(&outstanding);
         let job = move || {
             // P2-7: skip the real work entirely if this plan was already
@@ -841,7 +849,7 @@ impl PluginHost {
             // longer needs should not also cost the shared pool the time
             // of running it.
             if spawned_outstanding.is_cancelled(plan) {
-                spawned_outstanding.finish(plan);
+                drop(spawned_outstanding.finish_with_result(plan));
                 return;
             }
             // P1-3: the deadline starts when execution actually begins,
@@ -863,15 +871,18 @@ impl PluginHost {
                     // synchronously above against this same (cached)
                     // bitness. Handled defensively instead of panicking a
                     // worker thread.
-                    spawned_outstanding.finish(plan);
+                    drop(spawned_outstanding.finish_with_result(plan));
                     return;
                 }
             };
-            let should_deliver = spawned_outstanding.finish(plan) == FinishOutcome::Deliver;
-            if should_deliver && let Some(host) = host.upgrade() {
-                let message = Message::ReadPlanResult(result);
-                if let Err(error) = host.dispatch_to_instance(instance, &message, 0) {
-                    host.log_dispatch_dropped(instance, message.opcode(), &error);
+            if let Some(result_slot) = spawned_outstanding.finish_with_result(plan) {
+                // The job owns no host reference (P1-2): the reserved slot
+                // is this result's whole route to its instance.
+                match OwnedMessage::from_message(&Message::ReadPlanResult(result), 0) {
+                    Ok(message) => drop(result_slot.send(message)),
+                    Err(error) => {
+                        tracing::warn!(?instance, %error, "a read plan result could not be encoded");
+                    }
                 }
             }
         };

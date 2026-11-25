@@ -1,0 +1,41 @@
+# M5 P0 testkit process fixture (docs/testing/verification.md, "M5 test and
+# fixture conventions"). Never bundled. tests/plugin_host_native/support
+# stages it per test and may substitute the plugin id `test.p0.testkit` and
+# the target process name `vosu-p0-target` to give a test's instances
+# distinct identities and data-source targets.
+kind = 'plugin'
+manifest_version = 1
+id = 'test.p0.testkit'
+name = 'P0 testkit process fixture'
+version = '1.0.0'
+host = '>=2.0.0-alpha.1, <3.0.0'
+abi_version = 1
+runtime = 'process'
+
+[targets.x86_64-unknown-linux-gnu]
+library = 'lib/libtestkit_process_plugin.so'
+[targets.x86_64-pc-windows-msvc]
+library = 'lib/testkit_process_plugin.dll'
+
+[match]
+process_names = ['vosu-p0-target', 'vosu-p0-target.exe']
+
+[[provides]]
+id = 'game:fixture'
+version = '*'
+[[provides]]
+id = 'field:test.p0.testkit'
+version = '1.0.0'
+schema = 'namespace.json'
+[[provides]]
+id = 'action:test.p0.testkit.hold'
+version = '1.0.0'
+
+[[actions]]
+name = 'hold'
+version = '1.0.0'
+title = 'Fixture action that answers, or holds under cancel_ignored'
+args_schema = 'args.json'
+result_schema = 'result.json'
+session = 'none'
+cli = true

@@ -234,6 +234,18 @@ impl PluginInstance {
         self.outbox.reserve()
     }
 
+    /// Reserves delivery of one brokered work result (an asynchronous
+    /// read plan's or a scan's) from its own outbox class, before the work
+    /// is admitted: the result then reaches exactly this instance, never a
+    /// generic queue that could be full, nor a later instance that reuses
+    /// its id.
+    pub(crate) fn reserve_work_result(
+        &self,
+        class: super::outbox::SlotClass,
+    ) -> Result<super::outbox::OutboxSlot, HostError> {
+        self.outbox.reserve_class(class)
+    }
+
     /// Enqueues one message for this instance's dispatch thread (serial)
     /// or the shared pool (`concurrent_dispatch`). The returned receiver
     /// yields the plugin's `dispatch` status once it runs; drop it if the
