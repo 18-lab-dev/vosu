@@ -729,11 +729,11 @@ pub fn encode_read_plan_submit(message: &ReadPlanSubmit) -> Result<Vec<u8>, Mess
 }
 
 /// Writes `plan`/`handle`/`root`/`stages` straight into `buf` as a
-/// `VOSU_OP_READ_PLAN_SUBMIT` payload (this type's own layout, matching
-/// [`encode_read_plan_submit`]), `buf.clear()`ed first but keeping its
+/// `VOSU_OP_READ_PLAN_SUBMIT` payload (the same layout `Message::encode_payload`
+/// produces for a [`ReadPlanSubmit`]), `buf.clear()`ed first but keeping its
 /// existing capacity: a caller that reuses the same `buf` across repeated
 /// submissions of a same-shaped plan allocates nothing once `buf`'s
-/// capacity has grown to fit. Unlike [`encode_read_plan_submit`], there is
+/// capacity has grown to fit. Unlike that owned encoder, there is
 /// no owned `ReadPlanSubmit`/`Stage` intermediate and, since each stage's
 /// own `ops_offset` is computed and written in place as soon as that
 /// stage's own `ops` are appended, no `ops_trailing` scratch buffer either
