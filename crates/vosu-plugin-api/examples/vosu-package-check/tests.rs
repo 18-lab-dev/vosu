@@ -3,9 +3,12 @@
 //! (missing schema bytes, a mirror mismatch, an unknown registration, a
 //! `vosu.` id from a non-official source, an escaping asset, an
 //! unsupported host) fails.
-#![expect(
-    clippy::disallowed_methods,
-    reason = "test fixtures write disposable package trees under a per-test temporary directory, never user state"
+#![cfg_attr(
+    test,
+    expect(
+        clippy::disallowed_methods,
+        reason = "test fixtures write disposable package trees under a per-test temporary directory, never user state"
+    )
 )]
 
 use std::path::{Path, PathBuf};
