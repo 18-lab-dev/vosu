@@ -47,7 +47,12 @@ mod windows;
 pub use region::{OutOfBounds, SharedRegion};
 
 #[cfg(target_os = "linux")]
-pub use linux::Doorbell;
+pub use linux::{
+    ChildStage, Doorbell, ENDPOINT_ARGUMENT, ENDPOINT_FDS, EndpointError, InheritedDirection,
+    InheritedEndpoints, ParentDeathError, PluginHostChild, PluginHostCommand, PluginHostLauncher,
+    ReadbackMismatch, SecurityCode, SecurityFailure, SecurityReadback, SecurityStep, SpawnError,
+    arm_parent_death, drop_privileges,
+};
 #[cfg(windows)]
 pub use windows::Doorbell;
 
