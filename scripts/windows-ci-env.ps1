@@ -29,6 +29,26 @@ function Import-VosuNativeToolchain {
     return (Join-Path $rust 'cargo.exe')
 }
 
+function Import-VosuDotnetSdk {
+    <#
+    .SYNOPSIS
+    Puts the VM's pinned .NET 8 SDK first on PATH for a release build, which
+    embeds the offset-generator bundle scripts\prepare-offset-generator.py
+    publishes with `dotnet` (README "Build from source"). The SDK is unpacked
+    once into this VM's toolchain directory, like the pinned Rust toolchain
+    and CARGO_HOME above; the guest's machine-wide .NET is a runtime only.
+    Mutates $env:*.
+    #>
+    $sdk = 'V:\agent-desktop\toolchains\dotnet-8.0.427'
+    if (-not (Test-Path (Join-Path $sdk 'dotnet.exe'))) {
+        throw "The pinned .NET SDK is missing: $sdk\dotnet.exe."
+    }
+    $env:DOTNET_ROOT = $sdk
+    $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+    $env:DOTNET_NOLOGO = '1'
+    $env:PATH = $sdk + ';' + $env:PATH
+}
+
 function Set-VosuCargoWorkEnv {
     <#
     .SYNOPSIS
@@ -157,7 +177,8 @@ function Invoke-VosuPluginHostFixtures {
     .PARAMETER ReleaseDaemon
     Also build and stage the release daemon (no test-harness) the
     plugin_host_native approval module runs, exported as
-    VOSU_PLUGIN_APPROVAL_DAEMON (plugin-host-fixtures.py --release-daemon).
+    VOSU_PLUGIN_APPROVAL_DAEMON (plugin-host-fixtures.py --release-daemon),
+    with the pinned .NET SDK on PATH (Import-VosuDotnetSdk).
     #>
     param(
         [Parameter(Mandatory = $true)][string]$CargoExe,
@@ -174,7 +195,10 @@ function Invoke-VosuPluginHostFixtures {
     Remove-Item $envFile -ErrorAction SilentlyContinue
     $arguments = @('scripts\plugin-host-fixtures.py')
     if ($Target) { $arguments += @('--target', $Target) }
-    if ($ReleaseDaemon) { $arguments += @('--release-daemon') }
+    if ($ReleaseDaemon) {
+        Import-VosuDotnetSdk
+        $arguments += @('--release-daemon')
+    }
     $arguments += @('--env-file', $envFile)
     $env:CARGO = $CargoExe
     $exitCode = Invoke-VosuCargoStep -Name 'plugin-host-fixtures' -CargoExe $python `
