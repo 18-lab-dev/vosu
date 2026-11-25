@@ -138,12 +138,21 @@ impl Harness {
             }],
         )
         .unwrap();
+        self.create(&loaded[0]);
+    }
+    /// Creates `loaded`, of either runtime, as the next instance with this
+    /// harness's root as its data directory, and its own pool when it
+    /// declares `concurrent_dispatch`.
+    pub fn create(&mut self, loaded: &plugin::LoadedPlugin) {
         self.host
             .create_instance(
                 PluginInstanceId::new(self.next),
-                &loaded[0],
+                loaded,
                 self.root.path().into(),
-                None,
+                loaded
+                    .manifest()
+                    .concurrent_dispatch
+                    .then(|| plugin::WorkerPool::new(2, 64)),
             )
             .unwrap();
         self.next += 1;

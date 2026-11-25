@@ -139,6 +139,11 @@ pub(super) struct Publisher {
     pub(super) read_fields: Vec<String>,
     pub(super) read_resources: Vec<String>,
     pub(super) bundled: bool,
+    /// May own an official `vosu.*` identity ([`PackageOrigin::is_official`]):
+    /// bundled, or the test harness's official fixture.
+    ///
+    /// [`PackageOrigin::is_official`]: crate::plugin::PackageOrigin::is_official
+    pub(super) official: bool,
     pub(super) _registration: SchemaRegistration,
 }
 

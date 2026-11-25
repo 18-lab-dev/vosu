@@ -14,8 +14,10 @@ workspace = true
 
 [features]
 # Per-crate test-harness seam (mirrors vosu-core, vosu-osu-state): never
-# enabled in a release build (src/lib.rs's `compile_error!` guard).
-test-harness = []
+# enabled in a release build (src/lib.rs's `compile_error!` guard). It
+# includes the publication fixtures, which the external osu! process
+# fixture's parity ingress (M5 X0) publishes through.
+test-harness = ["bench-harness"]
 # Instance-owned production-publisher fixtures, including release benchmarks.
 bench-harness = []
 

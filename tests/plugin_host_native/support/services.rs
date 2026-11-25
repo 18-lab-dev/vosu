@@ -49,6 +49,14 @@ pub struct Spec {
     pub stream: u64,
     /// Extra manifest tables appended at the end (`[[requires]]`, ...).
     pub requires: Vec<String>,
+    /// Record each `STREAM_READ` past offset 0 and never answer it
+    /// (`hold_reads`).
+    pub hold_reads: bool,
+    /// A dispatch-time fault and its trigger opcode (`fault`, `trigger`).
+    pub fault: Option<(&'static str, u32)>,
+    /// Load the same library in-process instead of in a plugin host
+    /// (`runtime = "in-process"`, a debug-build development package).
+    pub in_process: bool,
 }
 
 /// One created instance.
@@ -77,11 +85,15 @@ const SETTINGS: &str = r#"[
 {"uniqueID":"LABEL","type":"text","title":"Label","value":"initial-label"},
 {"uniqueID":"RATE","type":"number","title":"Rate","value":150.0}]"#;
 const DRIVE_ARGS: &str = r#"{"type":"object","required":["op"],"additionalProperties":false,"properties":{
-"op":{"enum":["publish","publish_invalid","refs","declare","sessions","subscribe","call","call_block","cancel","answer"]},
+"op":{"enum":["publish","publish_invalid","refs","declare","sessions","subscribe","call","call_block","cancel","answer","plan"]},
 "text":{"type":"string","maxLength":256},
 "path":{"type":"string","maxLength":4096},
 "count":{"type":"integer","minimum":0,"maximum":64},
 "session":{"type":"integer","minimum":0},
+"handle":{"type":"integer","minimum":0},
+"plan":{"type":"integer","minimum":0},
+"address":{"type":"integer","minimum":0},
+"length":{"type":"integer","minimum":0,"maximum":65536},
 "invocation":{"type":"integer","minimum":0},
 "progress":{"type":"integer","minimum":0,"maximum":5000},
 "action":{"type":"string","maxLength":256},
@@ -99,9 +111,14 @@ const WORK_RESULT: &str = r#"{"type":"object","required":["n","invocation","call
 
 /// The services package manifest for `spec`.
 fn manifest(spec: &Spec, plugin_id: &str, process: &str) -> String {
+    let runtime = if spec.in_process {
+        "in-process"
+    } else {
+        "process"
+    };
     let mut text = format!(
         "kind = 'plugin'\nmanifest_version = 1\nid = '{plugin_id}'\nname = 'I0 services fixture'\n\
-         version = '1.0.0'\nhost = '>=2.0.0-alpha.1, <3.0.0'\nabi_version = 1\nruntime = 'process'\n\
+         version = '1.0.0'\nhost = '>=2.0.0-alpha.1, <3.0.0'\nabi_version = 1\nruntime = '{runtime}'\n\
          root_slots = ['files']\nsettings_schema = 'settings.json'\n\n\
          [targets.x86_64-unknown-linux-gnu]\nlibrary = 'lib/libtestkit_process_plugin.so'\n\
          [targets.x86_64-pc-windows-msvc]\nlibrary = 'lib/testkit_process_plugin.dll'\n\n\
@@ -191,6 +208,12 @@ fn control(fixture: &Fixture, staged: &Staged, spec: &Spec) {
     if spec.observer {
         text.push_str("observer=1\n");
     }
+    if spec.hold_reads {
+        text.push_str("hold_reads=1\n");
+    }
+    if let Some((fault, trigger)) = spec.fault {
+        text.push_str(&format!("fault={fault}\ntrigger={trigger}\n"));
+    }
     std::fs::write(
         staged
             .library
@@ -227,6 +250,11 @@ impl Job {
         self.outcome
             .recv_timeout(BOUND)
             .unwrap_or_else(|_| panic!("invocation {} never finished", self.id))
+    }
+
+    /// The terminal outcome, if the invocation already finished.
+    pub fn try_outcome(&self) -> Option<TerminalOutcome> {
+        self.outcome.try_recv().ok()
     }
 
     /// The `status` a successful `drive` reported.
@@ -319,7 +347,11 @@ impl Services {
         let created = fixture
             .wait("init", BOUND)
             .unwrap_or_else(|| panic!("{plugin_id} never ran create in services mode"));
-        assert_ne!(created.pid, std::process::id(), "create ran in core");
+        if spec.in_process {
+            assert_eq!(created.pid, std::process::id(), "create ran outside core");
+        } else {
+            assert_ne!(created.pid, std::process::id(), "create ran in core");
+        }
         self.plugins.push(Plugin {
             id,
             plugin_id,

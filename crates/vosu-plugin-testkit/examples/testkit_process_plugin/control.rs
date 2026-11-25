@@ -16,7 +16,9 @@
 //! - `mode=services`: run the host-services plugin (`services.rs`, M5 I0)
 //!   instead of the fault fixture's attach; with `root` (the absolute
 //!   directory declared as the `files` root), `observer=1` (never identify
-//!   a session) and `stream` (the generated stream's byte size).
+//!   a session), `stream` (the generated stream's byte size) and
+//!   `hold_reads=1` (record each `STREAM_READ` past offset 0 but never
+//!   answer it, so a started body waits on a read in flight: M5 X0's J3).
 //! - `spawn`: the argument vector, separated by U+001F, of a descendant
 //!   process `create` starts before anything else it does (M5 N0's
 //!   core-death trees). It writes a `descendant` receipt naming the child.
@@ -136,6 +138,9 @@ pub struct Control {
     pub observer: bool,
     /// `stream`: the byte size of the generated stream resource.
     pub stream: u64,
+    /// `hold_reads=1`: a services-mode plugin records each `STREAM_READ`
+    /// past offset 0 and never answers it.
+    pub hold_reads: bool,
     /// The descendant's argument vector (`spawn`), program first.
     pub spawn: Option<Vec<String>>,
 }
@@ -182,6 +187,7 @@ fn read_control(library: &Path) -> Option<Control> {
     let mut root = None;
     let mut observer = false;
     let mut stream = 0;
+    let mut hold_reads = false;
     let mut spawn = None;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let (key, value) = line.split_once('=')?;
@@ -200,6 +206,7 @@ fn read_control(library: &Path) -> Option<Control> {
             "root" if Path::new(value).is_absolute() => root = Some(PathBuf::from(value)),
             "observer" if value == "1" => observer = true,
             "stream" => stream = value.parse().ok()?,
+            "hold_reads" if value == "1" => hold_reads = true,
             "spawn" => {
                 let argv: Vec<String> = value.split('\u{1f}').map(str::to_owned).collect();
                 if !Path::new(&argv[0]).is_absolute() {
@@ -225,6 +232,7 @@ fn read_control(library: &Path) -> Option<Control> {
         root,
         observer,
         stream,
+        hold_reads,
         spawn,
     })
 }

@@ -112,7 +112,7 @@ impl super::PluginHost {
             .filter_map(|slot| match slot {
                 super::InstanceSlot::Live(entry) => Some(ProviderRegistration {
                     id: entry.plugin_id.clone(),
-                    official: entry.publisher.bundled,
+                    official: entry.publisher.official,
                     builtin: entry.publisher.bundled,
                     replaces: entry.replaces.clone(),
                     revision: entry

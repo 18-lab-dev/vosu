@@ -1441,8 +1441,9 @@ plugin's own settings, namespace and action schema files, and its manifest
 differs from the bundled one only in `runtime` and `[targets]`. The bundled
 osu! manifest stays target-free and in-process. The osu! fixture keeps the
 official `vosu.osu` identity that parity needs. The ordinary development
-loader refuses that identity, so loading it for parity needs an approved
-official path (X0).
+loader refuses that identity. X0's test-harness official loading seam
+(`load_official_test_fixture`, see [M5 X0 unit
+evidence](#m5-x0-unit-evidence-2026-11-25)) is the path parity uses.
 
 The preparation helper, `scripts/plugin-host-fixtures.py`, builds both
 targets with `--message-format=json-render-diagnostics`. It takes the
@@ -2004,3 +2005,150 @@ library comes from `plugin-host-fixtures.py`'s debug example build, which
 the packaged plugin host loads like any user plugin. The daemon variants of
 `parent_death` and `windows_job` are ordinary tests (`-- _daemon
 --nocapture`), on Linux and in the Windows VM.
+
+### M5 X0 unit evidence (2026-11-25)
+
+Results from the X0 checkout (`m5/process`, with U0 and the M6b/M4b
+`origin/v2/main` merge of the integration branch), before integration.
+Every native run went through `scripts/plugin-host-fixtures.py`; native
+Windows runs went through `vm-test.py`.
+
+**Official loading seam.** `vosu_core::plugin::load_official_test_fixture`
+(`crates/vosu-core/src/plugin/registry.rs`) loads a package directory under
+its own official `vosu.*` manifest, so `parity` runs the external
+`osu_process_plugin` library with the real `vosu.osu` identity. Its origin is
+`PackageOrigin::OfficialTestFixture` (`plugin/execution.rs`): official
+namespace and schema trust (`is_official`, `schema_provenance`), never the
+bundled-only surface grants. It cannot reach a release build: it exists only
+with `test-harness`, which release builds reject; it refuses unless
+`debug_build`; and it accepts only `runtime = "process"`, refused before any
+library is mapped. It cannot bypass approval either. The seam only validates
+and returns a process package; a process package runs only through the
+installed launcher, which production composition makes the approval gate for
+every origin alike. The gate keys on the plugin id, the package's provenance
+(a process package's canonical directory) and its digests, never on
+`PackageOrigin`. The
+`vosu-core` tests `plugin::registry::official_fixture_tests` (4) prove each
+refusal, that the development loader still refuses `vosu.osu`, and
+`official_fixture_never_skips_the_approval_gate`: an unapproved official
+fixture is refused at stage `approval` before the launcher runs, and starts
+only once its digests are approved.
+
+**Parity method.** Two producers, each loaded once in-process and once in a
+real plugin host, compared on what consumers receive.
+
+- `parity::parity_osu_oracle_encodings_match_across_runtimes`: every
+  committed source-oracle case (13, `tests/fixtures/oracle/`, read only,
+  never regenerated) through M4a's own in-process replay and through the
+  external osu! library. In the child, M4a's oracle ingress publishes the
+  case through the production `BusPublisher` with the shared conversion
+  (`tests/state_api_compat/oracle_input.rs`) and chart files. The `/json`,
+  `/json/v2`, `/json/v2/precise` and StreamCompanion bytes are equal byte for
+  byte, and every client case serves its own document.
+- `parity::parity_osu_api_v1_frames_match_across_runtimes`: for
+  `stable-play-osu-fl`→`stable-result-catch-ht`,
+  `lazer-menu-da`→`lazer-play-taiko-dt` and `sc-equal-bpm`→`sc-range-bpm`,
+  the encoded API v1 session-events, initial, update and removal frames, the
+  close code (1000), the HTTP session and state reads and the oracle chart
+  resource bytes (275) are equal.
+- `parity::testkit::parity_testkit_services_state_resources_and_frames_match_across_runtimes`:
+  the services-mode testkit library loaded in-process and in a plugin host
+  serves equal session, state and namespace reads, API v1 initial, publish,
+  republish and removal frames and close code, and nine resource responses
+  (status, completeness, `Content-Type`, `Content-Length`, `Content-Range`,
+  `Accept-Ranges`, `ETag` and bytes): file, file range, root escape (502),
+  tree index, member and absent member (404), a 2,101,345-byte stream, a
+  stream range, and a short stream whose body fails.
+
+**Bijection.** Both runtimes compose the same host in the same order, so
+session ids, generations, target PIDs, instance ids and revisions are equal
+and compared as served. The only volatile value is a resource or tree id,
+which ends in a MAC under each host's own secret. It reaches consumers as a
+resource or tree URL and as a resource's strong `ETag` (`"<id>"`).
+`parity::ResourceIds` maps each run's distinct URLs, in order of first
+appearance, to `<resource-N>`, and an `ETag` to the quoted placeholder of its
+own resource URL; it fails if one URL would get two placeholders or two URLs
+one. Nothing else is rewritten. The chart root and the testkit's `files`
+root never reach a consumer, which both tests assert. The testkit runs share
+one `files` root, because a file's validators derive from its filesystem
+identity.
+
+**Corpus pin and coverage.** `inventory.json` SHA-256
+`f906fb5dde59437a2b3ad820a1c19f9daa8f2e00c0867212835d75a5934367f4`; tosu
+`2359305a63f2aaebb201bc8d2eee58177f52590e`, lazer calculator
+`323bc04198b256b5a00f4e63c5c4cbb506f43cc5`, osu!
+`fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48`, calculator package
+`0.6.1-20260729-main.0`, calculator tree
+`b12ac98627ab365e373fcfb7505465253f25fcfa`. The 13 cases cover every one
+of the 29 required tags (`no-client` through `placeholders`); the test fails
+on a required tag without a case and prints each case's tags and per-schema
+SHA-256.
+
+**Approved [spec] deviations.**
+
+- Parity feeds M4a's oracle ingress (snapshot → production `BusPublisher`)
+  inside the external library
+  (`crates/vosu-osu/examples/osu_process_plugin/parity.rs`). The plugin's own
+  memory capture is not compared, as in M4a's in-process parity. Without a
+  `parity.json` control the library is `OsuPlugin` itself.
+- A SYNC sent from inside a SYNC result's own dispatch is refused in both
+  runtimes: that dispatch counts as a dispatch
+  (`sync::sync_results_reach_their_submitter_while_dispatch_is_held_and_nesting_is_refused`).
+- The cross-runtime SYNC deadline uses a two-stage plan whose first read is
+  held 2.3 s. In-process cannot interrupt one blocked native read and checks
+  the budget between stages (2.300 s on Linux, 2.313 s on Windows); only the
+  plugin host's answer at the 2 s budget while the read is still blocked is
+  asserted (2.001 s on Linux, 2.000 s on Windows)
+  (`sync::sync_a_read_past_the_budget_times_out_and_its_late_result_never_arrives`).
+
+**J3 closed (`crash::j3`).** Two cases lose a services-mode child, once by a
+real `std::process::abort` in its dispatch (triggered by a
+`SETTINGS_CHANGED` only the test sends) and once by an OS kill. At the loss
+the child holds an identified session, a pending asynchronous plan whose read
+is blocked inside core, a stream body that has its first chunk and waits on
+an unanswered `STREAM_READ`, a running job, and relayed calls in both
+directions (to a peer plugin's held `work`, and from a third plugin). The
+cases assert:
+
+- the job and the child's own call-issuing drive fail `plugin_crashed`;
+- the stream body fails (status 200, 1,048,512 bytes, incomplete) long
+  before the 30-second request deadline: after a kill 1.4 ms (Linux) or
+  5.5 ms (Windows), after an abort 343 ms (Linux) or 85 ms (Windows), the
+  abort's own reap taking about as long;
+- the peer's relayed invocation gets `ACTION_CANCEL`, and the third plugin's
+  relayed result is `plugin_crashed`;
+- the owned session leaves the store, and the loss is `exited` with status
+  `-9`/`9` or `-6`/`0xC0000409`;
+- the pending plan is retired: its read, released after the loss, reaches
+  no one, and the next generation's plan under the same id returns its own
+  bytes, the only `plan_result` of any generation;
+- the restart follows the 1-second backoff: after a kill 1.056 s (Linux) or
+  1.032 s (Windows), after an abort 1.051 s or 1.050 s, under a new session
+  handle;
+- the peer and the third plugin keep their children, never lose or restart,
+  the peer's session and plans still serve, and its own held job is still
+  running and then answers.
+
+The testkit's services mode gained the `plan` drive, `plan_result`
+receipts and `hold_reads` for this case.
+
+**Counts.** Linux ran at `2b47fb95` (code identical to this commit);
+native Windows staged the same commit through `vm-test.py`.
+
+- `cargo test --locked --features test-harness --test plugin_host_native --
+  --list`: 80 tests on Linux.
+- The full native target: 75 passed and 5 ignored on Linux; 74 passed and 2
+  ignored of 76 on native Windows (the Linux-only modules are not built
+  there). Every X0 test above passed on both.
+- `state_api_compat` 7, `state_bus_compat` 5, `server_compat` 37,
+  `performance_invariants` 22 and `runtime_wakeups` 3 (1 ignored) passed.
+- `prop_` passed 47. Workspace nextest through
+  `scripts/plugin-host-fixtures.py` passed 3143 (22 skipped).
+- fmt, Linux Clippy and xwin Clippy were clean. Every `check-*.py` passed
+  (deleted-assertions against `v2/main`) once this commit allowlisted the
+  parity pin's upstream revision (`check-brand`) and the osu! parity
+  fixture's three bounded polls and receipt write
+  (`check-lint-expectations`).
+
+Still open from the conventions above: the first-load time of a realistic
+release plugin DLL and of concurrent first loads is not measured.

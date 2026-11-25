@@ -50,6 +50,28 @@ pub enum PackageOrigin {
     /// `TrustTier::Official` decision for its exact installed source
     /// identity; a trusted user source is `false`.
     Installed { official: bool },
+    /// A separately staged external library under an official `vosu.*`
+    /// identity, loaded only by the test harness
+    /// ([`super::registry::load_official_test_fixture`]) so a native test
+    /// can run the official producer in a plugin host. Official, never
+    /// bundled: it gets the official namespace and schema trust, never
+    /// the bundled-only surface grants. Absent from every build without
+    /// `test-harness`, which release builds reject.
+    #[cfg(feature = "test-harness")]
+    OfficialTestFixture,
+}
+
+impl PackageOrigin {
+    /// Whether this package may own an official `vosu.*` identity and
+    /// register its schemas as trusted official ones.
+    pub fn is_official(self) -> bool {
+        match self {
+            Self::Bundled | Self::Installed { official: true } => true,
+            Self::Development | Self::Installed { official: false } => false,
+            #[cfg(feature = "test-harness")]
+            Self::OfficialTestFixture => true,
+        }
+    }
 }
 
 /// The one way a validated package is allowed to run. Cloning shares a

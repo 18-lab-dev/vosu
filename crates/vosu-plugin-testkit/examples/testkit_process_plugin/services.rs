@@ -19,7 +19,14 @@
 //! root (the `escape` one points outside it); `docs` is a two-entry tree
 //! (`alpha.osu`, `beta.osu`); `generated` resolves to a fresh stream lease
 //! of `stream` bytes ([`generated`]), whose `short` variant ends after
-//! half of its declared size.
+//! half of its declared size. Under `hold_reads` every `STREAM_READ` past
+//! offset 0 is recorded (`read`, then `held`) and never answered, so a
+//! body that already started stays waiting on a read in flight.
+//!
+//! **Reads.** The `plan` drive submits one asynchronous read plan of
+//! `length` bytes at absolute `address` against owned session `handle`
+//! under plan id `plan`; its `READ_PLAN_RESULT` writes a `plan_result`
+//! receipt with the result bytes.
 //!
 //! **Actions.** `work` is a callee: it answers with
 //! `{n, invocation, caller}` after `progress` progress messages, or holds
@@ -33,9 +40,10 @@ use std::path::PathBuf;
 
 use vosu_plugin_api::{
     ActionCancel, ActionInvoke, ActionProgress, ActionResult, ActionStatus, CborBytes, CborValue,
-    ErrorInfo, HostServices, Init, Message, PluginError, PublishBatch, PublishField, PublishValue,
-    ResourceRef, ResourceResolved, Selector, SessionDecline, StreamChunk, TreeEntry,
-    VOSU_STREAM_CHUNK_MAX_BYTES, VtableHostServices, vosu_status,
+    ErrorInfo, HostServices, Init, Message, PlanBase, PlanOp, PluginError, PublishBatch,
+    PublishField, PublishValue, ReadResult, ResourceRef, ResourceResolved, Selector,
+    SessionDecline, Stage, StageBase, StreamChunk, TreeEntry, VOSU_STREAM_CHUNK_MAX_BYTES,
+    VtableHostServices, vosu_status,
 };
 
 use crate::control::Control;
@@ -290,6 +298,10 @@ impl Services {
                 let Some(lease) = self.streams.get(&read.stream) else {
                     return Err(vosu_status::VOSU_ERR_CANCELLED.into());
                 };
+                if control.hold_reads && read.offset > 0 {
+                    control.receipt("held", &format!("stream={}", read.stream));
+                    return Ok(());
+                }
                 if read.len > VOSU_STREAM_CHUNK_MAX_BYTES {
                     return Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT.into());
                 }
@@ -379,6 +391,14 @@ impl Services {
                 if let Some(drive) = self.calls.remove(&result.invocation) {
                     self.settle(host, drive);
                 }
+            }
+            Message::ReadPlanResult(result) => {
+                let fields = match result.results.first() {
+                    Some(ReadResult::Ok(bytes)) => format!("result=ok bytes={}", crate::hex(bytes)),
+                    Some(other) => format!("result={}", escape(&format!("{other:?}"))),
+                    None => "result=empty".to_owned(),
+                };
+                control.receipt("plan_result", &format!("plan={} {fields}", result.plan));
             }
             _ => {}
         }
@@ -532,6 +552,19 @@ impl Services {
                 }
                 vosu_status::VOSU_OK
             }
+            "plan" => host.submit_read_plan(
+                integer(args, "plan").unwrap_or(0) as u64,
+                integer(args, "handle").unwrap_or(0) as u64,
+                PlanBase::Absolute(integer(args, "address").unwrap_or(0) as u64),
+                vec![Stage {
+                    base: StageBase::Root,
+                    base_offset: 0,
+                    ops: vec![PlanOp {
+                        offset: 0,
+                        length: integer(args, "length").unwrap_or(0) as u32,
+                    }],
+                }],
+            ),
             _ => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
         };
         self.control.receipt(

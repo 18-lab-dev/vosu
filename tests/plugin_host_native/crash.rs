@@ -7,6 +7,12 @@
 //! sessions, the reaped child), the restart, and a second plugin that stays
 //! healthy. The grace and stall arithmetic itself is covered by
 //! `vosu-core`'s `host::actions::tests::grace` and `launcher::tests`.
+//!
+//! [`j3`] (M5 X0) closes J3: one loss with a session, a pending plan, a
+//! stream read, a job and relayed calls in both directions all live.
+
+#[path = "crash/j3.rs"]
+mod j3;
 
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
