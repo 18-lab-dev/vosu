@@ -205,6 +205,16 @@ typedef enum vosu_opcode {
     VOSU_OP_STATE_UPDATE = 71,      /* host -> plugin, CBOR */
 } vosu_opcode;
 
+/* Reserved opcode range (A5.2, docs/v2/plugin-abi.md §7.6): every opcode
+ * with this bit set belongs to the private supervision protocol between
+ * vosu core and one `vosu plugin-host` process, and is never a plugin
+ * opcode. No vosu_opcode value, in this or any later ABI v1 minor
+ * revision, sets it. Plugin code never receives such an opcode through
+ * `dispatch`, and a `vosu_host_services::send` naming one is refused with
+ * VOSU_ERR_UNSUPPORTED exactly as any other unknown opcode, in either
+ * runtime. */
+#define VOSU_OPCODE_PRIVATE_BIT (1u << 31)
+
 typedef struct vosu_message {
     uint32_t opcode;         /* a vosu_opcode value */
     uint32_t flags;          /* opcode-specific; 0 unless the spec says otherwise. A receiver rejects a message whose flags set any bit it does not recognize with VOSU_ERR_INVALID_ARGUMENT rather than ignoring it (D4). */

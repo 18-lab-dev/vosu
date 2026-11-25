@@ -87,7 +87,7 @@ pub use message::flat::{
     decode_publish_batch_ref, decode_publish_field_ref,
 };
 pub use message::{HostServices, Message, MessageError};
-pub use opcode::vosu_opcode;
+pub use opcode::{VOSU_OPCODE_PRIVATE_BIT, vosu_opcode};
 pub use primitives::{
     vosu_invocation_id, vosu_plan_id, vosu_resource_id, vosu_session_id, vosu_timer_id,
 };
