@@ -16,6 +16,7 @@ static EVENTS: LazyLock<Mutex<HashMap<String, mpsc::SyncSender<Message>>>> =
 static GATES: LazyLock<Mutex<HashMap<String, mpsc::Receiver<()>>>> = LazyLock::new(Mutex::default);
 
 mod frame_limits;
+mod grace;
 mod loss;
 mod pressure;
 mod reentrant;
@@ -296,6 +297,7 @@ fn actions_invalid_result_timeout_and_loss_are_terminal() {
     );
     let executor = host.invocation_executor_with_policy(InvocationPolicy {
         deadline: Duration::from_millis(50),
+        ..InvocationPolicy::default()
     });
     let id = executor
         .invoke(

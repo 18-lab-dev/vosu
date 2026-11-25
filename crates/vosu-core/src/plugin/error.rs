@@ -7,6 +7,7 @@ use super::settings::SettingsError;
 use vosu_plugin_api::manifest::ValidationError;
 
 use super::matcher::RegisterError;
+use super::process::control::StartupFailure;
 
 /// Every way loading, starting, or tearing down a plugin instance can fail.
 #[derive(Debug)]
@@ -85,8 +86,10 @@ pub enum HostError {
     ProcessRuntimeUnavailable,
     /// The plugin-host child for this instance did not become ready: it
     /// exited, broke its channel, or its plugin's `create` failed. The
-    /// launcher has already reaped it.
-    ProcessStartupFailed(String),
+    /// launcher has already reaped it. The failure keeps its §7.6 stage, so
+    /// supervision decides restarts from [`StartupFailure::stage`], never
+    /// from formatted text.
+    ProcessStartupFailed(StartupFailure),
     /// The instance's process was reported lost before it was published.
     InstanceLost,
 }
@@ -149,8 +152,8 @@ impl fmt::Display for HostError {
                 f,
                 "runtime = \"process\" requires the plugin-host launcher, which is not available"
             ),
-            Self::ProcessStartupFailed(reason) => {
-                write!(f, "plugin-host process did not start: {reason}")
+            Self::ProcessStartupFailed(failure) => {
+                write!(f, "plugin-host process did not start: {failure}")
             }
             Self::InstanceLost => write!(f, "the plugin-host process was lost"),
         }

@@ -17,6 +17,7 @@ use crate::plugin::execution::{
     InstanceLoss, LossCause, MessageRef, PluginIngress, ProcessEndpoint, ProcessLaunch,
     ProcessLauncher,
 };
+use crate::plugin::process::control::{StartupFailure, StartupStage};
 
 /// The `[targets.*]` key for the running host (`docs/v2/plugin-abi.md` §8).
 pub fn host_target_triple() -> &'static str {
@@ -29,8 +30,9 @@ pub fn host_target_triple() -> &'static str {
 
 /// Writes a development package into `dir`: a game plugin `plugin_id`
 /// matching `process_name`, with its own namespace schema, one `run` action
-/// and `library` copied to `lib/<library_name>`. `runtime` is the manifest's
-/// `runtime` value (`"process"` or `"in-process"`).
+/// (broker-invocable, `cli = true`) and `library` copied to
+/// `lib/<library_name>`. `runtime` is the manifest's `runtime` value
+/// (`"process"` or `"in-process"`).
 pub fn write_development_package(
     dir: &Path,
     plugin_id: &str,
@@ -40,7 +42,7 @@ pub fn write_development_package(
     library: &[u8],
 ) -> std::io::Result<()> {
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='{runtime}'\n\n[match]\nprocess_names=['{process_name}']\n\n[[provides]]\nid='game:fixture'\nversion='*'\n[[provides]]\nid='field:{plugin_id}'\nversion='1.0.0'\nschema='schema.json'\n[[provides]]\nid='action:{plugin_id}.run'\nversion='1.0.0'\n\n[[actions]]\nname='run'\nversion='1.0.0'\ntitle='Run'\nargs_schema='args.json'\nresult_schema='result.json'\nsession='none'\n\n[targets.{target}]\nlibrary='lib/{library_name}'\n",
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='{runtime}'\n\n[match]\nprocess_names=['{process_name}']\n\n[[provides]]\nid='game:fixture'\nversion='*'\n[[provides]]\nid='field:{plugin_id}'\nversion='1.0.0'\nschema='schema.json'\n[[provides]]\nid='action:{plugin_id}.run'\nversion='1.0.0'\n\n[[actions]]\nname='run'\nversion='1.0.0'\ntitle='Run'\nargs_schema='args.json'\nresult_schema='result.json'\nsession='none'\ncli=true\n\n[targets.{target}]\nlibrary='lib/{library_name}'\n",
         target = host_target_triple(),
     );
     let schema = format!(
@@ -70,8 +72,9 @@ fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 pub enum LaunchBehavior {
     /// Returns a ready endpoint.
     Ready,
-    /// Reports a startup failure after terminating the endpoint it made.
-    FailStartup,
+    /// Reports a startup failure at this §7.6 stage after terminating the
+    /// endpoint it made.
+    FailStartup(StartupStage),
     /// Reports the instance lost, then returns its endpoint as if ready:
     /// the loss lands between launch and publication.
     LoseBeforeReady,
@@ -93,6 +96,7 @@ pub struct LaunchRecord {
 pub struct RecordingLauncher {
     behavior: Mutex<LaunchBehavior>,
     launches: Mutex<Vec<LaunchRecord>>,
+    launched: Condvar,
 }
 
 impl RecordingLauncher {
@@ -100,6 +104,7 @@ impl RecordingLauncher {
         Arc::new(Self {
             behavior: Mutex::new(behavior),
             launches: Mutex::new(Vec::new()),
+            launched: Condvar::new(),
         })
     }
 
@@ -109,6 +114,17 @@ impl RecordingLauncher {
 
     pub fn launches(&self) -> MutexGuard<'_, Vec<LaunchRecord>> {
         self.launches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits up to `timeout` until at least `count` launches happened, and
+    /// returns how many did.
+    pub fn wait_launches(&self, count: usize, timeout: Duration) -> usize {
+        let launches = self.launches();
+        let (launches, _) = self
+            .launched
+            .wait_timeout_while(launches, timeout, |launches| launches.len() < count)
+            .unwrap_or_else(PoisonError::into_inner);
+        launches.len()
     }
 }
 
@@ -125,13 +141,16 @@ impl ProcessLauncher for RecordingLauncher {
             loss: launch.loss.clone(),
             endpoint: Arc::clone(&endpoint),
         });
+        self.launched.notify_all();
         match behavior {
             LaunchBehavior::Ready => Ok(endpoint),
-            LaunchBehavior::FailStartup => {
+            LaunchBehavior::FailStartup(stage) => {
                 endpoint.terminate();
-                Err(HostError::ProcessStartupFailed(
-                    "fixture child never became ready".into(),
-                ))
+                Err(HostError::ProcessStartupFailed(StartupFailure::new(
+                    stage,
+                    "fixture",
+                    "fixture child never became ready",
+                )))
             }
             LaunchBehavior::LoseBeforeReady => {
                 launch

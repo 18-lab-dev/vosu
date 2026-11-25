@@ -364,6 +364,7 @@ async fn deadline_is_terminal_and_late_success_cannot_resurrect() {
     let job = create(&registry);
     let _guard = InvocationPolicy {
         deadline: Duration::ZERO,
+        ..InvocationPolicy::default()
     }
     .arm(&registry, &job.id)
     .unwrap();

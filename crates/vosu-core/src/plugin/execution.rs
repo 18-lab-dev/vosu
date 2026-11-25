@@ -48,7 +48,10 @@ pub enum PackageOrigin {
     Development,
 }
 
-/// The one way a validated package is allowed to run.
+/// The one way a validated package is allowed to run. Cloning shares a
+/// local library mapping; supervision keeps a clone of a process package
+/// to start its next generation.
+#[derive(Clone)]
 pub enum Execution {
     /// In-process code: bundled, or granted the local development trust.
     Local(LocalCode),
@@ -59,6 +62,7 @@ pub enum Execution {
 /// A validated local vtable. `library` keeps a `dlopen`ed development
 /// library mapped for as long as any instance still calls into it; `None`
 /// for a bundled plugin linked into this executable.
+#[derive(Clone)]
 pub struct LocalCode {
     pub(crate) vtable: vosu_plugin_vtable,
     pub(crate) library: Option<Arc<Library>>,

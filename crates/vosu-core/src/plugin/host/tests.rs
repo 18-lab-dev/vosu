@@ -33,3 +33,7 @@ mod resource_composition;
 mod settings_schema;
 mod state;
 mod state_subscribe;
+/// M5 C0: process supervision — backoff restart as a new generation,
+/// stop and shutdown during the delay, the per-instance teardown seam and
+/// the manual restart of a failed initial load.
+mod supervision;

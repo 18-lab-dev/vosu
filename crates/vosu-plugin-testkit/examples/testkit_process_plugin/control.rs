@@ -35,15 +35,16 @@ const RELEASE_BOUND: Duration = Duration::from_secs(120);
 pub enum Fault {
     None,
     /// The load-time constructor ends the process abnormally
-    /// (`native::crash`: `SIGABRT`, or the fail-fast status on Windows).
+    /// (`native::crash`: the real `std::process::abort` on every platform).
     ConstructorCrash,
     /// `create` ends the process abnormally.
     CreateCrash,
     /// The triggering dispatch ends the process abnormally.
     DispatchCrash,
     /// The triggering dispatch calls the real `std::process::abort` on every
-    /// platform: on Windows a fail-fast that Windows Error Reporting holds
-    /// (the open C0 crash-classification item in verification.md).
+    /// platform, writing an `abort` receipt (C0's crash evidence: on
+    /// Windows a fail-fast the plugin host's error mode keeps Windows Error
+    /// Reporting from holding).
     DispatchAbort,
     /// The triggering dispatch waits for `release-<pid>`.
     DispatchBlock,
@@ -57,13 +58,17 @@ pub enum Fault {
     /// The triggering dispatch publishes a malformed frame into the plugin →
     /// host ring and wakes core.
     CorruptFrame,
+    /// `create` waits for `release-<pid>` before it returns (C0's startup
+    /// deadline evidence).
+    CreateBlock,
 }
 
 impl Fault {
-    pub const NAMES: [(&'static str, Self); 10] = [
+    pub const NAMES: [(&'static str, Self); 11] = [
         ("none", Self::None),
         ("constructor_crash", Self::ConstructorCrash),
         ("create_crash", Self::CreateCrash),
+        ("create_block", Self::CreateBlock),
         ("dispatch_crash", Self::DispatchCrash),
         ("dispatch_abort", Self::DispatchAbort),
         ("dispatch_block", Self::DispatchBlock),

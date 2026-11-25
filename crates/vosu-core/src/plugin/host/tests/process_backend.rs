@@ -225,7 +225,9 @@ fn failed_process_readiness_unregisters_only_its_own_state() {
     .unwrap();
 
     let (_dir, loaded) = process_package("test.h0.unready", "h0-unready");
-    launcher.set_behavior(LaunchBehavior::FailStartup);
+    launcher.set_behavior(LaunchBehavior::FailStartup(
+        crate::plugin::process::control::StartupStage::Create,
+    ));
     assert!(matches!(
         host.create_instance(
             PluginInstanceId::new(9_301),

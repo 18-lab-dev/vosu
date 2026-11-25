@@ -939,3 +939,35 @@ fn read_plan_sync_result_after_core_timed_out_is_discarded() {
     assert!(harness.losses().is_empty());
     endpoint.terminate();
 }
+
+/// A core write that finds no ring space for the whole 2-second
+/// backpressure window is one `pressure_timeout` loss, not a protocol
+/// violation: the child here stops reading its ring after `READY`.
+#[test]
+fn a_write_stalled_for_the_backpressure_window_is_one_pressure_loss() {
+    let mut harness = start_harness(vosu_status::VOSU_OK, BOUND);
+    let endpoint = harness.ready();
+    let payload = vec![0_u8; super::super::frame::MAX_PAYLOAD_BYTES];
+    let started = Instant::now();
+    // The 2 MiB ring holds one maximum frame; the second waits for space.
+    let statuses: Vec<_> = (0..2)
+        .map(|_| {
+            endpoint.dispatch(MessageRef {
+                opcode: vosu_opcode::VOSU_OP_FOCUS_CHANGED as u32,
+                flags: 0,
+                correlation_id: 0,
+                payload: &payload,
+            })
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        [vosu_status::VOSU_OK, vosu_status::VOSU_ERR_NOT_READY]
+    );
+    assert!(started.elapsed() >= Duration::from_millis(1_900));
+    assert_eq!(harness.handler.wait_for(&harness.handler.losses, 1), 1);
+    assert_eq!(harness.losses(), vec![LossCause::Stalled]);
+    assert_eq!(harness.losses()[0].reason(), "pressure_timeout");
+    endpoint.terminate();
+    assert_eq!(harness.losses().len(), 1, "the kill was a second loss");
+}

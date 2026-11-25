@@ -139,9 +139,37 @@ pub enum LossCause {
     /// The OS reported the child exited (any exit core did not request,
     /// including status 0).
     ProcessExited { status: Option<i64> },
-    /// The channel failed: a malformed frame, a broken endpoint, or an
-    /// expired backpressure obligation.
+    /// The channel failed: a peer protocol violation or a broken doorbell.
     ChannelFailed,
+    /// A legal frame core wrote waited the whole 2-second backpressure
+    /// window for ring space (§7.2 "Pressure, loss and restart").
+    Stalled,
+    /// Core killed the instance: an action it timed out stayed unanswered
+    /// past its 5-second cancellation grace (§7.6 A5.4).
+    ActionGraceExpired,
+}
+
+impl LossCause {
+    /// The §7.6 loss reason, as supervision and the management surface
+    /// name it. A child exits with
+    /// [`EXIT_TRANSPORT_TIMEOUT`](crate::plugin::process::control::EXIT_TRANSPORT_TIMEOUT)
+    /// only when one of its waiter backstops expired: core stopped serving
+    /// the channel, recorded as one `transport_timeout` loss.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::ProcessExited {
+                status: Some(status),
+            } if *status
+                == i64::from(crate::plugin::process::control::EXIT_TRANSPORT_TIMEOUT) =>
+            {
+                "transport_timeout"
+            }
+            Self::ProcessExited { .. } => "exited",
+            Self::ChannelFailed => "protocol_violation",
+            Self::Stalled => "pressure_timeout",
+            Self::ActionGraceExpired => "action_grace_expired",
+        }
+    }
 }
 
 /// The one-shot loss flag shared by an instance and its [`InstanceLoss`].
@@ -158,6 +186,12 @@ impl LossState {
 
     pub(crate) fn is_lost(&self) -> bool {
         self.lost.load(Ordering::Acquire)
+    }
+
+    /// Marks the instance lost; `true` only for the first mark across
+    /// this flag and every [`InstanceLoss`] sharing it.
+    pub(crate) fn mark(&self) -> bool {
+        !self.lost.swap(true, Ordering::AcqRel)
     }
 }
 

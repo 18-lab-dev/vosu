@@ -80,7 +80,7 @@ impl Run {
 
 fn startup_stage(result: Result<(), HostError>) -> String {
     match result {
-        Err(HostError::ProcessStartupFailed(reason)) => reason,
+        Err(HostError::ProcessStartupFailed(failure)) => failure.to_string(),
         other => panic!("expected a startup failure, got {other:?}"),
     }
 }

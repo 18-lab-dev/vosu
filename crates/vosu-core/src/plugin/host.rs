@@ -244,6 +244,9 @@ pub struct PluginHost {
     /// Installed once by composition; without it a process package is
     /// refused at creation, never run in-process.
     process_launcher: std::sync::OnceLock<Arc<dyn super::execution::ProcessLauncher>>,
+    /// Restart and stop state of every `runtime = "process"` instance
+    /// (`supervision.rs`, §7.6 "Restart"). Its lock is a leaf.
+    supervisor: Arc<super::process::supervisor::Supervisor>,
 }
 
 impl PluginHost {
@@ -370,6 +373,7 @@ impl PluginHost {
             ),
             last_dispatch_queue_full_log: Mutex::new(None),
             process_launcher: std::sync::OnceLock::new(),
+            supervisor: Arc::default(),
         });
         // P2-4: spawned only after `new_cyclic` has returned a real
         // `Arc<Self>` — never from inside its own closure, where no
@@ -918,6 +922,7 @@ pub mod resources;
 mod scans;
 mod state;
 mod state_delivery;
+mod supervision;
 mod surface;
 pub(crate) use surface::SurfaceRequester;
 

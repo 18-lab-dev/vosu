@@ -195,7 +195,6 @@ mod windows {
     unsafe extern "system" {
         fn GetModuleFileNameW(module: *mut c_void, name: *mut u16, size: u32) -> u32;
         fn GetCurrentProcess() -> *mut c_void;
-        fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
         fn MapViewOfFile(
             section: *mut c_void,
             access: u32,
@@ -238,21 +237,14 @@ mod windows {
         String::new()
     }
 
-    /// `STATUS_STACK_BUFFER_OVERRUN`, the status a Rust abort (fail-fast)
-    /// exits with.
-    const FAIL_FAST_STATUS: u32 = 0xC000_0409;
-
-    /// Ends this process abnormally at once, with the fail-fast status.
-    /// A real fail-fast (`std::process::abort`) is held by Windows Error
-    /// Reporting for seconds before the process exits (seen in the guest as
-    /// Application Error 1000 followed by WER 1001 3–4 s later), which
-    /// would turn a deterministic startup crash into a startup timeout.
+    /// Ends this process abnormally at once with the real fail-fast of
+    /// `std::process::abort` (`STATUS_STACK_BUFFER_OVERRUN`), as on Linux.
+    /// Windows Error Reporting used to hold such a process for 1–6 s before
+    /// it exited, which turned a startup crash into a startup timeout; the
+    /// plugin host now sets its error mode so the fail-fast exits promptly
+    /// (plugin-abi.md §7.4 "Crash reporting"), and these startup crash
+    /// modes are the evidence for it.
     pub fn crash() -> ! {
-        // SAFETY: terminates this process through its own pseudo handle;
-        // the call does not return when it succeeds.
-        unsafe {
-            TerminateProcess(GetCurrentProcess(), FAIL_FAST_STATUS);
-        }
         std::process::abort()
     }
 

@@ -39,6 +39,7 @@ pub struct BundledPlugin<'a> {
 
 /// A manifest-validated package with its one granted [`Execution`],
 /// ready for `super::instance::PluginInstance::create`.
+#[derive(Clone)]
 pub struct LoadedPlugin {
     manifest: PluginManifest,
     origin: PackageOrigin,

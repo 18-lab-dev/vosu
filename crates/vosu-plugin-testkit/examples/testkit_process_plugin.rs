@@ -47,8 +47,13 @@ impl Plugin for TestkitProcessPlugin {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
         let control = control::get().ok_or(PluginError(vosu_status::VOSU_ERR_INVALID_ARGUMENT))?;
         control.receipt("create", &format!("plugin={}", init.plugin_id));
-        if control.fault == Fault::CreateCrash {
-            native::crash();
+        match control.fault {
+            Fault::CreateCrash => native::crash(),
+            Fault::CreateBlock => {
+                let released = control.wait_release();
+                control.receipt("create_released", &format!("released={released}"));
+            }
+            _ => {}
         }
         Ok(Self {
             host,
@@ -151,6 +156,7 @@ impl TestkitProcessPlugin {
             Fault::None
             | Fault::ConstructorCrash
             | Fault::CreateCrash
+            | Fault::CreateBlock
             | Fault::CancelIgnored
             | Fault::DestroyIgnored => {}
         }

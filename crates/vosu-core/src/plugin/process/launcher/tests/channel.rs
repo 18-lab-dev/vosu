@@ -107,7 +107,7 @@ impl ProcessLauncher for ChannelLauncher {
         let endpoint = supervising
             .join()
             .unwrap()
-            .map_err(|failure| HostError::ProcessStartupFailed(failure.to_string()))?;
+            .map_err(HostError::ProcessStartupFailed)?;
         self.children.lock().unwrap().push_back(child);
         self.launched.notify_all();
         Ok(endpoint)

@@ -62,7 +62,10 @@ fn router(
         ApiV1Router::new(source, hub.clone()).with_actions(ActionRoutes::new(
             h.host.clone(),
             h.host
-                .invocation_executor_with_policy(InvocationPolicy { deadline }),
+                .invocation_executor_with_policy(InvocationPolicy {
+                    deadline,
+                    ..InvocationPolicy::default()
+                }),
             jobs,
             Arc::new(Authority(JobOwner::for_tool("j3".into()))),
         )),
