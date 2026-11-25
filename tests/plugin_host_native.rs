@@ -26,6 +26,8 @@ mod lifecycle;
 mod linux_security;
 #[path = "plugin_host_native/parent_death.rs"]
 mod parent_death;
+#[path = "plugin_host_native/parity.rs"]
+mod parity;
 #[path = "plugin_host_native/relay.rs"]
 mod relay;
 #[path = "plugin_host_native/resources.rs"]
