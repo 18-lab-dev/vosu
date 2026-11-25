@@ -78,4 +78,4 @@ impl ConcurrentPlugin for RecordedOsu {
         self.0.dispatch(message, correlation)
     }
 }
-vosu_plugin_api::export_plugin!(bundled concurrent RecordedOsu);
+vosu_plugin_internal::export_plugin!(bundled concurrent RecordedOsu);

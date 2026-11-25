@@ -33,8 +33,19 @@ vosu-osu-model -> vosu-proptest
 vosu-pp
 vosu-release-smoke
 vosu-surface -> vosu-plugin-api
-vosu-plugin-api -> vosu-proptest
 vosu-plugin-testkit -> vosu-plugin-api
+# AF.9 (S0): the published SDK has no workspace edge of any kind; its
+# workspace-only PlanMemory, sync-read interception, bundled registration
+# and read-plan profiler live in the `publish = false` vosu-plugin-internal.
+vosu-plugin-internal -> vosu-plugin-api
+vosu-plugin-testkit -> vosu-plugin-internal
+vosu-osu -> vosu-plugin-internal
+vosu-adapter-gosumemory -> vosu-plugin-internal
+vosu-adapter-streamcompanion -> vosu-plugin-internal
+vosu-adapter-upstream -> vosu-plugin-internal
+# Host-side read_plan_profile spans; tests register bundled fixtures.
+vosu-core -> vosu-plugin-internal
+vosu -> vosu-plugin-internal
 
 vosu-net -> vosu-sys
 vosu-net -> vosu-proptest

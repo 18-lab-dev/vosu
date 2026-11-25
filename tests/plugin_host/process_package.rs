@@ -15,7 +15,7 @@ use vosu_core::plugin::test_support::{
 use vosu_core::plugin::{self, Execution, PackageOrigin, PluginInstanceId};
 
 /// `$CC`, `cc`, `clang` or `gcc`, the same discovery as
-/// `crates/vosu-plugin-api/tests/layout.rs` (Windows needs Clang). A
+/// `tests/sdk/layout_header.rs` (Windows needs Clang). A
 /// missing compiler fails the test: the constructor probe is required
 /// evidence, not optional.
 fn find_c_compiler() -> String {

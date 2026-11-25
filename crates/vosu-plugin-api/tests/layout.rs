@@ -1,15 +1,10 @@
 //! Layout tests: every size and offset in `docs/v2/plugin-abi.md`'s §3
-//! table, asserted on the Rust side with `core::mem::offset_of!` and, in
-//! [`c_header_layout_matches_the_table`], on the C side against
-//! `include/vosu_plugin.h` itself so the header and these Rust types
-//! cannot silently drift apart.
-#![expect(
-    clippy::disallowed_methods,
-    reason = "test code: runs the C compiler directly; no plugin host exists in this process"
-)]
+//! table, asserted on the Rust side with `core::mem::offset_of!`. The C
+//! side (`include/vosu_plugin.h` compiled against the same table) is a
+//! workspace-only check in the root crate's `tests/sdk/layout_header.rs`,
+//! since the header is a separate release asset, not part of this package.
 
 use core::mem::{offset_of, size_of};
-use std::process::Command;
 
 use vosu_plugin_api::{
     vosu_demand_changed_header, vosu_field_publish_header, vosu_plan_base_flat, vosu_plan_op,
@@ -124,57 +119,4 @@ fn vosu_publish_batch_header_layout() {
     assert_eq!(offset_of!(vosu_publish_batch_header, handle), 0);
     assert_eq!(offset_of!(vosu_publish_batch_header, entries_offset), 8);
     assert_eq!(offset_of!(vosu_publish_batch_header, entry_count), 12);
-}
-
-/// Finds a C compiler to run `tests/layout_check.c`'s `_Static_assert`s
-/// through, without a build-time `cc` crate dependency: a dev/build
-/// dependency on `cc` is built around `OUT_DIR`/`TARGET`/`HOST` being set by
-/// cargo for a build script, none of which a `tests/*.rs` binary gets, so
-/// invoking the platform compiler directly here is the cleaner fit for a
-/// test-only check (see the commit message for the full tradeoff).
-fn find_c_compiler() -> Option<String> {
-    let mut candidates = Vec::new();
-    if let Ok(cc) = std::env::var("CC") {
-        candidates.push(cc);
-    }
-    candidates.push("cc".to_owned());
-    candidates.push("clang".to_owned());
-    candidates.push("gcc".to_owned());
-    candidates.into_iter().find(|candidate| {
-        Command::new(candidate)
-            .arg("--version")
-            .output()
-            .is_ok_and(|out| out.status.success())
-    })
-}
-
-/// Compiles `tests/layout_check.c` with `-fsyntax-only` against
-/// `include/vosu_plugin.h`: its `_Static_assert`s mirror this file's
-/// `offset_of!` assertions, so a header edit that disagrees with
-/// `docs/v2/plugin-abi.md`'s §3 table fails here even if nobody touches
-/// the Rust types.
-#[test]
-fn c_header_layout_matches_the_table() {
-    let Some(compiler) = find_c_compiler() else {
-        panic!(
-            "no C compiler (checked $CC, cc, clang, gcc) found to verify include/vosu_plugin.h's layout against docs/v2/plugin-abi.md's §3 table"
-        );
-    };
-
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let include_dir = format!("{manifest_dir}/../../include");
-    let source = format!("{manifest_dir}/tests/layout_check.c");
-
-    let output = Command::new(&compiler)
-        .args(["-fsyntax-only", "-std=c11", "-Wall", "-Wextra", "-I"])
-        .arg(&include_dir)
-        .arg(&source)
-        .output()
-        .unwrap_or_else(|error| panic!("failed to run {compiler} on {source}: {error}"));
-
-    assert!(
-        output.status.success(),
-        "{compiler} rejected {source} (include/vosu_plugin.h disagrees with docs/v2/plugin-abi.md's §3 table):\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }

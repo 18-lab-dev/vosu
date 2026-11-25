@@ -134,11 +134,9 @@ pub struct Stage {
 }
 
 /// [`Stage`], borrowed: one stage's `ops` as a slice instead of an owned
-/// `Vec`, so `encode_submit_into` builds a `VOSU_OP_READ_PLAN_SUBMIT`
-/// payload straight from a caller's own `&[PlanOp]` without ever owning a
-/// `Stage`/`Vec<Stage>` (D17; `crate::sdk::plan_memory`'s own module doc
-/// comment).
-#[cfg(feature = "unstable-sync-reads")]
+/// `Vec`, so [`encode_read_plan_submit_into`] builds a
+/// `VOSU_OP_READ_PLAN_SUBMIT` payload straight from a caller's own
+/// `&[PlanOp]` without ever owning a `Stage`/`Vec<Stage>` (D17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StageRef<'a> {
     pub base: StageBase,
@@ -739,10 +737,9 @@ pub fn encode_read_plan_submit(message: &ReadPlanSubmit) -> Result<Vec<u8>, Mess
 /// no owned `ReadPlanSubmit`/`Stage` intermediate and, since each stage's
 /// own `ops_offset` is computed and written in place as soon as that
 /// stage's own `ops` are appended, no `ops_trailing` scratch buffer either
-/// — every byte `buf` grows to is already final (D17;
-/// `crate::sdk::plan_memory::SyncReadBuffers`'s own doc comment).
-#[cfg(feature = "unstable-sync-reads")]
-pub fn encode_submit_into(
+/// — every byte `buf` grows to is already final (D17). Pair it with
+/// [`crate::HostServices::send_flat`] for an allocation-free submission.
+pub fn encode_read_plan_submit_into(
     buf: &mut Vec<u8>,
     plan: u64,
     handle: u64,

@@ -7,4 +7,4 @@
 //! release builds reject). The bundled manifest stays target-free and
 //! in-process; only this separately staged library runs in a plugin host.
 
-vosu_plugin_api::export_plugin!(concurrent vosu_osu::plugin::OsuPlugin);
+vosu_plugin_internal::export_plugin!(concurrent vosu_osu::plugin::OsuPlugin);

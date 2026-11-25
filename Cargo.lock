@@ -3532,6 +3532,7 @@ dependencies = [
  "vosu-osu-reader",
  "vosu-osu-state",
  "vosu-plugin-api",
+ "vosu-plugin-internal",
  "vosu-plugin-testkit",
  "vosu-pp",
  "vosu-proptest",
@@ -3553,6 +3554,7 @@ dependencies = [
  "vosu-adapter-support",
  "vosu-osu-model",
  "vosu-plugin-api",
+ "vosu-plugin-internal",
  "vosu-surface",
 ]
 
@@ -3573,6 +3575,7 @@ dependencies = [
  "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-plugin-api",
+ "vosu-plugin-internal",
  "vosu-surface",
 ]
 
@@ -3605,6 +3608,7 @@ dependencies = [
  "vosu-osu-model",
  "vosu-osu-state",
  "vosu-plugin-api",
+ "vosu-plugin-internal",
  "vosu-surface",
 ]
 
@@ -3644,6 +3648,7 @@ dependencies = [
  "url",
  "vosu-net",
  "vosu-plugin-api",
+ "vosu-plugin-internal",
  "vosu-plugin-testkit",
  "vosu-proptest",
  "vosu-surface",
@@ -3698,6 +3703,7 @@ dependencies = [
  "vosu-osu-reader",
  "vosu-osu-state",
  "vosu-plugin-api",
+ "vosu-plugin-internal",
  "vosu-proptest",
  "vosu-sys",
  "zip",
@@ -3787,8 +3793,6 @@ name = "vosu-plugin-api"
 version = "1.0.0-alpha.0"
 dependencies = [
  "ciborium",
- "jsonschema",
- "proptest",
  "regex",
  "semver",
  "serde",
@@ -3796,7 +3800,13 @@ dependencies = [
  "thiserror",
  "toml",
  "url",
- "vosu-proptest",
+]
+
+[[package]]
+name = "vosu-plugin-internal"
+version = "0.1.0"
+dependencies = [
+ "vosu-plugin-api",
 ]
 
 [[package]]
@@ -3804,6 +3814,7 @@ name = "vosu-plugin-testkit"
 version = "0.1.0"
 dependencies = [
  "vosu-plugin-api",
+ "vosu-plugin-internal",
 ]
 
 [[package]]

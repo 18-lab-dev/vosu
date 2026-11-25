@@ -383,8 +383,9 @@ impl PublishBatchWriter {
 
     /// Lays the batch started by the last [`Self::begin`] out into `out`
     /// (`out.clear()`ed first, capacity kept — the same reuse pattern
-    /// `super::encode_submit_into` uses), 8-byte aligned (`vosu_field_publish_header`'s
-    /// own size already is, so the entry array and `self.data` need no
+    /// `super::encode_read_plan_submit_into` uses), 8-byte aligned
+    /// (`vosu_field_publish_header`'s own size already is, so the entry
+    /// array and `self.data` need no
     /// extra padding between them), capped at
     /// [`crate::limits::VOSU_PUBLISH_BATCH_MAX_BYTES`] like every other
     /// encode in this module.

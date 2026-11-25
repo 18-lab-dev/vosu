@@ -132,7 +132,7 @@ fn production_selectors_capture_live_time_stats_and_preserve_descendant_lanes() 
                     "../../../../docs/v2/schemas/vosu.osu.schema.json"
                 )],
                 action_schemas: &[],
-                vtable: || vosu_plugin_api::__vtable_for_serialized::<Source>(),
+                vtable: || vosu_plugin_internal::vtable_for::<Source>(),
             },
             plugin::BundledPlugin {
                 manifest: MANIFEST,

@@ -374,5 +374,5 @@ pub fn clean(value: impl std::fmt::Debug) {
 
 pub mod f5 {
     use vosu_plugin_testkit::fixture::ApiFixturePlugin;
-    vosu_plugin_api::export_plugin!(bundled ApiFixturePlugin);
+    vosu_plugin_internal::export_plugin!(bundled ApiFixturePlugin);
 }

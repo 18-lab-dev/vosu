@@ -15,6 +15,8 @@ serde = { version = "=1.0.228", features = ["derive", "rc"] }
 vosu-adapter-support = { path = "../vosu-adapter-support" }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
+# Bundled registration (`export_plugin!(bundled ...)`, AF.9).
+vosu-plugin-internal = { path = "../vosu-plugin-internal" }
 vosu-surface = { path = "../vosu-surface" }
 
 [dev-dependencies]

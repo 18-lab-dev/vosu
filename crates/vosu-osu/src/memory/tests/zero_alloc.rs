@@ -4,8 +4,8 @@
 //! (`SyncReadBuffers`, `read_many`'s `Vec<PlanOp>`) across calls.
 //!
 //! `ByteEchoHost` answers a `VOSU_READ_PLAN_SYNC` submission by re-entering
-//! the SDK's generated `dispatch` synchronously, exactly as
-//! `vosu-plugin-api/tests/plan_memory_alloc.rs` does — and, like that
+//! the workspace glue's intercepting `dispatch` synchronously, exactly as
+//! `vosu-plugin-internal/tests/plan_memory_alloc.rs` does — and, like that
 //! test, never builds an owned `Message`/`ReadPlanSubmit` from the
 //! payload (only `Copy` header reads) and answers through its own reused
 //! `result_buf`, so nothing on this call stack can hide an allocation
@@ -75,7 +75,7 @@ struct ByteEchoHost {
 // SAFETY: `plugin_ctx`/`dispatch` are a raw context and function pointer
 // from a `NoopPlugin::create` call, documented callable from any thread
 // for the plugin instance's whole lifetime (mirrors
-// `vosu-plugin-api/tests/plan_memory_alloc.rs`'s identical `FakeHost`).
+// `vosu-plugin-internal/tests/plan_memory_alloc.rs`'s identical `FakeHost`).
 // Every other field is `Send + Sync` on its own, and this test drives
 // every call from a single thread regardless.
 unsafe impl Send for ByteEchoHost {}
@@ -87,7 +87,7 @@ impl ByteEchoHost {
     /// address: a read for address `a` is served from
     /// `memory[a - base..]`.
     fn new(memory: Vec<u8>, base: usize) -> Self {
-        let vt = vosu_plugin_api::__vtable_for_serialized::<NoopPlugin>();
+        let vt = vosu_plugin_internal::vtable_for::<NoopPlugin>();
         let noop = noop_host_services();
         let init = init_bytes();
         // SAFETY: `noop`/`init` are valid for this call's duration; `vt`

@@ -28,8 +28,6 @@ pub mod memory;
 mod message;
 mod opcode;
 mod primitives;
-#[doc(hidden)]
-pub mod read_plan_profile;
 mod sdk;
 mod status;
 mod validate;
@@ -75,13 +73,11 @@ pub use manifest::{
     ActionDeclaration, ActionSessionMode, Capability, MatchTable, PluginManifest, ResourceKind,
     Runtime, Target,
 };
-#[cfg(feature = "unstable-sync-reads")]
-pub use message::flat::StageRef;
 pub use message::flat::{
     CborAppend, DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishBatchRef,
     PublishBatchWriter, PublishField, PublishFieldRef, PublishValue, PublishValueRef,
-    ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase,
-    decode_publish_batch_ref, decode_publish_field_ref,
+    ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase, StageRef,
+    decode_publish_batch_ref, decode_publish_field_ref, encode_read_plan_submit_into,
 };
 pub use message::{HostServices, Message, MessageError};
 pub use opcode::{VOSU_OPCODE_PRIVATE_BIT, vosu_opcode};
@@ -91,8 +87,6 @@ pub use primitives::{
 #[doc(hidden)]
 pub use sdk::{__vtable_for_concurrent, __vtable_for_serialized};
 pub use sdk::{ConcurrentPlugin, Init, Plugin, PluginError, VtableHostServices};
-#[cfg(feature = "unstable-sync-reads")]
-pub use sdk::{FlatReadResults, PlanMemory, PlanMemoryError, SyncReadBuffers};
 pub use status::vosu_status;
 pub use validate::{
     ValidationError, read_flat_header, validate_array_range, validate_bytes_range,

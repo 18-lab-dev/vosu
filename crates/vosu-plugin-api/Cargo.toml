@@ -4,7 +4,25 @@ version = "1.0.0-alpha.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "vosu 2.0 plugin ABI v1 types, layouts, and codecs (ADR 0019); see docs/v2/plugin-abi.md and include/vosu_plugin.h."
+description = "Plugin SDK for vosu 2.0: ABI v1 types, message codecs, Plugin/ConcurrentPlugin exports and package/catalog validation."
+repository = "https://github.com/18-lab-dev/vosu"
+homepage = "https://github.com/18-lab-dev/vosu"
+documentation = "https://docs.rs/vosu-plugin-api"
+readme = "README.md"
+keywords = ["vosu", "osu", "plugin", "sdk", "abi"]
+categories = ["api-bindings", "development-tools::ffi"]
+# The published package is exactly this list (AF.9): no workspace-relative
+# file is needed to build, test or run its example. Workspace-only header,
+# packaging-schema and property tests live in the root crate's `tests/sdk/`.
+include = [
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "src/**/*.rs",
+    "examples/**/*.rs",
+    "tests/**/*.rs",
+]
 
 [lib]
 path = "src/lib.rs"
@@ -12,14 +30,10 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
-[features]
-# Synchronous read-plan delivery (D5): a plugin's own reader threads only;
-# never published (D11).
-unstable-sync-reads = []
-read-plan-profile = []
-# Bundled-plugin registration glue consumed by the root crate's explicit
-# `BUNDLED` array (D13); never published (D11).
-bundled = []
+# No Cargo features: Cargo has no unpublished features, so everything here
+# ships to crates.io. Synchronous reads and bundled registration live in the
+# `publish = false` `vosu-plugin-internal` crate (AF.9, implementation plan
+# D11); `scripts/check-crate-boundaries.py` rejects a feature here.
 
 [dependencies]
 # Caret, not `=` like every other workspace crate's dependency pins: this is
@@ -35,19 +49,9 @@ thiserror = "2.0.18"
 toml = "1.1.2"
 url = "2.5.8"
 
-[dev-dependencies]
-jsonschema = { version = "=0.61.2", default-features = false }
-proptest = "1.12"
-vosu-proptest = { path = "../vosu-proptest" }
-
-[[test]]
-name = "plan_memory_alloc"
-required-features = ["unstable-sync-reads"]
-
-[[test]]
-name = "plan_memory_validation"
-required-features = ["unstable-sync-reads"]
-
-[[test]]
-name = "plan_memory_unwind"
-required-features = ["unstable-sync-reads"]
+# AF.10's publisher-side checker over this SDK's own validators; its unit
+# tests run with `cargo test -p vosu-plugin-api`.
+[[example]]
+name = "vosu-package-check"
+path = "examples/vosu-package-check/main.rs"
+test = true

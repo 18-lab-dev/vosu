@@ -562,9 +562,9 @@ fn read_plan_process_refusals_match_in_process_before_any_read() {
         commands.send(command).unwrap();
         match events.recv_timeout(BOUND).unwrap() {
             ReadPlanEvent::SubmitStatus(status) => status,
-            ReadPlanEvent::SyncResult(Err(vosu_plugin_api::PlanMemoryError::Rejected(status))) => {
-                status
-            }
+            ReadPlanEvent::SyncResult(Err(vosu_plugin_internal::PlanMemoryError::Rejected(
+                status,
+            ))) => status,
             other => panic!("unexpected {other:?}"),
         }
     };

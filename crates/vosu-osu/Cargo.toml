@@ -30,7 +30,9 @@ tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-osu-reader = { path = "../vosu-osu-reader" }
 vosu-osu-state = { path = "../vosu-osu-state" }
-vosu-plugin-api = { path = "../vosu-plugin-api", features = ["bundled", "unstable-sync-reads"] }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
+# `PlanMemory` synchronous reads and bundled/process registration (AF.9).
+vosu-plugin-internal = { path = "../vosu-plugin-internal" }
 tempfile = "3.26.0"
 thiserror = "2.0.18"
 rosu-map = "=0.2.1"

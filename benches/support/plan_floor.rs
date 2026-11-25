@@ -14,10 +14,8 @@ use vosu_osu_reader::{
 use vosu_plugin_api::memory::{
     MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
 };
-use vosu_plugin_api::{
-    HostServices, Message, PlanMemory, ReadPlanSubmit, StageRef, SyncReadBuffers, vosu_opcode,
-    vosu_status,
-};
+use vosu_plugin_api::{HostServices, Message, ReadPlanSubmit, StageRef, vosu_opcode, vosu_status};
+use vosu_plugin_internal::{PlanMemory, SyncReadBuffers};
 
 struct RecordingMemory {
     inner: Arc<lazer_fixture::Fixture>,

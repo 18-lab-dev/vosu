@@ -348,13 +348,15 @@ permissions, host support, download safety or installation approval.
 In particular, catalog `published` is an informational string, not a required
 date-time format assertion.
 
-The SDK's `tests/packaging_schema.rs` corpus projects TOML to JSON and separates
+The workspace's `tests/sdk/packaging_schema.rs` corpus (root-owned since S0,
+because the schemas are not part of the published SDK package) projects TOML to
+JSON and separates
 shape-invalid rows (both validators reject) from SDK-only semantic rejections
 (structural acceptance is expected). Run offline parity with:
 
 ```sh
-cargo test --locked -p vosu-plugin-api manifest_schema
-cargo test --locked -p vosu-plugin-api catalog_schema
+cargo test --locked --test sdk manifest_schema
+cargo test --locked --test sdk catalog_schema
 ```
 
 Ecosystem packaging scripts may consume these committed files without running
@@ -390,6 +392,37 @@ and asset-backed mirror validation for every entry, fails on any error or on
 missing schema bytes, and prints nonzero package, action and schema-asset
 counts plus every target artifact it checked. A pass grants no trust: a
 `vosu.` plugin id validates only with an exact official `--source`.
+
+S0 fixed the layout and context format. The package for catalog entry `id`
+and target `T` (a native triple or `any`) is read from
+`<packages-root>/<plugins|tools|overlays>/<id>/<T>/`; every package-relative
+path must be a portable relative path of real directories and a real final
+file (no `..`, symlink or reparse point). The registry context is format 1
+JSON with exactly these keys:
+
+```json
+{
+  "format": 1,
+  "official_sources": ["18-lab-dev/vosu-tools"],
+  "registrations": [{"kind": "plugin", "id": "vosu.osu", "source": "bundled",
+                     "official": true, "builtin": true, "replaces": []}],
+  "namespace_revisions": [{"namespace": "vosu.osu", "version": "1.3.0",
+                           "provenance": "trusted-bundled"}],
+  "common_defs_schema": {"$defs": {}}
+}
+```
+
+`--source` is official only when it equals one `official_sources` entry
+exactly; then every catalog id is checked as official and namespace schemas
+compile with official provenance. `registrations` and `namespace_revisions`
+map field for field onto `Registration`/`NamespaceRevision`
+(`provenance`: `third-party`, `official` or `trusted-bundled`), and
+`common_defs_schema` is the host release's `common-defs.schema.json`. Each
+plugin target's library, settings schema and action schemas must exist in the
+package; action schemas are checked as bounded JSON documents only, since
+their bounded-profile compiler is host code (vosu-core `action_schema`), not
+SDK code. The exit status is 0 on a pass, 1 on a validation failure and 2 on
+a usage error.
 
 ### `kind = "plugin"`
 

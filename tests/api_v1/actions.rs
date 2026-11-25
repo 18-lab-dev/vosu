@@ -74,7 +74,7 @@ mod fixture {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled Echo);
+    vosu_plugin_internal::export_plugin!(bundled Echo);
 }
 struct Installed(std::sync::Weak<PluginHost>);
 impl vosu::tools::capabilities::InstalledCapabilities for Installed {

@@ -1,8 +1,9 @@
 use super::{Result, open, plan};
 use std::{hint::black_box, time::Instant};
 use vosu_plugin_api::memory::{ProcessMemory, ReadRequest};
-use vosu_plugin_api::{
-    PlanBase, PlanMemory, PlanOp, StageBase, StageRef, SyncReadBuffers,
+use vosu_plugin_api::{PlanBase, PlanOp, StageBase, StageRef};
+use vosu_plugin_internal::{
+    PlanMemory, SyncReadBuffers,
     read_plan_profile::{self, Phase},
 };
 

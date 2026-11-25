@@ -26,4 +26,4 @@ impl ConcurrentPlugin for ConcurrentEchoPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled concurrent ConcurrentEchoPlugin);
+vosu_plugin_internal::export_plugin!(bundled concurrent ConcurrentEchoPlugin);

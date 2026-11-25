@@ -102,11 +102,41 @@ def check(metadata, rules_path=RULES):
     # M5 R0: the published SDK owns the platform-neutral memory vocabulary
     # below the native boundary, and the reducer reads it with no native edge.
     sdk_forbidden = {"vosu-core", "vosu-net", "vosu-surface", "vosu-sys"}
-    for source, package in workspace_packages(metadata).items():
+    packages = workspace_packages(metadata)
+    # AF.9 (S0): Cargo has no unpublished features, so the published SDK
+    # carries no feature and no workspace crate (not even a dev-dependency:
+    # its packaged tests must build from the .crate alone), and everything
+    # workspace-internal lives in the never-published vosu-plugin-internal.
+    sdk = packages.get("vosu-plugin-api")
+    if sdk is not None:
+        if sdk.get("features"):
+            errors.append(
+                "AF.9: vosu-plugin-api declares Cargo features "
+                f"{sorted(sdk['features'])}; Cargo has no unpublished features"
+            )
+        if sdk.get("publish") == []:
+            errors.append("AF.9: vosu-plugin-api is the published SDK; it cannot be publish = false")
+    internal = packages.get("vosu-plugin-internal")
+    if internal is not None and internal.get("publish") != []:
+        errors.append("AF.9: vosu-plugin-internal must stay publish = false")
+    for source, package in packages.items():
         for dependency in package["dependencies"]:
             target = dependency["name"]
             if "path" not in dependency or target not in names:
                 continue
+            if source == "vosu-plugin-api":
+                errors.append(
+                    f"AF.9: SDK edge vosu-plugin-api -> {target} needs a workspace crate the "
+                    "published package cannot carry"
+                )
+            if (
+                target == "vosu-plugin-internal"
+                and dependency.get("kind") != "dev"
+                and package.get("publish") != []
+            ):
+                errors.append(
+                    f"AF.9: publishable {source} depends on the unpublished vosu-plugin-internal"
+                )
             if source == "vosu-osu" and target == "vosu-surface":
                 errors.append("M4a: vosu-osu -> vosu-surface revives the removed snapshot bridge")
             if dependency.get("kind") == "dev":

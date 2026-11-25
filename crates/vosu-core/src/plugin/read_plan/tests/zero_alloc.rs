@@ -13,7 +13,8 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vosu_plugin_api::{Bitness, Message, PlanMemory, StageRef, SyncReadBuffers};
+use vosu_plugin_api::{Bitness, Message, StageRef};
+use vosu_plugin_internal::{PlanMemory, SyncReadBuffers};
 
 use super::helpers::{FakeMemory, NoModules, far_deadline, op};
 use super::*;
@@ -327,11 +328,12 @@ fn execute_into_is_allocation_free_once_warmed_multi_op_dependent_stage() {
 /// — `PlanMemory::read_flat` called directly on this test thread against
 /// that plugin's own `VtableHostServices`
 /// ([`vosu_plugin_testkit::read_plan::host_services`]), exercising the
-/// real pipeline `vosu-plugin-api`'s own `plan_memory_alloc.rs` (a fake
+/// real pipeline `vosu-plugin-internal`'s own `plan_memory_alloc.rs` (a fake
 /// host) cannot reach: `PluginHostHandler::handle_read_plan_sync` ->
 /// `PluginHost::handle_read_plan_submit_raw` -> `execute_into` into its
-/// own per-thread reused buffer -> `DispatchTarget::dispatch` -> the SDK's
-/// `try_intercept_sync_raw` -> `read_flat`'s own `SyncReadBuffers`.
+/// own per-thread reused buffer -> `DispatchTarget::dispatch` ->
+/// `vosu-plugin-internal`'s intercepting dispatch -> `read_flat`'s own
+/// `SyncReadBuffers`.
 #[test]
 fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
     struct DummyStorage;

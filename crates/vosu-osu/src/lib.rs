@@ -40,7 +40,7 @@ mod test_support;
 #[cfg(all(feature = "test-harness", not(test)))]
 pub use session::test_support;
 
-vosu_plugin_api::export_plugin!(bundled concurrent plugin::OsuPlugin);
+vosu_plugin_internal::export_plugin!(bundled concurrent plugin::OsuPlugin);
 
 /// The plugin's `manifest.toml`, embedded verbatim (`docs/v2/plugin-abi.md`
 /// §8). Parse with `vosu_plugin_api::manifest::PackageManifest::parse`.

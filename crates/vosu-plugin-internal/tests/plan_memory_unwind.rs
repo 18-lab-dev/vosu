@@ -13,7 +13,7 @@
 //! `read`/`read_flat` is actually running) would then make
 //! `intercept_raw` write through that dangling pointer — a use-after-free
 //! from entirely safe code. Run under miri to actually observe the UB
-//! this guards against (`cargo +nightly miri test -p vosu-plugin-api
+//! this guards against (`cargo +nightly miri test -p vosu-plugin-internal
 //! --test plan_memory_unwind`).
 
 use std::ffi::c_void;
@@ -21,10 +21,10 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Mutex;
 
 use vosu_plugin_api::{
-    HostServices, Init, Message, PlanBase, PlanMemory, Plugin, PluginError, ReadResult, StageRef,
-    SyncReadBuffers, VtableHostServices, vosu_bytes, vosu_host_services, vosu_message, vosu_opcode,
-    vosu_status,
+    HostServices, Init, Message, PlanBase, Plugin, PluginError, ReadResult, StageRef,
+    VtableHostServices, vosu_bytes, vosu_host_services, vosu_message, vosu_opcode, vosu_status,
 };
+use vosu_plugin_internal::{PlanMemory, SyncReadBuffers};
 
 struct TestPlugin;
 
@@ -123,7 +123,7 @@ impl HostServices for TypedAnsweringHost {
 /// complete correctly instead of writing through that stale pointer.
 #[test]
 fn unwinding_out_of_read_flat_does_not_leave_a_dangling_sync_raw_target() {
-    let vt = vosu_plugin_api::__vtable_for_serialized::<TestPlugin>();
+    let vt = vosu_plugin_internal::vtable_for::<TestPlugin>();
     let noop = noop_host_services();
     let init = init_bytes();
     // SAFETY: `noop`/`init` are valid for this call's duration; `vt` is a
@@ -231,7 +231,7 @@ impl Plugin for RecordingPlugin {
 /// through that dangling pointer instead of ever reaching `on_message`.
 #[test]
 fn unwinding_out_of_read_flat_does_not_leave_a_dangling_target_for_a_later_raw_send() {
-    let vt = vosu_plugin_api::__vtable_for_serialized::<RecordingPlugin>();
+    let vt = vosu_plugin_internal::vtable_for::<RecordingPlugin>();
     let noop = noop_host_services();
     let init = vosu_plugin_api::encode(&Init {
         plugin_id: "test.plan_memory_unwind.recording".to_owned(),

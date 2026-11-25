@@ -111,7 +111,7 @@ impl ConcurrentPlugin for ObservedPlugin {
         result
     }
 }
-vosu_plugin_api::export_plugin!(bundled concurrent ObservedPlugin);
+vosu_plugin_internal::export_plugin!(bundled concurrent ObservedPlugin);
 
 pub struct Memory {
     base: usize,

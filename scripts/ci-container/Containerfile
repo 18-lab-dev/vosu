@@ -22,7 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libbpf-dev libelf-dev) rather than guessing a runtime-only subset, plus
 # what else those tests need that the hosted runner image preinstalls:
 #   - clang/libbpf-dev/libelf-dev: ci.yml's own line. clang is also a C
-#     compiler `crates/vosu-plugin-api/tests/layout.rs`'s
+#     compiler `tests/sdk/layout_header.rs`'s
 #     `c_header_layout_matches_the_table` invokes directly (checks $CC, cc,
 #     clang, gcc) to verify include/vosu_plugin.h against the ABI doc; the
 #     -dev headers cover libbpf-cargo's skeleton codegen if a test ever

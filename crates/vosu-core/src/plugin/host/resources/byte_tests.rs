@@ -91,7 +91,7 @@ impl Plugin for BytePlugin {
         Ok(())
     }
 }
-vosu_plugin_api::export_plugin!(bundled BytePlugin);
+vosu_plugin_internal::export_plugin!(bundled BytePlugin);
 
 /// Even blocking-worker-backed operations have a bounded test-side wait.
 pub(super) struct BoundedRuntime(tokio::runtime::Runtime);

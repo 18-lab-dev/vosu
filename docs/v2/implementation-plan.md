@@ -88,26 +88,26 @@ dependencies" lists workspace crates only; it is recorded in a new
 
 | Crate | Responsibility | Allowed workspace dependencies |
 |---|---|---|
-| `crates/vosu-plugin-api` | ABI v1 types mirroring `include/vosu_plugin.h` (`repr(C)`, layout-tested), message codecs (flat hot-path layouts including `PUBLISH_BATCH`, CBOR), the Rust SDK (`Plugin` with `&mut self` behind an SDK lock and `ConcurrentPlugin` with `&self`, D22; `HostServices`; `Message`; `export_plugin!` for external builds), manifest validation shared by core and SDK users. Published to crates.io (D11). Until S0 implements AF.9, `PlanMemory` (synchronous reads, D5) and the bundled-registration glue still sit behind the `unstable-sync-reads` and `bundled` features; S0 moves them to `vosu-plugin-internal` so the published crate has neither. Versioned by SDK semver whose major equals the ABI major. | none |
-| `crates/vosu-plugin-internal` (AF.9) | `publish = false` companion: `PlanMemory` and the SDK-side synchronous-read interception (D5) and the bundled-registration glue for the root crate's `BUNDLED` array, moved out of `vosu-plugin-api` by S0 with every internal caller (D11). | `vosu-plugin-api` |
+| `crates/vosu-plugin-api` | ABI v1 types mirroring `include/vosu_plugin.h` (`repr(C)`, layout-tested), message codecs (flat hot-path layouts including `PUBLISH_BATCH`, CBOR), the Rust SDK (`Plugin` with `&mut self` behind an SDK lock and `ConcurrentPlugin` with `&self`, D22; `HostServices`; `Message`; `export_plugin!` for external builds), manifest validation shared by core and SDK users. Published to crates.io (D11). Since S0 (AF.9) it declares no Cargo features and no workspace dependency (not even a dev-dependency), ships a crate README and license copies, and carries the `vosu-package-check` example (AF.10); its workspace-only header, packaging-schema and `prop_*` tests are the root `tests/sdk.rs`. Versioned by SDK semver whose major equals the ABI major. | none |
+| `crates/vosu-plugin-internal` (AF.9) | `publish = false` companion: `PlanMemory` and the SDK-side synchronous-read interception (D5) — a wrapper around the SDK glue's `dispatch` — the bundled-registration glue for the root crate's `BUNDLED` array, the intercepting `cdylib` form for the osu! process fixture, and the opt-in `read_plan_profile` diagnostics, moved out of `vosu-plugin-api` by S0 with every internal caller (D11). Its users (`vosu-osu`, the adapters, `vosu-plugin-testkit`, `vosu-core` for host-side profile spans, the root crate) are all `publish = false`; `scripts/check-crate-boundaries.py` enforces both. | `vosu-plugin-api` |
 | `crates/vosu-sys` (core-owned) | Native boundary: `src/platform*`, `src/process*` (Linux/Windows `ProcessMemory` backends, signature region walk, module tables), process-event backends `src/instance/events*` with the eBPF build step. All platform `unsafe`. | `vosu-plugin-api` (M5 R0: implements the platform-neutral `memory` vocabulary — `ProcessMemory`, read requests, `MemoryError`/`ReadStatus`, `ProcessBitness`, signature `Pattern` — instead of defining it) |
 | `crates/vosu-net` (core-owned) | Hardened HTTPS streaming and archive extraction (`src/net*`), later credential origin scoping and the per-host private-network exception (ADR 0023). | `vosu-sys` |
 | `crates/vosu-surface` (core-owned) | Rust-only API for **bundled** surface plugins (D3), listed exhaustively in the ADR 0019 amendment: exact route and WebSocket-feed registration on a listener role; state reads that go through the same subscription, demand, and `requires` path as `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE` handles; management-route provenance. No `ProcessMemory`, configuration writes, or credentials. Not part of the C ABI. | `vosu-plugin-api` |
-| `crates/vosu-core` | Config, logging, report, updater, desktop integration, generic discovery/generations/focus (generalized `src/instance*`), plugin registry and host (in-process dispatch, `vosu plugin-host` supervision and channel), state bus and demand compiler, listeners/origins/auth/API keys/broker/file confinement/WebSocket hub primitives, API v1 (sessions, subscriptions, reads, resources, trees, jobs), catalog v2, sources, credentials, resolver, 1.x migration, lifecycle. | `vosu-sys`, `vosu-net`, `vosu-plugin-api`, `vosu-surface` |
+| `crates/vosu-core` | Config, logging, report, updater, desktop integration, generic discovery/generations/focus (generalized `src/instance*`), plugin registry and host (in-process dispatch, `vosu plugin-host` supervision and channel), state bus and demand compiler, listeners/origins/auth/API keys/broker/file confinement/WebSocket hub primitives, API v1 (sessions, subscriptions, reads, resources, trees, jobs), catalog v2, sources, credentials, resolver, 1.x migration, lifecycle. | `vosu-sys`, `vosu-net`, `vosu-plugin-api`, `vosu-surface`, `vosu-plugin-internal` (S0: host-side `read_plan_profile` spans; bundled test fixtures) |
 | `crates/vosu-osu-model` | osu! value types and osu!-exact helpers shared by reader, calculator, and adapters: `src/model/{memory,states,enums}*` and the calculation root helpers (`src/calculation/root/{helpers,mods,scores}.rs`: JS-compatible rounding and number writing, mods, grades, legacy hits). | none |
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`, `vosu-net` (the moved offset-generator's hardened ZIP extraction, `vosu_net::extract_zip_atomic`, DD, and since M5 R1 the atomic offset-cache publish/read convention, `vosu_net::publish`). The interim `vosu-sys` edge (DC) was removed by M5 R1: reads use `PlanMemory`, every scan goes through an injected `ScanBackend` (the host's `SCAN_REQUEST`; no region-walk fallback), the lazer executable root comes from the `SESSION_ATTACHED` `path` fact, and the offset generator's composer injects the gated `vosu_sys::process_spawn` spawn. `vosu-sys` remains a dev-dependency only |
 | `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`, `vosu-plugin-api` (the reducer's `MemoryRead`/`ReadStatus`/`MemoryError` from `vosu_plugin_api::memory`; the interim `vosu-sys` edge was removed by M5 R0) |
-| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; no `vosu-surface` dependency after M4a |
+| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-plugin-internal` (S0: `PlanMemory`, bundled and process registration), `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; no `vosu-surface` dependency after M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
-| `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
-| `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model` |
+| `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
+| `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model` |
 | `crates/vosu-adapter-streamcompanion` | streamCompanion-compatible `/json/sc`, `/tokens`; computes strains, breaks, kiai points, and timing points itself from the chart resource (D2). | gosumemory's list plus `vosu-osu-calc` |
 | `crates/vosu-dashboard` | Dashboard pages, server-side render, embedded `assets/server/`, report page, plugin/tool/overlay management UI, `VOSU_DASHBOARD=off`. | `vosu-surface`, `vosu-plugin-api` |
 | `crates/vosu-overlay-host` | Overlay hosting: counter discovery/download/settings/profiles (`src/counters*`), the community overlay catalog (`src/server/catalog.rs`), `/websocket/commands` (`src/server/commands*`), overlay static serving. | `vosu-surface`, `vosu-plugin-api`, `vosu-net` |
 | `crates/vosu-tool-host` | Web-only tool hosting: static UI serving, launch sessions, bridge, tool settings (`src/tools/mod.rs` minus services). | `vosu-surface`, `vosu-plugin-api` |
 | `crates/vosu-proptest` (dev-only) | `vosu_proptest_config()` from `src/proptest_support.rs`, shared by every crate with `prop_*` tests. | none |
-| `crates/vosu-plugin-testkit` (test-harness only) | Bundled test plugin with echo/progress/cancel/stream actions and a synthetic game, for API v1, bridge, and plugin-host tests and as the SDK reference example; also `vosu-core`'s own dev-dependency for `PluginHost` session/focus end-to-end tests (`session.rs`'s `SessionPlugin`). | `vosu-plugin-api` |
+| `crates/vosu-plugin-testkit` (test-harness only) | Bundled test plugin with echo/progress/cancel/stream actions and a synthetic game, for API v1, bridge, and plugin-host tests and as the SDK reference example; also `vosu-core`'s own dev-dependency for `PluginHost` session/focus end-to-end tests (`session.rs`'s `SessionPlugin`). | `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration, `PlanMemory`) |
 | `.` (`vosu`) | `main.rs`, `vosux` and `plugin-host` argv dispatch, Windows resources, the explicit `BUNDLED` registration array (D13), integration tests, benches, examples. | every crate above |
 | `crates/vosu-pp` and members, `crates/vosu-test-harness`, `crates/vosu-release-smoke` | Unchanged roles (`AGENTS.md` "Source ownership"); the harness depends on the specific crates it drives instead of the old monolith. | unchanged |
 
@@ -844,7 +844,8 @@ Scope:
   `VOSU_STREAM_CHUNK_MAX_BYTES`, alignment, unknown flag bits rejected); `Plugin`
   (`&mut self`, serialized by an SDK lock) and `ConcurrentPlugin` (`&self`,
   `Sync`) with `export_plugin!` producing `vosu_plugin_entry_v1` for
-  `cdylib` builds (D22); `PlanMemory` behind `unstable-sync-reads` (D5).
+  `cdylib` builds (D22); `PlanMemory` behind `unstable-sync-reads` (D5;
+  S0 later moved it to the `publish = false` `vosu-plugin-internal`, AF.9).
 - Core plugin host: the explicit `BUNDLED` array in the root crate and
   external `dlopen` (`libloading`, D13); manifest `kind = "plugin"` runtime
   fields (plugin-abi.md §8) for bundled and development plugins
@@ -2693,8 +2694,8 @@ states what was adopted and why. Spec amendments land in A1.
   the blocked submitter), under a deadline that returns `VOSU_ERR_TIMED_OUT`.
   The SDK routes flagged results to a per-plan slot before user code sees
   them; `PlanMemory` refuses to run on a dispatch thread and ships only
-  behind the unpublished `unstable-sync-reads` feature, which AF.9 replaces
-  with the `publish = false` `vosu-plugin-internal` crate (see D11). The osu! plugin is measured
+  in the `publish = false` `vosu-plugin-internal` crate (AF.9, S0; see D11),
+  whose dispatch glue performs that routing. The osu! plugin is measured
   under the process runtime in M5. Why: an optional "host may" behavior is
   one plugins cannot rely on, deadlocks a plugin holding a lock across `send`,
   contradicts the header's "arrives later" contract
@@ -2820,6 +2821,21 @@ states what was adopted and why. Spec amendments land in A1.
   `vosu-proptest`, and no source-stripping release variant exists. A version
   bump is never a publication: each crates.io upload is a separate owner
   approval (AF.1).
+
+  **F S0 implementation (2026-11-25).** The dispatch seam is the SDK's own
+  generic glue: `vosu-plugin-internal`'s `vtable_for`/`vtable_for_concurrent`
+  take the SDK's `create`/`destroy` unchanged and wrap its `dispatch`, so a
+  synchronous `READ_PLAN_RESULT` is claimed (header read first, no decode for
+  `read_flat`) before the SDK glue decodes it or takes the serialized lock,
+  and every other message runs the unmodified SDK path with the
+  dispatch-thread mark set. The SDK keeps only codecs that external plugins
+  can use for allocation-free async reads and publishes — `StageRef`,
+  `encode_read_plan_submit_into`, `HostServices::send_flat`, now
+  unconditional — and drops `HostServices::submit_read_plan_sync`
+  (`PlanMemory` sends its own `sync` submission). `read_plan_profile` moved
+  with `PlanMemory`. `scripts/sdk-package.py verify` checks the packaged
+  `.crate` outside the workspace, including an isolated registry-requirement
+  consumer and probes proving the removed private surface does not resolve.
 - **D12 Bridge path.** The 2.0 bridge is served at
   `/tools/_host/v2/bridge.js`; the v1 path is removed in M7. Why: every
   official tool is rebuilt and 1.x user tools are disabled by the migration
