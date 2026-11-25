@@ -5,11 +5,13 @@ use sha2::{Digest, Sha256};
 use super::library::{open_verified, sha256};
 use super::*;
 
-fn library_file(bytes: &[u8]) -> tempfile::NamedTempFile {
+/// A library file whose writer is closed, as an installed package is: an
+/// open writer would (correctly) make the Windows deny-write open fail.
+fn library_file(bytes: &[u8]) -> tempfile::TempPath {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     file.write_all(bytes).unwrap();
     file.flush().unwrap();
-    file
+    file.into_temp_path()
 }
 
 #[test]
@@ -28,33 +30,28 @@ fn a_matching_library_loads_through_the_object_that_was_hashed() {
     let bytes = b"not really an ELF, only hashed here".to_vec();
     let file = library_file(&bytes);
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let verified = open_verified(file.path(), &digest).unwrap();
+    let verified = open_verified(&file, &digest).unwrap();
     #[cfg(target_os = "linux")]
     {
         let load_path = verified.load_path().to_str().unwrap().to_owned();
         assert!(load_path.starts_with("/proc/self/fd/"), "{load_path}");
         // Replacing the path after the check does not change what loads.
-        std::fs::remove_file(file.path()).unwrap();
-        std::fs::write(file.path(), b"substituted").unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, b"substituted").unwrap();
         assert_eq!(std::fs::read(verified.load_path()).unwrap(), bytes);
     }
     #[cfg(windows)]
     {
-        assert_eq!(verified.load_path(), file.path());
+        assert_eq!(verified.load_path(), &*file);
         // The open handle refuses writers until loading finishes.
-        assert!(
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(file.path())
-                .is_err()
-        );
+        assert!(std::fs::OpenOptions::new().write(true).open(&file).is_err());
     }
 }
 
 #[test]
 fn a_changed_library_is_the_approval_stage() {
     let file = library_file(b"changed bytes");
-    let failure = open_verified(file.path(), &[0; 32]).err().unwrap();
+    let failure = open_verified(&file, &[0; 32]).err().unwrap();
     assert_eq!(failure.stage, StartupStage::Approval);
     assert_eq!(failure.code, "digest_mismatch");
 }
