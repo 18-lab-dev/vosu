@@ -288,7 +288,7 @@ fn approval_near_miss_management_requests_are_refused() {
         (Method::POST, format!("/api/plugins/{ID}/approval/")),
         (Method::POST, format!("/api/plugins/{ID}/Approval")),
         (Method::POST, format!("/api/plugins/{ID}x/approval")),
-        (Method::POST, format!("/api/plugins//approval")),
+        (Method::POST, "/api/plugins//approval".to_owned()),
     ] {
         let (status, body) =
             daemon.request(method.clone(), &path, Some(&approval), Presented::Dashboard);
