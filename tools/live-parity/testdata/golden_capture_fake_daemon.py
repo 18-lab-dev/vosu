@@ -20,6 +20,7 @@ import socketserver
 import subprocess
 import sys
 import threading
+import urllib.parse
 
 MODE = sys.argv[1]
 PORT = int(os.environ["SERVER_PORT"])
@@ -140,6 +141,11 @@ class Handler(socketserver.BaseRequestHandler):
         path, _, query = target.partition("?")
         if path in OPTIONS.get("close_paths", ()):
             return True
+        if MODE == "vosu" and OPTIONS.get("request_budget") and len(
+                urllib.parse.parse_qsl(query, keep_blank_values=True)) > 128:
+            # adapter-surface-request-budget: the request never reaches a provider.
+            sock.sendall(response(404, b"Not Found", head=method == "HEAD"))
+            return
         if MODE == "vosu" and path == ENDPOINT and not OPTIONS.get("no_harness"):
             if values("x-vosu-test-capture") == [CAPABILITY]:
                 if method != "GET":

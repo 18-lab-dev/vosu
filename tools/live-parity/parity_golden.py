@@ -50,6 +50,7 @@ import os
 from pathlib import Path
 import re
 import parity_golden_crash as crash
+import parity_golden_ledger as ledger
 import parity_volatile as volatile
 import shutil
 import subprocess
@@ -567,13 +568,11 @@ def _check_sandwiches(case: dict[str, Any]) -> None:
     if case["family"] == "state-http" and method in ("GET", "HEAD") and path in STATE_ROUTES:
         if STATE_ROUTES[path] != before["schema"]:
             raise GoldenError(f"case {case_id}: state route must dump its own schema")
-        # The dump records the adapter's GET response; a HEAD status is a route property
-        # (GOLDEN_CONTRACT §6: status and headers come from the route record).
-        if method == "GET" and route["status"] != before["http"]["status"]:
-            raise GoldenError(f"case {case_id}: vosu route status differs from the dump's adapter status")
-        if method == "GET" and volatile.payload_view(path, route["body"])[0] != volatile.payload_view(
-                path, before["http"]["body_utf8"].encode("utf-8"))[0]:
-            raise GoldenError(f"case {case_id}: vosu route bytes differ from the dump's adapter bytes")
+        # The dump records the adapter's GET response unless a ledger row decides the route
+        # first; a HEAD status is a route property (GOLDEN_CONTRACT §6: status and headers
+        # come from the route record).
+        if method == "GET":
+            ledger.check_state_route(case_id, path, route, before)
     if case["family"] == "files":
         for name in ("etag", "last-modified"):
             values = [[v for n, v in record["headers"] if n.lower() == name]

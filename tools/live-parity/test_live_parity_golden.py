@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION
 import parity_golden as golden_mod
+import parity_golden_ledger as golden_ledger
 from parity_golden_rules import (
     RULE_IDS, GoldenError, Root, RootRewriter, apply_timestamp_pointers, check_approved_rules,
     rewrite_cbor_text,
@@ -428,6 +429,44 @@ class CaptureValidationTests(GoldenTestCase):
         get = case("state-http.json-v2.get.no-client", request(), (up, up),
                    vosu=response(text(not_ready), [], status="HTTP/1.1 404 Not Found"), dump=dump)
         self.rejects(capture([get]), "route status differs")
+
+    def test_request_budget_ledger_decides_the_route_not_the_dump(self) -> None:
+        # Pilot 2: an over-budget request never reaches the adapter, so vosu answers the
+        # ledger's 404 while the dump still records the adapter's 200.
+        pairs = lambda count: "/json/v2?" + "&".join(f"p{index}=0" for index in range(count))
+        up = response(text('{"ok":true}'), [["Content-Type", "application/json"]])
+        not_found = response(text("Not Found"), [], status="HTTP/1.1 404 Not Found")
+        over = case("state-http.json-v2.budget.query-pairs-129", request(target=pairs(129)),
+                    (up, up), vosu=not_found)
+        self.run_golden(capture([over]))
+        self.rejects(capture([case("state-http.json-v2.budget.query-pairs-129",
+                                   request(target=pairs(129)), (up, up))]),
+                     "ledger adapter-surface-request-budget .*must answer 404, not 200")
+        # Within the budget the case stays strict, and no other case gets the rule.
+        self.rejects(capture([case("state-http.json-v2.budget.query-pairs-128",
+                                   request(target=pairs(128)), (up, up), vosu=not_found)]),
+                     "route status differs")
+        self.run_golden(capture([case("state-http.json-v2.budget.query-pairs-128",
+                                      request(target=pairs(128)), (up, up))]))
+        self.rejects(capture([case("state-http.json-v2.near.query", request(target=pairs(129)),
+                                   (up, up), vosu=not_found)]), "route status differs")
+
+    def test_request_budget_mirrors_the_surface_limits(self) -> None:
+        excess = golden_ledger.request_budget_excess
+        query = lambda total: request(target="/json/v2?q=" + "x" * (total - 1))
+        tags = lambda count: [f'If-None-Match: "t{index}"' for index in range(count)]
+        self.assertIsNone(excess(query(16_384)))
+        self.assertRegex(excess(query(16_385)), "16385 metadata bytes")
+        self.assertIsNone(excess(request("GET", "/json/v2", *tags(32))))
+        self.assertRegex(excess(request("GET", "/json/v2", *tags(33))), "33 forwarded headers")
+        self.assertIsNone(excess(request("GET", "/json/v2", "X-Other: \x01")))
+        self.assertRegex(excess(request("GET", "/json/v2", "Range: bytes=0-1\x7f")),
+                         "forwarded range value")
+        # Decoded like form_urlencoded: empty sequences are skipped, a bare key is a pair.
+        self.assertIsNone(excess(request(target="/json/v2?" + "&" * 300 + "a")))
+        self.assertRegex(excess(request(target="/json/v2?" + "&".join("k" * 129))), "129 query")
+        self.assertIsNone(golden_ledger.route_rule("state-http.json-v2.get.menu",
+                                                   request(target="/json/v2?" + "&".join("k" * 129))))
 
     def test_identity_ordinals_are_verified(self) -> None:
         dump = envelope()

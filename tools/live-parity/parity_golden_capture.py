@@ -10,7 +10,8 @@ identical bytes, then vosu dump -> route -> dump. A failed sandwich retries the 
 case, at most three attempts, and every attempt is recorded; attempts are never
 mixed. Upstream records are the only expected values; vosu dumps are replay input.
 Cases whose request kills upstream run last, after the no-client barrier, and record
-the `upstream_crashed` outcome (`parity_golden_crash`).
+the `upstream_crashed` outcome (`parity_golden_crash`). A run starts only with a passing
+client-less rehearsal receipt for its authorized commit and tooling (`parity_golden_rehearsal`).
 
 Outputs, both private and never published: the capture `--out`, exactly the shape
 `golden` reads, and `<out>.transcript.json` with the raw records, attestations,
@@ -148,8 +149,18 @@ class LiveClient:
             daemon_mod._terminate_client_descendants(self.artifact, hard=True)
             if not daemon_mod._wait_for_client_descendants(self.artifact, 1):
                 errors.append("attested osu client descendants survived cleanup")
-        self.shared_profile = remove_new_shared_logs(self.shared_logs, self.shared_before)
+        self.shared_profile = remove_new_shared_logs(self.shared_logs, self.shared_before,
+                                                     exited=self._released)
+        errors += [f"shared lazer log {entry['name']} is still open after the client exited: "
+                   f"{entry['error']}" for entry in self.shared_profile["locked"]]
         return errors
+
+    def _released(self) -> bool:
+        """The attested client has exited (an unapproved process keeps the wait going)."""
+        try:
+            return self.exited()
+        except ValueError:
+            return False
 
 
 def stderr_operator(barrier: str, message: str) -> None:
@@ -646,10 +657,12 @@ class Session:
         else:
             source_record = {"revision": PINNED_SOURCE_REVISION, "kind": "native",
                              "sha256": source["sha256"]}
+        return {"source": source_record, "vosu": build["vosu"], "client": self._client_attestation()}
+
+    def _client_attestation(self) -> dict[str, Any]:
         client = self.cfg["_artifact_identity"]["client"]
-        return {"source": source_record, "vosu": build["vosu"],
-                "client": {"variant": self.cfg["client"].lower(), "version": client["version"],
-                           "sha256": client["sha256"]}}
+        return {"variant": self.cfg["client"].lower(), "version": client["version"],
+                "sha256": client["sha256"]}
 
     def _assets(self) -> list[dict[str, Any]]:
         root = Path(self.golden_cfg["capture_root"]).resolve(strict=True)
@@ -915,7 +928,7 @@ def _serialize(value: Any) -> bytes:
 
 
 def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
-                   timeout: float = 3600.0,
+                   rehearsal_receipt: str | None, timeout: float = 3600.0,
                    build: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
                    client: Client | None = None,
                    operator: Callable[[str, str], None] = stderr_operator) -> int:
@@ -933,11 +946,14 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
             raise CaptureError(f"{path.name} exists; golden-capture never replaces evidence")
     if not out_path.parent.is_dir():
         raise CaptureError("the private capture directory does not exist")
+    from parity_golden_rehearsal import check_receipt  # It builds on this module.
+    receipt = check_receipt(rehearsal_receipt, cfg)
     if build is None:
         from parity_build import build_harness_artifacts
         build = build_harness_artifacts
     session = Session(cfg, scenario, out_path, timeout=timeout, build=build,
                       client=client or LiveClient(cfg), operator=operator)
+    session.transcript["rehearsal_receipt"] = receipt
     capture: dict[str, Any] | None = None
     failure: BaseException | None = None
     try:

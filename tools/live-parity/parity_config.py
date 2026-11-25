@@ -108,10 +108,21 @@ def config_schema() -> dict[str, Any]:
         ],
         "additionalProperties": False,
     }
-def load_config(path: str) -> dict[str, Any]:
+def load_config(path: str, *, rehearsal: bool = False) -> dict[str, Any]:
+    """Validate a run configuration and attest its artifacts.
+
+    `rehearsal` loads a client-less `golden-rehearsal` configuration (parity_golden_rehearsal):
+    Linux lazer, a golden block without authorization or assets, and no client fields."""
     with open(path, encoding="utf-8") as fh:
         cfg = json.load(fh)
     errors: list[str] = []
+    client_fields = ("client_executable", "client_args", "client_launch_mode",
+                     "client_expected_sha256", "client_expected_version")
+    if rehearsal:
+        errors += [f"{name} is forbidden in a client-less rehearsal" for name in client_fields
+                   if name in cfg]
+        if str(cfg.get("os", "")).lower() != "linux" or "golden" not in cfg:
+            errors.append("a rehearsal runs on Linux and needs a golden block")
     allowed_top = {
         "scenario", "source_mode", "source_directory", "source_reference",
         "client_executable", "client_args", "client_launch_mode",
@@ -167,9 +178,9 @@ def load_config(path: str) -> dict[str, Any]:
                 errors.append(
                     f"source_reference.version must be exactly {PINNED_SOURCE_VERSION}")
     launch_mode = cfg.get("client_launch_mode", "launch")
-    if launch_mode not in {"launch", "external"}:
+    if not rehearsal and launch_mode not in {"launch", "external"}:
         errors.append("client_launch_mode must be launch or external")
-    else:
+    elif not rehearsal:
         cfg["client_launch_mode"] = launch_mode
     os_name, client = str(cfg.get("os", "")).lower(), str(cfg.get("client", "")).lower()
     host_os = "windows" if sys.platform == "win32" else "linux" if sys.platform.startswith("linux") else "unsupported"
@@ -179,15 +190,16 @@ def load_config(path: str) -> dict[str, Any]:
         errors.append(f"unsupported matrix entry {os_name}/{client}; expected windows/stable, windows/lazer, or linux/lazer")
     if cfg.get("poll_rate_ms") != 150 or isinstance(cfg.get("poll_rate_ms"), bool):
         errors.append("poll_rate_ms must be exactly 150 for the release parity gate")
-    for field in ("client_executable", "client_expected_version"):
+    for field in () if rehearsal else ("client_executable", "client_expected_version"):
         if not isinstance(cfg.get(field), str) or not cfg[field]:
             errors.append(f"{field} is required")
     digest = cfg.get("client_expected_sha256")
-    if (not isinstance(digest, str) or len(digest) != 64
-            or any(char not in "0123456789abcdef" for char in digest)):
+    if not rehearsal and (not isinstance(digest, str) or len(digest) != 64
+                          or any(char not in "0123456789abcdef" for char in digest)):
         errors.append("client_expected_sha256 must be 64 lowercase hexadecimal characters")
     args = cfg.get("client_args")
-    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+    if not rehearsal and (not isinstance(args, list)
+                          or not all(isinstance(arg, str) for arg in args)):
         errors.append("client_args must be an array of strings")
     daemons = cfg.get("daemons")
     if not isinstance(daemons, dict) or set(daemons) != {"source", "vosu"}:
@@ -236,11 +248,11 @@ def load_config(path: str) -> dict[str, Any]:
         if len(ports) == 2 and ports[0] == ports[1]:
             errors.append("source and vosu ports must be distinct")
     if "golden" in cfg:
-        errors.extend(validate_golden_config(cfg["golden"], os_name))
+        errors.extend(validate_golden_config(cfg["golden"], os_name, rehearsal=rehearsal))
     if errors:
         raise ValueError("; ".join(errors))
     try:
-        cfg["_artifact_identity"] = validate_artifacts(cfg)
+        cfg["_artifact_identity"] = validate_artifacts(cfg, client=not rehearsal)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         raise ValueError(f"artifact provenance verification failed: {exc}") from exc
     return cfg

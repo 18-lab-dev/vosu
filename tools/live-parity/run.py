@@ -25,6 +25,7 @@ import parity_diff
 import parity_golden
 import parity_golden_capture
 import parity_golden_client
+import parity_golden_rehearsal
 
 _MODULES = (
     parity_process,
@@ -104,7 +105,19 @@ def parser() -> argparse.ArgumentParser:
     golden_capture.add_argument("--out", required=True,
                                 help="new private vosu-golden-capture-v1 file; "
                                      "<out>.transcript.json holds the raw private transcript")
+    golden_capture.add_argument("--rehearsal-receipt", required=True,
+                                help="passing golden-rehearsal receipt for the authorized "
+                                     "vosu commit and this tooling")
     golden_capture.add_argument("--timeout", type=float, default=3600.0)
+    rehearsal = sub.add_parser(
+        "golden-rehearsal",
+        help="client-less full route-matrix rehearsal on Linux; required before golden-capture")
+    rehearsal.add_argument("--config", required=True,
+                           help="Linux JSON run configuration without client fields, with a "
+                                "golden block without authorization or assets")
+    rehearsal.add_argument("--out", required=True,
+                           help="new private receipt; <out>.transcript.json holds the raw records")
+    rehearsal.add_argument("--timeout", type=float, default=3600.0)
     gold = sub.add_parser(
         "golden", help="normalize complete attested golden captures into a new candidate directory")
     gold.add_argument("--capture", required=True, action="append",
@@ -134,11 +147,14 @@ def main() -> int:
             return 0
         if args.action == "capture":
             return capture(load_config(args.config), args.out, args.timeout, args.interval_ms)
+        if args.action == "golden-rehearsal":
+            return parity_golden_rehearsal.rehearse(
+                load_config(args.config, rehearsal=True), args.out, timeout=args.timeout)
         if args.action == "golden-capture":
             return parity_golden_capture.golden_capture(
                 load_config(args.config),
                 parity_golden_capture.SCENARIO_SETS[args.scenario_set], args.out,
-                timeout=args.timeout)
+                rehearsal_receipt=args.rehearsal_receipt, timeout=args.timeout)
         if args.action == "golden-client-copy":
             with open(args.config, encoding="utf-8") as handle:
                 return parity_golden_client.golden_client_copy(json.load(handle))

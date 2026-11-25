@@ -35,6 +35,7 @@ import parity_golden_crash as crash
 from parity_golden_config import validate_golden_config
 from parity_golden_rules import NON_GOLDEN_SEGMENTS
 import parity_golden_client as golden_client
+import parity_golden_rehearsal as rehearsal
 import route_matrix as rm
 import route_security as rs
 
@@ -200,10 +201,21 @@ class CaptureTestCase(unittest.TestCase):
                     "owned_paths": []}
         return build
 
+    def receipt(self, **changes) -> Path:
+        """A passing rehearsal receipt for this commit and tooling, with `changes` applied."""
+        receipt = {"format": rehearsal.RECEIPT_FORMAT, "result": "pass",
+                   "vosu_commit": self.commit, "tooling_digest": rehearsal.tooling_digest(),
+                   "source_revision": PINNED_SOURCE_REVISION, "completed_utc": "2026-11-25T00:00:00Z",
+                   **changes}
+        path = self.tmp / f"receipt-{len(list(self.tmp.glob('receipt-*')))}.json"
+        path.write_text(json.dumps(receipt))
+        return path
+
     def capture(self, scenario: gc.ScenarioSet, client: FakeClient, cfg: dict, *,
-                build=None, timeout: float = 120.0) -> dict:
+                build=None, timeout: float = 120.0, receipt: Path | None = None) -> dict:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             gc.golden_capture(cfg, scenario, str(self.out), timeout=timeout,
+                              rehearsal_receipt=str(receipt or self.receipt()),
                               build=build or self.stub_build(), client=client,
                               operator=client.operator)
         return json.loads(self.out.read_text("utf-8"))
@@ -346,7 +358,9 @@ class FakeTraversalTests(CaptureTestCase):
         self.out.with_name("capture.json.transcript.json").unlink()
         cfg = self.config(scenario)
         cfg["golden"]["authorization"]["vosu_commit"] = "0" * 40
-        self.refuses("authorization.vosu_commit", scenario, FakeClient(self.state), cfg)
+        # The receipt matches the authorization; the build's commit does not.
+        self.refuses("authorization.vosu_commit", scenario, FakeClient(self.state), cfg,
+                     receipt=self.receipt(vosu_commit="0" * 40))
 
     def test_orphan_processes_are_killed_and_survivors_fail_the_run(self) -> None:
         scenario = gc.ScenarioSet("test-orphan", ("menu",), ("state-http.json-v2.get.menu",))

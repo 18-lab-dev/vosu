@@ -253,7 +253,7 @@ def _verify_pinned_worktree(repository: Path, revision: str) -> None:
                 f"pinned source executable mode differs from Git tree: {relative}")
 
 
-def validate_artifacts(cfg: dict[str, Any]) -> dict[str, Any]:
+def validate_artifacts(cfg: dict[str, Any], *, client: bool = True) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[2]
     source_mode = cfg["source_mode"]
     source_spec, vosu_spec = cfg["daemons"]["source"], cfg["daemons"]["vosu"]
@@ -343,27 +343,28 @@ def validate_artifacts(cfg: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "vosu daemon command must contain only the vosu executable placeholder")
 
-    client = Path(cfg["client_executable"]).resolve(strict=True)
-    client_hash = sha256_file(client)
+    identity = {"source": source_record,
+                "vosu": {"package_version": cargo["package"]["version"]}, "client": None}
+    if not client:  # A client-less golden rehearsal attests no client.
+        return identity
+    executable = Path(cfg["client_executable"]).resolve(strict=True)
+    client_hash = sha256_file(executable)
     if client_hash != cfg["client_expected_sha256"]:
         raise ValueError(
             "client executable digest does not match client_expected_sha256")
-    client_version, deps_record = _derive_client_version(client, cfg["client"])
+    client_version, deps_record = _derive_client_version(executable, cfg["client"])
     if client_version != cfg["client_expected_version"]:
         raise ValueError(
             "client build version does not match client_expected_version")
     client_record = {
-        "executable": str(client), "sha256": client_hash, "kind": cfg["client"],
+        "executable": str(executable), "sha256": client_hash, "kind": cfg["client"],
         "version": client_version,
         "build_identity": f"{cfg['client']}:{client_version}:{client_hash}",
     }
     if deps_record is not None:
         client_record["version_source"] = deps_record
-    return {
-        "source": source_record,
-        "vosu": {"package_version": cargo["package"]["version"]},
-        "client": client_record,
-    }
+    identity["client"] = client_record
+    return identity
 def _controlled_tool_path(
         required_tools: tuple[str, ...] = ("git", "node", "pnpm", "cargo", "rustc")
 ) -> str:

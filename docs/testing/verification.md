@@ -182,8 +182,9 @@ private evidence path, GUI operator scope, review route); VM lifecycle
 approval is not capture authorization. On the authorized platform:
 
 ```sh
+python tools/live-parity/run.py golden-rehearsal --config "$REHEARSAL_CONFIG" --out "$PRIVATE_RECEIPT"   # Linux, no client
 python tools/live-parity/run.py check-config --config "$PARITY_CONFIG"
-python tools/live-parity/run.py golden-capture --config "$PARITY_CONFIG" --scenario-set "$APPROVED_SCENARIO" --out "$PRIVATE_CAPTURE"
+python tools/live-parity/run.py golden-capture --config "$PARITY_CONFIG" --scenario-set "$APPROVED_SCENARIO" --rehearsal-receipt "$PRIVATE_RECEIPT" --out "$PRIVATE_CAPTURE"
 python tools/live-parity/run.py golden --capture "$PRIVATE_CAPTURE" --candidate-dir "$CANDIDATE_DIR"
 cargo test --locked --features test-harness --test adapter_golden
 python scripts/check-brand.py
@@ -273,9 +274,34 @@ eight `state-http.*.near.malformed-percent{,-hex}` cases kill the pinned upstrea
 against a client-less pinned upstream). They run after the `no-client` barrier
 and its cases, with a re-attested upstream relaunched before each one
 (`upstream_restarts` in the transcript), and record the `upstream_crashed`
-outcome (GOLDEN_CONTRACT §6); vosu must answer them. The
-authorization must name exactly this platform, pin, commit, client version and
+outcome (GOLDEN_CONTRACT §6); vosu must answer them. A state route's vosu `GET`
+must answer the dump's adapter status and bytes, except where a ledger row decides
+the route first: a `state-http.*.budget.*` request over
+`adapter-surface-request-budget`'s limits must get vosu's 404 (`parity_golden_ledger`).
+The authorization must name exactly this platform, pin, commit, client version and
 scenario set, or the run is refused before the build.
+
+0. **Mandatory client-less rehearsal first** (owner amendment 2026-11-25).
+   `golden-capture` refuses to start without a passing receipt from
+   `golden-rehearsal` for its authorized `vosu_commit` and its own tooling
+   digest (SHA-256 over the `tools/live-parity` modules, tests excluded, and
+   `GOLDEN_CONTRACT.md` and `DIVERGENCES.md`). The rehearsal needs no capture
+   authorization and no game. On Linux, from a clean checkout of that commit,
+   it builds and attests both daemons exactly as `golden-capture` does, waits
+   for the `no-client` barrier, then sends every route-matrix case through
+   every capture check: the golden sandwiches with their retries, barrier
+   guards (both daemons must hold `no-client`), request and divergence
+   ledgers, volatile rules and `golden`'s case validation; the
+   `upstream_crashed` cases last; the negative and diagnostic cases; and
+   finally `golden`'s whole-capture validation of the natively rendered cases.
+   Cases the linux-lazer plan excludes (Windows spellings, stable skin routes)
+   are rendered for windows-lazer or windows-stable and sent anyway. It
+   reports every failing case, including an upstream exit outside the crash
+   ledger, and writes the 0600 receipt and `<out>.transcript.json`. Its config
+   is a Linux run configuration without `client_*` fields whose `golden` block
+   has no `authorization`, `assets` or `client_source`; the Linux harness
+   build needs `python scripts/prepare-offset-generator.py --rid linux-x64`.
+   Copy the receipt into the VM and pass it as `--rehearsal-receipt`.
 
 1. **Mandatory dry run first.** Use a config whose
    `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and
@@ -285,7 +311,7 @@ scenario set, or the run is refused before the build.
 
    ```powershell
    python tools\live-parity\run.py check-config --config $env:DRY_RUN_CONFIG
-   python tools\live-parity\run.py golden-capture --config $env:DRY_RUN_CONFIG --scenario-set m4b-dry-run-v1 --out $env:DRY_RUN_CAPTURE
+   python tools\live-parity\run.py golden-capture --config $env:DRY_RUN_CONFIG --scenario-set m4b-dry-run-v1 --rehearsal-receipt $env:REHEARSAL_RECEIPT --out $env:DRY_RUN_CAPTURE
    python tools\live-parity\run.py golden --capture $env:DRY_RUN_CAPTURE --candidate-dir $env:DRY_RUN_CANDIDATE
    ```
 
@@ -293,7 +319,7 @@ scenario set, or the run is refused before the build.
    `m4b-full-v1`, and a new `--out`:
 
    ```powershell
-   python tools\live-parity\run.py golden-capture --config $env:PARITY_CONFIG --scenario-set m4b-full-v1 --out $env:PRIVATE_CAPTURE
+   python tools\live-parity\run.py golden-capture --config $env:PARITY_CONFIG --scenario-set m4b-full-v1 --rehearsal-receipt $env:REHEARSAL_RECEIPT --out $env:PRIVATE_CAPTURE
    ```
 
    Then run `golden`, `adapter_golden` and the brand check as listed above.
@@ -316,7 +342,10 @@ scenario set, or the run is refused before the build.
   copy: lazer writes `<unix time>.nauth.log` into the shared
   `%APPDATA%\osu\logs`. `golden-capture` removes each one that
   appeared while its client ran and records its name, size and SHA-256 as
-  `shared_profile` in the transcript. A launch outside the tool, such as the
+  `shared_profile` in the transcript. The client holds the log open until it
+  has exited (pilot 2: WinError 32), so the removal waits for the exit and
+  retries a still-open log for at most 15 s; a log still open then is a
+  cleanup error. A launch outside the tool, such as the
   beatmap import, leaves one that the operator removes.
 - **Line endings.** Clone the staged vosu tree with
   `git clone -c core.autocrlf=false` (Git for Windows converts line endings by

@@ -200,8 +200,13 @@ A case is recorded as:
    call the dump endpoint again. Both dumps must agree on provider generation,
    selected-entry digest, focus and roster revisions and derived-input state,
    and a state route's `GET` response must equal the dump's adapter status and
-   bytes. Status and headers come from the route record, so a `HEAD` status is
-   not compared with the dump. For the `sc` schema only, `provider_generation`
+   bytes. The dump holds the adapter's answer, so this applies only to a request
+   that reaches the adapter: a request over the `adapter-surface-request-budget`
+   limits ([DIVERGENCES.md](DIVERGENCES.md)) never does, and its vosu route must
+   instead be that row's ordinary 404; a budget case within the limits is
+   compared with the dump as usual. Status and headers come from the route
+   record, so a `HEAD` status is not compared with the dump. For the `sc`
+   schema only, `provider_generation`
    and `derived.revision` are exempt: every `sc` read releases the
    streamCompanion chart-work handle, so both advance on each read (main
    decision, 2026-11-24). An `sc` sandwich still compares the whole selection
