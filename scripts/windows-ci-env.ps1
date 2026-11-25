@@ -135,3 +135,41 @@ function Invoke-VosuCargoStep {
     Write-Host ('{0}: exit {1}, {2:N2}s{3}' -f $Name, $entry.exitCode, $entry.wallSeconds, $suffix)
     return $entry.exitCode
 }
+
+function Invoke-VosuPluginHostFixtures {
+    <#
+    .SYNOPSIS
+    Runs scripts\plugin-host-fixtures.py (the same helper ci.yml and the Linux
+    gate run) as one logged step named 'plugin-host-fixtures', then imports
+    the two fixture library variables it wrote into this process, so the
+    cargo test that follows finds them. Returns the helper's exit code.
+    .PARAMETER Target
+    Must match the test build's own --target, so the libraries come from the
+    same target directory layout.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$CargoExe,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$LogDir,
+        [Parameter(Mandatory = $true)]$Steps,
+        [string]$Target,
+        [int]$TimeoutSeconds = 0
+    )
+    $python = (Get-Command python.exe -ErrorAction Stop).Source
+    $envFile = Join-Path $LogDir 'plugin-host-fixtures.env'
+    Remove-Item $envFile -ErrorAction SilentlyContinue
+    $arguments = @('scripts\plugin-host-fixtures.py')
+    if ($Target) { $arguments += @('--target', $Target) }
+    $arguments += @('--env-file', $envFile)
+    $env:CARGO = $CargoExe
+    $exitCode = Invoke-VosuCargoStep -Name 'plugin-host-fixtures' -CargoExe $python `
+        -WorkingDirectory $WorkingDirectory -Arguments $arguments -LogDir $LogDir -Steps $Steps `
+        -TimeoutSeconds $TimeoutSeconds
+    if ($exitCode -eq 0) {
+        foreach ($line in Get-Content $envFile) {
+            $name, $value = $line -split '=', 2
+            Set-Item -Path ('Env:\' + $name) -Value $value
+        }
+    }
+    return $exitCode
+}
