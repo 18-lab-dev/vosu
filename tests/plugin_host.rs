@@ -21,6 +21,9 @@ use std::time::Duration;
 use vosu_core::plugin::{self, OwnedMessage, PluginHostHandler, PluginInstance, PluginInstanceId};
 use vosu_plugin_api::{CborValue, FocusChanged, Init, Message, encode, vosu_status};
 
+#[path = "plugin_host/process_package.rs"]
+mod process_package;
+
 const DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 /// Records every message the plugin sends back to the host (the echo

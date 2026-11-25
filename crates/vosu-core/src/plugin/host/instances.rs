@@ -16,6 +16,7 @@ use vosu_plugin_api::{Init, Message, encode, vosu_status};
 
 use super::super::dispatch::{OwnedMessage, WorkerPool};
 use super::super::error::HostError;
+use super::super::execution::PackageOrigin;
 use super::super::host_services::PluginHostHandler;
 use super::super::instance::PluginInstance;
 use super::super::read_plan::OutstandingPlans;
@@ -131,12 +132,15 @@ impl PluginHost {
                 data_dir,
             })
             .map_err(|error| HostError::InitEncodeFailed(error.to_string()))?;
-            PluginInstance::create(
+            PluginInstance::create_with_launcher(
                 id,
                 plugin,
                 &init,
                 self.clone() as Arc<dyn PluginHostHandler>,
                 concurrent_pool,
+                self.process_launcher
+                    .get()
+                    .map(|launcher| launcher.as_ref()),
             )
         })();
 
@@ -172,14 +176,7 @@ impl PluginHost {
             // `create` above was still running. Destroy the instance this
             // call just built instead of publishing it `Live`, and remove
             // the placeholder so `destroy_all`'s own wait for it resolves.
-            guard.remove(&id);
-            drop(guard);
-            self.instances_changed.notify_all();
-            self.timers.cancel_all(id);
-            self.resource_state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(id);
+            self.discard_unpublished(guard, id);
             // F3: same reason as the `created` error path above — this
             // instance is being destroyed, never published `Live`, so
             // its matcher table (not yet registered) needs no unregister.
@@ -192,13 +189,25 @@ impl PluginHost {
             self.timers.cancel_all(id);
             return Err(HostError::ShuttingDown);
         }
+        if instance.is_lost() {
+            // The child was reported lost after its launch returned but
+            // before this publication: `process_instance_lost` found only
+            // the `Creating` placeholder and left the teardown to this
+            // call. Nothing was published, so no matcher, action or
+            // session cleanup is owed; the namespace registration drops
+            // with `registration` on return.
+            self.discard_unpublished(guard, id);
+            instance.abandon(SHUTDOWN_RACE_DESTROY_GRACE);
+            self.timers.cancel_all(id);
+            return Err(HostError::InstanceLost);
+        }
         if let Some(table) = matcher_table {
             // F3: registered only now, atomically with publishing `Live`
             // under this same `instances` lock — never while `id` was
             // only `Creating`, so `process_appeared` can never attach a
             // session to a plugin instance that might still fail to come
             // up. A refusal here (a duplicate id already registered)
-            // tears this instance down exactly like the two paths above:
+            // tears this instance down exactly like the paths above:
             // it never got a chance to publish `Live` either.
             if let Err(error) = self
                 .matcher
@@ -206,14 +215,7 @@ impl PluginHost {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .register(plugin_id.clone(), table)
             {
-                guard.remove(&id);
-                drop(guard);
-                self.instances_changed.notify_all();
-                self.timers.cancel_all(id);
-                self.resource_state
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .remove(id);
+                self.discard_unpublished(guard, id);
                 if let Err(destroy_error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
                     tracing::warn!(
                         ?id, %destroy_error,
@@ -271,7 +273,7 @@ impl PluginHost {
                         .chain(&plugin.manifest().optional)
                         .filter_map(|cap| cap.id.strip_prefix("resource:").map(str::to_owned))
                         .collect(),
-                    bundled: plugin.library_handle().is_none(),
+                    bundled: plugin.origin() == PackageOrigin::Bundled,
                     _registration: registration,
                 }),
             }),
@@ -410,5 +412,28 @@ impl PluginHost {
             .unwrap_or_else(|poison| poison.into_inner())
             .get(&instance)
             .map(|slot| slot.plugin_id().to_owned())
+    }
+
+    /// Drops a `Creating` placeholder that will never be published `Live`
+    /// (shutdown raced it, its process was lost, or its matcher refused),
+    /// releasing the `instances` lock before waking `destroy_all`, and the
+    /// resource slots registered alongside it. The caller then tears the
+    /// instance itself down outside every host lock.
+    fn discard_unpublished(
+        &self,
+        mut guard: std::sync::MutexGuard<
+            '_,
+            std::collections::HashMap<PluginInstanceId, InstanceSlot>,
+        >,
+        id: PluginInstanceId,
+    ) {
+        guard.remove(&id);
+        drop(guard);
+        self.instances_changed.notify_all();
+        self.timers.cancel_all(id);
+        self.resource_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id);
     }
 }

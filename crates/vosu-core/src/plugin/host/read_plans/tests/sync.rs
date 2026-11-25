@@ -387,7 +387,7 @@ impl ProcessMemory for AlwaysOkMemory {
 /// call — never `PlanMemory` — from its own background reader thread,
 /// and, the moment that submission's result reaches its own `on_message`
 /// (reentrant, on that same reader thread, via
-/// `PluginHost::deliver_sync_result_raw`'s `dispatch_raw` call), submits
+/// `PluginHost::deliver_sync_result_raw`'s direct target dispatch), submits
 /// a second synchronous plan the same way, immediately, nested inside
 /// that very `on_message` call — exactly the case P1 of the F4 review
 /// describes: any C plugin, or an SDK plugin calling
@@ -539,7 +539,7 @@ mod nested_sync_plugin {
                     let _ = self.host.send(&Message::SessionIdentify(identify), 0);
                 }
                 Message::ReadPlanResult(_) => {
-                    // Reentrant on the same thread `dispatch_raw` just
+                    // Reentrant on the same thread the direct dispatch just
                     // delivered this on: `DispatchThreadScope` (held
                     // around that call by `deliver_sync_result_raw`, the
                     // P1 fix this test proves) must make this nested

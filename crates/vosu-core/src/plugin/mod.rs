@@ -7,6 +7,13 @@
 //! (§6.10), and timers (§6.11), wired into one `PluginHostHandler`
 //! (`host.rs`'s `PluginHost`) that owns every live instance.
 //!
+//! The registry validates every package through one path and then
+//! attaches its execution backend (`execution.rs`, §7.1–§7.2): local code
+//! (bundled vtables, or a debug development library) or a
+//! `runtime = "process"` package whose library core never maps; instances
+//! dispatch through the same queues to either a local vtable or a process
+//! endpoint.
+//!
 //! `PluginHost` also owns process matching, session lifecycle, and focus
 //! (`host.rs`'s `process_appeared`/`process_exited`/`foreground_changed`,
 //! `MatcherEngine`, `SessionRegistry`, `FocusTracker`):
@@ -55,6 +62,7 @@ mod discovery;
 mod dispatch;
 mod dispatch_queue;
 mod error;
+mod execution;
 mod focus;
 mod host;
 mod host_services;
@@ -85,6 +93,10 @@ pub use discovery::{
 pub use discovery::{ForegroundPoller, WindowsProcessSource};
 pub use dispatch::{OwnedMessage, WorkerPool};
 pub use error::HostError;
+pub use execution::{
+    Execution, InstanceLoss, LocalCode, LossCause, MessageRef, PackageOrigin, PluginIngress,
+    ProcessEndpoint, ProcessLaunch, ProcessLauncher, ProcessPackage,
+};
 pub use focus::{
     FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
     SyntheticForegroundSource,

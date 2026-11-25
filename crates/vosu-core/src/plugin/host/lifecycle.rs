@@ -16,6 +16,14 @@ use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
 use crate::identity::PluginInstanceId;
 
+/// How [`PluginHost::retire_instance`] ends the instance itself.
+pub(super) enum Teardown {
+    /// Controlled `destroy` within the grace period (shutdown).
+    Destroy(Duration),
+    /// The process was lost: terminate it and drain dispatch, no `destroy`.
+    Abandon(Duration),
+}
+
 impl PluginHost {
     /// Rate-limited window `Self::log_dispatch_dropped` enforces
     /// (this struct's own `last_dispatch_queue_full_log` doc comment).
@@ -139,28 +147,50 @@ impl PluginHost {
                 }
             };
             let (id, instance) = next;
-            self.action_instance_lost(id);
-            self.resource_state
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(id);
-            self.state_subscriber_removed(id);
-            if let Some(plugin_id) = self.plugin_id_of(id) {
-                self.surface_reader_removed(&plugin_id);
-                self.close_bus_sessions_for(&plugin_id);
+            self.retire_instance(id, instance, Teardown::Destroy(grace));
+        }
+    }
+
+    /// Removes one instance already taken out of active duty (its slot is
+    /// `Destroying`) from every host service — actions, resources,
+    /// subscriptions, surface readers, bus sessions, timers — then tears
+    /// the instance itself down and drops its slot. Shared by shutdown and
+    /// process loss so both release exactly the same state. Timers are
+    /// cancelled both before and after the teardown: a local `destroy`'s
+    /// queue drain can run `TIMER_SET` again (§6.11's exit item).
+    pub(super) fn retire_instance(
+        &self,
+        id: PluginInstanceId,
+        instance: Option<super::super::instance::PluginInstance>,
+        teardown: Teardown,
+    ) {
+        self.action_instance_lost(id);
+        self.resource_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(id);
+        self.state_subscriber_removed(id);
+        if let Some(plugin_id) = self.plugin_id_of(id) {
+            self.surface_reader_removed(&plugin_id);
+            self.close_bus_sessions_for(&plugin_id);
+        }
+        self.timers.cancel_all(id);
+        if let Some(instance) = instance {
+            match teardown {
+                Teardown::Destroy(grace) => {
+                    if let Err(error) = instance.destroy(grace) {
+                        tracing::warn!(?id, %error, "plugin did not destroy within its grace period");
+                    }
+                }
+                Teardown::Abandon(grace) => instance.abandon(grace),
             }
             self.timers.cancel_all(id);
-            if let Some(instance) = instance {
-                if let Err(error) = instance.destroy(grace) {
-                    tracing::warn!(?id, %error, "plugin did not destroy within its grace period");
-                }
-                self.timers.cancel_all(id);
-            }
-            self.instances
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .remove(&id);
         }
+        self.instances
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&id);
+        self.instances_changed.notify_all();
     }
     /// Discovery's own entry point for a process exit (phase (d2)):
     /// detaches whatever session, if any, this registry still tracks for
@@ -215,8 +245,8 @@ impl PluginHost {
 
     /// Finishes a detach once `sessions` has already removed `handle` and
     /// produced `detached` — shared by every non-`SESSION_DECLINE` detach
-    /// path (currently only [`Self::process_exited`]; "lost" and
-    /// "superseded" are later wiring, this module's own doc comment).
+    /// path ([`Self::process_exited`], and a lost process instance's owned
+    /// sessions in `instance_loss.rs`; "superseded" is later wiring).
     ///
     /// P3: cancels `owner`'s outstanding read plans and scans for
     /// `handle` *before* dispatching `SESSION_DETACHED` — on serial
@@ -224,7 +254,7 @@ impl PluginHost {
     /// queued for this handle at the moment of cancellation is delivered
     /// before `SESSION_DETACHED`, never after it (mirroring the same
     /// ordering `SessionDecline`'s own handler already uses).
-    fn finish_detach(
+    pub(super) fn finish_detach(
         &self,
         handle: SessionHandle,
         owner: Option<super::super::matcher::PluginId>,

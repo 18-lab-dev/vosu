@@ -259,7 +259,7 @@ fn owned_publication_flushes_before_detach_with_full_dispatch_queue() {
         else {
             panic!("live owner")
         };
-        entry.instance.dispatch_task(Box::new(|_, _| {})).unwrap();
+        entry.instance.dispatch_task(Box::new(|_| {})).unwrap();
     }
     publish_owned(&host, 90_141, owned, 99);
     host.process_exited(90_141);

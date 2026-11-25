@@ -70,7 +70,6 @@ use std::time::{Duration, Instant};
 use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_opcode, vosu_status};
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
-use super::super::dispatch::dispatch_raw;
 use super::super::read_plan::{
     self, DispatchThreadScope, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
 };
@@ -751,7 +750,7 @@ impl PluginHost {
     /// The §4 SYNC exception itself (D17): delivers `payload` — already
     /// the flat `VOSU_OP_READ_PLAN_RESULT` bytes [`read_plan::execute_into`]
     /// wrote — through a direct, non-queued plugin call
-    /// ([`super::super::dispatch::dispatch_raw`]) on the calling
+    /// ([`super::super::dispatch::DispatchTarget::dispatch`]) on the calling
     /// (submitting) thread, before this call — and so `send` — returns.
     /// No `Message`/owned-`Vec<u8>` copy of it is ever made. Never holds
     /// `self.instances` across that call: the plugin's own `dispatch` may
@@ -759,7 +758,7 @@ impl PluginHost {
     /// lock still held here would deadlock against.
     ///
     /// P1 (F4 review): holds [`DispatchThreadScope::enter`] around the
-    /// `dispatch_raw` call, exactly as `dispatch.rs::run_job` already does
+    /// target dispatch, exactly as `dispatch.rs::run_job` already does
     /// for the ordinary queued delivery path. Without this, a plugin that
     /// submits `VOSU_READ_PLAN_SYNC` through a raw `send` (not through
     /// `PlanMemory`, e.g. any C plugin, or an SDK plugin calling
@@ -777,10 +776,10 @@ impl PluginHost {
             .unwrap_or_else(|poison| poison.into_inner())
             .get(&instance)
             .and_then(|slot| match slot {
-                InstanceSlot::Live(entry) => Some(entry.instance.ctx_and_vtable()),
+                InstanceSlot::Live(entry) => Some(entry.instance.dispatch_target()),
                 InstanceSlot::Creating { .. } | InstanceSlot::Destroying { .. } => None,
             });
-        let Some((vtable, ctx)) = target else {
+        let Some(target) = target else {
             // P3: the instance tore down between this submission
             // arriving and its result finishing executing. The
             // submission itself genuinely ran to completion, but
@@ -790,14 +789,7 @@ impl PluginHost {
             return vosu_status::VOSU_ERR_NOT_READY;
         };
         let _dispatch_thread = DispatchThreadScope::enter();
-        dispatch_raw(
-            &vtable,
-            ctx,
-            vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32,
-            0,
-            0,
-            payload,
-        );
+        target.dispatch(vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32, 0, 0, payload);
         vosu_status::VOSU_OK
     }
 

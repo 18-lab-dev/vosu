@@ -330,7 +330,7 @@ fn execute_into_is_allocation_free_once_warmed_multi_op_dependent_stage() {
 /// real pipeline `vosu-plugin-api`'s own `plan_memory_alloc.rs` (a fake
 /// host) cannot reach: `PluginHostHandler::handle_read_plan_sync` ->
 /// `PluginHost::handle_read_plan_submit_raw` -> `execute_into` into its
-/// own per-thread reused buffer -> `dispatch_raw` -> the SDK's
+/// own per-thread reused buffer -> `DispatchTarget::dispatch` -> the SDK's
 /// `try_intercept_sync_raw` -> `read_flat`'s own `SyncReadBuffers`.
 #[test]
 fn in_process_sync_round_trip_allocates_nothing_after_warmup() {

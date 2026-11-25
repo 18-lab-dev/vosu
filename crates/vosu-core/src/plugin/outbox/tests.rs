@@ -2,6 +2,7 @@ use super::super::dispatch::SerialWorker;
 use super::*;
 use std::sync::mpsc::sync_channel;
 use std::time::Duration;
+use vosu_plugin_api::vosu_plugin_vtable;
 
 fn message(id: u64) -> OwnedMessage {
     OwnedMessage {
@@ -34,18 +35,18 @@ fn reserved_outbox_delivers_fifo_through_full_queue_and_releases_slots() {
         dispatch: Some(dispatched),
         destroy: None,
     };
-    let ctx = PluginCtx((&raw mut *sender).cast());
-    let outbox = ReservedOutbox::new(worker.queue(), vtable, ctx, InFlightTracker::new());
+    let ctx = super::super::dispatch::PluginCtx((&raw mut *sender).cast());
+    let target = DispatchTarget::Local { vtable, ctx };
+    let outbox = ReservedOutbox::new(worker.queue(), target.clone(), InFlightTracker::new());
     let (started_tx, started_rx) = sync_channel(1);
     let (release_tx, release_rx) = sync_channel(1);
     worker
         .submit(Job {
-            vtable,
-            ctx,
+            target: target.clone(),
             message: message(0),
             reply: None,
             in_flight: None,
-            task: Some(Box::new(move |_, _| {
+            task: Some(Box::new(move |_| {
                 started_tx.send(()).unwrap();
                 release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
             })),
@@ -54,8 +55,7 @@ fn reserved_outbox_delivers_fifo_through_full_queue_and_releases_slots() {
     started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     worker
         .submit(Job {
-            vtable,
-            ctx,
+            target: target.clone(),
             message: message(73),
             reply: None,
             in_flight: None,
@@ -65,8 +65,7 @@ fn reserved_outbox_delivers_fifo_through_full_queue_and_releases_slots() {
     assert!(
         worker
             .submit(Job {
-                vtable,
-                ctx,
+                target: target.clone(),
                 message: message(74),
                 reply: None,
                 in_flight: None,

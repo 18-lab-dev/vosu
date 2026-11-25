@@ -240,6 +240,10 @@ pub struct PluginHost {
     /// result sent to it, cannot flood the log the way an unrated
     /// per-drop `tracing::warn!` would.
     last_dispatch_queue_full_log: Mutex<Option<Instant>>,
+    /// Starts `runtime = "process"` instances (`super::execution`).
+    /// Installed once by composition; without it a process package is
+    /// refused at creation, never run in-process.
+    process_launcher: std::sync::OnceLock<Arc<dyn super::execution::ProcessLauncher>>,
 }
 
 impl PluginHost {
@@ -365,6 +369,7 @@ impl PluginHost {
                 u64::try_from(read_plans::READ_PLAN_DEADLINE.as_millis()).unwrap_or(u64::MAX),
             ),
             last_dispatch_queue_full_log: Mutex::new(None),
+            process_launcher: std::sync::OnceLock::new(),
         });
         // P2-4: spawned only after `new_cyclic` has returned a real
         // `Arc<Self>` — never from inside its own closure, where no
@@ -785,6 +790,10 @@ impl PluginHostHandler for PluginHost {
     ) -> Option<vosu_status> {
         Some(self.handle_publish_raw(instance, opcode, payload))
     }
+
+    fn instance_lost(&self, instance: PluginInstanceId, cause: super::execution::LossCause) {
+        self.process_instance_lost(instance, cause);
+    }
 }
 
 /// Background task spawned once per [`PluginHost`] (module doc comment,
@@ -888,6 +897,7 @@ mod action_delivery;
 mod actions;
 mod api;
 mod capabilities;
+mod instance_loss;
 mod instances;
 mod lifecycle;
 pub(super) mod read_plans;
