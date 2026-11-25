@@ -63,4 +63,4 @@ impl Plugin for HostServicesPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled HostServicesPlugin);
+vosu_plugin_internal::export_plugin!(bundled HostServicesPlugin);

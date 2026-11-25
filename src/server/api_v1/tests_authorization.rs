@@ -150,8 +150,10 @@ async fn broker_credentials_never_bypass_peer_or_origin_and_keys_are_not_actions
 struct NonCli;
 impl vosu_core::actions::ActionRegistry for NonCli {
     fn get(&self, id: &str) -> Option<Arc<vosu_core::actions::ActionDescriptor>> {
-        let schema =
-            Arc::new(vosu_core::action_schema::CompiledActionSchema::compile("true").unwrap());
+        let schema = Arc::new(
+            vosu_plugin_api::manifest::action_schema::CompiledActionSchema::compile("true")
+                .unwrap(),
+        );
         Some(Arc::new(vosu_core::actions::ActionDescriptor {
             id: id.into(),
             version: semver::Version::new(1, 0, 0),

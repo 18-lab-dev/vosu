@@ -27,9 +27,12 @@ use crate::capability::{
 };
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
+pub mod action_schema;
 mod actions;
+pub mod files;
 pub mod legacy_metadata;
 pub mod schema;
+pub mod settings;
 pub use actions::{ActionDeclaration, ActionSessionMode, validate_actions};
 mod context;
 mod diagnostics;

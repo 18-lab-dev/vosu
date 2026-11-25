@@ -19,6 +19,8 @@ vosu-osu-calc = { path = "../vosu-osu-calc" }
 vosu-adapter-support = { path = "../vosu-adapter-support" }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
+# Bundled registration (`export_plugin!(bundled ...)`, AF.9).
+vosu-plugin-internal = { path = "../vosu-plugin-internal" }
 vosu-surface = { path = "../vosu-surface" }
 
 [dev-dependencies]

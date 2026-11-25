@@ -112,7 +112,7 @@ impl InstallLayout {
         if id.is_empty()
             || id.starts_with('.')
             || id.contains(['/', '\\', ':', '\0'])
-            || !vosu_net::streaming::portable_component(id)
+            || !vosu_plugin_api::manifest::files::portable_component(id)
         {
             return Err(InstallError::Unsupported(id.to_owned()));
         }

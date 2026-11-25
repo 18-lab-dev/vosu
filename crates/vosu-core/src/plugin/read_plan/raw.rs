@@ -20,7 +20,7 @@ use std::mem::MaybeUninit;
 
 use super::deadline::RawDeadline;
 use super::*;
-use vosu_plugin_api::read_plan_profile::{Phase, Span};
+use vosu_plugin_internal::read_plan_profile::{Phase, Span};
 
 mod shape;
 

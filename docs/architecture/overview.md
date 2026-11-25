@@ -157,7 +157,7 @@ Core's `DiscoveryService` queries a platform `ProcessSource`, matches enabled pl
 
 On Windows, core samples the foreground owner once every 100 ms and caches it before recomputing plugin focus. Surface captures carry that cached observation for every identified session, not a second OS query or timer.
 
-`vosu_plugin_api::memory::ProcessMemory` is the object-safe all-or-error read boundary, with its request, error, status and signature-pattern vocabulary; `vosu-sys` implements it over native handles and owns the signature region walk and module tables. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
+`vosu_plugin_api::memory::ProcessMemory` is the object-safe all-or-error read boundary, with its request, error, status and signature-pattern vocabulary; `vosu-sys` implements it over native handles and owns the signature region walk and module tables. The plugin's `PlanProcessMemory` adapts synchronous `PlanMemory` requests (workspace-only `vosu-plugin-internal`) to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
 
 Resolver version discovery, generated-offset parsing and cache installation run
 on Tokio's blocking pool. The embedded generator uses a blocking-pool bridge

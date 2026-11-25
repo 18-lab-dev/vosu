@@ -93,5 +93,36 @@ class ClassifyTests(unittest.TestCase):
         self.assertTrue(ui)
 
 
+class SdkChangedTests(unittest.TestCase):
+    def test_sdk_sources_and_workspace_inputs_need_the_package_check(self):
+        for path in [
+            "crates/vosu-plugin-api/src/manifest/files.rs",
+            "crates/vosu-plugin-api/README.md",
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".cargo/config.toml",
+            ".github/workflows/ci.yml",
+            "scripts/sdk-package.py",
+            "scripts/prepush.py",
+        ]:
+            self.assertTrue(ci_changes.sdk_changed([path]), path)
+
+    def test_daemon_and_other_crate_changes_skip_the_package_check(self):
+        for path in [
+            "crates/vosu-core/src/catalog/install/prepare.rs",
+            "crates/vosu-core/Cargo.toml",
+            "crates/vosu-plugin-internal/src/glue.rs",
+            "src/server/pages.rs",
+            "docs/v2/catalog-v2.md",
+            "scripts/test_sdk_package.py",
+        ]:
+            self.assertFalse(ci_changes.sdk_changed([path]), path)
+
+    def test_any_sdk_path_in_a_mixed_change_runs_it(self):
+        self.assertTrue(ci_changes.sdk_changed(["src/server/pages.rs", "Cargo.lock"]))
+        self.assertFalse(ci_changes.sdk_changed([]))
+
+
 if __name__ == "__main__":
     unittest.main()

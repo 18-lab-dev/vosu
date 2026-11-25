@@ -20,8 +20,10 @@ impl ToolHost {
 struct Registry(Mutex<HashMap<String, Arc<ActionDescriptor>>>);
 impl Registry {
     fn insert(&self, action: &str, version: &str) {
-        let schema =
-            Arc::new(vosu_core::action_schema::CompiledActionSchema::compile("true").unwrap());
+        let schema = Arc::new(
+            vosu_plugin_api::manifest::action_schema::CompiledActionSchema::compile("true")
+                .unwrap(),
+        );
         self.0.lock().insert(
             action.into(),
             Arc::new(ActionDescriptor {

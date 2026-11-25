@@ -2,6 +2,33 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 F (SDK packaging)
+
+- Make the `vosu-plugin-api` SDK crate packageable on its own (AF.9): it
+  declares no Cargo features and no workspace dependency, ships a README and
+  its MIT/Apache-2.0 license texts, and its tests build from the packaged
+  crate. `export_plugin!` keeps the `cdylib` forms (`export_plugin!(MyPlugin)`,
+  `export_plugin!(concurrent MyPlugin)`); its bundled form, `PlanMemory`
+  synchronous reads and the read-plan profiler moved to the unpublished
+  workspace crate `vosu-plugin-internal`. `HostServices::send_flat`,
+  `StageRef` and `encode_read_plan_submit_into` are now always available for
+  allocation-free publishing and asynchronous read plans;
+  `HostServices::submit_read_plan_sync` is removed.
+- Add `vosu-package-check`, an example of the SDK crate that runs the SDK's
+  own manifest, schema and catalog-mirror validation over a publisher's
+  catalog and extracted packages against an explicit registry context
+  (AF.10), and `scripts/sdk-package.py verify`, which checks the packaged
+  `.crate` from outside the workspace with an isolated serialized and
+  concurrent consumer. No crate is published by either.
+- The SDK now owns the bounded action-schema compiler
+  (`manifest::action_schema`), the `settings.schema.json` parser
+  (`manifest::settings`) and the package-path and byte-bound rules
+  (`manifest::files`, `catalog::MAX_CATALOG_BYTES`). vosu's installer, plugin
+  loader and archive extractor and `vosu-package-check` all call these, so the
+  checker refuses what the host refuses. Catalog install now also refuses a
+  settings schema that is valid JSON but not the settings array the loader
+  requires.
+
 ## Unreleased — 2.0 M6b
 
 - Manage catalogs through catalog v2 in the dashboard. Settings › Catalog

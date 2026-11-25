@@ -7,7 +7,7 @@ use std::{
     cell::Cell,
     time::{Duration, Instant},
 };
-use vosu_plugin_api::read_plan_profile;
+use vosu_plugin_internal::read_plan_profile;
 
 pub(super) enum RawDeadline {
     Absolute(Instant),

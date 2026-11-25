@@ -115,7 +115,7 @@ impl InstalledDocument {
             };
             if duplicate
                 || !artifact_matches
-                || !vosu_net::streaming::portable_component(&record.id)
+                || !vosu_plugin_api::manifest::files::portable_component(&record.id)
                 || record.id.contains(['/', '\\'])
             {
                 return Err(InstallError::RecordsInvalid);
@@ -194,9 +194,12 @@ pub(in crate::catalog) fn read_manifest(
 ) -> Result<PackageManifest, InstallError> {
     let mismatch = || InstallError::InstalledManifest(record.id.clone());
     let root = layout.destination(record.package_kind(), &record.id)?;
-    let text =
-        super::preflight::read_asset(&root, "manifest.toml", super::preflight::MAX_MANIFEST_BYTES)
-            .map_err(|_| mismatch())?;
+    let text = super::preflight::read_asset(
+        &root,
+        "manifest.toml",
+        vosu_plugin_api::manifest::files::MAX_MANIFEST_BYTES,
+    )
+    .map_err(|_| mismatch())?;
     let manifest = PackageManifest::parse(&text).map_err(|_| mismatch())?;
     let fields = manifest.fields();
     if manifest.kind() != record.package_kind()

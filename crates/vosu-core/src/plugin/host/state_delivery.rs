@@ -721,6 +721,13 @@ impl PluginHost {
         }
     }
 
+    /// Stops selecting state for `who`, an instance already out of service:
+    /// its subscriptions and session watch end, so nothing new reaches its
+    /// delivery slots. The slots themselves stay until
+    /// [`Self::state_slots_retired`]: a `SESSION_DETACHED` (and the final
+    /// state merged before it) that the teardown's own detach already queued
+    /// on `who`'s dispatch must still be delivered by that dispatch's drain
+    /// (`docs/v2/plugin-abi.md` §7.6 "Per-instance teardown seam").
     pub(super) fn state_subscriber_removed(&self, who: PluginInstanceId) {
         let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
         let sessions = self
@@ -737,7 +744,21 @@ impl PluginHost {
             delivery.watchers.remove(&who);
             delivery.ending.remove(&who);
             delivery.restart.remove(&who);
-            delivery.slots.retain(|(id, _), slot| {
+        }
+        for session in sessions {
+            self.refresh_state_demand(session);
+        }
+    }
+
+    /// Drops `who`'s remaining delivery slots once its dispatch has drained
+    /// (or was abandoned): a job still queued for one of them then delivers
+    /// nothing.
+    pub(super) fn state_slots_retired(&self, who: PluginInstanceId) {
+        self.state_delivery
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .slots
+            .retain(|(id, _), slot| {
                 if *id != who {
                     return true;
                 }
@@ -746,10 +767,6 @@ impl PluginHost {
                 slot.pending.clear();
                 false
             });
-        }
-        for session in sessions {
-            self.refresh_state_demand(session);
-        }
     }
 
     fn schedule_state_slot(&self, who: PluginInstanceId, key: SessionKey, slot: Arc<Mutex<Slot>>) {
@@ -865,7 +882,23 @@ impl PluginHost {
             self.retire_state_slot(who, key, slot);
             return;
         }
-        slot.lock().unwrap_or_else(|p| p.into_inner()).queued = false;
+        let detach_arrived = {
+            let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+            let arrived = !pending.dead && pending.detached.is_some();
+            if !arrived {
+                pending.queued = false;
+            }
+            arrived
+        };
+        if detach_arrived {
+            // A detach that ran while this job did found the slot queued and
+            // left `SESSION_DETACHED` to this job. It goes out now, after what
+            // was merged meanwhile, ending the slot: a resubmission could find
+            // the instance already out of service (a teardown detaches its
+            // sessions, then unpublishes it at once) and never deliver it.
+            self.drain_state_slot(who, key, slot, target);
+            return;
+        }
         self.schedule_state_slot(who, key, slot.clone());
     }
 }

@@ -14,7 +14,6 @@
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
-pub mod action_schema;
 pub mod actions;
 pub mod api;
 pub mod app;

@@ -87,6 +87,75 @@ async fn manifest_id_version_and_single_lane_mismatches_are_refused() {
     }
 }
 
+/// Declares one action and a settings schema, with their asset bytes.
+fn with_action_and_settings(package: &mut Plugin, args_schema: &str, settings: &str) {
+    let id = package.manifest["id"].as_str().unwrap().to_owned();
+    let provide = json!({"id": format!("action:{id}.song.import"), "version": "2.0.0"});
+    let action = json!({"name": "song.import", "version": "2.0.0", "title": "Import",
+        "args_schema": "schemas/args.json", "result_schema": "schemas/result.json",
+        "session": "none"});
+    for document in [&mut package.manifest, &mut package.entry] {
+        document["provides"]
+            .as_array_mut()
+            .unwrap()
+            .push(provide.clone());
+        document["actions"] = json!([action.clone()]);
+    }
+    package.entry["actions"][0]["cli"] = json!(false);
+    package.manifest["settings_schema"] = json!("settings.schema.json");
+    package.files[0].1 = toml::to_string(&package.manifest).unwrap().into_bytes();
+    package.files.extend([
+        (
+            "schemas/args.json".to_owned(),
+            args_schema.as_bytes().to_vec(),
+        ),
+        ("schemas/result.json".to_owned(), b"true".to_vec()),
+        (
+            "settings.schema.json".to_owned(),
+            settings.as_bytes().to_vec(),
+        ),
+    ]);
+}
+
+/// The installer compiles action schemas and parses the settings schema
+/// through the SDK's own validators, the same calls `vosu-package-check`
+/// makes (its `an_out_of_profile_action_schema_fails` and
+/// `a_settings_schema_must_be_the_host_settings_array` use these bytes):
+/// well-formed JSON outside the bounded profile or settings shape is refused.
+#[tokio::test]
+async fn out_of_profile_action_and_invalid_settings_schemas_are_refused() {
+    const SETTINGS: &str = r#"[{"uniqueID":"RATE","type":"number","value":1}]"#;
+    let (fixture, error) = install_mutated(|p| {
+        with_action_and_settings(p, r#"{"type":"string","maxLength":4}"#, SETTINGS);
+    })
+    .await;
+    assert_eq!(error, None, "positive control");
+    assert_eq!(fixture.records().records.len(), 1);
+    for (args, settings, asset) in [
+        (
+            r#"{"type":"string","pattern":"x"}"#,
+            SETTINGS,
+            "schemas/args.json",
+        ),
+        (r#"{"oneOf":[true]}"#, SETTINGS, "schemas/args.json"),
+        (r#"true"#, r#"{"type":"object"}"#, "settings.schema.json"),
+        (
+            r#"true"#,
+            r#"[{"uniqueID":"A","type":"text"},{"uniqueID":"A","type":"text"}]"#,
+            "settings.schema.json",
+        ),
+    ] {
+        let (fixture, error) =
+            install_mutated(|p| with_action_and_settings(p, args, settings)).await;
+        assert_eq!(
+            error.as_deref(),
+            Some(format!("invalid package asset: {asset}").as_str()),
+            "{args} / {settings}"
+        );
+        fixture.assert_untouched();
+    }
+}
+
 #[tokio::test]
 async fn schema_path_escape_and_missing_target_library_are_refused() {
     let (fixture, error) = install_mutated(|p| {

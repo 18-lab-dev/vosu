@@ -8,6 +8,9 @@ mod validate;
 pub use mirror::compare_package;
 pub use types::{Catalog, CatalogEntry, CatalogProvide, Package};
 pub use validate::EntrySupport;
+
+/// Upper bound on one fetched `catalog-v2.json` document.
+pub const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 #[cfg(test)]
 mod mirror_tests;
 #[cfg(test)]

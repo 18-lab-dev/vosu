@@ -27,5 +27,5 @@ impl Plugin for EchoPlugin {
     }
 }
 
-vosu_plugin_api::export_plugin!(bundled EchoPlugin);
+vosu_plugin_internal::export_plugin!(bundled EchoPlugin);
 vosu_plugin_api::export_plugin!(EchoPlugin);

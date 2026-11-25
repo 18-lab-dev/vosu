@@ -2,11 +2,8 @@ catalog -> state
 # M6b G0: catalog game offers reuse the runtime matcher and observe discovery.
 catalog -> plugin
 # I0 compiles staged package action schemas before install publication.
-catalog -> action_schema
 api -> state
-actions -> action_schema
 actions -> identity
-plugin -> action_schema
 plugin -> identity
 plugin -> actions
 app -> config

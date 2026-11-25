@@ -1,14 +1,11 @@
-//! The Rust SDK (`docs/v2/plugin-abi.md` §9): `Plugin`/`ConcurrentPlugin`,
-//! `export_plugin!`, and (behind the unpublished `unstable-sync-reads`
-//! feature, D5) `PlanMemory`.
+//! The Rust SDK (`docs/v2/plugin-abi.md` §9): `Plugin`/`ConcurrentPlugin`
+//! and the external `cdylib` form of `export_plugin!`. Synchronous reads
+//! (D5) and bundled registration live in the unpublished
+//! `vosu-plugin-internal` crate (AF.9), never here.
 
 mod glue;
-#[cfg(feature = "unstable-sync-reads")]
-pub(crate) mod plan_memory;
 mod plugin;
 
-#[cfg(feature = "unstable-sync-reads")]
-pub use plan_memory::{FlatReadResults, PlanMemory, PlanMemoryError, SyncReadBuffers};
 pub use plugin::{ConcurrentPlugin, Init, Plugin, PluginError, VtableHostServices};
 
 #[doc(hidden)]

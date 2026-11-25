@@ -8,7 +8,7 @@
 //! region walk live in `vosu-sys`, behind core; a plugin reaches target
 //! memory only through `VOSU_OP_READ_PLAN_SUBMIT`/`VOSU_OP_SCAN_REQUEST`
 //! (`docs/v2/plugin-abi.md` §6.3–§6.4), for example via a
-//! `ProcessMemory` implementation built on the SDK's `PlanMemory`.
+//! `ProcessMemory` implementation built on those read plans.
 
 mod backend;
 mod pattern;

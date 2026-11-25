@@ -1,0 +1,25 @@
+[package]
+name = "vosu-plugin-internal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Workspace-only vosu plugin glue: PlanMemory synchronous reads (D5), their dispatch interception and bundled registration (AF.9)."
+# Never published (implementation plan D11, AF.9): everything here is the
+# workspace's own plugin runtime surface, which the published
+# `vosu-plugin-api` must not carry in any feature-gated form.
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+# Opt-in per-thread read-plan phase counters; the root crate forwards its
+# diagnostic `read-plan-profile` feature here. Never in a release build.
+read-plan-profile = []
+
+[dependencies]
+vosu-plugin-api = { path = "../vosu-plugin-api" }

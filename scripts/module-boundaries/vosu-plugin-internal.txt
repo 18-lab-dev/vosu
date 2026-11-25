@@ -1,0 +1,7 @@
+# Dependencies between vosu-plugin-internal's own top-level src/ modules,
+# enforced by scripts/check-module-boundaries.py (AF.9, S0).
+#
+# The dispatch glue claims synchronous results for PlanMemory's slots.
+glue -> plan_memory
+# Opt-in, wire-ABI-independent per-thread read-plan phase diagnostics.
+plan_memory -> read_plan_profile

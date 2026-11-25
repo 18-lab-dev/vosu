@@ -13,6 +13,7 @@ README.md 26 history documents the rename, migration precedence, and upstream to
 CHANGELOG.md 33 history pre-rename release notes and the rename itself are historical record, not current branding
 LICENSE 9 history retains the upstream copyright holder credit and relicensing permission text
 LICENSE-MIT 1 history retains the upstream copyright holder credit
+crates/vosu-plugin-api/LICENSE-MIT 1 history the published SDK package carries the repository MIT license unchanged, including the upstream copyright holder credit
 PRIVACY.md 6 upstream discloses the network request to the tosu-operated overlay catalog service
 CODE_SIGNING_POLICY.md 1 upstream notes that community overlays are installed from the tosu catalog
 THIRD_PARTY_NOTICES.md 30 third-party-catalog inventories upstream tosu attribution, relicensing permission, and catalog provenance

@@ -774,5 +774,5 @@ mod game {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled concurrent ReplayGame);
+    vosu_plugin_internal::export_plugin!(bundled concurrent ReplayGame);
 }

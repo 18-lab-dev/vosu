@@ -155,7 +155,7 @@ impl Plugin for OsuProvider {
     }
 }
 fn vtable() -> vosu_plugin_api::vosu_plugin_vtable {
-    vosu_plugin_api::__vtable_for_serialized::<OsuProvider>()
+    vosu_plugin_internal::vtable_for::<OsuProvider>()
 }
 async fn prepare(selection: Selection) -> PreparedResources {
     let worker = ResourceWorker::start();

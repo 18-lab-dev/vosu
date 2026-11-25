@@ -138,7 +138,7 @@ mod harness {
                 let client = client(
                     self.0,
                     DownloadLimits {
-                        max_bytes: vosu_core::catalog::sources::MAX_CATALOG_BYTES as u64,
+                        max_bytes: vosu_plugin_api::catalog::MAX_CATALOG_BYTES as u64,
                         max_redirects: 5,
                     },
                 );

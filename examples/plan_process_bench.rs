@@ -197,12 +197,12 @@ fn fixture_run() -> Result<()> {
             "{shape}: native_ns={native_ns} plan_ns={plan_ns} ratio={:.3}",
             plan_ns as f64 / native_ns as f64
         );
-        if vosu_plugin_api::read_plan_profile::COMPILED_IN
+        if vosu_plugin_internal::read_plan_profile::COMPILED_IN
             && std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1")
         {
-            vosu_plugin_api::read_plan_profile::take_thread_snapshot();
+            vosu_plugin_internal::read_plan_profile::take_thread_snapshot();
             capture(shape, &attachment.process, &mut plan_reader);
-            let clocks = vosu_plugin_api::read_plan_profile::take_thread_snapshot();
+            let clocks = vosu_plugin_internal::read_plan_profile::take_thread_snapshot();
             println!(
                 "  plan_clock_reads_per_capture: precise={} coarse={} profiler={}",
                 clocks.precise_clock_reads, clocks.coarse_clock_reads, clocks.profiler_clock_reads

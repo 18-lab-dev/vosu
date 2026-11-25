@@ -118,7 +118,7 @@ thread_local! {
     /// submission runs reentrant on the plugin's own submitting thread, so
     /// this buffer stays warm (steady-state capacity) for that one thread
     /// across repeated same-shaped plans, mirroring
-    /// `vosu_plugin_api::sdk::plan_memory::SyncReadBuffers`'s own
+    /// `vosu_plugin_internal::SyncReadBuffers`'s own
     /// plugin-side buffer.
     static SYNC_RESULT_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
@@ -723,8 +723,8 @@ impl PluginHost {
             Ok(plan) => plan,
             Err(error) => return error.into(),
         };
-        let session_profile = vosu_plugin_api::read_plan_profile::Span::new(
-            vosu_plugin_api::read_plan_profile::Phase::SessionMemory,
+        let session_profile = vosu_plugin_internal::read_plan_profile::Span::new(
+            vosu_plugin_internal::read_plan_profile::Phase::SessionMemory,
         );
         let handle = SessionHandle(plan.handle());
         let memory = match self.sync_session_memory(instance, handle) {
@@ -745,8 +745,8 @@ impl PluginHost {
             ) {
                 return vosu_status::from(error);
             }
-            let _delivery_profile = vosu_plugin_api::read_plan_profile::Span::new(
-                vosu_plugin_api::read_plan_profile::Phase::ResultDelivery,
+            let _delivery_profile = vosu_plugin_internal::read_plan_profile::Span::new(
+                vosu_plugin_internal::read_plan_profile::Phase::ResultDelivery,
             );
             self.deliver_sync_result_raw(instance, &buf)
         })
@@ -766,8 +766,8 @@ impl PluginHost {
     /// target dispatch, exactly as `dispatch.rs::run_job` already does
     /// for the ordinary queued delivery path. Without this, a plugin that
     /// submits `VOSU_READ_PLAN_SYNC` through a raw `send` (not through
-    /// `PlanMemory`, e.g. any C plugin, or an SDK plugin calling
-    /// `HostServices::submit_read_plan_sync` directly) and then submits
+    /// `PlanMemory`, e.g. any C plugin, or an SDK plugin sending a
+    /// `ReadPlanSubmit { sync: true, .. }` itself) and then submits
     /// another synchronous plan from inside this very `on_message` call
     /// would re-enter `handle_read_plan_submit_raw` on the same thread:
     /// `SYNC_RESULT_BUF.borrow_mut()` would panic (`BorrowMutError`)

@@ -11,7 +11,7 @@ use vosu_plugin_testkit::fixture::{ApiFixturePlugin, STREAM_BYTES};
 
 const FILE: &[u8] = include_bytes!("../fixtures/api-v1-plugin/fixture.osu");
 fn vtable() -> vosu_plugin_api::vosu_plugin_vtable {
-    vosu_plugin_api::__vtable_for_serialized::<ApiFixturePlugin>()
+    vosu_plugin_internal::vtable_for::<ApiFixturePlugin>()
 }
 fn setup(id: &str, pid: u32) -> Harness {
     let mut h = Harness::new();

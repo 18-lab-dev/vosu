@@ -1,5 +1,5 @@
 //! F4 review P1: the raw `VOSU_READ_PLAN_SYNC` intercept
-//! (`sdk::plan_memory::intercept_raw`/`sdk::glue::try_intercept_sync_raw`)
+//! (`plan_memory::intercept_raw`/`glue::try_intercept_sync`)
 //! must validate a `VOSU_OP_READ_PLAN_RESULT` payload exactly as
 //! `Message::decode` would — `validate_flags` and
 //! `validate_read_plan_result`, both allocation-free — before ever
@@ -19,7 +19,7 @@
 //! id, and asserts `PlanMemory::read_flat` rejects it — never reaching
 //! `FlatReadResults::get` at all, so there is nothing left to read out of
 //! bounds. Run under miri when available (`cargo +nightly miri test -p
-//! vosu-plugin-api --test plan_memory_validation`); without it, these
+//! vosu-plugin-internal --test plan_memory_validation`); without it, these
 //! tests at least confirm every case returns `Err` instead of panicking
 //! or reading garbage.
 
@@ -27,10 +27,11 @@ use std::cell::Cell;
 use std::ffi::c_void;
 
 use vosu_plugin_api::{
-    HostServices, Init, Message, PlanBase, PlanMemory, PlanMemoryError, Plugin, PluginError,
-    StageRef, SyncReadBuffers, read_flat_header, vosu_bytes, vosu_host_services, vosu_message,
-    vosu_opcode, vosu_read_plan_submit_header, vosu_status,
+    HostServices, Init, Message, PlanBase, Plugin, PluginError, StageRef, read_flat_header,
+    vosu_bytes, vosu_host_services, vosu_message, vosu_opcode, vosu_read_plan_submit_header,
+    vosu_status,
 };
+use vosu_plugin_internal::{PlanMemory, PlanMemoryError, SyncReadBuffers};
 
 struct TestPlugin;
 
@@ -138,7 +139,7 @@ fn try_read_flat_against(
     flags: u32,
     build: impl Fn(u64) -> Vec<u8> + 'static,
 ) -> Result<usize, PlanMemoryError> {
-    let vt = vosu_plugin_api::__vtable_for_serialized::<TestPlugin>();
+    let vt = vosu_plugin_internal::vtable_for::<TestPlugin>();
     let noop = noop_host_services();
     let init = init_bytes();
     // SAFETY: `noop`/`init` are valid for this call's duration; `vt` is a

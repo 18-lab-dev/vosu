@@ -3,7 +3,7 @@
 //! have been warmed to their steady-state capacity, for both a 1-op and an
 //! 11-op plan (the plan's own F4 acceptance criterion).
 //!
-//! `FakeHost` re-enters the SDK's own generated `dispatch` synchronously
+//! `FakeHost` re-enters the workspace's intercepting `dispatch` synchronously
 //! from inside `HostServices::send_flat`, exactly as an in-process host's
 //! real `VOSU_READ_PLAN_SYNC` delivery does (`docs/v2/plugin-abi.md` §4,
 //! D5): it never decodes the submitted plan into an owned `ReadPlanSubmit`
@@ -19,11 +19,12 @@ use std::ffi::c_void;
 use std::hint::black_box;
 
 use vosu_plugin_api::{
-    HostServices, Init, Message, PlanBase, PlanMemory, PlanOp, Plugin, PluginError, StageBase,
-    StageRef, SyncReadBuffers, read_flat_header, vosu_bytes, vosu_host_services, vosu_message,
-    vosu_opcode, vosu_read_plan_result_header, vosu_read_plan_submit_header, vosu_read_result_flat,
+    HostServices, Init, Message, PlanBase, PlanOp, Plugin, PluginError, StageBase, StageRef,
+    read_flat_header, vosu_bytes, vosu_host_services, vosu_message, vosu_opcode,
+    vosu_read_plan_result_header, vosu_read_plan_submit_header, vosu_read_result_flat,
     vosu_read_result_kind, vosu_stage_header, vosu_status,
 };
+use vosu_plugin_internal::{PlanMemory, SyncReadBuffers};
 
 struct TrackingAllocator;
 
@@ -245,7 +246,7 @@ impl HostServices for FakeHost {
 }
 
 fn run_zero_alloc_case(op_count: usize) {
-    let vt = vosu_plugin_api::__vtable_for_serialized::<TestPlugin>();
+    let vt = vosu_plugin_internal::vtable_for::<TestPlugin>();
     let noop = noop_host_services();
     let init = init_bytes();
     // SAFETY: `noop`/`init` are valid for this call's duration; `vt` is a

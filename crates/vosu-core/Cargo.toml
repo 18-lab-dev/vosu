@@ -49,6 +49,9 @@ tracing = "=0.1.44"
 url = "=2.5.8"
 vosu-net = { path = "../vosu-net" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
+# Host-side read-plan phase diagnostics (`read_plan_profile`); its tests
+# also register bundled fixtures and drive `PlanMemory` (AF.9).
+vosu-plugin-internal = { path = "../vosu-plugin-internal" }
 vosu-surface = { path = "../vosu-surface" }
 vosu-sys = { path = "../vosu-sys" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

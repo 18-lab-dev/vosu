@@ -48,7 +48,7 @@ pub fn resource_host(id: &str, pid: u32) -> Harness {
     let schema =
         format!(r#"{{"title":"{id}","version":"1.0.0","type":"object","properties":{{}}}}"#);
     h.load(&manifest, &[&schema], &[], || {
-        vosu_plugin_api::__vtable_for_serialized::<vosu_plugin_testkit::fixture::ApiFixturePlugin>()
+        vosu_plugin_internal::vtable_for::<vosu_plugin_testkit::fixture::ApiFixturePlugin>()
     });
     h.host.process_appeared(record(pid, id));
     h

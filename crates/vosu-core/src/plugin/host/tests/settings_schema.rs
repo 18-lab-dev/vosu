@@ -84,7 +84,7 @@ mod capturing_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled CapturingPlugin);
+    vosu_plugin_internal::export_plugin!(bundled CapturingPlugin);
 }
 
 #[test]
@@ -281,7 +281,7 @@ mod gated_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled GatedPlugin);
+    vosu_plugin_internal::export_plugin!(bundled GatedPlugin);
 }
 
 #[test]
@@ -414,7 +414,7 @@ mod gated_replay_plugin {
         }
     }
 
-    vosu_plugin_api::export_plugin!(bundled GatedReplayPlugin);
+    vosu_plugin_internal::export_plugin!(bundled GatedReplayPlugin);
 }
 
 /// P0 review finding 1, regression test: before the fix, `schema_for`

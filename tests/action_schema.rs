@@ -1,6 +1,6 @@
 //! The unrestricted engine remains a dev-only, offline oracle, not a core dependency.
 use serde_json::{Value, json};
-use vosu_core::action_schema::CompiledActionSchema;
+use vosu_plugin_api::manifest::action_schema::CompiledActionSchema;
 
 #[test]
 fn action_schema_differential_supported_profile() {

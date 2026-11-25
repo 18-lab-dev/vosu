@@ -20,7 +20,7 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
    eBPF backend. Building with `--no-default-features` skips them and produces a
    polling-only Linux binary.
 
-   `crates/vosu-plugin-api/tests/layout.rs` also needs a C compiler on `PATH`
+   `tests/sdk/layout_header.rs` (the root `sdk` test) also needs a C compiler on `PATH`
    (`$CC`, `cc`, `clang`, or `gcc`) to check `include/vosu_plugin.h` against the
    Rust ABI types with `-fsyntax-only`. On Linux/macOS this is already covered by
    the table above; on Windows it specifically means Clang, since the test's

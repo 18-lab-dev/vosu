@@ -21,17 +21,15 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = []
-# `vosu-plugin-api/unstable-sync-reads` backs `read_plan.rs`'s own
-# `PlanMemory` use (D5): only the test-harness build needs it, never a
-# published build of this crate (which never ships at all, `publish =
-# false` above, but the split still documents the boundary).
 # Bench-only production-host fixtures; test-harness rejects release builds.
 # Production must never enable this feature.
 bench-harness = []
-test-harness = ["bench-harness", "vosu-plugin-api/unstable-sync-reads"]
+test-harness = ["bench-harness"]
 
 [dependencies]
 vosu-plugin-api = { path = "../vosu-plugin-api" }
+# Bundled registration and `read_plan.rs`'s `PlanMemory` use (D5, AF.9).
+vosu-plugin-internal = { path = "../vosu-plugin-internal" }
 
 [[example]]
 name = "api_v1_plugin"

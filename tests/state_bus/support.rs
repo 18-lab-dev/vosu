@@ -301,7 +301,7 @@ pub mod delayed {
             Ok(())
         }
     }
-    vosu_plugin_api::export_plugin!(bundled concurrent Delayed);
+    vosu_plugin_internal::export_plugin!(bundled concurrent Delayed);
     pub fn register() -> Receiver<(u64, VtableHostServices)> {
         let (tx, rx) = sync_channel(1);
         *EVENTS.lock().unwrap() = Some(tx);

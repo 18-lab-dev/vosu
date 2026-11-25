@@ -7,6 +7,20 @@ import subprocess
 
 
 UI_PREFIXES = ("assets/server/", "src/server/", "src/tools/")
+# Everything `scripts/sdk-package.py verify` depends on: the published SDK
+# crate itself, the workspace manifest/lock/toolchain it inherits and packages
+# from, Cargo configuration, and the verifier and its CI/gate wiring. The
+# verify step (~40 s warm, a few minutes cold) runs only when one of these
+# changed, so a pure daemon change does not repackage the SDK.
+SDK_PATHS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+SDK_PREFIXES = (
+    "crates/vosu-plugin-api/",
+    ".cargo/",
+    ".github/workflows/",
+    "scripts/sdk-package.py",
+    "scripts/ci-changes.py",
+    "scripts/prepush.py",
+)
 
 
 def is_ui_path(path):
@@ -19,6 +33,11 @@ def is_ui_path(path):
         if "smoke" in name or "browser" in name:
             return True
     return False
+
+
+def sdk_changed(paths):
+    """Whether the published SDK package or its verification may have changed."""
+    return any(path in SDK_PATHS or path.startswith(SDK_PREFIXES) for path in paths)
 
 
 def classify(paths):
@@ -53,6 +72,7 @@ def classify(paths):
 
 def main():
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    sdk = True
     if os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
         code, native, ui = True, True, True
     else:
@@ -70,10 +90,18 @@ def main():
             if result.returncode:
                 code, native, ui = True, True, True
             else:
-                code, native, ui = classify(result.stdout.decode("utf-8", errors="replace").split("\0")[:-1])
+                paths = result.stdout.decode("utf-8", errors="replace").split("\0")[:-1]
+                code, native, ui = classify(paths)
+                sdk = sdk_changed(paths)
     with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-        output.write(f"code={str(code).lower()}\nnative={str(native).lower()}\nui={str(ui).lower()}\n")
-    print(f"Rust validation: {code}; native Windows verification: {native}; dashboard UI verification: {ui}")
+        output.write(
+            f"code={str(code).lower()}\nnative={str(native).lower()}\nui={str(ui).lower()}\n"
+            f"sdk={str(sdk).lower()}\n"
+        )
+    print(
+        f"Rust validation: {code}; native Windows verification: {native}; "
+        f"dashboard UI verification: {ui}; SDK package verification: {sdk}"
+    )
 
 
 if __name__ == "__main__":

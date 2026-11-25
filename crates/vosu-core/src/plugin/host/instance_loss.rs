@@ -3,16 +3,18 @@
 //! child or channel was reported lost (`execution::InstanceLoss`). Loss
 //! releases the same host state shutdown does (`retire_instance`), plus
 //! the instance's matcher registration and owned sessions, which detach
-//! with reason `lost` (§6.2) so a later generation can attach fresh. Only
-//! once the lost generation is retired, its endpoints closed and its
-//! process reaped, does supervision decide whether a new generation starts
-//! (`supervision.rs`).
+//! with reason `lost` (§6.2) so a later generation can attach fresh.
+//! Supervision records the loss before that retirement starts; only once
+//! the lost generation is retired, its endpoints closed and its process
+//! reaped, does a restart delay begin (`supervision.rs`).
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use super::super::error::HostError;
 use super::super::execution::{LossCause, ProcessLauncher};
 use super::super::instance::PluginInstance;
+use super::super::process::supervisor::Next;
 use super::lifecycle::Teardown;
 use super::{InstanceSlot, PluginHost, SHUTDOWN_RACE_DESTROY_GRACE};
 use crate::identity::PluginInstanceId;
@@ -60,10 +62,15 @@ impl PluginHost {
         };
         let (plugin_id, instance) = taken;
         tracing::warn!(?id, plugin = %plugin_id, reason = cause.reason(), "plugin-host process lost");
+        // Supervision records the loss before retirement ends any of the
+        // generation's waiters, so `process_status` never reports it running
+        // after a waiter got `plugin_crashed`. The restart delay is armed only
+        // once the generation is retired (§7.6 "Loss identity").
+        let next = self.supervisor.lost(id, cause, Instant::now());
         let host = self.arc();
         std::thread::Builder::new()
             .name(format!("vosu-plugin-lost-{}", id.0))
-            .spawn(move || host.retire_lost(id, plugin_id, instance, cause))
+            .spawn(move || host.retire_lost(id, plugin_id, instance, next))
             .expect("spawning a lost plugin instance's retirement thread");
     }
 
@@ -89,7 +96,7 @@ impl PluginHost {
         id: PluginInstanceId,
         plugin_id: String,
         instance: PluginInstance,
-        cause: LossCause,
+        next: Next,
     ) {
         // Unregistered first so discovery stops offering processes to the
         // lost instance, and a replacement generation can register again.
@@ -100,6 +107,6 @@ impl PluginHost {
             Some(instance),
             Teardown::Abandon(SHUTDOWN_RACE_DESTROY_GRACE),
         );
-        self.supervised_lost(id, cause);
+        self.follow(id, next);
     }
 }

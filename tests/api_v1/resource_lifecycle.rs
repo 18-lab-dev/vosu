@@ -138,7 +138,7 @@ impl Plugin for Fixture {
     }
 }
 fn vtable() -> vosu_plugin_api::vosu_plugin_vtable {
-    vosu_plugin_api::__vtable_for_serialized::<Fixture>()
+    vosu_plugin_internal::vtable_for::<Fixture>()
 }
 fn setup(
     id: &str,

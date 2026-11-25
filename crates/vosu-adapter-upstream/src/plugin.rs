@@ -13,4 +13,4 @@ impl Plugin for Adapter {
         Err(vosu_status::VOSU_ERR_UNSUPPORTED.into())
     }
 }
-vosu_plugin_api::export_plugin!(bundled Adapter);
+vosu_plugin_internal::export_plugin!(bundled Adapter);

@@ -122,7 +122,7 @@ impl vosu_plugin_api::Plugin for Game {
         Ok(())
     }
 }
-vosu_plugin_api::export_plugin!(bundled Game);
+vosu_plugin_internal::export_plugin!(bundled Game);
 
 /// Production stream routing (vosu-osu `plugin/resources.rs`): only the owning
 /// session's resource worker serves a stream; an unowned stream is TARGET_GONE.

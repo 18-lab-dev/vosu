@@ -142,7 +142,51 @@ class CrateBoundariesTests(unittest.TestCase):
                     self.assertTrue(any(error.startswith("M5:") for error in errors))
                     crate["dependencies"][0]["kind"] = "dev"
                     errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
-                    self.assertEqual(errors, [])
+                    if source == "vosu-plugin-api":
+                        # AF.9: the published SDK has no workspace edge of any kind.
+                        self.assertTrue(errors)
+                        self.assertTrue(all(error.startswith("AF.9:") for error in errors))
+                    else:
+                        self.assertEqual(errors, [])
+
+    def test_af9_published_sdk_has_no_workspace_edge_feature_or_publish_false(self):
+        for kind in [None, "dev", "build"]:
+            with self.subTest(kind=kind):
+                sdk = package("vosu-plugin-api", [("vosu-proptest", True)])
+                sdk["dependencies"][0]["kind"] = kind
+                meta = metadata([sdk, package("vosu-proptest", [])])
+                self.rules.write_text("vosu-plugin-api -> vosu-proptest\n", encoding="utf-8")
+                errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
+                self.assertTrue(any("AF.9: SDK edge vosu-plugin-api -> vosu-proptest" in e for e in errors))
+        self.rules.write_text("vosu-plugin-api\n", encoding="utf-8")
+        sdk = package("vosu-plugin-api", [])
+        errors, _, _ = crate_boundaries.check(metadata([sdk]), rules_path=self.rules)
+        self.assertEqual(errors, [])
+        sdk["features"] = {"unstable-sync-reads": []}
+        errors, _, _ = crate_boundaries.check(metadata([sdk]), rules_path=self.rules)
+        self.assertTrue(any("declares Cargo features" in e for e in errors))
+        sdk["features"] = {}
+        sdk["publish"] = []
+        errors, _, _ = crate_boundaries.check(metadata([sdk]), rules_path=self.rules)
+        self.assertTrue(any("cannot be publish = false" in e for e in errors))
+
+    def test_af9_internal_glue_stays_unpublished_and_off_publishable_crates(self):
+        internal = package("vosu-plugin-internal", [])
+        internal["publish"] = []
+        user = package("vosu-osu", [("vosu-plugin-internal", True)])
+        user["publish"] = []
+        self.rules.write_text("vosu-osu -> vosu-plugin-internal\n", encoding="utf-8")
+        errors, _, _ = crate_boundaries.check(metadata([internal, user]), rules_path=self.rules)
+        self.assertEqual(errors, [])
+        del user["publish"]
+        errors, _, _ = crate_boundaries.check(metadata([internal, user]), rules_path=self.rules)
+        self.assertTrue(any("publishable vosu-osu depends on the unpublished" in e for e in errors))
+        user["dependencies"][0]["kind"] = "dev"
+        errors, _, _ = crate_boundaries.check(metadata([internal, user]), rules_path=self.rules)
+        self.assertEqual(errors, [])
+        del internal["publish"]
+        errors, _, _ = crate_boundaries.check(metadata([internal, user]), rules_path=self.rules)
+        self.assertTrue(any("vosu-plugin-internal must stay publish = false" in e for e in errors))
 
     def test_rules_file_comments_and_blank_lines_are_ignored(self):
         meta = metadata([package("alpha", [("beta", True)]), package("beta", [])])
