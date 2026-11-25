@@ -37,7 +37,7 @@ fields, using capability ids from the [naming contract](naming.md) (`field:…`,
 ```toml
 [[provides]]
 id = "field:vosu.osu"              # a bare namespace id covers the whole namespace
-version = "1.2.0"                  # the owning namespace's schema version, not the plugin's own release
+version = "1.3.0"                  # the owning namespace's schema version, not the plugin's own release
 schema = "schemas/vosu.osu.schema.json"  # required for a whole-namespace `field:` entry naming the plugin's own namespace (D7); path inside this package
 
 [[requires]]
@@ -55,7 +55,7 @@ version = "^1.0.0"
   - For a `field:` id, `version` must equal the owning namespace's current
     schema version (`docs/v2/state-schema.md`; every namespace schema starts
     at `1.0.0`, additive amendments bump it from there — `vosu.osu` is
-    `1.2.0` at this freeze) — a field's shape, not the plugin release that
+    `1.3.0` in `2.0.0-alpha.1`) — a field's shape, not the plugin release that
     happens to implement it, is what a requirer actually depends on. A
     plugin cannot publish a namespace at a version its own build doesn't
     match the corresponding schema revision for. A whole-namespace entry

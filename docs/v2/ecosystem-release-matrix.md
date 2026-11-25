@@ -88,12 +88,12 @@ be invented for an overlay without its source.
 
 | Axis | Value |
 | --- | --- |
-| Application (`host` ranges match this) | `2.0.0-alpha.N` prereleases, then `2.0.0`. f/alpha `49e95cf` declares `2.0.0-alpha.1`. |
-| Alpha host range | `>=2.0.0-alpha.1, <3.0.0`, or a higher alpha minimum for a package that needs a later alpha's contract (schema 1.3.0, B0 artifacts). |
+| Application (`host` ranges match this) | `2.0.0-alpha.N` prereleases, then `2.0.0`. The F landing head (f/alpha with M4a and M4b merged), from which `v2.0.0-alpha.1` is cut, declares `2.0.0-alpha.1`. |
+| Alpha host range | `>=2.0.0-alpha.1, <3.0.0`, or a higher alpha minimum for a package that needs a later alpha's contract (B0 artifacts, P0 header asset). |
 | Stable host range | `>=2.0.0, <3.0.0` unless the owner explicitly asks to keep an alpha-compatible range (A8.5). |
 | SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. The workspace declares the unpublished `1.0.0-alpha.0`. crates.io had no `vosu-plugin-api` crate on 2026-11-24, so the first publication is `1.0.0-alpha.1` if it is still unoccupied when approved. Consumers pin it exactly (`=1.0.0-alpha.N`). |
 | ABI / `manifest_version` / `catalog_version` | ABI 1; manifest format 1; catalog 2 for `catalog-v2.json`, 1 for the frozen `catalog.json`. |
-| Core namespace schemas at `49e95cf` | `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin` 1.0.0; `vosu.osu` 1.2.0. M4a's 1.3.0 (`keys.overlay`, physical keys) is not in alpha.1; a package that requires it raises its host minimum to the first alpha that ships it. |
+| Core namespace schemas in `2.0.0-alpha.1` | `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin` 1.0.0; `vosu.osu` 1.3.0, including M4a's `keys.overlay` physical keys. A package that requires `vosu.osu` 1.3.0 needs no host minimum above `2.0.0-alpha.1`. |
 | Core action | `vosu.osu.beatmap.import` 1.0.0, `session = "required"`, `cli = true`. |
 | New plugin namespaces, actions and schema assets | Each starts at `1.0.0` and moves only when its own contract changes; never bulk-rewritten with a package version. |
 | Package `version` | Independent semver per entry, chosen by the component owner and recorded in the candidate receipt. |
@@ -330,7 +330,7 @@ operations; unit agents only prepare them.
 | Land F vosu units onto `v2/main` | AF, R0, S0, B0, P0, D0 | `python scripts/prepush.py --base v2/main`, then `python scripts/land.py --base v2/main --topic <approved-topic>` at the exact HEAD | owner-blocked |
 | Tag, draft, sign and publish `v2.0.0-alpha.1` as a prerelease, `make_latest=false` | R0 | release workflow for tag `v2.0.0-alpha.1` on the approved `v2/main` commit; `sign-release.py` (uploads signatures) | owner-blocked; R0 trigger |
 | Publish `vosu-plugin-api` `1.0.0-alpha.N` to crates.io | S0 | `cargo publish --locked -p vosu-plugin-api` from the approved commit, after rechecking that the version is unoccupied | owner-blocked; S1 |
-| Each later host alpha (B0, schema 1.3.0, P0 header asset) | R0/B0/P0 | as for alpha.1, new tag | owner-blocked |
+| Each later host alpha (B0 artifacts, P0 header asset) | R0/B0/P0 | as for alpha.1, new tag | owner-blocked |
 | Each later SDK alpha (B0 codecs) | B0 | as for the first SDK alpha, new version | owner-blocked |
 | Ecosystem prerelease tags and draft uploads (vosu-tools, vosulay, vosu-overlays, quickstart) | C0, V2, O0, Q0 | each repository's own release workflow at the approved tag | owner-blocked |
 | Make `18-lab-dev/vosu-overlay-quickstart` public | Q0 | repository visibility change (AF.5 approves the outcome; the operation is still separately confirmed) | owner-blocked |
@@ -352,7 +352,7 @@ operations; unit agents only prepare them.
     "assets": { "<target>": { "url": "https://github.com/18-lab-dev/vosu/releases/download/<tag>/<file>", "sha256": "<64-hex>", "size": 0 } }
   },
   "sdk": { "crate": "vosu-plugin-api", "version": "1.0.0-alpha.N", "crate_sha256": "<64-hex>" },
-  "schemas": { "vosu.osu": "1.2.0" }
+  "schemas": { "vosu.osu": "1.3.0" }
 }
 ```
 
