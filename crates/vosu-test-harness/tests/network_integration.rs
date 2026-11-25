@@ -159,14 +159,11 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     bounded!(update_task).unwrap().unwrap();
     // The updater identifies itself with the executable's (root package's)
     // version; vosu-core's own 0.1.0 package version once leaked here.
+    // `lines()` also strips the `\r` a Windows checkout's CRLF endings add.
     let root_version = include_str!("../../../Cargo.toml")
-        .split("\n[package]\n")
-        .nth(1)
-        .and_then(|package| {
-            package
-                .lines()
-                .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
-        })
+        .lines()
+        .skip_while(|line| *line != "[package]")
+        .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
         .expect("root [package] version");
     let updater_requests: Vec<_> = mock
         .requests()
