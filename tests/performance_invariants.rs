@@ -436,7 +436,10 @@ fn plan_memory_stable_capture_backend_call_count() {
         plan_health.load(Ordering::Relaxed),
     );
     assert_eq!(native_regular_calls, 14);
-    assert_eq!(plan_regular_calls, 15);
+    // The executor reads each dependency level of a plan in one native
+    // batch (no longer one call per stage), so the plan path makes as many
+    // backend calls as the native reader.
+    assert_eq!(plan_regular_calls, 14);
     assert_eq!(native_ops.load(Ordering::Relaxed), 56);
     assert_eq!(plan_ops.load(Ordering::Relaxed), 56);
     assert_eq!(plan_health.load(Ordering::Relaxed), 0);
