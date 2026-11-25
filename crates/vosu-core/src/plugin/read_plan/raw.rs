@@ -667,6 +667,14 @@ impl<'a> ValidatedPlan<'a> {
         self.header.handle
     }
 
+    /// Whether the root's module name, if it has one, is UTF-8: the one
+    /// check the SDK's owned decode makes beyond structural validation.
+    pub(crate) fn root_name_is_utf8(&self) -> bool {
+        vosu_plan_base_kind::try_from(self.header.root.kind)
+            != Ok(vosu_plan_base_kind::VOSU_BASE_MODULE)
+            || module_name_str(self.payload, &self.header.root).is_ok()
+    }
+
     pub(crate) fn execute(
         self,
         memory: &dyn ProcessMemory,
