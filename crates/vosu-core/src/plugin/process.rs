@@ -12,6 +12,8 @@
 //!   doorbell-driven waits, 2-second backpressure window and termination.
 //! - `linux` (Linux only): core's launch of one plugin host with exactly its
 //!   channel objects, and the child's adoption of them (§7.3, §7.6).
+//! - `windows_launch` (Windows only): core's launch of one confined child
+//!   with both directions' objects inherited, and the child's attach (W0).
 //!
 //! The OS objects (mapping and doorbell per direction) come from
 //! `vosu_sys::plugin_process::RingObjects`, whose module documents the
@@ -35,3 +37,5 @@ pub mod frame;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod ring;
+#[cfg(windows)]
+pub mod windows_launch;
