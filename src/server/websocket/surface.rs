@@ -30,20 +30,7 @@ impl FeedControl for Control {
         Ok(())
     }
     fn write_completed(&self) {
-        if self
-            .control
-            .client
-            .state
-            .compare_exchange(
-                CLIENT_PENDING,
-                CLIENT_OPEN,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
-        {
-            self.control.hub.wake_writable();
-        }
+        self.control.hub.write_completed(&self.control.client);
     }
     fn send_text(&self, bytes: Bytes) -> ResponseFuture<'_, bool> {
         Box::pin(async move {

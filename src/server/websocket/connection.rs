@@ -28,19 +28,7 @@ impl Connection {
 
     /// The transport writer must call this after its state send future completes.
     pub fn write_completed(&self) {
-        if self
-            .client
-            .state
-            .compare_exchange(
-                CLIENT_PENDING,
-                CLIENT_OPEN,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
-        {
-            self.hub.wake_writable();
-        }
+        self.hub.write_completed(&self.client);
     }
 
     pub async fn send_text(&self, bytes: Bytes) -> bool {
