@@ -10,6 +10,8 @@
 //!   peer-written cursor and head before use.
 //! - [`channel`]: one side's serialized producer, single consumer,
 //!   doorbell-driven waits, 2-second backpressure window and termination.
+//! - `windows_launch` (Windows only): core's launch of one confined child
+//!   with both directions' objects inherited, and the child's attach (W0).
 //!
 //! The OS objects (mapping and doorbell per direction) come from
 //! `vosu_sys::plugin_process::RingObjects`, whose module documents the
@@ -31,3 +33,5 @@
 pub mod channel;
 pub mod frame;
 pub mod ring;
+#[cfg(windows)]
+pub mod windows_launch;
