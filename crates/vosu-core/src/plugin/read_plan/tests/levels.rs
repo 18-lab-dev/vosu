@@ -134,7 +134,7 @@ fn run_both(submit: &ReadPlanSubmit, memory: &RecordingMemory) -> Vec<ReadResult
 }
 
 /// Stages interleaved in submission order across three dependency levels
-/// cost one native batch per level, and results keep (stage, op) order.
+/// cost one native call per level, and results keep (stage, op) order.
 #[test]
 fn independent_stages_share_one_native_batch_per_level() {
     let memory = memory();
@@ -147,8 +147,9 @@ fn independent_stages_share_one_native_batch_per_level() {
         dependent_stage(0, 0, vec![op(0x40, 1)]),
     ]);
     let results = run_both(&submit, &memory);
-    assert_eq!(memory.batches(), vec![3, 4, 1]);
-    assert!(memory.singles().is_empty());
+    // The last level's one read needs no batch.
+    assert_eq!(memory.batches(), vec![3, 4]);
+    assert_eq!(memory.singles(), vec![PAGE as usize + 0x44]);
     assert_eq!(
         results,
         vec![
@@ -184,9 +185,9 @@ fn a_failed_level_batch_falls_back_per_op_keeping_each_status() {
     // Stage 2's op 0 reads the page's bytes 0x10..0x18: as a pointer,
     // unmapped.
     let unmapped = u64::from_le_bytes([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
-    // Level 0, level 1 (failed), level 2 (stage 5 only: stage 4's base
-    // failed before any read; its one read fails too).
-    assert_eq!(memory.batches(), vec![2, 3, 1]);
+    // Level 0, level 1 (failed), then level 2's one read, unbatched (stage
+    // 4's base failed before any read; stage 5's read fails too).
+    assert_eq!(memory.batches(), vec![2, 3]);
     assert_eq!(
         memory.singles(),
         vec![

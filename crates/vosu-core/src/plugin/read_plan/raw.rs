@@ -107,14 +107,17 @@ struct StageSlot {
     first_op: u32,
 }
 
-/// Per-thread scratch for [`plan_levels`], taken out of [`SCHEDULE`] for one
-/// execution and put back afterwards, so a warmed executor allocates
-/// nothing (and a reentrant call merely starts with empty scratch).
+/// Plans with at most this many stages are scheduled in stack arrays; a
+/// larger plan uses the per-thread [`SCHEDULE`] scratch.
+const STACK_STAGES: usize = 32;
+
+/// Per-thread scratch for plans over [`STACK_STAGES`] stages, taken out of
+/// [`SCHEDULE`] for one execution and put back afterwards, so a warmed
+/// executor allocates nothing (and a reentrant call merely starts with
+/// empty scratch).
 #[derive(Default)]
 struct Schedule {
-    /// Indexed by stage.
     slots: Vec<StageSlot>,
-    /// `level << 32 | stage`, sorted: every level's stages, in stage order.
     order: Vec<u64>,
 }
 
@@ -124,17 +127,18 @@ thread_local! {
     };
 }
 
-/// Fills `schedule` for the validated plan and returns its level count.
-/// Every stage of one level depends only on lower levels, so a whole level
-/// can be read in one native batch once the level below it has finished.
+/// Writes every stage's [`StageSlot`] to `slots` and its `level << 32 |
+/// stage` key to `order` (both exactly `stage_count` long) and returns the
+/// level count. Every stage of one level depends only on lower levels, so
+/// a whole level can be read in one native batch once the level below it
+/// has finished.
 fn plan_levels(
     payload: &[u8],
     header: &vosu_read_plan_submit_header,
-    schedule: &mut Schedule,
+    slots: &mut [MaybeUninit<StageSlot>],
+    order: &mut [MaybeUninit<u64>],
 ) -> u32 {
     let stage_size = size_of::<vosu_stage_header>();
-    schedule.slots.clear();
-    schedule.order.clear();
     let mut first_op = 0u32;
     let mut levels = 0u32;
     for index in 0..header.stage_count as usize {
@@ -142,9 +146,11 @@ fn plan_levels(
             read_struct_at(payload, header.stages_offset as usize + index * stage_size);
         let level = match vosu_stage_base_kind::try_from(stage.base.kind) {
             Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_ROOT) => 0,
-            // `validate_read_plan_submit` proved `ref_stage < index`.
             Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_DEPENDENT) => {
-                schedule.slots[stage.base.ref_stage as usize].level + 1
+                let referenced = &slots[stage.base.ref_stage as usize];
+                // SAFETY: `validate_read_plan_submit` proved `ref_stage <
+                // index`, and this loop wrote every slot before `index`.
+                unsafe { referenced.assume_init_ref() }.level + 1
             }
             Err(()) => {
                 unreachable!(
@@ -153,16 +159,101 @@ fn plan_levels(
             }
         };
         levels = levels.max(level + 1);
-        schedule.slots.push(StageSlot {
+        slots[index].write(StageSlot {
             header: stage,
             level,
             first_op,
         });
-        schedule.order.push(u64::from(level) << 32 | index as u64);
+        order[index].write(u64::from(level) << 32 | index as u64);
         first_op += stage.op_count;
     }
-    schedule.order.sort_unstable();
     levels
+}
+
+/// Runs `run` with the plan's stage slots (indexed by stage), its stages
+/// sorted by level (each level in stage order) and its level count. A
+/// single-stage plan needs no scheduling storage at all.
+fn with_schedule<R>(
+    payload: &[u8],
+    header: &vosu_read_plan_submit_header,
+    run: impl FnOnce(&[StageSlot], &[u64], u32) -> R,
+) -> R {
+    let count = header.stage_count as usize;
+    if count == 1 {
+        // Stage 0 is always root-based: one level, nothing to order.
+        let stage: vosu_stage_header = read_struct_at(payload, header.stages_offset as usize);
+        let slot = StageSlot {
+            header: stage,
+            level: 0,
+            first_op: 0,
+        };
+        return run(&[slot], &[0], 1);
+    }
+    if count <= STACK_STAGES {
+        return with_stack_schedule(payload, header, run);
+    }
+    with_scratch_schedule(payload, header, run)
+}
+
+fn sort_levels(order: &mut [u64]) {
+    if !order.is_sorted() {
+        order.sort_unstable();
+    }
+}
+
+/// [`with_schedule`] in stack arrays. Out of line, so a single-stage plan's
+/// stack frame does not carry them.
+#[inline(never)]
+fn with_stack_schedule<R>(
+    payload: &[u8],
+    header: &vosu_read_plan_submit_header,
+    run: impl FnOnce(&[StageSlot], &[u64], u32) -> R,
+) -> R {
+    let count = header.stage_count as usize;
+    let mut slots = [const { MaybeUninit::<StageSlot>::uninit() }; STACK_STAGES];
+    let mut order = [const { MaybeUninit::<u64>::uninit() }; STACK_STAGES];
+    let levels = plan_levels(payload, header, &mut slots[..count], &mut order[..count]);
+    // SAFETY: `plan_levels` initialized the first `count` elements of both
+    // arrays; both element types are `Copy` with no drop glue.
+    let (slots, order) = unsafe {
+        (
+            std::slice::from_raw_parts(slots.as_ptr().cast::<StageSlot>(), count),
+            std::slice::from_raw_parts_mut(order.as_mut_ptr().cast::<u64>(), count),
+        )
+    };
+    sort_levels(order);
+    run(slots, order, levels)
+}
+
+/// [`with_schedule`] in the per-thread [`SCHEDULE`] scratch.
+#[inline(never)]
+fn with_scratch_schedule<R>(
+    payload: &[u8],
+    header: &vosu_read_plan_submit_header,
+    run: impl FnOnce(&[StageSlot], &[u64], u32) -> R,
+) -> R {
+    let count = header.stage_count as usize;
+    let mut schedule = SCHEDULE.take();
+    schedule.slots.clear();
+    schedule.order.clear();
+    schedule.slots.reserve(count);
+    schedule.order.reserve(count);
+    let levels = plan_levels(
+        payload,
+        header,
+        &mut schedule.slots.spare_capacity_mut()[..count],
+        &mut schedule.order.spare_capacity_mut()[..count],
+    );
+    // SAFETY: `plan_levels` initialized the first `count` spare elements of
+    // both vectors, which `reserve` sized to hold them.
+    unsafe {
+        schedule.slots.set_len(count);
+        schedule.order.set_len(count);
+    }
+    sort_levels(&mut schedule.order);
+    let result = run(&schedule.slots, &schedule.order, levels);
+    SCHEDULE.set(schedule);
+    result
 }
 
 fn resolve_stage_base_raw(
@@ -387,6 +478,13 @@ impl Batch {
         if count == 0 {
             return Ok(());
         }
+        if count == 1 {
+            // One read needs no batch: read it directly, as a fallback
+            // would, without a deadline check before the only read.
+            // SAFETY: `push` initialized element 0.
+            let (global_index, address, length) = unsafe { self.ops[0].assume_init() };
+            return read_one_into_tail_raw(ctx.memory, address, length, global_index, out, pending);
+        }
         // SAFETY: `push` initialized exactly `0..count`, the tuple is `Copy`
         // with no drop glue, and nothing writes `ops` until this returns.
         let ops: &[(u32, usize, u32)] =
@@ -395,28 +493,7 @@ impl Batch {
         let region_len: usize = ops.iter().map(|&(_, _, length)| length as usize).sum();
         out.resize(region_start + region_len, 0);
 
-        let batch_ok = {
-            let mut requests: [MaybeUninit<ReadRequest<'_>>; BATCH_CAPACITY] =
-                [const { MaybeUninit::uninit() }; BATCH_CAPACITY];
-            let mut remaining: &mut [u8] = &mut out[region_start..];
-            for (slot, &(_, address, length)) in requests.iter_mut().zip(ops) {
-                let (dst, rest) = remaining.split_at_mut(length as usize);
-                slot.write(ReadRequest::new(address, dst));
-                remaining = rest;
-            }
-            // SAFETY: the loop above wrote exactly `count` slots, `0..count`,
-            // each with one `.write(...)` call; `ReadRequest` has no `Drop`
-            // impl, so the array's unwritten tail needs no cleanup when
-            // this block (and `requests`) goes out of scope.
-            let requests: &mut [ReadRequest<'_>] = unsafe {
-                std::slice::from_raw_parts_mut(
-                    requests.as_mut_ptr().cast::<ReadRequest<'_>>(),
-                    count,
-                )
-            };
-            let _read_profile = Span::new(Phase::Backend).ops(count);
-            ctx.memory.read_many(requests).is_ok()
-        };
+        let batch_ok = read_batch(ctx.memory, ops, &mut out[region_start..]);
 
         if batch_ok {
             let mut offset = region_start;
@@ -426,22 +503,56 @@ impl Batch {
             }
             return Ok(());
         }
-        if !ctx.memory.is_alive() {
-            return Err(ReadPlanError::TargetGone);
-        }
-        // A failed batch may have touched its destinations. None of those
-        // bytes are a successful per-op result: retract the region and
-        // re-read each op independently, appending only what succeeds, so
-        // every op reports exactly the status its own read gets.
-        out.truncate(region_start);
-        for &(global_index, address, length) in ops {
-            if ctx.deadline.expired()? {
-                return Err(ReadPlanError::TimedOut);
-            }
-            read_one_into_tail_raw(ctx.memory, address, length, global_index, out, pending)?;
-        }
-        Ok(())
+        read_each(ctx, ops, region_start, out, pending)
     }
+}
+
+/// After a failed batch: re-reads each op on its own. A failed batch may
+/// have touched its destinations, and none of those bytes are a successful
+/// per-op result, so the region is retracted first and only what succeeds
+/// is appended: every op reports exactly the status its own read gets.
+#[cold]
+fn read_each(
+    ctx: &RawContext<'_>,
+    ops: &[(u32, usize, u32)],
+    region_start: usize,
+    out: &mut Vec<u8>,
+    pending: &mut Vec<PendingMessage>,
+) -> Result<(), ReadPlanError> {
+    if !ctx.memory.is_alive() {
+        return Err(ReadPlanError::TargetGone);
+    }
+    out.truncate(region_start);
+    for &(global_index, address, length) in ops {
+        if ctx.deadline.expired()? {
+            return Err(ReadPlanError::TimedOut);
+        }
+        read_one_into_tail_raw(ctx.memory, address, length, global_index, out, pending)?;
+    }
+    Ok(())
+}
+
+/// One `read_many` call for `ops`, reading into consecutive regions of
+/// `region`. Kept out of line: its request array would otherwise enlarge
+/// the stack frame of every plan, including single-read ones.
+#[inline(never)]
+fn read_batch(memory: &dyn ProcessMemory, ops: &[(u32, usize, u32)], region: &mut [u8]) -> bool {
+    let mut requests: [MaybeUninit<ReadRequest<'_>>; BATCH_CAPACITY] =
+        [const { MaybeUninit::uninit() }; BATCH_CAPACITY];
+    let mut remaining = region;
+    for (slot, &(_, address, length)) in requests.iter_mut().zip(ops) {
+        let (dst, rest) = remaining.split_at_mut(length as usize);
+        slot.write(ReadRequest::new(address, dst));
+        remaining = rest;
+    }
+    // SAFETY: the loop above wrote exactly `ops.len()` slots (at most
+    // `BATCH_CAPACITY`), each with one `.write(...)` call; `ReadRequest` has
+    // no `Drop` impl, so the array's unwritten tail needs no cleanup.
+    let requests: &mut [ReadRequest<'_>] = unsafe {
+        std::slice::from_raw_parts_mut(requests.as_mut_ptr().cast::<ReadRequest<'_>>(), ops.len())
+    };
+    let _read_profile = Span::new(Phase::Backend).ops(ops.len());
+    memory.read_many(requests).is_ok()
 }
 
 /// Queues every op of one stage on `batch`, or writes its failures:
@@ -459,19 +570,7 @@ fn queue_stage_raw(
     let op_size = size_of::<vosu_plan_op>();
     let stage = &slot.header;
     let base = match stage_base {
-        Err(failure) => {
-            if !ctx.memory.is_alive() {
-                return Err(ReadPlanError::TargetGone);
-            }
-            let entry = match failure {
-                RawFailure::NotReady => not_ready_entry(),
-                RawFailure::Error(code) => error_entry(code, 0, 0),
-            };
-            for op_index in 0..stage.op_count {
-                write_entry(out, (slot.first_op + op_index) as usize, &entry);
-            }
-            return Ok(());
-        }
+        Err(failure) => return write_stage_failure(ctx, slot, failure, out),
         Ok(base) => base,
     };
     for op_index in 0..stage.op_count {
@@ -482,24 +581,58 @@ fn queue_stage_raw(
         let global_index = slot.first_op + op_index;
         match resolve_op_address(base, op.offset) {
             Some(address) => batch.push(ctx, (global_index, address, op.length), out, pending)?,
-            None => {
-                // A single-op stage has always probed the target first here.
-                if stage.op_count == 1 && !ctx.memory.is_alive() {
-                    return Err(ReadPlanError::TargetGone);
-                }
-                write_entry(
-                    out,
-                    global_index as usize,
-                    &error_entry(ReadErrorCode::AddressOverflow, 0, 0),
-                );
-                pending.push(PendingMessage {
-                    global_index,
-                    overflow: true,
-                    message: op_overflow_message(base, op.offset),
-                });
-            }
+            None => write_op_overflow(ctx, slot, global_index, (base, op.offset), out, pending)?,
         }
     }
+    Ok(())
+}
+
+/// Every op of a stage whose base failed reports that failure.
+#[cold]
+fn write_stage_failure(
+    ctx: &RawContext<'_>,
+    slot: &StageSlot,
+    failure: RawFailure,
+    out: &mut [u8],
+) -> Result<(), ReadPlanError> {
+    if !ctx.memory.is_alive() {
+        return Err(ReadPlanError::TargetGone);
+    }
+    let entry = match failure {
+        RawFailure::NotReady => not_ready_entry(),
+        RawFailure::Error(code) => error_entry(code, 0, 0),
+    };
+    for op_index in 0..slot.header.op_count {
+        write_entry(out, (slot.first_op + op_index) as usize, &entry);
+    }
+    Ok(())
+}
+
+/// An op whose address overflows reports `AddressOverflow` with its own
+/// message.
+#[cold]
+fn write_op_overflow(
+    ctx: &RawContext<'_>,
+    slot: &StageSlot,
+    global_index: u32,
+    (base, offset): (u64, i64),
+    out: &mut [u8],
+    pending: &mut Vec<PendingMessage>,
+) -> Result<(), ReadPlanError> {
+    // A single-op stage has always probed the target first here.
+    if slot.header.op_count == 1 && !ctx.memory.is_alive() {
+        return Err(ReadPlanError::TargetGone);
+    }
+    write_entry(
+        out,
+        global_index as usize,
+        &error_entry(ReadErrorCode::AddressOverflow, 0, 0),
+    );
+    pending.push(PendingMessage {
+        global_index,
+        overflow: true,
+        message: op_overflow_message(base, offset),
+    });
     Ok(())
 }
 
@@ -509,14 +642,14 @@ fn queue_stage_raw(
 /// per level, before any of its reads.
 fn run_levels(
     ctx: &RawContext<'_>,
-    schedule: &Schedule,
+    (slots, order): (&[StageSlot], &[u64]),
     root_base: &Result<u64, RawFailure>,
     bitness: ProcessBitness,
     out: &mut Vec<u8>,
     pending: &mut Vec<PendingMessage>,
 ) -> Result<(), ReadPlanError> {
     let mut batch = Batch::new();
-    for level_stages in schedule.order.chunk_by(|a, b| a >> 32 == b >> 32) {
+    for level_stages in order.chunk_by(|a, b| a >> 32 == b >> 32) {
         if ctx
             .deadline
             .stage_expired((level_stages[0] >> 32) as usize)?
@@ -524,9 +657,34 @@ fn run_levels(
             return Err(ReadPlanError::TimedOut);
         }
         for &key in level_stages {
-            let slot = &schedule.slots[key as u32 as usize];
-            let stage_base =
-                resolve_stage_base_raw(&slot.header, &schedule.slots, out, root_base, bitness);
+            let slot = &slots[key as u32 as usize];
+            let stage_base = resolve_stage_base_raw(&slot.header, slots, out, root_base, bitness);
+            if let ([_], 1, Ok(base)) = (level_stages, slot.header.op_count, stage_base) {
+                // A level of one read needs no batch.
+                let op: vosu_plan_op = read_struct_at(ctx.payload, slot.header.ops_offset as usize);
+                let global_index = slot.first_op;
+                match resolve_op_address(base, op.offset) {
+                    Some(address) => read_one_into_tail_raw(
+                        ctx.memory,
+                        address,
+                        op.length,
+                        global_index,
+                        out,
+                        pending,
+                    )?,
+                    None => {
+                        write_op_overflow(
+                            ctx,
+                            slot,
+                            global_index,
+                            (base, op.offset),
+                            out,
+                            pending,
+                        )?;
+                    }
+                }
+                continue;
+            }
             queue_stage_raw(ctx, slot, stage_base, &mut batch, out, pending)?;
         }
         batch.flush(ctx, out, pending)?;
@@ -750,10 +908,9 @@ impl<'a> ValidatedPlan<'a> {
             + RESULT_ENTRY_SIZE * total_ops
             + usize::try_from(total_len).unwrap_or(usize::MAX);
         let budget = ErrorBudget::new((VOSU_READ_PLAN_MAX_BYTES as usize).saturating_sub(used));
-        let mut schedule = SCHEDULE.take();
-        let levels = plan_levels(payload, &header, &mut schedule);
         drop(validation_profile);
-        let result = deadline.begin(levels).and_then(|()| {
+        let result = with_schedule(payload, &header, |slots, order, levels| {
+            deadline.begin(levels)?;
             out.clear();
             out.resize(RESULT_HEADER_SIZE + RESULT_ENTRY_SIZE * total_ops, 0);
             let root_base = {
@@ -766,11 +923,10 @@ impl<'a> ValidatedPlan<'a> {
                 deadline: &deadline,
             };
             let mut pending = Vec::new();
-            run_levels(&ctx, &schedule, &root_base, bitness, out, &mut pending)?;
-            write_pending_messages(payload, &schedule.slots, pending, budget, out);
+            run_levels(&ctx, (slots, order), &root_base, bitness, out, &mut pending)?;
+            write_pending_messages(payload, slots, pending, budget, out);
             Ok(())
         });
-        SCHEDULE.set(schedule);
         result.map_err(ExecuteBytesError::Execute)?;
 
         write_struct_at(
