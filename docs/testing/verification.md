@@ -1044,14 +1044,37 @@ process environment.
   ran" claim needs the marker's absence and the absence of a leftover PID.
 
 The testkit fault modes are `constructor_crash`, `create_crash`,
-`dispatch_crash`, `dispatch_block`, `cancel_ignored`, `destroy_ignored`,
-`ring_stall` (the child stops itself: `SIGSTOP`, or `NtSuspendProcess`) and
-`corrupt_frame` (the child publishes a length-mismatched frame into its own
-plugin → host ring and wakes core). Distinct data-source targets come from
-per-package plugin ids and process names. Each instance reads its own
-target's bytes through one read plan per attached session. The
-`support::smoke` tests prove that each mode triggers under the production
-launcher.
+`dispatch_crash`, `dispatch_abort`, `dispatch_block`, `cancel_ignored`,
+`destroy_ignored`, `ring_stall` (the child stops itself: `SIGSTOP`, or
+`NtSuspendProcess`) and `corrupt_frame` (the child publishes a
+length-mismatched frame into its own plugin → host ring and wakes core).
+Distinct data-source targets come from per-package plugin ids and process
+names. Each instance reads its own target's bytes through one read plan per
+attached session. The `support::smoke` tests prove that each mode triggers
+under the production launcher.
+
+The `*_crash` modes end the child at once, for deterministic fixtures. Linux
+uses `abort` (`SIGABRT`). Windows terminates the process itself with the
+fail-fast status `0xC0000409`. `dispatch_abort` calls the real
+`std::process::abort` on both platforms. It is the mode that proves real
+crash handling.
+
+**Open item (owner C0): Windows Error Reporting holds crashed plugin hosts.**
+A real Windows fail-fast (`std::process::abort`) is held by Windows Error
+Reporting for several seconds before the process exits. In the guest,
+Application Error 1000 (exception `0xc0000409`, faulting module
+`testkit_process_plugin.dll`) was followed 3–4 s later by WER 1001. A
+constructor or `create` crash therefore reached core as a startup `timeout`,
+not a `crash`. That is a production misclassification, not only a fixture
+effect. Candidate mechanisms, for C0 to evaluate and choose:
+
+- `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` on the plugin-host job;
+- child-side `SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)`
+  or `WerSetFlags`;
+- whether `__fastfail`, which `std::process::abort` uses, bypasses both.
+
+P0 does not implement a fix. C0/X0 prove it with `dispatch_abort`, and with an
+equivalent real-abort startup case if C0 adds one.
 
 **Process identity.** A death proof reads a pidfd, or a process handle and its
 exit status. It never relies on PID absence alone.

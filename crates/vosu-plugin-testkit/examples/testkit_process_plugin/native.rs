@@ -115,6 +115,11 @@ mod linux {
         fields.join(" ")
     }
 
+    /// Ends this process abnormally at once: `SIGABRT`.
+    pub fn crash() -> ! {
+        std::process::abort()
+    }
+
     /// Stops every thread of this process, the ring reader included.
     pub fn stop_process() {
         // SAFETY: `raise` is async-signal-safe and only signals this
@@ -190,6 +195,7 @@ mod windows {
     unsafe extern "system" {
         fn GetModuleFileNameW(module: *mut c_void, name: *mut u16, size: u32) -> u32;
         fn GetCurrentProcess() -> *mut c_void;
+        fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
         fn MapViewOfFile(
             section: *mut c_void,
             access: u32,
@@ -230,6 +236,24 @@ mod windows {
     /// identities independently.
     pub fn readback() -> String {
         String::new()
+    }
+
+    /// `STATUS_STACK_BUFFER_OVERRUN`, the status a Rust abort (fail-fast)
+    /// exits with.
+    const FAIL_FAST_STATUS: u32 = 0xC000_0409;
+
+    /// Ends this process abnormally at once, with the fail-fast status.
+    /// A real fail-fast (`std::process::abort`) is held by Windows Error
+    /// Reporting for seconds before the process exits (seen in the guest as
+    /// Application Error 1000 followed by WER 1001 3–4 s later), which
+    /// would turn a deterministic startup crash into a startup timeout.
+    pub fn crash() -> ! {
+        // SAFETY: terminates this process through its own pseudo handle;
+        // the call does not return when it succeeds.
+        unsafe {
+            TerminateProcess(GetCurrentProcess(), FAIL_FAST_STATUS);
+        }
+        std::process::abort()
     }
 
     /// Suspends every thread of this process, the ring reader included.

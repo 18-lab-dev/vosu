@@ -48,7 +48,7 @@ impl Plugin for TestkitProcessPlugin {
         let control = control::get().ok_or(PluginError(vosu_status::VOSU_ERR_INVALID_ARGUMENT))?;
         control.receipt("create", &format!("plugin={}", init.plugin_id));
         if control.fault == Fault::CreateCrash {
-            std::process::abort();
+            native::crash();
         }
         Ok(Self {
             host,
@@ -121,6 +121,10 @@ impl TestkitProcessPlugin {
         match self.control.fault {
             Fault::DispatchCrash => {
                 self.control.receipt("crash", &format!("opcode={opcode}"));
+                native::crash();
+            }
+            Fault::DispatchAbort => {
+                self.control.receipt("abort", &format!("opcode={opcode}"));
                 std::process::abort();
             }
             Fault::DispatchBlock => {

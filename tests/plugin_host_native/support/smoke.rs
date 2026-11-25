@@ -175,6 +175,7 @@ fn support_fault_constructor_crash_aborts_the_child_before_create() {
     let run = Run::testkit("constructor_crash", None);
     let reason = startup_stage(run.create());
     assert!(reason.starts_with("stage crash"), "{reason}");
+    println!("RECORD constructor_crash: {reason}");
     let constructor = run.receipt("constructor");
     assert_ne!(
         constructor.pid,
@@ -191,6 +192,7 @@ fn support_fault_create_crash_aborts_the_child_inside_create() {
     let run = Run::testkit("create_crash", None);
     let reason = startup_stage(run.create());
     assert!(reason.starts_with("stage crash"), "{reason}");
+    println!("RECORD create_crash: {reason}");
     let create = run.receipt("create");
     assert_eq!(run.receipt("constructor").pid, create.pid);
     assert_ne!(create.pid, std::process::id());
@@ -211,6 +213,29 @@ fn support_fault_dispatch_crash_aborts_the_child_on_its_trigger() {
     assert!(
         run.fixture.receipts("destroy").is_empty(),
         "a crash ran destroy"
+    );
+}
+
+/// The real `std::process::abort` mode C0/X0 use to prove crash handling
+/// (on Windows, a fail-fast that Windows Error Reporting holds before the
+/// process exits). The bound covers that hold; the exit delay is recorded.
+#[test]
+fn support_fault_dispatch_abort_really_aborts_the_child() {
+    let run = Run::testkit("dispatch_abort", Some(FOCUS));
+    run.create().unwrap();
+    let identity = Identity::of(run.child());
+    run.host.dispatch(1, &focus(true)).unwrap();
+    assert_eq!(run.receipt("abort").get("opcode"), FOCUS.to_string());
+    let aborted = Instant::now();
+    assert!(
+        wait_until(BOUND, || !identity.alive()),
+        "the aborted child survived"
+    );
+    println!("RECORD dispatch_abort exit after {:?}", aborted.elapsed());
+    assert!(run.host.wait_retired(1, &focus(false), BOUND));
+    assert!(
+        run.fixture.receipts("destroy").is_empty(),
+        "an abort ran destroy"
     );
 }
 

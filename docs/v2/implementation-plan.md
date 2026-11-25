@@ -1838,6 +1838,13 @@ No unit makes a length exception. Every file stays at or below 1,000 lines.
 The [D17 contract](../testing/benchmarks.md#m5-d17-contract) records the
 D17 names, metrics and bars.
 
+**Dev-profile measure (P0, 2026-11-25).** The workspace builds `sha2` at
+`opt-level = 3` in the dev profile (`[profile.dev.package.sha2]`). Core and
+the plugin host each hash a process library before loading it, the child
+inside the 5-second startup deadline. Unoptimized, hashing the 241 MB debug
+osu! fixture library took 4.9 s; optimized, it took 0.11 s. Release builds
+were already optimized, so production behavior is unchanged.
+
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
 Scope: the unified manifest (catalog-v2.md "Package manifest v2", "Shared

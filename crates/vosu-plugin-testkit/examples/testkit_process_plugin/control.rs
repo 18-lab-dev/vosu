@@ -34,12 +34,17 @@ const RELEASE_BOUND: Duration = Duration::from_secs(120);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fault {
     None,
-    /// The load-time constructor aborts the process.
+    /// The load-time constructor ends the process abnormally
+    /// (`native::crash`: `SIGABRT`, or the fail-fast status on Windows).
     ConstructorCrash,
-    /// `create` aborts the process.
+    /// `create` ends the process abnormally.
     CreateCrash,
-    /// The triggering dispatch aborts the process.
+    /// The triggering dispatch ends the process abnormally.
     DispatchCrash,
+    /// The triggering dispatch calls the real `std::process::abort` on every
+    /// platform: on Windows a fail-fast that Windows Error Reporting holds
+    /// (the open C0 crash-classification item in verification.md).
+    DispatchAbort,
     /// The triggering dispatch waits for `release-<pid>`.
     DispatchBlock,
     /// `ACTION_INVOKE` never completes and `ACTION_CANCEL` is ignored.
@@ -55,11 +60,12 @@ pub enum Fault {
 }
 
 impl Fault {
-    pub const NAMES: [(&'static str, Self); 9] = [
+    pub const NAMES: [(&'static str, Self); 10] = [
         ("none", Self::None),
         ("constructor_crash", Self::ConstructorCrash),
         ("create_crash", Self::CreateCrash),
         ("dispatch_crash", Self::DispatchCrash),
+        ("dispatch_abort", Self::DispatchAbort),
         ("dispatch_block", Self::DispatchBlock),
         ("cancel_ignored", Self::CancelIgnored),
         ("destroy_ignored", Self::DestroyIgnored),
@@ -78,7 +84,11 @@ impl Fault {
     pub fn fires_in_dispatch(self) -> bool {
         matches!(
             self,
-            Self::DispatchCrash | Self::DispatchBlock | Self::RingStall | Self::CorruptFrame
+            Self::DispatchCrash
+                | Self::DispatchAbort
+                | Self::DispatchBlock
+                | Self::RingStall
+                | Self::CorruptFrame
         )
     }
 }
@@ -102,7 +112,7 @@ pub fn get() -> Option<&'static Control> {
 
 /// Runs once, from the load-time constructor: reads the control file next
 /// to `library`, writes the `constructor` receipt with `readback`, and
-/// aborts for [`Fault::ConstructorCrash`]. Without a valid control file it
+/// crashes for [`Fault::ConstructorCrash`]. Without a valid control file it
 /// does nothing, and `create` refuses.
 pub fn on_load(library: Option<PathBuf>, readback: &str) {
     let control = library.as_deref().and_then(read_control);
@@ -120,7 +130,7 @@ pub fn on_load(library: Option<PathBuf>, readback: &str) {
         &format!("library={} {readback}", library.replace(' ', "_")),
     );
     if control.fault == Fault::ConstructorCrash {
-        std::process::abort();
+        crate::native::crash();
     }
 }
 

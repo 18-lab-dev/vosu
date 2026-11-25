@@ -207,6 +207,13 @@ required-features = ["test-harness"]
 [build-dependencies]
 winresource = "=0.1.31"
 
+# Core and the plugin host each hash a process plugin's library before
+# loading it (plugin-abi.md §7.6), the child within the 5-second startup
+# deadline. Unoptimized, SHA-256 of the 241 MB debug osu! fixture library took
+# 4.9 s (0.11 s at opt-level 3), so debug and test builds missed the deadline.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
