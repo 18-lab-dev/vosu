@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Build and stage the M5 plugin-host fixture libraries before the root native
+test (`docs/testing/verification.md`, "M5 test and fixture conventions").
+
+Usage:
+    python scripts/plugin-host-fixtures.py [--target TRIPLE] [--env-file PATH] [-- COMMAND...]
+
+Builds both `cdylib` examples with `--message-format=json-render-diagnostics`
+and takes each library path from its `compiler-artifact` record, never from a
+guessed file name or hash suffix. Each library is then copied to
+`<artifact dir>/plugin-host-fixtures/<file name>`, so a later Cargo build of
+the same example with other features (the workspace `--all-features
+--examples` test build) cannot replace the bytes a test runs. The copy's
+SHA-256 is printed as an `ARTIFACT` receipt.
+
+The two staged paths are exported as VOSU_PLUGIN_HOST_TESTKIT_LIBRARY and
+VOSU_PLUGIN_HOST_OSU_LIBRARY:
+
+- with `-- COMMAND...`, the command runs with both set and its exit code is
+  returned;
+- with `--env-file PATH`, `NAME=VALUE` lines are appended to PATH (the
+  `$GITHUB_ENV` format, which the local gates read too);
+- otherwise shell `export` lines are printed.
+
+The tests never run Cargo themselves; they fail when a variable is unset.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# (environment variable, cargo package, example target, extra cargo arguments)
+FIXTURES = (
+    ("VOSU_PLUGIN_HOST_TESTKIT_LIBRARY", "vosu-plugin-testkit", "testkit_process_plugin", ()),
+    ("VOSU_PLUGIN_HOST_OSU_LIBRARY", "vosu-osu", "osu_process_plugin", ("--features", "test-harness")),
+)
+LIBRARY_SUFFIXES = (".so", ".dll", ".dylib")
+STAGE_DIR = "plugin-host-fixtures"
+
+
+class FixtureError(RuntimeError):
+    pass
+
+
+def build_command(package, example, extra, target=None):
+    """The exact `cargo build` argv for one fixture."""
+    command = ["cargo", "build", "--locked", "-p", package, "--example", example, *extra]
+    if target:
+        command += ["--target", target]
+    command.append("--message-format=json-render-diagnostics")
+    return command
+
+
+def select_library(stdout, example):
+    """The one dynamic library Cargo reported for `example`'s cdylib.
+
+    Reads `compiler-artifact` records only; a missing record, a target that
+    is not a cdylib, or anything but exactly one library file is an error.
+    """
+    found = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        record = json.loads(line)
+        if record.get("reason") != "compiler-artifact":
+            continue
+        target = record.get("target", {})
+        if target.get("name") != example or "example" not in target.get("kind", []):
+            continue
+        if "cdylib" not in target.get("crate_types", []):
+            raise FixtureError(f"{example} is not built as a cdylib: {target.get('crate_types')}")
+        found.extend(name for name in record.get("filenames", []) if name.endswith(LIBRARY_SUFFIXES))
+    if len(found) != 1:
+        raise FixtureError(f"expected exactly one library for {example}, Cargo reported {found}")
+    return Path(found[0])
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def stage(library):
+    """Copies `library` into its directory's fixture stage, returning the copy."""
+    staged = library.parent / STAGE_DIR / library.name
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    temporary = staged.with_name(staged.name + ".tmp")
+    shutil.copyfile(library, temporary)
+    os.replace(temporary, staged)
+    return staged
+
+
+def env_lines(paths):
+    return [f"{name}={path}" for name, path in paths.items()]
+
+
+def prepare(target=None, cargo="cargo"):
+    """Builds and stages every fixture; returns {variable: staged path}."""
+    paths = {}
+    for variable, package, example, extra in FIXTURES:
+        command = build_command(package, example, extra, target)
+        command[0] = cargo
+        print(f"$ {shlex.join(command)}", file=sys.stderr, flush=True)
+        completed = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, text=True, check=False)
+        if completed.returncode != 0:
+            raise FixtureError(f"building {example} failed with exit {completed.returncode}")
+        staged = stage(select_library(completed.stdout, example))
+        print(f"ARTIFACT name={example} sha256={sha256(staged)} path={staged}", file=sys.stderr, flush=True)
+        paths[variable] = staged
+    return paths
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--target", help="cargo --target triple, matching the test build's own --target")
+    parser.add_argument("--env-file", help="append NAME=VALUE lines to this file (the $GITHUB_ENV format)")
+    parser.add_argument("command", nargs="*", help="command to run with both variables set (after `--`)")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    try:
+        paths = prepare(args.target, os.environ.get("CARGO", "cargo"))
+    except FixtureError as error:
+        print(f"plugin-host-fixtures.py: {error}", file=sys.stderr)
+        return 2
+    if args.env_file:
+        with open(args.env_file, "a", encoding="utf-8") as handle:
+            handle.writelines(line + "\n" for line in env_lines(paths))
+    if args.command:
+        env = {**os.environ, **{name: str(path) for name, path in paths.items()}}
+        return subprocess.run(args.command, cwd=ROOT, env=env, check=False).returncode
+    if not args.env_file:
+        for name, path in paths.items():
+            print(f"export {name}={shlex.quote(str(path))}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

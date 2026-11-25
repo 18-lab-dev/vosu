@@ -982,16 +982,33 @@ core-only kill, and descendants can leave it with `setsid`.
   build.
 
 Each target has a non-bundled `runtime = "process"` manifest under
-`tests/fixtures/plugin_host/{testkit,osu}/`, with its schema, settings and
-action assets. The bundled osu! manifest stays target-free and in-process.
+`tests/fixtures/plugin_host/{testkit,osu}/`. The testkit's namespace and
+action assets live beside its manifest. The osu! fixture stages the bundled
+plugin's own settings, namespace and action schema files, and its manifest
+differs from the bundled one only in `runtime` and `[targets]`. The bundled
+osu! manifest stays target-free and in-process. The osu! fixture keeps the
+official `vosu.osu` identity that parity needs. The ordinary development
+loader refuses that identity, so loading it for parity needs an approved
+official path (X0).
 
-The preparation helper builds both targets with
-`--message-format=json-render-diagnostics`. It takes the `cdylib` path from
-the matching `compiler-artifact` record and never guesses a file name or a
-hash suffix. It exports two absolute paths:
+The preparation helper, `scripts/plugin-host-fixtures.py`, builds both
+targets with `--message-format=json-render-diagnostics`. It takes the
+`cdylib` path from the matching `compiler-artifact` record and never guesses
+a file name or a hash suffix. It copies each library to
+`<artifact dir>/plugin-host-fixtures/`, so the later `--all-features
+--examples` build of the same example cannot replace the bytes under test,
+and prints `ARTIFACT name=<example> sha256=<hex> path=<copy>`. It exports two
+absolute paths:
 
 - `VOSU_PLUGIN_HOST_TESTKIT_LIBRARY`;
 - `VOSU_PLUGIN_HOST_OSU_LIBRARY`.
+
+Run a native test under it, for example
+`python scripts/plugin-host-fixtures.py -- cargo test --locked --features test-harness --test plugin_host_native -- --list`.
+With `--env-file <path>` it appends the variables in the `$GITHUB_ENV`
+format instead. ci.yml runs it before each nextest step, and so do
+`prepush.py`'s `test-linux` step, `native-ci.ps1` and `vm-test.py` (whenever
+the selected tests can include `plugin_host_native`).
 
 The native target reads these variables and fails, rather than skips, when a
 variable is unset or names a missing file. It never runs Cargo.
@@ -1006,15 +1023,35 @@ RECEIPT artifact=<name> sha256=<hex> path=<staged path>
 Native Windows builds the same example targets in the guest after staging.
 Linux artifacts are never copied there.
 
-**Per-run isolation.** The test daemon gets a per-test
-`VOSU_PLUGIN_HOST_FIXTURE_DIR`, which the plugin host inherits.
+**Per-run isolation.** Each test stages its own copy of the testkit library,
+and writes a control file, `testkit-fixture.control`, beside that copy. The
+library's load-time constructor finds the file through its own module path
+before `create`. The file names the run's nonce, its receipt directory, its
+fault mode, the trigger opcode, and the range each attached session reads.
+Parallel tests therefore never share a control file or an environment
+variable. This replaces the earlier per-test `VOSU_PLUGIN_HOST_FIXTURE_DIR`
+variable: tests that drive a `PluginHost` in the test process share one
+process environment.
 
-- The testkit's constructor, `create`, crash, stall and security probes write
-  markers named `<probe>-<pid>` into that directory.
-- Barriers and acknowledgements use files or the ABI in that directory. There
-  is no global PID-keyed registry and no ordering sleep.
+- The testkit's constructor, `create`, dispatch, crash, stall and security
+  probes append receipts named `<probe>-<pid>` to that directory, plus an
+  ordered `journal-<pid>`. Every line carries the run's nonce. A line with
+  another nonce fails the test.
+- Barriers and acknowledgements use files or the ABI in that directory. A
+  blocked dispatch waits for `release-<pid>` holding the nonce. There is no
+  global PID-keyed registry and no ordering sleep.
 - A "constructor ran" claim needs a marker that names the child PID. A "never
   ran" claim needs the marker's absence and the absence of a leftover PID.
+
+The testkit fault modes are `constructor_crash`, `create_crash`,
+`dispatch_crash`, `dispatch_block`, `cancel_ignored`, `destroy_ignored`,
+`ring_stall` (the child stops itself: `SIGSTOP`, or `NtSuspendProcess`) and
+`corrupt_frame` (the child publishes a length-mismatched frame into its own
+plugin → host ring and wakes core). Distinct data-source targets come from
+per-package plugin ids and process names. Each instance reads its own
+target's bytes through one read plan per attached session. The
+`support::smoke` tests prove that each mode triggers under the production
+launcher.
 
 **Process identity.** A death proof reads a pidfd, or a process handle and its
 exit status. It never relies on PID absence alone.
