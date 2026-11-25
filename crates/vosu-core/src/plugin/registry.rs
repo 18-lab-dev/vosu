@@ -14,11 +14,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sha2::Digest as _;
+use vosu_plugin_api::manifest::action_schema::{self, CompiledActionSchema};
+use vosu_plugin_api::manifest::settings::SettingsSchema;
 use vosu_plugin_api::{PluginManifest, Runtime, vosu_plugin_vtable};
 
 use super::error::HostError;
 use super::execution::{Execution, LocalCode, PackageOrigin, ProcessPackage, descriptor};
-use super::settings::SettingsSchema;
 
 /// One bundled plugin entry the root crate's explicit `BUNDLED` array lists
 /// (D13): its embedded manifest text (never carrying `[targets.*]`, §8) and
@@ -53,8 +54,7 @@ pub struct LoadedPlugin {
     settings_schema: Option<SettingsSchema>,
     namespace_schemas: Vec<String>,
     action_schemas: std::collections::BTreeMap<String, String>,
-    compiled_action_schemas:
-        std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>>,
+    compiled_action_schemas: std::collections::BTreeMap<String, Arc<CompiledActionSchema>>,
 }
 
 impl LoadedPlugin {
@@ -111,7 +111,7 @@ impl LoadedPlugin {
     /// Compiled once during load, keyed by the exact manifest asset path.
     pub fn compiled_action_schemas(
         &self,
-    ) -> &std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>> {
+    ) -> &std::collections::BTreeMap<String, Arc<CompiledActionSchema>> {
         &self.compiled_action_schemas
     }
 }
@@ -161,7 +161,7 @@ pub fn load_bundled(
                 .settings_schema
                 .map(SettingsSchema::parse)
                 .transpose()
-                .map_err(HostError::Settings)?;
+                .map_err(|e| HostError::Settings(e.into()))?;
             let action_schemas = load_action_schemas(&manifest, |path| {
                 let mut matches = entry.action_schemas.iter().filter(|(p, _)| *p == path);
                 let (_, text) = matches.next().ok_or_else(|| {
@@ -174,7 +174,7 @@ pub fn load_bundled(
                     )
                     .into());
                 }
-                if text.len() > crate::action_schema::MAX_SCHEMA_BYTES {
+                if text.len() > action_schema::MAX_SCHEMA_BYTES {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "action schema byte budget exceeded",
@@ -264,12 +264,12 @@ pub fn load_installed(
     official: bool,
 ) -> Result<LoadedPlugin, HostError> {
     use std::io::Read as _;
-    const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+    use vosu_plugin_api::manifest::files::MAX_MANIFEST_BYTES;
     let mut text = String::new();
     std::fs::File::open(dir.join("manifest.toml"))?
-        .take(MAX_MANIFEST_BYTES + 1)
+        .take(MAX_MANIFEST_BYTES as u64 + 1)
         .read_to_string(&mut text)?;
-    if text.len() as u64 > MAX_MANIFEST_BYTES {
+    if text.len() > MAX_MANIFEST_BYTES {
         return Err(HostError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "manifest byte budget exceeded",
@@ -298,7 +298,7 @@ fn load_package(
         .as_ref()
         .map(|relative| {
             let text = std::fs::read_to_string(confined_asset(&root, relative)?)?;
-            SettingsSchema::parse(&text).map_err(HostError::Settings)
+            SettingsSchema::parse(&text).map_err(|e| HostError::Settings(e.into()))
         })
         .transpose()?;
     // Canonical containment also rejects symlinks escaping the plugin root.
@@ -320,7 +320,7 @@ fn load_package(
         read_bounded_asset(
             &root,
             relative,
-            crate::action_schema::MAX_SCHEMA_BYTES,
+            action_schema::MAX_SCHEMA_BYTES,
             "action schema byte budget exceeded",
         )
     })?;
@@ -445,14 +445,11 @@ fn load_action_schemas(
 
 fn compile_action_schemas(
     schemas: &std::collections::BTreeMap<String, String>,
-) -> Result<
-    std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>>,
-    HostError,
-> {
+) -> Result<std::collections::BTreeMap<String, Arc<CompiledActionSchema>>, HostError> {
     schemas
         .iter()
         .map(|(path, text)| {
-            crate::action_schema::CompiledActionSchema::compile(text)
+            CompiledActionSchema::compile(text)
                 .map(|schema| (path.clone(), Arc::new(schema)))
                 .map_err(|error| {
                     HostError::Io(std::io::Error::new(

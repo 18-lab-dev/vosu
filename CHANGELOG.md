@@ -20,6 +20,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
   (AF.10), and `scripts/sdk-package.py verify`, which checks the packaged
   `.crate` from outside the workspace with an isolated serialized and
   concurrent consumer. No crate is published by either.
+- The SDK now owns the bounded action-schema compiler
+  (`manifest::action_schema`), the `settings.schema.json` parser
+  (`manifest::settings`) and the package-path and byte-bound rules
+  (`manifest::files`, `catalog::MAX_CATALOG_BYTES`). vosu's installer, plugin
+  loader and archive extractor and `vosu-package-check` all call these, so the
+  checker refuses what the host refuses. Catalog install now also refuses a
+  settings schema that is valid JSON but not the settings array the loader
+  requires.
 
 ## Unreleased — 2.0 M6b
 

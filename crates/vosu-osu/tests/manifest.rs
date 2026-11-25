@@ -12,9 +12,10 @@
 //! The independent byte-bound assertions below retain the fixture contract.
 //! Likewise `parse_overlay_entries` below
 //! is this test's own narrow reader of the overlay settings array shape
-//! (`docs/tools/protocol.md`) — it is not a stand-in for core's
-//! `vosu_core::plugin::settings::SettingsSchema::parse`, which this crate
-//! cannot depend on and which real bundled-plugin loading still runs
+//! (`docs/tools/protocol.md`) — it is not a stand-in for the SDK's
+//! `vosu_plugin_api::manifest::settings::SettingsSchema::parse`, which the
+//! root `osu_settings_schema` test runs over this schema and real
+//! bundled-plugin loading still runs
 //! (`invalid_bundled_settings_schema_refuses_load`, unit P0).
 
 use vosu_osu::settings::OsuSettings;
@@ -72,7 +73,7 @@ struct OverlayEntry {
 }
 
 /// Parses `text` as the plain overlay-settings array `docs/tools/protocol.md`
-/// defines. Not `vosu_core::plugin::settings::SettingsSchema::parse`
+/// defines. Not the SDK's `SettingsSchema::parse`
 /// (module doc above): this only reads the three fields this test needs
 /// and does not validate every entry shape core's parser does.
 fn parse_overlay_entries(text: &str) -> Vec<OverlayEntry> {

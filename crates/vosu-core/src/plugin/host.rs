@@ -36,6 +36,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
+use vosu_plugin_api::manifest::settings::SettingsSchema;
 use vosu_plugin_api::{
     Bitness, FocusChanged, Message, SessionDecline, TimerCancel, TimerFired, TimerSet, vosu_status,
 };
@@ -49,9 +50,7 @@ use super::matcher::{CandidateProcess, MatcherEngine, host_platform};
 use super::read_plan::OutstandingPlans;
 use super::scan::{OutstandingScans, ScanWorkerPool};
 use super::session::{DiscoveredProcess, SessionHandle, SessionRegistry};
-use super::settings::{
-    PluginSettingsService, SettingsChangeDelivery, SettingsSchema, SettingsSchemaSource,
-};
+use super::settings::{PluginSettingsService, SettingsChangeDelivery, SettingsSchemaSource};
 use super::timers::TimerDelivery;
 use super::timers::TimerRegistry;
 use crate::identity::PluginInstanceId;

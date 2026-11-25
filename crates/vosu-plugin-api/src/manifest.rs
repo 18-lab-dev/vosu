@@ -27,9 +27,15 @@ use crate::capability::{
 };
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
+pub mod action_schema;
 mod actions;
+/// Confined, bounded reads of package files from an extracted package tree,
+/// and the portable path-component rule every package path follows.
+pub mod files;
 pub mod legacy_metadata;
 pub mod schema;
+/// The `settings_schema` document (`docs/v2/plugin-abi.md` §6.9).
+pub mod settings;
 pub use actions::{ActionDeclaration, ActionSessionMode, validate_actions};
 mod context;
 mod diagnostics;

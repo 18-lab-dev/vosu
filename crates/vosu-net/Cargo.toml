@@ -28,6 +28,7 @@ thiserror = "2.0.18"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 url = "2.5.8"
+vosu-plugin-api = { path = "../vosu-plugin-api" }
 vosu-sys = { path = "../vosu-sys" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 

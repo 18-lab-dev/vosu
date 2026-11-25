@@ -12,8 +12,12 @@
 //! validator: `Catalog::parse` (intrinsic), `Catalog::validate_context`
 //! (explicit registrations and official ids), `CatalogEntry::support` and
 //! `PackageManifest::validate_context` (host support),
-//! `manifest::schema::compile` over each package's actual schema bytes and
-//! `catalog::compare_package` (asset-backed mirror equality). Each
+//! `manifest::schema::compile` over each package's actual schema bytes,
+//! `catalog::compare_package` (asset-backed mirror equality),
+//! `manifest::action_schema::CompiledActionSchema::compile` and
+//! `manifest::settings::SettingsSchema::parse` over each plugin's action and
+//! settings schemas, and `manifest::files` for every package path and byte
+//! bound; vosu's installer runs the same functions. Each
 //! catalog entry's package for target `T` must already be extracted at
 //! `<packages-root>/<plugins|tools|overlays>/<id>/<T>/`; download, archive
 //! safety and extraction stay with the publisher's own scripts.
@@ -33,21 +37,17 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use semver::Version;
-use vosu_plugin_api::catalog::{Catalog, CatalogEntry, compare_package};
+use vosu_plugin_api::catalog::{Catalog, CatalogEntry, MAX_CATALOG_BYTES, compare_package};
+use vosu_plugin_api::manifest::action_schema::{self, CompiledActionSchema};
+use vosu_plugin_api::manifest::files::MAX_MANIFEST_BYTES;
 use vosu_plugin_api::manifest::schema::{self, CompiledSchema, SchemaProvenance};
+use vosu_plugin_api::manifest::settings::{MAX_SETTINGS_SCHEMA_BYTES, SettingsSchema};
 use vosu_plugin_api::manifest::{
     HostSupport, PackageKind, PackageManifest, Registration, ValidationContext,
 };
 
 use crate::assets::{confined, read_asset};
 use crate::context::RegistryContext;
-
-/// Upper bound on a catalog document (vosu's own catalog fetch limit).
-const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
-/// Upper bound on a root `manifest.toml` (vosu's own install limit).
-const MAX_MANIFEST_BYTES: usize = 256 * 1024;
-/// Upper bound on an action or settings schema (vosu's action-schema limit).
-const MAX_JSON_SCHEMA_BYTES: usize = 256 * 1024;
 
 const USAGE: &str = "usage: vosu-package-check --catalog <absolute catalog-v2.json> \
 --packages-root <absolute directory> --host-version <semver> --source <exact source identity> \
@@ -319,12 +319,16 @@ impl Packages<'_> {
                 confined(&root, &library.library).map_err(fail)?;
                 let _ = write!(detail, "library {}", library.library);
                 if let Some(path) = &plugin.settings_schema {
-                    json_schema(&root, path).map_err(fail)?;
+                    let text = read_asset(&root, path, MAX_SETTINGS_SCHEMA_BYTES).map_err(fail)?;
+                    SettingsSchema::parse(&text).map_err(|e| fail(format!("{path}: {e}")))?;
                     schema_assets += 1;
                 }
                 for action in &plugin.actions {
                     for path in [&action.args_schema, &action.result_schema] {
-                        json_schema(&root, path).map_err(fail)?;
+                        let text = read_asset(&root, path, action_schema::MAX_SCHEMA_BYTES)
+                            .map_err(fail)?;
+                        CompiledActionSchema::compile(text)
+                            .map_err(|e| fail(format!("{path}: {e}")))?;
                         schema_assets += 1;
                     }
                     actions += 1;
@@ -347,17 +351,5 @@ impl Packages<'_> {
             "{label}: {detail}, {actions} actions, {schema_assets} schema assets"
         ));
         Ok(())
-    }
-}
-
-/// An action or settings schema must exist inside the package and be one
-/// bounded JSON document. Its bounded action-schema profile is compiled by
-/// the host at install time; the SDK carries no second copy of that
-/// compiler.
-fn json_schema(root: &Path, path: &str) -> Result<(), String> {
-    let text = read_asset(root, path, MAX_JSON_SCHEMA_BYTES)?;
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(serde_json::Value::Object(_) | serde_json::Value::Bool(_)) => Ok(()),
-        _ => Err(format!("{path}: not a JSON schema document")),
     }
 }

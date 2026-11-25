@@ -3676,6 +3676,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+ "vosu-plugin-api",
  "vosu-proptest",
  "vosu-sys",
  "windows-sys 0.61.2",

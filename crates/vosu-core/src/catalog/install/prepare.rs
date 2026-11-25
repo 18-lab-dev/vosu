@@ -5,7 +5,7 @@ use super::{
     InstallError, InstallLayout,
     download::{self, PackageTransport},
     installed::{InstalledFor, InstalledRecord},
-    preflight::{self, MAX_MANIFEST_BYTES},
+    preflight,
 };
 use crate::catalog::plans::{PinnedAdd, Reason};
 use serde_json::Value;
@@ -16,12 +16,12 @@ use vosu_plugin_api::{
     catalog::{CatalogEntry, compare_package},
     manifest::{
         PackageKind, PackageManifest,
+        action_schema::{self, CompiledActionSchema},
+        files::MAX_MANIFEST_BYTES,
         schema::{self, CompiledSchema, SchemaProvenance},
+        settings::{MAX_SETTINGS_SCHEMA_BYTES, SettingsSchema},
     },
 };
-
-/// Settings schemas are bounded like namespace schemas.
-const MAX_SETTINGS_SCHEMA_BYTES: usize = schema::MAX_BYTES;
 
 /// A fully verified, unpublished package tree owned by this operation.
 #[derive(Debug)]
@@ -182,14 +182,13 @@ pub(super) fn validate(
             preflight::confined(root, &library.library)?;
             if let Some(path) = &plugin.settings_schema {
                 let settings = preflight::read_asset(root, path, MAX_SETTINGS_SCHEMA_BYTES)?;
-                serde_json::from_str::<Value>(&settings)
+                SettingsSchema::parse(&settings)
                     .map_err(|_| InstallError::InvalidAsset(path.clone()))?;
             }
             for action in &plugin.actions {
                 for path in [&action.args_schema, &action.result_schema] {
-                    let text =
-                        preflight::read_asset(root, path, crate::action_schema::MAX_SCHEMA_BYTES)?;
-                    crate::action_schema::CompiledActionSchema::compile(text)
+                    let text = preflight::read_asset(root, path, action_schema::MAX_SCHEMA_BYTES)?;
+                    CompiledActionSchema::compile(text)
                         .map_err(|_| InstallError::InvalidAsset(path.clone()))?;
                 }
             }

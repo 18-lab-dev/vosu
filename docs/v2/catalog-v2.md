@@ -419,9 +419,14 @@ map field for field onto `Registration`/`NamespaceRevision`
 (`provenance`: `third-party`, `official` or `trusted-bundled`), and
 `common_defs_schema` is the host release's `common-defs.schema.json`. Each
 plugin target's library, settings schema and action schemas must exist in the
-package; action schemas are checked as bounded JSON documents only, since
-their bounded-profile compiler is host code (vosu-core `action_schema`), not
-SDK code. The exit status is 0 on a pass, 1 on a validation failure and 2 on
+package. Action schemas compile through the SDK's bounded-profile compiler
+(`manifest::action_schema`), the settings schema parses through
+`manifest::settings::SettingsSchema::parse`, and every package path, byte
+bound and portable-name rule comes from `manifest::files`; vosu's installer
+and plugin loader call the same functions, so the checker cannot pass a
+package the host refuses for those reasons. Archive-level checks (published
+size/SHA-256, ZIP entry count, expanded size and case-fold collisions) need
+the archive and stay with the publisher's packaging. The exit status is 0 on a pass, 1 on a validation failure and 2 on
 a usage error.
 
 ### `kind = "plugin"`

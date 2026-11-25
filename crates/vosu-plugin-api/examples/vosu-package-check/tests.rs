@@ -2,7 +2,8 @@
 //! packages passes with nonzero counts, and each AF.10 counterexample
 //! (missing schema bytes, a mirror mismatch, an unknown registration, a
 //! `vosu.` id from a non-official source, an escaping asset, an
-//! unsupported host) fails.
+//! unsupported host, and the action-schema, settings-schema and path rules
+//! the host enforces) fails.
 #![cfg_attr(
     test,
     expect(
@@ -237,6 +238,94 @@ fn missing_action_schema_bytes_fail() {
     .unwrap();
     let error = fixture.run(THIRD_PARTY).unwrap_err();
     assert!(error.contains("schemas/result.json"), "{error}");
+}
+
+/// The host's install refuses these same bytes
+/// (`vosu-core` `catalog::install::tests_prepare::
+/// out_of_profile_action_and_invalid_settings_schemas_are_refused`): both
+/// run `CompiledActionSchema::compile`, so JSON that is merely an object is
+/// not enough.
+#[test]
+fn an_out_of_profile_action_schema_fails() {
+    let fixture = Fixture::new("acme.game");
+    for schema in [
+        r#"{"type":"string","pattern":"x"}"#,
+        r#"{"oneOf":[true]}"#,
+        r#"{"$ref":"https://example.invalid/remote.json"}"#,
+    ] {
+        fixture.scratch.write(
+            &format!("{}/schemas/args.json", fixture.plugin_dir()),
+            schema,
+        );
+        let error = fixture.run(THIRD_PARTY).unwrap_err();
+        assert!(error.contains("schemas/args.json"), "{schema}: {error}");
+    }
+    fixture.scratch.write(
+        &format!("{}/schemas/args.json", fixture.plugin_dir()),
+        r#"{"type":"string","maxLength":4}"#,
+    );
+    fixture
+        .run(THIRD_PARTY)
+        .expect("bounded-profile schema passes");
+}
+
+/// The settings schema goes through the host's own `SettingsSchema::parse`:
+/// an array of entries passes, and the documents the host refuses at install
+/// and load (an object, a duplicate `uniqueID`, an unknown entry type) fail.
+#[test]
+fn a_settings_schema_must_be_the_host_settings_array() {
+    let fixture = Fixture::new("acme.game");
+    let plugin = fixture.plugin_dir();
+    fixture.scratch.write(
+        &format!("{plugin}/manifest.toml"),
+        &plugin_manifest("acme.game", "settings_schema = \"settings.schema.json\"\n"),
+    );
+    fixture.scratch.write(
+        &format!("{plugin}/settings.schema.json"),
+        r#"[{"uniqueID":"RATE","type":"number","value":1},{"uniqueID":"NOTE","type":"header"}]"#,
+    );
+    let report = fixture.run(THIRD_PARTY).expect("settings array passes");
+    assert_eq!(report.schema_assets, 4);
+    for (schema, reason) in [
+        (r#"{"type":"object"}"#, "must be a JSON array"),
+        (
+            r#"[{"uniqueID":"A","type":"text"},{"uniqueID":"A","type":"text"}]"#,
+            "reuses an earlier entry",
+        ),
+        (r#"[{"uniqueID":"A","type":"slider"}]"#, "not valid JSON"),
+    ] {
+        fixture
+            .scratch
+            .write(&format!("{plugin}/settings.schema.json"), schema);
+        let error = fixture.run(THIRD_PARTY).unwrap_err();
+        assert!(
+            error.contains("settings.schema.json") && error.contains(reason),
+            "{schema}: {error}"
+        );
+    }
+}
+
+/// Package paths follow the host's portable-component rule exactly,
+/// including the Windows device names the installer refuses on every OS.
+/// On Unix the file really exists, so only the name can fail it; Windows
+/// cannot create these names at all.
+#[test]
+fn a_package_path_the_installer_refuses_fails() {
+    for name in ["COM\u{b9}.json", "CONIN$.json", "nul .json"] {
+        let fixture = Fixture::new("acme.game");
+        let plugin = fixture.plugin_dir();
+        fixture.scratch.write(
+            &format!("{plugin}/manifest.toml"),
+            &plugin_manifest("acme.game", &format!("settings_schema = \"{name}\"\n")),
+        );
+        #[cfg(unix)]
+        fixture.scratch.write(&format!("{plugin}/{name}"), "[]");
+        let error = fixture.run(THIRD_PARTY).unwrap_err();
+        assert!(
+            error.contains("not a confined package path"),
+            "{name}: {error}"
+        );
+    }
 }
 
 #[test]

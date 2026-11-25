@@ -49,6 +49,10 @@ vosu -> vosu-plugin-internal
 
 vosu-net -> vosu-sys
 vosu-net -> vosu-proptest
+# The archive extractor names an entry portable through the SDK's one
+# package-path rule (`manifest::files::portable_component`), the rule
+# `vosu-package-check` applies to extracted packages.
+vosu-net -> vosu-plugin-api
 
 vosu-core -> vosu-net
 vosu-core -> vosu-plugin-api

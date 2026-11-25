@@ -1,4 +1,8 @@
 //! Compiled A3 action schemas. No I/O, callbacks or runtime schema-engine dependency.
+//!
+//! This is the one bounded-profile check: vosu's catalog install and plugin
+//! load paths and `vosu-package-check` all compile action schemas here, so
+//! the checker cannot pass a schema the host refuses.
 mod compile;
 mod validate;
 

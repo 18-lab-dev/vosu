@@ -3,6 +3,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 
 use tokio_util::sync::CancellationToken;
+use vosu_plugin_api::manifest::files::portable_component;
 
 use super::{NetworkError, PartialDirectory, ZipLimits};
 
@@ -220,7 +221,8 @@ pub fn open_preflighted_zip(
 }
 /// Shared counter/import entry preflight. Reject nonportable separators and
 /// Windows prefixes/alternate streams even when validation runs on Unix, plus
-/// Windows device names and the trailing dot/space Windows silently strips.
+/// Windows device names and the trailing dot/space Windows silently strips
+/// (the SDK's package-path [`portable_component`] rule).
 pub fn validate_zip_entry(name: &str, unix_mode: Option<u32>) -> Result<PathBuf, NetworkError> {
     let path = Path::new(name);
     if name.is_empty()
@@ -246,43 +248,6 @@ pub fn validate_zip_entry(name: &str, unix_mode: Option<u32>) -> Result<PathBuf,
         return Err(NetworkError::UnsafeZip("non-regular archive entry".into()));
     }
     Ok(path.to_path_buf())
-}
-
-/// Windows reserves device names with any extension (`CON.txt`, `com1.json`),
-/// including the superscript-digit COM/LPT forms, and strips a trailing dot or
-/// space, so `a.` and `a` name one file there but two on Linux.
-pub fn portable_component(component: &str) -> bool {
-    if component.ends_with(['.', ' ']) {
-        return false;
-    }
-    let stem = component
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches(' ')
-        .to_ascii_uppercase();
-    let device = matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) || ["COM", "LPT"].iter().any(|prefix| {
-        stem.strip_prefix(prefix).is_some_and(|digit| {
-            matches!(
-                digit,
-                "1" | "2"
-                    | "3"
-                    | "4"
-                    | "5"
-                    | "6"
-                    | "7"
-                    | "8"
-                    | "9"
-                    | "\u{b9}"
-                    | "\u{b2}"
-                    | "\u{b3}"
-            )
-        })
-    });
-    !device
 }
 
 /// Case-insensitive key matching Windows' per-character simple upcase table.
