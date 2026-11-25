@@ -58,6 +58,7 @@
 //! events (§6.2, §6.12). Resource/tree/stream operations and action calls remain
 //! out of scope until their respective milestones.
 
+pub mod approval;
 mod discovery;
 mod dispatch;
 mod dispatch_queue;

@@ -9,19 +9,24 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
 use super::artifacts::Staged;
 
-/// One daemon's roots and listener.
+/// One daemon's roots and listeners.
 #[derive(Debug)]
 pub struct Daemon {
     /// The executable started: on Windows a copy inside the run's root,
     /// because Windows keeps configuration next to the executable.
     pub executable: PathBuf,
+    /// The overlay listener (`SERVER_PORT`).
     pub port: u16,
+    /// The dashboard listener's origin, once `/` on the overlay listener
+    /// redirected to it. `/api/plugins` is served there only (A5.5).
+    dashboard: OnceLock<String>,
 }
 
 fn free_port() -> u16 {
@@ -110,7 +115,12 @@ pub fn command(binary: &Path, root: &Path, staged: &Staged) -> (Command, Daemon)
         .stdin(Stdio::null())
         .stdout(std::fs::File::create(root.join("daemon.stdout.log")).unwrap())
         .stderr(std::fs::File::create(root.join("daemon.stderr.log")).unwrap());
-    (command, Daemon { executable, port })
+    let daemon = Daemon {
+        executable,
+        port,
+        dashboard: OnceLock::new(),
+    };
+    (command, daemon)
 }
 
 fn manifest_id(manifest: &str) -> String {
@@ -124,21 +134,38 @@ fn manifest_id(manifest: &str) -> String {
 }
 
 impl Daemon {
-    /// The management view of plugin `id` (`GET /api/plugins`), once the
-    /// listener answers.
+    /// The management view of plugin `id` (`GET /api/plugins` on the
+    /// dashboard listener), once the listeners answer.
     pub fn plugin(&self, id: &str) -> Option<serde_json::Value> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let url = format!("http://127.0.0.1:{}/api/plugins", self.port);
         let listing: serde_json::Value = runtime.block_on(async {
             let client = reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .ok()?;
-            let response = client.get(&url).send().await.ok()?;
+            let dashboard = match self.dashboard.get() {
+                Some(origin) => origin.clone(),
+                None => {
+                    // `DASHBOARD_PORT = 0` picks a free port; the overlay
+                    // listener's `/` redirects to it.
+                    let overlay = format!("http://127.0.0.1:{}/", self.port);
+                    let response = client.get(&overlay).send().await.ok()?;
+                    if response.url().port() == Some(self.port) {
+                        return None;
+                    }
+                    let origin = response.url().origin().ascii_serialization();
+                    self.dashboard.get_or_init(|| origin).clone()
+                }
+            };
+            let response = client
+                .get(format!("{dashboard}/api/plugins"))
+                .send()
+                .await
+                .ok()?;
             response.json().await.ok()
         })?;
         listing["plugins"]

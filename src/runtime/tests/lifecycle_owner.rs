@@ -155,6 +155,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &pool,
                 std::slice::from_ref(&broken),
                 &[],
+                &mut plugin_management::Roster::default(),
             )
             .is_err()
         );
@@ -168,7 +169,8 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &owner.logger,
                 &pool,
                 &entries,
-                &[]
+                &[],
+                &mut plugin_management::Roster::default(),
             )
             .unwrap(),
             5
@@ -280,6 +282,7 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             &pool,
             crate::plugins::BUNDLED,
             &[],
+            &mut plugin_management::Roster::default(),
         )
         .unwrap();
         let (adapters, hubs) = adapters::Adapters::start(&owner.plugins, owner.config.clone())
@@ -370,7 +373,8 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
                     &owner.logger,
                     &pool,
                     &entries,
-                    &[]
+                    &[],
+                    &mut plugin_management::Roster::default(),
                 )
                 .is_err(),
                 "required slot {omitted}"

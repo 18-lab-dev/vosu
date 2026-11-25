@@ -21,10 +21,14 @@
 //! `DESTROY`, waits up to its grace (5 s) for the OS exit, then kills and
 //! reaps the child.
 //!
-//! **Installation.** Production composition does not install this launcher
-//! yet: process plugins stay unavailable until the approval flow (A5.5, M5
-//! U0) gates them. Tests and fixtures install it through
-//! `PluginHost::install_process_launcher`.
+//! **Installation.** Production composition never installs this launcher
+//! directly: it starts a child only through
+//! [`ApprovalGate`](crate::plugin::approval::ApprovalGate), which checks the
+//! package's approval record on every load and restart (catalog-v2.md A5.5)
+//! and passes the *approved* library digest to [`ProcessHostLauncher::launch_approved`].
+//! The direct [`ProcessLauncher`] implementation, which hashes the library
+//! at launch, exists only for tests and fixtures
+//! (`PluginHost::install_process_launcher`).
 //!
 //! **`SYNC` execution (M5 B0).** A broker worker runs the host's own
 //! synchronous read-plan path through `PluginIngress::deliver`, exactly as
@@ -45,7 +49,9 @@ use vosu_plugin_api::{Init, decode};
 
 use super::control::{Create, StartupFailure, StartupStage};
 use crate::plugin::error::HostError;
-use crate::plugin::execution::{ProcessEndpoint, ProcessLaunch, ProcessLauncher};
+#[cfg(any(test, feature = "test-harness"))]
+use crate::plugin::execution::ProcessLauncher;
+use crate::plugin::execution::{ProcessEndpoint, ProcessLaunch};
 
 pub use platform::LaunchTarget;
 
@@ -128,12 +134,29 @@ impl ProcessHostLauncher {
         self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Starts one child for `launch` whose `CREATE` carries
+    /// `library_sha256`: the digest the user approved, which the child
+    /// verifies against the library object it opens (§7.6 "Startup" step
+    /// 6). Core never maps the library.
+    pub fn launch_approved(
+        &self,
+        launch: ProcessLaunch<'_>,
+        library_sha256: [u8; 32],
+    ) -> Result<Arc<dyn ProcessEndpoint>, HostError> {
+        let plugin = launch.manifest.id.clone();
+        self.launch_child(launch, library_sha256)
+            .map_err(|failure| {
+                tracing::warn!(%plugin, %failure, "plugin host did not start");
+                HostError::ProcessStartupFailed(failure)
+            })
+    }
+
     fn launch_child(
         &self,
         launch: ProcessLaunch<'_>,
+        library_sha256: [u8; 32],
     ) -> Result<Arc<dyn ProcessEndpoint>, StartupFailure> {
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-        let library_sha256 = library_digest(launch.package.library())?;
         let create = Create {
             generation,
             plugin_id: launch.manifest.id.clone(),
@@ -173,19 +196,20 @@ impl ProcessHostLauncher {
     }
 }
 
+/// Tests and fixtures start children without an approval record: the
+/// digest is the library's bytes at launch.
+#[cfg(any(test, feature = "test-harness"))]
 impl ProcessLauncher for ProcessHostLauncher {
     fn launch(&self, launch: ProcessLaunch<'_>) -> Result<Arc<dyn ProcessEndpoint>, HostError> {
-        let plugin = launch.manifest.id.clone();
-        self.launch_child(launch).map_err(|failure| {
-            tracing::warn!(%plugin, %failure, "plugin host did not start");
-            HostError::ProcessStartupFailed(failure)
-        })
+        let digest =
+            library_digest(launch.package.library()).map_err(HostError::ProcessStartupFailed)?;
+        self.launch_approved(launch, digest)
     }
 }
 
-/// The SHA-256 the child must find in the library it opens. Core reads the
-/// bytes only to hash them, never maps them.
-fn library_digest(path: &Path) -> Result<[u8; 32], StartupFailure> {
+/// The SHA-256 of the library at `path`. Core reads the bytes only to hash
+/// them, never maps them.
+pub(crate) fn library_digest(path: &Path) -> Result<[u8; 32], StartupFailure> {
     let failure = |error: std::io::Error| StartupFailure {
         stage: StartupStage::Library,
         code: "read_failed".to_owned(),

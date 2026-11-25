@@ -13,6 +13,8 @@
 
 #[path = "plugin_host_native/actions.rs"]
 mod actions;
+#[path = "plugin_host_native/approval.rs"]
+mod approval;
 #[path = "plugin_host_native/broker.rs"]
 mod broker;
 #[path = "plugin_host_native/crash.rs"]

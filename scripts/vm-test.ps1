@@ -80,7 +80,8 @@ try {
         # The root plugin_host_native test reads fixture libraries built in
         # this guest (never Linux artifacts) and never runs Cargo itself.
         $fixturesExit = Invoke-VosuPluginHostFixtures -CargoExe $cargo -WorkingDirectory $source `
-            -LogDir $logs -Steps $steps -TimeoutSeconds $TimeoutSeconds -ScratchRoot 'V:\agent-desktop\tmp'
+            -LogDir $logs -Steps $steps -TimeoutSeconds $TimeoutSeconds -ScratchRoot 'V:\agent-desktop\tmp' `
+            -ReleaseDaemon:([bool]$config.ReleaseDaemon)
         if ($fixturesExit -ne 0) {
             $tail = (Get-Content (Join-Path $logs 'plugin-host-fixtures.stderr.log') -Tail 40) -join "`n"
             throw "plugin-host fixture preparation failed (exit $fixturesExit):`n$tail"

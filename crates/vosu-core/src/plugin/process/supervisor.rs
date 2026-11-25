@@ -87,6 +87,11 @@ pub struct ProcessStatus {
     pub last_failure: Option<FailureReason>,
     /// Generations started after the first: automatic and manual restarts.
     pub restarts: u64,
+    /// The generation last started (initial load, automatic or manual
+    /// restart). It only grows within a daemon run, even across a stop and
+    /// a later re-register, so a management action naming it never acts on
+    /// another generation (`docs/v2/plugin-abi.md` §7.6).
+    pub generation: u64,
     /// Crash events currently inside the rolling window.
     pub crash_events: usize,
 }
@@ -121,6 +126,7 @@ struct Entry {
     timer: Option<RestartTimer>,
     last_failure: Option<FailureReason>,
     restarts: u64,
+    generation: u64,
 }
 
 #[derive(Default)]
@@ -156,6 +162,8 @@ pub enum RestartRefused {
     Unknown,
     /// A generation is already starting.
     Busy,
+    /// The caller named a generation that is no longer current.
+    GenerationChanged,
     ShuttingDown,
 }
 
@@ -211,7 +219,9 @@ impl Supervisor {
         {
             return Err(RestartRefused::Busy);
         }
-        let epoch = inner.entries.get(&id).map_or(1, |entry| entry.epoch + 1);
+        let previous = inner.entries.get(&id);
+        let epoch = previous.map_or(1, |entry| entry.epoch + 1);
+        let generation = previous.map_or(1, |entry| entry.generation + 1);
         inner.entries.insert(
             id,
             Entry {
@@ -222,6 +232,7 @@ impl Supervisor {
                 timer: None,
                 last_failure: None,
                 restarts: 0,
+                generation,
             },
         );
         Ok(self.guard(&mut inner, epoch))
@@ -348,22 +359,28 @@ impl Supervisor {
         }
         entry.phase = ProcessPhase::Starting;
         entry.restarts += 1;
+        entry.generation += 1;
         let template = entry.template.clone();
         Some((template, self.guard(&mut inner, epoch)))
     }
 
     /// A manual restart: resets the window and the latch, cancels any
     /// delay, and starts a new generation whatever the phase, unless one
-    /// is already starting.
+    /// is already starting. With `expected`, refuses unless that is still
+    /// the current generation, checked under the same lock that acts.
     pub fn manual_restart(
         self: &Arc<Self>,
         id: PluginInstanceId,
+        expected: Option<u64>,
     ) -> Result<(Template, StartGuard), RestartRefused> {
         let mut inner = self.lock();
         if inner.shut_down {
             return Err(RestartRefused::ShuttingDown);
         }
         let entry = inner.entries.get_mut(&id).ok_or(RestartRefused::Unknown)?;
+        if expected.is_some_and(|expected| expected != entry.generation) {
+            return Err(RestartRefused::GenerationChanged);
+        }
         if entry.phase == ProcessPhase::Starting {
             return Err(RestartRefused::Busy);
         }
@@ -372,21 +389,31 @@ impl Supervisor {
         entry.epoch += 1;
         entry.phase = ProcessPhase::Starting;
         entry.restarts += 1;
+        entry.generation += 1;
         let (template, epoch) = (entry.template.clone(), entry.epoch);
         Ok((template, self.guard(&mut inner, epoch)))
     }
 
     /// The user stopped `id`: `Stopped`, any delay cancelled, any start in
-    /// progress made stale. Returns whether `id` is supervised.
-    pub fn stop(&self, id: PluginInstanceId) -> bool {
+    /// progress made stale. With `expected`, refuses unless that is still
+    /// the current generation, checked under the same lock that acts.
+    /// Returns whether `id` is supervised.
+    pub fn stop(
+        &self,
+        id: PluginInstanceId,
+        expected: Option<u64>,
+    ) -> Result<bool, RestartRefused> {
         let mut inner = self.lock();
         let Some(entry) = inner.entries.get_mut(&id) else {
-            return false;
+            return Ok(false);
         };
+        if expected.is_some_and(|expected| expected != entry.generation) {
+            return Err(RestartRefused::GenerationChanged);
+        }
         entry.epoch += 1;
         entry.timer = None;
         entry.phase = ProcessPhase::Stopped;
-        true
+        Ok(true)
     }
 
     /// Daemon shutdown: no start begins and no delay survives. Every entry
@@ -430,6 +457,7 @@ impl Supervisor {
             phase: entry.phase.clone(),
             last_failure: entry.last_failure.clone(),
             restarts: entry.restarts,
+            generation: entry.generation,
             crash_events: entry.window.len(),
         })
     }

@@ -40,6 +40,9 @@ pub enum HostError {
     InProcessRefused {
         reason: &'static str,
     },
+    /// `--plugin <dir>` in a stable release build (catalog-v2.md A5.5):
+    /// only debug and prerelease builds accept development packages.
+    DevelopmentRefused,
     /// `create` returned `NULL`.
     CreateRejected,
     /// `concurrent_dispatch = true` but no shared worker pool was supplied.
@@ -92,6 +95,10 @@ pub enum HostError {
     ProcessStartupFailed(StartupFailure),
     /// The instance's process was reported lost before it was published.
     InstanceLost,
+    /// A manual restart or stop named a process generation that is no
+    /// longer current (an automatic restart, another stop or restart came
+    /// first). Checked under the supervisor's lock, so nothing acted.
+    GenerationChanged,
 }
 
 impl fmt::Display for HostError {
@@ -117,6 +124,10 @@ impl fmt::Display for HostError {
             ),
             Self::MissingRequiredFunction => write!(f, "create, dispatch, or destroy is missing"),
             Self::InProcessRefused { reason } => write!(f, "in-process runtime refused: {reason}"),
+            Self::DevelopmentRefused => write!(
+                f,
+                "stable release builds refuse `--plugin <dir>`; use a debug or prerelease build"
+            ),
             Self::CreateRejected => write!(f, "create returned NULL"),
             Self::ConcurrentPoolMissing => write!(
                 f,
@@ -156,6 +167,7 @@ impl fmt::Display for HostError {
                 write!(f, "plugin-host process did not start: {failure}")
             }
             Self::InstanceLost => write!(f, "the plugin-host process was lost"),
+            Self::GenerationChanged => write!(f, "the plugin's generation changed"),
         }
     }
 }

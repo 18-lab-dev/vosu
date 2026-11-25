@@ -1088,9 +1088,25 @@ and the D17 names are in the
 the child modules in `tests/plugin_host_native/`:
 
 - `relay`, `broker`, `lifecycle`, `state`, `resources`, `actions`, `parity`,
-  `crash`, `backpressure`, `sync` and `restart`;
+  `crash`, `backpressure`, `sync`, `restart` and `approval`;
 - the security modules `linux_security`, `windows_job` and `parent_death`;
 - `support/`.
+
+**Approval smoke (M5 U0).** `approval` starts a real daemon with P0's
+testkit as a `--plugin` process package and drives the dashboard's
+`/api/plugins` routes: approve and persist, a denied prompt, revoke, a changed
+library refused on restart, near-miss mutations without the dashboard origin
+or CSRF token, and a noninteractive start. The daemon is the release build
+named by `VOSU_PLUGIN_APPROVAL_DAEMON` (staged by
+`python scripts/plugin-host-fixtures.py --release-daemon`, or
+`python scripts/vm-test.py --release-daemon` in the Windows VM), otherwise the
+debug `vosu`, and each test prints which one it ran. Only a release-daemon run
+is the prerelease release evidence. Two cases are `#[ignore]` and run with
+`-- --ignored approval_`: `approval_release_daemon_refuses_in_process_without_the_test_harness`
+needs `VOSU_PLUGIN_APPROVAL_DAEMON`, and
+`approval_stable_release_daemon_refuses_every_plugin` needs
+`VOSU_PLUGIN_APPROVAL_STABLE_DAEMON`, a release build whose version has no
+prerelease part.
 
 Every test name starts with its module path, so each filter in the M5 plan
 (`relay`, `broker`, `lifecycle`, and so on) matches a nonzero set. Main lists
@@ -1512,7 +1528,12 @@ the kill semantics, but it is not the daemon. At `7cdbcc4` the daemon installs
 no process launcher; M5 U0's approval gate adds that. The `_daemon` variants
 run the same assertions against the real `vosu` daemon. They load the package
 through `--plugin`, with a `plugins/approvals.json` record written before
-start. They are `#[ignore = "needs M5 U0 integrated: …"]` until U0 merges.
+start. They read `GET /api/plugins` on the dashboard listener, found through
+the overlay listener's redirect from `/`; plugin management is served there
+only (catalog-v2.md A5.5). The daemon composes its plugins, each `create`
+included, before it binds a listener, so the bootstrap variant asserts that
+nothing lists the plugin yet rather than a `starting` view. Since U0
+integrated they run unignored.
 
 Each tree is: core, the plugin host running the testkit, optionally a
 descendant the plugin started from `create` (control `spawn`), and an outside
@@ -1712,5 +1733,5 @@ The filter matches all three packaged cases, which need U0's approval-gated
 `--plugin` launch in the packaged build. Expect `3 passed`. The testkit
 library comes from `plugin-host-fixtures.py`'s debug example build, which
 the packaged plugin host loads like any user plugin. The daemon variants of
-`parent_death` and `windows_job` run after U0 integrates with
-`-- --ignored _daemon --nocapture`, on Linux and in the Windows VM.
+`parent_death` and `windows_job` are ordinary tests (`-- _daemon
+--nocapture`), on Linux and in the Windows VM.

@@ -2,6 +2,7 @@
 // data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
 
 import { cardBanner, cardIcon, catalogArt, sourceFailures } from './dashboard-catalog.js';
+import { mountPlugins } from './dashboard-plugins.js';
 import { toolAutostartControl } from './homepage-settings.js';
 
 const STATUS_LABELS = {
@@ -149,9 +150,12 @@ export function mountTools({
   root.setAttribute('aria-busy', 'true');
   root.replaceChildren(banner);
   // Installed and Available share one plain heading style.
-  root.before(el('header', { className: 'tools-catalog__header tools-installed__header' },
-    el('h2', { text: 'Installed', attrs: { id: 'tools-installed-title' } })));
+  const installedHeader = el('header', { className: 'tools-catalog__header tools-installed__header' },
+    el('h2', { text: 'Installed', attrs: { id: 'tools-installed-title' } }));
+  root.before(installedHeader);
   root.setAttribute('aria-labelledby', 'tools-installed-title');
+  // Plugins come first: one needing approval is the page's first decision.
+  mountPlugins({ before: installedHeader, requestJson, notify, setBusy, errorText, confirmAction, createActionDialog });
 
   const api = (id, suffix = '') => `/api/tools/${encodeURIComponent(id)}${suffix}`;
   const availableCards = el('div', { className: 'tools-root', attrs: { 'aria-labelledby': 'tools-available-title' } });
