@@ -14,13 +14,21 @@
 //! `smoke` proves each testkit fault mode actually triggers under the
 //! production launcher. The crash, stall and loss end-to-end assertions
 //! belong to the X0/C0 modules.
+//!
+//! - [`services`] (M5 I0) stages services-mode testkit packages and drives
+//!   them through core's actions; [`api`] serves the production API v1
+//!   router over the test's `PluginHost`.
 
+#[path = "api.rs"]
+pub mod api;
 #[path = "artifacts.rs"]
 pub mod artifacts;
 #[path = "fixture.rs"]
 pub mod fixture;
 #[path = "host.rs"]
 pub mod host;
+#[path = "services.rs"]
+pub mod services;
 #[path = "smoke.rs"]
 mod smoke;
 

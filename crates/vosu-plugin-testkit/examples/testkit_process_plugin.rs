@@ -23,6 +23,10 @@
 //! write their receipt (`crash`, `blocked`/`released`, `stall`, `corrupt`)
 //! before acting.
 //!
+//! Under `mode=services` (M5 I0) every message after the `dispatch`
+//! receipt goes to `testkit_process_plugin/services.rs`, which exercises
+//! core's state, resource and action services instead.
+//!
 //! The library compiles its modules directly and never links the testkit
 //! rlib, which exports the legacy echo plugin's entry symbol.
 
@@ -30,6 +34,8 @@
 mod control;
 #[path = "testkit_process_plugin/native.rs"]
 mod native;
+#[path = "testkit_process_plugin/services.rs"]
+mod services;
 
 use control::{Control, Fault};
 use vosu_plugin_api::{
@@ -41,6 +47,8 @@ struct TestkitProcessPlugin {
     host: VtableHostServices,
     control: &'static Control,
     fired: bool,
+    /// `mode=services` (M5 I0): every message goes to the services plugin.
+    services: Option<services::Services>,
 }
 
 impl Plugin for TestkitProcessPlugin {
@@ -55,14 +63,18 @@ impl Plugin for TestkitProcessPlugin {
             }
             _ => {}
         }
+        let services = control
+            .services
+            .then(|| services::Services::new(control, &init));
         Ok(Self {
             host,
             control,
             fired: false,
+            services,
         })
     }
 
-    fn on_message(&mut self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
+    fn on_message(&mut self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
         let opcode = message.opcode() as u32;
         self.control
             .receipt("dispatch", &format!("opcode={opcode}"));
@@ -73,6 +85,9 @@ impl Plugin for TestkitProcessPlugin {
             self.fired = true;
             self.fire(opcode);
             return Ok(());
+        }
+        if let Some(services) = &mut self.services {
+            return services.on_message(&self.host, message, correlation_id);
         }
         match message {
             Message::SessionAttached(attached) => self.attach(attached.handle, attached.pid),

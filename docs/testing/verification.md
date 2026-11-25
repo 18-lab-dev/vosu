@@ -1273,6 +1273,28 @@ attached session. The `support::smoke` tests prove that each mode triggers
 under the production launcher; `restart` uses `create_block` for the
 first-load deadline.
 
+**Services mode (I0).** A control file with `mode=services` switches the same
+library to `testkit_process_plugin/services.rs`, which uses core's ordinary
+services instead of the fault fixture's attach. An owner identifies each
+session, declares the control's `root` as its `files` root, and publishes
+`/marker`, `/count` and five resource references. Those are a root-relative
+file, one reference escaping the root, a two-member tree, and a generated
+stream of `stream` bytes plus its `short` variant, which ends at half its
+declared size. With `observer=1` the plugin never identifies a session.
+The test drives the plugin through its `drive` action: publishing,
+publishing a batch core must refuse, republishing references, re-declaring
+the root, subscribing, and issuing `ACTION_CALL`s. A `call_block` drive
+also blocks dispatch behind the `probe` and `release` barriers. The `work`
+action is the callee: it sends progress and then answers, or it holds the
+invocation until the `answer` drive or a cancel. Every message the plugin
+receives writes a receipt. `support::services` stages each package under
+its own manifest, plugin id and process name. It validates each package
+against the host's live snapshot, so a `requires` can name a namespace or
+action an earlier instance registered. `support::api` serves the production
+API v1 router over the test's `PluginHost`. A test without a discovery
+service re-offers its target after a restart, as discovery would once the
+restarted matcher registers.
+
 The `*_crash` modes and `dispatch_abort` all end the child with the real
 `std::process::abort`: `SIGABRT` on Linux, the fail-fast status `0xC0000409`
 on Windows. `dispatch_abort` also writes an `abort` receipt first. It is the

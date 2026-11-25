@@ -13,6 +13,10 @@
 //!   fault; required for those faults.
 //! - `read`: `<address>:<length>` read from each attached session
 //!   (default `0:8`).
+//! - `mode=services`: run the host-services plugin (`services.rs`, M5 I0)
+//!   instead of the fault fixture's attach; with `root` (the absolute
+//!   directory declared as the `files` root), `observer=1` (never identify
+//!   a session) and `stream` (the generated stream's byte size).
 //!
 //! Receipts are appended as one line each to `<probe>-<pid>` and, in order,
 //! to `journal-<pid>` in `dir`. A line is
@@ -106,6 +110,17 @@ pub struct Control {
     pub fault: Fault,
     pub trigger: Option<u32>,
     pub read: (u64, u32),
+    /// `mode=services`: the plugin exercises core's host services
+    /// (`crate::services`) instead of the fixture's read-plan attach.
+    pub services: bool,
+    /// `root`: the absolute directory a services-mode owner declares as its
+    /// `files` root for each session it identifies.
+    pub root: Option<PathBuf>,
+    /// `observer=1`: a services-mode plugin that never identifies a session
+    /// it is told about (a `vosu.sessions` subscriber).
+    pub observer: bool,
+    /// `stream`: the byte size of the generated stream resource.
+    pub stream: u64,
 }
 
 static CONTROL: OnceLock<Option<Control>> = OnceLock::new();
@@ -146,6 +161,10 @@ fn read_control(library: &Path) -> Option<Control> {
     let mut fault = Fault::None;
     let mut trigger = None;
     let mut read = (0, 8);
+    let mut services = false;
+    let mut root = None;
+    let mut observer = false;
+    let mut stream = 0;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let (key, value) = line.split_once('=')?;
         match key {
@@ -159,6 +178,10 @@ fn read_control(library: &Path) -> Option<Control> {
                 let (address, length) = value.split_once(':')?;
                 read = (address.parse().ok()?, length.parse().ok()?);
             }
+            "mode" if value == "services" => services = true,
+            "root" if Path::new(value).is_absolute() => root = Some(PathBuf::from(value)),
+            "observer" if value == "1" => observer = true,
+            "stream" => stream = value.parse().ok()?,
             // An unknown or malformed key is a test setup error: refuse
             // the whole control rather than run a different scenario.
             _ => return None,
@@ -173,6 +196,10 @@ fn read_control(library: &Path) -> Option<Control> {
         fault,
         trigger,
         read,
+        services,
+        root,
+        observer,
+        stream,
     })
 }
 
@@ -190,15 +217,21 @@ impl Control {
 
     /// Waits for the test's `release-<pid>` barrier file. Returns whether it
     /// appeared within [`RELEASE_BOUND`].
+    pub fn wait_release(&self) -> bool {
+        self.wait_barrier("release")
+    }
+
+    /// Waits for the test's `<name>-<pid>` barrier file holding this run's
+    /// nonce. Returns whether it appeared within [`RELEASE_BOUND`].
     #[expect(
         clippy::disallowed_methods,
         reason = "a blocked fixture dispatch polls the test's barrier file until a bounded deadline; no other wake source crosses the process boundary"
     )]
-    pub fn wait_release(&self) -> bool {
-        let release = self.dir.join(format!("release-{}", std::process::id()));
+    pub fn wait_barrier(&self, name: &str) -> bool {
+        let barrier = self.dir.join(format!("{name}-{}", std::process::id()));
         let deadline = Instant::now() + RELEASE_BOUND;
         loop {
-            if std::fs::read_to_string(&release).is_ok_and(|text| text.trim() == self.nonce) {
+            if std::fs::read_to_string(&barrier).is_ok_and(|text| text.trim() == self.nonce) {
                 return true;
             }
             if Instant::now() >= deadline {
