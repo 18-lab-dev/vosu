@@ -1,6 +1,8 @@
 //! Dispatch primitives: the owned, channel-safe message job, one
 //! instance's dedicated serial worker thread, and the shared
-//! `concurrent_dispatch` worker pool (`docs/v2/plugin-abi.md` §4).
+//! `concurrent_dispatch` worker pool (`docs/v2/plugin-abi.md` §4). Jobs
+//! call a backend-neutral [`DispatchTarget`], so a process instance's
+//! deliveries reuse the same queues, ordering and in-flight accounting.
 
 use super::dispatch_queue::DispatchQueue;
 use std::ffi::c_void;
@@ -8,7 +10,9 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
-use vosu_plugin_api::{vosu_bytes, vosu_message, vosu_plugin_vtable, vosu_status};
+use vosu_plugin_api::vosu_status;
+
+pub(crate) use super::execution::DispatchTarget;
 
 use super::error::HostError;
 use super::read_plan::DispatchThreadScope;
@@ -119,64 +123,15 @@ impl OwnedMessage {
 }
 
 impl OwnedMessage {
-    pub(crate) fn call(&self, vtable: &vosu_plugin_vtable, ctx: PluginCtx) -> vosu_status {
-        let message = vosu_message {
-            opcode: self.opcode,
-            flags: self.flags,
-            correlation_id: self.correlation_id,
-            payload: vosu_bytes {
-                data: self.payload.as_ptr(),
-                len: self.payload.len() as u32,
-            },
-        };
-        let dispatch = vtable
-            .dispatch
-            .expect("the registry's check_descriptor verifies dispatch is Some before load");
-        // SAFETY: `ctx.0` is this instance's live `plugin_ctx`; `message`'s
-        // `payload` points at `self.payload`, which outlives this call.
-        let raw = unsafe { dispatch(ctx.0, &message as *const vosu_message) };
-        vosu_status::try_from(raw).unwrap_or(vosu_status::VOSU_ERR_BACKEND)
+    pub(crate) fn call(&self, target: &DispatchTarget) -> vosu_status {
+        target.dispatch(self.opcode, self.flags, self.correlation_id, &self.payload)
     }
-}
-
-/// [`OwnedMessage::call`]'s zero-allocation counterpart (D17): delivers
-/// `payload` as one `vosu_message` directly through `vtable`'s own
-/// `dispatch`, with no [`OwnedMessage`]/owned-`Vec<u8>` copy at all —
-/// `payload` stays borrowed for this call's whole duration. For
-/// `host/read_plans.rs`'s own `VOSU_READ_PLAN_SYNC` fast path, whose
-/// result `read_plan::execute_into` already wrote straight into a
-/// caller-owned, reusable buffer.
-pub(crate) fn dispatch_raw(
-    vtable: &vosu_plugin_vtable,
-    ctx: PluginCtx,
-    opcode: u32,
-    flags: u32,
-    correlation_id: u64,
-    payload: &[u8],
-) -> vosu_status {
-    let message = vosu_message {
-        opcode,
-        flags,
-        correlation_id,
-        payload: vosu_bytes {
-            data: payload.as_ptr(),
-            len: payload.len() as u32,
-        },
-    };
-    let dispatch = vtable
-        .dispatch
-        .expect("the registry's check_descriptor verifies dispatch is Some before load");
-    // SAFETY: `ctx.0` is this instance's live `plugin_ctx`; `message`'s
-    // `payload` points at `payload`, which outlives this call.
-    let raw = unsafe { dispatch(ctx.raw(), &message as *const vosu_message) };
-    vosu_status::try_from(raw).unwrap_or(vosu_status::VOSU_ERR_BACKEND)
 }
 
 /// One dispatch call plus everything needed to run it and report its
 /// status back to whoever is waiting on it.
 pub(crate) struct Job {
-    pub vtable: vosu_plugin_vtable,
-    pub ctx: PluginCtx,
+    pub target: DispatchTarget,
     pub message: OwnedMessage,
     pub task: Option<DispatchTask>,
     pub reply: Option<SyncSender<vosu_status>>,
@@ -191,7 +146,7 @@ pub(crate) struct Job {
 }
 
 /// Runs on the instance's existing worker, retaining its in-flight lifetime.
-pub(crate) type DispatchTask = Box<dyn FnOnce(&vosu_plugin_vtable, PluginCtx) + Send + 'static>;
+pub(crate) type DispatchTask = Box<dyn FnOnce(&DispatchTarget) + Send + 'static>;
 
 fn run_job(job: Job) {
     // §4/D5: every call this host makes into a plugin's own `dispatch`
@@ -200,10 +155,10 @@ fn run_job(job: Job) {
     // refused instead of deadlocking or running out of serialized order.
     let _dispatch_thread = DispatchThreadScope::enter();
     let status = if let Some(task) = job.task {
-        task(&job.vtable, job.ctx);
+        task(&job.target);
         vosu_status::VOSU_OK
     } else {
-        job.message.call(&job.vtable, job.ctx)
+        job.message.call(&job.target)
     };
     if let Some(reply) = job.reply {
         let _ = reply.send(status);

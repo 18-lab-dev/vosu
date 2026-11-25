@@ -80,6 +80,15 @@ pub enum HostError {
         entry_declares_one: bool,
     },
     State(String),
+    /// A `runtime = "process"` package reached instance creation with no
+    /// process launcher installed: core never runs it in-process instead.
+    ProcessRuntimeUnavailable,
+    /// The plugin-host child for this instance did not become ready: it
+    /// exited, broke its channel, or its plugin's `create` failed. The
+    /// launcher has already reaped it.
+    ProcessStartupFailed(String),
+    /// The instance's process was reported lost before it was published.
+    InstanceLost,
 }
 
 impl fmt::Display for HostError {
@@ -136,6 +145,14 @@ impl fmt::Display for HostError {
                 },
             ),
             Self::State(e) => write!(f, "state: {e}"),
+            Self::ProcessRuntimeUnavailable => write!(
+                f,
+                "runtime = \"process\" requires the plugin-host launcher, which is not available"
+            ),
+            Self::ProcessStartupFailed(reason) => {
+                write!(f, "plugin-host process did not start: {reason}")
+            }
+            Self::InstanceLost => write!(f, "the plugin-host process was lost"),
         }
     }
 }

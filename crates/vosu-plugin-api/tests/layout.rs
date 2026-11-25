@@ -3,6 +3,10 @@
 //! [`c_header_layout_matches_the_table`], on the C side against
 //! `include/vosu_plugin.h` itself so the header and these Rust types
 //! cannot silently drift apart.
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test code: runs the C compiler directly; no plugin host exists in this process"
+)]
 
 use core::mem::{offset_of, size_of};
 use std::process::Command;

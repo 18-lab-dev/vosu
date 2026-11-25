@@ -1,7 +1,7 @@
 //! Successful active lazer graph shared by decoder and PlanMemory benchmarks.
 use std::sync::Arc;
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
-use vosu_sys::process::ProcessMemory;
+use vosu_plugin_api::memory::ProcessMemory;
 const FIXTURE_SIZE: usize = 1024 * 1024;
 const KEY_COUNT: usize = 18;
 pub(super) struct Fixture {
@@ -199,8 +199,8 @@ impl ProcessMemory for Fixture {
         &self,
         address: usize,
         dst: &mut [u8],
-    ) -> Result<(), vosu_sys::process::MemoryError> {
-        use vosu_sys::process::MemoryError;
+    ) -> Result<(), vosu_plugin_api::memory::MemoryError> {
+        use vosu_plugin_api::memory::MemoryError;
         let source = address
             .checked_sub(self.origin)
             .and_then(|start| {
@@ -220,8 +220,8 @@ impl ProcessMemory for Fixture {
     }
     fn read_many(
         &self,
-        reads: &mut [vosu_sys::process::ReadRequest<'_>],
-    ) -> Result<(), vosu_sys::process::MemoryError> {
+        reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
+    ) -> Result<(), vosu_plugin_api::memory::MemoryError> {
         #[cfg(windows)]
         {
             native().read_many(reads)
@@ -236,8 +236,9 @@ impl ProcessMemory for Fixture {
     }
     fn readable_regions(
         &self,
-    ) -> Result<Vec<vosu_sys::process::MemoryRegion>, vosu_sys::process::MemoryError> {
-        Ok(vec![vosu_sys::process::MemoryRegion {
+    ) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, vosu_plugin_api::memory::MemoryError>
+    {
+        Ok(vec![vosu_plugin_api::memory::MemoryRegion {
             address: self.origin,
             size: self.bytes.len(),
         }])

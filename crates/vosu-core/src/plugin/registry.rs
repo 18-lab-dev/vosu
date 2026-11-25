@@ -1,18 +1,22 @@
-//! Plugin registry: loads the root crate's explicit `BUNDLED` array (D13)
-//! and `--plugin <dir>` external `dlopen` plugins (`libloading`, D13), with
-//! ABI version negotiation and descriptor checks (`docs/v2/plugin-abi.md`
-//! §1, §2) and the §7.1 in-process trust decision.
+//! Plugin registry: validates the root crate's explicit `BUNDLED` array
+//! (D13) and `--plugin <dir>` development packages into one
+//! [`LoadedPlugin`] shape — manifest, schemas and grants through one
+//! validation path — then applies the §7.1 runtime decision
+//! (`docs/v2/plugin-abi.md` §1, §2, §7.1). Only a local grant enters native
+//! code here (a linked bundled vtable, or a debug development library
+//! `dlopen`ed through `execution::descriptor::load_library`). A
+//! `runtime = "process"` package yields a confined
+//! [`super::execution::ProcessPackage`]; its library is never mapped in
+//! core.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use libloading::{Library, Symbol};
-use vosu_plugin_api::{
-    PluginManifest, Runtime, VOSU_PLUGIN_ABI_MAJOR, VosuPluginEntryFn, vosu_plugin_vtable,
-};
+use vosu_plugin_api::{PluginManifest, Runtime, vosu_plugin_vtable};
 
 use super::error::HostError;
+use super::execution::{Execution, LocalCode, PackageOrigin, ProcessPackage, descriptor};
 use super::settings::SettingsSchema;
 
 /// One bundled plugin entry the root crate's explicit `BUNDLED` array lists
@@ -33,11 +37,12 @@ pub struct BundledPlugin<'a> {
     pub vtable: fn() -> vosu_plugin_vtable,
 }
 
-/// A manifest-validated, ABI-checked plugin ready for
-/// `super::instance::PluginInstance::create`.
+/// A manifest-validated package with its one granted [`Execution`],
+/// ready for `super::instance::PluginInstance::create`.
 pub struct LoadedPlugin {
     manifest: PluginManifest,
-    vtable: vosu_plugin_vtable,
+    origin: PackageOrigin,
+    execution: Execution,
     /// This plugin's own parsed `settings.schema.json` (§6.9), if it
     /// declares one: `create_instance` builds `init.settings` against it
     /// and keeps a copy for bridge-style settings-change watchers (§8's
@@ -48,15 +53,6 @@ pub struct LoadedPlugin {
     action_schemas: std::collections::BTreeMap<String, String>,
     compiled_action_schemas:
         std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>>,
-    // Shared, not just held: unloading while an instance's `plugin_ctx`
-    // still points into the library would be immediate undefined behavior
-    // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
-    // does not outlive the instances built from it (a caller is free to
-    // drop it right after `PluginInstance::create`). `PluginInstance`
-    // clones this `Arc` via `library_handle` so the library stays mapped
-    // for as long as either side needs it. `None` for a bundled plugin,
-    // which is linked into this executable rather than `dlopen`ed.
-    library: Option<Arc<Library>>,
 }
 
 impl LoadedPlugin {
@@ -64,8 +60,17 @@ impl LoadedPlugin {
         &self.manifest
     }
 
-    pub fn vtable(&self) -> vosu_plugin_vtable {
-        self.vtable
+    /// Where this package came from. Schema trust and bundled-only grants
+    /// key off this, never off the execution backend.
+    pub fn origin(&self) -> PackageOrigin {
+        self.origin
+    }
+
+    /// How this package runs: local code, or a process package core never
+    /// enters. A local development library stays mapped for as long as
+    /// either this value or an instance built from it is alive.
+    pub fn execution(&self) -> &Execution {
+        &self.execution
     }
 
     /// This plugin's own parsed `settings.schema.json`, if it declared
@@ -89,47 +94,6 @@ impl LoadedPlugin {
     ) -> &std::collections::BTreeMap<String, Arc<crate::action_schema::CompiledActionSchema>> {
         &self.compiled_action_schemas
     }
-
-    /// Clones this plugin's `Arc<Library>` handle, so a `PluginInstance`
-    /// can co-own it for its whole lifetime, independent of how long this
-    /// `LoadedPlugin` itself stays alive. `None` for a bundled plugin.
-    pub(crate) fn library_handle(&self) -> Option<Arc<Library>> {
-        self.library.clone()
-    }
-}
-
-/// The minimum `struct_size` this major ABI version accepts: large enough
-/// to hold the three required functions `create`, `dispatch`, `destroy`
-/// (§1). Only one minor revision exists so far, so this equals the full
-/// Rust struct size; a future additive minor revision keeps this constant
-/// at the size this host understands, never the newer producer's size.
-pub fn descriptor_minimum() -> usize {
-    core::mem::size_of::<vosu_plugin_vtable>()
-}
-
-fn check_header(struct_size: u32, abi_version: u32) -> Result<(), HostError> {
-    if abi_version != VOSU_PLUGIN_ABI_MAJOR {
-        return Err(HostError::AbiMismatch {
-            expected: VOSU_PLUGIN_ABI_MAJOR,
-            found: abi_version,
-        });
-    }
-    let minimum = descriptor_minimum();
-    if (struct_size as usize) < minimum {
-        return Err(HostError::DescriptorTooSmall {
-            minimum,
-            found: struct_size as usize,
-        });
-    }
-    Ok(())
-}
-
-fn check_descriptor(vtable: &vosu_plugin_vtable) -> Result<(), HostError> {
-    check_header(vtable.struct_size, vtable.abi_version)?;
-    if vtable.create.is_none() || vtable.dispatch.is_none() || vtable.destroy.is_none() {
-        return Err(HostError::MissingRequiredFunction);
-    }
-    Ok(())
 }
 
 /// The running host's target triple, matching `[targets.<triple>]` keys
@@ -195,10 +159,14 @@ pub fn load_bundled(
             })?;
             let compiled_action_schemas = compile_action_schemas(&action_schemas)?;
             let vtable = (entry.vtable)();
-            check_descriptor(&vtable)?;
+            descriptor::check_descriptor(&vtable)?;
             Ok(LoadedPlugin {
                 manifest,
-                vtable,
+                origin: PackageOrigin::Bundled,
+                execution: Execution::Local(LocalCode {
+                    vtable,
+                    library: None,
+                }),
                 settings_schema,
                 action_schemas,
                 compiled_action_schemas,
@@ -207,17 +175,19 @@ pub fn load_bundled(
                     .iter()
                     .map(|s| (*s).to_owned())
                     .collect(),
-                library: None,
             })
         })
         .collect()
 }
 
-/// Loads one development plugin from `--plugin <dir>` (§7.1, the `--tool <dir>`
-/// analog, `src/tools/mod.rs::development_roots`): trusted
-/// in-process only in a debug build (`debug_build` is `cfg!(debug_assertions)`
-/// at the call site), refused outright in release with an explicit
-/// message rather than a silent downgrade.
+/// Loads one development package from `--plugin <dir>` (§7.1, the
+/// `--tool <dir>` analog, `src/tools/mod.rs::development_roots`). Release
+/// builds refuse every such package outright rather than silently
+/// downgrading it. A debug build (`debug_build` is `cfg!(debug_assertions)`
+/// at the call site) grants a `runtime = "in-process"` request the local
+/// development trust and loads its library here; a `runtime = "process"`
+/// request is validated identically but returned as a process package
+/// whose library core never maps.
 pub fn load_development(
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
@@ -231,11 +201,6 @@ pub fn load_development(
     }
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
     let manifest = parse_plugin(&text, application_version, snapshot, false)?;
-    if manifest.runtime != Runtime::InProcess {
-        return Err(HostError::InProcessRefused {
-            reason: "`--plugin <dir>` only loads an in-process development plugin",
-        });
-    }
     let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
@@ -252,88 +217,45 @@ pub fn load_development(
         .iter()
         .filter_map(|provided| provided.schema.as_ref())
         .map(|relative| {
-            use std::io::Read as _;
-            let path = confined_asset(&root, relative)?;
-            let limit = vosu_plugin_api::manifest::schema::MAX_BYTES;
-            let mut text = String::new();
-            std::fs::File::open(path)?
-                .take((limit + 1) as u64)
-                .read_to_string(&mut text)?;
-            if text.len() > limit {
-                return Err(HostError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "namespace schema byte budget exceeded",
-                )));
-            }
-            Ok(text)
+            read_bounded_asset(
+                &root,
+                relative,
+                vosu_plugin_api::manifest::schema::MAX_BYTES,
+                "namespace schema byte budget exceeded",
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let action_schemas = load_action_schemas(&manifest, |relative| {
-        let path = confined_asset(&root, relative)?;
-        use std::io::Read as _;
-        let limit = crate::action_schema::MAX_SCHEMA_BYTES;
-        let mut text = String::new();
-        std::fs::File::open(path)?
-            .take((limit + 1) as u64)
-            .read_to_string(&mut text)?;
-        if text.len() > limit {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "action schema byte budget exceeded",
-            )
-            .into());
-        }
-        Ok(text)
+        read_bounded_asset(
+            &root,
+            relative,
+            crate::action_schema::MAX_SCHEMA_BYTES,
+            "action schema byte budget exceeded",
+        )
     })?;
     let compiled_action_schemas = compile_action_schemas(&action_schemas)?;
-    let triple = current_target_triple();
     let target = manifest
         .targets
-        .get(triple)
+        .get(current_target_triple())
         .ok_or(HostError::MissingTarget)?;
     let library_path = confined_asset(&root, &target.library)?;
-    // SAFETY: `library_path` names a file the developer passed via the
-    // debug-only `--plugin <dir>` flag; loading and running its code
-    // in-process is exactly the trust this development tier accepts
-    // (§7.1), the whole reason this path is refused outside debug builds.
-    let library = unsafe { Library::new(&library_path) }?;
-    // SAFETY: a null-terminated symbol name, looked up on a freshly opened
-    // library before any plugin code has run.
-    let entry: Symbol<VosuPluginEntryFn> = unsafe { library.get(b"vosu_plugin_entry_v1\0") }?;
-    // SAFETY: `vosu_plugin_entry_v1` takes no arguments and is documented
-    // to return a pointer valid for the library's whole lifetime, which
-    // `library` (kept in the returned `LoadedPlugin`) outlives this call.
-    let vtable_ptr = unsafe { entry() };
-    if vtable_ptr.is_null() {
-        return Err(HostError::MissingEntry);
-    }
-    // SAFETY: a non-null entry point is documented to point at a live,
-    // fully initialized `vosu_plugin_vtable` for the library's lifetime —
-    // but only up to the producer's own `struct_size`, which this host
-    // must not assume matches `size_of::<vosu_plugin_vtable>()` (§1: a
-    // reader never touches a field beyond `struct_size`). `struct_size`
-    // and `abi_version` are always the layout's first two `u32` fields, so
-    // reading them individually through `addr_of!` is sound even for an
-    // undersized descriptor; only once `check_header` confirms
-    // `struct_size` covers this host's whole `vosu_plugin_vtable` is the
-    // full-struct copy below safe to perform.
-    let struct_size = unsafe { std::ptr::addr_of!((*vtable_ptr).struct_size).read() };
-    // SAFETY: same reasoning as `struct_size` above.
-    let abi_version = unsafe { std::ptr::addr_of!((*vtable_ptr).abi_version).read() };
-    check_header(struct_size, abi_version)?;
-    // SAFETY: `check_header` just confirmed `struct_size >=
-    // size_of::<vosu_plugin_vtable>()`, so this copy never reads past the
-    // producer's real descriptor.
-    let vtable = unsafe { *vtable_ptr };
-    check_descriptor(&vtable)?;
+    let execution = match manifest.runtime {
+        // SAFETY: `library_path` names a file the developer passed via the
+        // debug-only `--plugin <dir>` flag with `runtime = "in-process"`;
+        // loading and running its code in-process is exactly the trust
+        // this development tier accepts (§7.1), the whole reason this path
+        // is refused outside debug builds.
+        Runtime::InProcess => Execution::Local(unsafe { descriptor::load_library(&library_path) }?),
+        Runtime::Process => Execution::Process(ProcessPackage::new(root, library_path)),
+    };
     Ok(LoadedPlugin {
         manifest,
-        vtable,
+        origin: PackageOrigin::Development,
+        execution,
         settings_schema,
         namespace_schemas,
         action_schemas,
         compiled_action_schemas,
-        library: Some(Arc::new(library)),
     })
 }
 
@@ -367,6 +289,26 @@ fn confined_asset(root: &Path, relative: &str) -> Result<PathBuf, HostError> {
         .into());
     }
     Ok(path)
+}
+
+/// Reads one confined text asset, refusing more than `limit` bytes without
+/// buffering past it.
+fn read_bounded_asset(
+    root: &Path,
+    relative: &str,
+    limit: usize,
+    exceeded: &'static str,
+) -> Result<String, HostError> {
+    use std::io::Read as _;
+    let path = confined_asset(root, relative)?;
+    let mut text = String::new();
+    std::fs::File::open(path)?
+        .take((limit + 1) as u64)
+        .read_to_string(&mut text)?;
+    if text.len() > limit {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, exceeded).into());
+    }
+    Ok(text)
 }
 
 fn parse_plugin(

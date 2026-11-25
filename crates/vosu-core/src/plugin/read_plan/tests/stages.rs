@@ -418,7 +418,7 @@ impl ProcessMemory for BatchCounter {
         }
     }
 
-    fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+    fn readable_regions(&self) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
         Ok(Vec::new())
     }
 }
@@ -525,7 +525,9 @@ fn pinned_reads_probe_health_only_on_failure_and_preserve_target_gone() {
             }
             Ok(())
         }
-        fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+        fn readable_regions(
+            &self,
+        ) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
             panic!("an absolute plan must not refresh process regions");
         }
         fn process_id(&self) -> Option<u32> {

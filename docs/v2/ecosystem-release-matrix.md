@@ -69,16 +69,17 @@ keep no 1.x service code, and no v1 metadata is generated around v2 bytes.
 Each repository commits `tests/legacy-catalog.lock.json` ([section 9](#9-lock-files-and-receipts)) recording the row above
 and the size and SHA-256 of every asset that catalog references.
 
-**Unresolved inventory (vosu-overlays owner).** The frozen `v0.4.0` catalog
-lists 19 overlays: aim-scatter, catcher-heatmap, catcher-trail, fruit-ledger,
-judgement-ratio, key-counter, key-overlay, kps-graph, leaderboard,
-now-playing, now-playing-ticker, pp-counter, profile-card, ratings-timeline
-(0.1.0), results-card, strain-graph, stream-interstitial, taiko-drum and
-taiko-pace (each 0.4.0 except ratings-timeline). `main` packages only
-ratings-timeline. Before O0 completes, the overlays owner either ports each of
-the other 18 to a `kind = "overlay"` v2 entry with a same-kind `replaces`, or
-records its retirement here. Until then, an installed one is left in place,
-unmanaged by 2.0, and flagged only for the removed APIs it uses
+**Overlay inventory (decided by the owner 2026-11-25).** The frozen `v0.4.0`
+catalog lists 19 overlays: aim-scatter, catcher-heatmap, catcher-trail,
+fruit-ledger, judgement-ratio, key-counter, key-overlay, kps-graph,
+leaderboard, now-playing, now-playing-ticker, pp-counter, profile-card,
+ratings-timeline (0.1.0), results-card, strain-graph, stream-interstitial,
+taiko-drum and taiko-pace (each 0.4.0 except ratings-timeline). `main`
+packages only ratings-timeline. The owner decided to **port all 18 others;
+none is retired.** F's O0 unit ports each one from its `v0.4.0` source in
+vosu-overlays to a `kind = "overlay"` v2 entry with a same-kind `replaces`
+naming its 1.x id. Until its port is published, an installed one is left in
+place, unmanaged by 2.0, and flagged only for the removed APIs it uses
 ([catalog v2](catalog-v2.md#first-start-migration-from-1x)). No v2 entry may
 be invented for an overlay without its source.
 
@@ -146,7 +147,7 @@ mutation needs one.
 | 1.x id (frozen version) | 2.0 entry | `replaces` |
 | --- | --- | --- |
 | `ratings-timeline` (0.1.0) | overlay `ratings-timeline-v2` (`any`, root `manifest.toml` and `index.html`) | `["ratings-timeline"]` |
-| 18 other `v0.4.0` overlays | pending the inventory decision in [section 2](#2-repositories-and-frozen-1x-sources) | — |
+| 18 other `v0.4.0` overlays | one `kind = "overlay"` v2 entry each, ported by O0 from its `v0.4.0` source (owner decision 2026-11-25, [section 2](#2-repositories-and-frozen-1x-sources)); none is retired | same-kind, naming its 1.x id |
 | sidecar pages `/lyrics`, `/map`, `/keys` | not packages; they stay a Python 3.12 sidecar in vosu-overlays | — |
 
 The quickstart's `manifest.toml` is a `kind = "overlay"` template whose id
@@ -418,7 +419,7 @@ M8 E0/G0 consume these receipts inside its candidate evidence manifest
   trigger itself: `v2.0.0-alpha.1` is unpublished, so ecosystem
   implementation has not been triggered.
 - Exact ecosystem tags for vosu-tools and vosu-overlays.
-- The 18 unported `v0.4.0` overlays ([section 2](#2-repositories-and-frozen-1x-sources)).
+- Porting the 18 remaining `v0.4.0` overlays to v2 entries (O0; decided 2026-11-25, all ported, none retired; [section 2](#2-repositories-and-frozen-1x-sources)).
 - vosulay settings rows (V1) and the vosulay runtime's minimum compatible
   version (V0).
 - T0's action ledger, T2's timeline point bound, and B0's implementation of

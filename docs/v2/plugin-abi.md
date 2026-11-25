@@ -110,7 +110,7 @@ Every `dispatch`/`send` call returns a `vosu_status`. `VOSU_OK` means the messag
 
 | Status | Meaning |
 | --- | --- |
-| `VOSU_ERR_INVALID_ARGUMENT` | Malformed payload, an offset/length outside the buffer, a read plan over `VOSU_READ_PLAN_MAX_BYTES`, or a submission that would exceed an outstanding-request cap (64 asynchronous read plans §6.3, 64 scans §6.4, 64 cross-plugin action calls §6.12, 64 timers §6.11) |
+| `VOSU_ERR_INVALID_ARGUMENT` | Malformed payload, an offset/length outside the buffer, a read plan over `VOSU_READ_PLAN_MAX_BYTES`, or a submission that would exceed an outstanding-request cap (64 asynchronous read plans §6.3, 64 scans §6.4, 64 cross-plugin action calls §6.12, 64 timers §6.11; for a `process`-runtime plugin, also the 64 concurrent status/`SYNC` waiters of §7.6, refused before any frame is written) |
 | `VOSU_ERR_PERMISSION_DENIED` | An opcode this plugin's trust level cannot use (e.g. a read plan touching a session it did not match) |
 | `VOSU_ERR_NOT_READY` | The target session has no live process |
 | `VOSU_ERR_TARGET_GONE` | A session died between submission and execution |
@@ -341,7 +341,7 @@ The callee plugin answers asynchronously, never as `dispatch`'s return value:
 
 Both are **bidirectional**: plugin → host when the callee is answering core directly (a tool/CLI invocation), and host → plugin when core is relaying the callee's answer to the plugin that issued `VOSU_OP_ACTION_CALL` (§6.12) — core remaps the callee's own `invocation` id back to the caller's id as part of that relay, so each side only ever sees ids it recognizes as its own. `VOSU_OP_ACTION_CANCEL` is bidirectional the same way: host → plugin to ask a callee to stop, and plugin → host for a plugin cancelling its own outstanding `ACTION_CALL` (`{"invocation": u64}`, the caller's own id; core remaps and forwards it to the callee).
 
-Core may request early termination with `VOSU_OP_ACTION_CANCEL` (CBOR): `{"invocation": u64}`; a plugin that supports cancellation stops promptly and still sends exactly one `ACTION_RESULT` with `"status": "error", "code": "cancelled"` (the status `docs/v2/api-v1.md` maps to its own `"state": "cancelled"`). A plugin that ignores cancellation simply runs to completion — core does not forcibly interrupt an in-process plugin's action (it cannot safely do so) and, for a `process`-runtime plugin, only kills `vosu plugin-host` as a last resort after a configurable timeout, which also ends every other in-flight call to that plugin.
+Core may request early termination with `VOSU_OP_ACTION_CANCEL` (CBOR): `{"invocation": u64}`; a plugin that supports cancellation stops promptly and still sends exactly one `ACTION_RESULT` with `"status": "error", "code": "cancelled"` (the status `docs/v2/api-v1.md` maps to its own `"state": "cancelled"`). A plugin that ignores cancellation simply runs to completion — core does not forcibly interrupt an in-process plugin's action (it cannot safely do so). For a `process`-runtime callee, core kills `vosu plugin-host` only under §7.6's fixed action-deadline grace (A5.4), never for a cancellation request alone; that kill also ends every other in-flight call to that plugin.
 
 A3/MK/ML: action schemas use the bounded profile in
 [catalog-v2.md](catalog-v2.md#bounded-action-schema-profile-a3), compiled once
@@ -357,9 +357,9 @@ until terminal delivery to the live caller, not cancellation; a bounded terminal
 outbox survives dispatch pressure, while progress may coalesce. Caller destruction
 explicitly tears down its slots. Use one-shot deadlines and ingress-triggered
 retention cleanup, never a periodic sweep.
-M3 exercises `plugin_crashed` through the production instance-loss seam;
-native process-host crash/kill and cancellation grace remain M5, not an
-in-process crash claim.
+M3 exercises `plugin_crashed` through the production instance-loss seam.
+§7.6 freezes the `process`-runtime deadline grace and loss identity (A5.4);
+native process-host crash/kill evidence is M5 X0/N0, not an in-process crash claim.
 
 AF.3 (approved 2026-11-24): work that can outlast the deadline is a
 plugin-owned operation behind short `start`/`status`/`cancel` (and, where a
@@ -442,7 +442,7 @@ they are not resource ids and carry no session, PID or handle.
 
 A manifest requests `runtime = "in-process"` or `runtime = "process"` (§8). `in-process` is granted only to bundled plugins, plugins from the official sources, or a source the user has explicitly marked trusted ([ADR 0023](../decisions/0023-authenticated-catalog-sources.md)); every other plugin may request it but is refused outright (`VOSU_ERR_PERMISSION_DENIED` at load time, logged, plugin left unloaded) rather than silently downgraded — a manifest cannot use its own runtime request to bypass the trust decision.
 
-`runtime = "process"` is available to any plugin regardless of trust tier. **Approval** (the same user-approval flow 1.x applies to user tools, required before the plugin runs at all) applies only to a plugin that is **not** eligible for `in-process` (`user` trust, per the table above); a bundled, official, or user-trusted-source plugin that happens to request `process` runs without a separate approval step, since the user already trusted its source.
+`runtime = "process"` is available to any plugin regardless of trust tier. **Approval** (the same user-approval flow 1.x applies to user tools, required before the plugin runs at all) applies only to a plugin that is **not** eligible for `in-process` (`user` trust, per the table above); a bundled, official, or user-trusted-source plugin that happens to request `process` runs without a separate approval step, since the user already trusted its source. An approval binds the exact package content and runtime, not an id or directory; its record, persistence and management routes are [catalog-v2.md "Process-plugin approval and management"](catalog-v2.md#process-plugin-approval-and-management-a55-approved-2026-11-24) (A5.5). Debug builds keep one explicit developer exception: a `--plugin <dir>` manifest requesting `in-process` loads in-process in a `debug_assertions` build only; prerelease and stable release builds never grant it.
 
 ### 7.2 The `vosu plugin-host` process protocol
 
@@ -454,22 +454,107 @@ Once its capability drop (§7.3) or job-object confinement (§7.4) completes, `v
 
 **Framing.** Each ring carries length-prefixed frames, written and read as a contiguous sequence of bytes (wrapping at the ring's capacity): a 4-byte little-endian total length (excluding itself), then `opcode` (u32), `flags` (u32), `correlation_id` (u64), `payload_len` (u32), and `payload_len` bytes of payload — the same fields as `vosu_message`, concatenated. Every opcode, in either direction, is bounded by one universal cap, `VOSU_FRAME_MAX_BYTES` (1 MiB): `VOSU_OP_PUBLISH_FIELD`/`PUBLISH_BATCH`'s whole-CBOR values, a `RESOURCE_RESOLVED` answering `TREE_LIST`, a `STREAM_CHUNK`, and a host-authored `STATE_UPDATE` are each capped (or, where the content is naturally splittable — a tree listing's existing `truncated: bool`, `STATE_UPDATE`'s `more` continuation flag, §6.12, or a `STREAM_CHUNK`'s own narrower cap, §6.5 — split) at or below this same bound, never only `PUBLISH_BATCH` (§6.5, §6.6, and §6.12 state each case). Each ring's fixed capacity is required to be at least `VOSU_FRAME_MAX_BYTES` plus one frame's length-prefix and header overhead, so a legal frame can never itself overflow an empty ring. `send` rejects a frame whose payload exceeds the cap with `VOSU_ERR_INVALID_ARGUMENT` before it is ever written to the ring, exactly as the in-process path already does; only a frame that is legal on its own but arrives while the ring is otherwise occupied can still overflow the *current* free space, and that writer blocks (parking and retrying) for up to 2 seconds before the connection is treated as unresponsive and the crash-handling path below applies — this keeps each ring's capacity bounded rather than growing without limit, per `AGENTS.md`'s unbounded-queue rule, without ever treating an oversize-but-illegal frame as a crash. Frames may be answered out of order; `correlation_id` (or, for read plans, `plan`) is how each side matches a reply to its request. A flat-layout opcode's frame is exactly its `vosu_message` as `dispatch`/`send` would otherwise receive it — the relay never reinterprets or re-encodes it, only copies it into and out of the ring.
 
-**Crash handling and restart.** An unexpected `vosu plugin-host` process exit, or its reader observing the writer side of either ring go silent past the 2-second backpressure window, marks every session that plugin owned `detached` (`reason: "lost"`), logs the exit, and restarts the process with the same exponential backoff as 1.x tool services: 1, 2, 4, 8, 16 seconds; five crashes within five minutes mark the plugin `failed` until the user restarts it from the dashboard. An in-process plugin crash is not survivable — it is the daemon crashing — which is exactly the cost the trust table in §7.1 prices in.
+**Pressure, loss and restart.** Idle silence on either ring is normal and never a loss: a healthy plugin may publish nothing indefinitely, and nothing in this protocol polls, heartbeats, or times out an empty ring. Loss requires an outstanding progress obligation that is not met — a legal frame that has waited 2 seconds for ring space (either direction), a status or `SYNC` waiter backstop (§7.6), a peer protocol violation — or the plugin host's OS exit. Each of these marks every session that plugin owned `detached` (`reason: "lost"`) and is handled exactly once per process generation by §7.6's supervisor: restart with the 1, 2, 4, 8, 16-second backoff and the five-in-five-minutes `failed` latch defined there. An in-process plugin crash is not survivable — it is the daemon crashing — which is exactly the cost the trust table in §7.1 prices in.
 
-### 7.3 Linux: capability drop before loading plugin code
+**Fixed capacity (A5.2).** Each direction's ring has exactly 2 MiB (2,097,152 bytes) of frame storage plus its header, a compile-time constant of the shared executable generation. The value is never read from the peer. It holds one maximum legal frame (`VOSU_FRAME_MAX_BYTES` + 24 bytes of prefix and header) together with the 24-byte private frame that precedes an acknowledged frame (§7.6). A plugin host therefore maps 4 MiB of ring storage. Shared ring headers are untrusted peer memory: cursors and lengths are validated against the trusted capacity with checked arithmetic before any copy or allocation, and a violation is a protocol loss of that channel only.
 
-`vosu --setup` grants the `vosu` executable `CAP_SYS_PTRACE` (and, where eBPF process-event backends are available, `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`) so core itself can read arbitrary same-user process memory. `vosu plugin-host` must never hold any of these: every memory read it needs goes through `VOSU_OP_READ_PLAN_SUBMIT` to core, which executes it against only the one process that plugin matched. Before `dlopen`ing the plugin library — on its single thread, before any plugin code has run — `vosu plugin-host` executes, in order:
+### 7.3 Linux: privilege drop and confinement before loading plugin code
 
-1. `prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)` — refuse to regain privilege through a later `execve`.
-2. `prctl(PR_CAPBSET_DROP, cap, 0, 0, 0)` for every capability still in the bounding set, until it is empty — a dropped bounding-set capability can never be re-added to the permitted set, even by a `setuid` binary the plugin might somehow invoke.
-3. `prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)` — clear the ambient set so nothing survives into a child process by inheritance.
-4. `capset(2)` with an empty `cap_user_data_t` for every capability set it addresses (effective, permitted, inheritable) — zero the calling thread's own active capabilities, not just what a future `execve` could gain.
+**Amended by A5.1, owner decision 2026-11-24, option (b).** The earlier requirement to empty the bounding set is withdrawn. Option (a), adding `CAP_SETPCAP` to `vosu --setup`, was rejected because it broadens the daemon executable's authority.
 
-Only after step 4 returns does `vosu plugin-host` call `dlopen`. Because `prctl`/`capset` apply per-thread, this sequence runs before the process creates any additional thread (including any thread the plugin's own `create` might spawn).
+`vosu --setup` grants the `vosu` executable `CAP_SYS_PTRACE` (and, where eBPF process-event backends are available, `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`) so core itself can read arbitrary same-user process memory. That list is unchanged: plugin hosting gives the daemon no new privilege, and core never runs `setcap`, a privileged helper or an elevation prompt to launch a plugin. `vosu plugin-host` must never hold any of these: every memory read it needs goes through `VOSU_OP_READ_PLAN_SUBMIT` to core, which executes it against only the one process that plugin matched.
+
+**Launch (accepted 2026-11-24 with M5 L0).** Core `execve`s the same file-capability executable, so without further care the kernel would grant the child those file capabilities and clear any parent-death signal set before the exec. Core's launcher therefore runs these steps in the forked child before `execve`, using only async-signal-safe syscalls:
+
+1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then `getppid()` must still be core. This covers the window between `fork` and `execve`.
+2. `prctl(PR_SET_NO_NEW_PRIVS, 1)`. With `no_new_privs` set, the `execve` grants no file capabilities, so the plugin host never holds one, not even while the dynamic loader and runtime start. The exec is then not a privileged exec, and the parent-death signal survives it.
+3. `setpgid(0, 0)`. Each plugin host gets its own process group, so terminal job-control signals aimed at core's group (for example Ctrl-C or a hangup) cannot kill plugin hosts behind core's controlled teardown (§7.6). Core-only death still kills the host through the parent-death signal.
+4. It clears the signal mask, installs the null device on 0–2 and exactly the four endpoint objects on 3–6, and closes every other descriptor.
+
+A failure at any of these steps is startup stage `spawn` (§7.6), reported to core with the step and `errno`. The §7.3 sequence below still runs in full after the exec and still verifies every set: it must not rely on these pre-exec steps, and with them its steps 4–5 are no-ops that must still succeed.
+
+**Kernel requirement.** Process plugins on Linux require kernel 5.4 or later: core holds every plugin host through a pidfd (`pidfd_open`, `waitid(P_PIDFD)`), so that killing it can never reach a reused PID and its exit can be awaited without polling. On an older kernel every process-plugin launch fails deterministically with startup stage `spawn`, is not retried and is not a crash. In-process plugins and core are unaffected.
+
+**Sequence.** On its initial thread, before it opens the plugin library and before any plugin code runs, `vosu plugin-host` performs the following steps and checks every return value. Step 1 runs immediately after argument parsing. Steps 2–6 run after the endpoints are validated and mapped, so that a failure can be reported over the channel (§7.6 startup). The process must have exactly one thread throughout (`/proc/self/status` `Threads: 1`, checked first; an unreadable procfs fails closed).
+
+1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then `getppid()` must equal the core PID named on its command line (§7.6). Re-arming after the exec is required: the plugin host must not depend on how it was launched, and a privileged exec clears any signal set before it.
+2. `prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)`.
+3. `seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, …)` installs a filter that denies creating or entering a user namespace:
+   - `unshare` and `clone` whose flags include `CLONE_NEWUSER` fail with `EPERM`;
+   - every `clone3` fails with `ENOSYS`, because its flags live in user memory a filter cannot inspect, and libc then falls back to `clone`;
+   - every `setns` fails with `EPERM`, which also blocks joining an existing user namespace the same user owns;
+   - any syscall made under a non-native audit architecture, or with the x32 bit set, kills the process (`SECCOMP_RET_KILL_PROCESS`), so the deny-list cannot be bypassed through another syscall table.
+
+   Every other syscall is allowed. The filter is a barrier against regaining privilege, not a sandbox.
+4. `prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)`.
+5. `capset(2)` with empty effective, permitted and inheritable sets.
+6. Readback through syscalls:
+   - `capget` reports empty effective, permitted and inheritable sets;
+   - `PR_CAP_AMBIENT_IS_SET` is 0 for every capability up to the kernel's last capability (`/proc/sys/kernel/cap_last_cap`);
+   - `PR_GET_NO_NEW_PRIVS` is 1;
+   - `PR_GET_SECCOMP` is 2;
+   - `unshare(CLONE_NEWUSER)` fails with exactly `EPERM`;
+   - `getresuid` reports no UID 0.
+
+**Postcondition.** `CapInh = CapPrm = CapEff = CapAmb = 0`, `NoNewPrivs = 1`, the step-3 filter active (`Seccomp: 2`), and no root UID. `CapBnd` is **not** part of the postcondition and normally stays the full default set (for example `000001ffffffffff`). With `no_new_privs` set, `execve` cannot add permitted capabilities from file capabilities or set-user-ID bits. The ambient and inheritable sets are empty, and the remaining route to capabilities, a new or joined user namespace, is denied. Emptying the bounding set would need `CAP_SETPCAP`, which setup deliberately does not grant. Tests assert the five sets as observed and assert `CapBnd` only as recorded data.
+
+**Fail closed.** A step-1 failure is startup stage `parent` (§7.6). If any of steps 2–6 fails or any readback differs, `vosu plugin-host` reports startup stage `security` with the failing step and `errno`, then exits. It never opens the plugin library, never creates a thread, and has no fallback with partial privilege. It must never ignore `EPERM`, retry a weaker sequence, or continue with only `CapEff` cleared. Core marks that plugin `failed` with the reason and does not retry automatically. The daemon and every other plugin keep running.
+
+The `security` stage's `FAILED` `code` (§7.6) is one of:
+
+| Code | Meaning |
+| --- | --- |
+| `security_unavailable` | The environment refuses `no_new_privs` or the step-3 filter (no `CONFIG_SECCOMP_FILTER`, a container policy, an architecture without a verified filter), or hides the procfs files the checks read. |
+| `not_single_threaded` | Another thread existed when the sequence started or when the filter was synchronized, so the drop could not cover it. |
+| `drop_failed` | Step 4 or 5 failed, or a step-6 readback syscall failed. |
+| `readback_mismatch` | Every step succeeded but the step-6 readback differs from the postcondition; the message names the first differing field. |
+
+The failing step is reported as `threads`, `no_new_privs`, `seccomp`, `ambient`, `capset` or `readback`.
+
+**Without setup or capabilities.** The same sequence and postcondition apply whether or not setup ran.
+
+- If the daemon has no file capabilities (setup never ran, setup failed, capabilities were removed, or a portable archive sits on a filesystem without xattrs), the child starts with empty sets. Steps 4–5 are no-ops that must still succeed, and process plugins load normally. Process plugins do not require `vosu --setup`. Core's own memory access is unchanged by this.
+- An environment that refuses the filter makes every process plugin a `security` startup failure with code `security_unavailable`. Examples are a kernel without `CONFIG_SECCOMP_FILTER` and a container policy that blocks `seccomp` or `prctl`.
+- There is no configuration switch, environment variable or build feature that runs a plugin host without this sequence.
+- A daemon running as root is refused through the step-6 UID check; packaged vosu never runs the daemon as root.
+
+**Scope.** This policy is only for `vosu plugin-host`. Plugin code may still spawn helpers; they inherit `no_new_privs` and the filter. Core death kills the plugin host through the death signal, but Linux has no job-object equivalent here: descendants a plugin spawns itself are not killed by core death unless the plugin arranges it.
+
+**Descendant cleanup follow-up.** M5 N0 owns this gap and evaluates a cgroup v2 confinement for it: each plugin host gets its own cgroup leaf, either a transient systemd user scope created through the user manager's `StartTransientUnit`, or a delegated cgroup v2 subtree that core already owns. Core empties that leaf with `cgroup.kill` on every loss and teardown, and the leaf's lifetime is bound to core so that a core-only `SIGKILL` also removes every descendant.
+
+N0 accepts an option only if all of these hold:
+
+- it needs no new privilege and no setup change;
+- it works without a systemd user session, or fails visibly when there is none;
+- its native evidence shows a plugin-spawned grandchild gone after a core-only kill.
+
+L0 implements the accepted option. If no option qualifies, X2 records the gap as an accepted residual with N0's receipt, and the gap stays documented rather than open-ended.
+
+The D16 vosulay supervisor child is a different launch policy ([implementation plan D16](implementation-plan.md#10-adopted-decisions-and-risks)). It must keep zero active capabilities and must **not** inherit `no_new_privs` or this filter. Chromium's Linux sandbox needs either the setuid helper, which `no_new_privs` disables, or unprivileged user namespaces, which this filter denies. S1 observed the user-namespace sandbox. Process isolation is not an OS sandbox: a plugin host keeps the user's filesystem and network access.
 
 ### 7.4 Windows: job objects
 
-Same-user `PROCESS_VM_READ` needs no elevated privilege on Windows, so no capability-drop equivalent is required; `vosu plugin-host` instead gets the same lifecycle confinement 1.x tool services use. Core creates the child with `CREATE_SUSPENDED`, immediately calls `AssignProcessToJobObject` with a job configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (so closing core's job handle — including an unclean core exit — terminates every plugin-host process rather than leaking it) before resuming the thread, eliminating the race where the child could run unconfined between creation and assignment. The inheritable file-mapping and event-object handles (§7.2) are included in the same `CreateProcess` handle list, so the child receives its channel atomically with being placed in the job.
+Same-user `PROCESS_VM_READ` needs no elevated privilege on Windows, so no capability-drop equivalent is required. `vosu plugin-host` instead gets the same lifecycle confinement 1.x tool services use, made race-free (A5, approved 2026-11-24):
+
+1. Core creates one job per plugin-host process. The job uses `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` or `SILENT_BREAKAWAY_OK`, and its handle is not inheritable.
+2. Core creates the child with `CREATE_SUSPENDED` and a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` that holds exactly the two section handles and the per-direction event handles of §7.2. The job handle, process or game handles, credentials and the daemon's standard handles are never on that list. The child gets no standard handles at all: `STARTF_USESTDHANDLES` with null input, output and error handles, and `DETACHED_PROCESS`, so it has no console. Opening the null device instead would put more handles on the list. Rust's standard library and the C runtime treat a missing standard handle as an empty input and a discarding output.
+3. Core calls `AssignProcessToJobObject`, checks that it succeeded, and only then resumes the thread.
+
+If creation, assignment or resume fails, core terminates the suspended child, waits for it, closes every partial handle, and records a deterministic startup failure (§7.6). It never resumes the child unconfined.
+
+**Inheritance gate.** A handle list keeps every other handle out of the plugin host, but the four duplicates core places on it are inheritable while `CreateProcessW` runs. Another process creation in the daemon that inherits handles without a list, as Rust's `std::process::Command` and `tokio::process::Command` do, would receive copies. Every process creation in the daemon therefore goes through one process-wide gate, `vosu_sys::process_spawn`. A plugin-host spawn holds the gate from creating its duplicates until it has closed them, and every other spawn holds it only around the creation call, never while waiting for a child. `clippy.toml` disallows the direct `spawn`, `output` and `status` calls and the third-party launchers that create processes, so no unchecked path remains.
+
+**Child-side endpoint checks.** The plugin host takes the four handle values from its endpoint argument. Before mapping anything, it checks that the values are distinct and canonical, that each names an open handle of the expected object type (`Section` or `Event`), and that each section's size equals the trusted region length rounded up to whole pages. A whole-section view, the only size a process can observe without undocumented calls, reports the size with page granularity. Core maps only the trusted length, so a larger section grants nothing. The plugin host then clears the inheritance flag on all four handles, so processes the plugin starts never inherit core's channel.
+
+Core keeps the job handle until it has reaped the process, so closing core's handles, including an unclean core exit, terminates the plugin host and every descendant it created. Nested jobs are expected, and only the result of the specific assignment counts. A generic `IsProcessInJob` answer is never evidence of membership in this job. Core's evidence is `IsProcessInJob` against this job's own handle together with the job's own process list, which must hold exactly the child before it resumes.
+
+The plugin host runs with the daemon's token. When the daemon is elevated to read an elevated client, process plugins run elevated too: approval remains a trust decision, not a sandbox. The Medium-integrity launch requirement belongs only to the D16 vosulay supervisor policy, not to every process plugin.
+
+**Transport choice (A5.6).** The unnamed section and auto-reset event transport of §7.2 is the production mechanism. M5 P1 also measures a named-pipe variant, which is measurement-only. Production adopts the pipe only if all of the following hold:
+
+- it is faster under the tie rule frozen in the [benchmark guide](../testing/benchmarks.md#m5-d17-contract), measured on the same dependent plans with identical bytes;
+- a separately approved amendment provides an endpoint handoff as non-discoverable as inherited unnamed handles;
+- the ring frame format and payloads are unchanged.
 
 ### 7.5 Bundled-only HTTP surfaces (D3)
 
@@ -515,6 +600,154 @@ routes may appear only inside the private replay-overlay backend, to render
 third-party overlays in a replay; migrated v2 overlays read replay state
 there through API v1 playback semantics (a replay session identity and
 deterministic render-clock barriers), never live daemon state.
+
+### 7.6 Process supervision protocol (A5, approved 2026-11-24)
+
+This section freezes the private contract between core and one `vosu plugin-host` generation. Its frames are transport-local: plugin code never sees them, `send` and `dispatch` never accept them, and they add no ABI opcode. Plugin code shares the child's address space and can write that process's ring memory directly. Core therefore treats every child → core frame, including the private ones below, as an untrusted claim that grants nothing beyond what plugin `send` can already do. Core validates each claim against its own state machine. A violation is a protocol loss of that instance only.
+
+**Launch.** Core starts the exact executable generation it is running. On Linux it executes `/proc/self/exe`. On Windows it uses the image path captured at startup, and the build check below catches an updater replacement.
+
+- `argv[1]` is exactly `plugin-host`. `src/main.rs` dispatches it before `vosux`, before any Tokio runtime or thread exists, and before any daemon service, listener, updater, discovery, ownership lock or log file.
+- The remaining arguments are exactly these, in order (E0, accepted 2026-11-25):
+  - the compile-time build identity of the executable, `vosu/<package version>/plugin-host-1`;
+  - on Linux only, the core PID in canonical decimal (no sign, no leading zero, at most `i32::MAX`);
+  - the inherited endpoint values: on Linux exactly `3,4,5,6` (host → plugin mapping and doorbell, then plugin → host), on Windows `h2p=<section>:<event>,p2h=<section>:<event>` (§7.4).
+
+  The full command line is therefore `vosu plugin-host <identity> <core pid> 3,4,5,6` on Linux and `vosu plugin-host <identity> h2p=…,p2h=…` on Windows.
+- The child checks the argument shape first, then the build identity. A missing, extra, duplicate, empty or malformed argument exits with `arguments` (70) even when the identity also differs; a well-formed command line with another build identity exits with `generation` (71). An endpoint that is not an open inherited descriptor or handle of the expected kind and of the fixed trusted size exits with `endpoints` (73). All of these exit before the child maps anything, and none starts a normal daemon, listener, updater, discovery, lock, log or configuration file.
+- **Build identity residual (accepted 2026-11-25).** The identity names the package version. On Linux the child is always the running image because core execs `/proc/self/exe`. On Windows core starts the image path captured at startup, so a replacement image with the *same* version is not detected. This is accepted because the updater always installs a different version, so every in-place update is refused as `generation` (`executable_updated`).
+- Linux core spawns plugin hosts only from a dedicated launcher thread that lives until shutdown has reaped every plugin host. `PR_SET_PDEATHSIG` fires when the *thread* that created the child exits, so spawning from a transient pool thread would kill healthy children.
+- The child's environment is inherited and is not a secret boundary. Its standard handles are the null device. Plugin diagnostics use `VOSU_OP_LOG_RECORD`.
+
+**Private frames.** These use the §7.2 frame layout. A frame is private iff `opcode & 0x8000_0000` is set; the header reserves that bit as `VOSU_OPCODE_PRIVATE_BIT` and the SDK exports it under the same name. Every public ABI opcode is below that bit, so a plugin `send` naming any such opcode is refused locally with `VOSU_ERR_UNSUPPORTED`, exactly as an unknown opcode is in-process.
+
+A private frame always has `flags = 0`. Its `correlation_id` field carries the private request ID, or 0 for lifecycle frames. A public frame's `correlation_id` and payload are never rewritten, reused or wrapped.
+
+| Opcode | Name | Direction | Payload |
+| --- | --- | --- | --- |
+| `0x8000_0001` | `CREATE` | core → child | CBOR: `generation`, `plugin_id`, absolute `library` path, 32-byte `library_sha256` (the approved digest), `concurrent_dispatch`, `sync_budget_ms`, `init` (`{"plugin_id", "settings", "data_dir"}`, exactly the in-process `create` init) |
+| `0x8000_0002` | `READY` | child → core | CBOR: `generation`, the plugin vtable's `struct_size` and `abi_version` |
+| `0x8000_0003` | `FAILED` | child → core | CBOR: `generation`, `stage`, `code`, optional `errno`, `message` of at most 512 bytes |
+| `0x8000_0004` | `DESTROY` | core → child | empty |
+| `0x8000_0005` | `DESTROYED` | child → core | empty |
+| `0x8000_0010` | `ACK_NEXT` | child → core | empty. Its request ID applies to the one public plugin → host frame that immediately follows it in the ring. |
+| `0x8000_0011` | `STATUS` | core → child | `u32` little-endian `vosu_status` for that request ID |
+| `0x8000_0012` | `REPLY_NEXT` | core → child | empty. The next frame is the `READ_PLAN_RESULT` answering that request ID's `SYNC` submission. |
+
+Any other private opcode, nonzero private flags, an `ACK_NEXT` or `REPLY_NEXT` not immediately followed by a public frame of the required direction, or a lifecycle frame out of order is a protocol violation. Examples of out-of-order frames: `READY` twice, `READY` after `FAILED`, or `DESTROYED` without a `DESTROY`. Request IDs are `u64` values allocated by the child, strictly increasing within one generation and never reused. Core replies only to the latest generation's IDs. A reply for an unknown or expired ID is discarded and counted, never delivered.
+
+**Lifecycle payloads (E0, accepted 2026-11-25).** `CREATE`, `READY` and `FAILED` are CBOR maps with exactly the keys above; a missing or unknown key is a protocol violation by the sender.
+
+- `CREATE`: `generation` (`u64`, starting at 1, never reused while core runs), `plugin_id` (text), `library` (text path), `library_sha256` (a byte string of exactly 32 bytes), `concurrent_dispatch` (bool), `sync_budget_ms` (`u32`), and `init`, the same `{"plugin_id", "settings", "data_dir"}` map the in-process `create` receives. The child passes its re-encoding of `init` to `create`, which equals the in-process bytes. A `CREATE` whose encoding would exceed `VOSU_FRAME_MAX_BYTES` is the `create` stage (`init_too_large`), detected by core before spawn.
+- `READY`: `generation`, `struct_size`, `abi_version` (`u32` each). Core checks the generation and the header with the same minimum-size and major-version checks an in-process load uses; a mismatch is the `abi` stage.
+- `FAILED`: `generation`, `stage` (text), `code` (text of at most 64 bytes), `errno` (`i32`, omitted when none), `message` (text of at most 512 bytes; the child truncates it at a character boundary). A child may name only the stages it detects: `security`, `approval`, `library`, `abi` and `create`. A `FAILED` naming any other stage, or over either cap, is a violation. A failure before the child read `CREATE` (the Linux `security` stage) carries generation **0**, which no real generation uses; core accepts 0 or its own generation.
+
+Child-reported codes: `security` uses the §7.3 codes; `approval` is `digest_mismatch`; `library` is `not_absolute`, `open_failed`, `read_failed`, `load_failed` (including a missing `vosu_plugin_entry_v1`) or `missing_entry` (the entry returned null); `abi` is `abi_mismatch`, `descriptor_too_small` or `missing_required_function`; `create` is `create_rejected` (null `create`) or `init_invalid`.
+
+**Startup.** The child performs these steps in order:
+
+1. Parse its arguments.
+2. Arm the Linux parent-death signal and check the parent (§7.3 step 1).
+3. Validate and map its endpoints.
+4. Run §7.3 on Linux. On Windows, job assignment happened before resume.
+5. Read `CREATE`.
+6. Open the library at its absolute path and compute its SHA-256 by reading that open object, then compare it with `library_sha256`. The object stays open until loading finishes. On Linux the loader opens `/proc/self/fd/<n>` of the descriptor that was hashed, so a rename or replacement of the path cannot substitute other bytes. On Windows the file is opened with read sharing only (no write or delete sharing), and that handle stays open across `LoadLibrary`; an open writer makes the open fail with stage `library`.
+7. Load the library, resolve `vosu_plugin_entry_v1`, and validate `abi_version`, `struct_size` and the required functions with the same pure checks an in-process load uses.
+8. Start the ring reader, so that acknowledged sends made from `create` receive their status, then call `create`.
+9. Start its dispatch workers.
+10. Send `READY`.
+
+The library stays mapped until the process exits, because plugin threads may outlive `destroy`.
+
+Core never `dlopen`s or `LoadLibrary`s a process-runtime library, not even to validate it, because constructors run at load. Core may read the library's bytes only to compute the approval digest. The child never parses `manifest.toml`; core sends the SDK-validated fields.
+
+Core publishes the instance only after `READY`. No session offer, action invocation, resource request or demand reaches the instance before then, and anything core staged for it is rolled back exactly once on any startup failure. Startup has a 5-second deadline, measured from spawn on Linux and from resume on Windows. Every startup failure reaps the process and closes its endpoints.
+
+| Startup stage | Detected by | Outcome |
+| --- | --- | --- |
+| `spawn` (including a Linux pre-exec launch step or a kernel older than 5.4, §7.3; on Windows, building the handle list or command line, `CreateProcessW`, or `ResumeThread`), `job` (Windows: creating the job or reading back its limits, assignment, or the job-specific membership check) | core | `failed`, not retried, not a crash |
+| `arguments`, `generation` (build mismatch, for example after an in-place update), `parent`, `endpoints` | exit before the channel exists | `failed`, not retried, not a crash. `generation` reports `executable_updated` and asks the user to restart vosu. |
+| `security` (codes `security_unavailable`, `not_single_threaded`, `drop_failed`, `readback_mismatch`; §7.3 "Fail closed"), `approval` (digest mismatch), `library`, `abi` | `FAILED` frame, then exit | `failed`, not retried, not a crash |
+| `create` (non-OK `create`, or init over the frame cap), `timeout`, `crash` (exit before `READY` without `FAILED`) | `FAILED`, deadline, or OS exit | On the initial load: `failed`, waiting for a manual restart. During an automatic restart: one crash event (below), and backoff continues. |
+
+Before the channel is mapped, the child reports its stage only through its exit status. Exit codes 70 (`arguments`), 71 (`generation`), 72 (`parent`) and 73 (`endpoints`) are private to the shared executable generation and are not a public interface. After the channel exists the child also uses 74 (it reported `FAILED`), 75 (the channel ended without a controlled `DESTROY`: core gone, a core protocol violation or a stalled write) and 76 (a waiter backstop expired), accepted 2026-11-25. Core takes the stage from `FAILED` when one arrived and maps only 70–73 to a stage; any other exit before `READY` is `crash`.
+
+**Exit before `READY`.** When a child exits during startup, core first reads every frame the child completed before its exit (a `FAILED` written just before exiting names the stage), then settles the startup: the reported stage, else the stage of exit codes 70–73, else `crash`. Its channel then refuses every further write.
+
+**Acknowledged sends (A5.2).** Each status below is identical to what the same call returns in-process.
+
+- **Local refusal.** `send` first applies exactly the in-process pre-handler checks: payload size and null data, unknown opcode (including the private range), unrecognized flags, SDK decode of the payload, `SYNC` submission from the instance's own dispatch thread, and the per-instance caps (64 asynchronous plans, 64 scans, 64 action calls, 64 timers). A check that fails returns that status without writing a frame or reserving a waiter.
+- **Acknowledgement.** Every other plugin → host opcode except `VOSU_OP_LOG_RECORD`, whose status is `VOSU_OK` whenever it decodes, is status-acknowledged. Publication validation is included. The child reserves one of at most **64 waiters per instance** (shared by status and `SYNC`, separate from the async caps). It writes `ACK_NEXT` and the unmodified public frame back to back under the single producer lock, so no other sender's frame can come between them, releases the lock, and blocks the calling thread until core's reply. When the second frame must wait for ring space, the writer first wakes a parked consumer, since the `ACK_NEXT` already published may be all it has to read. An oversize payload is refused before either frame is written. A host → plugin opcode a plugin sends has no effect in-process and returns `VOSU_OK` there; the child returns `VOSU_OK` for it without writing.
+- **Overload.** A 65th concurrent waiter is refused with `VOSU_ERR_INVALID_ARGUMENT` before any write. This is the documented overload status of §5.
+- **Core's reply.** Core validates the frame exactly as in-process. It answers `STATUS`, or for an accepted `SYNC` plan, `REPLY_NEXT` and then the result. A non-OK status means nothing was applied and no later public message follows: a refused read plan, scan or call produces no result, ever. For an accepted asynchronous operation, the `STATUS` always precedes its later result on the same ring.
+- **`SYNC` reads.** Core enforces the §6.3 budget (`sync_budget_ms`) and answers `STATUS VOSU_ERR_TIMED_OUT` itself on expiry. The waiting thread, not the ring reader, dispatches a `SYNC` result before `send` returns.
+- **Backstops.** A status waiter's backstop is 2 s after its write completes, and a `SYNC` waiter's is `sync_budget_ms` + 2 s. Reaching a backstop means core stopped serving the channel. The child does not fabricate a status: it closes the channel and exits, and core records one `transport_timeout` loss.
+- **Waiter release.** Waiters are released on reply, local refusal or loss. A late reply never satisfies a newer waiter.
+- **Core → child.** Frames in this direction are not acknowledged. Core already ignores `dispatch` statuses in-process.
+
+The ring reader only validates, copies into aligned storage and routes:
+
+- `STATUS` and `REPLY_NEXT` results go to their waiter;
+- other frames go to §7.2's per-instance delivery queue, whose latest-only keys and work-unit caps are unchanged;
+- lifecycle frames go to the lifecycle handler.
+
+It never calls plugin code, never blocks on a plugin lock, and never inserts into a full queue. Core's per-instance writer applies the same semantic coalescing, sends work units and terminal results through their existing reserved admission and outboxes, and never refuses an admitted work unit or terminal result because a generic dispatch queue is full.
+
+**Destroy and shutdown.** Stop, disable, approval revocation, uninstall teardown and daemon shutdown all use the controlled per-plugin teardown operation:
+
+1. Cancel any restart timer.
+2. Stop admitting new work.
+3. Send `DESTROY`.
+
+The child stops routing frames to dispatch when it reads `DESTROY`, lets the dispatch worker finish what was already queued and joins it, then runs `destroy` exactly as in-process destruction does (including §4's 4.5-second worker-join budget), sends `DESTROYED` and exits 0; its ring reader keeps serving status replies for sends `destroy` makes. Core waits up to **5 seconds** after writing `DESTROY` for the OS exit, then kills it (`SIGKILL`, or `TerminateJobObject`) and reaps it. Session, demand, root, resource, job and relay cleanup follows the in-process instance-removal path. A controlled teardown is never a crash, never restarts, and logs `destroy_timeout` if it needed the kill. Uninstall and revocation also unregister the plugin's schemas, matchers and actions exactly once. Daemon shutdown tears down every process instance concurrently, and no restart fires after shutdown begins.
+
+**Loss identity.** One owner per generation coalesces into exactly one loss, using the first observed reason:
+
+- OS exit;
+- ring protocol violation;
+- a 2-second parked write;
+- waiter backstop expiry;
+- an action-grace kill.
+
+An unexpected exit with code 0 is still a loss. The owner cancels and collects work under locks, then notifies after unlocking, in this order:
+
+1. Final committed state reaches subscribers before detach.
+2. Owned sessions detach with `reason: "lost"`.
+3. Demand, roots and reference memberships are retired.
+4. Pending read, scan, resource, stream and waiter operations end.
+5. Running jobs and relay calls whose provider was the lost instance fail with `plugin_crashed`.
+
+A job that already timed out stays `timed_out`, and an already-terminal job never changes. Old endpoints are closed and the process reaped before any restart. A restart is a new generation with new handles, re-offered sessions and identification before public exposure. Nothing from an old generation can complete a new generation's request.
+
+**Restart (A5.3).** Each of these counts as exactly one crash event:
+
+- a loss;
+- a crash-stage startup failure during an automatic restart.
+
+Deterministic startup refusals, controlled teardown and approval revocation are never crash events.
+
+- **Failed latch.** Core keeps the timestamps of the last five events. The fifth event inside a rolling 300-second window sets `failed` instead of scheduling a restart.
+- **Backoff.** An accepted restart waits 1, 2, 4, 8, then 16 s, saturating. The step counts events since the window was last empty, so 16 s is reached only after older events age out.
+- **Timers.** A backoff delay is one cancellable one-shot timer. Stop, disable, shutdown and manual restart cancel it.
+- **Manual restart.** A manual restart through the management route (catalog-v2.md) resets the window and the latch, and always starts a new generation.
+
+**Action deadline grace (A5.4).** `DELETE` and session-detach cancellation stay advisory and never kill.
+
+- When the 30-second core deadline expires for an invocation whose callee is a `process`-runtime instance, the job becomes `timed_out` (unchanged), core sends `ACTION_CANCEL`, and that invocation gets a grace deadline 5 seconds later.
+- Any `ACTION_RESULT` for that invocation from the callee before its grace deadline proves the instance responsive and clears that grace. The late result is discarded, and the job stays `timed_out`.
+- If several invocations are in grace, core kills the instance at the earliest grace deadline that is still unanswered. That kill is one loss, reason `action_grace_expired`, counted once.
+- The kill fails the instance's other running jobs and relay calls with `plugin_crashed`. Terminal and timed-out jobs keep their state.
+- Relay calls use the same deadline and grace. In-process callees are never killed. There is no manifest timeout field.
+
+**Linux parent death (A5.8).** The child exits on any of:
+
+- the parent-death signal;
+- a parent mismatch at startup;
+- its own 2-second parked write or waiter backstop;
+- a core protocol violation;
+- controlled `DESTROY`.
+
+On Windows, closing the job does the same. Startup and controlled destroy both use the 5-second bounds above.
 
 ## 8. `manifest.toml` runtime fields for `kind = "plugin"`
 

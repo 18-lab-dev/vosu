@@ -3754,6 +3754,7 @@ dependencies = [
  "tokio-util",
  "vosu-net",
  "vosu-osu-model",
+ "vosu-plugin-api",
  "vosu-proptest",
  "vosu-sys",
  "zip",
@@ -3773,9 +3774,9 @@ dependencies = [
  "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-osu-reader",
+ "vosu-plugin-api",
  "vosu-pp",
  "vosu-proptest",
- "vosu-sys",
  "windows-sys 0.61.2",
 ]
 
@@ -3872,12 +3873,14 @@ dependencies = [
  "libbpf-rs",
  "libc",
  "memchr",
+ "open",
  "parking_lot",
  "semver",
  "tempfile",
  "thiserror",
  "tokio",
  "tracing",
+ "vosu-plugin-api",
  "vosu-proptest",
  "windows-sys 0.61.2",
 ]

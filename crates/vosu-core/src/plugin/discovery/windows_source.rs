@@ -192,9 +192,10 @@ trait ProcessOps {
 }
 
 #[cfg(windows)]
+use vosu_plugin_api::memory::{MemoryError, ProcessBitness};
+#[cfg(windows)]
 use vosu_sys::process::{
-    MemoryError, ProcessBitness, enumerate_processes, process_bitness, process_command_line,
-    process_image_path,
+    enumerate_processes, process_bitness, process_command_line, process_image_path,
 };
 
 #[cfg(windows)]

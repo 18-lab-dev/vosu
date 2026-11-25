@@ -28,7 +28,9 @@ fn ready(harness: &Harness, count: usize) -> Vec<vosu_core::plugin::DiagnosticSe
     harness.host.diagnostic_sessions()
 }
 use vosu_plugin_api::DetachReason;
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 
 fn engine(platform: MatchPlatform) -> MatcherEngine {
     let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)

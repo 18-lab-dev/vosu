@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use vosu_osu_reader::process::{
-    ChainReadRequest, MemoryError, ProcessBitness, ProcessMemory, ReadRequest,
+use vosu_osu_reader::process::ProcessHandle;
+use vosu_plugin_api::memory::{
+    ChainReadRequest, MemoryError, Pattern, ProcessBitness, ProcessMemory, ReadRequest,
 };
 
 use super::{MAX_SINGLE_OP_BYTES, PlanProcessMemory};
@@ -255,6 +256,34 @@ fn readable_regions_is_unsupported_through_read_plans() {
     ));
 }
 
+/// Without the brokered `ScanBackend`, a handle's signature scans fall back to
+/// the native region walk. Over read plans that walk must fail closed at
+/// `readable_regions`, never enumerate or scan target memory through ordinary
+/// read plans: `VOSU_OP_SCAN_REQUEST` stays the only scan path.
+#[test]
+fn region_walk_fallback_over_read_plans_fails_closed_without_reads() {
+    let plan = Arc::new(memory(fill(64, 3), 0x8000));
+    let handle = ProcessHandle::new(plan.clone(), ProcessBitness::X64);
+    let pattern = Pattern::parse("03 04", false).unwrap();
+    assert!(matches!(
+        handle.scan_first(&pattern),
+        Err(MemoryError::Backend { .. })
+    ));
+    assert!(matches!(
+        handle.scan_first_valid(&pattern, |_| Ok(true)),
+        Err(MemoryError::Backend { .. })
+    ));
+    assert!(matches!(
+        handle.scan_all(&pattern),
+        Err(MemoryError::Backend { .. })
+    ));
+    assert!(matches!(
+        handle.scan_batch(std::slice::from_ref(&pattern)),
+        Err(MemoryError::Backend { .. })
+    ));
+    assert_eq!(plan.host.submission_count(), 0);
+}
+
 #[test]
 fn dependent_chains_use_one_submission_and_target_pointer_width() {
     for bitness in [ProcessBitness::X86, ProcessBitness::X64] {
@@ -325,7 +354,7 @@ fn dependent_chain_overflow_and_large_offset_keep_sequential_error_precedence() 
 
 #[test]
 fn indirect_many_fuses_holders_and_pointees_without_publishing_on_holder_error() {
-    use vosu_osu_reader::process::IndirectReadRequest;
+    use vosu_plugin_api::memory::IndirectReadRequest;
     let mut bytes = vec![0; 96];
     bytes[..8].copy_from_slice(&32u64.to_le_bytes());
     bytes[8..16].copy_from_slice(&64u64.to_le_bytes());

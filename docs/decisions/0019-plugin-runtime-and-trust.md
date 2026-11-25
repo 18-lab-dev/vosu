@@ -194,6 +194,45 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   table), not the upstream project itself, so the catalog UI never needs a
   `scripts/brand-allowlist.txt` entry for a display string.
 
+**2026-11-24** (A5, M5 contract freeze; the owner decided A5.1, and Main
+adopted A5.2–A5.8 as recommended under delegated authority). The full text is in
+[`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.3, §7.4 and §7.6, and in
+[catalog v2](../v2/catalog-v2.md#process-plugin-approval-and-management-a55-approved-2026-11-24).
+
+- **Linux plugin-host privilege (A5.1, option b).** Where this ADR says a
+  plugin host "drops every capability", it now means the following. Before any
+  plugin code runs, the plugin host reaches `CapPrm = CapEff = CapInh = CapAmb
+  = 0` and `NoNewPrivs = 1`, and a seccomp filter denies creating or entering
+  a user namespace. It reads all of this back and fails closed, refusing to
+  load the plugin, if it cannot verify it. An empty bounding set is no longer
+  required. `vosu --setup` keeps its existing capability list. The daemon gains
+  no `CAP_SETPCAP` and no other privilege, because granting `CAP_SETPCAP`
+  (option a) would have broadened the executable's authority to empty a set
+  that `no_new_privs` and the namespace denial already make unusable. Process
+  plugins also run without setup. An environment that cannot install the
+  filter makes process plugins fail with a named reason instead of running
+  less confined.
+- **Supervision (A5.2–A5.4, A5.8).** Core and its plugin hosts exchange
+  private frames that are local to the transport. Every send whose status only
+  core can decide waits for core's acknowledgement, so a process plugin sees
+  exactly the in-process status and never a fabricated success. Idle silence
+  is never a crash. Restart backoff, the five-in-five-minutes latch, the
+  action-deadline grace, parent-death handling and startup failure identities
+  are frozen.
+- **Approval (A5.5).** Approval binds a plugin's id, its exact manifest and
+  library digests, its runtime and its provenance, and changed bytes need a
+  new approval. Only debug builds keep the in-process `--plugin` developer
+  exception. Prerelease release builds load `--plugin` as `user` trust in the
+  `process` runtime, after approval.
+- **Windows (A5.6, A5.7).** Unnamed section and event handles remain the
+  production transport unless a measured, separately approved amendment
+  changes them. Plugin hosts inherit the daemon's token. The Medium-integrity
+  launch is the D16 vosulay supervisor's requirement, not a token change for
+  every plugin.
+- **Not a sandbox.** This amendment does not change this ADR's statement that
+  an out-of-process plugin is not sandboxed. It still has the user's
+  filesystem and network access, and approval remains a trust decision.
+
 **2026-11-24** (AF, ecosystem fan-out contract freeze; full record in
 [`docs/v2/ecosystem-release-matrix.md`](../v2/ecosystem-release-matrix.md)
 and `docs/v2/implementation-plan.md` section 7):

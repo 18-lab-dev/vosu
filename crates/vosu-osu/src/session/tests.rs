@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
-use vosu_osu_reader::process::{
+use vosu_plugin_api::memory::{
     MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
 };
 

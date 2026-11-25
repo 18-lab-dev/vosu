@@ -19,13 +19,14 @@ use vosu_osu_reader::{
         lazer_offsets::LazerOffsets,
         stable::{StableMemory, StablePatterns},
     },
-    process::{ProcessHandle, ReadStatus},
+    process::ProcessHandle,
 };
 use vosu_osu_state::{
     Delivery, PollIntervalUpdates, ReadContext, ReaderSettings, RegularCapturePlan,
     SnapshotPublisher, SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot,
     StateWorkerError, StateWorkerHandle, SubscriptionDemand, spawn_state_worker,
 };
+use vosu_plugin_api::memory::ReadStatus;
 
 #[derive(Clone)]
 pub struct CaptureTarget {

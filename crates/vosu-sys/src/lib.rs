@@ -18,4 +18,6 @@ compile_error!("the test-harness feature is forbidden in release builds");
 pub mod events;
 pub mod fs;
 pub mod platform;
+pub mod plugin_process;
 pub mod process;
+pub mod process_spawn;

@@ -1,7 +1,14 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    if let Some(args) = vosu::vosux::arguments(std::env::args_os()) {
+    // `vosu plugin-host` first: before `vosux`, before any runtime or other
+    // thread, and before any daemon service, listener, updater, discovery,
+    // ownership lock or log file (`docs/v2/plugin-abi.md` §7.6 "Launch").
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if let Some(status) = vosu::plugin_host::dispatch(&args) {
+        std::process::exit(status);
+    }
+    if let Some(args) = vosu::vosux::arguments(args) {
         std::process::exit(vosu::vosux::run(args));
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread()

@@ -23,6 +23,8 @@ mod limits;
 /// requirement matching. Asset-backed namespace extraction/catalog comparison
 /// are separate from intrinsic validity and application host support.
 pub mod manifest;
+#[forbid(unsafe_code)]
+pub mod memory;
 mod message;
 mod opcode;
 mod primitives;
@@ -82,7 +84,7 @@ pub use message::flat::{
     decode_publish_batch_ref, decode_publish_field_ref,
 };
 pub use message::{HostServices, Message, MessageError};
-pub use opcode::vosu_opcode;
+pub use opcode::{VOSU_OPCODE_PRIVATE_BIT, vosu_opcode};
 pub use primitives::{
     vosu_invocation_id, vosu_plan_id, vosu_resource_id, vosu_session_id, vosu_timer_id,
 };

@@ -14,7 +14,7 @@ use vosu_osu_reader::memory::snapshot::PreciseCaptureContext;
 use vosu_osu_reader::memory::snapshot::{
     InstanceEpoch, RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext,
 };
-use vosu_sys::process::MemoryError;
+use vosu_plugin_api::memory::MemoryError;
 
 pub type TransitionFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, StateWorkerError>> + Send + 'a>>;

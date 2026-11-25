@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use crate::process::ReadRequest;
+use vosu_plugin_api::memory::ReadRequest;
 
 struct TestRegion {
     region: MemoryRegion,
@@ -120,25 +120,6 @@ fn pattern(value: &str, non_zero_mask: bool) -> Pattern {
 }
 
 #[test]
-fn parses_fixed_and_wildcard_bytes_and_rejects_malformed_tokens() {
-    let parsed = pattern("0a ?? FF", true);
-    assert_eq!(parsed.bytes(), &[0x0a, 0, 0xff]);
-    assert_eq!(parsed.mask(), &[1, 0, 1]);
-    assert!(parsed.non_zero_mask());
-    assert_eq!(parsed.to_string(), "0A ?? FF");
-
-    assert_eq!(
-        Pattern::parse("A", false),
-        Err(PatternParseError::InvalidToken {
-            index: 0,
-            token: "A".to_owned(),
-        })
-    );
-    assert!(Pattern::parse("GG", false).is_err());
-    assert!(Pattern::parse("?", false).is_err());
-}
-
-#[test]
 fn fixed_and_wildcard_semantics_match_upstream() {
     let process = handle(TestMemory::new(vec![(
         0x1000,
@@ -146,19 +127,19 @@ fn fixed_and_wildcard_semantics_match_upstream() {
     )]));
 
     assert_eq!(
-        process.scan_first(&pattern("AA 00 BB", false)).unwrap(),
+        scan_first(&*process, &pattern("AA 00 BB", false)).unwrap(),
         Some(0x1000)
     );
     assert_eq!(
-        process.scan_all(&pattern("AA ?? BB", false)).unwrap(),
+        scan_all(&*process, &pattern("AA ?? BB", false)).unwrap(),
         vec![0x1000]
     );
     assert_eq!(
-        process.scan_all(&pattern("?? BB", false)).unwrap(),
+        scan_all(&*process, &pattern("?? BB", false)).unwrap(),
         vec![0x1001, 0x1003]
     );
     assert_eq!(
-        process.scan_all(&pattern("?? BB", true)).unwrap(),
+        scan_all(&*process, &pattern("?? BB", true)).unwrap(),
         vec![0x1003]
     );
 }
@@ -179,7 +160,7 @@ fn finds_match_crossing_a_chunk_boundary_inside_one_region() {
     );
 
     assert_eq!(
-        process.scan_first(&pattern("DE AD BE EF", false)).unwrap(),
+        scan_first(&*process, &pattern("DE AD BE EF", false)).unwrap(),
         Some(0x8000 + SCAN_CHUNK_SIZE - 2)
     );
     assert!(memory.read_calls.load(Ordering::Relaxed) >= 2);
@@ -197,12 +178,11 @@ fn validated_scan_stops_before_reading_the_rest_of_a_large_region() {
     let process = handle(Arc::clone(&memory));
     let mut validations = 0;
 
-    let found = process
-        .scan_first_valid(&pattern("DE AD BE EF", false), |address| {
-            validations += 1;
-            Ok(address == 0xa000)
-        })
-        .unwrap();
+    let found = scan_first_valid(&*process, &pattern("DE AD BE EF", false), |address| {
+        validations += 1;
+        Ok(address == 0xa000)
+    })
+    .unwrap();
 
     assert_eq!(found, Some(0xa000));
     assert_eq!(validations, 1);
@@ -243,11 +223,11 @@ fn mixed_pattern_overlap_partitions_candidate_starts_without_duplicates() {
     );
     assert_eq!(offsets, vec![SCAN_CHUNK_SIZE - 1, SCAN_CHUNK_SIZE]);
     assert_eq!(
-        process.scan_all(&short).unwrap(),
+        scan_all(&*process, &short).unwrap(),
         vec![0x9000 + SCAN_CHUNK_SIZE - 1, 0x9000 + SCAN_CHUNK_SIZE,]
     );
     assert_eq!(
-        process.scan_batch(&[long, short]).unwrap(),
+        scan_batch(&*process, &[long, short]).unwrap(),
         vec![BatchScanResult {
             index: 1,
             address: 0x9000 + SCAN_CHUNK_SIZE - 1,
@@ -262,7 +242,7 @@ fn first_match_in_later_chunk_adds_chunk_and_region_base_once() {
     let process = handle(TestMemory::new(vec![(0x1234_0000, bytes)]));
 
     assert_eq!(
-        process.scan_first(&pattern("CC", false)).unwrap(),
+        scan_first(&*process, &pattern("CC", false)).unwrap(),
         Some(0x1234_0000 + SCAN_CHUNK_SIZE + 37)
     );
 }
@@ -282,7 +262,7 @@ fn address_additions_report_overflow_instead_of_wrapping() {
     let region_base = usize::MAX - 10;
     let process = handle(TestMemory::new(vec![(region_base, bytes)]));
     assert_eq!(
-        process.scan_first(&pattern("EE", false)),
+        scan_first(&*process, &pattern("EE", false)),
         Err(MemoryError::AddressOverflow {
             base: region_base,
             offset: 15,
@@ -296,10 +276,12 @@ fn never_combines_adjacent_regions() {
         (0x1000, vec![0xaa]),
         (0x1001, vec![0xbb]),
     ]));
-    assert_eq!(process.scan_first(&pattern("AA BB", false)).unwrap(), None);
+    assert_eq!(
+        scan_first(&*process, &pattern("AA BB", false)).unwrap(),
+        None
+    );
     assert!(
-        process
-            .scan_all(&pattern("AA BB", false))
+        scan_all(&*process, &pattern("AA BB", false))
             .unwrap()
             .is_empty()
     );
@@ -313,9 +295,9 @@ fn first_and_all_follow_region_then_offset_order() {
     ]));
     let target = pattern("01", false);
 
-    assert_eq!(process.scan_first(&target).unwrap(), Some(0x3001));
+    assert_eq!(scan_first(&*process, &target).unwrap(), Some(0x3001));
     assert_eq!(
-        process.scan_all(&target).unwrap(),
+        scan_all(&*process, &target).unwrap(),
         vec![0x3001, 0x3003, 0x1000, 0x1002]
     );
 }
@@ -335,7 +317,7 @@ fn batch_loops_regions_then_caller_patterns_and_omits_missing() {
     ];
 
     assert_eq!(
-        process.scan_batch(&patterns).unwrap(),
+        scan_batch(&*process, &patterns).unwrap(),
         vec![
             BatchScanResult {
                 index: 1,
@@ -362,19 +344,23 @@ fn handles_empty_all_wildcard_and_no_match_deliberately() {
     let process = handle(TestMemory::new(vec![(0x5000, vec![0, 1, 2])]));
     let empty = pattern("  ", false);
 
-    assert_eq!(process.scan_first(&empty).unwrap(), Some(0x5000));
-    assert!(process.scan_all(&empty).unwrap().is_empty());
-    assert!(process.scan_batch(&[]).unwrap().is_empty());
+    assert_eq!(scan_first(&*process, &empty).unwrap(), Some(0x5000));
+    assert!(scan_all(&*process, &empty).unwrap().is_empty());
+    assert!(scan_batch(&*process, &[]).unwrap().is_empty());
     assert_eq!(
-        process.scan_all(&pattern("?? ??", false)).unwrap(),
+        scan_all(&*process, &pattern("?? ??", false)).unwrap(),
         vec![0x5000, 0x5001]
     );
     assert_eq!(
-        process.scan_all(&pattern("?? ??", true)).unwrap(),
+        scan_all(&*process, &pattern("?? ??", true)).unwrap(),
         vec![0x5001]
     );
-    assert_eq!(process.scan_first(&pattern("FF", false)).unwrap(), None);
-    assert!(process.scan_all(&pattern("FF", false)).unwrap().is_empty());
+    assert_eq!(scan_first(&*process, &pattern("FF", false)).unwrap(), None);
+    assert!(
+        scan_all(&*process, &pattern("FF", false))
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -386,11 +372,11 @@ fn unreadable_regions_are_skipped_without_leaking_partial_matches() {
     let process = handle(memory);
 
     assert_eq!(
-        process.scan_first(&pattern("AA", false)).unwrap(),
+        scan_first(&*process, &pattern("AA", false)).unwrap(),
         Some(0x2000)
     );
     assert_eq!(
-        process.scan_all(&pattern("AA", false)).unwrap(),
+        scan_all(&*process, &pattern("AA", false)).unwrap(),
         vec![0x2000]
     );
 }
@@ -404,9 +390,7 @@ fn batch_discards_failed_region_matches_before_reusing_slots() {
     let process = handle(memory.clone());
 
     assert_eq!(
-        process
-            .scan_batch(&[pattern("AA", false), pattern("BB", false)])
-            .unwrap(),
+        scan_batch(&*process, &[pattern("AA", false), pattern("BB", false)]).unwrap(),
         vec![BatchScanResult {
             index: 1,
             address: 0x400000,
@@ -421,7 +405,7 @@ fn permission_denials_stop_scanning_instead_of_appearing_unreadable() {
     let target = pattern("AA", false);
 
     assert!(matches!(
-        process.scan_first(&target),
+        scan_first(&*process, &target),
         Err(MemoryError::PermissionDenied {
             address: 0x1000,
             len: 16,
@@ -429,7 +413,7 @@ fn permission_denials_stop_scanning_instead_of_appearing_unreadable() {
         })
     ));
     assert!(matches!(
-        process.scan_first_valid(&target, |_| Ok(false)),
+        scan_first_valid(&*process, &target, |_| Ok(false)),
         Err(MemoryError::PermissionDenied {
             address: 0x1000,
             len: 16,

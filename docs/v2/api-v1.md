@@ -487,8 +487,26 @@ of HTTP `wait`; tests inject the same policy with bounded overrides. There is
 no per-action timeout manifest field. First accepted terminal result wins;
 timeout is terminal even when an in-process callee continues, and late results
 cannot resurrect a job. Cancellation is advisory, not a terminal transition.
-M3 proves `plugin_crashed` through the production instance-loss lifecycle seam;
-actual subprocess crash/kill and process cancellation grace are M5 evidence.
+M3 proves `plugin_crashed` through the production instance-loss lifecycle seam.
+
+**Process-runtime providers (A5.4, approved 2026-11-24).** `DELETE` never
+kills a plugin host. When a `process`-runtime provider exceeds the 30-second
+deadline:
+
+- The job becomes `failed`/`timed_out` immediately, as above.
+- Core sends cancellation and allows a 5-second grace for that invocation.
+- If the plugin host has not answered that invocation by then, core kills the
+  plugin host.
+
+The kill fails every other still-running job on that plugin host with
+`plugin_crashed`. A job that is already terminal, including the one that timed
+out, never changes state. The same `plugin_crashed` identity covers a plugin
+host's crash, its pressure or transport loss, and its controlled stop or
+uninstall while a job is running. The job body does not distinguish these
+causes; the dashboard's plugin status names the reason. The exact grace
+aggregation is in [plugin ABI §7.6](plugin-abi.md#76-process-supervision-protocol-a5-approved-2026-11-24).
+Evidence from a real crash, kill and grace run is M5 X0's and is not yet
+recorded.
 
 ### `/api/v1/jobs/{id}`
 

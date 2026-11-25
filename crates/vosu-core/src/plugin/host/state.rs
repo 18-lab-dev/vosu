@@ -181,7 +181,9 @@ impl SchemaRegistration {
             let ns = provided.id.strip_prefix("field:").unwrap_or(&provided.id);
             let version = semver::Version::parse(&provided.version)
                 .map_err(|error| HostError::State(error.to_string()))?;
-            let provenance = if plugin.library_handle().is_none() {
+            // Explicit provenance (M6a Q3), never inferred from the backend:
+            // a process package has no local library either.
+            let provenance = if plugin.origin() == crate::plugin::PackageOrigin::Bundled {
                 vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial
             } else {
                 vosu_plugin_api::manifest::schema::SchemaProvenance::Untrusted

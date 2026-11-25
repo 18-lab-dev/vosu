@@ -18,7 +18,9 @@ use vosu_osu_state::{
     Delivery, PollIntervals, ReaderSettings, SnapshotPublisher, StateBundleSnapshot,
     StateWorkerError, SubscriptionDemand, SubscriptionPolling,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 
 #[path = "../benches/support/stable_fixture.rs"]
 mod stable_fixture;

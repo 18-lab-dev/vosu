@@ -24,7 +24,7 @@ use vosu_osu_reader::memory::{
     SynchronizedMemoryReader,
 };
 use vosu_osu_reader::process::ProcessHandle;
-use vosu_sys::process::{
+use vosu_plugin_api::memory::{
     MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 

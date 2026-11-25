@@ -31,6 +31,7 @@ tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", 
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 vosu-net = { path = "../vosu-net" }
 vosu-osu-model = { path = "../vosu-osu-model" }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
 vosu-sys = { path = "../vosu-sys" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 

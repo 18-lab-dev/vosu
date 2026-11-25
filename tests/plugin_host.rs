@@ -21,6 +21,9 @@ use std::time::Duration;
 use vosu_core::plugin::{self, OwnedMessage, PluginHostHandler, PluginInstance, PluginInstanceId};
 use vosu_plugin_api::{CborValue, FocusChanged, Init, Message, encode, vosu_status};
 
+#[path = "plugin_host/process_package.rs"]
+mod process_package;
+
 const DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 /// Records every message the plugin sends back to the host (the echo
@@ -473,7 +476,7 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
 
 // --- `vosu-core` `test-harness` memory seam (F3) ------------------------
 
-/// A [`vosu_sys::process::ProcessMemory`] backed by a plain in-memory
+/// A [`vosu_plugin_api::memory::ProcessMemory`] backed by a plain in-memory
 /// byte buffer, standing in for a real OS process: `address` indexes
 /// straight into `bytes`, exactly the way
 /// `vosu_core::plugin::test_support::set_session_memory` injects it for
@@ -483,34 +486,33 @@ struct InjectedBuffer {
     bytes: Vec<u8>,
 }
 
-impl vosu_sys::process::ProcessMemory for InjectedBuffer {
+impl vosu_plugin_api::memory::ProcessMemory for InjectedBuffer {
     fn read_exact(
         &self,
         address: usize,
         dst: &mut [u8],
-    ) -> Result<(), vosu_sys::process::MemoryError> {
+    ) -> Result<(), vosu_plugin_api::memory::MemoryError> {
         let end = address.checked_add(dst.len()).ok_or(
-            vosu_sys::process::MemoryError::AddressOverflow {
+            vosu_plugin_api::memory::MemoryError::AddressOverflow {
                 base: address,
                 offset: dst.len(),
             },
         )?;
-        let slice =
-            self.bytes
-                .get(address..end)
-                .ok_or_else(|| vosu_sys::process::MemoryError::Read {
-                    address,
-                    len: dst.len(),
-                    message: "out of injected buffer bounds".to_owned(),
-                })?;
+        let slice = self.bytes.get(address..end).ok_or_else(|| {
+            vosu_plugin_api::memory::MemoryError::Read {
+                address,
+                len: dst.len(),
+                message: "out of injected buffer bounds".to_owned(),
+            }
+        })?;
         dst.copy_from_slice(slice);
         Ok(())
     }
 
     fn read_many(
         &self,
-        reads: &mut [vosu_sys::process::ReadRequest<'_>],
-    ) -> Result<(), vosu_sys::process::MemoryError> {
+        reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
+    ) -> Result<(), vosu_plugin_api::memory::MemoryError> {
         for read in reads {
             self.read_exact(read.address, read.dst)?;
         }
@@ -519,8 +521,9 @@ impl vosu_sys::process::ProcessMemory for InjectedBuffer {
 
     fn readable_regions(
         &self,
-    ) -> Result<Vec<vosu_sys::process::MemoryRegion>, vosu_sys::process::MemoryError> {
-        Ok(vec![vosu_sys::process::MemoryRegion {
+    ) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, vosu_plugin_api::memory::MemoryError>
+    {
+        Ok(vec![vosu_plugin_api::memory::MemoryRegion {
             address: 0,
             size: self.bytes.len(),
         }])
@@ -600,13 +603,13 @@ fn injected_session_memory_answers_a_sync_plan() {
     // only thing that makes this session's memory resolvable.
     let pid: u32 = 0x7FFF_FFFE;
     let marker: u64 = 0xABCD_EF01_2345_6789;
-    let memory: Arc<dyn vosu_sys::process::ProcessMemory> = Arc::new(InjectedBuffer {
+    let memory: Arc<dyn vosu_plugin_api::memory::ProcessMemory> = Arc::new(InjectedBuffer {
         bytes: marker.to_le_bytes().to_vec(),
     });
     vosu_core::plugin::test_support::set_session_memory(
         pid,
         memory,
-        vosu_sys::process::ProcessBitness::X64,
+        vosu_plugin_api::memory::ProcessBitness::X64,
     );
 
     host.process_appeared(vosu_core::plugin::ProcessRecord {
@@ -759,13 +762,13 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     // `REAL_MODULE_NAME` — unlike the previous version's synthetic pid,
     // which could never tell the two branches apart (module doc comment).
     let pid: u32 = std::process::id();
-    let memory: Arc<dyn vosu_sys::process::ProcessMemory> = Arc::new(InjectedBuffer {
+    let memory: Arc<dyn vosu_plugin_api::memory::ProcessMemory> = Arc::new(InjectedBuffer {
         bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
     });
     vosu_core::plugin::test_support::set_session_memory(
         pid,
         memory,
-        vosu_sys::process::ProcessBitness::X64,
+        vosu_plugin_api::memory::ProcessBitness::X64,
     );
 
     host.process_appeared(vosu_core::plugin::ProcessRecord {

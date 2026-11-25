@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 
 use vosu_plugin_api::{
-    VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_PUBLISH_BATCH_MAX_BYTES,
-    VOSU_READ_PLAN_MAX_BYTES, VOSU_READ_PLAN_SYNC, VOSU_STREAM_CHUNK_MAX_BYTES, vosu_opcode,
-    vosu_plan_base_kind, vosu_read_error_code, vosu_read_result_kind, vosu_stage_base_kind,
-    vosu_status, vosu_value_kind,
+    VOSU_FRAME_MAX_BYTES, VOSU_OPCODE_PRIVATE_BIT, VOSU_PLUGIN_ABI_MAJOR,
+    VOSU_PUBLISH_BATCH_MAX_BYTES, VOSU_READ_PLAN_MAX_BYTES, VOSU_READ_PLAN_SYNC,
+    VOSU_STREAM_CHUNK_MAX_BYTES, vosu_opcode, vosu_plan_base_kind, vosu_read_error_code,
+    vosu_read_result_kind, vosu_stage_base_kind, vosu_status, vosu_value_kind,
 };
 
 /// Strips every `/* ... */` block comment, replacing it with a single
@@ -401,6 +401,7 @@ fn buffer_size_and_flag_constants_match_the_header() {
         ("VOSU_PUBLISH_BATCH_MAX_BYTES", VOSU_PUBLISH_BATCH_MAX_BYTES),
         ("VOSU_STREAM_CHUNK_MAX_BYTES", VOSU_STREAM_CHUNK_MAX_BYTES),
         ("VOSU_READ_PLAN_SYNC", VOSU_READ_PLAN_SYNC),
+        ("VOSU_OPCODE_PRIVATE_BIT", VOSU_OPCODE_PRIVATE_BIT),
     ];
     for (name, rust_value) in expected {
         let header_value = macros
@@ -410,5 +411,31 @@ fn buffer_size_and_flag_constants_match_the_header() {
             header_value, rust_value,
             "{name}: include/vosu_plugin.h and the Rust constant disagree"
         );
+    }
+}
+
+/// The A5.2 reservation: the private bit is exactly the high bit, no
+/// header opcode sets it, and the SDK refuses every opcode carrying it.
+#[test]
+fn private_opcode_bit_is_reserved_from_every_public_opcode() {
+    assert_eq!(VOSU_OPCODE_PRIVATE_BIT, 0x8000_0000);
+    let source = header_source();
+    let enums = parse_enums(&source);
+    let opcodes = &enums["vosu_opcode"];
+    assert!(!opcodes.is_empty());
+    for (name, value) in opcodes {
+        assert_eq!(
+            value & VOSU_OPCODE_PRIVATE_BIT,
+            0,
+            "{name} sets the reserved private bit"
+        );
+        assert!(vosu_opcode::try_from(*value).is_ok(), "{name}");
+        assert!(
+            vosu_opcode::try_from(*value | VOSU_OPCODE_PRIVATE_BIT).is_err(),
+            "{name} with the private bit must not decode"
+        );
+    }
+    for private in [0x8000_0000, 0x8000_0001, 0x8000_0012, u32::MAX] {
+        assert!(vosu_opcode::try_from(private).is_err(), "{private:#x}");
     }
 }

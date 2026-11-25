@@ -213,7 +213,7 @@ impl Connection {
         let url = value["url"]
             .as_str()
             .ok_or((1, "missing launch URL".into()))?;
-        open::that(url).map_err(|e| (1, format!("could not open tool: {e}")))?;
+        vosu_sys::process_spawn::open(url).map_err(|e| (1, format!("could not open tool: {e}")))?;
         Ok(())
     }
 }
@@ -460,15 +460,16 @@ async fn child(
     };
     #[cfg(windows)]
     let _handler = ConsoleHandler::install()?;
-    let mut child = tokio::process::Command::new(executable)
-        .args(&argv[1..])
-        .args(args)
-        .current_dir(cwd)
-        .envs(env)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+    let mut child = vosu_sys::process_spawn::spawn_tokio(
+        tokio::process::Command::new(executable)
+            .args(&argv[1..])
+            .args(args)
+            .current_dir(cwd)
+            .envs(env)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit()),
+    )?;
     #[cfg(unix)]
     loop {
         let signal = tokio::select! {

@@ -311,10 +311,10 @@ impl StableMemory {
         let (mut beat_word, mut mode_object) = (Word::new(), Span::<0, 0x10>::new());
         self.process.read_indirect_many(
             &mut [
-                crate::process::IndirectReadRequest::new(beat_anchor, 0, &mut beat_word.bytes),
-                crate::process::IndirectReadRequest::new(mode_anchor, 0, &mut mode_object.bytes),
+                IndirectReadRequest::new(beat_anchor, 0, &mut beat_word.bytes),
+                IndirectReadRequest::new(mode_anchor, 0, &mut mode_object.bytes),
             ],
-            crate::process::ProcessBitness::X86,
+            ProcessBitness::X86,
         )?;
         let beat = beat_word.ptr(0);
         if beat == 0 {

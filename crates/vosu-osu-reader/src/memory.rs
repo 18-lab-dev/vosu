@@ -19,7 +19,7 @@ use vosu_osu_model::memory::{
     LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
     TourneyChat, TourneyUser, User,
 };
-use vosu_sys::process::{MemoryError, MemoryRead, ReadStatus};
+use vosu_plugin_api::memory::{MemoryError, MemoryRead, ReadStatus};
 
 /// Complete regular/precise reader surface shared by stable and lazer clients.
 ///

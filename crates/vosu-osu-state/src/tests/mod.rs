@@ -19,7 +19,7 @@ use vosu_osu_reader::memory::snapshot::{
     RawRegularSnapshotBuilder, RegularCaptureContext,
 };
 use vosu_osu_reader::memory::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
-use vosu_sys::process::{MemoryRead, ReadStatus};
+use vosu_plugin_api::memory::{MemoryRead, ReadStatus};
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex

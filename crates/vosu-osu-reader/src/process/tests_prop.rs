@@ -16,6 +16,7 @@ use proptest::prelude::*;
 use vosu_proptest::vosu_proptest_config;
 
 use super::*;
+use vosu_sys::process::scanner::SCAN_CHUNK_SIZE;
 
 /// One or more non-overlapping readable regions backed by in-memory byte
 /// buffers (bases spaced `REGION_STRIDE` apart, well past any generated
@@ -85,11 +86,11 @@ struct EchoBackend {
 
 impl ScanBackend for EchoBackend {
     fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
-        self.memory.scan_all(pattern)
+        scanner::scan_all(&*self.memory, pattern)
     }
 
     fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
-        self.memory.scan_batch(patterns)
+        scanner::scan_batch(&*self.memory, patterns)
     }
 }
 

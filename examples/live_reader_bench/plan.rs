@@ -16,8 +16,8 @@ use vosu_osu::{
     scan::{PlanScanBackend, ScanWaiters},
 };
 use vosu_osu_reader::process::ProcessHandle;
+use vosu_plugin_api::memory::ProcessBitness;
 use vosu_plugin_api::{HostServices, Init, Message, Plugin, PluginError, VtableHostServices};
-use vosu_sys::process::ProcessBitness;
 
 type Attached = (VtableHostServices, u64, Arc<ScanWaiters>);
 /// Per plugin id: the attachment channel and the identified client variant.

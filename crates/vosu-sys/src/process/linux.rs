@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 
 const MAX_PROC_FILE: u64 = 1024 * 1024;
 const MAX_COMM_FILE: u64 = 4096;
@@ -418,7 +420,7 @@ impl LinuxProcessMemory {
                 });
                 address = address
                     .checked_add(len)
-                    .ok_or(super::MemoryError::AddressOverflow {
+                    .ok_or(MemoryError::AddressOverflow {
                         base: address,
                         offset: len,
                     })?;
@@ -1146,46 +1148,8 @@ fn read_error(address: usize, len: usize, message: impl Into<String>) -> MemoryE
 }
 
 #[cfg(test)]
-mod empty_read_tests {
-    use super::*;
-
-    #[derive(Debug)]
-    struct NoSyscall;
-
-    impl ProcessVmReadv for NoSyscall {
-        fn readv(
-            &self,
-            _pid: libc::pid_t,
-            _local: &mut [libc::iovec],
-            _remote: &[libc::iovec],
-        ) -> Result<usize, i32> {
-            panic!("empty reads must not issue process_vm_readv")
-        }
-
-        fn iov_max(&self) -> usize {
-            panic!("empty reads must not prepare an iovec batch")
-        }
-    }
-
-    #[test]
-    fn empty_reads_do_not_prepare_or_issue_native_io() {
-        let memory = LinuxProcessMemory::with_parts(20, PathBuf::new(), Arc::new(NoSyscall));
-
-        memory.read_exact(usize::MAX, &mut []).expect("exact read");
-        memory
-            .read_scanner_region_exact(usize::MAX, &mut [])
-            .expect("scanner read");
-        let mut empty = [];
-        let mut other_empty = [];
-        let mut reads = [
-            ReadRequest::new(usize::MAX, &mut empty),
-            ReadRequest::new(usize::MAX, &mut other_empty),
-        ];
-        for count in [1, 2] {
-            memory.read_many(&mut reads[..count]).expect("batched read");
-        }
-    }
-}
+#[path = "linux/tests/empty_reads.rs"]
+mod empty_read_tests;
 
 /// F1 review P2 (`command_line_from_bytes` doc comment): kept out of
 /// `tests` itself, which is at its own baselined line-count limit
