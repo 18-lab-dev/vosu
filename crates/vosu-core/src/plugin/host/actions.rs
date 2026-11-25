@@ -508,7 +508,10 @@ impl PluginHost {
             provider = ?grace.provider,
             "a process action ignored its cancellation past the grace; killing the plugin host"
         );
-        self.lose_process_instance(grace.provider, super::super::execution::LossCause::ActionGraceExpired);
+        self.lose_process_instance(
+            grace.provider,
+            super::super::execution::LossCause::ActionGraceExpired,
+        );
     }
 
     pub(super) fn handle_action_progress(

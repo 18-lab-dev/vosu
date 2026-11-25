@@ -17,5 +17,7 @@ mod broker;
 mod lifecycle;
 #[path = "plugin_host_native/relay.rs"]
 mod relay;
+#[path = "plugin_host_native/restart.rs"]
+mod restart;
 #[path = "plugin_host_native/support/mod.rs"]
 mod support;

@@ -58,7 +58,10 @@ fn sixteen_seconds_is_reached_only_after_older_events_age_out() {
     );
     assert_eq!(window.len(), 4);
     // Saturates at 16 s while the streak continues.
-    assert_eq!(delay(window.record(start + CRASH_WINDOW + secs(1))), secs(16));
+    assert_eq!(
+        delay(window.record(start + CRASH_WINDOW + secs(1))),
+        secs(16)
+    );
 }
 
 #[test]

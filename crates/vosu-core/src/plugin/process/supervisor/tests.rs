@@ -8,8 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{
-    FailureReason, Next, ProcessPhase, Published, RestartRefused, StartGuard, Supervisor,
-    Template,
+    FailureReason, Next, ProcessPhase, Published, RestartRefused, StartGuard, Supervisor, Template,
 };
 use crate::identity::PluginInstanceId;
 use crate::plugin::execution::LossCause;
@@ -68,7 +67,10 @@ fn restart(next: Next) -> (u64, Duration) {
 
 /// Starts the generation the delay under `epoch` was waiting for.
 fn begin(supervisor: &Arc<Supervisor>, epoch: u64) -> StartGuard {
-    supervisor.begin_restart(ID, epoch).expect("a current delay").1
+    supervisor
+        .begin_restart(ID, epoch)
+        .expect("a current delay")
+        .1
 }
 
 fn crash(stage: StartupStage) -> FailureReason {
@@ -204,29 +206,24 @@ fn a_manual_restart_resets_the_window_and_the_latch() {
         Err(RestartRefused::Busy)
     ));
     assert_eq!(supervisor.published(ID, guard.epoch), Published::Keep);
-    let (_, delay) = restart(supervisor.lost(
-        ID,
-        LossCause::ChannelFailed,
-        start + Duration::from_secs(5),
-    ));
+    let (_, delay) =
+        restart(supervisor.lost(ID, LossCause::ChannelFailed, start + Duration::from_secs(5)));
     assert_eq!(delay, Duration::from_secs(1), "the backoff starts over");
 }
 
 #[test]
 fn startup_failures_split_by_their_structured_stage() {
     // During an automatic restart a crash-class stage is one crash event.
-    for stage in [StartupStage::Create, StartupStage::Timeout, StartupStage::Crash] {
+    for stage in [
+        StartupStage::Create,
+        StartupStage::Timeout,
+        StartupStage::Crash,
+    ] {
         let (_dir, supervisor) = running();
-        let (epoch, _) =
-            restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
+        let (epoch, _) = restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
         let guard = begin(&supervisor, epoch);
-        let (_, delay) = restart(supervisor.start_failed(
-            ID,
-            guard.epoch,
-            crash(stage),
-            true,
-            Instant::now(),
-        ));
+        let (_, delay) =
+            restart(supervisor.start_failed(ID, guard.epoch, crash(stage), true, Instant::now()));
         assert_eq!(delay, Duration::from_secs(2), "{stage:?}");
         assert_eq!(supervisor.status(ID).unwrap().crash_events, 2, "{stage:?}");
     }
@@ -241,8 +238,7 @@ fn startup_failures_split_by_their_structured_stage() {
         StartupStage::Abi,
     ] {
         let (_dir, supervisor) = running();
-        let (epoch, _) =
-            restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
+        let (epoch, _) = restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
         let guard = begin(&supervisor, epoch);
         assert_eq!(
             supervisor.start_failed(ID, guard.epoch, crash(stage), true, Instant::now()),
@@ -268,7 +264,10 @@ fn startup_failures_split_by_their_structured_stage() {
         Next::Nothing
     );
     let status = supervisor.status(ID).unwrap();
-    assert_eq!((status.phase, status.crash_events), (ProcessPhase::Failed, 0));
+    assert_eq!(
+        (status.phase, status.crash_events),
+        (ProcessPhase::Failed, 0)
+    );
 }
 
 #[test]

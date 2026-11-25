@@ -116,9 +116,11 @@ fn supervision_a_lost_instance_restarts_after_backoff_as_a_new_generation() {
 
     let lost_at = Instant::now();
     scenario.lose(0);
-    wait_phase(host, id, |phase| {
-        matches!(phase, ProcessPhase::Backoff { delay, streak: 1 } if *delay == Duration::from_secs(1))
-    });
+    wait_phase(
+        host,
+        id,
+        |phase| matches!(phase, ProcessPhase::Backoff { delay, streak: 1 } if *delay == Duration::from_secs(1)),
+    );
     // The lost generation was retired, its child reaped, before the delay.
     assert_eq!(old.terminate_calls(), 1);
     assert!(
@@ -157,8 +159,11 @@ fn supervision_a_lost_instance_restarts_after_backoff_as_a_new_generation() {
         .unwrap()
         .recv_timeout(RECV_TIMEOUT)
         .unwrap();
-    assert!(old.frames().iter().all(|frame| frame.opcode
-        != vosu_opcode::VOSU_OP_TIMER_FIRED as u32));
+    assert!(
+        old.frames()
+            .iter()
+            .all(|frame| frame.opcode != vosu_opcode::VOSU_OP_TIMER_FIRED as u32)
+    );
     assert!(
         new.wait_for_frame(vosu_opcode::VOSU_OP_TIMER_FIRED as u32, RECV_TIMEOUT)
             .is_some()
@@ -181,12 +186,24 @@ fn supervision_a_teardown_during_the_backoff_never_respawns() {
     let scenario = Scenario::running("test.c0.stopped", "c0-stopped", 9_802);
     let (host, id) = (&scenario.host, scenario.id);
     scenario.lose(0);
-    wait_phase(host, id, |phase| matches!(phase, ProcessPhase::Backoff { .. }));
+    wait_phase(host, id, |phase| {
+        matches!(phase, ProcessPhase::Backoff { .. })
+    });
     host.teardown_instance(id).unwrap();
-    assert_eq!(host.process_status(id).unwrap().phase, ProcessPhase::Stopped);
+    assert_eq!(
+        host.process_status(id).unwrap().phase,
+        ProcessPhase::Stopped
+    );
     std::thread::sleep(PAST_FIRST_BACKOFF);
-    assert_eq!(scenario.launcher.launches().len(), 1, "a stopped instance respawned");
-    assert_eq!(host.process_status(id).unwrap().phase, ProcessPhase::Stopped);
+    assert_eq!(
+        scenario.launcher.launches().len(),
+        1,
+        "a stopped instance respawned"
+    );
+    assert_eq!(
+        host.process_status(id).unwrap().phase,
+        ProcessPhase::Stopped
+    );
     host.destroy_all(Duration::from_secs(5));
 }
 
@@ -195,11 +212,20 @@ fn supervision_shutdown_during_the_backoff_never_respawns() {
     let scenario = Scenario::running("test.c0.shutdown", "c0-shutdown", 9_803);
     let (host, id) = (&scenario.host, scenario.id);
     scenario.lose(0);
-    wait_phase(host, id, |phase| matches!(phase, ProcessPhase::Backoff { .. }));
+    wait_phase(host, id, |phase| {
+        matches!(phase, ProcessPhase::Backoff { .. })
+    });
     host.destroy_all(Duration::from_secs(5));
     std::thread::sleep(PAST_FIRST_BACKOFF);
-    assert_eq!(scenario.launcher.launches().len(), 1, "respawned after shutdown");
-    assert_eq!(host.process_status(id).unwrap().phase, ProcessPhase::Stopped);
+    assert_eq!(
+        scenario.launcher.launches().len(),
+        1,
+        "respawned after shutdown"
+    );
+    assert_eq!(
+        host.process_status(id).unwrap().phase,
+        ProcessPhase::Stopped
+    );
 }
 
 #[test]
@@ -228,20 +254,37 @@ fn supervision_teardown_destroys_one_running_process_instance() {
             .wait_for_frame(vosu_opcode::VOSU_OP_SESSION_DETACHED as u32, RECV_TIMEOUT)
             .is_some()
     );
-    assert_eq!((endpoint.destroy_calls(), endpoint.terminate_calls()), (1, 0));
+    assert_eq!(
+        (endpoint.destroy_calls(), endpoint.terminate_calls()),
+        (1, 0)
+    );
     assert!(matches!(
         host.dispatch_to_instance(id, &fired(), 0),
         Err(crate::plugin::HostError::UnknownInstance)
     ));
-    assert!(host.action_state.lock().unwrap().descriptors.keys().all(|key| !key.starts_with("test.c0.teardown.")));
-    assert_eq!(host.process_status(id).unwrap().phase, ProcessPhase::Stopped);
+    assert!(
+        host.action_state
+            .lock()
+            .unwrap()
+            .descriptors
+            .keys()
+            .all(|key| !key.starts_with("test.c0.teardown."))
+    );
+    assert_eq!(
+        host.process_status(id).unwrap().phase,
+        ProcessPhase::Stopped
+    );
     // The bystander is untouched.
     host.dispatch_to_instance(bystander, &fired(), 0)
         .unwrap()
         .recv_timeout(RECV_TIMEOUT)
         .unwrap();
     std::thread::sleep(PAST_FIRST_BACKOFF);
-    assert_eq!(scenario.launcher.launches().len(), 2, "a torn-down instance restarted");
+    assert_eq!(
+        scenario.launcher.launches().len(),
+        2,
+        "a torn-down instance restarted"
+    );
     assert!(matches!(
         host.teardown_instance(PluginInstanceId::new(9_899)),
         Err(crate::plugin::HostError::UnknownInstance)
@@ -266,7 +309,10 @@ fn supervision_a_failed_initial_load_waits_for_a_manual_restart() {
     };
     assert_eq!(failure.stage, StartupStage::Crash);
     let status = host.process_status(id).unwrap();
-    assert_eq!((status.phase, status.crash_events), (ProcessPhase::Failed, 0));
+    assert_eq!(
+        (status.phase, status.crash_events),
+        (ProcessPhase::Failed, 0)
+    );
     std::thread::sleep(PAST_FIRST_BACKOFF);
     assert_eq!(launcher.launches().len(), 1, "an initial load was retried");
 

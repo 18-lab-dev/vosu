@@ -159,9 +159,7 @@ impl LossCause {
         match self {
             Self::ProcessExited {
                 status: Some(status),
-            } if *status
-                == i64::from(crate::plugin::process::control::EXIT_TRANSPORT_TIMEOUT) =>
-            {
+            } if *status == i64::from(crate::plugin::process::control::EXIT_TRANSPORT_TIMEOUT) => {
                 "transport_timeout"
             }
             Self::ProcessExited { .. } => "exited",

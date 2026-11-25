@@ -85,7 +85,12 @@ fn actions_an_unanswered_grace_kills_only_the_process_callee_once() {
     let (timed_out, timed_out_outcome) =
         invoke(&host, policy(150, 400), "test.c0.grace.run", json!({}));
     let (_, collateral) = invoke(&host, policy(30_000, 5_000), "test.c0.grace.run", json!({}));
-    let (_, unrelated) = invoke(&host, policy(30_000, 5_000), "test.c0.unrelated.run", json!({}));
+    let (_, unrelated) = invoke(
+        &host,
+        policy(30_000, 5_000),
+        "test.c0.unrelated.run",
+        json!({}),
+    );
     let (_, in_process) = invoke(
         &host,
         policy(150, 100),
@@ -95,10 +100,16 @@ fn actions_an_unanswered_grace_kills_only_the_process_callee_once() {
     invoke_message(&events);
 
     let started = Instant::now();
-    assert_eq!(failed(timed_out_outcome.recv_timeout(WAIT).unwrap()), "timed_out");
+    assert_eq!(
+        failed(timed_out_outcome.recv_timeout(WAIT).unwrap()),
+        "timed_out"
+    );
     assert_eq!(failed(in_process.recv_timeout(WAIT).unwrap()), "timed_out");
     let cancel = endpoint
-        .wait_for_frame(vosu_plugin_api::vosu_opcode::VOSU_OP_ACTION_CANCEL as u32, WAIT)
+        .wait_for_frame(
+            vosu_plugin_api::vosu_opcode::VOSU_OP_ACTION_CANCEL as u32,
+            WAIT,
+        )
         .expect("ACTION_CANCEL to the timed-out process callee");
     assert_eq!(
         vosu_plugin_api::decode::<ActionCancel>(&cancel.payload)
@@ -109,12 +120,27 @@ fn actions_an_unanswered_grace_kills_only_the_process_callee_once() {
 
     // The grace elapses unanswered: the callee is killed, and its other
     // running job fails with `plugin_crashed`.
-    assert_eq!(failed(collateral.recv_timeout(WAIT).unwrap()), "plugin_crashed");
-    assert!(started.elapsed() >= Duration::from_millis(350), "{:?}", started.elapsed());
+    assert_eq!(
+        failed(collateral.recv_timeout(WAIT).unwrap()),
+        "plugin_crashed"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(350),
+        "{:?}",
+        started.elapsed()
+    );
     // Retirement finishes on its own thread: the kill, then supervision.
     let deadline = Instant::now() + WAIT;
-    while host.process_status(PluginInstanceId(9_701)).unwrap().crash_events == 0 {
-        assert!(Instant::now() < deadline, "the grace kill was never recorded");
+    while host
+        .process_status(PluginInstanceId(9_701))
+        .unwrap()
+        .crash_events
+        == 0
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the grace kill was never recorded"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(endpoint.terminate_calls(), 1);
@@ -126,7 +152,11 @@ fn actions_an_unanswered_grace_kills_only_the_process_callee_once() {
     );
     assert_eq!(status.crash_events, 1);
     // The timed-out job never changes, and nothing else was killed.
-    assert!(timed_out_outcome.recv_timeout(Duration::from_millis(100)).is_err());
+    assert!(
+        timed_out_outcome
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
     assert!(unrelated.recv_timeout(Duration::from_millis(100)).is_err());
     assert_eq!(launcher.launches()[1].endpoint.terminate_calls(), 0);
     assert!(
@@ -154,7 +184,10 @@ fn actions_an_answer_inside_the_grace_keeps_the_process_callee() {
     let (id, outcome) = invoke(&host, policy(150, 500), "test.c0.answers.run", json!({}));
     assert_eq!(failed(outcome.recv_timeout(WAIT).unwrap()), "timed_out");
     endpoint
-        .wait_for_frame(vosu_plugin_api::vosu_opcode::VOSU_OP_ACTION_CANCEL as u32, WAIT)
+        .wait_for_frame(
+            vosu_plugin_api::vosu_opcode::VOSU_OP_ACTION_CANCEL as u32,
+            WAIT,
+        )
         .unwrap();
     // The late result is discarded with the in-process status, and proves
     // the callee responsive.
@@ -163,10 +196,17 @@ fn actions_an_answer_inside_the_grace_keeps_the_process_callee() {
         vosu_status::VOSU_ERR_INVALID_ARGUMENT
     );
     std::thread::sleep(Duration::from_millis(800));
-    assert_eq!(endpoint.terminate_calls(), 0, "a responsive callee was killed");
+    assert_eq!(
+        endpoint.terminate_calls(),
+        0,
+        "a responsive callee was killed"
+    );
     assert!(outcome.try_recv().is_err(), "the timed-out job changed");
     let status = host.process_status(PluginInstanceId(9_711)).unwrap();
-    assert_eq!((status.phase, status.crash_events), (ProcessPhase::Running, 0));
+    assert_eq!(
+        (status.phase, status.crash_events),
+        (ProcessPhase::Running, 0)
+    );
     host.destroy_all(Duration::from_secs(5));
 }
 
@@ -186,7 +226,10 @@ fn actions_teardown_instance_destroys_one_in_process_instance() {
         json!("x"),
     );
     host.teardown_instance(PluginInstanceId(9_721)).unwrap();
-    assert_eq!(failed(running.recv_timeout(WAIT).unwrap()), "plugin_crashed");
+    assert_eq!(
+        failed(running.recv_timeout(WAIT).unwrap()),
+        "plugin_crashed"
+    );
     assert!(host.get("tests.actions.teardown.nested.echo").is_none());
     assert!(host.get("tests.actions.kept.nested.echo").is_some());
     assert!(host.process_status(PluginInstanceId(9_721)).is_none());

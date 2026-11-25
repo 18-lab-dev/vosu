@@ -68,15 +68,15 @@ impl PluginHost {
             data_dir,
             pool,
         };
-        let guard = self
-            .supervisor
-            .register(id, template.clone())
-            .map_err(|refused| match refused {
-                RestartRefused::ShuttingDown => HostError::ShuttingDown,
-                RestartRefused::Busy | RestartRefused::Unknown => {
-                    HostError::State(format!("process instance {} is already running", id.0))
-                }
-            })?;
+        let guard =
+            self.supervisor
+                .register(id, template.clone())
+                .map_err(|refused| match refused {
+                    RestartRefused::ShuttingDown => HostError::ShuttingDown,
+                    RestartRefused::Busy | RestartRefused::Unknown => {
+                        HostError::State(format!("process instance {} is already running", id.0))
+                    }
+                })?;
         self.run_start(id, &template, guard, false)
     }
 
@@ -105,9 +105,13 @@ impl PluginHost {
             Err(error) => {
                 let reason = failure_reason(error);
                 tracing::warn!(?id, %reason, automatic, "process plugin did not start");
-                let next =
-                    self.supervisor
-                        .start_failed(id, guard.epoch, reason, automatic, Instant::now());
+                let next = self.supervisor.start_failed(
+                    id,
+                    guard.epoch,
+                    reason,
+                    automatic,
+                    Instant::now(),
+                );
                 self.follow(id, next);
             }
         }
@@ -223,24 +227,22 @@ impl PluginHost {
     /// resets the crash window and the `failed` latch, cancels any delay,
     /// tears a running generation down, and starts a new generation.
     pub fn restart_process_instance(&self, id: PluginInstanceId) -> Result<(), HostError> {
-        let (template, guard) = self
-            .supervisor
-            .manual_restart(id)
-            .map_err(|refused| match refused {
-                RestartRefused::Unknown => HostError::UnknownInstance,
-                RestartRefused::ShuttingDown => HostError::ShuttingDown,
-                RestartRefused::Busy => {
-                    HostError::State(format!("process instance {} is already starting", id.0))
-                }
-            })?;
+        let (template, guard) =
+            self.supervisor
+                .manual_restart(id)
+                .map_err(|refused| match refused {
+                    RestartRefused::Unknown => HostError::UnknownInstance,
+                    RestartRefused::ShuttingDown => HostError::ShuttingDown,
+                    RestartRefused::Busy => {
+                        HostError::State(format!("process instance {} is already starting", id.0))
+                    }
+                })?;
         if let Some(Err(error)) = self.stop_live(id) {
             tracing::warn!(?id, %error, "the running generation needed a kill before the manual restart");
         }
         if !self.wait_slot_free(id, SLOT_RELEASE_BOUND) {
-            let error = HostError::State(format!(
-                "process instance {} is still being retired",
-                id.0
-            ));
+            let error =
+                HostError::State(format!("process instance {} is still being retired", id.0));
             self.supervisor.start_failed(
                 id,
                 guard.epoch,
@@ -330,7 +332,11 @@ impl PluginHost {
             .unwrap_or_else(|poison| poison.into_inner())
             .detach_owner(plugin_id);
         for event in detached {
-            self.finish_detach(SessionHandle(event.handle), Some(plugin_id.to_owned()), event);
+            self.finish_detach(
+                SessionHandle(event.handle),
+                Some(plugin_id.to_owned()),
+                event,
+            );
         }
     }
 
