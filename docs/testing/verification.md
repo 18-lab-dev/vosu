@@ -690,3 +690,316 @@ Results: `manifest` **59 passed**, the same count the Linux lib filter lists.
 ignored. These runs cover native Windows filesystem, confined-asset and
 manifest/metadata precedence behavior; cross-Clippy alone did not. The
 main-owned integrated landing gate is still required.
+
+## S1 vosulay supervisor evidence (D16)
+
+S1 tested [D16](../v2/implementation-plan.md#10-adopted-decisions-and-risks)
+with a throwaway in-process spike plugin, `crates/vosu-spike-vosulay` on
+branch `spike/s1-vosulay-supervisor`, which was never merged. It starts
+vosulay's host executable as a child: inside a job object on Windows, and with
+`PR_SET_PDEATHSIG` on Linux. The spike source, its scripts and its receipts are
+evidence inputs only, and no production code is derived from them. Receipts
+are kept outside the repository:
+
+- Windows: `/home/user/gh/vecosystem/win-osu/evidence/s1-final-20261124/` on
+  the host, and `V:\bt\units1win\` in the guest.
+- Linux: `/home/user/gh/vecosystem/evidence/s1-linux/`, with the summary in
+  `SUMMARY.md`.
+
+**Verdict: D16 stands on both operating systems.**
+
+- Windows passed on 2026-11-24, conditional on launching the vosulay host
+  unelevated at Medium integrity.
+- Linux passed on 2026-11-25 with a daemon that holds file capabilities.
+  Chromium's user-namespace sandbox was the active mechanism there; the setuid
+  helper was not.
+
+The M5 consequences are in the
+[S1 outcome](../v2/implementation-plan.md#s1-outcome-2026-11-25).
+
+### Evidence classes
+
+Each class proves only what its own run observed. A later class does not
+upgrade an earlier one.
+
+| Class | What it shows | What it does not show |
+| --- | --- | --- |
+| Linux host-only run, 2026-11-23 (no `vosu --setup`, no setuid helper) | The child had `NoNewPrivs: 0`, `CapPrm`/`CapEff` zero and a nonzero `CapInh`. `kill -9` of the daemon removed the vosulay child within 1 s. | This daemon held **no file capabilities**, and no CEF process existed. It is not capability or sandbox evidence. |
+| Windows pre-control runs, 2026-11-23/24 | Strict job creation and assignment succeeded. `IsProcessInJob` was true. `taskkill /F` on the daemon removed a live host that had no CEF children. | `IsProcessInJob(NULL)` means membership in *some* job: the scheduled-task environment already supplies one. The High-integrity real-client attempt ended in CEF exit 38, which is Chromium's auto-de-elevation result. It is neither a sandbox failure nor a job failure. |
+| Windows controlled matrix, 2026-11-24 | Live packaged CEF ran under the original strict job at Medium integrity, and the live tree was killed when only the daemon died. The negative control is included. | It says nothing about launching from an elevated daemon. The S1 daemon itself ran at Medium. |
+| Linux VM run with a file-capability daemon, 2026-11-25 | Supervision, zero host capabilities with `NoNewPrivs: 0`, a live namespaced and seccomp-filtered CEF tree, and core-only forced death. | The setuid `chrome-sandbox` path did not run. The daemon was a debug build with file capabilities, not a release package. |
+
+### Windows final matrix (2026-11-24)
+
+All accepted cells ran under these identical conditions:
+
+- the same packaged vosulay 1.5.3 bootstrap, with CEF
+  `156.0.15+gcf671c0+chromium-156.0.8078.80`;
+- `--config V:\bt\units1win\matrix\config.json`;
+- real osu!lazer in interactive session 1;
+- `/IT /RL LIMITED` scheduled-task launchers.
+
+In every cell, `environment.json` records the game and runner tokens at RID
+8192 (Medium), not elevated. The initial `GetForegroundWindow` PID equals the
+game's PID.
+
+Spike plugin source `a522e20a4b` adds `VOSU_SPIKE_JOB_MODE`. Unset or
+`strict` keeps the original kill-on-close job, and `none` skips only that
+assignment. The matrix rebuilt only the spike crate (`matrix/build.log`, exit
+0). No CEF sandbox setting changed, and no `--no-sandbox` or breakaway flag was
+used.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Matrix spike DLL `C:\s1spike\dev-plugin\lib\vosu_spike_vosulay.dll` (`matrix/dll-hash.json`) | `4A74F2A1B5C3FFDEC36FF7EB1BA827BFA2B4C1AB2E31BDC21B1DCFC494F51074` |
+| Debug daemon `C:\s1spike\bin\vosu.exe` (`evidence/hashes.json`) | `DCA79901075C002507D8B8EB8E517C20DF80B7C8CD4ADE1DAF3798C00D4E4D85` |
+| Packaged `vosulay.exe` | `0C73CC1DD7F1F2752ACE2AA1D12AA08C99FA08137C4A3FF0ADBBBF1612FF5709` |
+| Packaged `vosulay.dll` | `C881F031B91F1CB02F1715EBD116252F9CE138E19C592BFDB263C2F43D22CA23` |
+| Packaged `libcef.dll` | `07168EACD81BC09AB9AB895D39BC1A80913B09C844F0B5A4730F5F89A71133F5` |
+| Pre-control spike DLL (earlier source `768ad1112c`) | `93D1CB5F8E0D9FBD91AC525E1AC9AB0B55FE08245308781ECA7F58D095CDDBC0` |
+| Host `matrix-receipts.zip` | `d290992fcbea0d13bec92096cb74a180d036e2c05ae98d5266f72ff702fdd7cd` |
+| Host `matrix.bundle` | `b783121b86d1d9668f39db964407c33b83faf00e4612a9fdc94cc676fedde8bd` |
+| Host `spike.bundle` | `704d2914897859773989c6f413562fd5f005971aab145c9b73aefd75a27bf85d` |
+
+Where the hashes come from:
+
+- The daemon and package hashes were taken for the same `C:\s1spike` paths
+  during the pre-control run (`evidence/hashes.json`). The matrix used those
+  same paths, but no matrix receipt re-hashed them.
+- The three host-file digests were computed when S0 recorded this evidence.
+
+| Cell | Live packaged CEF | Forced daemon death |
+| --- | --- | --- |
+| (a) Standalone vosulay, no supervisor | **PASS**: host 10836, GPU 9548, renderer 2172 and utilities (`a/tree-live.json`). | No daemon. Standalone cleanup left no recorded process after 2.157 s. |
+| (b) Medium daemon, original strict kill-on-close job | **PASS**: daemon 11448 → host 16288 → GPU 5456, renderer 15884 and utilities (`b/tree-live.json`). | **PASS**: `taskkill /F /PID 11448` left every recorded live-tree PID absent at 2.156 s, including renderer and GPU (`b/kill.json`). No `/T` was used. |
+| (c) Medium daemon, assignment disabled (negative control) | **PASS**: daemon 13376 → host 5384 → GPU 2132, renderer 1992 and utilities (`c/tree-live.json`). | **Survived as expected**: after only daemon 13376 was killed, the host and all four CEF children remained at 2.193 s (`c/kill.json`). They were then cleaned up explicitly. |
+| (d) Breakaway variants | Not run, because (a) and (b) both passed. | Nothing here justifies changing a production job limit. |
+
+Tokens were read with `OpenProcessToken`, `GetTokenInformation` and
+`IsTokenRestricted`, and are identical across (a)–(c):
+
+- The host is Medium and unrestricted.
+- Each GPU process is Low (RID 4096) and restricted.
+- Each renderer and storage utility is Untrusted (RID 0) and restricted.
+- The network utility is Medium and unrestricted, and declares
+  `--service-sandbox-type=none`.
+
+No process ran in an AppContainer, and AppContainer is not claimed as the
+mechanism.
+
+The proof that the strict job was assigned is the source/env switch plus the
+opposite kill results of (b) and (c). It is not a generic membership query.
+
+The preserved short samples for (c) (`c-reused-client`, `c-short`,
+`c-focus-lost`, `c-attach-refused`) are retained, not used. (c) has no
+`done.json`, because its cleanup loop failed on an already-gone PID. The
+independent `matrix/cleanup.json` shows no remaining processes or `UnitS1Win*`
+tasks.
+
+Exit 38 sources were checked at pinned revisions (`exit38-sources.json`).
+
+- Chromium `chrome_result_codes.h` maps 38 to
+  `CHROME_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED`.
+- `chrome_main_delegate.cc` relaunches without elevation.
+- CEF `main_runner.cc` logs any nonnegative result as a failure.
+- The sandbox API's own 38 is a different enum and does not explain the exit.
+
+### Linux VM run (2026-11-25)
+
+Environment:
+
+- Guest: `vosu-gaming` (Arch, linux-zen, Plasma Wayland, user `vosu`).
+- vosu: spike `66de385`, **debug** build, loaded with `--plugin`.
+- vosulay: `9f9f560` (1.5.3), release build with
+  `libvosulay_{lookup,overlay}.so`.
+- osu!lazer 2026.726.0, headless under gamescope with vosulay's documented
+  `LD_PRELOAD` compositor.
+- Session variables: `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, `DISPLAY` and
+  `XAUTHORITY`.
+
+`02-grant-caps.sh` gave the daemon binary the capabilities `vosu --setup`
+grants, `cap_sys_ptrace,cap_sys_resource,cap_perfmon,cap_bpf=ep`, and staged
+`chrome-sandbox` as root:root 4755. The receipts come from `evidence2/` unless
+noted otherwise.
+
+| Criterion | Result |
+| --- | --- |
+| Supervision | vosu 77973 → vosulay host 77995, a direct child (`process-tree.txt`). |
+| vosulay host status | `CapInh`, `CapPrm` and `CapEff` are zero, `NoNewPrivs: 0`, and `CapBnd` is the full default `000001ffffffffff`. The host inherited no daemon capability. Recorded in `evidence/vosulay-status.txt` and in the `CapEff`/`NoNewPrivs` lines of `process-security.txt`. |
+| Live CEF sandbox | The renderer zygotes run in fresh PID, user and net namespaces, for example `pid:[4026532715]` and `user:[4026532554]`, against the host's `4026531836`/`4026531837`. Their status shows `NoNewPrivs: 1` and `Seccomp: 2`. Zygote 78056 holds `CapEff 0x200000` (`CAP_SYS_ADMIN`) only inside its own user namespace, as Chromium's namespace sandbox does. |
+| Core-only forced death | After SIGKILL of the daemon alone, `kill-verification.txt` reports **0 of 25** surviving. The 25 entries are 13 distinct PIDs: the host plus 12 CEF processes. The script's two `pgrep` patterns matched each CEF PID twice. So 0 of 13 distinct processes survived after 3 s, with zombies excluded. |
+| Sandbox mechanism | The kernel allows unprivileged user namespaces, so Chromium used its namespace sandbox. The staged setuid `chrome-sandbox` was not exercised. |
+
+Evidence limits recorded with the PASS:
+
+- The retained receipts contain no `getcap` output and no daemon
+  `/proc/<pid>/status` readback. The only daemon-side evidence that the
+  capabilities were effective is `vosu.log`'s `Process events backend: eBPF`.
+  That selection needs `CAP_BPF` and `CAP_PERFMON` in an unprivileged process,
+  which makes it indirect.
+- No vosu or vosulay artifact hashes were recorded.
+- The daemon was a debug build. This is file-capability evidence, not
+  packaged-release evidence.
+- Session and focus input from vosu was not exercised. vosulay attached through
+  its own compositor, and the daemon's lazer offsets were unavailable in this
+  debug build.
+- Every run shows a `[tokio-rt-worker] <defunct>` child of the daemon. S1 did
+  not attribute it.
+- The setuid-helper path still needs evidence on a kernel that forbids
+  unprivileged user namespaces. Per AF.7, the separately installed vosulay
+  runtime owns that provisioning.
+
+### Requirements S1 established and did not implement
+
+- **Elevated daemon on Windows.** When the daemon runs elevated to read
+  elevated osu! stable, vosulay's official in-process supervisor must still
+  launch the host at Medium integrity. It uses a verified unelevated token for
+  the same interactive user and session. If no suitable token exists, the
+  launch fails visibly. It never falls back to High integrity and never uses a
+  breakaway flag or `--no-sandbox`. S1 ran the daemon at Medium, so the launch
+  from an elevated daemon is still unimplemented and unproven.
+- **No stdin protocol.** vosulay's `watch_stdin` (`VOSU_TOOL_PROTOCOL=1`)
+  only reads to EOF, which it treats as shutdown. Session and focus lines that
+  the spike wrote there had no effect.
+- **Ecosystem boundary (F/AF.8).** The attached vosulay child reads session
+  and focus through its own API-v1 subscription
+  (`/api/v1/sessions/subscribe` and the selected session's state), and that
+  subscription is the only data authority. The supervisor's bounded private
+  IPC carries only lifecycle, backend configuration, editor intent and the
+  chosen-session policy. This replaces S1's stdin-forwarding sketch. The
+  production supervisor, the Medium launch and the API-v1 conversion belong to
+  the vosulay ecosystem owner, not M5.
+- **Separate launch policies.** The generic `vosu plugin-host` confinement
+  ([plugin ABI §7.3](../v2/plugin-abi.md#73-linux-privilege-drop-and-confinement-before-loading-plugin-code))
+  must not be applied to the vosulay child. `no_new_privs` would disable the
+  setuid helper. The plugin host's user-namespace denial would disable the
+  namespace sandbox that S1 Linux observed.
+
+### Defects in the throwaway S1 scripts
+
+These scripts are throwaway. Fix the following before any rerun; nothing here
+is imported into production.
+
+- `01-build.sh` builds `--bin vosu -p vosu-spike-vosulay` in one Cargo
+  invocation, which is invalid (`s1-build.log`). Build the daemon and the spike
+  crate separately.
+- `03-run-and-verify.sh` waits for a `vosulayx-*` process name. vosulay 1.5.3
+  re-execs as `vosulay-<hash>`.
+- `03-run-and-verify.sh` looks for a `chrome-sandbox` process to prove that the
+  sandbox started. No such process exists while the namespace sandbox is
+  active, so `sandbox-status.txt` falsely reported that CEF had not started
+  even though the zygotes were live. Use the namespace, `NoNewPrivs` and
+  `Seccomp` readback instead.
+- `s1-ev2.sh` collects PIDs with two overlapping `pgrep` patterns, which
+  double-counts the CEF processes (25 entries for 13 PIDs). Deduplicate the
+  PIDs before counting.
+- A daemon launched over SSH has no session display environment, so vosulay
+  exits. Export the session's `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, `DISPLAY`
+  and `XAUTHORITY`.
+- vosulay sometimes exits a few seconds after `--toggle-edit` in the headless
+  setup. Evidence was captured 4 s after the toggle.
+- Record `getcap` and the daemon's `/proc/<pid>/status`, plus SHA-256 of every
+  binary, so that capability evidence is direct rather than inferred.
+- osu!lazer's Velopack self-update needs root for `/opt/osu`. The pending
+  package was moved to `/home/vosu/s1-spike/velopack-held/` for the run and
+  then restored.
+
+## M5 test and fixture conventions (A5)
+
+These are the frozen names and artifact rules the M5 units implement. They do
+not claim that the tests exist or pass. The contract they test is the
+[A5 freeze](../v2/implementation-plan.md#a5-approved-contract-freeze-2026-11-24),
+and the D17 names are in the
+[benchmark guide](benchmarks.md#m5-d17-contract).
+
+**Native target.** `tests/plugin_host_native.rs` is a thin root that declares
+the child modules in `tests/plugin_host_native/`:
+
+- `relay`, `broker`, `lifecycle`, `state`, `resources`, `actions`, `parity`,
+  `crash`, `backpressure`, `sync` and `restart`;
+- the security modules `linux_security`, `windows_job` and `parent_death`;
+- `support/`.
+
+Every test name starts with its module path, so each filter in the M5 plan
+(`relay`, `broker`, `lifecycle`, and so on) matches a nonzero set. Main lists
+`-- --list` before running. A filter that matches zero tests is a failure.
+
+The following required cases are frozen by name:
+
+- `linux_security::linux_packaged_capability_drop` is `#[ignore]`. It runs
+  only after an explicitly authorized `vosu --setup`, against the binary named
+  by `VOSU_PLUGIN_HOST_PACKAGED_BINARY`.
+- `windows_job::windows_core_death_kills_job_tree` is not ignored, and runs in
+  the ordinary native Windows target.
+
+An ordinary run that skips the ignored Linux case does not complete N0.
+
+**Fixture artifacts.** P0 owns two `crate-type = ["cdylib"]` example targets:
+
+- `crates/vosu-plugin-testkit/examples/testkit_process_plugin.rs`;
+- `crates/vosu-osu/examples/osu_process_plugin.rs`, which has
+  `required-features = ["test-harness"]` and is never part of a release
+  build.
+
+Each target has a non-bundled `runtime = "process"` manifest under
+`tests/fixtures/plugin_host/{testkit,osu}/`, with its schema, settings and
+action assets. The bundled osu! manifest stays target-free and in-process.
+
+The preparation helper builds both targets with
+`--message-format=json-render-diagnostics`. It takes the `cdylib` path from
+the matching `compiler-artifact` record and never guesses a file name or a
+hash suffix. It exports two absolute paths:
+
+- `VOSU_PLUGIN_HOST_TESTKIT_LIBRARY`;
+- `VOSU_PLUGIN_HOST_OSU_LIBRARY`.
+
+The native target reads these variables and fails, rather than skips, when a
+variable is unset or names a missing file. It never runs Cargo.
+
+Each test stages a fresh package directory. It copies the manifest, the assets
+and the library into `lib/`, then prints this receipt:
+
+```text
+RECEIPT artifact=<name> sha256=<hex> path=<staged path>
+```
+
+Native Windows builds the same example targets in the guest after staging.
+Linux artifacts are never copied there.
+
+**Per-run isolation.** The test daemon gets a per-test
+`VOSU_PLUGIN_HOST_FIXTURE_DIR`, which the plugin host inherits.
+
+- The testkit's constructor, `create`, crash, stall and security probes write
+  markers named `<probe>-<pid>` into that directory.
+- Barriers and acknowledgements use files or the ABI in that directory. There
+  is no global PID-keyed registry and no ordering sleep.
+- A "constructor ran" claim needs a marker that names the child PID. A "never
+  ran" claim needs the marker's absence and the absence of a leftover PID.
+
+**Process identity.** A death proof reads a pidfd, or a process handle and its
+exit status. It never relies on PID absence alone.
+
+**Security readback.** Before a constructor runs and again after
+plugin-created threads exist, the readback records:
+
+- UID;
+- all five capability sets;
+- `NoNewPrivs`, `Seccomp` and the result of the user-namespace probe.
+
+**Windows readback.** Token and job identities are read independently of the
+code under test.
+
+**Commands (later, by the owning units and Main):**
+
+```sh
+cargo build --locked -p vosu-plugin-testkit --example testkit_process_plugin
+cargo build --locked -p vosu-osu --example osu_process_plugin --features test-harness
+cargo test --locked --features test-harness --test plugin_host_native -- --list
+cargo test --locked --features test-harness --test plugin_host_native -- --nocapture
+# Packaged Linux, after explicitly authorized setup only:
+cargo test --locked --features test-harness --test plugin_host_native \
+  linux_security::linux_packaged_capability_drop -- --ignored --nocapture
+cargo test --locked --test process_memory -- --nocapture
+```
+
+None of these commands were run by A5.

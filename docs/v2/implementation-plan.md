@@ -1042,6 +1042,61 @@ packaged sandbox bootstrap (`vosulay/docs/security.md:265`,
 `vosulay/docs/architecture.md:24`); killing the daemon kills the child on
 both. A failure reopens D16 before M5 starts.
 
+#### S1 outcome (2026-11-25)
+
+**D16 stands on both operating systems.** M5's S1 prerequisite is closed. The
+evidence, artifact hashes, receipts and script defects are in
+[verification](../testing/verification.md#s1-vosulay-supervisor-evidence-d16).
+
+- **Windows: PASS (2026-11-24), conditional on a Medium vosulay host.** A
+  Medium daemon running the original strict kill-on-close job started real
+  packaged CEF: a Medium host, a Low restricted GPU process and an Untrusted
+  restricted renderer. Killing only the daemon removed the whole live tree in
+  2.156 s. The negative control with assignment disabled survived. The earlier
+  High-integrity exit 38 is Chromium's auto-de-elevation code, not a job or
+  sandbox refusal.
+- **Linux: PASS (2026-11-25).** The daemon held the `vosu --setup` file
+  capabilities. The vosulay host had zero `CapInh`, `CapPrm` and `CapEff`, and
+  `NoNewPrivs: 0`. CEF zygotes ran in fresh PID, user and net namespaces with
+  `NoNewPrivs: 1` and `Seccomp: 2`. After SIGKILL of the daemon alone, none of
+  the 13 distinct host and CEF processes survived. The script printed this as
+  "0 of 25" because it counted duplicate PIDs.
+- **The Linux exit criterion was met differently from its wording.** Chromium
+  used its unprivileged user-namespace sandbox, not the setuid
+  `chrome-sandbox` named in the exit above. The sandboxed CEF tree was live
+  and confined, so D16 holds, but the setuid path is still unexercised (see
+  residuals).
+- **Evidence classes stay separate.** The 2026-11-23 host-only Linux run, with
+  no file capabilities, is death-signal evidence only. The Linux VM daemon was
+  a debug build with file capabilities, and its receipts lack `getcap` and a
+  daemon status readback.
+
+Requirements this records:
+
+- **Elevated daemon on Windows.** vosulay's official supervisor must launch
+  the host at Medium integrity from an elevated daemon, using a verified
+  unelevated token for the same interactive user and session. A missing token
+  fails visibly, with no High-integrity fallback, breakaway flag or
+  `--no-sandbox`. S1 did not implement or prove this.
+- **Session and focus input (AF.8).** S1's stdin forwarding (scope above)
+  had no effect, because vosulay's stdin reader only waits for EOF. It is
+  superseded by AF.8: the attached child reads session and focus through its
+  own API-v1 subscription, which is the only data authority. The supervisor's
+  bounded private IPC carries lifecycle, backend configuration, editor intent
+  and the chosen-session policy.
+- **Ownership.** The production supervisor, the Medium launch and the API-v1
+  conversion belong to the vosulay ecosystem owner (F), not M5. M5 must not
+  ship shared spawn helpers that contradict this policy.
+- **Separate launch policies.** The vosulay child never gets the generic
+  plugin-host confinement of plugin-abi.md §7.3.
+
+Residuals, owned by F/vosulay and not M5 blockers:
+
+- setuid-helper evidence on a kernel that forbids unprivileged user
+  namespaces (AF.7's separately installed runtime owns that provisioning);
+- a direct daemon capability receipt;
+- packaged-release evidence for the daemon.
+
 ### M2: state bus and `vosu.*` namespaces
 
 Scope:
@@ -1572,17 +1627,19 @@ Scope:
   dedicated ring-reader thread that hands `VOSU_READ_PLAN_SYNC` results to
   the blocked submitter, which dispatches them on its own thread (D5);
   bounded streams for generated resources.
-- Linux: the §7.3 sequence before `dlopen` on the single initial thread.
-  `vosu --setup` grants file capabilities (`src/platform/linux/capabilities.rs:8-12`),
-  so the exec of `vosu plugin-host` regains them and must drop them first.
+- Linux: the §7.3 sequence before `dlopen` on the single initial thread, as
+  amended by A5.1(b) (below). `vosu --setup` grants file capabilities
+  (`crates/vosu-sys/src/platform/linux/capabilities.rs`), so the exec of
+  `vosu plugin-host` regains them and must remove them first. Setup does not
+  change.
 - Windows: `CREATE_SUSPENDED`, job object with
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` before resume (§7.4), reusing
   `src/tools/process.rs:59-70`. Then the measurement brokered-reads.md "Open
   questions" requires: port `benches/brokered_reads_bench.rs` to a Windows
   helper (unnamed section + event versus named pipe), run it pinned on the
   native Windows guest, record results in [brokered reads](brokered-reads.md)
-  and the [benchmark guide](../testing/benchmarks.md), adopt the faster
-  transport for Windows, and set the Windows brokered-read bar (D17).
+  and the [benchmark guide](../testing/benchmarks.md), and apply A5.6's frozen
+  tie rule and Windows brokered-read bar (D17).
 - `--plugin <dir>` becomes available in prerelease release builds, loading
   the plugin with `user` trust: `runtime = "process"` after the approval
   prompt (catalog-v2.md "Trust"), so ecosystem testers exercise the process
@@ -1598,11 +1655,14 @@ as in-process for the oracle inputs; read plans against another session's
 handle return `VOSU_ERR_PERMISSION_DENIED`; `VOSU_READ_PLAN_SYNC` works and
 times out identically in both runtimes; killing the plugin host detaches its
 sessions with `reason: "lost"` and restarts with backoff; a stalled ring
-trips the 2-second window. On Linux an `#[ignore]` test, run natively after
-`vosu --setup` on a packaged build, asserts that the plugin host's
-`/proc/<pid>/status` shows `CapInh`, `CapPrm`, `CapEff`, `CapBnd`, and
-`CapAmb` all zero and `NoNewPrivs: 1`; on Windows, terminating core
-terminates the plugin host. D17 M5 benches: `brokered_reads_bench` with the
+trips the 2-second window while an idle plugin survives beyond it. On Linux an
+`#[ignore]` test, run natively after `vosu --setup` on a packaged build,
+asserts that the plugin host's `/proc/<pid>/status` shows `CapInh`, `CapPrm`,
+`CapEff` and `CapAmb` all zero, `NoNewPrivs: 1`, `Seccomp: 2`, a failing
+user-namespace probe and no UID 0, both before the constructor and after
+plugin threads exist. `CapBnd` is recorded but not asserted (A5.1). On
+Windows, terminating core terminates the plugin host and its descendants.
+D17 M5 benches: `brokered_reads_bench` with the
 production transport, and the osu! plugin's reader benches and per-tick CPU
 under the process runtime (D5) recorded as data, not gated, since the
 bundled plugin runs in-process; `cargo test --locked --test process_memory -- --nocapture`
@@ -1612,6 +1672,146 @@ Risks: shared-memory setup and teardown robustness against a crashed host
 (brokered-reads.md "Recommendation" keeps a socket fallback acceptable);
 measured stage counts of the real regular capture path versus the bench
 estimate (brokered-reads.md "Open questions").
+
+#### A5 approved contract freeze (2026-11-24)
+
+The owner decided A5.1 as option (b). Main adopted A5.2–A5.8 as recommended,
+under the owner's delegated spec authority. These decisions are normative, and
+no implementation or measurement is claimed by them. The full text is in:
+
+- [plugin ABI](plugin-abi.md) §5, §6.8, §7.1–§7.4 and §7.6;
+- [catalog v2](catalog-v2.md#process-plugin-approval-and-management-a55-approved-2026-11-24);
+- [API v1](api-v1.md) jobs;
+- [ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)'s 2026-11-24
+  amendment;
+- the [test and fixture conventions](../testing/verification.md#m5-test-and-fixture-conventions-a5);
+- the [D17 contract](../testing/benchmarks.md#m5-d17-contract).
+
+| ID | Decision |
+| --- | --- |
+| A5.1 | Before any plugin code runs, a Linux plugin host reaches `CapPrm = CapEff = CapInh = CapAmb = 0` and `NoNewPrivs = 1`, with seccomp denying creation or entry of a user namespace. It reads this back and fails closed. `CapBnd = 0` is not required. Setup and the daemon gain no privilege, and `CAP_SETPCAP` is not granted. Without setup, process plugins run under the same postcondition. An environment that cannot install the filter fails with `security_unavailable` and is not retried. |
+| A5.2 | Transport-private frames are those whose opcode has the high bit set; ABI v1 gains no opcode. Every send whose status only core can decide is acknowledged. Plugins see the in-process statuses: there is no fabricated success and no phantom later result. Each instance has 64 shared status and `SYNC` waiters, and overflow returns `VOSU_ERR_INVALID_ARGUMENT`. Backstops are 2 s, or the `SYNC` budget plus 2 s, and reaching one is a transport loss. Rings are 2 MiB per direction. |
+| A5.3 | Every unexpected exit (including code 0) and every pressure or transport loss counts once. The fifth event in a rolling 300 s window latches `failed`. Backoff is 1/2/4/8/16 s, saturating, and resets only when the window is empty. Controlled stop, shutdown, revocation and deterministic startup refusals are never crashes. A manual restart resets the latch and starts a new generation. |
+| A5.4 | `DELETE` stays advisory. The 30 s deadline makes a job `timed_out`, then core cancels and allows 5 s of grace per invocation. Core kills at the earliest unanswered grace, and that kill counts as one loss. Collateral jobs fail `plugin_crashed`, and terminal or timed-out jobs are unchanged. Destroy has a 5 s grace. There is no manifest timeout. |
+| A5.5 | Approval binds the id, the runtime, the manifest and library SHA-256 and the provenance. It is stored in `plugins/approvals.json`, and dashboard routes handle it under `/api/plugins` with CSRF. Debug builds keep only the in-process `--plugin` exception. Prerelease release builds load `--plugin` as `user`/`process` after approval. There is no noninteractive or CLI approval. Stable release builds still refuse `--plugin`. |
+| A5.6 | Unnamed section and events remain the Windows production transport. The pipe is measurement-only unless it wins under the frozen tie rule and a separate secure-handoff amendment is approved. Linux `production_sync` p50 must be at most 2× the same-run prototype `shm` p50. The Windows bar uses the same form against the selected transport. |
+| A5.7 | D16 stands with the Medium-host requirement. S1 is recorded (above). Session and focus use the child's API v1 (AF.8). The production vosulay launch belongs to the ecosystem owner. |
+| A5.8 | The child re-arms `PR_SET_PDEATHSIG` after exec, checks its parent PID, and is spawned only from a long-lived launcher thread. Startup and destroy deadlines are 5 s. Failed security, bootstrap or configuration is a load refusal, not a crash loop. |
+
+**Execution backend and load metadata (H0).** Core keeps exactly one
+authoritative validation path: the M6a SDK `PackageManifest` plus validation
+context. From the validated package and its trust, core decides the granted
+runtime once (plugin-abi.md §7.1).
+
+- An instance's backend is either `InProcess`, a bundled vtable or a debug
+  developer library, or `Process(ProcessLaunch)`.
+- `ProcessLaunch` holds:
+  - the plugin id;
+  - the next generation (a `u64` that is never reused while the daemon runs);
+  - the canonical absolute library path for the running host target;
+  - `library_sha256` and `manifest_sha256`;
+  - provenance: `bundled`, `development {path}` or
+    `installed {source, version, package_sha256}`;
+  - the trust tier and a reference to the approval record;
+  - `concurrent_dispatch`;
+  - effective settings, `data_dir` and the `SYNC` budget.
+- A process grant never resolves, loads or calls the library in core.
+- A bundled manifest that requests `process` stays invalid.
+- State, actions, resources, sessions, focus, timers and logging remain the
+  existing host services behind one dispatch, destroy and loss seam per
+  backend. There is no duplicate host implementation.
+
+**Waiter and queue budgets (per process instance).** These bounds are frozen:
+
+| Item | Bound |
+| --- | --- |
+| Ring storage | 2 MiB in each direction. A legal frame parks for at most 2 s, and an illegal oversize frame is refused at once. |
+| Status and `SYNC` waiters | 64, shared. A `SYNC` result buffer holds at most 64 KiB, so the total is at most 4 MiB, allocated lazily and reused. |
+| Asynchronous plans, scans, plugin `ACTION_CALL`s and timers | 64 each, as before. Local admission happens before write, and core stays authoritative. |
+| `STATE_UPDATE` | One in-flight split sequence plus one complete merged update per session. |
+| Latest-only notifications | One entry per key: the handle for demand and focus, the timer id, one entry for settings, and the invocation for progress. |
+| Lifecycle backlog | 4,096 entries, unchanged. |
+| Restart state | Five timestamps and one cancellable one-shot timer. |
+
+Admitted work and terminal results use their existing reserved outboxes. The
+generic dispatch queue never refuses them, and private replies never enter it.
+
+**Counterexamples ruled out by this text:**
+
+- core loading a process library to validate it (§7.6 startup);
+- the unchanged `--setup` being assumed able to empty the bounding set
+  (§7.3: not required, not attempted);
+- a silent ring treated as an idle crash (§7.2 pressure and loss);
+- a remote permission failure turned into a fabricated success (§7.6
+  acknowledged sends);
+- `EPERM` ignored while a constructor still runs (§7.3 fail closed);
+- a `PR_SET_PDEATHSIG` that only the pre-exec process armed (§7.3 step 1);
+- generic plugin-host confinement applied to vosulay (§7.3 scope, D16);
+- generic job membership offered as proof (§7.4);
+- a changed library reusing an approval (A5.5 record, §7.6 digest check);
+- a 16 s retry after the fifth crash (A5.3);
+- `timed_out` overwritten by `plugin_crashed` (A5.4).
+
+**M4a and A4 compatibility.** The bundled osu! plugin and adapters stay
+in-process, and no external or process plugin gets `vosu-surface` authority
+(§7.5). The process osu! fixture follows the real producer → ABI → bus →
+M4a adapter path and compares actual `/json/v2` bytes and encoded API-v1
+frames against the committed oracle inputs, without fixture regeneration or a
+DTO publisher. A4.1–A4.6, the adapter surface contracts and M4a's D17 cases
+are unchanged. The process runtime adds no B1 bridge, snapshot channel or
+`vosu-osu → vosu-surface` edge.
+
+**M6a and Q compatibility.** Core validates through the SDK only:
+
+- Q3 provenance is part of the registration context;
+- Q4's strict and duplicate policy is unchanged;
+- Q6 hint validation and Q7 game classification run before any launch.
+
+The plugin host never parses `manifest.toml` and adds no second validator;
+core sends it only already-validated fields.
+
+**M6b and M7 interfaces.** None of these decisions reopens an M6b or F
+decision. M6b depends on two M5 deliverables:
+
+- the per-plugin controlled teardown and unregistration operation, for
+  uninstall, untrust and revocation (A6b.7);
+- the shared process-plugin load path, which M6b X0 needs to load, restart
+  and approve real installed process plugins.
+
+M7 consumes the `/api/plugins` routes and does not rebuild them. Both
+deliverables are in [catalog v2](catalog-v2.md#process-plugin-approval-and-management-a55-approved-2026-11-24).
+
+**Unit file ownership.** The integrator owns:
+
+- workspace and crate `Cargo.toml` files and the lockfile;
+- public and core exports;
+- `src/main.rs` and runtime composition;
+- test-root declarations, `scripts/crate-boundaries.txt` and the module
+  boundary lists.
+
+`host/instances.rs` changes in the order H0 → B0 → C0, through the integrator.
+No unit makes a length exception. Every file stays at or below 1,000 lines.
+
+| Unit | Owns |
+| --- | --- |
+| S0, A5 | `docs/testing/{verification,benchmarks}.md` contract sections; `docs/v2/{implementation-plan,plugin-abi,catalog-v2,api-v1}.md`; ADR 0019 |
+| H0 | `crates/vosu-core/src/plugin/{registry,instance,error,host}.rs`, new `plugin/registry/` and `plugin/execution/` modules, and the shared pure descriptor validator |
+| T0 | `crates/vosu-core/src/plugin/process/{frame,ring,channel}.rs`; `crates/vosu-sys/src/plugin_process/` mapping primitives |
+| L0 | `crates/vosu-sys/src/plugin_process/linux/{spawn,capabilities,channel}.rs`; Linux spawn integration in core. Setup capabilities stay unchanged. |
+| W0 | `crates/vosu-sys/src/plugin_process/windows/{spawn,job,channel}.rs`; Windows endpoint integration; a shared tool-process helper only with owner agreement |
+| R0, R1 | Pure memory vocabulary in `vosu-plugin-api` (R0); migration of the reader, state and `vosu-osu` callers, and deletion of their `vosu-sys` edges (R1) |
+| E0 | `crates/vosu-core/src/plugin/process/{entry,bootstrap,control}.rs`; the child loader |
+| T1 | `crates/vosu-core/src/plugin/process/{relay,waiters,delivery,admission}.rs`, reusing `plugin/{outbox,dispatch}` |
+| B0 | `crates/vosu-core/src/plugin/host/{read_plans,scans}.rs` process routing |
+| C0 | `crates/vosu-core/src/plugin/process/{supervisor,restart,shutdown}.rs`; focused hooks in `host/{instances,lifecycle,actions,action_delivery,resources,resource_requests}.rs` |
+| U0 | `src/runtime/dev_plugins.rs`, CLI parsing and prerelease policy, the approval store and `/api/plugins` handlers |
+| P0 | `crates/vosu-plugin-testkit/examples/testkit_process_plugin.rs`, `crates/vosu-osu/examples/osu_process_plugin.rs`, `tests/fixtures/plugin_host/`, `tests/plugin_host_native/support/` |
+| I0, X0, N0 | Their `tests/plugin_host_native/` child modules, listed in verification |
+| P1, X1 | `benches/brokered_reads_bench.rs` and its support, `examples/brokered_reads_target.rs`, the process cases and modes in the reader benches, and `docs/v2/brokered-reads.md` |
+| X2 | Final evidence, plus updates to security, setup and architecture documents |
+
+The [D17 contract](../testing/benchmarks.md#m5-d17-contract) records the
+D17 names, metrics and bars.
 
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
@@ -1884,7 +2084,7 @@ each newer alpha deliberately.
 | Repository | Changes (ADR 0022, specs, adopted decisions) |
 |---|---|
 | vosu-tools | Each `[service]` becomes a plugin crate on `vosu-plugin-api` (replacing `crates/vosu-tool-sdk`) with id `vosu.tools.<tool>`: `[api].write` routes become `[[actions]]` with `args_schema`/`result_schema`; read routes that return state become a plugin namespace whose schema `[[provides]]` declares (D7); file-returning routes become resources or trees; `[cli]` becomes actions with `cli = true` (`vosux <plugin-id> <action>`). `[permissions].host = ["context"]` becomes `requires` on `vosu.osu` fields and, where a raw path is truly needed, `vosu.osu/internal/paths` (D8) — replacing the `songs_dir` reinterpretation in `tools/replay-renderer/src/main.rs:628-636`; `songs:write` writers (the downloader, practice) call `vosu.osu.beatmap.import` instead of writing paths (D8). Each `tool.toml` becomes `manifest.toml` `kind = "tool"` with `[ui]` and `requires`/`optional`; plugin manifests carry `runtime`, `[targets.*]`, `provides`. `packages/tool-web` (`src/bridge.d.ts`) adopts the 2.0 bridge; every `/json/v2` and `/websocket/v2/subscribe` consumer moves to API v1 pointers using state-schema.md's mapping table. `scripts/package.py` emits `catalog-v2.json` beside `catalog.json` (catalog-v2.md "1.x coexistence"). CI runs each plugin under `runtime = "process"` against the latest alpha. |
-| vosulay | A small official plugin supervises vosulay's existing host executable as a child process (D16, validated by S1): job object on Windows, `PR_SET_PDEATHSIG` on Linux, session/focus forwarding, start/stop actions; the host keeps its CEF sandbox (`vosulay/docs/security.md:58-60`, `:265`) and its standalone mode against upstream-compatible backends. The editor becomes a `kind = "tool"` UI; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1 when attached to vosu. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its winget/Scoop/AUR packaging is unchanged. |
+| vosulay | A small official plugin supervises vosulay's existing host executable as a child process (D16, validated by S1): a job object on Windows, with the host launched at Medium integrity even from an elevated daemon; `PR_SET_PDEATHSIG` on Linux, without the generic plugin-host `no_new_privs` or user-namespace denial; bounded private lifecycle, configuration and editor-intent IPC; start/stop actions. Per AF.8, the attached child reads session and focus through its own API-v1 subscription; the supervisor does not forward them over stdin. The host keeps its CEF sandbox (`vosulay/docs/security.md:58-60`, `:265`) and its standalone mode against upstream-compatible backends. The editor becomes a `kind = "tool"` UI; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1 when attached to vosu. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its winget/Scoop/AUR packaging is unchanged. |
 | vosu-overlays | `metadata.txt` becomes `manifest.toml` `kind = "overlay"` with `requires`/`optional` field ids (common-layer fields where possible so overlays work across games); `overlays/*/overlay.js` move from `/websocket/v2/subscribe` to `WS /api/v1/sessions/active/subscribe`; `scripts/package.py` publishes both catalogs. |
 | vosu-overlay-quickstart | `app.js` (its `/websocket/v2/subscribe` at `app.js:449`) uses API v1 (api-v1.md "Worked examples"), ships a `manifest.toml` template, `TUTORIAL.md` rewritten with a section on porting overlays built from the 1.x template (D20); a release tagged `v2.x` (required by the day-0 check). |
 | packaging (`packaging/` here) | `nfpm.yaml` and AUR install hooks keep running `vosu --setup`; the plugin host is the same executable, so no new file capabilities; the `vosux` symlink stays; the release adds `include/vosu_plugin.h` as an asset for C plugin authors; `scripts/package-release.py` notes describe 2.0. Starts after M5 (plugin host exists). |
@@ -2278,15 +2478,21 @@ states what was adopted and why. Spec amendments land in A1.
 - **D16 vosulay hosting.** vosulay ships a small official plugin, running
   in-process, that supervises vosulay's existing host executable as a child:
   job object on Windows, `PR_SET_PDEATHSIG` on Linux. Spike S1 validates it
-  on Linux and Windows before M5. Why: under `vosu plugin-host` the
-  `no_new_privs` bit (plugin-abi.md:254) disables the setuid `chrome-sandbox`
-  vosulay's Linux packages install (`vosulay/docs/security.md:58-60`), CEF on
+  on Linux and Windows before M5. Why: under `vosu plugin-host`, the
+  `no_new_privs` bit (plugin-abi.md §7.3) disables the setuid `chrome-sandbox`
+  that vosulay's Linux packages install (`vosulay/docs/security.md:58-60`). The
+  plugin host's seccomp user-namespace denial (A5.1) disables Chromium's
+  namespace sandbox, which S1 observed in use. CEF on
   Windows must start through vosulay's sandbox bootstrap
   (`vosulay/docs/security.md:265`, `vosulay/docs/architecture.md:24`), CEF
   cannot be reinitialized within one process (`vosulay/docs/architecture.md:7`)
   and installs its own signal handlers (`vosulay/docs/architecture.md:35`);
   CEF renderers already run out of process, and the standalone mode for
-  upstream-compatible backends keeps working unchanged.
+  upstream-compatible backends keeps working unchanged. **S1 outcome
+  (2026-11-25): D16 stands** ([S1 outcome](#s1-outcome-2026-11-25)). On
+  Windows it is conditional on a Medium, unelevated vosulay host launched with
+  a verified same-session token, with no High fallback. Session and focus
+  reach the attached child through its API-v1 subscription (AF.8), not stdin.
 - **D17 Performance gates.** Benches: M1 runs the reader benches and the
   allocation invariant (`scalar_readers_allocate_nothing`) over `PlanMemory`
   with the in-process executor, since `raw_snapshot_reads`
@@ -2305,7 +2511,10 @@ states what was adopted and why. Spec amendments land in A1.
   against the pre-M0 commit, judged by non-overlapping Criterion 95%
   confidence intervals on pinned CPUs; Linux brokered reads within 2x of
   brokered-reads.md's prototype; the Windows brokered bar is set from M5's
-  measurement. Why: the first draft's benches bypassed the code under
+  measurement. A5.6 fixes both brokered metrics before measurement
+  ([M5 D17 contract](../testing/benchmarks.md#m5-d17-contract)):
+  `production_sync` p50 is at most 2× the same-run prototype p50 for each
+  plan shape. Why: the first draft's benches bypassed the code under
   change, and per-milestone bounds alone compound to about 33%.
 - **D18 Matcher hints and overlap.** `[match]` gains optional
   `comm_hints` (substrings of at most 15 bytes) used only to fill the
@@ -2383,13 +2592,16 @@ Risks that need no further decision:
 - **Hidden 1.x quirks:** the adapters rely on M4b to catch behavior the
   source oracle and `server_compat` do not cover; the pilot narrows that
   window.
-- **Windows transport:** unmeasured until M5; the spec lets the choice follow
-  the measurement.
+- **Windows transport:** unmeasured until M5. A5.6 keeps the unnamed
+  section and events unless a pipe wins under the frozen tie rule and gains an
+  approved secure handoff.
 - **Linux capability drop:** must run before any thread exists, so
   `plugin-host` dispatch happens first in `main`, before the Tokio runtime is
-  built (`src/main.rs:3-16`).
-- **vosulay:** if S1 fails on either OS, D16 reopens before M5, while there
-  is still time before the day-0 gate.
+  built (`src/main.rs:3-16`). A5.1(b) replaces the bounding-set drop with
+  `no_new_privs`, the user-namespace seccomp denial and a fail-closed readback.
+- **vosulay:** S1 passed on both OSes (D16 stands). The remaining
+  setuid-helper and elevated-launch evidence belongs to the vosulay ecosystem
+  owner.
 
 ## Critical files
 
