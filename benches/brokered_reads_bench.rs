@@ -66,7 +66,8 @@ mod linux_impl {
     use std::sync::Arc;
     use std::time::Instant;
 
-    use vosu_sys::process::{MemoryError, ProcessMemory, ReadRequest, open_process};
+    use vosu_plugin_api::memory::{MemoryError, ProcessMemory, ReadRequest};
+    use vosu_sys::process::open_process;
 
     const SAMPLES: usize = 5_000;
     const WARMUP: usize = 200;

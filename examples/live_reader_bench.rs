@@ -35,8 +35,8 @@ use vosu_osu_state::{
     RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
     StateBundle, state_backend::LiveStateCalculationBackend,
 };
+use vosu_plugin_api::memory::ReadStatus;
 use vosu_sys::platform::{PathResolver, Paths, SystemPathResolver};
-use vosu_sys::process::ReadStatus;
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(message.into()).into()

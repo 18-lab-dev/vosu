@@ -26,11 +26,13 @@ fn target_gone_is_reported_before_any_read_when_the_process_is_already_dead() {
         }
         fn read_many(
             &self,
-            _reads: &mut [vosu_sys::process::ReadRequest<'_>],
+            _reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
         ) -> Result<(), MemoryError> {
             panic!("must never read a dead target")
         }
-        fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+        fn readable_regions(
+            &self,
+        ) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
             Ok(Vec::new())
         }
         fn is_alive(&self) -> bool {
@@ -94,11 +96,13 @@ fn ref_op_wrong_width_outranks_target_gone_in_both_execution_paths() {
         }
         fn read_many(
             &self,
-            _reads: &mut [vosu_sys::process::ReadRequest<'_>],
+            _reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
         ) -> Result<(), MemoryError> {
             panic!("must never read a dead target")
         }
-        fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+        fn readable_regions(
+            &self,
+        ) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
             Ok(Vec::new())
         }
         fn is_alive(&self) -> bool {

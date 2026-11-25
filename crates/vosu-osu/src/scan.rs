@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use vosu_osu_reader::process::{BatchScanResult, MemoryError, Pattern, ScanBackend};
+use vosu_osu_reader::process::ScanBackend;
+use vosu_plugin_api::memory::{BatchScanResult, MemoryError, Pattern};
 use vosu_plugin_api::{
     ErrorInfo, HostServices, ScanRequest, ScanResult, VtableHostServices, vosu_session_id,
     vosu_status,

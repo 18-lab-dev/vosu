@@ -11,11 +11,13 @@ use vosu_osu_reader::{
     memory::{LazerMemory, LazerPattern, ReaderSynchronization, lazer_offsets::LazerOffsets},
     process::ProcessHandle,
 };
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 use vosu_plugin_api::{
     HostServices, Message, PlanMemory, ReadPlanSubmit, StageRef, SyncReadBuffers, vosu_opcode,
     vosu_status,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 struct RecordingMemory {
     inner: Arc<lazer_fixture::Fixture>,

@@ -34,7 +34,9 @@ use windows_sys::{
     },
 };
 
-use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 mod memory;
 mod read_impl;
 use read_impl::{read_exact_impl, read_many_impl};

@@ -105,8 +105,8 @@ checksum-verified payload and game installation remain untouched.
 |---|---|---|
 | Startup and process-wide lifecycle | `crates/vosu-core/src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
 | Client discovery, generations, focus | `crates/vosu-core/src/plugin/{discovery,session,focus}.rs`, `crates/vosu-osu/src/plugin.rs` | host-owned lifecycle and Focus rule |
-| Native process access | `src/process.rs`, `src/process/linux.rs`, `src/process/windows.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
-| Signature/offset scanning | `src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
+| Native process access | `crates/vosu-plugin-api/src/memory.rs`, `crates/vosu-sys/src/process{,/linux,/windows}.rs`, `crates/vosu-osu-reader/src/process.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
+| Signature/offset scanning | `crates/vosu-plugin-api/src/memory/pattern.rs`, `crates/vosu-sys/src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
 | Raw client decoding | `src/memory/stable/*`, `src/memory/lazer/*`, `src/memory/snapshot/*` | `MemoryReader`, `StableMemory`, `LazerMemory`, raw snapshots |
 | Capture scheduling and state transitions | `src/state/worker.rs`, `src/state/readers.rs`, `src/state/bundle/*` | `spawn_state_worker`, `StateBundle`, `SnapshotTransition` |
 | Coherent state publication and selection | `crates/vosu-osu/src/publish.rs`, `crates/vosu-core/src/state/`, `crates/vosu-surface/src/state.rs` | ABI commits and captured selected images |
@@ -157,7 +157,7 @@ Core's `DiscoveryService` queries a platform `ProcessSource`, matches enabled pl
 
 On Windows, core samples the foreground owner once every 100 ms and caches it before recomputing plugin focus. Surface captures carry that cached observation for every identified session, not a second OS query or timer.
 
-`vosu-sys::process::ProcessMemory` is the native all-or-error syscall boundary. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
+`vosu_plugin_api::memory::ProcessMemory` is the object-safe all-or-error read boundary, with its request, error, status and signature-pattern vocabulary; `vosu-sys` implements it over native handles and owns the signature region walk and module tables. The plugin's `PlanProcessMemory` adapts synchronous SDK `PlanMemory` requests to the existing reader's pointer-width-aware `ProcessHandle`; core owns native handles and executes the plans. Stable scanning and lazer offset resolution stay above the OS backend. Each lazer session owns at most one resolver; detach/destroy cancels and joins it, and capture waits for immutable offsets.
 
 Resolver version discovery, generated-offset parsing and cache installation run
 on Tokio's blocking pool. The embedded generator uses a blocking-pool bridge

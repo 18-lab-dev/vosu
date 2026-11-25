@@ -9,7 +9,7 @@ use serde_json::{Number, Value};
 
 use crate::memory::lazer_offsets::LazerOffsets;
 use crate::memory::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
-use crate::process::{Pattern, ProcessHandle};
+use crate::process::ProcessHandle;
 use vosu_osu_model::enums::{GameState, RankedPlayStage};
 use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
@@ -22,7 +22,7 @@ use vosu_osu_model::states::{
     Statistics, TourneyManagerChatItem,
 };
 use vosu_osu_model::{js_round_number, net_date_binary_to_date};
-use vosu_sys::process::{MemoryError, MemoryRead, ReadRequest, ReadStatus};
+use vosu_plugin_api::memory::{MemoryError, MemoryRead, Pattern, ReadRequest, ReadStatus};
 
 const MAX_COLLECTION: usize = 1_000_000;
 // Room/client counts and retained chat are far smaller than gameplay histories.

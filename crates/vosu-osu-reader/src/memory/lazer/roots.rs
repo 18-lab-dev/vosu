@@ -6,6 +6,8 @@
 //! first use in a capture reads all roots in one native batch; if that batch fails, each root
 //! falls back to its own read so errors are those of that field alone.
 use super::*;
+#[cfg(any(windows, test))]
+use vosu_plugin_api::memory::ChainReadRequest;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum GameRoot {
@@ -178,9 +180,9 @@ impl LazerMemory {
         self.process
             .read_chains(
                 &mut [
-                    crate::process::ChainReadRequest::new(base, &[0], &mut vtable),
-                    crate::process::ChainReadRequest::new(add(base, root_first).ok()?, &[], roots),
-                    crate::process::ChainReadRequest::new(
+                    ChainReadRequest::new(base, &[0], &mut vtable),
+                    ChainReadRequest::new(add(base, root_first).ok()?, &[], roots),
+                    ChainReadRequest::new(
                         add(self.current_screen, screen_first).ok()?,
                         &[],
                         screen,

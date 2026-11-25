@@ -67,8 +67,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
+use vosu_plugin_api::memory::{MemoryError, ProcessBitness, ProcessMemory};
 use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_opcode, vosu_status};
-use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
 use super::super::read_plan::{
     self, DispatchThreadScope, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,

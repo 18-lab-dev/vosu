@@ -18,7 +18,7 @@ use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_reader::discovery::{
     StartupArgs, instance_settings, is_linux_candidate_name, is_linux_named_name, windows_client,
 };
-use vosu_osu_reader::process::ProcessBitness;
+use vosu_plugin_api::memory::ProcessBitness;
 use vosu_plugin_api::{Bitness, SessionAttached};
 
 /// Which OS this attach's facts describe. A runtime value (not a `cfg`) so

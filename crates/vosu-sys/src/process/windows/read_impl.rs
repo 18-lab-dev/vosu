@@ -1,4 +1,4 @@
-use super::{MemoryError, ReadRequest};
+use vosu_plugin_api::memory::{MemoryError, ReadRequest};
 
 const MERGED_READ_LIMIT: usize = 4096;
 const STACK_READ_LIMIT: usize = 1024;

@@ -25,6 +25,7 @@ semver = "=1.0.28"
 thiserror = "2.0.18"
 tokio = { version = "=1.52.3", features = ["fs", "sync", "time"] }
 tracing = "=0.1.44"
+vosu-plugin-api = { path = "../vosu-plugin-api" }
 
 [dev-dependencies]
 parking_lot = "0.12.5"

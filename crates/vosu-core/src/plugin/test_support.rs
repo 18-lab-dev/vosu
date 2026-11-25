@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use vosu_sys::process::{ProcessBitness, ProcessMemory};
+use vosu_plugin_api::memory::{ProcessBitness, ProcessMemory};
 
 use super::host::read_plans;
 

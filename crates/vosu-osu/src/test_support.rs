@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::thread;
 
-use vosu_osu_reader::process::Pattern;
+use vosu_plugin_api::memory::Pattern;
 use vosu_plugin_api::{
     Init, Message, PlanBase, Plugin, PluginError, ReadErrorCode, ReadPlanSubmit, ReadResult,
     ScanResult, StageBase, VtableHostServices, vosu_bytes, vosu_host_services, vosu_message,

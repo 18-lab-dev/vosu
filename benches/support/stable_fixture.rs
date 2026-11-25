@@ -1,7 +1,7 @@
 //! Shared successful x86 capture: identical bytes for native and brokered benches.
 use vosu_osu_model::memory::{Gameplay, Global, Menu};
 use vosu_osu_reader::memory::{MemoryReader, StableMemory, StablePatterns};
-use vosu_sys::process::ReadStatus;
+use vosu_plugin_api::memory::ReadStatus;
 
 pub const PLAY_TIME: f64 = 1234.0;
 pub const FIRST_OBJECT_TIME: Option<i64> = Some(0);

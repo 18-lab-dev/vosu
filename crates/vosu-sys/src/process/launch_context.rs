@@ -1,6 +1,6 @@
 //! Bounded, selected-process launch facts; never inherits daemon context.
-use super::MemoryError;
 use std::{ffi::OsString, path::PathBuf};
+use vosu_plugin_api::memory::MemoryError;
 
 pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone)]

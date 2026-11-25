@@ -7,9 +7,9 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use vosu_plugin_api::memory::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
 use vosu_plugin_api::{PlanBase, PlanMemoryError, ReadResult, vosu_status};
 use vosu_plugin_testkit::read_plan::{ReadPlanCommand, ReadPlanEvent, ReadPlanPluginConfig};
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
 
 use super::super::super::super::registry;
 use super::super::super::tests::{test_host, test_process};
