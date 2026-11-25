@@ -5,9 +5,11 @@
 //! - Every process instance [`PluginHost::create_instance`] creates is
 //!   supervised: the initial load starts its window, and a failure leaves
 //!   it `Failed` until a manual restart.
-//! - A loss reaches [`PluginHost::supervised_lost`] only after
-//!   `instance_loss.rs` retired the lost generation, so its endpoints are
-//!   closed and its process reaped before anything restarts.
+//! - A loss is recorded (`last_failure`, the crash event, `backoff` or
+//!   `failed`) as soon as `instance_loss.rs` takes the generation out of
+//!   service, before its retirement ends any waiter; the restart delay is
+//!   armed through [`PluginHost::follow`] only after that retirement closed
+//!   its endpoints and reaped its process.
 //! - A restart is a new generation under the same instance id: a new child,
 //!   new handles, new sessions offered by discovery once the matcher
 //!   registers again, identification before public exposure.
@@ -20,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use super::super::dispatch::WorkerPool;
 use super::super::error::HostError;
-use super::super::execution::{Execution, LossCause};
+use super::super::execution::Execution;
 use super::super::process::control::{StartupFailure, StartupStage};
 use super::super::process::supervisor::{
     FailureReason, Next, ProcessStatus, Published, RestartRefused, RestartTimer, StartGuard,
@@ -121,14 +123,9 @@ impl PluginHost {
         result
     }
 
-    /// A `Running` generation of `id` was lost and retired: one crash
-    /// event, then a delayed restart or the `failed` latch.
-    pub(super) fn supervised_lost(&self, id: PluginInstanceId, cause: LossCause) {
-        let next = self.supervisor.lost(id, cause, Instant::now());
-        self.follow(id, next);
-    }
-
-    fn follow(&self, id: PluginInstanceId, next: Next) {
+    /// Acts on a supervisor transition: arms the restart delay, or logs why
+    /// nothing restarts.
+    pub(super) fn follow(&self, id: PluginInstanceId, next: Next) {
         match next {
             Next::Restart { epoch, delay } => {
                 tracing::info!(?id, ?delay, "restarting process plugin after backoff");

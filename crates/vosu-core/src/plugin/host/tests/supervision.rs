@@ -116,12 +116,22 @@ fn supervision_a_lost_instance_restarts_after_backoff_as_a_new_generation() {
 
     let lost_at = Instant::now();
     scenario.lose(0);
+    // The loss is recorded as soon as it is reported, before retirement ends
+    // any of the generation's waiters.
     wait_phase(
         host,
         id,
         |phase| matches!(phase, ProcessPhase::Backoff { delay, streak: 1 } if *delay == Duration::from_secs(1)),
     );
-    // The lost generation was retired, its child reaped, before the delay.
+    assert_eq!(
+        host.process_status(id).unwrap().last_failure,
+        Some(FailureReason::Loss(LossCause::ProcessExited {
+            status: Some(0)
+        }))
+    );
+
+    assert_eq!(scenario.launcher.wait_launches(2, RECV_TIMEOUT), 2);
+    // The lost generation was retired, its child reaped, before the restart.
     assert_eq!(old.terminate_calls(), 1);
     assert!(
         host.sessions
@@ -130,8 +140,6 @@ fn supervision_a_lost_instance_restarts_after_backoff_as_a_new_generation() {
             .handle_for_pid(9_890)
             .is_none()
     );
-
-    assert_eq!(scenario.launcher.wait_launches(2, RECV_TIMEOUT), 2);
     let restarted_after = lost_at.elapsed();
     assert!(
         restarted_after >= Duration::from_millis(950),

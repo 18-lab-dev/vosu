@@ -172,7 +172,11 @@ impl PluginHost {
     /// running jobs and relay calls fail (§7.6 "Loss identity" order).
     /// Timers are cancelled both before and after the teardown: a local
     /// `destroy`'s queue drain can run `TIMER_SET` again (§6.11's exit
-    /// item). Returns the controlled `destroy`'s result.
+    /// item). State subscriptions end before the teardown, but the
+    /// instance's delivery slots are dropped only after it: the drain
+    /// still delivers the `SESSION_DETACHED` (and final state) its owned
+    /// sessions' detach queued before `destroy` (§7.6 "Per-instance
+    /// teardown seam" step 2). Returns the controlled `destroy`'s result.
     pub(super) fn retire_instance(
         &self,
         id: PluginInstanceId,
@@ -198,6 +202,7 @@ impl PluginHost {
             }
             self.timers.cancel_all(id);
         }
+        self.state_slots_retired(id);
         self.instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())

@@ -759,9 +759,11 @@ The child stops routing frames to dispatch when it reads `DESTROY`, lets the dis
 **Per-instance teardown seam (M5 C0, 2026-11-25).** `PluginHost::teardown_instance(id)` is the one host API for the controlled teardown of a single instance of either runtime. It serves manual stop, approval revocation, and M6b uninstall's `RootRemoval::stop`. In order, it:
 
 1. cancels a process instance's restart delay and marks it `stopped`, so nothing restarts it, and waits for a start already in progress, which tears down what it starts;
-2. unregisters the instance's matcher and detaches every session it owns with reason `lost`, while the instance is still published, so its final committed state and `SESSION_DETACHED` reach it before `destroy`;
-3. takes the instance out of dispatch and releases its resources, streams, actions, jobs, relays, subscriptions and timers;
-4. drains queued dispatch and runs `destroy` within the 5-second grace. For a process instance that is `DESTROY`, then a kill and reap past the grace.
+2. unregisters the instance's matcher and detaches every session it owns with reason `lost`, while the instance is still published, so its final committed state and `SESSION_DETACHED` are queued on its dispatch before it leaves service;
+3. takes the instance out of dispatch and releases its resources, streams, actions, jobs, relays, subscriptions and timers. Ending its state subscriptions stops new deliveries but does not cancel the ones step 2 queued;
+4. drains queued dispatch, which delivers step 2's final state and `SESSION_DETACHED`, and runs `destroy` within the 5-second grace. For a process instance that is `DESTROY`, then a kill and reap past the grace. Only then are the instance's state delivery slots dropped.
+
+Invariant: every session the instance owned has had `SESSION_DETACHED` delivered before `destroy` (or `DESTROY`) runs. There are two exceptions: the grace ran out, or the instance's bounded dispatch queue was full when the detach was queued. In the second case the delivery's retry finds the instance already gone. Two races can also break the invariant, and the host handles both. Releasing subscriptions in step 3 must not discard a delivery that step 2 already queued, so slots are dropped only after the drain. A detach can also arrive while an earlier delivery job for the same session is running, which leaves the `SESSION_DETACHED` to that job. That job sends it itself instead of resubmitting, because by then the instance may already be out of dispatch.
 
 It returns once teardown has completed. `Err(DestroyTimedOut)` means the grace ran out; a process child is already dead by then. Limit: an in-process plugin whose `destroy` or queued dispatch never returns cannot be stopped. Its thread keeps running, and its context and library stay mapped (leaked, never freed under it) until the daemon exits, although its host state is released. Uninstalling such a plugin's files is safe only after the daemon restarts. Process status (`starting`, `running`, `backoff`, `failed`, `stopped`, last failure, restarts, crash events and `generation`) is `PluginHost::process_status`; a manual restart is `PluginHost::restart_process_instance`.
 
@@ -784,6 +786,8 @@ An unexpected exit with code 0 is still a loss. The owner cancels and collects w
 5. Running jobs and relay calls whose provider was the lost instance fail with `plugin_crashed`.
 
 A job that already timed out stays `timed_out`, and an already-terminal job never changes. Old endpoints are closed and the process reaped before any restart. A restart is a new generation with new handles, re-offered sessions and identification before public exposure. Nothing from an old generation can complete a new generation's request.
+
+Supervision records the loss before any of those notifications. `PluginHost::process_status` already reports the loss as `last_failure`, counts its crash event, and shows `backoff` or `failed` before a session detaches or a waiter gets `plugin_crashed`. A reader that has observed an ended waiter therefore never sees the lost generation as `running` with no failure. The backoff timer is armed only after the lost generation is retired: its endpoints are closed and its process is reaped. So the 1, 2, 4, 8 or 16 s delay counts from the end of retirement, and during retirement the status already shows `backoff`.
 
 **Restart (A5.3).** Each of these counts as exactly one crash event:
 
