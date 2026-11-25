@@ -227,12 +227,15 @@ A plugin that no longer needs an outstanding plan's result (its owning session d
 **Opt-in synchronous reads (D5).** `VOSU_READ_PLAN_SYNC` (`include/vosu_plugin.h`), set in `vosu_message.flags` on a `READ_PLAN_SUBMIT`, guarantees the matching `READ_PLAN_RESULT` is dispatched back on this same submitting thread before `send` returns — directly, for an in-process plugin; through a dedicated ring-reader thread that hands the result to the blocked submitter, for a `process`-runtime plugin under `vosu plugin-host` — under a host-enforced deadline that returns `VOSU_ERR_TIMED_OUT` rather than blocking indefinitely. This is the one case where `send` itself may deliver the reply synchronously, concurrently with an ordinary `dispatch` call already in flight on this plugin instance's own serialized thread (§4); every other opcode keeps the asynchronous, serialized contract above, and a plugin using this flag must treat its own state as accessed from both threads for the duration of the call. A plugin submits a synchronous plan from its own worker thread only: submitting one from any thread the host itself dispatches onto — a `dispatch` invocation of any kind, or the state-bus publisher thread — is rejected with `VOSU_ERR_INVALID_ARGUMENT` in both runtimes, since blocking there would either deadlock a lock the plugin holds across `send` or stall publication. The Rust SDK routes a flagged result to a per-plan slot before user code ever sees it through `on_message`, and gates `PlanMemory` (a synchronous-looking read API built on this flag) behind the unpublished `unstable-sync-reads` feature; the osu! plugin is measured under the process runtime with this feature in M5 before any third party is offered it.
 
 The current host uses a 2 s execution budget for fresh synchronous plans, checked
-between dependent stages and during individual-op retries after a failed batch.
+between dependency levels and during individual-op retries after a failed batch.
+A level is every stage whose base is already resolved (the root's stages first,
+then the stages reading through them, and so on); its reads run as one native
+batch, and results keep the submission's (stage, op) order.
 These checks use a coarse monotonic clock (~16 ms on Windows; typically 1–4 ms on
 Linux), not capture timestamps. Overrides are clamped to at least 64 ms (four
-Windows ticks). A successful single-stage synchronous plan makes no time query:
+Windows ticks). A successful single-level synchronous plan makes no time query:
 native reads cannot be preempted by a same-thread deadline check, and the bounded
-64 KiB stage is already a finite backend batch sequence. A failed batch starts a retry budget.
+64 KiB level is already a finite backend batch sequence. A failed batch starts a retry budget.
 The public `execute_into` executor retains its precise absolute-deadline contract.
 
 ### 6.4 Signature scanning and module enumeration

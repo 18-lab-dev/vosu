@@ -4,7 +4,7 @@
 //! checked against the simpler, allocating one it must agree with byte for
 //! byte once decoded.
 //!
-//! Each generated plan is one to three stages deep. Every stage's first op
+//! Each generated plan is one to five stages deep. Every stage's first op
 //! is forced to [`ProcessBitness::X64`]'s pointer width (8 bytes) so it can
 //! always serve as a later stage's dependent `ref_op`; stage 0 is always
 //! `StageBase::Root`, every later stage picks `Root` or `Dependent` on an
@@ -88,7 +88,7 @@ fn plan_strategy() -> impl Strategy<Value = (PlanBase, Vec<GenStage>)> {
             offset: 0,
         }),
     ];
-    let stage_count = 1usize..=3;
+    let stage_count = 1usize..=5;
     (root_strategy, stage_count).prop_flat_map(|(root, stage_count)| {
         let stages = (0..stage_count as u32)
             .map(stage_strategy)
