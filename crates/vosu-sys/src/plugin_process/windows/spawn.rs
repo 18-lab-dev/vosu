@@ -18,14 +18,14 @@
 //! process, waits for it within [`UNWIND_REAP_BOUND`], and closes every
 //! handle; the child never runs a user-mode instruction unconfined.
 //!
-//! **Residual (§7.4 has no answer for it).** A handle list stops *this*
-//! child from inheriting anything else, but the four duplicates are
-//! inheritable for the duration of `CreateProcessW`. Another thread of this
-//! process that creates a process with `bInheritHandles = TRUE` and no
-//! handle list in that window (Rust's `std::process::Command`, and so
-//! `tokio::process`, does exactly that) inherits copies of them. Every
-//! plugin-host spawn here uses a handle list and so never picks up another
-//! spawn's duplicates.
+//! **Inheritance gate.** A handle list stops *this* child from inheriting
+//! anything else, but the four duplicates are inheritable for the duration
+//! of `CreateProcessW`, and a concurrent `CreateProcess` elsewhere in this
+//! process with `bInheritHandles = TRUE` and no handle list (Rust's
+//! `std::process::Command`, and so `tokio::process`) would inherit copies.
+//! The spawn therefore holds `crate::process_spawn`'s process-wide gate from
+//! creating the duplicates until they are closed, and every other process
+//! creation in the daemon takes the same gate (enforced by `clippy.toml`).
 
 use std::ffi::OsStr;
 use std::io;
@@ -227,6 +227,10 @@ pub(in crate::plugin_process) fn spawn_with(
     let job = PluginJob::create().map_err(|error| fail(SpawnStep::CreateJob, error))?;
 
     let created = {
+        // Held until the block ends, after `inherited` is dropped: no other
+        // process creation in this process can run while the duplicates
+        // are inheritable (declared first, so dropped last).
+        let _gate = crate::process_spawn::hold();
         let prepare = |error| fail(SpawnStep::PrepareChild, error);
         // Inheritable duplicates; dropped (closed) right after creation.
         let mut inherited = vec![

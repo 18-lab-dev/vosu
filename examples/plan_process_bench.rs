@@ -1,3 +1,7 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "diagnostic harness: spawns its own target child; no plugin host exists in this process"
+)]
 //! Real-process native/PluginHost diagnostic. Windows (no test-harness required):
 //! `$env:VOSU_READ_PLAN_PROFILE='1'; cargo run --release --locked --features read-plan-profile --example plan_process_bench -- --pid 1234 --cycles 1000`
 //! Optional `--address 0x...` overrides the first readable region. The synthetic

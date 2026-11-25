@@ -13,7 +13,7 @@ fn launch(command: &mut Command) -> io::Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut child = command.spawn()?;
+    let mut child = vosu_sys::process_spawn::spawn(command)?;
     // A terminal can live indefinitely. A detached thread reaps it without
     // retaining a Tokio blocking worker or delaying daemon shutdown.
     if let Err(error) = std::thread::Builder::new()

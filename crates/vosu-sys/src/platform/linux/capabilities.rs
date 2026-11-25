@@ -210,11 +210,11 @@ struct NativeCommandRunner;
 
 impl CommandRunner for NativeCommandRunner {
     fn output(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<Output> {
-        Command::new(program).args(arguments).output()
+        crate::process_spawn::output(Command::new(program).args(arguments))
     }
 
     fn status(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<ExitStatus> {
-        Command::new(program).args(arguments).status()
+        crate::process_spawn::status(Command::new(program).args(arguments))
     }
 }
 

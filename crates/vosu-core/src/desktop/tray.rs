@@ -92,7 +92,7 @@ pub fn start(
                     // OS launch may block; never run it on a runtime/UI thread.
                     let _ = tokio::task::spawn_blocking(move || {
                         if let Some(url) = url {
-                            if let Err(error) = open::that_detached(url) {
+                            if let Err(error) = vosu_sys::process_spawn::open_detached(url) {
                                 tracing::debug!(%error, "Tray dashboard launch unavailable");
                             }
                         } else if let Err(error) = logs::show(&logs_dir) {

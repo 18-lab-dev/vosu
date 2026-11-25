@@ -208,7 +208,7 @@ async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -
             Ok(())
         });
     }
-    let mut child = command.spawn()?;
+    let mut child = vosu_sys::process_spawn::spawn_tokio(&mut command)?;
     #[cfg(windows)]
     let _job = Job::assign(&child)?;
     {

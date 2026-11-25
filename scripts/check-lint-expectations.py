@@ -31,7 +31,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = ROOT / "scripts" / "lint-expectations.txt"
 LINTS = ("disallowed_methods", "disallowed_types")
-CATEGORIES = {"bounded-poll", "disposable-io", "bounded-queue", "benchmark-helper"}
+CATEGORIES = {"bounded-poll", "disposable-io", "bounded-queue", "benchmark-helper", "spawn-gate"}
 
 LINT_PATTERN = re.compile(r"clippy::(disallowed_methods|disallowed_types)\b")
 CFG_ATTR_TEST = re.compile(r"cfg_attr\s*\(\s*test\s*,\s*expect\s*\(")

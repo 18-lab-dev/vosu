@@ -3872,6 +3872,7 @@ dependencies = [
  "libbpf-rs",
  "libc",
  "memchr",
+ "open",
  "parking_lot",
  "semver",
  "tempfile",

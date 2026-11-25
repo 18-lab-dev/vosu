@@ -34,7 +34,7 @@ pub trait CounterOpener: Send + Sync {
 pub struct SystemOpener;
 impl CounterOpener for SystemOpener {
     fn open(&self, path: &Path) -> io::Result<()> {
-        open::that_detached(path).map_err(io::Error::other)
+        vosu_sys::process_spawn::open_detached(path)
     }
 }
 

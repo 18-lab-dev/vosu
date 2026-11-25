@@ -77,6 +77,7 @@ fn helper_process_entry() {
         "probe" => probe(&args, Path::new(&role[1]), role[2] == "descendant"),
         "descendant" => descendant(),
         "core" => core(&args, Path::new(&role[1]), &role[2]),
+        "exit" => 0,
         other => panic!("unknown helper role {other}"),
     };
     std::process::exit(code);
@@ -672,4 +673,61 @@ fn command_line_quotes_every_argument_for_the_runtime_parser() {
     assert_eq!(line.last(), Some(&0));
     assert!(command_line(Path::new("a\"b"), &[], &values).is_err());
     assert!(command_line(Path::new("a"), &[OsStr::new("x\0y")], &values).is_err());
+}
+
+/// Plugin-host spawns racing a loop of ordinary spawns (std `Command`, which
+/// inherits every inheritable handle): the inheritance gate must keep the
+/// plugin host's transient inheritable duplicates out of every ordinary
+/// child. Each ordinary child is created suspended and its handle table is
+/// compared against the ring objects before it is killed.
+#[test]
+fn concurrent_ordinary_spawns_never_inherit_plugin_host_ring_handles() {
+    use std::os::windows::process::CommandExt as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    const PLUGIN_SPAWNS: usize = 64;
+    let exe = std::env::current_exe().unwrap();
+    let to_plugin = RingObjects::create(LEN).unwrap();
+    let to_host = RingObjects::create(LEN).unwrap();
+    let rings = [
+        to_plugin.mapping_handle(),
+        to_plugin.doorbell_handle(),
+        to_host.mapping_handle(),
+        to_host.doorbell_handle(),
+    ];
+    let done = AtomicBool::new(false);
+    let checked = std::thread::scope(|scope| {
+        let ordinary = scope.spawn(|| {
+            let mut checked = 0_usize;
+            while !done.load(Ordering::Acquire) {
+                let mut command = std::process::Command::new(&exe);
+                command
+                    .creation_flags(CREATE_SUSPENDED)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                let mut child = crate::process_spawn::spawn(&mut command).unwrap();
+                let table = child_handles(child.as_handle()).unwrap();
+                child.kill().unwrap();
+                child.wait().unwrap();
+                for original in rings {
+                    assert!(
+                        !table.iter().any(|entry| entry.same_object(original)),
+                        "ordinary child {checked} inherited a ring handle: {table:?}"
+                    );
+                }
+                checked += 1;
+            }
+            checked
+        });
+        let args = helper_args(&["exit"]);
+        for _ in 0..PLUGIN_SPAWNS {
+            // Dropping it closes the job, which kills the plugin host.
+            drop(spawn_plugin_host(&exe, &os_args(&args), &to_plugin, &to_host).unwrap());
+        }
+        done.store(true, Ordering::Release);
+        ordinary.join().unwrap()
+    });
+    assert!(checked >= 8, "only {checked} ordinary children overlapped");
 }

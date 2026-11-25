@@ -1,3 +1,10 @@
+#![cfg_attr(
+    target_os = "linux",
+    expect(
+        clippy::disallowed_methods,
+        reason = "benchmark harness: spawns its own target child; no plugin host exists in this process"
+    )
+)]
 //! Brokered memory-read cost measurement for ADR 0019 (`process`-runtime plugins).
 //!
 //! ## Plan shape derivation

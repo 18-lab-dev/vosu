@@ -389,10 +389,11 @@ impl ProductionRuntime {
         }
         if self.ordinary_role && config.open_dashboard_on_startup {
             let url = format!("{}/", self.origins.dashboard());
-            if let Err(error) = tokio::task::spawn_blocking(move || open::that_detached(url))
-                .await
-                .map_err(|error| error.to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()))
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || vosu_sys::process_spawn::open_detached(url))
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result.map_err(|error| error.to_string()))
             {
                 self.logger
                     .warn(format!("Could not open dashboard: {error}"));
@@ -753,7 +754,7 @@ pub async fn run_cli() -> io::Result<()> {
         && let Some(url) = vosu_core::desktop::existing_dashboard(&target.host, target.port).await
     {
         println!("vosu is already running; opening {url}");
-        if let Err(error) = open::that_detached(&url) {
+        if let Err(error) = vosu_sys::process_spawn::open_detached(&url) {
             eprintln!("Could not open dashboard: {error}");
         }
         config.shutdown().await?;
