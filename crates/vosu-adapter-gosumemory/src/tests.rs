@@ -205,7 +205,9 @@ fn selectors_request_no_removed_extensions_and_manifest_has_exact_private_grant(
             || s.pointer.contains("release")
             || s.pointer == "/keys/all")
     );
-    let manifest = vosu_plugin_api::PluginManifest::parse(MANIFEST).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     assert_eq!(manifest.id, "vosu.adapter.gosumemory");
     assert!(MANIFEST.contains("field:vosu.osu.internal.paths"));
 }

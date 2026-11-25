@@ -12,6 +12,5 @@
 1045 crates/vosu-sys/src/platform/linux/capabilities.rs
 1197 crates/vosu-sys/src/process/linux.rs
 1201 crates/vosu-sys/src/process/linux/tests/mod.rs
-1255 src/counters/service.rs
 1114 src/server/websocket/tests.rs
 1378 src/tools/tests.rs

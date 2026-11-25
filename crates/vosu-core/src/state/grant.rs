@@ -1,7 +1,8 @@
 //! Publication authority compiled once from a validated plugin manifest.
 use std::sync::Arc;
 
-use vosu_plugin_api::{ManifestError, PluginManifest, field_to_pointer};
+use vosu_plugin_api::manifest::ManifestError;
+use vosu_plugin_api::{PluginManifest, field_to_pointer};
 
 use super::{CORE_NAMESPACES, Pointer, PointerError};
 

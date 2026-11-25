@@ -17,6 +17,9 @@ fn publisher() -> PublisherGrant {
         "test.reference",
         "\"field:vosu.chart\",\"field:vosu.skin\"",
         r#"
+[[provides]]
+id='resource:test.reference.custom'
+version='1.0.0'
 [[resource_kinds]]
 kind='audio'
 families=['audio']

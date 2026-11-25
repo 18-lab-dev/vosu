@@ -315,9 +315,9 @@ fn api_root_expands_new_namespaces_without_spending_external_selectors() {
             .any(|(ns, p)| ns.as_ref() == id && p.is_empty())
     );
     assert!(!subscription.updates.borrow().ended);
-    let manifest = vosu_plugin_api::PluginManifest::parse(&format!(
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(&format!(
         "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='root'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:{id}'\nversion='1.0.0'\nschema='new.json'\n"
-    )).unwrap();
+    )).and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     let bytes = batch(handle, &[(id, "/value", PublishValueRef::U64(92))]);
     let published = vosu_plugin_api::decode_publish_batch_ref(&bytes).unwrap();
@@ -358,16 +358,18 @@ fn api_projection_never_uses_plugin_internal_grants() {
         .registry
         .write()
         .unwrap()
-        .register(
+        .register_versioned(
             "vosu.osu",
             "vosu.osu",
+            &semver::Version::parse("1.3.0").unwrap(),
+            vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../docs/v2/schemas/vosu.osu.schema.json"
             )),
         )
         .unwrap();
-    let manifest = vosu_plugin_api::PluginManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='osu.json'\n").unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='osu.json'\n").and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     let public_id = summary_id(&host.api_state_source().sessions().unwrap().remove(0));
     host.state.store.close_session(SessionKey(handle));

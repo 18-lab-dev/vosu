@@ -190,16 +190,18 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         .registry
         .write()
         .unwrap()
-        .register(
+        .register_versioned(
             "vosu.osu",
             "vosu.osu",
+            &semver::Version::parse("1.3.0").unwrap(),
+            vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../docs/v2/schemas/vosu.osu.schema.json"
             )),
         )
         .unwrap();
-    let manifest = vosu_plugin_api::PluginManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='osu.json'\n").unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='osu.json'\n").and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     host.state().store.close_session(SessionKey(handle));
     host.state().store.open_session(
@@ -272,13 +274,27 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
     );
     publisher::register_manifest(granted, &manifest);
     let _events = publisher::register(granted);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &publisher::manifest(granted),
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: publisher::vosu_plugin_vtable,
-    }])
+    let mut snapshot = host.validation_snapshot();
+    snapshot
+        .providers
+        .push(crate::plugin::ProviderRegistration {
+            id: "vosu.osu".into(),
+            official: true,
+            builtin: true,
+            replaces: Vec::new(),
+            revision: Some(semver::Version::parse("1.3.0").unwrap()),
+        });
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &snapshot,
+        &[registry::BundledPlugin {
+            manifest: &publisher::manifest(granted),
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(8706),

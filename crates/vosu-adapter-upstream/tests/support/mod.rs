@@ -218,23 +218,36 @@ impl Case {
         );
         let (send, recv) = sync_channel(1);
         PENDING.lock().unwrap().insert(root.path().to_owned(), send);
-        let manifest = "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='R1 Fixture'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs','files','skins']\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='osu.json'\n[[resource_kinds]]\nkind='file'\nfamilies=['chart-text']\n[match]\nprocess_names=['r1-fixture']\n";
-        let loaded = plugin::load_bundled(&[
-            plugin::BundledPlugin {
-                manifest,
-                settings_schema: None,
-                namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
-                action_schemas: &[],
-                vtable: vosu_plugin_vtable,
-            },
-            plugin::BundledPlugin {
-                manifest: vosu_adapter_upstream::MANIFEST,
-                settings_schema: None,
-                namespace_schemas: &[],
-                action_schemas: &[],
-                vtable: adapter::vosu_plugin_vtable,
-            },
-        ])
+        let manifest = "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='R1 Fixture'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['songs','files','skins']\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='osu.json'\n[[provides]]\nid='game:osu'\nversion='*'\n[[resource_kinds]]\nkind='file'\nfamilies=['chart-text']\n[match]\nprocess_names=['r1-fixture']\n";
+        // As composition does, the batch's bundled source is a known provider.
+        let mut snapshot = host.validation_snapshot();
+        snapshot.providers.push(plugin::ProviderRegistration {
+            id: "vosu.osu".into(),
+            official: true,
+            builtin: true,
+            replaces: Vec::new(),
+            revision: None,
+        });
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &snapshot,
+            &[
+                plugin::BundledPlugin {
+                    manifest,
+                    settings_schema: None,
+                    namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
+                    action_schemas: &[],
+                    vtable: vosu_plugin_vtable,
+                },
+                plugin::BundledPlugin {
+                    manifest: vosu_adapter_upstream::MANIFEST,
+                    settings_schema: None,
+                    namespace_schemas: &[],
+                    action_schemas: &[],
+                    vtable: adapter::vosu_plugin_vtable,
+                },
+            ],
+        )
         .unwrap();
         host.create_instance(
             PluginInstanceId::new(1),

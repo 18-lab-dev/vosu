@@ -207,8 +207,9 @@ fn run_backend_probe(backend: BackendProbe) -> io::Result<()> {
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub(super) fn backend_probe_hints() -> io::Result<vosu_sys::events::CommHints> {
     use vosu_core::plugin::{MatchPlatform, MatcherEngine, Prefilter};
-    let manifest =
-        vosu_plugin_api::PluginManifest::parse(vosu_osu::MANIFEST).map_err(io::Error::other)?;
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .map_err(io::Error::other)?;
     let matcher = manifest
         .matcher
         .ok_or_else(|| io::Error::other("osu! manifest has no matcher"))?;

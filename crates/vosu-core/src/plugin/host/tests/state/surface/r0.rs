@@ -171,13 +171,17 @@ impl Case {
             .lock()
             .unwrap()
             .insert(name.into(), fixture.clone());
-        let loaded = registry::load_bundled(&[registry::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_plugin_vtable,
-        }])
+        let loaded = registry::load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &host.validation_snapshot(),
+            &[registry::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         let instance = PluginInstanceId::new(instance);
         let dir = tempfile::tempdir().unwrap();

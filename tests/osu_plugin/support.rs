@@ -303,19 +303,33 @@ impl Harness {
             // namespace. These lifecycle fixtures retain common coverage.
             // Real-id schema registration is also covered by tests/state_bus.rs
             // (K8) and real_manifest_registers_its_namespace_schema.
-            manifest.remove("provides");
+            manifest
+                .get_mut("provides")
+                .unwrap()
+                .as_array_mut()
+                .unwrap()
+                .retain(|capability| {
+                    capability
+                        .get("id")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|id| id.starts_with("game:"))
+                });
             manifest.remove("actions");
             &[][..]
         };
         manifest.insert("id".into(), toml::Value::String(id.into()));
         let manifest = toml::to_string(&manifest).unwrap();
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
-            namespace_schemas,
-            action_schemas: vosu_osu::ACTION_SCHEMAS,
-            vtable: vosu_plugin_vtable,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &vosu_core::plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
+                namespace_schemas,
+                action_schemas: vosu_osu::ACTION_SCHEMAS,
+                vtable: vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         host.create_instance(
             PluginInstanceId::new(1),
@@ -361,13 +375,17 @@ impl Harness {
         let manifest = format!(
             "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='{id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
         );
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_plugin_testkit::subscriber::vosu_plugin_vtable,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &vosu_core::plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_testkit::subscriber::vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         self.host
             .create_instance(

@@ -18,13 +18,17 @@ fn owned_subscriber(
         "[match]",
         &format!("{options}covers=['field:vosu.play.combo']\n[match]"),
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: subscriber::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: subscriber::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(n),

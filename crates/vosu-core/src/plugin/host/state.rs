@@ -179,7 +179,16 @@ impl SchemaRegistration {
         }
         for (provided, text) in provided.iter().zip(plugin.namespace_schemas()) {
             let ns = provided.id.strip_prefix("field:").unwrap_or(&provided.id);
-            if let Err(error) = registry.register(&manifest.id, ns, text) {
+            let version = semver::Version::parse(&provided.version)
+                .map_err(|error| HostError::State(error.to_string()))?;
+            let provenance = if plugin.library_handle().is_none() {
+                vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial
+            } else {
+                vosu_plugin_api::manifest::schema::SchemaProvenance::Untrusted
+            };
+            if let Err(error) =
+                registry.register_versioned(&manifest.id, ns, &version, provenance, text)
+            {
                 registry.unregister_provider(&manifest.id);
                 return Err(HostError::State(error.to_string()));
             }

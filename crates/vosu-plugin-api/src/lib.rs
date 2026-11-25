@@ -13,12 +13,16 @@
     reason = "mirrors include/vosu_plugin.h's type and enumerator names exactly, so the header and these Rust types read as the same contract rather than two spellings of it"
 )]
 mod capability;
+pub mod catalog;
 mod cbor;
 mod envelope;
 mod flags;
 mod flat;
 mod limits;
-mod manifest;
+/// Unified package validation, explicit registration context and pure
+/// requirement matching. Asset-backed namespace extraction/catalog comparison
+/// are separate from intrinsic validity and application host support.
+pub mod manifest;
 mod message;
 mod opcode;
 mod primitives;
@@ -66,8 +70,8 @@ pub use limits::{
     VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
 pub use manifest::{
-    ActionDeclaration, ActionSessionMode, Capability, ManifestError, MatchTable, PluginManifest,
-    ResourceKind, Runtime, Target,
+    ActionDeclaration, ActionSessionMode, Capability, MatchTable, PluginManifest, ResourceKind,
+    Runtime, Target,
 };
 #[cfg(feature = "unstable-sync-reads")]
 pub use message::flat::StageRef;

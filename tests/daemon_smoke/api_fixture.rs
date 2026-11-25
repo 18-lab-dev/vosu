@@ -144,7 +144,7 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
                 .unwrap();
             if ["file", "stream"]
                 .iter()
-                .all(|kind| state["test.api.fixture"]["resources"][*kind]["url"].is_string())
+                .all(|kind| state["test.api.fixture"]["resources"][kind]["url"].is_string())
             {
                 break state;
             }

@@ -198,8 +198,10 @@ namespace documents, manifest-derived grants, schema-lane demand, audience
 projection and latest-only subscriptions. A `PUBLISH_BATCH` is validated in
 full before one serialized ArcSwap replacement; an invalid batch changes neither
 values nor revision. Committed state is capped at 4 MiB per namespace and
-65,536 keys per session. Schemas are embedded source inputs; production uses
-the lane walker, not a JSON Schema validator.
+65,536 keys per session. Core embeds trusted schema inputs and consumes the
+SDK's bounded `manifest::schema` compiler and demand union; it retains registry
+lifetime, grants and rollback, not a second lane walker. This is load-time
+metadata extraction, not runtime JSON Schema validation of published values.
 
 `crates/vosu-osu/src/project/` maps each accepted snapshot into `vosu.status`,
 `vosu.chart`, `vosu.play`, `vosu.skin` and `vosu.osu`; core supplies
@@ -238,6 +240,16 @@ The bundled adapter crates own wire construction: `vosu-adapter-gosumemory` (`/j
 `src/server/origins.rs` separates trusted dashboard pages/management from the unchanged overlay origin ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)). Each listener has an explicit origin role and shares effective address metadata. Dashboard mutations require exact dashboard provenance plus a per-start CSRF token; dashboard HTML is not CORS-readable, and overlay static files never run on that listener. Overlay command-socket settings and scoped key grants retain their compatibility contracts. This browser-origin boundary does not authenticate against malicious native same-account clients.
 
 `src/tools` reserves `/tools` before counter static routing. `ToolHost` discovers development, official-catalog, and user tools, persists trust/enabled state and settings in a separate config namespace, and owns bounded service logs and supervised child lifetimes. Ordered configurable catalog sources merge tools and overlays with first-source-wins shadowing; packages undergo shared network/archive hardening, size/digest and manifest checks before atomic installation. Only the default official tool source grants automatic trust. Services receive per-launch secrets, bind ephemeral loopback ports, and pass readiness/health checks before requests are forwarded. Public read prefixes remain overlay-readable; mutations require a dashboard-minted tab session or a declared dependent tool token. Dashboard-only `/api/tools` management retains provenance and CSRF checks. Shutdown closes child stdin and enforces a five-second exit bound; Linux parent-death signals and Windows kill-on-close jobs additionally contain daemon death. See the [tool protocol](../tools/protocol.md).
+
+Package document validation lives in `vosu-plugin-api`: core plugin loading,
+v2 tool discovery and manifest-first overlay discovery all consume its unified
+model with explicit application-version and registration context. Legacy tool
+presentation conversion is not a second v2 parser; `tool.toml` remains only
+through M7. The SDK's catalog parser and asset-backed comparison do not switch
+the legacy network installer to catalog v2. Sources, trust, graph selection and
+installation remain M6b/M7-owned. Offline packaging schemas check structure
+only; their limits and the exact [consumer inventory](../testing/verification.md#consumer-migration-ledger)
+are recorded separately from native-platform evidence.
 
 
 Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; publication tasks live in `WebSocketHubs`. The hub bounds each client to one pending state frame, and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. The selected-field `/websocket/v2/subscribe` feed is removed. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`.

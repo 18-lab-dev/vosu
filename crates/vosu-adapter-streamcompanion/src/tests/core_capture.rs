@@ -111,25 +111,38 @@ fn production_selectors_capture_live_time_stats_and_preserve_descendant_lanes() 
         runtime.handle().clone(),
         Arc::new(plugin::SyntheticForegroundSource::new(None)),
     );
-    let source_manifest = "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='SC fixture source'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=['fixture.exe']\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='state.json'\n";
-    let loaded = plugin::load_bundled(&[
-        plugin::BundledPlugin {
-            manifest: source_manifest,
-            settings_schema: None,
-            namespace_schemas: &[include_str!(
-                "../../../../docs/v2/schemas/vosu.osu.schema.json"
-            )],
-            action_schemas: &[],
-            vtable: || vosu_plugin_api::__vtable_for_serialized::<Source>(),
-        },
-        plugin::BundledPlugin {
-            manifest: MANIFEST,
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_plugin_vtable,
-        },
-    ])
+    let source_manifest = "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='SC fixture source'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=['fixture.exe']\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='state.json'\n[[provides]]\nid='game:osu'\nversion='*'\n";
+    // As composition does, the batch's bundled source is a known provider.
+    let mut snapshot = host.validation_snapshot();
+    snapshot.providers.push(plugin::ProviderRegistration {
+        id: "vosu.osu".into(),
+        official: true,
+        builtin: true,
+        replaces: Vec::new(),
+        revision: None,
+    });
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &snapshot,
+        &[
+            plugin::BundledPlugin {
+                manifest: source_manifest,
+                settings_schema: None,
+                namespace_schemas: &[include_str!(
+                    "../../../../docs/v2/schemas/vosu.osu.schema.json"
+                )],
+                action_schemas: &[],
+                vtable: || vosu_plugin_api::__vtable_for_serialized::<Source>(),
+            },
+            plugin::BundledPlugin {
+                manifest: MANIFEST,
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_vtable,
+            },
+        ],
+    )
     .unwrap();
     for (index, loaded) in loaded.iter().enumerate() {
         host.create_instance(

@@ -13,7 +13,8 @@ fn actions_session_ownership_is_fixed_and_detach_only_requests_cancellation() {
         "tests.actions.session",
         "",
         "required",
-        "[match]\nprocess_names = [\"actions-session-process\"]",
+        "[match]\nprocess_names = [\"actions-session-process\"]\n[[provides]]\nid='game:fixture'\nversion='*'\n",
+        &[],
     );
     host.process_appeared(test_process(91901, "actions-session-process"));
     let attached = match events.recv_timeout(WAIT).unwrap() {
@@ -65,6 +66,7 @@ fn actions_session_ownership_is_fixed_and_detach_only_requests_cancellation() {
         "",
         "optional",
         "",
+        &[],
     );
     let other_action = host.get("tests.actions.sessionother.nested.echo").unwrap();
     assert_eq!(

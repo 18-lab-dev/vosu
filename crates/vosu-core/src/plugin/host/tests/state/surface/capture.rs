@@ -19,13 +19,17 @@ fn reader(
         session_manifest(name, &[name]).replace("[match]", &format!("{requirements}[match]"));
     publisher::register_manifest(name, &manifest);
     let _events = publisher::register(name);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &publisher::manifest(name),
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: publisher::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &host.validation_snapshot(),
+        &[registry::BundledPlugin {
+            manifest: &publisher::manifest(name),
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     host.create_instance(
         PluginInstanceId::new(instance),

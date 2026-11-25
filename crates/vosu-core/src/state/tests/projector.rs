@@ -50,9 +50,11 @@ fn client_namespace() -> StateValue {
 
 fn session() -> (SchemaRegistry, SessionState) {
     let mut reg = SchemaRegistry::with_core().unwrap();
-    reg.register(
+    reg.register_versioned(
         "vosu.osu",
         "vosu.osu",
+        &semver::Version::new(1, 3, 0),
+        vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
         include_str!("../../../../../docs/v2/schemas/vosu.osu.schema.json"),
     )
     .unwrap();
@@ -173,7 +175,9 @@ fn manifest_with(entries: &str) -> vosu_plugin_api::PluginManifest {
          version='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\n\
          runtime='in-process'\n\n{entries}"
     );
-    vosu_plugin_api::PluginManifest::parse(&text).expect("parses")
+    vosu_plugin_api::manifest::PackageManifest::parse(&text)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .expect("parses")
 }
 
 #[test]

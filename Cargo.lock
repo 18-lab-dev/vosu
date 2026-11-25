@@ -3562,6 +3562,7 @@ dependencies = [
  "bytes",
  "ciborium",
  "indexmap",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -3590,6 +3591,7 @@ version = "2.0.0-alpha.1"
 dependencies = [
  "bytes",
  "ciborium",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -3781,10 +3783,15 @@ name = "vosu-plugin-api"
 version = "1.0.0-alpha.0"
 dependencies = [
  "ciborium",
+ "jsonschema",
  "proptest",
+ "regex",
  "semver",
  "serde",
+ "serde_json",
+ "thiserror",
  "toml",
+ "url",
  "vosu-proptest",
 ]
 

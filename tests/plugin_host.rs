@@ -180,8 +180,13 @@ fn development_plugin_dir() -> tempfile::TempDir {
 #[test]
 fn development_plugin_dlopen_create_dispatch_destroy() {
     let dir = development_plugin_dir();
-    let loaded = plugin::load_development(dir.path(), true)
-        .expect("loading the dev-plugin directory this test just wrote");
+    let loaded = plugin::load_development(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        dir.path(),
+        true,
+    )
+    .expect("loading the dev-plugin directory this test just wrote");
     let (handler, rx) = recording_handler();
     let instance = PluginInstance::create(
         PluginInstanceId::new(1),
@@ -202,8 +207,13 @@ fn development_plugin_dlopen_create_dispatch_destroy() {
 #[test]
 fn development_plugin_instance_outlives_a_dropped_loaded_plugin() {
     let dir = development_plugin_dir();
-    let loaded = plugin::load_development(dir.path(), true)
-        .expect("loading the dev-plugin directory this test just wrote");
+    let loaded = plugin::load_development(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        dir.path(),
+        true,
+    )
+    .expect("loading the dev-plugin directory this test just wrote");
     let (handler, rx) = recording_handler();
     let instance = PluginInstance::create(
         PluginInstanceId::new(5),
@@ -233,7 +243,12 @@ fn development_plugin_instance_outlives_a_dropped_loaded_plugin() {
 #[test]
 fn release_builds_refuse_development_plugins() {
     let dir = development_plugin_dir();
-    match plugin::load_development(dir.path(), false) {
+    match plugin::load_development(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        dir.path(),
+        false,
+    ) {
         Err(plugin::HostError::InProcessRefused { .. }) => {}
         Err(other) => panic!("expected InProcessRefused, got {other}"),
         Ok(_) => panic!("expected a release build to refuse --plugin <dir>"),
@@ -266,8 +281,13 @@ fn development_settings_schema_is_read_from_the_manifest_dir() {
     )
     .expect("writing manifest.toml");
 
-    let loaded = plugin::load_development(dir.path(), true)
-        .expect("loading the dev-plugin directory this test just wrote");
+    let loaded = plugin::load_development(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        dir.path(),
+        true,
+    )
+    .expect("loading the dev-plugin directory this test just wrote");
     let defaults = loaded
         .settings_schema()
         .expect("manifest declared settings_schema")
@@ -279,8 +299,23 @@ fn development_settings_schema_is_read_from_the_manifest_dir() {
 
 #[test]
 fn bundled_echo_create_dispatch_destroy() {
-    let loaded =
-        plugin::load_bundled(vosu::plugins::BUNDLED).expect("loading vosu::plugins::BUNDLED");
+    // The required adapters in BUNDLED need `vosu.osu`'s fields, which only
+    // composition's bundled-provider snapshot supplies; load the echo entry.
+    let echo_entry: Vec<_> = vosu::plugins::BUNDLED
+        .iter()
+        .filter(|entry| {
+            vosu_plugin_api::manifest::PackageManifest::parse(entry.manifest)
+                .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+                .is_ok_and(|manifest| manifest.id == "vosu.testkit.echo")
+        })
+        .cloned()
+        .collect();
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &echo_entry,
+    )
+    .expect("loading the BUNDLED echo entry");
     let echo = loaded
         .iter()
         .find(|plugin| plugin.manifest().id == "vosu.testkit.echo")
@@ -383,13 +418,17 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
         vosu_core::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
 
     let manifest = "kind='plugin'\nmanifest_version=1\nid='acme.testkit.host-services'\nname='Host Services Testkit'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
-    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-        manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: vosu_plugin_testkit::host_services::vosu_plugin_vtable,
-    }])
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[plugin::BundledPlugin {
+            manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: vosu_plugin_testkit::host_services::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the host-services testkit plugin");
 
     let data_dir = tempfile::tempdir().expect("creating a temp plugin data dir");
@@ -533,15 +572,19 @@ fn injected_session_memory_answers_a_sync_plan() {
     let plugin_id = "acme.testkit.readplan.injected";
     let (events, commands) = vosu_plugin_testkit::read_plan::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-injected']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-injected']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     );
-    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
-    }])
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[plugin::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the read-plan testkit plugin");
 
     let data_dir = tempfile::tempdir().expect("creating a temp plugin data dir");
@@ -686,15 +729,19 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     let plugin_id = "acme.testkit.scan.injected";
     let (events, commands) = vosu_plugin_testkit::scan::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-scan-injected']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-scan-injected']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     );
-    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: vosu_plugin_testkit::scan::vosu_plugin_vtable,
-    }])
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[plugin::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: vosu_plugin_testkit::scan::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the scan testkit plugin");
 
     let data_dir = tempfile::tempdir().expect("creating a temp plugin data dir");

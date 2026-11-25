@@ -88,7 +88,12 @@ impl References {
             "{}\ncovers=['field:vosu.chart']\n[[provides]]\nid='field:test.x1.reference'\nversion='1.0.0'\nschema='state.json'\n[[resource_kinds]]\nkind='audio'\nfamilies=['audio']\n",
             manifest("test.x1.reference")
         );
-        let grant = PublisherGrant::from_manifest(&PluginManifest::parse(&text).unwrap()).unwrap();
+        let grant = PublisherGrant::from_manifest(
+            &vosu_plugin_api::manifest::PackageManifest::parse(&text)
+                .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+                .unwrap(),
+        )
+        .unwrap();
         let store = StateStore::new(Arc::new(RwLock::new(SchemaRegistry::with_core().unwrap())));
         store.open_session(
             SessionKey(99131),

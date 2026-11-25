@@ -104,8 +104,12 @@ pub async fn start_test_production_composition(
         ConfigSettingsBridgeB2::new(options.config.clone()),
     )));
     let plugins = api_v1::resource_host(logger.clone(), settings, &plugin_data).await?;
-    let loaded =
-        vosu_core::plugin::load_bundled(crate::plugins::BUNDLED).map_err(io::Error::other)?;
+    let loaded = vosu_core::plugin::load_bundled(
+        crate::application_version(),
+        &super::dev_plugins::source_snapshot(&plugins, crate::plugins::BUNDLED, &[]),
+        crate::plugins::BUNDLED,
+    )
+    .map_err(io::Error::other)?;
     let pool = vosu_core::plugin::WorkerPool::new(4, vosu_core::plugin::DEFAULT_QUEUE_CAPACITY);
     for (index, plugin) in loaded.iter().enumerate() {
         plugins

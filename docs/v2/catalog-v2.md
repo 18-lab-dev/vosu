@@ -275,6 +275,98 @@ replaces = []                     # optional, default []; grammar matches `id`'s
   `kind = "tool"` or `kind = "overlay"` is invalid (see "Capability fields"
   above).
 
+#### M6a validation contract (approved 2026-11-24)
+
+The M6a Q1–Q7 clarifications are adopted, not pending recommendations:
+
+- Declaration lists reject duplicate capability ids within `provides`,
+  `requires` and `optional`, and duplicate action names, resource-kind names,
+  root slots and `covers` strings. Unknown fields and cross-kind fields are
+  errors; a future extension requires an explicit format-contract change.
+- V2 overlay resolution is exactly two integers, each in `1..=16384`.
+  This restriction does not change legacy metadata parsing.
+- A plugin is a game plugin iff its `provides` contains a `game:` capability.
+  `[match]` is required iff it is a game plugin.
+- Own-namespace leaf provides require an own whole-namespace declaration
+  with its schema asset; all own field versions equal that declaration.
+  Foreign leaf provides require the authoritative namespace revision in
+  supplied built-in/official context and must equal it. Missing authoritative
+  revision is an error. Foreign whole-namespace provides remain forbidden.
+- Context supplies exact official identities and every enabled-source,
+  bundled and installed registration. Prefix collisions are symmetric and
+  segment-delimited; seeing the same identity installed and catalogued is
+  not a collision. Source-local replaces checks remain per kind.
+
+Validation separates intrinsic document validity, contextual validity, host
+support and asset-backed mirror verification. A well-formed host mismatch
+is unsupported, not malformed. The application version is injected, never
+the SDK package version. M6b reuses SDK capability coverage and semver
+candidate-conjunction predicates; graph traversal, source selection, trust,
+network acquisition and installation remain M6b/M7-owned.
+
+The SDK cutover interface is `manifest::PackageManifest` with typed
+`PluginManifest`, `ToolManifest` and `OverlayManifest` views.
+`parse`/`validate` check intrinsic rules; `validate_context` consumes an
+explicit `ValidationContext` and returns host support separately.
+`ValidationError` carries a stable rule id and document pointer.
+Ordered declaration vectors remain ordered for mirror comparison.
+
+The SDK namespace compiler accepts caller-supplied bytes, expected namespace
+and provide version, trusted common-definition bytes and explicit schema
+provenance. Its output contains namespace/version, canonical
+`(pointer,lane,activity)` contributions, required top-level fields and
+visibility metadata. The catalog comparison accepts a validated package, catalog
+entry and loaded schema metadata, and fails if schema bytes/metadata are
+absent; catalog-only checks never attest package equivalence. It compares
+all genuinely mirrored metadata, including requirement order, but not
+package-local art paths against remote URLs or an invented catalog UI.
+
+### Offline packaging schemas
+
+The committed Draft 2020-12 schemas are
+[`manifest.schema.json`](schemas/manifest.schema.json) and
+[`catalog-v2.schema.json`](schemas/catalog-v2.schema.json).
+They are self-contained: every `$ref` is a document-local fragment, and
+their fixed HTTPS `$id` values are identifiers, not retrieval instructions.
+Use an offline Draft 2020-12 validator; no network access is necessary.
+For manifests, first parse `manifest.toml` and project its data model to JSON,
+then validate that JSON against the manifest schema. Do not validate raw TOML
+text as JSON. Omitted arrays default to empty; tool UI entry defaults to
+`index.html`. Schema `default` annotations document defaults, not mutations.
+Manifest optional fields are omitted, not JSON null. Catalog metadata and
+art fields may be null; cross-kind fields remain forbidden even when null.
+
+These schemas check packaging structure, required fields, kind discrimination,
+integer bounds, enums and lexical identifier/path/URL/hash shapes. They are
+not complete semantic validators. The SDK remains authoritative for semver
+requirements and prerelease rules, registered namespace boundaries, official
+source identity, cross-entry uniqueness/replacement claims, capability ownership,
+action/provide and namespace-version correspondence, Rust regex syntax, UTF-8
+byte lengths (JSON Schema lengths count Unicode characters), canonical lane
+tables and asset-backed manifest/catalog equality. A schema pass grants no
+permissions, host support, download safety or installation approval.
+In particular, catalog `published` is an informational string, not a required
+date-time format assertion.
+
+The SDK's `tests/packaging_schema.rs` corpus projects TOML to JSON and separates
+shape-invalid rows (both validators reject) from SDK-only semantic rejections
+(structural acceptance is expected). Run offline parity with:
+
+```sh
+cargo test --locked -p vosu-plugin-api manifest_schema
+cargo test --locked -p vosu-plugin-api catalog_schema
+```
+
+Ecosystem packaging scripts may consume these committed files without running
+vosu; full publisher/install validation must still use the SDK and actual
+schema assets. No external ecosystem repository is changed by these schemas.
+
+The integrated M6a corpus records 266 paired rejection controls and 38 literal
+semver truth rows. See [outcome and evidence](../testing/verification.md#m6a-outcome-and-evidence)
+for observed Linux commands, the consumer migration ledger and native Windows
+commands explicitly marked **pending**. Structural parity does not establish
+native filesystem behavior, complete package equality or an installation gate.
+
 ### `kind = "plugin"`
 
 Runtime fields — `abi_version`, `runtime`, `concurrent_dispatch`,

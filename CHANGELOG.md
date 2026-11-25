@@ -78,6 +78,25 @@ All notable user-visible changes to vosu are documented here. Older sections are
   Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
   truncation marker. Production mounts all adapters through requester-bound routes.
 
+## Unreleased — 2.0 M6a
+
+- Validate plugin, web-tool and overlay package manifests through the SDK's
+  unified validator, with the executable's version and fresh live-provider
+  namespace context. Namespace registration checks the declared schema version
+  and explicit bundled/development provenance.
+- Discover manifest-only overlays and prefer `manifest.toml` even when it is
+  invalid or unreadable. Legacy `metadata.txt` stays read-only, with its historic
+  defaults and separate settings; invalid manifests never fall back to it.
+- Reject the reserved `vosu.sessions` namespace in every capability class.
+  Malformed namespace-schema references report `D7.ref`, distinct from malformed
+  catalog mirror pointers.
+- Add strict SDK catalog-v2 validation and asset-backed manifest/catalog mirror
+  comparison, sharing namespace-schema extraction with core. Validation performs
+  no fetch or installation; source/trust/resolver work remains M6b-owned.
+- Commit offline Draft 2020-12 manifest and catalog packaging schemas with
+  TOML-to-JSON parity controls. Structural checks complement, not replace, SDK
+  semantic/context validation. Native Windows M6a evidence remains pending.
+
 ## Unreleased — 2.0 M3
 
 - `vosu logs` and the tray **Show logs** fallback now read the log directory

@@ -22,6 +22,7 @@ vosu-plugin-api = { path = "../vosu-plugin-api" }
 vosu-surface = { path = "../vosu-surface" }
 
 [dev-dependencies]
+semver = "=1.0.28"
 tempfile = "3.26.0"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "time", "macros", "sync"] }
 vosu-core = { path = "../vosu-core" }

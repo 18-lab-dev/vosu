@@ -9,6 +9,7 @@
 # graph stays accurate even where the checker itself cannot derive them.
 manifest -> limits
 manifest -> capability
+catalog -> manifest
 cbor -> validate
 message -> cbor
 message -> flags

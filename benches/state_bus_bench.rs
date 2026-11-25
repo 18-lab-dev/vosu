@@ -23,8 +23,7 @@ use vosu_osu::{project::SessionFacts, publish::BusPublisher};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot};
 use vosu_plugin_api::{
-    HostServices, Message, PluginManifest, StateUpdate, decode_publish_batch_ref, vosu_opcode,
-    vosu_status,
+    HostServices, Message, StateUpdate, decode_publish_batch_ref, vosu_opcode, vosu_status,
 };
 
 const KEY: SessionKey = SessionKey(8202);
@@ -71,14 +70,19 @@ struct Bus {
 }
 impl Bus {
     fn new() -> Self {
-        let manifest =
-            PluginManifest::parse(include_str!("../crates/vosu-osu/manifest.toml")).unwrap();
+        let manifest = vosu_plugin_api::manifest::PackageManifest::parse(include_str!(
+            "../crates/vosu-osu/manifest.toml"
+        ))
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
         let grant = PublisherGrant::from_manifest(&manifest).unwrap();
         let mut schemas = SchemaRegistry::with_core().unwrap();
         schemas
-            .register(
+            .register_versioned(
                 "vosu.osu",
                 "vosu.osu",
+                &semver::Version::new(1, 3, 0),
+                vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
                 include_str!("../docs/v2/schemas/vosu.osu.schema.json"),
             )
             .unwrap();

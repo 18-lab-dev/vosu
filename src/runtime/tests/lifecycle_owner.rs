@@ -153,7 +153,8 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &owner.paths,
                 &owner.logger,
                 &pool,
-                std::slice::from_ref(&broken)
+                std::slice::from_ref(&broken),
+                &[],
             )
             .is_err()
         );
@@ -161,8 +162,15 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
         let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
         entries.push(broken);
         assert_eq!(
-            dev_plugins::load_bundled(&owner.plugins, &owner.paths, &owner.logger, &pool, &entries)
-                .unwrap(),
+            dev_plugins::load_bundled(
+                &owner.plugins,
+                &owner.paths,
+                &owner.logger,
+                &pool,
+                &entries,
+                &[]
+            )
+            .unwrap(),
             5
         );
         assert!(owner.plugins.has_enabled_matchers());
@@ -271,6 +279,7 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             &owner.logger,
             &pool,
             crate::plugins::BUNDLED,
+            &[],
         )
         .unwrap();
         let (adapters, hubs) = adapters::Adapters::start(&owner.plugins, owner.config.clone())
@@ -360,7 +369,8 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
                     &owner.paths,
                     &owner.logger,
                     &pool,
-                    &entries
+                    &entries,
+                    &[]
                 )
                 .is_err(),
                 "required slot {omitted}"

@@ -1,0 +1,699 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.app/schemas/catalog-v2.schema.json",
+  "title": "Catalog v2 packaging document",
+  "$comment": "Offline structural checks only; the SDK remains authoritative for semantic/context/asset validation.",
+  "$defs": {
+    "text": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+    },
+    "pluginId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}(\\.[a-z0-9][a-z0-9-]{0,31}){1,3}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*[\\\\:\\u0000])(?!\\.?\\.?(?:/|$))(?!.*?/\\.?\\.?(?:/|$))[^/]+(?:/[^/]+)*$"
+    },
+    "https": {
+      "type": "string",
+      "pattern": "^https://[^/@?#\\s]+(?:[/?#][^\\s]*)?$"
+    },
+    "homepage": {
+      "type": "string",
+      "pattern": "^https?://[^/\\s]+(?:/[^\\s]*)?$"
+    },
+    "resolution": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16384
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "runtime": {
+      "enum": [
+        "process",
+        "in-process"
+      ]
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^(?:game:[a-z][a-z0-9-]{0,31}|(?:field|action|resource):[a-z0-9][A-Za-z0-9-]*(?:\\.[a-z0-9][A-Za-z0-9-]*)*)$"
+    },
+    "lane": {
+      "type": "object",
+      "properties": {
+        "pointer": {
+          "type": "string",
+          "pattern": "^(?:/(?:[^~]|~[01])*)*$"
+        },
+        "lane": {
+          "enum": [
+            "regular",
+            "precise",
+            "both"
+          ]
+        },
+        "activity": {
+          "enum": [
+            "always",
+            "gameplay"
+          ]
+        }
+      },
+      "required": [
+        "pointer",
+        "lane",
+        "activity"
+      ],
+      "additionalProperties": false
+    },
+    "requirement": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "provide": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "$ref": "#/$defs/text"
+        },
+        "schema": {
+          "$ref": "#/$defs/path"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "catalogProvide": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "version": {
+          "$ref": "#/$defs/text"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/version"
+        },
+        "lanes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lane"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,31}(\\.[a-z0-9][a-z0-9-]{0,31})*$"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "title": {
+          "$ref": "#/$defs/text"
+        },
+        "args_schema": {
+          "$ref": "#/$defs/path"
+        },
+        "result_schema": {
+          "$ref": "#/$defs/path"
+        },
+        "session": {
+          "enum": [
+            "required",
+            "optional",
+            "none"
+          ]
+        },
+        "cli": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "title",
+        "args_schema",
+        "result_schema",
+        "session"
+      ],
+      "additionalProperties": false
+    },
+    "resource": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/id"
+        },
+        "tree": {
+          "type": "boolean",
+          "default": false
+        },
+        "families": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "image",
+              "audio",
+              "video",
+              "chart-text"
+            ]
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "matcher": {
+      "type": "object",
+      "properties": {
+        "process_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "process_path_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "command_line_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "comm_hints": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 15,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "default": []
+        },
+        "linux_name_contains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 15,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "default": []
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "package": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/https"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "url",
+        "sha256",
+        "size"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "catalog_version": {
+      "const": 2
+    },
+    "name": {
+      "$ref": "#/$defs/text"
+    },
+    "published": {
+      "type": "string"
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/pluginId"
+          },
+          "name": {
+            "$ref": "#/$defs/text"
+          },
+          "version": {
+            "$ref": "#/$defs/version"
+          },
+          "host": {
+            "$ref": "#/$defs/text"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "homepage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/homepage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/pluginId"
+            },
+            "default": [],
+            "uniqueItems": true
+          },
+          "provides": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/catalogProvide"
+            },
+            "default": []
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/requirement"
+            },
+            "default": []
+          },
+          "optional": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/requirement"
+            },
+            "default": []
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "banner_url": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "packages": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z0-9_]+(?:-[a-z0-9_]+){2,}$"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/package"
+            }
+          },
+          "runtime": {
+            "$ref": "#/$defs/runtime"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/action"
+            },
+            "default": []
+          },
+          "resource_kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/resource"
+            },
+            "default": []
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^field:vosu\\.(?:client|status|chart|play|skin)(?:\\.[A-Za-z0-9-]+)*$"
+            },
+            "default": [],
+            "uniqueItems": true
+          },
+          "matcher": {
+            "$ref": "#/$defs/matcher"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "host",
+          "packages",
+          "runtime"
+        ],
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "name": {
+            "$ref": "#/$defs/text"
+          },
+          "version": {
+            "$ref": "#/$defs/version"
+          },
+          "host": {
+            "$ref": "#/$defs/text"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "homepage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/homepage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/id"
+            },
+            "default": [],
+            "uniqueItems": true
+          },
+          "provides": {
+            "type": "array",
+            "maxItems": 0,
+            "default": []
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/requirement"
+            },
+            "default": []
+          },
+          "optional": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/requirement"
+            },
+            "default": []
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "banner_url": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "packages": {
+            "type": "object",
+            "properties": {
+              "any": {
+                "$ref": "#/$defs/package"
+              }
+            },
+            "required": [
+              "any"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "host",
+          "packages"
+        ],
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "overlays": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "name": {
+            "$ref": "#/$defs/text"
+          },
+          "version": {
+            "$ref": "#/$defs/version"
+          },
+          "host": {
+            "$ref": "#/$defs/text"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "homepage": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/homepage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/id"
+            },
+            "default": [],
+            "uniqueItems": true
+          },
+          "provides": {
+            "type": "array",
+            "maxItems": 0,
+            "default": []
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/requirement"
+            },
+            "default": []
+          },
+          "optional": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/requirement"
+            },
+            "default": []
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "banner_url": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "packages": {
+            "type": "object",
+            "properties": {
+              "any": {
+                "$ref": "#/$defs/package"
+              }
+            },
+            "required": [
+              "any"
+            ],
+            "additionalProperties": false
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/https"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution": {
+            "$ref": "#/$defs/resolution"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "host",
+          "packages"
+        ],
+        "additionalProperties": false
+      },
+      "default": []
+    }
+  },
+  "required": [
+    "catalog_version",
+    "name",
+    "published"
+  ],
+  "additionalProperties": false
+}

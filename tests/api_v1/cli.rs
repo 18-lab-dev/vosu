@@ -72,7 +72,7 @@ fn vosux_production_action_routes() {
         &h,
         783321,
         "fixture.c0.game",
-        "\n[match]\nprocess_names=['jthree-cli.exe']\n",
+        "\n[match]\nprocess_names=['jthree-cli.exe']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
     );
     h.host.process_appeared(record(783322, "jthree-cli.exe"));
     h.runtime.block_on(bounded(async {

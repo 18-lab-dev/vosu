@@ -31,18 +31,22 @@ async fn resource_route_uses_production_provider_composition() {
             Arc::new(plugin::settings::PluginSettingsService::new(settings)),
             tokio::runtime::Handle::current(),
         );
-        let manifest = "kind='plugin'\nmanifest_version=1\nid='test.r4.composition'\nname='R4 composition'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['fixture']\n[match]\nprocess_names=['test.r4.composition']\n[[provides]]\nid='field:test.r4.composition'\nversion='1.0.0'\nschema='namespace.json'\n[[resource_kinds]]\nkind='fixture-file'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-stream'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-tree'\ntree=true\nfamilies=['chart-text']\n";
+        let manifest = "kind='plugin'\nmanifest_version=1\nid='test.r4.composition'\nname='R4 composition'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nroot_slots=['fixture']\n[match]\nprocess_names=['test.r4.composition']\n[[provides]]\nid='field:test.r4.composition'\nversion='1.0.0'\nschema='namespace.json'\n[[provides]]\nid='resource:test.r4.composition.fixture-file'\nversion='1.0.0'\n[[provides]]\nid='resource:test.r4.composition.fixture-stream'\nversion='1.0.0'\n[[provides]]\nid='resource:test.r4.composition.fixture-tree'\nversion='1.0.0'\n[[resource_kinds]]\nkind='fixture-file'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-stream'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-tree'\ntree=true\nfamilies=['chart-text']\n[[provides]]\nid='game:fixture'\nversion='*'\n";
         let schema =
             r#"{"title":"test.r4.composition","version":"1.0.0","type":"object","properties":{}}"#;
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest,
-            settings_schema: None,
-            namespace_schemas: &[schema],
-            action_schemas: &[],
-            vtable: vosu_plugin_api::__vtable_for_serialized::<
-                vosu_plugin_testkit::fixture::ApiFixturePlugin,
-            >,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &vosu_core::plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest,
+                settings_schema: None,
+                namespace_schemas: &[schema],
+                action_schemas: &[],
+                vtable: vosu_plugin_api::__vtable_for_serialized::<
+                    vosu_plugin_testkit::fixture::ApiFixturePlugin,
+                >,
+            }],
+        )
         .unwrap();
         host.create_instance(
             PluginInstanceId::new(9471),
