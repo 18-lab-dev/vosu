@@ -78,6 +78,19 @@ impl Fixture {
         std::fs::write(staged.library.parent().unwrap().join(CONTROL_FILE), text).unwrap();
     }
 
+    /// Adds one `key=value` line to the control file [`Self::control`]
+    /// wrote next to `staged`'s library (for example `spawn`, M5 N0).
+    pub fn append_control(&self, staged: &Staged, key: &str, value: &str) {
+        use std::io::Write as _;
+        assert!(!value.contains('\n'), "{key} spans lines");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(staged.library.parent().unwrap().join(CONTROL_FILE))
+            .unwrap()
+            .write_all(format!("{key}={value}\n").as_bytes())
+            .unwrap();
+    }
+
     /// Every complete receipt line in `<probe>-<pid>` files (all PIDs), in
     /// file order. A line naming another run's nonce fails the test.
     pub fn receipts(&self, probe: &str) -> Vec<Receipt> {

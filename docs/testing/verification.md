@@ -1249,8 +1249,11 @@ The testkit fault modes are `constructor_crash`, `create_crash`,
 `create_block` (`create` waits for `release-<pid>` before it returns),
 `dispatch_crash`, `dispatch_abort`, `dispatch_block`, `cancel_ignored`,
 `destroy_ignored`, `ring_stall` (the child stops itself: `SIGSTOP`, or
-`NtSuspendProcess`) and `corrupt_frame` (the child publishes a
-length-mismatched frame into its own plugin → host ring and wakes core).
+`NtSuspendProcess`), `corrupt_frame` (the child publishes a
+length-mismatched frame into its own plugin → host ring and wakes core) and
+`write_block` (N0: after `release-<pid>`, `create`'s own thread sends 32 KiB
+`VOSU_OP_LOG_RECORD`s until one send stays blocked on the full plugin → host
+ring; a watchdog writes `write_blocked` once a send has waited 250 ms).
 Distinct data-source targets come from per-package plugin ids and process
 names. Each instance reads its own target's bytes through one read plan per
 attached session. The `support::smoke` tests prove that each mode triggers
@@ -1278,6 +1281,16 @@ action an earlier instance registered. `support::api` serves the production
 API v1 router over the test's `PluginHost`. A test without a discovery
 service re-offers its target after a restart, as discovery would once the
 restarted matcher registers.
+
+Two more N0 receipts come from every run. `security` repeats the
+constructor's readback in `create` after the plugin started a thread of its
+own. On Linux that readback holds the UID, all five capability sets,
+`NoNewPrivs`, `Seccomp`, the thread count and `userns`, the result of
+`unshare(CLONE_NEWUSER)` in a forked single-threaded child. On Windows it
+holds the process's own immediate job: its limit flags and process IDs.
+When the control has a `spawn` line (an argument vector separated by
+U+001F), `create` first starts that process as the plugin's descendant and
+writes `descendant child=<pid>`.
 
 The `*_crash` modes and `dispatch_abort` all end the child with the real
 `std::process::abort`: `SIGABRT` on Linux, the fail-fast status `0xC0000409`
@@ -1484,3 +1497,220 @@ Windows runs went through `vm-test.py`; every native run went through
   create instance 1 again by hand after its loss. Under C0 supervision, the
   instance restarts by itself after its backoff, so the test now waits for
   that restart.
+
+### M5 N0 unit evidence (2026-11-25)
+
+Results from the N0 checkout (`m5/process` at `7cdbcc4` plus N0), before
+integration. Every native run went through `scripts/plugin-host-fixtures.py`;
+native Windows runs went through `vm-test.py`.
+
+**Two kinds of core.** The ordinary cases kill a *core helper process running
+production `PluginHost`/`ProcessHostLauncher` code*: the test binary
+re-executed in a helper role (`parent_death::helper_process_entry`). It starts
+the real `vosu plugin-host` exactly as the daemon would. It is a real core for
+the kill semantics, but it is not the daemon. At `7cdbcc4` the daemon installs
+no process launcher; M5 U0's approval gate adds that. The `_daemon` variants
+run the same assertions against the real `vosu` daemon. They load the package
+through `--plugin`, with a `plugins/approvals.json` record written before
+start. They are `#[ignore = "needs M5 U0 integrated: …"]` until U0 merges.
+
+Each tree is: core, the plugin host running the testkit, optionally a
+descendant the plugin started from `create` (control `spawn`), and an outside
+control process. A helper core starts the control itself; a daemon core has
+the test start it. Every process is held by a pidfd or a handle opened while
+it was known alive and checked against the start time it reported. A death
+is read from that pidfd or handle; PID absence is never the evidence.
+
+**Cases.**
+
+- `parent_death` (Linux and native Windows). Each case kills only core.
+  - `parent_death_core_kill_while_live_ends_the_plugin_host`: after `READY`.
+  - `parent_death_core_kill_during_bootstrap_ends_the_plugin_host`: the kill
+    comes while `create` is still blocked (`create_block`). The plugin host
+    never reaches `READY`, and `create_released` never appears.
+  - `parent_death_core_kill_during_a_blocked_write_ends_the_plugin_host`:
+    core is stopped (`SIGSTOP`, or `NtSuspendProcess`), then the flood is
+    released (`write_block`). The plugin host fills its 2 MiB plugin → host
+    ring, and the test kills core after `write_blocked`. The plugin host
+    must be seen gone less than 2 s after the release. The blocked send
+    started after the release, so the host's own full-ring exit (exit 75)
+    could not come that early. No send returned, and on Windows the exit
+    status is not 75.
+  - Every case asserts that the outside control is still alive 1 s after
+    the plugin host died.
+  - On Windows the descendant dies with core. On Linux it outlives core,
+    which is the §7.3 residual below; the cases assert that it survives
+    and then kill it themselves. On Linux the descendant also reports
+    `NoNewPrivs: 1`, `Seccomp: 2` and `CapEff` 0: a plugin's helpers
+    inherit the drop and the filter.
+- `windows_job::windows_core_death_kills_job_tree` (native Windows, not
+  ignored). The same core-only kill of a live tree with a descendant,
+  preceded by readbacks the test takes itself:
+  - the plugin host's immediate job when the library loaded (the
+    constructor's readback): kill-on-close, no breakaway, and only the
+    plugin host in it;
+  - the descendant's immediate job: the same limits, holding the plugin
+    host, the descendant and only processes whose parent is one of them
+    (the console host Windows creates for the console descendant). Every
+    process in that job is tracked and must end with core.
+  - the tokens of core, plugin host and descendant: equal user SID,
+    integrity level and elevation;
+  - the handle tables of the plugin host and the descendant: no handle of
+    the job object type, so neither can keep a job alive.
+- `linux_security`:
+  - `linux_security_host_readback_before_constructor_and_after_threads`.
+    The constructor's readback (`Threads: 1`) and the `security` readback
+    taken after the plugin started its own thread both show `CapInh`,
+    `CapPrm`, `CapEff` and `CapAmb` 0, `NoNewPrivs` 1, `Seccomp` 2,
+    `userns=EPERM`, no UID 0, and `CapBnd` recorded only. Its core has no
+    file capabilities, so this is also the no-setup evidence: the sequence
+    completes and process plugins load without `vosu --setup` (§7.3
+    "Without setup or capabilities").
+  - `linux_security_refused_filter_fails_closed_without_constructor`. Core
+    runs under a wrapper seccomp filter that hands `seccomp(2)` to the test
+    through a user notification. While a call waits for its answer, its
+    caller is alive and stopped in the syscall. The test therefore opens a
+    pidfd on each refusing plugin host before it answers `EPERM`.
+    `create` fails with stage `security`, code `security_unavailable`. After
+    2.5 s, past the first restart delay, the instance is `Failed` with 0
+    restarts and 0 crash events. No constructor or `create` receipt exists.
+    The refused plugin host ended and was reaped, as its pidfd shows, and
+    core has no child left but the outside control.
+  - `linux_packaged_capability_drop`, `…_refusal_control` and
+    `…_core_only_death` are `#[ignore]`d. Together they are the frozen
+    packaged steps 1–4, 5 and 6, against the daemon named by
+    `VOSU_PLUGIN_HOST_PACKAGED_BINARY`. Each first checks step 1: `getcap`
+    shows `cap_sys_ptrace`, with the three process-event capabilities all
+    present or all absent, and, except under the refusal wrapper, the
+    started daemon's own `CapEff` is nonzero. The refusal control reads
+    `GET /api/plugins` (state `failed`, reason `security`, detail
+    `security_unavailable`, 0 restarts and 0 crash events after 2.5 s).
+    The wrapper's `no_new_privs` leaves that daemon without file
+    capabilities, which this control does not need.
+
+**Linux results.**
+
+- `plugin_host_native -- parent_death linux_security support` passed 19,
+  with 6 ignored. The whole `plugin_host_native` target passed 46, with 6
+  ignored (3 packaged cases and 3 `_daemon` variants).
+- The plugin host was seen gone 1–6 ms after the kill in every case.
+- In the blocked-write case the 64th 32 KiB record blocked. The plugin host
+  was seen gone 267–310 ms after the release.
+- The refusal control held the refused plugin host by its pidfd in every
+  run.
+- `CapBnd` was `000001ffffffffff`.
+- `cargo test --locked --test process_memory -- --nocapture` passed 8.
+- Workspace nextest through the fixtures script passed 2914, with 12
+  skipped, and `prop_` passed 45.
+
+**Native Windows results.**
+
+- `plugin_host_native -- windows_job parent_death support` passed 18, with 4
+  ignored. The whole target passed 44, with 4 ignored (the `_daemon`
+  variants), and `process_memory` passed 8.
+- `windows_core_death_kills_job_tree`:
+  - At load, the plugin host's job held only the plugin host.
+  - The descendant's job held three processes: the plugin host, the
+    descendant and the descendant's console host.
+  - Core, plugin host and descendant tokens were equal: Medium integrity
+    (`0x2000`), not elevated.
+  - Neither the plugin host nor the descendant held a job handle.
+  - After the kill of core alone, all three job members ended with exit
+    status 0. The plugin host was seen gone 3 ms after the kill, and the
+    outside control survived.
+- `parent_death`:
+  - Kill to plugin host gone: 3–5 ms.
+  - Each plugin host and descendant exited with status 0. That is the
+    status the job's kill-on-close termination gives, not the plugin host's
+    channel-loss exit 75.
+  - In the blocked-write case the 64th record blocked, and the plugin host
+    was seen gone 273–290 ms after the release.
+- The first run failed on two test defects, fixed since:
+  - the descendant's job also lists the console host Windows creates for a
+    console child;
+  - a fixed-size `TokenElevation` query needs its exact length.
+
+**Descendant cleanup evaluation (ABI §7.3 "Descendant cleanup follow-up").**
+Measured on the host: CachyOS kernel 7.3.5, cgroup v2, with a running
+systemd user manager. The shell ran in a user-owned scope under
+`user@1000.service`. `sleep` processes stood in for core, plugin host and
+grandchild; each grandchild was started with `setsid`.
+
+1. *Transient user scope bound to core.* Core ran alone in its own
+   transient scope: `systemd-run --user --scope -p KillSignal=SIGKILL`. The
+   plugin host ran in a second transient scope with `BindsTo=` and `After=`
+   on core's scope and `KillSignal=SIGKILL`, and started a `setsid`
+   grandchild. After `SIGKILL` of core alone, the host scope was empty
+   within 22 ms, the grandchild was gone, and both units were inactive.
+2. *Leaving the scope.* Under the same setup, the grandchild wrote its own
+   PID into `cgroup.procs` of another cgroup the user owns. It survived the
+   core-only kill.
+3. *No user manager reachable.* With no session bus and an unusable
+   `XDG_RUNTIME_DIR`, `systemd-run --user --scope` failed ("Failed to
+   connect to user scope bus via local transport: No such file or
+   directory") with exit status 1. That failure is visible.
+4. *Delegated leaf without systemd.* A `setsid` grandchild was placed in a
+   leaf under the user-owned cgroup. It survived a core-only kill in the
+   leaf. `echo 1 > cgroup.kill` then emptied the leaf. Nothing binds a
+   leaf's lifetime to core; emptying it needs a living killer.
+
+Assessment:
+
+- Both options need no new privilege and no setup change.
+- The delegated leaf fails the third rule: core-only death leaves the
+  grandchild alive (case 4).
+- The transient scope passes cases 1 and 3, but only under conditions
+  outside a per-host leaf:
+  - Core must be the only process in its own unit. Started from a terminal
+    or a session scope, the daemon shares its unit, so it would first have
+    to move itself into a transient scope of its own. Started by
+    `vosu.service`, it would move out of the service it runs under.
+  - The launcher would need a D-Bus client and a per-spawn
+    `StartTransientUnit` round trip, and would have to hold each plugin
+    host before plugin code until systemd confirmed the move. That is an
+    L0/E0 launch-protocol change.
+  - A same-user descendant can still leave the scope (case 2), the defect
+    this section already holds against a per-host process group.
+  - Not measured: a daemon started in a login session's
+    `session-N.scope`, which lies outside `user@1000.service`.
+
+Decision: N0 implements neither option. The gap stays the accepted residual
+of §7.3 "Scope": on Linux, core-only death kills the plugin host through
+its parent-death signal, and descendants a plugin starts itself survive
+unless the plugin arranges otherwise. The Linux `parent_death` cases assert
+that survival, so a later mechanism must update them. X2 records the
+residual with this receipt. A transient-scope design would need its own
+[spec] decision covering core's own unit placement and the launch
+handshake.
+
+**Packaged Linux run (pending owner-authorized setup).** Build and package
+the release binary exactly as the release workflow does, outside `/tmp`.
+File capabilities need a filesystem with xattrs that is not mounted
+`nosuid`.
+
+```sh
+source scripts/dev-env.sh
+export CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/<checkout>
+TAG="v$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "vosu"))')"
+PKG=/home/user/.cache/vosu-n0-packaged
+python scripts/prepare-offset-generator.py --rid linux-x64
+cargo build --release --locked --no-default-features --features linux-process-events \
+  --target x86_64-unknown-linux-gnu
+python scripts/package-release.py package --platform linux --tag "$TAG" \
+  --binary "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/vosu" --output "$PKG/dist"
+python scripts/package-release.py extract --platform linux --tag "$TAG" \
+  --archive "$PKG/dist/vosu-linux-$TAG.zip" --destination "$PKG/linux"
+# Owner-authorized only: the pkexec prompt, then setcap.
+"$PKG/linux/vosu" --setup
+getcap "$PKG/linux/vosu"
+VOSU_PLUGIN_HOST_PACKAGED_BINARY="$PKG/linux/vosu" \
+  python scripts/plugin-host-fixtures.py -- cargo test --locked --features test-harness \
+  --test plugin_host_native linux_security::linux_packaged_capability_drop -- --ignored --nocapture
+```
+
+The filter matches all three packaged cases, which need U0's approval-gated
+`--plugin` launch in the packaged build. Expect `3 passed`. The testkit
+library comes from `plugin-host-fixtures.py`'s debug example build, which
+the packaged plugin host loads like any user plugin. The daemon variants of
+`parent_death` and `windows_job` run after U0 integrates with
+`-- --ignored _daemon --nocapture`, on Linux and in the Windows VM.

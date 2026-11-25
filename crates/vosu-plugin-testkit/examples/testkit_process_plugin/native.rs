@@ -55,9 +55,16 @@ mod linux {
     };
 
     const SIGSTOP: i32 = 19;
+    const CLONE_NEWUSER: i32 = 0x1000_0000;
+    const EPERM: i32 = 1;
 
     unsafe extern "C" {
         fn raise(signal: i32) -> i32;
+        fn fork() -> i32;
+        fn unshare(flags: i32) -> i32;
+        fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+        fn _exit(code: i32) -> !;
+        fn __errno_location() -> *mut i32;
     }
 
     /// Registered in `.init_array`: the dynamic loader runs it while it
@@ -90,7 +97,8 @@ mod linux {
     }
 
     /// The security state as this process sees it now: UID, all five
-    /// capability sets, `NoNewPrivs`, `Seccomp` and the thread count.
+    /// capability sets, `NoNewPrivs`, `Seccomp`, the thread count and the
+    /// user-namespace probe ([`userns_probe`]).
     pub fn readback() -> String {
         let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
         let mut fields = Vec::new();
@@ -112,8 +120,46 @@ mod linux {
                 .unwrap_or_else(|| "missing".to_owned());
             fields.push(format!("{}={value}", key.to_ascii_lowercase()));
         }
+        fields.push(format!("userns={}", userns_probe()));
         fields.join(" ")
     }
+
+    /// `unshare(CLONE_NEWUSER)` in a forked child, which is single-threaded
+    /// even when this process is not (a multithreaded caller always gets
+    /// `EINVAL`), and whose namespace never affects this process: `EPERM`
+    /// when refused, `succeeded` when not, otherwise `errno<N>`.
+    fn userns_probe() -> String {
+        // SAFETY: the child makes only raw async-signal-safe calls
+        // (`unshare`, reading errno, `_exit`) and never returns.
+        let pid = unsafe { fork() };
+        if pid == 0 {
+            // SAFETY: as above; errno is this thread's own.
+            unsafe {
+                let code = if unshare(CLONE_NEWUSER) == 0 {
+                    0
+                } else {
+                    *__errno_location()
+                };
+                _exit(code.clamp(0, 255));
+            }
+        }
+        if pid < 0 {
+            return "fork_failed".to_owned();
+        }
+        let mut status = 0;
+        // SAFETY: waits for the child forked above, into a local status.
+        if unsafe { waitpid(pid, &mut status, 0) } != pid || status & 0x7f != 0 {
+            return "wait_failed".to_owned();
+        }
+        match (status >> 8) & 0xff {
+            0 => "succeeded".to_owned(),
+            EPERM => "EPERM".to_owned(),
+            errno => format!("errno{errno}"),
+        }
+    }
+
+    /// A Linux child has no console to suppress.
+    pub fn without_console(_command: &mut std::process::Command) {}
 
     /// Ends this process abnormally at once: `SIGABRT`.
     pub fn crash() -> ! {
@@ -204,6 +250,44 @@ mod windows {
         ) -> *mut c_void;
         fn UnmapViewOfFile(base: *const c_void) -> i32;
         fn SetEvent(event: *mut c_void) -> i32;
+        fn QueryInformationJobObject(
+            job: *mut c_void,
+            class: i32,
+            info: *mut c_void,
+            length: u32,
+            returned: *mut u32,
+        ) -> i32;
+    }
+
+    const JOB_OBJECT_BASIC_PROCESS_ID_LIST: i32 = 3;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: i32 = 9;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    /// `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`.
+    #[repr(C)]
+    struct ExtendedLimit {
+        _per_process_user_time: i64,
+        _per_job_user_time: i64,
+        limit_flags: u32,
+        _minimum_working_set: usize,
+        _maximum_working_set: usize,
+        _active_process_limit: u32,
+        _affinity: usize,
+        _priority_class: u32,
+        _scheduling_class: u32,
+        _io_counters: [u64; 6],
+        _process_memory_limit: usize,
+        _job_memory_limit: usize,
+        _peak_process_memory: usize,
+        _peak_job_memory: usize,
+    }
+
+    /// `JOBOBJECT_BASIC_PROCESS_ID_LIST` with room for 32 IDs.
+    #[repr(C)]
+    struct ProcessIdList {
+        assigned: u32,
+        listed: u32,
+        ids: [usize; 32],
     }
 
     #[link(name = "ntdll")]
@@ -231,10 +315,62 @@ mod windows {
             .then(|| PathBuf::from(std::ffi::OsString::from_wide(&buffer[..len])))
     }
 
-    /// Windows has no capability readback; the test reads token and job
-    /// identities independently.
+    /// Windows has no capability readback. This is this process's own
+    /// immediate job, read with a null job handle: its limit flags and
+    /// the processes it holds (`job=none` outside any job). The test reads
+    /// token and job identities independently too.
     pub fn readback() -> String {
-        String::new()
+        // SAFETY: all-zero is a valid value of this plain C struct.
+        let mut limits: ExtendedLimit = unsafe { std::mem::zeroed() };
+        // SAFETY: a null job names this process's immediate job; the buffer
+        // is writable for exactly the length passed.
+        let limited = unsafe {
+            QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                (&raw mut limits).cast(),
+                size_of::<ExtendedLimit>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if limited == 0 {
+            return "job=none".to_owned();
+        }
+        let mut list = ProcessIdList {
+            assigned: 0,
+            listed: 0,
+            ids: [0; 32],
+        };
+        // SAFETY: as above, for the process-ID list.
+        let listed = unsafe {
+            QueryInformationJobObject(
+                std::ptr::null_mut(),
+                JOB_OBJECT_BASIC_PROCESS_ID_LIST,
+                (&raw mut list).cast(),
+                size_of::<ProcessIdList>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        let pids = if listed == 0 {
+            "unreadable".to_owned()
+        } else {
+            list.ids[..(list.listed as usize).min(list.ids.len())]
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        format!(
+            "job_flags={:#x} job_assigned={} job_pids={pids}",
+            limits.limit_flags, list.assigned
+        )
+    }
+
+    /// Starts a console child without a console window: the plugin host
+    /// has none to share.
+    pub fn without_console(command: &mut std::process::Command) {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 
     /// Ends this process abnormally at once with the real fail-fast of
