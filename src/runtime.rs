@@ -72,10 +72,26 @@ use vosu_core::{
     updater::{
         LATEST_RELEASE_API, NativePlatform, RELEASE_PLATFORM, RecoveryAction, StartupDispatch,
         StartupReadiness, UpdateCheck, check_latest_and_prepare, check_startup_and_prepare,
-        current_version, dispatch_startup_role, recover_startup_update,
+        dispatch_startup_role, recover_startup_update,
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
+
+/// The running executable's version: the root package's, never a library
+/// crate's own package version. The updater, dashboard, catalog and log
+/// prefix all report this one.
+pub(crate) fn current_version() -> semver::Version {
+    semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("root package version is valid semver")
+}
+
+/// Daemon logger options; every console line is prefixed with [`current_version`].
+fn daemon_logger_options(debug_log: bool) -> LoggerOptions {
+    LoggerOptions {
+        version: current_version().to_string(),
+        debug_log,
+        ..LoggerOptions::default()
+    }
+}
 
 mod adapters;
 mod catalog;
@@ -102,7 +118,8 @@ pub use lifecycle::{ProductionRuntime, is_startup_owner_conflict, run_cli};
 pub use projection::ReloadableAuthorizer;
 #[cfg(feature = "test-harness")]
 pub use test_support::{
-    TestProductionComposition, TestProductionCompositionOptions, start_test_production_composition,
+    TestGame, TestProductionComposition, TestProductionCompositionOptions,
+    start_test_production_composition,
 };
 pub use worker::{ListenerOwner, WebSocketHubs};
 
@@ -129,5 +146,6 @@ mod tests {
     include!("runtime/tests/service.rs");
     include!("runtime/tests/package_limit.rs");
     include!("runtime/tests/update_notice.rs");
+    include!("runtime/tests/version.rs");
     include!("runtime/tests/lifecycle.rs");
 }

@@ -4,9 +4,24 @@
 //! both derived in `brokered_reads_bench.rs`'s module doc comment) at addresses
 //! fixed relative to one heap allocation, then reports that allocation's base
 //! address and blocks until the parent benchmark closes stdin. The parent reads
-//! this process's memory over `process_vm_readv`, exactly as a 1.x stable/lazer
-//! reader reads a game client; no IPC happens inside this binary.
+//! this process's memory natively (`process_vm_readv` / `ReadProcessMemory`),
+//! exactly as a 1.x stable/lazer reader reads a game client; no IPC happens
+//! inside this binary.
+//!
+//! It also reports, per plan shape, the SHA-256 of the exact response a
+//! correct broker must return (`EXPECT <shape> <sha256>`). It computes that
+//! by walking the same plans over its own buffer in-process, with no remote
+//! read and no transport, so it independently checks every variant's
+//! `result_sha256`. Output: `BASE <hex>`, one `EXPECT` line per shape, then
+//! `READY`.
 use std::io::{self, Read, Write};
+
+use sha2::{Digest, Sha256};
+
+#[path = "../benches/support/brokered/plans.rs"]
+mod plans;
+
+use plans::{Plan, Source};
 
 /// Matches `brokered_reads_bench::TARGET_SIZE`; kept independent on purpose so
 /// a mismatch fails loudly (out-of-bounds offset) rather than silently.
@@ -76,6 +91,37 @@ fn write_regular_chain(buffer: &mut [u8], base: usize, origin: u64) {
     put_i32(buffer, mp3 + 0x8, 180_000);
 }
 
+/// The response a correct broker returns for `plan`: every read's bytes in
+/// stage/read order, read here straight out of `buffer` (whose first byte
+/// lives at `origin`). Panics on an address outside the buffer.
+fn evaluate_local(plan: &Plan, origin: u64, buffer: &[u8]) -> Vec<u8> {
+    let slice = |address: u64, len: usize| {
+        let start = usize::try_from(address.checked_sub(origin).expect("address above origin"))
+            .expect("offset fits usize");
+        &buffer[start..start + len]
+    };
+    let mut resolved: Vec<Vec<u64>> = Vec::with_capacity(plan.stages.len());
+    let mut response = Vec::with_capacity(plan.bytes());
+    for stage in &plan.stages {
+        let mut pointers = Vec::with_capacity(stage.len());
+        for op in stage {
+            let base = match op.source {
+                Source::Root => origin,
+                Source::Prev(stage_index, op_index) => resolved[stage_index][op_index],
+            };
+            let bytes = slice(base.wrapping_add_signed(op.offset), op.len as usize);
+            pointers.push(if op.as_pointer {
+                u64::from_le_bytes(bytes[..8].try_into().expect("pointer read is 8 bytes"))
+            } else {
+                0
+            });
+            response.extend_from_slice(bytes);
+        }
+        resolved.push(pointers);
+    }
+    response
+}
+
 fn main() {
     let mut buffer = vec![0u8; TARGET_SIZE];
     let origin = buffer.as_ptr() as u64;
@@ -83,7 +129,18 @@ fn main() {
     write_regular_chain(&mut buffer, 0x40, origin);
 
     println!("BASE {origin:#x}");
-    io::stdout().flush().expect("flush base address line");
+    for (shape, plan) in plans::shapes() {
+        let response = evaluate_local(&plan, origin, &buffer);
+        assert_eq!(response.len(), plan.bytes(), "{shape} response length");
+        assert!(plan.reads() > 0, "{shape} plan has reads");
+        let sha: String = Sha256::digest(&response)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        println!("EXPECT {shape} {sha}");
+    }
+    println!("READY");
+    io::stdout().flush().expect("flush target report");
 
     // Block until the parent closes our stdin (end of benchmark run); keeps
     // `buffer` alive and this process addressable via `process_vm_readv` the

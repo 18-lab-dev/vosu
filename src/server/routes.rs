@@ -98,6 +98,21 @@ pub enum CachedJson {
     NotReady,
     Failed { status: StatusCode, body: Bytes },
 }
+/// Production body of every state or calculation read before a client is ready.
+pub const NOT_READY_BODY: &[u8] = br#"{"error":"osu is not ready/running"}"#;
+impl CachedJson {
+    /// The status and body every production state route serves for this result.
+    pub fn status_body(self) -> (StatusCode, Bytes) {
+        match self {
+            Self::Ready(body) => (StatusCode::OK, body),
+            Self::NotReady => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Bytes::from_static(NOT_READY_BODY),
+            ),
+            Self::Failed { status, body } => (status, body),
+        }
+    }
+}
 
 pub trait StateJsonProvider: Send + Sync {
     fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson>;
@@ -126,6 +141,12 @@ pub trait RouteDelegate: Send + Sync {
         None
     }
     fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> {
+        None
+    }
+    /// The test-harness adapter capture endpoint, mounted only when this launch
+    /// received its capability.
+    #[cfg(feature = "test-harness")]
+    fn adapter_capture(&self) -> Option<&super::adapter_capture::endpoint::AdapterCaptureEndpoint> {
         None
     }
     fn handle(
@@ -332,22 +353,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
     }
     let allowed = {
-        let peer = request
-            .extensions()
-            .get::<ConnectInfo<PeerAddress>>()
-            .map(|value| value.0.0)
-            .or_else(|| {
-                request
-                    .extensions()
-                    .get::<ConnectInfo<SocketAddr>>()
-                    .map(|value| value.0)
-            })
-            .or_else(|| {
-                request
-                    .extensions()
-                    .get::<PeerAddress>()
-                    .map(|value| value.0)
-            });
+        let peer = request_peer(&request);
         let header_text = |name: HeaderName| {
             request
                 .headers()
@@ -464,6 +470,20 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     {
         return cors(not_found());
     }
+    // Only a loopback caller holding this launch's capability reaches the
+    // harness endpoint; anyone else falls through to ordinary routing. The
+    // dashboard listener never serves it, and it is never CORS-enabled.
+    #[cfg(feature = "test-harness")]
+    if !providers
+        .authorization
+        .origins()
+        .is_some_and(|(_, dashboard)| dashboard)
+        && let Some(response) = providers.delegate.adapter_capture().and_then(|endpoint| {
+            endpoint.route(request_peer(&request).map(|peer| peer.ip()), &request)
+        })
+    {
+        return response.await;
+    }
     let Some(endpoint) = classify(&method, &path) else {
         return cors(not_found_for(&request));
     };
@@ -570,22 +590,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 .extensions()
                 .get::<Option<Arc<super::broker::BrokerToken>>>()
                 .and_then(Option::as_ref);
-            let peer = request
-                .extensions()
-                .get::<ConnectInfo<PeerAddress>>()
-                .map(|peer| peer.0.0.ip())
-                .or_else(|| {
-                    request
-                        .extensions()
-                        .get::<ConnectInfo<SocketAddr>>()
-                        .map(|peer| peer.0.ip())
-                })
-                .or_else(|| {
-                    request
-                        .extensions()
-                        .get::<PeerAddress>()
-                        .map(|peer| peer.0.ip())
-                });
+            let peer = request_peer(&request).map(|peer| peer.ip());
             if method == Method::POST
                 && scope.is_some()
                 && providers
@@ -786,6 +791,20 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     } else {
         cors(response)
     }
+}
+
+/// The transport peer, never forwarded or Host-derived.
+fn request_peer(request: &Request) -> Option<SocketAddr> {
+    let extensions = request.extensions();
+    extensions
+        .get::<ConnectInfo<PeerAddress>>()
+        .map(|value| value.0.0)
+        .or_else(|| {
+            extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|value| value.0)
+        })
+        .or_else(|| extensions.get::<PeerAddress>().map(|value| value.0))
 }
 
 pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {

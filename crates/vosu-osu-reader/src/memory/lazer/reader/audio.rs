@@ -19,11 +19,11 @@ pub(super) fn read(process: &ProcessHandle, array: usize) -> Result<Vec<f64>, Me
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use vosu_plugin_api::memory::{MemoryRegion, ProcessBitness, ProcessMemory};
 
     struct AudioMemory {
         batches: AtomicUsize,

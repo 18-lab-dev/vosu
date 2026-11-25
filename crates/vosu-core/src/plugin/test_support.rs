@@ -16,9 +16,15 @@
 
 use std::sync::Arc;
 
-use vosu_sys::process::{ProcessBitness, ProcessMemory};
+use vosu_plugin_api::memory::{ProcessBitness, ProcessMemory};
 
 use super::host::read_plans;
+
+mod process;
+pub use process::{
+    LaunchBehavior, LaunchRecord, RecordedFrame, RecordingEndpoint, RecordingLauncher,
+    host_target_triple, write_development_package,
+};
 
 /// Substitutes the process [`PluginHost::session_memory`] would otherwise
 /// open from the real OS for `pid` with an already-built `memory`/`bitness`

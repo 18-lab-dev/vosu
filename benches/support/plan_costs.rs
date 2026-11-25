@@ -10,11 +10,11 @@ use std::{
 use vosu_core::plugin::execute_sync_into;
 use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
+use vosu_plugin_api::memory::{ProcessBitness, ProcessMemory, ReadRequest};
 use vosu_plugin_api::{
     Message, PlanBase, PlanOp, ReadPlanSubmit, Stage, StageBase, VOSU_READ_PLAN_SYNC,
     validate_read_plan_result,
 };
-use vosu_sys::process::{ProcessBitness, ProcessMemory, ReadRequest};
 
 pub(super) fn bench(c: &mut Criterion) {
     let offsets = LazerOffsets::embedded().unwrap();

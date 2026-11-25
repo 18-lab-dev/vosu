@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 pub(super) use std::sync::atomic::Ordering;
-pub(super) use vosu_sys::process::{MemoryRegion, ProcessBitness, ProcessMemory};
+pub(super) use vosu_plugin_api::memory::{MemoryRegion, ProcessBitness, ProcessMemory};
 
 #[derive(Default)]
 pub(super) struct SparseMemory {

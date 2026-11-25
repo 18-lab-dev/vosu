@@ -78,6 +78,191 @@ Intervals describe these rounds, not immunity to systematic fixture or host
 bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 `--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
 
+## M5 D17 contract
+
+A5 (A5.6, approved 2026-11-24) freezes these names, metrics and bars before
+anything is measured. This is a contract. It is not measurement evidence and
+does not claim that the cases exist yet. A result that fails a bar is fixed
+and measured again; the bar is never moved after a result is seen.
+
+**Brokered reads.** `benches/brokered_reads_bench.rs` keeps its custom
+`harness = false` runner and the prototype plan shapes exactly:
+
+- precise: 8 stages, 43 reads, 358 bytes;
+- regular: 5 stages, 8 reads, 116 bytes.
+
+Linux variants:
+
+- The existing prototypes `direct`, `uds`, `shm` and `naive`, rerun in the
+  same invocation.
+- `production_sync`: the real M5 transport and core executor, with a real
+  `vosu plugin-host` child submitting `VOSU_READ_PLAN_SYNC`.
+- `production_async`: the same path without `SYNC`. It submits, receives
+  `STATUS`, and has the result dispatched on the instance's dispatch thread.
+
+Windows variants:
+
+- `section`: the prototype protocol over an unnamed section and auto-reset
+  events;
+- `pipe`: the same protocol over a named pipe, for measurement only;
+- `production_sync` and `production_async`.
+
+Every variant runs the same dependent plans with identical bytes.
+
+The runner prints `METRIC {shape}_{variant}_{metric}` for each of these
+metrics:
+
+- the existing `p50_ns`, `p99_ns`, `mean_ns`, `core_cpu_ns`, `plugin_cpu_ns`,
+  `reads` and `bytes`;
+- `round_trips`, which counts logical submissions per sample and must be 1
+  for every brokered variant except `naive`;
+- `wire_frames` (both directions, private frames included) and
+  `control_frames` (private frames only);
+- `wakeups`, `allocations`, `copies` and `clock_reads`;
+- `result_sha256`, which must equal `direct`'s. A run with a mismatch is
+  invalid, however fast it was.
+
+Cold startup is reported separately as `startup_p50_ns` and `startup_p99_ns`,
+measured from spawn to `READY`. The runner documents exactly which arguments it
+supports, and Criterion flags are never passed to it. A missing variant is a
+failure, not a skip.
+
+**Bars.** Gated runs use approved exclusive pinned CPUs with child affinity
+verified, five paired rounds and independent build and output directories.
+Non-exclusive runs are exploratory only.
+
+- **Linux.** For each shape, the median over five rounds of
+  `production_sync p50 / shm p50`, both from the same invocation, is at most
+  2.0. The historical prototype bars, 21.540 µs for precise and 13.126 µs for
+  regular, are reported alongside and are never a substitute for the
+  same-run comparison.
+- **Async data.** `production_async` p50 and p99, with its acknowledgement
+  frames counted, are required data. They are not gated, because the
+  prototype has no dispatch-thread hop.
+- **Windows.** The same 2.0 rule applies, with the selected transport's
+  prototype variant as the denominator (`section`, or `pipe` if adopted).
+- **Windows transport choice.** `pipe` replaces `section` only if all of the
+  following hold:
+  - its p50 is lower in all five paired rounds;
+  - the median improvement is at least 10%;
+  - the result hashes are equal;
+  - a separately approved amendment provides a non-discoverable endpoint
+    handoff (plugin-abi.md §7.4).
+
+  Otherwise the unnamed section and events remain the production transport.
+
+**Process-runtime osu! data.** These cases are required data, not a gate for
+the bundled runtime:
+
+- `plan_memory/stable_precise_process`, `plan_memory/lazer_precise_process`,
+  `plan_memory/stable_regular_fields_process` and
+  `plan_memory/lazer_regular_fields_process`. They use the same fixtures as the
+  existing `_plan` cases, through a real plugin-host child.
+- `examples/live_reader_bench.rs` gains `--memory process`.
+- For each actual regular and precise capture on stable and lazer, report the
+  counts of `submissions`, `stages`, `reads`, `read_bytes`, `wire_frames` and
+  `control_frames`. Never extrapolate them from the prototype's 5-stage
+  estimate.
+- Report these profiles: no client, subscribed precise, two process plugins
+  in contention, delayed dispatch, a full or nearly full stream, and an idle
+  host.
+
+The generic broker bars above still apply to production transport code.
+
+**Unchanged bundled paths.** The bundled reader, adapter and API paths keep
+M4a's existing bar: the `state_bus_bench` cases `end_to_end/*` and
+`adapter/*`, `memory_reader_bench`, and the existing `plan_memory` cases.
+There must be no regression of more than 10% in the median, judged with
+non-overlapping Criterion 95% intervals, per milestone and cumulatively
+against pre-M0, with equivalent outputs. `performance_invariants` and
+`runtime_wakeups` must keep passing.
+
+Inherited findings stay open until their own evidence closes them, including
+M1 PlanMemory's stable 2.65x result and the open CPU finding, and the open
+findings from M2 through M4a.
+
+```sh
+cargo build --locked --release --example brokered_reads_target
+cargo bench --locked --bench brokered_reads_bench
+cargo bench --locked --bench plan_memory_bench -- 'plan_memory/.*_process$'
+cargo bench --locked --bench memory_reader_bench
+cargo bench --locked --bench state_bus_bench -- '^end_to_end/'
+cargo test --locked --test performance_invariants --test runtime_wakeups
+```
+
+None of these commands was run by A5. Record results only from an approved
+exclusive schedule.
+
+### M5 P1 candidate result and Windows bar (approved 2026-11-25)
+
+**Main approved the proposal below on 2026-11-25 under A5.6.** The
+measurements stay the exploratory candidate result: other agents shared the
+CPUs and the VM, so they are not D17 evidence. The approved bar gates a later
+exclusive run of the production variants. The full method, every table and
+the contention record are in
+[brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result),
+with the accepted method deviations. The production variants
+`production_sync` and `production_async` do not exist yet; they need B0 and
+the E0 launcher.
+
+The `brokered_reads_bench` runner now runs on Linux and Windows:
+
+- Linux runs `direct`, `uds`, `shm` and `naive`, plus `ring`, T0's ring over a
+  memfd and an eventfd, as the reference.
+- Windows runs `direct`, `section` (T0's ring over unnamed sections and
+  auto-reset events) and `pipe` (a measurement-only named pipe).
+
+Both candidate carriers use the same frames, policy, batching, handoff and no
+flush, against real target memory. Each run is checked against the target's
+own expected SHA-256 of the response. The runner takes `--bench`,
+`--warmup`, `--samples`, `--startup-samples`, `--criterion-ms` and `--round`,
+and nothing else.
+
+```sh
+# Linux, five rounds (round 1 through Cargo, rounds 2-5 the same executable)
+cargo build --locked --release --example brokered_reads_target
+taskset -c 0-7,16-23 cargo bench --locked --bench brokered_reads_bench -- --round 1
+taskset -c 0-7,16-23 target/release/deps/brokered_reads_bench-HASH --bench --round N
+```
+
+```powershell
+# Windows guest, after the same two builds with --no-default-features
+cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\brokered_reads_bench-HASH.exe --bench --round N
+```
+
+Medians of five rounds on `a63a0bb`, in µs:
+
+| Platform | Shape | `direct` p50 | Candidate p50 (p99) | Reference p50 | Ratio |
+|---|---|---:|---:|---:|---:|
+| Linux | precise | 7.59 | `ring` 14.56 (41.06) | `shm` 11.25 | 1.297 |
+| Linux | regular | 3.67 | `ring` 9.39 (20.33) | `shm` 6.85 | 1.383 |
+| Windows, set C | precise | 16.10 | `pipe` 89.80 (314.30) | `section` 80.50 | 1.256 |
+| Windows, set C | regular | 5.60 | `pipe` 71.80 (303.10) | `section` 65.00 | 1.058 |
+
+Across three Windows sets of five paired rounds, `pipe` was never lower in
+all five rounds; it was lower in 0, 1 or 2 of them. Its median p50 was 3–26%
+above `section`. Criterion's 95% intervals for set C do not overlap, with the
+pipe higher. Every result hash matched.
+
+**Approved (2026-11-25):**
+
+- **Windows transport.** The unnamed section and events stay the production
+  transport. The pipe fails the frozen tie rule and stays measurement-only.
+- **Windows bar.** For each shape, the median over five paired rounds of
+  `production_sync p50 / section p50`, from the same invocation, is at most
+  2.0. A gated run holds the VM exclusively, uses the 16-vCPU
+  `/AFFINITY FFFF` launcher with child affinity verified, records
+  `load_other_busy_cpus`, and reruns any round in which other work kept 2 or
+  more CPUs busy.
+- **Windows reference.** 167.2 µs for precise and 129.7 µs for regular are
+  reported alongside the gate and do not gate. They are twice the median
+  `section` p50 over the eight quiet rounds (83.6 µs and 64.9 µs).
+
+Contention moved the absolute Windows numbers by up to 6×: in one busy round
+`section` had a regular-shape p50 of 11.2 µs, most likely (an inference, not
+profiled) because the busy guest avoided waking halted vCPUs.
+That is why only the same-run ratio is the gate.
+
 ## M4a D17 contract
 
 A4 freezes the following exact future case names in `state_bus_bench`; this

@@ -19,10 +19,12 @@ use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_osu_reader::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory};
-use vosu_osu_reader::process::{Pattern, ProcessHandle};
+use vosu_osu_reader::process::ProcessHandle;
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessMemory, ReadRequest,
+};
 use vosu_plugin_api::{Message, PlanBase, PlanOp, ReadPlanSubmit, Stage, StageBase};
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 #[path = "support/stable_fixture.rs"]
 mod stable_fixture;
 

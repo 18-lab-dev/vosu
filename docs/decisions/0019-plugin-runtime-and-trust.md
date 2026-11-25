@@ -201,3 +201,67 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   [ADR 0021](0021-api-v1-and-upstream-adapters.md)'s "Route ownership"
   table), not the upstream project itself, so the catalog UI never needs a
   `scripts/brand-allowlist.txt` entry for a display string.
+
+**2026-11-24** (A5, M5 contract freeze; the owner decided A5.1, and Main
+adopted A5.2–A5.8 as recommended under delegated authority). The full text is in
+[`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.3, §7.4 and §7.6, and in
+[catalog v2](../v2/catalog-v2.md#process-plugin-approval-and-management-a55-approved-2026-11-24).
+
+- **Linux plugin-host privilege (A5.1, option b).** Where this ADR says a
+  plugin host "drops every capability", it now means the following. Before any
+  plugin code runs, the plugin host reaches `CapPrm = CapEff = CapInh = CapAmb
+  = 0` and `NoNewPrivs = 1`, and a seccomp filter denies creating or entering
+  a user namespace. It reads all of this back and fails closed, refusing to
+  load the plugin, if it cannot verify it. An empty bounding set is no longer
+  required. `vosu --setup` keeps its existing capability list. The daemon gains
+  no `CAP_SETPCAP` and no other privilege, because granting `CAP_SETPCAP`
+  (option a) would have broadened the executable's authority to empty a set
+  that `no_new_privs` and the namespace denial already make unusable. Process
+  plugins also run without setup. An environment that cannot install the
+  filter makes process plugins fail with a named reason instead of running
+  less confined.
+- **Supervision (A5.2–A5.4, A5.8).** Core and its plugin hosts exchange
+  private frames that are local to the transport. Every send whose status only
+  core can decide waits for core's acknowledgement, so a process plugin sees
+  exactly the in-process status and never a fabricated success. Idle silence
+  is never a crash. Restart backoff, the five-in-five-minutes latch, the
+  action-deadline grace, parent-death handling and startup failure identities
+  are frozen.
+- **Approval (A5.5).** Approval binds a plugin's id, its exact manifest and
+  library digests, its runtime and its provenance, and changed bytes need a
+  new approval. Only debug builds keep the in-process `--plugin` developer
+  exception. Prerelease release builds load `--plugin` as `user` trust in the
+  `process` runtime, after approval.
+- **Windows (A5.6, A5.7).** Unnamed section and event handles remain the
+  production transport unless a measured, separately approved amendment
+  changes them. Plugin hosts inherit the daemon's token. The Medium-integrity
+  launch is the D16 vosulay supervisor's requirement, not a token change for
+  every plugin.
+- **Not a sandbox.** This amendment does not change this ADR's statement that
+  an out-of-process plugin is not sandboxed. It still has the user's
+  filesystem and network access, and approval remains a trust decision.
+
+**2026-11-24** (AF, ecosystem fan-out contract freeze; full record in
+[`docs/v2/ecosystem-release-matrix.md`](../v2/ecosystem-release-matrix.md)
+and `docs/v2/implementation-plan.md` section 7):
+
+- **Private child transports (AF.13).** Removing 1.x tool services, their
+  proxying, readiness protocol and service tokens does not remove a
+  plugin's own private child processes: the replay renderer's render worker
+  and private replay-overlay backend, and vosulay's CEF preview. These are
+  owned by one plugin instance, never registered with core, and carry no
+  core route, listener, proxy, service token, shell, path or action
+  authority; a loopback listener a child genuinely needs lives only for that
+  child, admits only it, and is reaped with it. They are never a fallback
+  data path for first-party consumers. "Plugins never serve HTTP" is
+  unchanged: nothing here lets a plugin answer a request on a core listener.
+  [`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.5 is normative.
+- **vosulay supervisor (D16, AF.7, AF.8).** `vosu.vosulay` is an external
+  official plugin that requests `in-process` under the official-source rule
+  above; it is never bundled. It supervises a separately installed vosulay
+  runtime and never installs, elevates or provisions a setuid sandbox. Its
+  child reads session state from API v1 itself.
+- **Tool runtime.** Official vosu-tools plugins request `process`; each
+  official plugin, including the supervisor through a separately identified
+  non-CEF fixture child (A8.6), must pass a process-runtime smoke in its own
+  CI before M8.

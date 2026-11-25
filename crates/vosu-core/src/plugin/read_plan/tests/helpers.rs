@@ -43,7 +43,7 @@ impl ProcessMemory for FakeMemory {
 
     fn read_many(
         &self,
-        reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
     ) -> Result<(), MemoryError> {
         for read in reads {
             self.read_exact(read.address, read.dst)?;
@@ -51,13 +51,13 @@ impl ProcessMemory for FakeMemory {
         Ok(())
     }
 
-    fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+    fn readable_regions(&self) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
         Ok(self
             .regions
             .lock()
             .unwrap()
             .iter()
-            .map(|(address, bytes)| vosu_sys::process::MemoryRegion {
+            .map(|(address, bytes)| vosu_plugin_api::memory::MemoryRegion {
                 address: *address,
                 size: bytes.len(),
             })
@@ -78,7 +78,7 @@ impl ProcessMemory for PermissionDeniedMemory {
 
     fn read_many(
         &self,
-        reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
     ) -> Result<(), MemoryError> {
         for read in reads {
             self.read_exact(read.address, read.dst)?;
@@ -86,7 +86,7 @@ impl ProcessMemory for PermissionDeniedMemory {
         Ok(())
     }
 
-    fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+    fn readable_regions(&self) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
         Ok(Vec::new())
     }
 }
@@ -104,7 +104,7 @@ impl ProcessMemory for SlowMemory {
 
     fn read_many(
         &self,
-        reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        reads: &mut [vosu_plugin_api::memory::ReadRequest<'_>],
     ) -> Result<(), MemoryError> {
         for read in reads {
             self.read_exact(read.address, read.dst)?;
@@ -112,7 +112,7 @@ impl ProcessMemory for SlowMemory {
         Ok(())
     }
 
-    fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+    fn readable_regions(&self) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
         Ok(Vec::new())
     }
 }

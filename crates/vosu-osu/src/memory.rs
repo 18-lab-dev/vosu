@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{cell::RefCell, mem::size_of};
 
-use vosu_osu_reader::process::{
+use vosu_plugin_api::memory::{
     ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRegion, ProcessBitness,
     ProcessMemory, ReadRequest, read_indirect_many_default,
 };
@@ -478,7 +478,7 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                             .all(|&offset| i64::try_from(offset).is_ok())
                 });
             if !eligible {
-                vosu_osu_reader::process::read_chains_default(self, chunk, bitness)?;
+                vosu_plugin_api::memory::read_chains_default(self, chunk, bitness)?;
                 continue;
             }
             let ops: usize = chunk.iter().map(|read| read.offsets.len() + 1).sum();
@@ -489,7 +489,7 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                     .checked_add((read.offsets.len() + 1).checked_mul(RESULT_ENTRY_BYTES)?)
             });
             if bytes.is_none_or(|bytes| bytes > PLAN_CAP) {
-                vosu_osu_reader::process::read_chains_default(self, chunk, bitness)?;
+                vosu_plugin_api::memory::read_chains_default(self, chunk, bitness)?;
             } else if ops <= 8 {
                 self.submit_chains::<8>(chunk, ops)?;
             } else if ops <= 32 {

@@ -5,18 +5,18 @@ impl StableMemory {
         let (mut profile_object, mut login_status) = (Word::new(), Word::new());
         self.process.read_indirect_many(
             &mut [
-                crate::process::IndirectReadRequest::new(
+                IndirectReadRequest::new(
                     self.patterns.user_profile_ptr,
                     0,
                     &mut profile_object.bytes,
                 ),
-                crate::process::IndirectReadRequest::new(
+                IndirectReadRequest::new(
                     self.patterns.raw_login_status_ptr,
                     0,
                     &mut login_status.bytes,
                 ),
             ],
-            crate::process::ProcessBitness::X86,
+            ProcessBitness::X86,
         )?;
         let (b, login_status) = (profile_object.ptr(0), login_status.ptr(0));
         if b == 0 {

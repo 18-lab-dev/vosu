@@ -1,5 +1,9 @@
 //! Public API composition: real ABI instances, core privacy/demand and TCP transport.
 #![cfg(feature = "test-harness")]
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test code: drives the vosu CLI as a child process"
+)]
 
 #[path = "api_v1/actions.rs"]
 mod actions;

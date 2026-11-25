@@ -13,7 +13,7 @@ use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
-use vosu_sys::process::MemoryError;
+use vosu_plugin_api::memory::MemoryError;
 
 const MAX_PROC_FILE: u64 = 1024 * 1024;
 

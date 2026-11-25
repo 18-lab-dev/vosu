@@ -1,4 +1,5 @@
 use super::*;
+use vosu_plugin_api::memory::ChainReadRequest;
 
 impl LazerMemory {
     pub(super) fn precise_key_player(&mut self) -> Result<usize, MemoryError> {
@@ -400,10 +401,8 @@ impl LazerMemory {
         let mut resolved = 0;
         self.process
             .read_chains(
-                &mut [
-                    crate::process::ChainReadRequest::new(address, offsets, &mut header)
-                        .with_resolved_address(&mut resolved),
-                ],
+                &mut [ChainReadRequest::new(address, offsets, &mut header)
+                    .with_resolved_address(&mut resolved)],
                 self.process.bitness(),
             )
             .ok()?;
@@ -614,12 +613,8 @@ impl LazerMemory {
         let cached_api = self.screen_bytes::<8>(self.current_screen, 0x3f0);
         let (mut api, mut decoupled, mut replay) = ([0; 8], [0; 8], [0; 8]);
         let mut reads = [
-            crate::process::ChainReadRequest::new(
-                add(self.current_screen, 0x3f0).ok()?,
-                &[],
-                &mut api,
-            ),
-            crate::process::ChainReadRequest::new(
+            ChainReadRequest::new(add(self.current_screen, 0x3f0).ok()?, &[], &mut api),
+            ChainReadRequest::new(
                 add(
                     clock,
                     self.offsets
@@ -630,7 +625,7 @@ impl LazerMemory {
                 &[],
                 &mut decoupled,
             ),
-            crate::process::ChainReadRequest::new(replay_address, &[], &mut replay),
+            ChainReadRequest::new(replay_address, &[], &mut replay),
         ];
         self.process
             .read_chains(
@@ -668,7 +663,7 @@ impl LazerMemory {
         self.process
             .read_chains(
                 &mut [
-                    crate::process::ChainReadRequest::new(
+                    ChainReadRequest::new(
                         add(
                             client,
                             self.offsets
@@ -679,7 +674,7 @@ impl LazerMemory {
                         &[0x40],
                         &mut connected,
                     ),
-                    crate::process::ChainReadRequest::new(
+                    ChainReadRequest::new(
                         add(
                             clock,
                             self.offsets

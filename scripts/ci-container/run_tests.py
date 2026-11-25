@@ -6,11 +6,12 @@ distribution's packages is caught before it reaches hosted CI.
 scripts/prepush.py calls `run()` for its "test-linux" step whenever podman is
 on PATH, and falls back to a plain host `cargo nextest run` otherwise (noting
 that fallback in the recorded evidence). Run this file directly to iterate
-without going through prepush.py:
+without going through prepush.py; the plugin-host native tests need the
+prepared fixture libraries, so run it under the preparation helper:
 
     source scripts/dev-env.sh
     export CARGO_TARGET_DIR=/path/to/a/target/dir
-    python scripts/ci-container/run_tests.py
+    python scripts/plugin-host-fixtures.py -- python scripts/ci-container/run_tests.py
 """
 
 import hashlib
@@ -36,6 +37,10 @@ ARCHIVE_CMD = [
     "cargo", "nextest", "archive", "--workspace", "--lib", "--bins", "--tests",
     "--examples", "--all-features", "--locked", "--archive-file",
 ]
+# The prepared plugin-host fixture libraries (scripts/plugin-host-fixtures.py).
+# They live under the target dir, which the container mounts at the same path,
+# so the host paths are passed through unchanged.
+FIXTURE_VARIABLES = ("VOSU_PLUGIN_HOST_TESTKIT_LIBRARY", "VOSU_PLUGIN_HOST_OSU_LIBRARY")
 
 
 def podman_path():
@@ -70,7 +75,7 @@ def ensure_image(podman, tag):
     return wall, result.stdout + result.stderr
 
 
-def run(root=ROOT, cargo_target_dir=None, cargo_nextest_bin=None):
+def run(root=ROOT, cargo_target_dir=None, cargo_nextest_bin=None, extra_env=None):
     """Build a nextest archive on the host, then replay it as a non-root user
     inside the container, with the source and target dir bind-mounted at
     their own host paths (read-only) so compile-time-baked paths like
@@ -82,7 +87,10 @@ def run(root=ROOT, cargo_target_dir=None, cargo_nextest_bin=None):
     the `image_build_seconds`/`archive_seconds`/`container_seconds`
     breakdown. Raises RuntimeError for a setup failure (podman/cargo-nextest
     missing, image build failure); a test failure instead comes back as a
-    nonzero `exit_code` like any other step."""
+    nonzero `exit_code` like any other step.
+
+    `extra_env` is added to the host environment; every FIXTURE_VARIABLES
+    entry the result holds is also passed into the container."""
     podman = podman_path()
     if podman is None:
         raise RuntimeError("podman not found on PATH")
@@ -98,6 +106,7 @@ def run(root=ROOT, cargo_target_dir=None, cargo_nextest_bin=None):
     env = dict(os.environ)
     env["CARGO_INCREMENTAL"] = "0"
     env["CARGO_TARGET_DIR"] = str(cargo_target_dir)
+    env.update(extra_env or {})
 
     with tempfile.TemporaryDirectory(prefix="vosu-prepush-src-") as src_dir, \
             tempfile.TemporaryDirectory(prefix="vosu-prepush-archive-") as archive_dir:
@@ -127,6 +136,7 @@ def run(root=ROOT, cargo_target_dir=None, cargo_nextest_bin=None):
             "-v", f"{cargo_target_dir}:{cargo_target_dir}:ro",
             "-v", f"{archive_file}:/archive.tar.zst:ro",
             "-v", f"{cargo_nextest_bin}:/usr/local/bin/cargo-nextest:ro",
+            *[flag for name in FIXTURE_VARIABLES if name in env for flag in ("-e", f"{name}={env[name]}")],
             tag,
             "cargo-nextest", "nextest", "run", "--archive-file", "/archive.tar.zst",
         ]

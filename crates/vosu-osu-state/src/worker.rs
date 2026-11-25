@@ -389,12 +389,12 @@ where
                             continue;
                         }
                         let precise_global = match snapshot.global() {
-                            Ok(vosu_sys::process::ReadStatus::Ready(value)) => Some(*value),
+                            Ok(vosu_plugin_api::memory::ReadStatus::Ready(value)) => Some(*value),
                             _ => None,
                         };
                         let acknowledge_suffix = match snapshot.hit_errors() {
                             None => true,
-                            Some(Ok(vosu_sys::process::ReadStatus::Ready(_))) => true,
+                            Some(Ok(vosu_plugin_api::memory::ReadStatus::Ready(_))) => true,
                             Some(_) => false,
                         };
                         let ending_index = snapshot.ending_index();

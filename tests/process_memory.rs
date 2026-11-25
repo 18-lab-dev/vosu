@@ -17,9 +17,9 @@ use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_osu_reader::memory::{
     LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
 };
-use vosu_osu_reader::process::{Pattern, ProcessHandle};
-use vosu_sys::process::{
-    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
+use vosu_osu_reader::process::ProcessHandle;
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 
 #[derive(Default)]

@@ -83,10 +83,21 @@ try {
     }
 
     $steps = New-Object 'System.Collections.Generic.List[object]'
+    if ($config.PluginHostFixtures) {
+        # The root plugin_host_native test reads fixture libraries built in
+        # this guest (never Linux artifacts) and never runs Cargo itself.
+        $fixturesExit = Invoke-VosuPluginHostFixtures -CargoExe $cargo -WorkingDirectory $source `
+            -LogDir $logs -Steps $steps -TimeoutSeconds $TimeoutSeconds -ScratchRoot 'V:\agent-desktop\tmp'
+        if ($fixturesExit -ne 0) {
+            $tail = (Get-Content (Join-Path $logs 'plugin-host-fixtures.stderr.log') -Tail 40) -join "`n"
+            throw "plugin-host fixture preparation failed (exit $fixturesExit):`n$tail"
+        }
+    }
     $exitCode = Invoke-VosuCargoStep -Name 'cargo-test' -CargoExe $cargo -WorkingDirectory $source `
         -Arguments $cargoArgs -LogDir $logs -Steps $steps -TimeoutSeconds $TimeoutSeconds
+    Remove-VosuPluginHostScratch
 
-    $timedOut = $steps[0].timedOut
+    $timedOut = $steps[$steps.Count - 1].timedOut
     if ($timedOut) {
         # A killed process's exit code is an OS artifact, not a test result;
         # report the conventional shell timeout code instead.
@@ -107,6 +118,7 @@ try {
     Write-Done -ExitCode $exitCode -TimedOut $timedOut -ErrorMessage $null
     exit $exitCode
 } catch {
+    if (Get-Command Remove-VosuPluginHostScratch -ErrorAction SilentlyContinue) { Remove-VosuPluginHostScratch }
     Write-Done -ExitCode 1 -TimedOut $false -ErrorMessage $_.ToString()
     [Console]::Error.WriteLine($_.ToString())
     exit 1

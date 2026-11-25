@@ -1,3 +1,7 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "diagnostic harness: spawns its own target child; no plugin host exists in this process"
+)]
 //! Real-process native/PluginHost diagnostic. Windows (no test-harness required):
 //! `$env:VOSU_READ_PLAN_PROFILE='1'; cargo run --release --locked --features read-plan-profile --example plan_process_bench -- --pid 1234 --cycles 1000`
 //! Optional `--address 0x...` overrides the first readable region. The synthetic
@@ -18,9 +22,9 @@ use vosu_osu_reader::{
     memory::{MemoryReader, StableMemory},
     process::ProcessHandle,
 };
-use vosu_sys::process::ProcessMemory;
+use vosu_plugin_api::memory::ProcessMemory;
 #[cfg(feature = "test-harness")]
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ReadRequest};
+use vosu_plugin_api::memory::{MemoryError, MemoryRegion, ProcessBitness, ReadRequest};
 #[path = "plan_process_bench/pid.rs"]
 mod pid;
 #[path = "live_reader_bench/plan.rs"]

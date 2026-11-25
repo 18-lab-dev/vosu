@@ -52,15 +52,32 @@ fn resolve_is_lazy_failed_opens_retry_successes_cache_and_mutation_is_gone() {
         .unwrap()
         .encode()
     );
-    std::fs::write(fixture.dir.path().join("chart.osu"), b"mutated--chart").unwrap();
-    let changed = std::fs::OpenOptions::new()
-        .write(true)
-        .open(fixture.dir.path().join("chart.osu"))
-        .unwrap();
-    changed
-        .set_times(std::fs::FileTimes::new().set_modified(original.modified().unwrap()))
-        .unwrap();
-    let restored = changed.metadata().unwrap();
+    // A same-size rewrite with its modification time restored is detected
+    // only through the file's change time (Linux ctime, Windows ChangeTime).
+    // Both can share one system clock tick with the original write on a fast
+    // machine, which would make the two contents indistinguishable to any
+    // metadata identity; repeat the mutation until the change time moves so
+    // the test exercises detection rather than clock granularity.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let restored = loop {
+        std::fs::write(fixture.dir.path().join("chart.osu"), b"mutated--chart").unwrap();
+        let changed = std::fs::OpenOptions::new()
+            .write(true)
+            .open(fixture.dir.path().join("chart.osu"))
+            .unwrap();
+        changed
+            .set_times(std::fs::FileTimes::new().set_modified(original.modified().unwrap()))
+            .unwrap();
+        let identity_now = vosu_sys::fs::FileIdentity::of(&changed).unwrap().encode();
+        if identity_now != file.identity_bytes() {
+            break changed.metadata().unwrap();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "change time never advanced past the original write"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
     assert_eq!(restored.len(), original.len());
     assert_eq!(restored.modified().unwrap(), original.modified().unwrap());
     let ResolvedResource::File(cached) = fixture

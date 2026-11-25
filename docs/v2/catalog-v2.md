@@ -37,7 +37,7 @@ fields, using capability ids from the [naming contract](naming.md) (`field:…`,
 ```toml
 [[provides]]
 id = "field:vosu.osu"              # a bare namespace id covers the whole namespace
-version = "1.2.0"                  # the owning namespace's schema version, not the plugin's own release
+version = "1.3.0"                  # the owning namespace's schema version, not the plugin's own release
 schema = "schemas/vosu.osu.schema.json"  # required for a whole-namespace `field:` entry naming the plugin's own namespace (D7); path inside this package
 
 [[requires]]
@@ -55,7 +55,7 @@ version = "^1.0.0"
   - For a `field:` id, `version` must equal the owning namespace's current
     schema version (`docs/v2/state-schema.md`; every namespace schema starts
     at `1.0.0`, additive amendments bump it from there — `vosu.osu` is
-    `1.2.0` at this freeze) — a field's shape, not the plugin release that
+    `1.3.0` in `2.0.0-alpha.1`) — a field's shape, not the plugin release that
     happens to implement it, is what a requirer actually depends on. A
     plugin cannot publish a namespace at a version its own build doesn't
     match the corresponding schema revision for. A whole-namespace entry
@@ -366,6 +366,30 @@ semver truth rows. See [outcome and evidence](../testing/verification.md#m6a-out
 for observed Linux commands, the consumer migration ledger and native Windows
 commands explicitly marked **pending**. Structural parity does not establish
 native filesystem behavior, complete package equality or an installation gate.
+
+#### Package checker (AF.10)
+
+Approved 2026-11-24. Publishers without a vosu checkout run the SDK's own
+validation through `vosu-package-check`, an example binary of the published
+`vosu-plugin-api` crate built only on the SDK's existing manifest, namespace
+and catalog APIs; it is not a second validator, a daemon dependency or a
+user demo. S0 delivers it; it is installed from the registry at the pinned
+SDK version:
+
+```sh
+cargo install --locked --version "$SDK_VERSION" vosu-plugin-api --example vosu-package-check --root "$RUN_ROOT/sdk-tools"
+vosu-package-check --catalog "$DIST/catalog-v2.json" --packages-root "$DIST/extracted" \
+  --host-version "$HOST_VERSION" --source "$OFFICIAL_SOURCE" --registry-context "$REGISTRY_CONTEXT"
+```
+
+It reads already-extracted package roots (each repository's scripts keep
+download, archive-safety and extraction), the explicit application version,
+the exact source identity and a registration-context file whose format S0
+defines from `ValidationContext`. It runs intrinsic, contextual, host-support
+and asset-backed mirror validation for every entry, fails on any error or on
+missing schema bytes, and prints nonzero package, action and schema-asset
+counts plus every target artifact it checked. A pass grants no trust: a
+`vosu.` plugin id validates only with an exact official `--source`.
 
 ### `kind = "plugin"`
 
@@ -1395,6 +1419,113 @@ Credential/private permission/hash integrity grants no author trust.
 The backend checks provenance/CSRF but cannot attest what a human read:
 caller-supplied `warning_shown` is not authority.
 
+#### Process-plugin approval and management (A5.5, approved 2026-11-24)
+
+Approval is the explicit user decision that lets a `user`-trust plugin run
+native code under `runtime = "process"`. It is never implied by a directory,
+an id, a source, a previous approval for other bytes, or a noninteractive
+start.
+
+**Builds.** A `--plugin <dir>` manifest is handled according to the build:
+
+- **Debug (`debug_assertions`).** A request for `in-process` uses the
+  documented developer exception and loads in-process. A request for
+  `process` is `user` trust and needs approval.
+- **Prerelease release** (a version with a semver prerelease part, D21).
+  `--plugin` is accepted without the release-forbidden `test-harness`
+  feature, and every such plugin is `user` trust. A request for `in-process`
+  is refused at load with `VOSU_ERR_PERMISSION_DENIED`: it is logged and left
+  unloaded, never rewritten to `process`. A request for `process` runs only
+  after approval.
+- **Stable release.** `--plugin` is still refused unless a separate approval
+  changes that.
+
+**Approval record.** A record holds:
+
+- the plugin `id`;
+- `runtime = "process"`;
+- the SHA-256 of the exact `manifest.toml` bytes;
+- the SHA-256 of the `[targets.<host triple>].library` bytes for the running
+  host;
+- the provenance. For M5 this is `{"kind": "development", "path": <canonical
+  absolute directory>}`. For M6b it is `{"kind": "installed", "source",
+  "version", "package_sha256"}`.
+
+Records live in `plugins/approvals.json` under the configuration root, inside
+the prerelease subdirectory for prerelease builds (D21). The file is replaced
+atomically in the same directory. It holds one record per `(id, provenance)`.
+Only an explicit approval writes it: the approval route below, or M6b's plan
+confirmation.
+
+**Checking a record.** Every load and every restart, automatic or manual,
+checks every bound value. Any difference leaves the plugin
+`approval_required`, and it does not execute.
+
+The plugin host also re-verifies the library digest from the file it opened
+(plugin-abi.md §7.6), so replacing the file after core's check fails startup
+with stage `approval`.
+
+M6b's install-plan `approve` list (A6b.6) produces records of this same
+shape. There is no second approval store.
+
+**Management routes.** These follow "API placement":
+
+- they are on the dashboard listener only;
+- every `POST` and `DELETE` needs dashboard-origin provenance plus
+  `X-Vosu-CSRF`;
+- responses carry `Cache-Control: no-store`;
+- `<id>` is percent-encoded.
+
+| Route | Effect |
+| --- | --- |
+| `GET /api/plugins` | Lists every plugin with `id`, `runtime`, `trust`, `provenance`, `generation`, `state`, `reason`, crash events in the current window and the next restart delay. A plugin that needs approval also has `approval: {"manifest_sha256", "library_sha256"}`. |
+| `POST /api/plugins/<id>/approval` `{"manifest_sha256", "library_sha256"}` | Both digests must equal the currently pending ones, or the result is 409 `approval_stale`. It persists the record, then starts the plugin. A plugin that is not `user`-trust `process` is 400 `approval_not_applicable`. |
+| `DELETE /api/plugins/<id>/approval` | Removes the record and runs the controlled teardown (plugin-abi.md §7.6). The plugin becomes `approval_required`. |
+| `POST /api/plugins/<id>/restart` `{"generation"}` | Manual restart (A5.3) of exactly that generation's plugin. It resets the crash window and the `failed` latch and starts a new generation. |
+| `POST /api/plugins/<id>/stop` `{"generation"}` | Controlled teardown of exactly that generation. The plugin becomes `stopped` and is not restarted until a manual restart. |
+
+A `generation` that is not the plugin's current generation is 409
+`generation_changed`. A stale button therefore never acts on a different
+generation or a similarly named plugin.
+
+Restart and stop apply to `process` instances. For an in-process plugin they
+are 409 `requires_daemon_restart`, consistent with A6b.7's "revocation pending
+restart".
+
+**States.** `state` is one of `approval_required`, `starting`, `running`,
+`backoff`, `failed` or `stopped`. `reason` names a startup stage or a loss
+reason from plugin-abi.md §7.6.
+
+A required bundled plugin's failure stays fatal to the daemon. An optional
+external plugin's failure never stops the daemon.
+
+**Noninteractive starts.** A plugin with no dashboard (`VOSU_DASHBOARD=off`) or
+no approving user stays `approval_required`. Core logs one WARN per load
+attempt naming the plugin and stating that approval needs the dashboard. M5
+has no CLI approval, no environment-variable approval and no automatic
+approval.
+
+**What the prompt shows.** The prompt is not a catalog installer. It shows:
+
+- the id, provenance, runtime and both digests;
+- `provides`, `requires` and `optional`;
+- D8's `requires_internal_paths` disclosure;
+- a statement that a process plugin runs with the user's OS account rights,
+  filesystem and network, and is not sandboxed.
+
+**What M6b depends on.** M6b keeps ownership of source trust, install plans and
+A6b.7 revocation semantics, and this section reopens none of them. M6b depends
+on two M5 deliverables:
+
+- **Teardown.** The per-plugin controlled teardown and unregistration
+  operation (plugin-abi.md §7.6), which untrust, revocation and uninstall
+  call. It stops `process` instances and reports in-process code as
+  revocation pending restart.
+- **Process load.** One process-plugin load path, which takes a validated
+  package, its provenance and its approval record. `--plugin` and M6b
+  installed plugins share it, and M6b X0 needs it for real installed
+  process-plugin load, restart and approval evidence.
+
 ## 1.x coexistence
 
 Every official repository (vosu-tools, vosulay, vosu-overlays) publishes both
@@ -1409,6 +1540,14 @@ support window (ADR 0022). A GitHub-shorthand 2.0 source resolves to the
 ignore `catalog-v2.json` entirely; 2.0 readers reject `catalog_version != 2`
 and ignore `catalog.json` entirely. Neither format's fetcher needs to inspect
 the other.
+
+AF.4 (owner, 2026-11-24): each official repository's `catalog.json` is a
+frozen copy of its last published 1.x catalog, pointing only at immutable
+1.x release assets that were packaged independently of the v2 source. The
+frozen tags, commits and hashes are in the
+[ecosystem release matrix](ecosystem-release-matrix.md#2-repositories-and-frozen-1x-sources).
+No v1 metadata is generated around v2 packages, and no 1.x service code is
+kept in v2 sources. The end of the 1.x support window is decided separately.
 
 ## First-start migration from 1.x
 
@@ -1460,6 +1599,21 @@ M8's one-time configuration migration removes exactly `ENABLE_KEY_OVERLAY`,
 `V2_SUBSCRIPTION_DEBOUNCE`; it preserves `API_V1_SUBSCRIPTION_DEBOUNCE` and
 unrelated unknown keys.
 
+**Service tools and cross-kind transfer (AF.2, approved 2026-11-24).** A
+1.x official tool with a service becomes a `kind = "plugin"` provider plus,
+where it has a UI, a same-kind `kind = "tool"` successor with a new id
+(`<old-id>-v2`, `vosulay-editor`). `replaces` never names the package's own
+id or an id of another kind, so it cannot carry service data or native
+settings to a plugin. For those tools the `replaces` move above applies only
+to the web tool's presentation settings and its trust/enabled state; durable
+data and native or secret settings move through the closed, one-time map in
+the [ecosystem release matrix](ecosystem-release-matrix.md#5-settings-and-durable-data-transfer),
+executed by M8's core migration, never by plugin code. That map also
+retires `lazer-library`, which has no 2.0 UI: its 1.x record leaves catalog
+management once `vosu.tools.lazer-library` is installed and its row is
+complete. Collisions, offline sources and restarts follow the rules there;
+1.x bytes are copied, never moved or deleted.
+
 ## Day-0 release check
 
 The release workflow checks, for the exact fixed official identities
@@ -1482,6 +1636,11 @@ pre-release exception, such as the stable tournament-manager aggregate's
 deferral, must be resolved before day-0, not merely documented, and every
 entry must carry one of the four recognized classes; the file's
 permanent `security`/`contract`/`licensing` entries never fail the gate.
+
+AF.5 (owner, 2026-11-24): vosu-tools, vosulay, vosu-overlays and the
+quickstart are released publicly when F ships, so the unauthenticated checks
+above stay exactly as written; no credential or private-source exception is
+added. Drafts and prereleases never satisfy `/releases/latest`.
 
 ## Open questions
 

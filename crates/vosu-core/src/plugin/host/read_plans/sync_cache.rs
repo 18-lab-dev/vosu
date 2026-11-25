@@ -45,9 +45,15 @@ pub(super) fn resolve(
                 .ok_or(vosu_status::VOSU_ERR_INVALID_ARGUMENT)?
                 .plugin_id();
             let sessions = host.sessions.lock().unwrap_or_else(PoisonError::into_inner);
-            let (owner, pid) = sessions
-                .owner_and_pid(handle)
-                .ok_or(vosu_status::VOSU_ERR_TARGET_GONE)?;
+            // §5 UnknownHandle (A2b), as `resolve_owned_session` applies it.
+            let (owner, pid) =
+                sessions
+                    .owner_and_pid(handle)
+                    .ok_or(if sessions.was_issued(handle) {
+                        vosu_status::VOSU_ERR_TARGET_GONE
+                    } else {
+                        vosu_status::VOSU_ERR_INVALID_ARGUMENT
+                    })?;
             if owner != plugin {
                 return Err(vosu_status::VOSU_ERR_PERMISSION_DENIED);
             }

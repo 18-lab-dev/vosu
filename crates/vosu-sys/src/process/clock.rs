@@ -1,5 +1,5 @@
 //! Coarse monotonic time for repeated execution-budget checks, not capture timestamps.
-use super::MemoryError;
+use vosu_plugin_api::memory::MemoryError;
 
 /// Milliseconds since an arbitrary monotonic origin. Resolution is typically
 /// about 16 ms on Windows and 1–4 ms on Linux; callers must use multi-tick budgets.

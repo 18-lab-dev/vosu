@@ -51,6 +51,9 @@ RUNNER_ONLY = (
 PLACEHOLDERS = (
     (re.compile(r"--binary \S+"), "--binary <binary>"),
     (re.compile(r"--playwright-module \S+"), "--playwright-module <playwright>"),
+    # ci.yml appends to $GITHUB_ENV (bash) or $env:GITHUB_ENV (pwsh); the
+    # local gates use their own evidence file.
+    (re.compile(r"--env-file \S+"), "--env-file <env-file>"),
 )
 
 

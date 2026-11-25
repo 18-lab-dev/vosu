@@ -9,8 +9,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use vosu_plugin_api::ScanResult;
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 use vosu_plugin_testkit::scan::{self as scan_plugin, ScanCommand, ScanEvent};
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 use super::super::super::registry;
 use super::super::read_plans::set_session_memory_hook_for_tests;

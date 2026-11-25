@@ -27,9 +27,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, Pattern, PatternParseError, ProcessMemory, ReadRequest,
+};
 use vosu_plugin_api::{ErrorInfo, ScanRequest, ScanResult, vosu_status};
-use vosu_sys::process::scanner::{Pattern, PatternParseError};
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
+use vosu_sys::process::scanner;
 #[cfg(any(windows, target_os = "linux"))]
 use vosu_sys::process::{ModuleEntry, enumerate_modules};
 
@@ -171,11 +173,9 @@ pub fn execute(
     };
 
     let outcome = if request.all_matches {
-        target.scan_all(&pattern)
+        scanner::scan_all(target, &pattern)
     } else {
-        target
-            .scan_first(&pattern)
-            .map(|found| found.into_iter().collect())
+        scanner::scan_first(target, &pattern).map(|found| found.into_iter().collect())
     };
 
     // A scan is unbounded cost in the worst case; re-check liveness rather

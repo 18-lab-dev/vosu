@@ -80,9 +80,17 @@ pub enum HostError {
         entry_declares_one: bool,
     },
     State(String),
-    /// A catalog-installed `runtime = "process"` plugin needs M5's real
-    /// external process runtime; it is never loaded in-process instead.
+    /// A `runtime = "process"` package has no plugin-host launcher: one
+    /// reached instance creation with none installed, or a catalog-installed
+    /// one was loaded before catalog X0 hands installed process packages to
+    /// the launcher. Core never runs it in-process instead.
     ProcessRuntimeUnavailable,
+    /// The plugin-host child for this instance did not become ready: it
+    /// exited, broke its channel, or its plugin's `create` failed. The
+    /// launcher has already reaped it.
+    ProcessStartupFailed(String),
+    /// The instance's process was reported lost before it was published.
+    InstanceLost,
 }
 
 impl fmt::Display for HostError {
@@ -139,9 +147,14 @@ impl fmt::Display for HostError {
                 },
             ),
             Self::State(e) => write!(f, "state: {e}"),
-            Self::ProcessRuntimeUnavailable => {
-                write!(f, "process plugin requires the M5 process runtime")
+            Self::ProcessRuntimeUnavailable => write!(
+                f,
+                "runtime = \"process\" requires the plugin-host launcher, which is not available"
+            ),
+            Self::ProcessStartupFailed(reason) => {
+                write!(f, "plugin-host process did not start: {reason}")
             }
+            Self::InstanceLost => write!(f, "the plugin-host process was lost"),
         }
     }
 }

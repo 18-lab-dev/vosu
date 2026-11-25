@@ -8,9 +8,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use vosu_plugin_api::memory::MemoryError;
 use vosu_plugin_api::{PlanBase, PlanOp, ReadResult, Stage, StageBase, vosu_status};
 use vosu_plugin_testkit::read_plan::{ReadPlanCommand, ReadPlanPluginConfig};
-use vosu_sys::process::MemoryError;
 
 use super::super::super::tests::{test_host, test_process};
 use super::super::*;

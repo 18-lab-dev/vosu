@@ -6,7 +6,7 @@ use vosu_osu_reader::memory::snapshot::{
     PreciseCaptureContext, RawPreciseSnapshotBuilder, RawRegularSnapshotBuilder,
     RegularCaptureContext,
 };
-use vosu_sys::process::ReadStatus;
+use vosu_plugin_api::memory::ReadStatus;
 
 fn press_hit_errors(values: Vec<f64>) -> HitErrorArray {
     HitErrorArray {

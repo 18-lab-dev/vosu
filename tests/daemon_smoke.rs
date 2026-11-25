@@ -19,6 +19,8 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use vosu::counters::SettingsStore;
 
 include!("daemon_smoke/roots.rs");
+#[path = "daemon_smoke/adapter_capture.rs"]
+mod adapter_capture;
 #[cfg(feature = "test-harness")]
 #[path = "daemon_smoke/api_fixture.rs"]
 mod api_fixture;

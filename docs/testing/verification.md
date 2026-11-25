@@ -124,6 +124,173 @@ and the native-only symlink-privilege and flake observations, is recorded in
 the [M4a outcome](../v2/implementation-plan.md#m4a-outcome). The D17 status is
 in the [benchmark guide](benchmarks.md#m4a-d17-status-at-the-exit).
 
+## M4b behavioral goldens
+
+The approved A4b freeze is the
+[behavioral golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md):
+capture authority, harness endpoint and dump envelope, case sandwiches, route
+families and header set, the closed normalization inventory, fixture layout,
+size budget, divergence-rule format, pin and brand policy. Upstream
+observations are the only expected values; vosu dumps are replay inputs. The
+source oracle stays the projection golden. A private raw capture is never a
+fixture, and `/api/ingame` is never captured.
+
+The commands below are frozen for the implementing units; they are required
+future evidence, not a claim that the targets or subcommands exist yet.
+`tests/adapter_golden.rs` requires the `test-harness` feature
+(`[[test]] required-features`), so the exit command names it:
+
+```sh
+# L1 tooling exit, at the integrated head
+python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
+cargo test --locked --features test-harness --test adapter_golden
+cargo test --locked --features test-harness --test daemon_smoke adapter_capture
+cargo test --locked --features test-harness --test server_compat adapter_capture
+cargo test --locked --test state_api_compat --test server_compat
+python scripts/check-brand.py
+python scripts/check-doc-links.py
+python scripts/check-file-length.py
+# Native Windows; the VM command must forward --features test-harness
+python scripts/vm-test.py --test adapter_golden -- --nocapture
+python scripts/vm-test.py --test daemon_smoke -- adapter_capture --nocapture
+```
+
+Also prove that a default build compiles and that a release-profile
+`test-harness` build still fails in a disposable target. Record nonzero case
+counts by platform and family. A featureless, zero-case or unpinned run, and
+any synthetic mechanics fixture, is not pilot or full evidence.
+
+Before the pilot fixtures land, `tests/fixtures/upstream/PENDING_PILOT` names
+the Cargo pin. The pinned test then passes but prints that it compared no
+upstream case. Without the marker it fails with "no golden fixtures for pin
+`<pin>`", and it also fails when the marker names another pin or sits beside
+fixtures. X0 deletes the marker in the fixture commit. Until then, report
+adapter goldens as pending. The comparator's nonzero coverage comes from the
+self-tests over `tests/fixtures/golden-synthetic/`. That tree is written by
+G0's writer with `provenance: "synthetic"`. Each of its platforms compares only
+on the host OS its name starts with (`windows-*` on Windows, `linux-*` on
+Linux), so run `adapter_golden` natively on both, for example with
+`python scripts/vm-test.py --jobs 16 --test adapter_golden`.
+`python tests/adapter_golden/generate_synthetic.py --foreign-export <path>`
+regenerates the tree from both hosts' exports.
+
+Captures run only under a written owner authorization for that session
+(commit and pin, client build/install/profile, scenario, data/media policy,
+private evidence path, GUI operator scope, review route); VM lifecycle
+approval is not capture authorization. On the authorized platform:
+
+```sh
+python tools/live-parity/run.py check-config --config "$PARITY_CONFIG"
+python tools/live-parity/run.py golden-capture --config "$PARITY_CONFIG" --scenario-set "$APPROVED_SCENARIO" --out "$PRIVATE_CAPTURE"
+python tools/live-parity/run.py golden --capture "$PRIVATE_CAPTURE" --candidate-dir "$CANDIDATE_DIR"
+cargo test --locked --features test-harness --test adapter_golden
+python scripts/check-brand.py
+```
+
+Report the evidence items listed in the contract's exit section; name the
+private evidence location by label only. Main reviews each candidate before a
+separate fixture commit, and nothing is uploaded or published.
+
+### O0 pilot run (`golden-capture`)
+
+`golden-capture` builds `cargo build --locked --features test-harness` (Windows:
+`--no-default-features --features test-harness`) from a clean committed tree
+and refuses a modified tracked tree. It also refuses an executable without the
+harness endpoint, which rules out every release or featureless build. It
+launches and owns both daemons, each on its own loopback port with isolated
+roots, and passes the vosu daemon a fresh `VOSU_TEST_ADAPTER_CAPTURE`
+capability. It checks that the endpoint answers only with that capability. It
+then prepares the run-owned path-security layout and launches the client.
+Operator prompts go to stderr, one per barrier, in the order menu → play →
+paused → result → no-client (close the client). At each barrier every
+golden-role route-matrix case runs as two sandwiches: upstream twice, then
+vosu dump → route → dump. A case gets at most three whole-case attempts.
+Every daemon and client process and every file the run created is removed
+before the command returns. Outputs are written once and never replaced,
+both mode 0600:
+
+- `--out`: the `vosu-golden-capture-v1` capture that `golden` reads. It is
+  written only for a complete run.
+- `<out>.transcript.json`: raw records of every attempt, the build, launch and
+  barrier attestations and the cleanup result. A failed run writes only this
+  file.
+
+A run whose evidence would contain the capability writes nothing.
+
+The run configuration adds a `golden` block (`config-schema` prints its
+schema):
+
+```json
+"golden": {
+  "authorization": {"reference": "<owner authorization id>", "platform": "windows-lazer",
+                    "source_revision": "<pin>", "vosu_commit": "<40-hex HEAD>",
+                    "client_version": "<client_expected_version>",
+                    "scenario_set": "m4b-dry-run-v1"},
+  "capture_root": "C:\\vosu-capture\\m4b-pilot-<utc>",
+  "capture_slot": "osu!",
+  "route_roots": {"/Songs/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files",
+                  "/files/beatmap/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
+  "other_roots": {"files": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
+  "inside_files": {"/Songs/": "<relative file under files>",
+                   "/files/beatmap/": "<relative file under files>"},
+  "fixture_values": {"songs_file": "<relative file under files>",
+                     "songs_dir": "<relative directory under files>",
+                     "beatmap_relative": "<file relative to the current beatmap>",
+                     "skin_file": "<legacy skin file name>",
+                     "calc_relative": "<relative chart under files>",
+                     "calc_absolute_inside": "<absolute chart under files>"},
+  "sentinel_chart": "<generated vosu-owned .osu to copy outside the roots>",
+  "assets": [{"id": "<asset id>", "relative": "<path under capture_root>",
+              "media_type": "<type>", "generator": "<generator>", "license": "<license>"}]
+}
+```
+
+Every root the client declares must lie inside `capture_root`, which is
+task-owned. For lazer, point the task-owned test profile's data directory
+inside it. The upstream daemon serves lazer's legacy `/Songs/` and
+`/files/beatmap/` routes from the files store, so both route roots name the
+files slot (also declared in `other_roots`), and those file and path cases run.
+Every golden case runs except these, each listed in the transcript with its
+authority:
+
+| Excluded cases | Platform | Authority |
+|---|---|---|
+| `files.skin.file.{get,head}` | lazer | GOLDEN_CONTRACT §6 stable `/files/skin/<name>` variant; lazer records `files.skin.lazer-file.*` instead (`lazer-legacy-skin-404`) |
+| `files.skin.lazer-file.{get,head}` | stable | GOLDEN_CONTRACT §6 lazer variant (`lazer-legacy-skin-404`) |
+| `path-security.skin.*` | lazer | ledger `lazer-legacy-skin-404`: lazer has no legacy skin root to traverse from |
+| drive, UNC, ADS, trailing dot/space spellings | Linux | GOLDEN_CONTRACT §6 path-security, Windows only |
+| `absolute-encoded`, `absolute-double-slash` spellings | Windows | GOLDEN_CONTRACT §6 path-security, POSIX absolute spellings |
+| `path-security.*.symlink` | Windows, only when the symlink cannot be created | GOLDEN_CONTRACT §6 "where the platform permits" |
+
+Any other unmet prerequisite (a missing fixture value or root) fails the run
+before anything is sent. A case whose connection closes without a response is
+recorded as the `closed` outcome and compared; it never fails the run. The
+authorization must name exactly this platform, pin, commit, client version and
+scenario set, or the run is refused before the build.
+
+1. **Mandatory dry run first.** Use a config whose
+   `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and
+   three cases. Then run `golden` on it into a scratch candidate directory, in
+   the VM, before the full pilot. This catches integration gaps cheaply.
+   Discard the dry-run outputs once reviewed; they are not pilot evidence.
+
+   ```powershell
+   python tools\live-parity\run.py check-config --config $env:DRY_RUN_CONFIG
+   python tools\live-parity\run.py golden-capture --config $env:DRY_RUN_CONFIG --scenario-set m4b-dry-run-v1 --out $env:DRY_RUN_CAPTURE
+   python tools\live-parity\run.py golden --capture $env:DRY_RUN_CAPTURE --candidate-dir $env:DRY_RUN_CANDIDATE
+   ```
+
+2. **Pilot.** Use the same config with `authorization.scenario_set` set to
+   `m4b-full-v1`, and a new `--out`:
+
+   ```powershell
+   python tools\live-parity\run.py golden-capture --config $env:PARITY_CONFIG --scenario-set m4b-full-v1 --out $env:PRIVATE_CAPTURE
+   ```
+
+   Then run `golden`, `adapter_golden` and the brand check as listed above.
+   Report the transcript's barrier log, retried cases, exclusions and cleanup
+   result alongside the contract's evidence items.
+
 ## M3 API, resources and actions
 
 A3 freezes the following exit commands for implementation/integration owners.
@@ -470,10 +637,11 @@ replaces nor relaxes the deterministic gate. That gate is `state_api_compat`
 adapter bytes), `server_compat` (the mounted production listener matrix) and
 `daemon_smoke` with `test-harness`. Fix a reported mismatch in the owning
 adapter or record an approved ledger row with exact route and member scope;
-never add a comparator exemption. M4b owns the pilot/full golden capture
-commands and owner artifacts; until they exist, report missing captures as
-pending M4b/release evidence, never as a pass. The 1.x captures in the
-verification history attest vosu 1.2.5 only.
+never add a comparator exemption. These release-build diagnostic captures are
+never golden evidence. M4b owns the pilot/full golden capture commands under
+its [own contract](#m4b-behavioral-goldens); until committed fixtures exist,
+report missing captures as pending M4b/release evidence, never as a pass. The
+1.x captures in the verification history attest vosu 1.2.5 only.
 
 Native-reference mode also accepts the exact compressed upstream Linux 4.26.2
 ELF (SHA-256 `fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f`).
@@ -880,3 +1048,536 @@ Observed: 66 maintained Markdown files, zero missing local paths; 114
 tracked files with historical-brand occurrences, zero brand errors.
 Documentation-only change: no runtime tests added or run, no VM/network/CA
 operations, no native/browser/owner-forge or performance evidence claimed.
+
+## S1 vosulay supervisor evidence (D16)
+
+S1 tested [D16](../v2/implementation-plan.md#10-adopted-decisions-and-risks)
+with a throwaway in-process spike plugin, `crates/vosu-spike-vosulay` on
+branch `spike/s1-vosulay-supervisor`, which was never merged. It starts
+vosulay's host executable as a child: inside a job object on Windows, and with
+`PR_SET_PDEATHSIG` on Linux. The spike source, its scripts and its receipts are
+evidence inputs only, and no production code is derived from them. Receipts
+are kept outside the repository:
+
+- Windows: `/home/user/gh/vecosystem/win-osu/evidence/s1-final-20261124/` on
+  the host, and `V:\bt\units1win\` in the guest.
+- Linux: `/home/user/gh/vecosystem/evidence/s1-linux/`, with the summary in
+  `SUMMARY.md`.
+
+**Verdict: D16 stands on both operating systems.**
+
+- Windows passed on 2026-11-24, conditional on launching the vosulay host
+  unelevated at Medium integrity.
+- Linux passed on 2026-11-25 with a daemon that holds file capabilities.
+  Chromium's user-namespace sandbox was the active mechanism there; the setuid
+  helper was not.
+
+The M5 consequences are in the
+[S1 outcome](../v2/implementation-plan.md#s1-outcome-2026-11-25).
+
+### Evidence classes
+
+Each class proves only what its own run observed. A later class does not
+upgrade an earlier one.
+
+| Class | What it shows | What it does not show |
+| --- | --- | --- |
+| Linux host-only run, 2026-11-23 (no `vosu --setup`, no setuid helper) | The child had `NoNewPrivs: 0`, `CapPrm`/`CapEff` zero and a nonzero `CapInh`. `kill -9` of the daemon removed the vosulay child within 1 s. | This daemon held **no file capabilities**, and no CEF process existed. It is not capability or sandbox evidence. |
+| Windows pre-control runs, 2026-11-23/24 | Strict job creation and assignment succeeded. `IsProcessInJob` was true. `taskkill /F` on the daemon removed a live host that had no CEF children. | `IsProcessInJob(NULL)` means membership in *some* job: the scheduled-task environment already supplies one. The High-integrity real-client attempt ended in CEF exit 38, which is Chromium's auto-de-elevation result. It is neither a sandbox failure nor a job failure. |
+| Windows controlled matrix, 2026-11-24 | Live packaged CEF ran under the original strict job at Medium integrity, and the live tree was killed when only the daemon died. The negative control is included. | It says nothing about launching from an elevated daemon. The S1 daemon itself ran at Medium. |
+| Linux VM run with a file-capability daemon, 2026-11-25 | Supervision, zero host capabilities with `NoNewPrivs: 0`, a live namespaced and seccomp-filtered CEF tree, and core-only forced death. | The setuid `chrome-sandbox` path did not run. The daemon was a debug build with file capabilities, not a release package. |
+
+### Windows final matrix (2026-11-24)
+
+All accepted cells ran under these identical conditions:
+
+- the same packaged vosulay 1.5.3 bootstrap, with CEF
+  `156.0.15+gcf671c0+chromium-156.0.8078.80`;
+- `--config V:\bt\units1win\matrix\config.json`;
+- real osu!lazer in interactive session 1;
+- `/IT /RL LIMITED` scheduled-task launchers.
+
+In every cell, `environment.json` records the game and runner tokens at RID
+8192 (Medium), not elevated. The initial `GetForegroundWindow` PID equals the
+game's PID.
+
+Spike plugin source `a522e20a4b` adds `VOSU_SPIKE_JOB_MODE`. Unset or
+`strict` keeps the original kill-on-close job, and `none` skips only that
+assignment. The matrix rebuilt only the spike crate (`matrix/build.log`, exit
+0). No CEF sandbox setting changed, and no `--no-sandbox` or breakaway flag was
+used.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Matrix spike DLL `C:\s1spike\dev-plugin\lib\vosu_spike_vosulay.dll` (`matrix/dll-hash.json`) | `4A74F2A1B5C3FFDEC36FF7EB1BA827BFA2B4C1AB2E31BDC21B1DCFC494F51074` |
+| Debug daemon `C:\s1spike\bin\vosu.exe` (`evidence/hashes.json`) | `DCA79901075C002507D8B8EB8E517C20DF80B7C8CD4ADE1DAF3798C00D4E4D85` |
+| Packaged `vosulay.exe` | `0C73CC1DD7F1F2752ACE2AA1D12AA08C99FA08137C4A3FF0ADBBBF1612FF5709` |
+| Packaged `vosulay.dll` | `C881F031B91F1CB02F1715EBD116252F9CE138E19C592BFDB263C2F43D22CA23` |
+| Packaged `libcef.dll` | `07168EACD81BC09AB9AB895D39BC1A80913B09C844F0B5A4730F5F89A71133F5` |
+| Pre-control spike DLL (earlier source `768ad1112c`) | `93D1CB5F8E0D9FBD91AC525E1AC9AB0B55FE08245308781ECA7F58D095CDDBC0` |
+| Host `matrix-receipts.zip` | `d290992fcbea0d13bec92096cb74a180d036e2c05ae98d5266f72ff702fdd7cd` |
+| Host `matrix.bundle` | `b783121b86d1d9668f39db964407c33b83faf00e4612a9fdc94cc676fedde8bd` |
+| Host `spike.bundle` | `704d2914897859773989c6f413562fd5f005971aab145c9b73aefd75a27bf85d` |
+
+Where the hashes come from:
+
+- The daemon and package hashes were taken for the same `C:\s1spike` paths
+  during the pre-control run (`evidence/hashes.json`). The matrix used those
+  same paths, but no matrix receipt re-hashed them.
+- The three host-file digests were computed when S0 recorded this evidence.
+
+| Cell | Live packaged CEF | Forced daemon death |
+| --- | --- | --- |
+| (a) Standalone vosulay, no supervisor | **PASS**: host 10836, GPU 9548, renderer 2172 and utilities (`a/tree-live.json`). | No daemon. Standalone cleanup left no recorded process after 2.157 s. |
+| (b) Medium daemon, original strict kill-on-close job | **PASS**: daemon 11448 → host 16288 → GPU 5456, renderer 15884 and utilities (`b/tree-live.json`). | **PASS**: `taskkill /F /PID 11448` left every recorded live-tree PID absent at 2.156 s, including renderer and GPU (`b/kill.json`). No `/T` was used. |
+| (c) Medium daemon, assignment disabled (negative control) | **PASS**: daemon 13376 → host 5384 → GPU 2132, renderer 1992 and utilities (`c/tree-live.json`). | **Survived as expected**: after only daemon 13376 was killed, the host and all four CEF children remained at 2.193 s (`c/kill.json`). They were then cleaned up explicitly. |
+| (d) Breakaway variants | Not run, because (a) and (b) both passed. | Nothing here justifies changing a production job limit. |
+
+Tokens were read with `OpenProcessToken`, `GetTokenInformation` and
+`IsTokenRestricted`, and are identical across (a)–(c):
+
+- The host is Medium and unrestricted.
+- Each GPU process is Low (RID 4096) and restricted.
+- Each renderer and storage utility is Untrusted (RID 0) and restricted.
+- The network utility is Medium and unrestricted, and declares
+  `--service-sandbox-type=none`.
+
+No process ran in an AppContainer, and AppContainer is not claimed as the
+mechanism.
+
+The proof that the strict job was assigned is the source/env switch plus the
+opposite kill results of (b) and (c). It is not a generic membership query.
+
+The preserved short samples for (c) (`c-reused-client`, `c-short`,
+`c-focus-lost`, `c-attach-refused`) are retained, not used. (c) has no
+`done.json`, because its cleanup loop failed on an already-gone PID. The
+independent `matrix/cleanup.json` shows no remaining processes or `UnitS1Win*`
+tasks.
+
+Exit 38 sources were checked at pinned revisions (`exit38-sources.json`).
+
+- Chromium `chrome_result_codes.h` maps 38 to
+  `CHROME_RESULT_CODE_NORMAL_EXIT_AUTO_DE_ELEVATED`.
+- `chrome_main_delegate.cc` relaunches without elevation.
+- CEF `main_runner.cc` logs any nonnegative result as a failure.
+- The sandbox API's own 38 is a different enum and does not explain the exit.
+
+### Linux VM run (2026-11-25)
+
+Environment:
+
+- Guest: `vosu-gaming` (Arch, linux-zen, Plasma Wayland, user `vosu`).
+- vosu: spike `66de385`, **debug** build, loaded with `--plugin`.
+- vosulay: `9f9f560` (1.5.3), release build with
+  `libvosulay_{lookup,overlay}.so`.
+- osu!lazer 2026.726.0, headless under gamescope with vosulay's documented
+  `LD_PRELOAD` compositor.
+- Session variables: `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, `DISPLAY` and
+  `XAUTHORITY`.
+
+`02-grant-caps.sh` gave the daemon binary the capabilities `vosu --setup`
+grants, `cap_sys_ptrace,cap_sys_resource,cap_perfmon,cap_bpf=ep`, and staged
+`chrome-sandbox` as root:root 4755. The receipts come from `evidence2/` unless
+noted otherwise. `daemon-capability-receipt.txt` was transcribed verbatim by
+Main from the session transcript of the same VM run.
+
+| Criterion | Result |
+| --- | --- |
+| Supervision | vosu 77973 → vosulay host 77995, a direct child (`process-tree.txt`). |
+| Daemon capability status | `getcap` on the daemon binary, read right after the grant, prints `cap_sys_ptrace,cap_sys_resource,cap_perfmon,cap_bpf=ep`. In the `s1-ev.sh` runs, daemon PIDs 68050 and 70843 show UID 1000, `CapPrm`/`CapEff` `000000c001080000`, `NoNewPrivs: 0` and `Seccomp: 0`. That mask is bits 19, 24, 38 and 39 (`CAP_SYS_PTRACE`, `CAP_SYS_RESOURCE`, `CAP_PERFMON`, `CAP_BPF`): exactly the four file capabilities. The supervised vosulay children in those same runs (68073 and 70865) show `CapPrm` 0, `CapEff` 0 and `NoNewPrivs: 0`. `vosu.log` also reports `Process events backend: eBPF`. Source: `daemon-capability-receipt.txt`. |
+| vosulay host status | `CapInh`, `CapPrm` and `CapEff` are zero, `NoNewPrivs: 0`, and `CapBnd` is the full default `000001ffffffffff`. The host inherited no daemon capability. Recorded in `evidence/vosulay-status.txt` and in the `CapEff`/`NoNewPrivs` lines of `process-security.txt`. |
+| Live CEF sandbox | The renderer zygotes run in fresh PID, user and net namespaces, for example `pid:[4026532715]` and `user:[4026532554]`, against the host's `4026531836`/`4026531837`. Their status shows `NoNewPrivs: 1` and `Seccomp: 2`. Zygote 78056 holds `CapEff 0x200000` (`CAP_SYS_ADMIN`) only inside its own user namespace, as Chromium's namespace sandbox does. |
+| Core-only forced death | After SIGKILL of the daemon alone, `kill-verification.txt` reports **0 of 25** surviving. The 25 entries are 13 distinct PIDs: the host plus 12 CEF processes. The script's two `pgrep` patterns matched each CEF PID twice. So 0 of 13 distinct processes survived after 3 s, with zombies excluded. |
+| Sandbox mechanism | The kernel allows unprivileged user namespaces, so Chromium used its namespace sandbox. The staged setuid `chrome-sandbox` was not exercised. |
+
+Evidence limits recorded with the PASS:
+
+- The daemon capability readback comes from the `s1-ev.sh` runs, not from the
+  `evidence2/` run (daemon 77973) that produced the CEF and forced-death
+  receipts. For daemon 77973 itself, the only capability evidence is its
+  `Process events backend: eBPF` log line. The binary, file capabilities and
+  launch path were the same across those runs.
+- No vosu or vosulay artifact hashes were recorded.
+- The daemon was a debug build. This is file-capability evidence, not
+  packaged-release evidence.
+- Session and focus input from vosu was not exercised. vosulay attached through
+  its own compositor, and the daemon's lazer offsets were unavailable in this
+  debug build.
+- Every run shows a `[tokio-rt-worker] <defunct>` child of the daemon. S1 did
+  not attribute it.
+- The setuid-helper path still needs evidence on a kernel that forbids
+  unprivileged user namespaces. Per AF.7, the separately installed vosulay
+  runtime owns that provisioning.
+
+### Requirements S1 established and did not implement
+
+- **Elevated daemon on Windows.** When the daemon runs elevated to read
+  elevated osu! stable, vosulay's official in-process supervisor must still
+  launch the host at Medium integrity. It uses a verified unelevated token for
+  the same interactive user and session. If no suitable token exists, the
+  launch fails visibly. It never falls back to High integrity and never uses a
+  breakaway flag or `--no-sandbox`. S1 ran the daemon at Medium, so the launch
+  from an elevated daemon is still unimplemented and unproven.
+- **No stdin protocol.** vosulay's `watch_stdin` (`VOSU_TOOL_PROTOCOL=1`)
+  only reads to EOF, which it treats as shutdown. Session and focus lines that
+  the spike wrote there had no effect.
+- **Ecosystem boundary (F/AF.8).** The attached vosulay child reads session
+  and focus through its own API-v1 subscription
+  (`/api/v1/sessions/subscribe` and the selected session's state), and that
+  subscription is the only data authority. The supervisor's bounded private
+  IPC carries only lifecycle, backend configuration, editor intent and the
+  chosen-session policy. This replaces S1's stdin-forwarding sketch. The
+  production supervisor, the Medium launch and the API-v1 conversion belong to
+  the vosulay ecosystem owner, not M5.
+- **Separate launch policies.** The generic `vosu plugin-host` confinement
+  ([plugin ABI §7.3](../v2/plugin-abi.md#73-linux-privilege-drop-and-confinement-before-loading-plugin-code))
+  must not be applied to the vosulay child. `no_new_privs` would disable the
+  setuid helper. The plugin host's user-namespace denial would disable the
+  namespace sandbox that S1 Linux observed.
+
+### Defects in the throwaway S1 scripts
+
+These scripts are throwaway. Fix the following before any rerun; nothing here
+is imported into production.
+
+- `01-build.sh` builds `--bin vosu -p vosu-spike-vosulay` in one Cargo
+  invocation, which is invalid (`s1-build.log`). Build the daemon and the spike
+  crate separately.
+- `03-run-and-verify.sh` waits for a `vosulayx-*` process name. vosulay 1.5.3
+  re-execs as `vosulay-<hash>`.
+- `03-run-and-verify.sh` looks for a `chrome-sandbox` process to prove that the
+  sandbox started. No such process exists while the namespace sandbox is
+  active, so `sandbox-status.txt` falsely reported that CEF had not started
+  even though the zygotes were live. Use the namespace, `NoNewPrivs` and
+  `Seccomp` readback instead.
+- `s1-ev2.sh` collects PIDs with two overlapping `pgrep` patterns, which
+  double-counts the CEF processes (25 entries for 13 PIDs). Deduplicate the
+  PIDs before counting.
+- A daemon launched over SSH has no session display environment, so vosulay
+  exits. Export the session's `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, `DISPLAY`
+  and `XAUTHORITY`.
+- vosulay sometimes exits a few seconds after `--toggle-edit` in the headless
+  setup. Evidence was captured 4 s after the toggle.
+- Record `getcap`, the daemon's `/proc/<pid>/status` and the SHA-256 of every
+  binary inside the evidence directory of the same run. In the 2026-11-25 run,
+  Main transcribed the capability readback separately afterwards, and no
+  hashes were taken.
+- osu!lazer's Velopack self-update needs root for `/opt/osu`. The pending
+  package was moved to `/home/vosu/s1-spike/velopack-held/` for the run and
+  then restored.
+
+## M5 test and fixture conventions (A5)
+
+These are the frozen names and artifact rules the M5 units implement. They do
+not claim that the tests exist or pass. The contract they test is the
+[A5 freeze](../v2/implementation-plan.md#a5-approved-contract-freeze-2026-11-24),
+and the D17 names are in the
+[benchmark guide](benchmarks.md#m5-d17-contract).
+
+**Native target.** `tests/plugin_host_native.rs` is a thin root that declares
+the child modules in `tests/plugin_host_native/`:
+
+- `relay`, `broker`, `lifecycle`, `state`, `resources`, `actions`, `parity`,
+  `crash`, `backpressure`, `sync` and `restart`;
+- the security modules `linux_security`, `windows_job` and `parent_death`;
+- `support/`.
+
+Every test name starts with its module path, so each filter in the M5 plan
+(`relay`, `broker`, `lifecycle`, and so on) matches a nonzero set. Main lists
+`-- --list` before running. A filter that matches zero tests is a failure.
+
+The following required cases are frozen by name:
+
+- `linux_security::linux_packaged_capability_drop` is `#[ignore]`. It runs
+  only after an explicitly authorized `vosu --setup`, against the binary named
+  by `VOSU_PLUGIN_HOST_PACKAGED_BINARY`.
+- `windows_job::windows_core_death_kills_job_tree` is not ignored, and runs in
+  the ordinary native Windows target.
+
+An ordinary run that skips the ignored Linux case does not complete N0.
+
+**N0 packaged Linux drop procedure.** `linux_packaged_capability_drop` and
+its controls perform exactly these steps. L0's unprivileged native tests
+(`vosu-sys` `plugin_process::linux`, `vosu-core`
+`plugin::process::linux`) do not replace any of them.
+
+1. Confirm with `getcap` that `VOSU_PLUGIN_HOST_PACKAGED_BINARY` carries the
+   setup capabilities (`cap_sys_ptrace`, plus `cap_bpf`, `cap_perfmon` and
+   `cap_sys_resource` in the process-event profile). Start that daemon and
+   confirm its own `/proc/<pid>/status` `CapEff` is nonzero. Without both,
+   the test fails; it never passes against an uncapable binary.
+2. Load P0's testkit process plugin through the approved path (A5.5).
+   Identify the plugin host as the daemon's child whose `argv[1]` is
+   `plugin-host`, and hold it by a pidfd.
+3. Read the host's security state twice: from the testkit constructor probe
+   (marker `<probe>-<pid>`, written with the probe's own
+   `/proc/self/status` readback before any plugin code beyond the
+   constructor runs), and again after the plugin has created its threads.
+4. Assert `CapInh`, `CapPrm`, `CapEff` and `CapAmb` are 0, `NoNewPrivs` is 1,
+   `Seccomp` is 2, the user-namespace probe fails with `EPERM`, and no UID is
+   0. Record `CapBnd` without asserting it. Because the launcher sets
+   `no_new_privs` before `execve` (plugin-abi.md §7.3 "Launch"), the host's
+   earliest observation already shows `NoNewPrivs: 1` and zero sets.
+5. Refusal control: run the daemon in an environment that refuses the
+   filter (for example a wrapper seccomp filter that denies `seccomp`).
+   Expect a `FAILED` frame with stage `security` and code
+   `security_unavailable`, the plugin `failed` and not retried, no
+   constructor marker, and the host reaped as its pidfd shows.
+6. Core-only death: `SIGKILL` only the daemon, both while the host is live
+   and during its bootstrap. The host must be gone as its pidfd shows, never
+   judged by PID absence.
+
+The cgroup v2 descendant-cleanup evaluation (plugin-abi.md §7.3
+"Descendant cleanup follow-up") is a separate N0 receipt. A plugin host's
+own process group is not a qualifying option: it does not survive a
+core-only kill, and descendants can leave it with `setsid`.
+
+**Fixture artifacts.** P0 owns two `crate-type = ["cdylib"]` example targets:
+
+- `crates/vosu-plugin-testkit/examples/testkit_process_plugin.rs`;
+- `crates/vosu-osu/examples/osu_process_plugin.rs`, which has
+  `required-features = ["test-harness"]` and is never part of a release
+  build.
+
+Each target has a non-bundled `runtime = "process"` manifest under
+`tests/fixtures/plugin_host/{testkit,osu}/`. The testkit's namespace and
+action assets live beside its manifest. The osu! fixture stages the bundled
+plugin's own settings, namespace and action schema files, and its manifest
+differs from the bundled one only in `runtime` and `[targets]`. The bundled
+osu! manifest stays target-free and in-process. The osu! fixture keeps the
+official `vosu.osu` identity that parity needs. The ordinary development
+loader refuses that identity, so loading it for parity needs an approved
+official path (X0).
+
+The preparation helper, `scripts/plugin-host-fixtures.py`, builds both
+targets with `--message-format=json-render-diagnostics`. It takes the
+`cdylib` path from the matching `compiler-artifact` record and never guesses
+a file name or a hash suffix. It copies each library to
+`<artifact dir>/plugin-host-fixtures/`, so the later `--all-features
+--examples` build of the same example cannot replace the bytes under test,
+and prints `ARTIFACT name=<example> sha256=<hex> path=<copy>`. It exports two
+absolute paths:
+
+- `VOSU_PLUGIN_HOST_TESTKIT_LIBRARY`;
+- `VOSU_PLUGIN_HOST_OSU_LIBRARY`.
+
+Run a native test under it, for example
+`python scripts/plugin-host-fixtures.py -- cargo test --locked --features test-harness --test plugin_host_native -- --list`.
+With `--env-file <path>` it appends the variables in the `$GITHUB_ENV`
+format instead. ci.yml runs it before each nextest step, and so do
+`prepush.py`'s `test-linux` step, `native-ci.ps1` and `vm-test.py` (whenever
+the selected tests can include `plugin_host_native`).
+
+The native target reads these variables and fails, rather than skips, when a
+variable is unset or names a missing file. It never runs Cargo.
+
+Each test stages a fresh package directory. It copies the manifest, the assets
+and the library into `lib/`, then prints this receipt:
+
+```text
+RECEIPT artifact=<name> sha256=<hex> path=<staged path>
+```
+
+Native Windows builds the same example targets in the guest after staging.
+Linux artifacts are never copied there.
+
+Windows charges two first-time costs to each fresh library, both measured in
+the VM.
+
+- **Image evaluation of each never-seen hash.** The VM runs Smart App Control
+  in evaluation mode with user-mode code integrity, and it evaluates an image
+  on its first load. A fresh 0.8 MB DLL took 0.5–1.1 s to load, even in a
+  Defender-excluded directory. A copy of the same hash at another path then
+  loaded in about 12 ms.
+- **Defender on-access scans in unexcluded directories.** The first read of
+  a fresh file took 1.6–3 s for 194 MB and 0.2 s for 0.8 MB, against about
+  50 ms excluded. The vm-test work roots (`V:\bt\vmt-*`, temporary directory
+  included) are not excluded.
+
+Both costs landed inside the plugin host's 5-second startup deadline. A run's
+first wave of parallel tests took 3.3–5.5 s to create and some timed out,
+while later creates took about 50 ms. The first-wave times were nearly equal,
+because every test waited on the same one-time evaluation of the freshly
+built `vosu.exe` on its first execution: a fresh 31 MB executable took about
+3 s to start the first time, even in an excluded directory.
+
+Three measures remove these costs from the deadline:
+
+- `support::host` runs `vosu plugin-host` once per test process before the
+  first host. It has no descriptors, so it refuses at once with exit 70. This
+  was the decisive fix: in three full native runs afterwards, every create
+  took 52–117 ms.
+- On Windows, `scripts/plugin-host-fixtures.py` loads and frees each staged
+  library once (`PRIMED ... first_load_ms=` in its log), so each build's
+  library hash is evaluated before any test runs.
+- `native-ci.ps1` and `vm-test.ps1` export `VOSU_PLUGIN_HOST_SCRATCH_DIR`, a
+  unique directory under the excluded `V:\agent-desktop\tmp`.
+  `support::scratch` places each test's packages, receipts and instance data
+  there. Unset, it uses the system temporary directory.
+
+**Per-run isolation.** Each test stages its own copy of the testkit library,
+and writes a control file, `testkit-fixture.control`, beside that copy. The
+library's load-time constructor finds the file through its own module path
+before `create`. The file names the run's nonce, its receipt directory, its
+fault mode, the trigger opcode, and the range each attached session reads.
+Parallel tests therefore never share a control file or an environment
+variable. This replaces the earlier per-test `VOSU_PLUGIN_HOST_FIXTURE_DIR`
+variable: tests that drive a `PluginHost` in the test process share one
+process environment.
+
+- The testkit's constructor, `create`, dispatch, crash, stall and security
+  probes append receipts named `<probe>-<pid>` to that directory, plus an
+  ordered `journal-<pid>`. Every line carries the run's nonce. A line with
+  another nonce fails the test.
+- Barriers and acknowledgements use files or the ABI in that directory. A
+  blocked dispatch waits for `release-<pid>` holding the nonce. There is no
+  global PID-keyed registry and no ordering sleep.
+- A "constructor ran" claim needs a marker that names the child PID. A "never
+  ran" claim needs the marker's absence and the absence of a leftover PID.
+
+The testkit fault modes are `constructor_crash`, `create_crash`,
+`dispatch_crash`, `dispatch_abort`, `dispatch_block`, `cancel_ignored`,
+`destroy_ignored`, `ring_stall` (the child stops itself: `SIGSTOP`, or
+`NtSuspendProcess`) and `corrupt_frame` (the child publishes a
+length-mismatched frame into its own plugin → host ring and wakes core).
+Distinct data-source targets come from per-package plugin ids and process
+names. Each instance reads its own target's bytes through one read plan per
+attached session. The `support::smoke` tests prove that each mode triggers
+under the production launcher.
+
+The `*_crash` modes end the child at once, for deterministic fixtures. Linux
+uses `abort` (`SIGABRT`). Windows terminates the process itself with the
+fail-fast status `0xC0000409`. `dispatch_abort` calls the real
+`std::process::abort` on both platforms. It is the mode that proves real
+crash handling.
+
+**Open item (owner C0): Windows Error Reporting holds crashed plugin hosts.**
+A real Windows fail-fast (`std::process::abort`) is held by Windows Error
+Reporting for several seconds before the process exits. In the guest,
+Application Error 1000 (exception `0xc0000409`, faulting module
+`testkit_process_plugin.dll`) was followed 3–4 s later by WER 1001. A
+constructor or `create` crash therefore reached core as a startup `timeout`,
+not a `crash`. That is a production misclassification, not only a fixture
+effect. Candidate mechanisms, for C0 to evaluate and choose:
+
+- `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` on the plugin-host job;
+- child-side `SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)`
+  or `WerSetFlags`;
+- whether `__fastfail`, which `std::process::abort` uses, bypasses both.
+
+P0 does not implement a fix. C0/X0 prove it with `dispatch_abort`, and with an
+equivalent real-abort startup case if C0 adds one.
+
+**Open item (owners C0 for startup-deadline semantics, X0 for native
+evidence): a first load of a newly installed plugin DLL on Windows.** In
+production the plugin host is the daemon's own executable, which Windows has
+already evaluated. A newly installed or updated plugin DLL has not been
+evaluated. Its first `LoadLibrary` gets the image evaluation described above,
+inside the 5-second startup deadline. A first start can therefore fail
+spuriously as `timeout`, and a large DLL or concurrent first loads make that
+more likely.
+
+P0 measured this in the VM only with a 0.8 MB DLL. A never-seen hash took
+0.5–1.1 s to load, even in a Defender-excluded directory. A copy of the same
+hash then loaded in about 12 ms. The first-load time of a realistic release
+plugin DLL, and the effect of several concurrent first loads, were not
+measured. The test harness avoids the cost by loading each staged library
+once before the tests run. That is not a production answer, and P0 does not
+change the deadline.
+
+**Process identity.** A death proof reads a pidfd, or a process handle and its
+exit status. It never relies on PID absence alone.
+
+**Security readback.** Before a constructor runs and again after
+plugin-created threads exist, the readback records:
+
+- UID;
+- all five capability sets;
+- `NoNewPrivs`, `Seccomp` and the result of the user-namespace probe.
+
+**Windows readback.** Token and job identities are read independently of the
+code under test.
+
+**Commands (later, by the owning units and Main):**
+
+```sh
+cargo build --locked -p vosu-plugin-testkit --example testkit_process_plugin
+cargo build --locked -p vosu-osu --example osu_process_plugin --features test-harness
+cargo test --locked --features test-harness --test plugin_host_native -- --list
+cargo test --locked --features test-harness --test plugin_host_native -- --nocapture
+# Packaged Linux, after explicitly authorized setup only:
+cargo test --locked --features test-harness --test plugin_host_native \
+  linux_security::linux_packaged_capability_drop -- --ignored --nocapture
+cargo test --locked --test process_memory -- --nocapture
+```
+
+None of these commands were run by A5.
+
+**W0 Windows launch evidence.** These native Windows unit tests run with
+`python scripts/vm-test.py --package vosu-sys --lib -- plugin_process` and
+`python scripts/vm-test.py --package vosu-core --lib -- plugin::process`.
+Their child processes are the test binaries themselves, run again in a helper
+role.
+
+- `spawn_assigns_the_strict_job_before_resume_and_inherits_exactly_the_ring_objects`:
+  - Before resume, the suspended child's handle table holds exactly the four
+    ring objects, each with only the access it needs, at the values named on
+    its command line.
+  - No handle refers to an inheritable sentinel, the parent process or the
+    job.
+  - At its first test instruction, the child reads its own immediate job and
+    finds it holds only itself.
+- The `failure_*` and `missing_program_*` tests inject an assignment failure
+  and a resume failure, and trigger a real `CreateProcessW` failure. Each one:
+  - proves through an independent handle that the child was terminated with
+    the unwind exit code;
+  - finds no marker, so the child never ran;
+  - finds the parent holding exactly one handle per ring object.
+- `nested_job_core_death_kills_plugin_host_and_descendant` builds the tree
+  test → core (job O) → plugin host (job I, nested in O) → descendant, and
+  terminates only the core process. The plugin host and its descendant exit
+  even though the test still holds job O.
+- Two negative controls survive the same core-only death for 2 s: one skips
+  the assignment, and one leaks a job handle into the child.
+- `concurrent_ordinary_spawns_never_inherit_plugin_host_ring_handles` checks
+  the handle table of every suspended ordinary child spawned during 64
+  plugin-host spawns. With the `vosu_sys::process_spawn` gate removed, the
+  first ordinary child inherited a ring handle.
+
+The real-daemon core-only kill remains `windows_job::windows_core_death_kills_job_tree`
+(N0).
+
+**Finding (tools follow-up, not fixed in M5).** `src/tools/process.rs`
+assigns a tool service to its kill-on-close job only after
+`tokio::process::Command` has spawned and started it. The tool therefore runs
+unconfined for a short time, and anything it starts in that window is outside
+the job. The plugin-host spawn does not have this race: it creates the child
+suspended and assigns the job before resume (plugin-abi.md §7.4). Tool spawns
+do take the process-wide inheritance gate.
+
+### M5 T1 and B0 unit evidence (2026-11-25)
+
+Recorded by Main from the unit reports. Results from a unit's own checkout,
+before integration.
+
+- **T1 (relay).**
+  - Linux: `cargo test --locked -p vosu-core --lib plugin::process` passed
+    114, and the native `plugin_host_native relay` filter passed 5.
+  - Native Windows (`vm-test.py`): `relay` passed 5, and `plugin::process`
+    passed 115.
+- **B0 (broker).**
+  - Each `broker_*` test runs against real x64 and x86 target processes with
+    distinct bytes, on Linux and native Windows.
+  - Linux: `cargo test --locked -p vosu-core --lib read_plan` passed 75,
+    `plugin_host_native broker` passed 5 (and 5 consecutive clean runs), and
+    `--test process_memory` passed 8.
+  - Native Windows: `read_plan` passed 75, and `broker` plus `relay` passed
+    10.
+  - The cases cover the B0 counterexamples:
+    - a multi-stage chain is one transport submission;
+    - foreign handles and raw PIDs are refused;
+    - refusals happen before any read and match the in-process runtime;
+    - a cancelled ID stays reserved until its execution finishes;
+    - an old child's result never completes a new child's waiter.
+- **Integrated head.** Workspace nextest through
+  `scripts/plugin-host-fixtures.py` passed 2862 (6 skipped).

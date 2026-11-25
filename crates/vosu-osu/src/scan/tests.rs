@@ -5,9 +5,9 @@ use std::thread;
 use std::time::Duration;
 
 use vosu_osu_reader::memory::StablePatterns;
-use vosu_osu_reader::process::{
-    MemoryError, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest, ReadStatus,
-    ScanBackend,
+use vosu_osu_reader::process::{ProcessHandle, ScanBackend};
+use vosu_plugin_api::memory::{
+    MemoryError, Pattern, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 
 use super::{MAX_OUTSTANDING_SCANS, PlanScanBackend, ScanWaiters};
@@ -759,8 +759,8 @@ impl ProcessMemory for FlatMemory {
         Ok(())
     }
 
-    fn readable_regions(&self) -> Result<Vec<vosu_osu_reader::process::MemoryRegion>, MemoryError> {
-        Ok(vec![vosu_osu_reader::process::MemoryRegion {
+    fn readable_regions(&self) -> Result<Vec<vosu_plugin_api::memory::MemoryRegion>, MemoryError> {
+        Ok(vec![vosu_plugin_api::memory::MemoryRegion {
             address: self.base,
             size: self.bytes.len(),
         }])

@@ -112,7 +112,51 @@ All notable user-visible changes to vosu are documented here. Older sections are
   Windows removal evidence is still pending, and routes and root composition are
   not part of this change.
 
-## Unreleased — 2.0 M4a
+## Unreleased — 2.0 M5
+
+- Add the internal `vosu plugin-host` command, which core starts once per
+  `runtime = "process"` plugin instance. It runs before any daemon service,
+  drops privileges (Linux) or runs inside a kill-on-close job (Windows)
+  before loading the plugin, and loads only a library whose SHA-256 matches.
+  A malformed or foreign command line exits at once without starting the
+  daemon. Process plugins are not yet loadable from the command line.
+- Child processes the daemon starts now go through one creation path, so a
+  plugin host's inherited channel handles never leak into other children on
+  Windows.
+
+## 2.0.0-alpha.1 — prerelease
+
+The first vosu 2.0 development prerelease, for plugin, tool and overlay
+authors and for testers. It is published as a GitHub prerelease and is never
+the repository's latest release, so 1.x installations are not offered it.
+Plugin manifests, the plugin ABI and API v1 may still change before 2.0.0.
+
+- Runs entirely on separate `prerelease/` config, data, cache, log and broker
+  roots. The first start imports 1.x settings once, read-only, with copied
+  static paths reset to the isolated default; the 1.x installation is never
+  written, so running 1.x again returns to its own settings.
+- Updates only to a newer stable release of the same major version (2.0.0 once
+  published). It never offers a 1.x release or another prerelease.
+- This release build loads only the bundled osu! plugin. External plugins can
+  be developed against debug builds' `--plugin <dir>` until the 2.0 plugin
+  process runtime arrives in a later alpha.
+- Linux packages record the version natively (`2.0.0~alpha.1` for Debian and
+  RPM, `2.0.0alpha.1` for Arch) so the final 2.0.0 package upgrades them. The
+  Windows file version is `2.0.0.0`; `vosu --version` reports `2.0.0-alpha.1`.
+
+### Release
+
+- Report the executable's own version to the updater, the dashboard, the
+  catalog host checks, the updater's User-Agent and every log line. They
+  previously reported an internal library's `0.1.0`, which made an alpha
+  build offer stable 1.2.5 as a major update.
+- Accept SemVer prerelease release tags that exactly match the package
+  version, and publish them as GitHub prereleases that never become latest.
+  Malformed, leading-zero, build-metadata and mismatched tags stay rejected.
+- Verify that a packaged prerelease build imports 1.x settings read-only and
+  keeps the normal configuration root byte-identical.
+
+### M4a
 
 - Remove vosu-only `/json/v2` fields `beatmap.time.rate`, `beatmap.time.running`
   and `play.source` (including filtered and WebSocket output). Accurate facts
@@ -136,6 +180,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Compatibility WebSocket feeds no longer send a client a frame captured
   before its last write acknowledgement observed a newer state, so the first
   frame after an acknowledgement is always the latest.
+- Off Windows, where core has no OS-foreground source, report the foreground
+  fact as unknown again instead of `false`: plugins' `FOCUS_CHANGED` omits
+  `foreground` and identified-roster sessions carry `foreground: null`, as the
+  plugin ABI documents. Adapter wire output is unchanged; `game.focused` was
+  already omitted off Windows.
+
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
   Capture, settings, resource/action ownership and precise ABI demand stay
@@ -191,7 +241,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
   Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
   truncation marker. Production mounts all adapters through requester-bound routes.
 
-## Unreleased — 2.0 M6a
+### M6a
 
 - Validate plugin, web-tool and overlay package manifests through the SDK's
   unified validator, with the executable's version and fresh live-provider
@@ -208,9 +258,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   no fetch or installation; source/trust/resolver work remains M6b-owned.
 - Commit offline Draft 2020-12 manifest and catalog packaging schemas with
   TOML-to-JSON parity controls. Structural checks complement, not replace, SDK
-  semantic/context validation. Native Windows M6a evidence remains pending.
+  semantic/context validation.
 
-## Unreleased — 2.0 M3
+### M3
 
 - `vosu logs` and the tray **Show logs** fallback now read the log directory
   of the running build's release channel, so an alpha build follows its own
@@ -243,7 +293,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
   phase alongside the retained v1 HTTP checks, and verify debug-plugin resource
   bytes plus alpha source preservation/restart through the actual daemon.
 
-## Unreleased — 2.0 M2
+### M2
 
 - Run graphical daemon launches in the background with a tray **Show logs**
   action. Add `vosu logs [-n N] [--follow]` for crash-independent file-based
@@ -262,7 +312,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Keep installation/current-file paths private to explicitly granted plugin
   readers; API-facing state always excludes `vosu.osu.internal`.
 
-## Unreleased — 2.0 M1
+### M1
 
 - Run osu! discovery and capture through the bundled `vosu.osu` plugin; remove
   the former instance runtime while retaining the existing HTTP/WebSocket

@@ -25,3 +25,9 @@ mod sync;
 /// `Weak<PluginHost>` self-join safety (P1-2), fairness across
 /// instances (P2-7), and cancel-before-detach ordering (F6).
 mod pool;
+
+/// M5 B0: `process`-runtime instances through core's real channel,
+/// supervision and ingress, the child played by the test: one round trip
+/// per plan, exact bytes, in-process refusals, broker workers and the
+/// core-side SYNC budget, cancel reservation and generation isolation.
+mod process;

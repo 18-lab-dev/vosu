@@ -7,7 +7,7 @@ use vosu_osu_model::memory::{
     TourneyUser, User,
 };
 use vosu_osu_model::states::CalculateMods;
-use vosu_sys::process::{MemoryRead, ReadStatus};
+use vosu_plugin_api::memory::{MemoryRead, ReadStatus};
 
 /// A branch which may not have been reached by the source loop.
 ///

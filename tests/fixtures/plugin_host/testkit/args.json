@@ -1,0 +1,1 @@
+{"type":"object","properties":{"sentinel":{"type":"string","maxLength":128}},"additionalProperties":false}

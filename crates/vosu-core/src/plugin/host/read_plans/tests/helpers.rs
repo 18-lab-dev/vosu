@@ -9,11 +9,11 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use vosu_plugin_api::memory::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
 use vosu_plugin_api::{PlanOp, Stage, StageBase, vosu_status};
 use vosu_plugin_testkit::read_plan::{
     self as read_plan_plugin, ReadPlanCommand, ReadPlanEvent, ReadPlanPluginConfig,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
 
 use super::super::super::super::registry;
 use super::super::*;

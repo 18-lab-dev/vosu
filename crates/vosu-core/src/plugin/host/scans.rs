@@ -29,17 +29,16 @@
 //! [`scan::OutstandingScans::cancel_session`] (`scan.rs`'s own F6 fix)
 //! itself; this module never re-derives any of that bookkeeping, only
 //! wires it to `PluginHost`'s session/instance state and delivers the
-//! result through the normal dispatch queue
-//! ([`PluginHost::dispatch_to_instance`]), carrying the request's own
+//! result through a scan-result slot of the instance's reserved outbox,
+//! taken before admission (M5 B0, `outbox.rs`) — never a generic dispatch
+//! queue that could be full, and never a later instance reusing this id —
+//! carrying the request's own
 //! `correlation_id` (§6.4: "there is no dedicated scan-id type: a scan is
 //! correlated like every other CBOR request/reply pair" — unlike a read
 //! plan, which is instead correlated by its own `plan` id). The delivery
-//! closure captures only a `Weak<PluginHost>` (P1-2), upgraded once, only
-//! to deliver — the same reason `read_plans.rs`'s own async job does:
-//! `ScanWorkerPool::drop` joins every worker, including whichever one is
-//! running the job that would otherwise hold the last strong
-//! `Arc<PluginHost>`, which self-joins and aborts or hangs instead of
-//! shutting down.
+//! closure holds no `PluginHost` reference (P1-2): `ScanWorkerPool::drop`
+//! joins every worker, so a job holding the last strong `Arc<PluginHost>`
+//! would self-join.
 //!
 //! `VOSU_OP_SCAN_REQUEST` has no `VOSU_READ_PLAN_SYNC`-equivalent opt-in
 //! (§6.4 names none): every scan, however cheap, is delivered
@@ -56,6 +55,8 @@ use std::sync::Arc;
 
 use vosu_plugin_api::{Message, ScanRequest, vosu_status};
 
+use super::super::dispatch::OwnedMessage;
+use super::super::outbox::SlotClass;
 use super::super::scan::{self, ModuleRegion, ModuleRegions, OutstandingScans};
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
@@ -189,9 +190,11 @@ impl PluginHost {
             Err(error) => return error.into(),
         };
         let modules = build_module_regions(pid);
-        // P1-2: a `Weak` reference, upgraded only to deliver — see this
-        // module's own doc comment.
-        let host = self.self_ref.clone();
+        // M5 B0: reserved before admission; the slot is the result's whole
+        // route to this instance (module doc comment).
+        let Ok(result_slot) = self.reserve_work_result(instance, SlotClass::ScanResult) else {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        };
         let process = Arc::clone(&memory.process);
         let result = scan::submit(
             &outstanding,
@@ -203,14 +206,13 @@ impl PluginHost {
                 session: handle.0,
                 queue_key: instance.0,
             },
-            move |result| {
-                if let Some(host) = host.upgrade() {
-                    let message = Message::ScanResult(result);
-                    if let Err(error) =
-                        host.dispatch_to_instance(instance, &message, correlation_id)
-                    {
-                        host.log_dispatch_dropped(instance, message.opcode(), &error);
-                    }
+            move |result| match OwnedMessage::from_message(
+                &Message::ScanResult(result),
+                correlation_id,
+            ) {
+                Ok(message) => drop(result_slot.send(message)),
+                Err(error) => {
+                    tracing::warn!(?instance, %error, "a scan result could not be encoded");
                 }
             },
         );

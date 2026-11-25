@@ -14,7 +14,7 @@
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 
-use vosu_osu_reader::process::{ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{ProcessBitness, ProcessMemory, ReadRequest};
 use vosu_plugin_api::{
     HostServices, Init, Message, Plugin, PluginError, VtableHostServices, read_flat_header,
     vosu_bytes, vosu_host_services, vosu_message, vosu_opcode, vosu_plan_op,
@@ -352,8 +352,8 @@ fn indirect_many_is_allocation_free_once_warmed() {
     let mut read = || {
         process.read_indirect_many(
             &mut [
-                vosu_osu_reader::process::IndirectReadRequest::new(0, 4, &mut a),
-                vosu_osu_reader::process::IndirectReadRequest::new(8, 8, &mut b),
+                vosu_plugin_api::memory::IndirectReadRequest::new(0, 4, &mut a),
+                vosu_plugin_api::memory::IndirectReadRequest::new(8, 8, &mut b),
             ],
             ProcessBitness::X64,
         )
@@ -380,8 +380,8 @@ fn mixed_chains_are_allocation_free_once_warmed() {
     let mut read = || {
         process.read_chains(
             &mut [
-                vosu_osu_reader::process::ChainReadRequest::new(72, &[], &mut direct),
-                vosu_osu_reader::process::ChainReadRequest::new(0, &[4, 8], &mut dependent)
+                vosu_plugin_api::memory::ChainReadRequest::new(72, &[], &mut direct),
+                vosu_plugin_api::memory::ChainReadRequest::new(0, &[4, 8], &mut dependent)
                     .with_resolved_address(&mut resolved),
             ],
             ProcessBitness::X64,

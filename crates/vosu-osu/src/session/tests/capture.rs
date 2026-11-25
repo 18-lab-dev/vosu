@@ -1,5 +1,6 @@
 use super::*;
-use vosu_osu_reader::process::{BatchScanResult, Pattern, ScanBackend};
+use vosu_osu_reader::process::ScanBackend;
+use vosu_plugin_api::memory::{BatchScanResult, Pattern};
 
 struct PublicationHost;
 impl vosu_plugin_api::HostServices for PublicationHost {

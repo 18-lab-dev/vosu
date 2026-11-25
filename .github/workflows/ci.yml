@@ -146,6 +146,14 @@ jobs:
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # Builds and stages the plugin-host fixture libraries the root native
+      # test reads through VOSU_PLUGIN_HOST_{TESTKIT,OSU}_LIBRARY; the test
+      # never runs Cargo itself and fails when they are missing.
+      - name: Prepare plugin-host fixture libraries
+        if: needs.changes.outputs.verified != 'true'
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
+        run: python scripts/plugin-host-fixtures.py --env-file "$GITHUB_ENV"
       - name: Test workspace libraries, binaries, integration tests, and examples
         if: needs.changes.outputs.verified != 'true'
         env:
@@ -359,6 +367,9 @@ jobs:
       - name: Lint native Windows targets and features
         if: needs.changes.outputs.verified != 'true'
         run: cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
+      - name: Prepare plugin-host fixture libraries
+        if: needs.changes.outputs.verified != 'true'
+        run: python scripts/plugin-host-fixtures.py --target x86_64-pc-windows-msvc --env-file $env:GITHUB_ENV
       - name: Test native Windows workspace
         if: needs.changes.outputs.verified != 'true'
         run: cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc

@@ -275,7 +275,7 @@ async fn output(
 ) -> io::Result<std::process::Output> {
     tokio::select! {
         _ = cancel.cancelled() => Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
-        result = command.output() => result,
+        result = vosu_sys::process_spawn::output_tokio(command) => result,
     }
 }
 

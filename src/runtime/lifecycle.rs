@@ -172,6 +172,8 @@ impl ProductionRuntime {
         // long-lived task.
         let target = listen_target(&config)?;
         let program = env::current_exe()?;
+        #[cfg(feature = "test-harness")]
+        let adapter_capture = crate::server::adapter_capture::endpoint::Capability::from_env()?;
         let static_root = resolved_static_root(&self.paths, &config)?;
         // K0: catalog recovery and committed-graph load precede the tool
         // host's first scan, discovery and every route.
@@ -290,6 +292,29 @@ impl ProductionRuntime {
                 relays: relays.clone(),
             },
         );
+        let delegate = ProductionRouteDelegate::new(services)
+            .with_surface(adapters.router(self.plugins.clone()))
+            .with_api_keys(Arc::new(api_keys))
+            .with_tools(tools.clone())
+            .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
+        let live_config = Arc::clone(&self.config);
+        let delegate = match self.catalog.get_mut() {
+            Some(catalog) => delegate.with_catalog(catalog.api(
+                Arc::new(move || live_config.current().max_package_bytes()),
+                crate::server::catalog_api::network(),
+            )),
+            None => delegate,
+        };
+        #[cfg(feature = "test-harness")]
+        let delegate = match adapter_capture {
+            Some(capability) => delegate.with_adapter_capture(
+                crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint::new(
+                    capability,
+                    adapters.clone(),
+                ),
+            ),
+            None => delegate,
+        };
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {
                 inner: self.authorizer.clone(),
@@ -298,21 +323,7 @@ impl ProductionRuntime {
             }),
             state: adapters.clone(),
             calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
-            delegate: Arc::new({
-                let delegate = ProductionRouteDelegate::new(services)
-                    .with_surface(adapters.router(self.plugins.clone()))
-                    .with_api_keys(Arc::new(api_keys))
-                    .with_tools(tools.clone())
-                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
-                let config = Arc::clone(&self.config);
-                match self.catalog.get_mut() {
-                    Some(catalog) => delegate.with_catalog(catalog.api(
-                        Arc::new(move || config.current().max_package_bytes()),
-                        crate::server::catalog_api::network(),
-                    )),
-                    None => delegate,
-                }
-            }),
+            delegate: Arc::new(delegate),
         };
         let mut dashboard_providers = providers.clone();
         dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {
@@ -413,10 +424,11 @@ impl ProductionRuntime {
         }
         if self.ordinary_role && config.open_dashboard_on_startup {
             let url = format!("{}/", self.origins.dashboard());
-            if let Err(error) = tokio::task::spawn_blocking(move || open::that_detached(url))
-                .await
-                .map_err(|error| error.to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()))
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || vosu_sys::process_spawn::open_detached(url))
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result.map_err(|error| error.to_string()))
             {
                 self.logger
                     .warn(format!("Could not open dashboard: {error}"));
@@ -741,7 +753,7 @@ pub async fn run_cli() -> io::Result<()> {
         && let Some(url) = vosu_core::desktop::existing_dashboard(&target.host, target.port).await
     {
         println!("vosu is already running; opening {url}");
-        if let Err(error) = open::that_detached(&url) {
+        if let Err(error) = vosu_sys::process_spawn::open_detached(&url) {
             eprintln!("Could not open dashboard: {error}");
         }
         config.shutdown().await?;
@@ -788,10 +800,7 @@ pub async fn run_cli() -> io::Result<()> {
     }
     let logger = Logger::new(
         vosu_core::logging::logs_dir(&paths),
-        LoggerOptions {
-            debug_log: config.current().debug_log,
-            ..LoggerOptions::default()
-        },
+        daemon_logger_options(config.current().debug_log),
         Arc::new(StdoutConsole),
     )?;
     super::tracing_log::install(logger.clone());

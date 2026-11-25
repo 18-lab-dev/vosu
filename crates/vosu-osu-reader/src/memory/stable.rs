@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use vosu_osu_model::{js_round_number, net_date_binary_to_date};
 
 use super::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
-use crate::process::{Pattern, ProcessHandle, checked_address_add};
+use crate::process::{ProcessHandle, checked_address_add};
 use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, Leaderboard, Menu,
     MenuChecksum, MenuFull, Mp3Length, RankedPlay, ResultScreen, Settings, StableReplayFrame,
@@ -15,7 +15,9 @@ use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Mod, Statistics,
     TourneyManagerChatItem,
 };
-use vosu_sys::process::{MemoryError, MemoryRead, ReadRequest, ReadStatus};
+use vosu_plugin_api::memory::{
+    IndirectReadRequest, MemoryError, MemoryRead, Pattern, ProcessBitness, ReadRequest, ReadStatus,
+};
 
 mod batched;
 mod helpers;

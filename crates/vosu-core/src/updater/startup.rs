@@ -1,9 +1,5 @@
 use super::*;
 
-pub fn current_version() -> Version {
-    Version::parse(CURRENT_VERSION).expect("Cargo package version is valid semver")
-}
-
 pub fn parse_startup_update_args<I>(arguments: I) -> Result<StartupIntent, UpdateError>
 where
     I: IntoIterator<Item = OsString>,

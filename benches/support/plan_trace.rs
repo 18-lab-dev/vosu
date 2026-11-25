@@ -12,11 +12,11 @@ use vosu_osu_reader::{
     },
     process::ProcessHandle,
 };
+use vosu_plugin_api::memory::ProcessBitness;
 use vosu_plugin_api::{
     HostServices, Message, read_flat_header, vosu_opcode, vosu_plan_op,
     vosu_read_plan_submit_header, vosu_stage_header, vosu_status,
 };
-use vosu_sys::process::ProcessBitness;
 struct TraceHost {
     inner: ExecutorHost,
     phase: Arc<AtomicUsize>,

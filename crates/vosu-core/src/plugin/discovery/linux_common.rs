@@ -9,7 +9,8 @@
 use std::ffi::OsString;
 
 use vosu_plugin_api::Bitness;
-use vosu_sys::process::{LinuxProcessMetadata, ProcessBitness};
+use vosu_plugin_api::memory::ProcessBitness;
+use vosu_sys::process::LinuxProcessMetadata;
 
 use crate::plugin::host::ProcessRecord;
 

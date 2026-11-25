@@ -2,7 +2,7 @@
 # Format: <path-or-glob> <lint> <max-count> <category> <reason>
 # lint is disallowed_methods or disallowed_types (the clippy.toml lints a
 # per-site #[expect(clippy::<lint>, reason = "...")] can suppress).
-# Category is one of: bounded-poll, disposable-io, bounded-queue, benchmark-helper
+# Category is one of: bounded-poll, disposable-io, bounded-queue, benchmark-helper, spawn-gate
 # (AGENTS.md: "Production exceptions need a per-site #[expect(clippy::disallowed_methods,
 # reason = "...")]. Test code is exempt at the crate level.")
 crates/vosu-core/src/config/store.rs disallowed_methods 1 bounded-queue config-store command channel depth tracks concurrent Save/Flush/Shutdown callers, not an unbounded backlog
@@ -16,3 +16,8 @@ crates/vosu-osu-reader/src/offset_generator/client_runtime.rs disallowed_methods
 crates/vosu-sys/src/platform/windows.rs disallowed_methods 2 bounded-poll native same-directory replacement and a transient missing-name read both retry on a bounded deadline
 examples/support/process_event_bench.rs disallowed_methods 2 benchmark-helper helper process only stays alive as a named discovery target for the benchmark
 crates/vosu-osu/src/plugin/tests.rs disallowed_methods 1 bounded-poll a plain #[test] (no executor of its own) polls for a task spawned onto the plugin's own 2-worker runtime to actually start, bounded by a 5-second deadline
+crates/vosu-sys/src/process_spawn.rs disallowed_methods 3 spawn-gate the gated process-creation wrappers themselves: std and tokio spawn plus open's detached launcher, each under the Windows inheritance gate
+examples/plan_process_bench.rs disallowed_methods 1 benchmark-helper diagnostic spawns its own target child; no plugin host exists in this process
+examples/process_event_bench.rs disallowed_methods 1 benchmark-helper benchmark spawns its own workload children; no plugin host exists in this process
+examples/process_event_lazer_bench.rs disallowed_methods 1 benchmark-helper benchmark spawns its own workload children; no plugin host exists in this process
+crates/vosu-plugin-testkit/examples/testkit_process_plugin/control.rs disallowed_methods 1 bounded-poll a blocked test-fixture dispatch in a plugin host polls the test's release-barrier file until a 120-second deadline

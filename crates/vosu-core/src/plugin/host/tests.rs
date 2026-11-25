@@ -22,6 +22,10 @@ mod sessions;
 /// leaking an instance still racing `create_instance`.
 mod races;
 
+/// The process execution seam with a recording launcher: per-instance
+/// endpoints, readiness failure, loss retirement, bundled isolation.
+mod process_backend;
+
 mod resource_composition;
 /// P0 review: `create_instance` building `init.settings` from the
 /// loaded plugin's own schema, and `PluginHost::schema_for` (plugin-id

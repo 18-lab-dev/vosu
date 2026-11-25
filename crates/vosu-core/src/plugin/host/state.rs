@@ -177,8 +177,9 @@ impl SchemaRegistration {
                 "namespace provider already registered".into(),
             ));
         }
-        // Loader-decided provenance (bundled or exact official installed
-        // source), never inferred from whether the code was dlopened.
+        // Explicit package-origin provenance (M6a Q3: bundled, or an exact
+        // official installed source), never inferred from the backend: a
+        // dlopened library or a process package proves nothing either way.
         let provenance = plugin.schema_provenance();
         for (provided, text) in provided.iter().zip(plugin.namespace_schemas()) {
             let ns = provided.id.strip_prefix("field:").unwrap_or(&provided.id);

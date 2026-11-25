@@ -99,6 +99,9 @@ def check(metadata, rules_path=RULES):
     # M4a is a hard architectural boundary, not an allowlist that --update can
     # accidentally bless. Test-only producer/host fixtures are permitted.
     forbidden = {"vosu-core", "vosu-osu", "vosu-osu-state", "vosu-osu-reader", "vosu-sys"}
+    # M5 R0: the published SDK owns the platform-neutral memory vocabulary
+    # below the native boundary, and the reducer reads it with no native edge.
+    sdk_forbidden = {"vosu-core", "vosu-net", "vosu-surface", "vosu-sys"}
     for source, package in workspace_packages(metadata).items():
         for dependency in package["dependencies"]:
             target = dependency["name"]
@@ -112,6 +115,14 @@ def check(metadata, rules_path=RULES):
                 errors.append(f"M4a: wire support cannot depend on {target}")
             elif source.startswith("vosu-adapter-") and target in forbidden:
                 errors.append(f"M4a: production adapter edge {source} -> {target} is forbidden")
+            if source == "vosu-plugin-api" and target in sdk_forbidden:
+                errors.append(
+                    f"M5: SDK edge vosu-plugin-api -> {target} puts native code below the SDK"
+                )
+            if source == "vosu-osu-state" and target == "vosu-sys":
+                errors.append(
+                    "M5: vosu-osu-state -> vosu-sys revives the removed native read-type edge"
+                )
     for name in sorted(names - allowed_crates):
         errors.append(
             f"{rules_path.name}: workspace crate {name!r} is not listed; add it (with its "

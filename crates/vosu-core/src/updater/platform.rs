@@ -60,13 +60,14 @@ impl UpdatePlatform for NativePlatform {
     }
 
     fn spawn(&self, executable: &Path, args: &[OsString], cwd: &Path) -> io::Result<Child> {
-        Command::new(executable)
-            .args(args)
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+        vosu_sys::process_spawn::spawn(
+            Command::new(executable)
+                .args(args)
+                .current_dir(cwd)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
     }
 
     fn terminate_and_wait(&self, identity: &ProcessIdentity, timeout: Duration) -> io::Result<()> {

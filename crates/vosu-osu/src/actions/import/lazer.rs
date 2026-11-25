@@ -90,7 +90,8 @@ impl LazerTarget {
     ) -> Result<ImportResult, ImportError> {
         let mut command = self.command(archive.snapshot.path());
         check_cancel(cancel)?;
-        let mut child = command.spawn().map_err(|_| ImportError::Handoff)?;
+        let mut child =
+            vosu_sys::process_spawn::spawn_tokio(&mut command).map_err(|_| ImportError::Handoff)?;
         let outcome = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
         let result = match outcome {
             Ok(Ok(status)) if status.success() => Ok(ImportResult::submitted()),

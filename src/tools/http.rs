@@ -252,7 +252,8 @@ impl ToolHost {
             }
             "open-data" => {
                 fs::create_dir_all(&entry.data_dir).map_err(|e| e.to_string())?;
-                open::that_detached(&entry.data_dir).map_err(|e| e.to_string())?;
+                vosu_sys::process_spawn::open_detached(&entry.data_dir)
+                    .map_err(|e| e.to_string())?;
             }
             "clear-cache" => {
                 let _gate = self.gate.lock().await;

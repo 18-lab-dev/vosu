@@ -3,10 +3,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use vosu_core::plugin::{self, PluginHost, PluginInstanceId, ProcessRecord};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 use vosu_plugin_api::{
     ConcurrentPlugin, Init, Message, PluginError, VtableHostServices, vosu_status,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 pub const WAIT: Duration = Duration::from_secs(5);
 pub static DISPATCHES: AtomicUsize = AtomicUsize::new(0);
@@ -134,11 +136,9 @@ impl Memory {
                 status_address = 0x20_0000;
                 image[offset..].copy_from_slice(&(status_address as u32).to_le_bytes());
             }
-            let pattern = vosu_osu_reader::process::Pattern::parse(
-                item["signature"].as_str().unwrap(),
-                false,
-            )
-            .unwrap();
+            let pattern =
+                vosu_plugin_api::memory::Pattern::parse(item["signature"].as_str().unwrap(), false)
+                    .unwrap();
             image.extend(
                 pattern
                     .bytes()
@@ -257,7 +257,16 @@ impl vosu_core::logging::ConsoleSink for Console {
     }
 }
 impl Harness {
+    /// A host with a settable synthetic foreground source.
     pub fn new(id: &str, first_pid: u32, count: u32) -> Self {
+        Self::build(id, first_pid, count, true)
+    }
+    /// A host built like production's (`PluginHost::new`): its foreground
+    /// source is the default poller sample, and `foreground` is unused.
+    pub fn production(id: &str, first_pid: u32, count: u32) -> Self {
+        Self::build(id, first_pid, count, false)
+    }
+    fn build(id: &str, first_pid: u32, count: u32, synthetic: bool) -> Self {
         let lease = TestLease::acquire();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -289,12 +298,16 @@ impl Harness {
         });
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(storage));
         let foreground = Arc::new(plugin::SyntheticForegroundSource::new(None));
-        let host = PluginHost::new_with_foreground(
-            logger,
-            settings.clone(),
-            runtime.handle().clone(),
-            foreground.clone(),
-        );
+        let host = if synthetic {
+            PluginHost::new_with_foreground(
+                logger,
+                settings.clone(),
+                runtime.handle().clone(),
+                foreground.clone(),
+            )
+        } else {
+            PluginHost::new(logger, settings.clone(), runtime.handle().clone())
+        };
         let mut manifest: toml::Table = toml::from_str(vosu_osu::MANIFEST).unwrap();
         let namespace_schemas = if id == "vosu.osu" {
             &[vosu_osu::OSU_NAMESPACE_SCHEMA][..]

@@ -139,6 +139,8 @@ pub struct ProgressToken(u64);
 
 #[derive(Clone, Debug)]
 pub struct LoggerOptions {
+    /// Console line prefix: the running executable's version, supplied by the
+    /// application. This crate's own package version is unrelated.
     pub version: String,
     pub debug_log: bool,
     pub queue_capacity: usize,
@@ -147,7 +149,7 @@ pub struct LoggerOptions {
 impl Default for LoggerOptions {
     fn default() -> Self {
         Self {
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: String::new(),
             debug_log: false,
             queue_capacity: 4096,
         }
