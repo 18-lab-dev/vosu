@@ -11,7 +11,12 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         .parent()
         .unwrap()
         .to_owned();
-    let fixture = profile.join("examples/libapi_v1_plugin.so");
+    // The fixture is built into its own target directory. Building it into
+    // the shared one would rewrite `deps/libvosu_plugin_testkit.so` (a cdylib
+    // keeps one unhashed name across feature sets) with this build's feature
+    // set while other test binaries read it.
+    let fixture_target = profile.parent().unwrap().join("daemon-smoke-fixture");
+    let built = fixture_target.join("debug/examples/libapi_v1_plugin.so");
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let build = tokio::time::timeout(
         Duration::from_secs(600),
@@ -28,24 +33,31 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
                 "api_v1_plugin",
             ])
             .arg("--target-dir")
-            .arg(profile.parent().unwrap())
+            .arg(&fixture_target)
             .kill_on_drop(true)
             .status(),
     )
     .await
     .expect("fixture build deadline");
-    match build {
-        Ok(status) => assert!(status.success()),
+    let fixture = match build {
+        Ok(status) => {
+            assert!(status.success());
+            built
+        }
         // A nextest archive run (the prepush container) has no toolchain and a
         // read-only target dir; its workspace `--examples` build produced the
         // fixture in that profile directory.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => assert!(
-            fixture.is_file(),
-            "no cargo to build the fixture plugin and no prebuilt {}",
-            fixture.display()
-        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let prebuilt = profile.join("examples/libapi_v1_plugin.so");
+            assert!(
+                prebuilt.is_file(),
+                "no cargo to build the fixture plugin and no prebuilt {}",
+                prebuilt.display()
+            );
+            prebuilt
+        }
         Err(error) => panic!("fixture build failed to start: {error}"),
-    }
+    };
     let root = tempfile::tempdir().unwrap();
     let plugin = root.path().join("plugin");
     fs::create_dir_all(plugin.join("lib")).unwrap();
