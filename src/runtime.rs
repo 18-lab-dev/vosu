@@ -94,6 +94,7 @@ fn daemon_logger_options(debug_log: bool) -> LoggerOptions {
 }
 
 mod adapters;
+mod catalog;
 mod cli;
 mod config;
 mod dev_plugins;
@@ -111,6 +112,7 @@ mod tool_context;
 mod tracing_log;
 mod worker;
 
+pub use catalog::{CatalogComposition, CatalogRoots, catalog_target};
 #[cfg(feature = "test-harness")]
 pub use config::test_updater_handoff;
 pub use lifecycle::{ProductionRuntime, is_startup_owner_conflict, run_cli};
@@ -143,6 +145,7 @@ mod tests {
     include!("runtime/tests/projection.rs");
     include!("runtime/tests/worker.rs");
     include!("runtime/tests/service.rs");
+    include!("runtime/tests/package_limit.rs");
     include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/version.rs");
     include!("runtime/tests/lifecycle.rs");

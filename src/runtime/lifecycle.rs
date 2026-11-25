@@ -19,6 +19,8 @@ pub struct ProductionRuntime {
     update_notice: Option<UpdateNotice>,
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
+    /// K0 catalog owner: started before tools/discovery/routes, stopped first.
+    catalog: AsyncMutex<Option<super::CatalogComposition>>,
     dev_tools: Vec<PathBuf>,
     dev_plugins: Vec<PathBuf>,
     plugins: Arc<PluginHost>,
@@ -68,6 +70,9 @@ impl ProductionRuntime {
         self.api_v1.shutdown();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
             watch.abort();
+        }
+        if let Some(catalog) = self.catalog.lock().await.take() {
+            catalog.shutdown().await;
         }
         if let Some(tools) = self.tools.lock().await.take() {
             tools.shutdown().await;
@@ -170,6 +175,14 @@ impl ProductionRuntime {
         #[cfg(feature = "test-harness")]
         let adapter_capture = crate::server::adapter_capture::endpoint::Capability::from_env()?;
         let static_root = resolved_static_root(&self.paths, &config)?;
+        // K0: catalog recovery and committed-graph load precede the tool
+        // host's first scan, discovery and every route.
+        let catalog = super::CatalogComposition::start(
+            Arc::clone(&self.plugins),
+            super::CatalogRoots::production(&self.paths, static_root.clone()),
+            super::CatalogComposition::production_transport(),
+        );
+        *self.catalog.get_mut() = Some(catalog.await?);
         let counters = Arc::new(ReloadableCounterService::production(
             static_root,
             self.paths.config().join("settings"),
@@ -230,6 +243,9 @@ impl ProductionRuntime {
             }
         };
         tools.set_counters(Arc::clone(&counters));
+        if let Some(catalog) = self.catalog.get_mut() {
+            catalog.attach_web_hosts(tools.clone(), Arc::clone(&counters));
+        }
         *self.tools.get_mut() = Some(tools.clone());
         let relays = Arc::new(WebSocketRelaySink::new());
         let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
@@ -282,6 +298,14 @@ impl ProductionRuntime {
             .with_tools(tools.clone())
             .with_plugins(Arc::new(management))
             .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
+        let live_config = Arc::clone(&self.config);
+        let delegate = match self.catalog.get_mut() {
+            Some(catalog) => delegate.with_catalog(catalog.api(
+                Arc::new(move || live_config.current().max_package_bytes()),
+                crate::server::catalog_api::network(),
+            )),
+            None => delegate,
+        };
         #[cfg(feature = "test-harness")]
         let delegate = match adapter_capture {
             Some(capability) => delegate.with_adapter_capture(
@@ -647,42 +671,6 @@ impl RuntimeHooks for ProductionRuntime {
     }
 }
 
-pub(super) fn listen_target(config: &Config) -> io::Result<ListenTarget> {
-    if !config.server_port.is_finite()
-        || config.server_port.fract() != 0.0
-        || config.server_port < 0.0
-        || config.server_port > u16::MAX as f64
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SERVER_PORT must be an integral value in the u16 range",
-        ));
-    }
-    Ok(ListenTarget::new(
-        config.server_ip.clone(),
-        config.server_port as u16,
-    ))
-}
-pub(super) fn dashboard_listen_target(config: &Config) -> io::Result<ListenTarget> {
-    let mut dashboard = config.clone();
-    dashboard.server_ip = config.dashboard_ip.clone();
-    dashboard.server_port = config.dashboard_port;
-    listen_target(&dashboard)
-}
-
-pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> io::Result<PathBuf> {
-    paths.static_path(&config.static_folder_path)
-}
-
-pub(super) fn reload_counter_static_root(
-    paths: &Paths,
-    config: &Config,
-    counters: &ReloadableCounterService,
-) -> io::Result<()> {
-    let static_root = resolved_static_root(paths, config)?;
-    counters.reload_static_root(static_root);
-    Ok(())
-}
 #[derive(Debug)]
 pub(super) struct StartupOwnerConflict;
 
@@ -884,6 +872,7 @@ pub async fn run_cli() -> io::Result<()> {
         update_notice: None,
         counters: AsyncMutex::new(None),
         tools: AsyncMutex::new(None),
+        catalog: AsyncMutex::new(None),
         dev_tools,
         dev_plugins: dev_plugin_dirs,
         api_v1: api_v1::ApiV1Service::new(&plugin_host, &current),

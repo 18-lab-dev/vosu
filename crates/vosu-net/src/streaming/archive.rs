@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 
@@ -219,7 +219,8 @@ pub fn open_preflighted_zip(
     Ok(archive)
 }
 /// Shared counter/import entry preflight. Reject nonportable separators and
-/// Windows prefixes/alternate streams even when validation runs on Unix.
+/// Windows prefixes/alternate streams even when validation runs on Unix, plus
+/// Windows device names and the trailing dot/space Windows silently strips.
 pub fn validate_zip_entry(name: &str, unix_mode: Option<u32>) -> Result<PathBuf, NetworkError> {
     let path = Path::new(name);
     if name.is_empty()
@@ -231,6 +232,13 @@ pub fn validate_zip_entry(name: &str, unix_mode: Option<u32>) -> Result<PathBuf,
     {
         return Err(NetworkError::UnsafeZip(name.into()));
     }
+    for part in path.components() {
+        if let Component::Normal(part) = part
+            && !portable_component(&part.to_string_lossy())
+        {
+            return Err(NetworkError::UnsafeZip("nonportable entry name".into()));
+        }
+    }
     if unix_mode.is_some_and(|mode| {
         let kind = mode & 0o170000;
         kind != 0 && kind != 0o100000 && kind != 0o040000
@@ -238,6 +246,87 @@ pub fn validate_zip_entry(name: &str, unix_mode: Option<u32>) -> Result<PathBuf,
         return Err(NetworkError::UnsafeZip("non-regular archive entry".into()));
     }
     Ok(path.to_path_buf())
+}
+
+/// Windows reserves device names with any extension (`CON.txt`, `com1.json`),
+/// including the superscript-digit COM/LPT forms, and strips a trailing dot or
+/// space, so `a.` and `a` name one file there but two on Linux.
+pub fn portable_component(component: &str) -> bool {
+    if component.ends_with(['.', ' ']) {
+        return false;
+    }
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let device = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        stem.strip_prefix(prefix).is_some_and(|digit| {
+            matches!(
+                digit,
+                "1" | "2"
+                    | "3"
+                    | "4"
+                    | "5"
+                    | "6"
+                    | "7"
+                    | "8"
+                    | "9"
+                    | "\u{b9}"
+                    | "\u{b2}"
+                    | "\u{b3}"
+            )
+        })
+    });
+    !device
+}
+
+/// Case-insensitive key matching Windows' per-character simple upcase table.
+fn fold_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .chars()
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(single), None) => single,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+/// Every exact spelling of one portable name must agree; a repeated file entry
+/// or two spellings that one OS would merge make the tree platform-dependent.
+fn claim_portable(
+    claimed: &mut HashMap<String, (PathBuf, bool)>,
+    relative: &Path,
+    is_directory: bool,
+) -> Result<(), NetworkError> {
+    let mut prefix = PathBuf::new();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        prefix.push(component);
+        let directory = is_directory || components.peek().is_some();
+        match claimed.entry(fold_path(&prefix)) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert((prefix.clone(), directory));
+            }
+            std::collections::hash_map::Entry::Occupied(slot) => {
+                let (exact, was_directory) = slot.get();
+                if *exact != prefix {
+                    return Err(NetworkError::UnsafeZip("portable name collision".into()));
+                }
+                if !(directory && *was_directory) {
+                    return Err(NetworkError::UnsafeZip("duplicate archive entry".into()));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -436,23 +525,16 @@ pub fn extract_zip_atomic(
     extract_zip_atomic_validated(archive_path, destination, limits, cancel, |_| Ok(()))
 }
 
-/// Validate and prepare the complete staging tree before replacing an installation.
-pub fn extract_zip_atomic_validated(
-    archive_path: &Path,
-    destination: &Path,
+/// The one archive extractor: preflight the retained handle, then write every
+/// entry into `staging` under the path, link, count, portable-name and
+/// expanded-size limits. Returns the directories to flush.
+fn extract_entries(
+    mut file: std::fs::File,
+    staging: &Path,
     limits: ZipLimits,
     cancel: &CancellationToken,
-    validate: impl FnOnce(&Path) -> Result<(), NetworkError>,
-) -> Result<(), NetworkError> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no parent"))?;
-    std::fs::create_dir_all(parent)?;
-    recover_install(destination, parent)?;
-    let staging = tempfile::Builder::new()
-        .prefix(".extract-")
-        .tempdir_in(parent)?;
-    let mut file = std::fs::File::open(archive_path)?;
+) -> Result<HashSet<PathBuf>, NetworkError> {
+    file.seek(SeekFrom::Start(0))?;
     let entries = preflight_zip_entries(&mut file, limits.max_entries, cancel)?;
     if cancel.is_cancelled() {
         return Err(NetworkError::Cancelled);
@@ -462,8 +544,9 @@ pub fn extract_zip_atomic_validated(
         return Err(NetworkError::UnsafeZip("entry limit exceeded".into()));
     }
     let mut expanded = 0u64;
-    let mut directories = HashSet::from([staging.path().to_owned()]);
+    let mut directories = HashSet::from([staging.to_owned()]);
     let mut extracted_paths = HashSet::new();
+    let mut claimed = HashMap::new();
     let mut buffer = [0u8; 64 * 1024];
     for index in 0..archive.len() {
         if cancel.is_cancelled() {
@@ -471,6 +554,7 @@ pub fn extract_zip_atomic_validated(
         }
         let mut entry = archive.by_index(index)?;
         let enclosed = validate_zip_entry(entry.name(), entry.unix_mode())?;
+        claim_portable(&mut claimed, &enclosed, entry.is_dir())?;
         let entry_size = entry.size();
         let remaining = limits
             .max_expanded_bytes
@@ -481,12 +565,12 @@ pub fn extract_zip_atomic_validated(
                 "expanded size limit exceeded".into(),
             ));
         }
-        let output = staging.path().join(enclosed);
+        let output = staging.join(enclosed);
         if entry.is_dir() {
             remember_paths(
                 &mut directories,
                 &mut extracted_paths,
-                staging.path(),
+                staging,
                 &output,
                 true,
                 limits.max_entries,
@@ -497,7 +581,7 @@ pub fn extract_zip_atomic_validated(
         remember_paths(
             &mut directories,
             &mut extracted_paths,
-            staging.path(),
+            staging,
             &output,
             false,
             limits.max_entries,
@@ -505,11 +589,12 @@ pub fn extract_zip_atomic_validated(
         if let Some(directory) = output.parent() {
             std::fs::create_dir_all(directory)?;
         }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "entries are written into a private staging directory that is published by one same-filesystem replacement after every check passes"
-        )]
-        let mut target = std::fs::File::create(&output)?;
+        // create_new: a name the portable claim missed can never truncate an
+        // earlier entry's bytes after they were counted.
+        let mut target = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&output)?;
         let mut copied = 0u64;
         loop {
             if cancel.is_cancelled() {
@@ -517,6 +602,8 @@ pub fn extract_zip_atomic_validated(
             }
             let allowance = remaining.saturating_sub(copied);
             let read_length = buffer.len().min(allowance.saturating_add(1) as usize);
+            // The decoder verifies each entry's CRC-32 at its end; a late
+            // mismatch fails here, before validation or publication.
             let read = entry.read(&mut buffer[..read_length])?;
             if read == 0 {
                 break;
@@ -535,15 +622,16 @@ pub fn extract_zip_atomic_validated(
         expanded += copied;
         target.sync_all()?;
     }
-    validate(staging.path())?;
-    if cancel.is_cancelled() {
-        return Err(NetworkError::Cancelled);
-    }
+    Ok(directories)
+}
+
+fn sync_tree(
+    directories: HashSet<PathBuf>,
+    parent: &Path,
+    cancel: &CancellationToken,
+) -> Result<(), NetworkError> {
     let mut directories: Vec<_> = directories.into_iter().collect();
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    if cancel.is_cancelled() {
-        return Err(NetworkError::Cancelled);
-    }
     for directory in directories {
         if cancel.is_cancelled() {
             return Err(NetworkError::Cancelled);
@@ -551,6 +639,32 @@ pub fn extract_zip_atomic_validated(
         sync_directory(&directory)?;
     }
     sync_directory(parent)?;
+    Ok(())
+}
+
+/// Validate and prepare the complete staging tree before replacing an installation.
+pub fn extract_zip_atomic_validated(
+    archive_path: &Path,
+    destination: &Path,
+    limits: ZipLimits,
+    cancel: &CancellationToken,
+    validate: impl FnOnce(&Path) -> Result<(), NetworkError>,
+) -> Result<(), NetworkError> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    recover_install(destination, parent)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".extract-")
+        .tempdir_in(parent)?;
+    let file = std::fs::File::open(archive_path)?;
+    let directories = extract_entries(file, staging.path(), limits, cancel)?;
+    validate(staging.path())?;
+    if cancel.is_cancelled() {
+        return Err(NetworkError::Cancelled);
+    }
+    sync_tree(directories, parent, cancel)?;
     if cancel.is_cancelled() {
         return Err(NetworkError::Cancelled);
     }
@@ -563,4 +677,117 @@ pub fn extract_zip_atomic_validated(
     sync_directory(parent)?;
     drop(staging_guard);
     Ok(())
+}
+
+/// A completely extracted, flushed and unpublished package tree in a private
+/// directory under the caller's staging parent. Dropping it removes the tree.
+#[derive(Debug)]
+pub struct StagedTree {
+    directory: tempfile::TempDir,
+}
+impl StagedTree {
+    pub fn path(&self) -> &Path {
+        self.directory.path()
+    }
+    /// Transfer ownership of the staged directory to a recovery journal.
+    pub fn keep(self) -> PathBuf {
+        self.directory.keep()
+    }
+}
+
+/// Extract from the caller's retained, already verified handle (never by
+/// reopening a path) into `parent`, which must be on the destination's
+/// filesystem. Nothing is published; the caller owns validation and commit.
+pub fn extract_zip_staged(
+    file: std::fs::File,
+    parent: &Path,
+    limits: ZipLimits,
+    cancel: &CancellationToken,
+) -> Result<StagedTree, NetworkError> {
+    std::fs::create_dir_all(parent)?;
+    let directory = tempfile::Builder::new()
+        .prefix(".stage-")
+        .tempdir_in(parent)?;
+    let directories = extract_entries(file, directory.path(), limits, cancel)?;
+    sync_tree(directories, parent, cancel)?;
+    Ok(StagedTree { directory })
+}
+
+/// Durable no-replace directory rename within one filesystem: fails if
+/// `destination` exists, then flushes both parents' namespace changes.
+pub fn rename_directory_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    let source_parent = source
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "source has no parent"))?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no parent"))?;
+    rename_no_replace(source, destination)?;
+    sync_directory(parent)?;
+    if source_parent != parent {
+        sync_directory(source_parent)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let source = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let destination = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination path contains NUL")
+    })?;
+    // SAFETY: `renameat2` is a direct syscall; both arguments are
+    // NUL-terminated C strings held alive for the call, `AT_FDCWD` is a
+    // documented sentinel and flag 1 is RENAME_NOREPLACE.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            1u32,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both arguments are NUL-terminated UTF-16 strings held alive for
+    // the call. Without MOVEFILE_REPLACE_EXISTING an existing name fails.
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    if destination.exists() {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
+    std::fs::rename(source, destination)
 }

@@ -1,5 +1,5 @@
 import { createSettingsEditor, createActionDialog, createOverflow, showModal } from './homepage-settings.js';
-import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.js';
+import { mountCatalogSources, mountCatalogOverlays, mountCatalogStatus } from './dashboard-catalog.js';
 import { createAppUpdater } from './dashboard-update.js';
 
 (() => {
@@ -2099,7 +2099,7 @@ import { createAppUpdater } from './dashboard-update.js';
   initializePresentation();
   initializePinDrag();
   initializeDashboardStatus();
-  refreshToolCount();
+  refreshToolCount(); mountCatalogStatus({ requestJson });
   if ((pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay) {
     state.roving = rovingGrid(results, '.counter-card');
   }

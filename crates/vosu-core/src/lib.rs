@@ -18,6 +18,7 @@ pub mod action_schema;
 pub mod actions;
 pub mod api;
 pub mod app;
+pub mod catalog;
 pub mod config;
 pub mod desktop;
 pub mod identity;

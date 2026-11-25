@@ -45,6 +45,8 @@ from parity_process import _process_alive
 import parity_routes as pr
 import route_matrix as rm
 import route_security as rs
+import parity_volatile as volatile
+from parity_golden_client import check_client_root
 
 TRANSCRIPT_FORMAT = "vosu-golden-capture-transcript-v1"
 CAPABILITY_ENV = "VOSU_TEST_ADAPTER_CAPTURE"
@@ -55,7 +57,9 @@ TRAVERSAL = ("menu", "play", "paused", "result", "no-client")
 MAX_ATTEMPTS = parity_golden.MAX_ATTEMPTS
 MAX_DUMP_BYTES = 8 << 20
 POLL_S = 0.1
-STABLE_OBSERVATIONS = 2
+# A barrier holds once both daemons report it and the non-volatile views of the upstream
+# v2 payload and the vosu v2 dump stayed identical across this many observations.
+STABLE_OBSERVATIONS = 3
 # A record must carry an HTTP response to be a golden record.
 RESPONSE_OUTCOMES = frozenset({"response", "rejected", "upgraded", "server-closed"})
 _SCHEMA_OF_PATH = {"/json": "v1", "/json/sc": "sc", "/json/v2": "v2",
@@ -375,16 +379,49 @@ def golden_record(record: dict[str, Any], attempt: int, family: str) -> dict[str
     return value
 
 
+def _raw(value: dict[str, str]) -> bytes:
+    return value["text"].encode("utf-8") if "text" in value else base64.b64decode(value["b64"])
+
+
 def _comparable(record: dict[str, Any]) -> tuple[Any, ...]:
-    """The parts a golden compares; the Date value is normalized, its presence is not."""
+    """The parts a golden compares; the Date value is normalized, its presence is not.
+
+    Volatile-ledger fields are compared by presence, type and rule (`parity_volatile`);
+    a record breaking a rule never compares equal to anything."""
     if "outcome" in record:
         return (record["outcome"],)
-    headers = [[name.lower(), "<date>" if name.lower() == "date" else value]
+    request = _raw(record["request"]).decode("utf-8", "replace").split(" ", 2)
+    path = request[1].partition("?")[0] if len(request) > 1 else ""
+    headers = [[name, "<date>" if name.lower() == "date" else value]
                for name, value in record["headers"]
                if name.lower() in parity_golden.COMPARED_HEADERS
                or name.lower().startswith("access-control-")]
-    return (record["status_line"].split(" ", 2)[1], sorted(headers), record["body"],
-            record.get("frames"))
+    frames = None if record.get("frames") is None else [
+        (f["from"], f["fin"], f["opcode"], (f["masked"], f["mask_key"]), _raw(f["payload"]))
+        for f in record["frames"]]
+    try:
+        return volatile.record_view(path, record["status_line"].split(" ", 2)[1], headers,
+                                    _raw(record["body"]), frames)[0]
+    except volatile.VolatileError as exc:
+        return ("volatile rule broken", str(exc), id(record))
+
+
+def _elevated() -> bool:
+    if sys.platform == "win32":
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    return os.geteuid() == 0
+
+
+def _remove_worktree(repository: str, path: str) -> None:
+    """Unregister and delete a run-owned `git worktree` of the source repository."""
+    env = daemon_mod._git_environment()
+    subprocess.run(daemon_mod._git_command(Path(repository), "worktree", "remove", "--force",
+                                           path), capture_output=True, env=env, check=False)
+    if Path(path).exists():
+        shutil.rmtree(path)
+    subprocess.run(daemon_mod._git_command(Path(repository), "worktree", "prune"),
+                   capture_output=True, env=env, check=True)
 
 
 # ---------------------------------------------------------------- run
@@ -440,6 +477,10 @@ class Session:
         if CAPABILITY_ENV in env or CAPABILITY_ENV in self.cfg["daemons"]["source"].get("env", {}):
             raise CaptureError(f"{CAPABILITY_ENV} is generated per launch, never configured")
         env[CAPABILITY_ENV] = self.capability
+        if sys.platform == "win32":
+            # vosu keeps its broker credential under LOCALAPPDATA: make that run-owned.
+            self.vosu_local = daemon_mod._private_runtime_dir("vosu-live-parity-vosu-")
+            env["LOCALAPPDATA"] = str(self.vosu_local)
         vosu_spec["env"] = env
         launch_cfg = {**self.cfg, "daemons": {**self.cfg["daemons"], "vosu": vosu_spec}}
         processes, evidence = daemon_mod.launch(launch_cfg)
@@ -451,9 +492,11 @@ class Session:
 
     # -- barriers
 
-    def _observe(self, source: Daemon, dump: HarnessDump) -> dict[str, str | None]:
+    def _observe(self, source: Daemon, dump: HarnessDump) -> tuple[dict[str, str | None], Any]:
+        """Both daemons' barriers, and the non-volatile view of their v2 state."""
         with HttpProbe(f"http://127.0.0.1:{source.port}", "source", "v2", source.evidence) as probe:
-            upstream = barrier_of(probe.fetch())
+            sample = probe.fetch()
+        upstream = barrier_of(sample)
         envelope = dump.fetch("v2")
         if envelope["http"]["kind"] == "not_ready":
             vosu = "process-exit"
@@ -464,7 +507,12 @@ class Session:
                 payload = None
             vosu = barrier_of(Sample("vosu", "v2", 0, payload))
         rename = {"process-exit": "no-client"}
-        return {"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)}
+        try:
+            view = (volatile.payload_view("/json/v2", json.dumps(sample.payload).encode("utf-8"))[0],
+                    volatile.dump_view(envelope)[0])
+        except volatile.VolatileError:
+            view = None  # never stable: a volatile field broke its rule
+        return {"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)}, view
 
     def _holds(self, barrier: str, seen: dict[str, str | None]) -> bool:
         """Both daemons report the barrier, and the attested client is alive in a client
@@ -476,11 +524,11 @@ class Session:
                       reached: list[str]) -> None:
         index = TRAVERSAL.index(barrier)
         self.operator(barrier, f"waiting for barrier {barrier}: {OPERATOR_STEPS[barrier]}")
-        stable = 0
+        stable, previous = 0, None
         while stable < STABLE_OBSERVATIONS:
             if time.monotonic() > self.deadline:
                 raise CaptureError(f"barrier {barrier} was not reached before the timeout")
-            seen = self._observe(source, dump)
+            seen, view = self._observe(source, dump)
             for daemon, value in seen.items():
                 if value not in TRAVERSAL or TRAVERSAL.index(value) <= index:
                     continue
@@ -488,11 +536,16 @@ class Session:
                     continue  # The client is still starting.
                 raise CaptureError(f"barrier out of order: {daemon} reached {value} while "
                                    f"waiting for {barrier} after {reached or ['launch']}")
-            stable = stable + 1 if self._holds(barrier, seen) else 0
+            if not self._holds(barrier, seen) or view is None:
+                stable, previous = 0, None
+            else:
+                stable = stable + 1 if stable and view == previous else 1
+                previous = view
             if stable < STABLE_OBSERVATIONS:
                 time.sleep(POLL_S)
         reached.append(barrier)
-        self.transcript["barriers"].append({"barrier": barrier, "monotonic_ns": time.monotonic_ns()})
+        self.transcript["barriers"].append({"barrier": barrier, "monotonic_ns": time.monotonic_ns(),
+                                            "stable_observations": STABLE_OBSERVATIONS})
 
     # -- cases
 
@@ -502,7 +555,7 @@ class Session:
         schema = dump_schema(case)
         raw: dict[str, Any] = {"case": case.id, "attempt": number}
         self.transcript["cases"].append(raw)
-        guard = self._observe(source, dump)
+        guard = self._observe(source, dump)[0]
         raw["barrier_before"] = guard
         if not self._holds(case.barrier, guard):
             return f"barrier {case.barrier} not held before the attempt: {guard}"
@@ -510,7 +563,7 @@ class Session:
         before = dump.fetch(schema)
         route = pr.run_identical(item, [vosu.endpoint], ledger=self.ledger)[0]
         after = dump.fetch(schema)
-        guard = self._observe(source, dump)
+        guard = self._observe(source, dump)[0]
         raw.update(source=upstream, vosu=route, dump_before=before, dump_after=after,
                    barrier_after=guard)
         if not self._holds(case.barrier, guard):
@@ -589,6 +642,8 @@ class Session:
 
     def run(self) -> dict[str, Any]:
         self._authorize(None)
+        self.transcript["volatile_ledger"] = volatile.ledger()
+        self.transcript["client_root"] = check_client_root(self.cfg)
         build = self.build(self.cfg, str(self.out))
         self.transcript["build"] = build
         identity = self._identity(build)
@@ -686,9 +741,21 @@ class Session:
         if self.layout is not None:
             step("path-security layout", lambda: rs.remove_security_layout(self.layout))
         build = self.transcript.get("build") or {}
+        for tree in build.get("owned_worktrees", []):
+            step("source worktree", lambda tree=tree: _remove_worktree(tree["repository"], tree["path"]))
         for owned in build.get("owned_paths", []):
             if Path(owned).exists():
                 step("capture build output", lambda path=owned: shutil.rmtree(path))
+        vosu_local = getattr(self, "vosu_local", None)
+        if isinstance(vosu_local, Path) and vosu_local.exists():
+            step("vosu local data", lambda: shutil.rmtree(vosu_local))
+        parents = [*build.get("owned_parents", []), *(
+            str(Path(p).parent) for p in [vosu_local, *(getattr(process, "_live_parity_runtime_dir", None)
+                                                     for process in self.processes.values())]
+            if isinstance(p, Path) and Path(p).parent.name == "vosu-live-parity")]
+        for parent in dict.fromkeys(parents):
+            step("empty run parent", lambda path=Path(parent): path.is_dir() and not any(
+                path.iterdir()) and path.rmdir())
         report = {"errors": errors, "daemons": sorted(groups)}
         self.transcript["cleanup"] = report
         return report
@@ -824,6 +891,9 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
         raise CaptureError("the run configuration has no golden block")
     if not 0 < timeout < float("inf"):
         raise CaptureError("timeout must be finite and positive")
+    if _elevated():
+        raise CaptureError("golden-capture refuses an elevated or root process: run it with the "
+                           "limited interactive token (verification.md, O0 pilot run)")
     out_path = Path(out).resolve()
     transcript_path = out_path.with_name(out_path.name + ".transcript.json")
     for path in (out_path, transcript_path):

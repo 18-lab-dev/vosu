@@ -239,6 +239,7 @@ impl PluginHost {
         if let Some((handle, owner, detached)) = resolved {
             self.finish_detach(handle, owner, detached);
         }
+        self.notify_exited(pid);
     }
 
     /// Discovery's foreground-window entry point (P2-9, phase (d2)): the
@@ -315,14 +316,17 @@ impl PluginHost {
     }
 
     /// The unified enumeration-cost pre-filter (§6.1,
-    /// `MatcherEngine::prefilter`'s own doc comment): re-read on every
+    /// `MatcherEngine::prefilter`'s own doc comment), unioned with any
+    /// discovery observer's extra interest (`observer.rs`): re-read on every
     /// reconciliation pass so a plugin installed or torn down after
     /// startup narrows or widens what a source opens or admits.
     #[must_use]
     pub fn prefilter(&self) -> Prefilter {
-        self.matcher
+        let installed = self
+            .matcher
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .prefilter()
+            .prefilter();
+        self.observer_prefilter(installed)
     }
 }

@@ -1,7 +1,8 @@
 // Tools page: renders `GET /api/tools` and drives the lifecycle, launch,
 // data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
 
-import { cardBanner, cardIcon, catalogArt, sourceFailures } from './dashboard-catalog.js';
+import { cardBanner, cardIcon } from './dashboard-catalog.js';
+import { mountCatalogBrowser } from './dashboard-catalog-browse.js';
 import { mountPlugins } from './dashboard-plugins.js';
 import { toolAutostartControl } from './homepage-settings.js';
 
@@ -158,141 +159,17 @@ export function mountTools({
   mountPlugins({ before: installedHeader, requestJson, notify, setBusy, errorText, confirmAction, createActionDialog });
 
   const api = (id, suffix = '') => `/api/tools/${encodeURIComponent(id)}${suffix}`;
-  const availableCards = el('div', { className: 'tools-root', attrs: { 'aria-labelledby': 'tools-available-title' } });
-  const catalogStatus = el('div', { className: 'tools-loading', text: 'Fetching catalog sources…' });
-  const catalogRefresh = el('button', { className: 'button', text: 'Refresh catalog', attrs: { type: 'button' } });
-  const available = el('section', { className: 'tools-catalog', attrs: { 'aria-labelledby': 'tools-available-title' } },
-    el('header', { className: 'tools-catalog__header' },
-      el('h2', { text: 'Available', attrs: { id: 'tools-available-title' } }), catalogRefresh),
-    catalogStatus, availableCards);
-  root.after(available);
-  let catalogTools = [];
+  // Catalog v2: tools and plugins to install through a reviewed plan, game
+  // offers and catalog-installed packages (dashboard-catalog-browse.js).
+  const catalog = mountCatalogBrowser({
+    anchor: root, requestJson, notify, errorText, setBusy, rovingGrid,
+    matches: (entry, query) => matches(entry, tokensOf(query)),
+  });
+  // A catalog install/uninstall changes the installed cards and the open
+  // drawer's Uninstall action.
+  window.addEventListener('vosu:catalog-changed', async () => { await refresh(); refreshOpenDetails(); });
   // One Tab stop per card grid; arrows move between cards.
   const installedGrid = rovingGrid(root, '.tool-card');
-  const availableGrid = rovingGrid(availableCards, '.tool-card');
-
-  // The catalog entry of an installed tool, for the version an update offers.
-  function catalogEntry(id) {
-    return catalogTools.find((tool) => (tool.id === id || tool.replacement_of === id) && !tool.shadowed) ?? null;
-  }
-
-  // `/api/tools` says whether a tool was installed from a catalog
-  // (`managed`) and whether the last fetched catalog has a newer version,
-  // so Update and Uninstall work even while the source is unreachable.
-  function updateButton(view, name) {
-    if (!view.managed || !view.update_available) return null;
-    const target = catalogEntry(view.id);
-    const renamed = target && target.id !== view.id;
-    const label = renamed ? `Update to ${target.name || target.id}` : 'Update';
-    const describe = renamed
-      ? `Update ${name} to ${target.name || target.id}${target.version ? ` v${target.version}` : ''}; preserves data and settings`
-      : `Update ${name}${target?.version ? ` to v${target.version}` : ''}`;
-    return actionButton(label, 'catalog-update', { update: true, describe });
-  }
-
-  // Only tools that are not installed, or have an update, are offered here;
-  // installed tools are managed from their own card and its Details.
-  function renderCatalog() {
-    const offered = catalogTools.filter((tool) => {
-      const installed = state.tools.find((entry) => entry.id === tool.id);
-      return !installed || (tool.managed && tool.update_available);
-    });
-    const shown = offered.filter((tool) => matches(tool, tokensOf(state.query)));
-    availableCards.replaceChildren(...shown.map((tool) => {
-      const installed = state.tools.find((entry) => entry.id === tool.id);
-      const update = Boolean(tool.replacement_of || (installed && tool.update_available));
-      const official = ['18-lab-dev/vosu-tools', '18-lab-dev/vosulay', '18-lab-dev/vosu-overlays'].includes(tool.source);
-      const titleId = `catalog-tool-${tool.id}`;
-      const card = el('article', { className: 'tool-card', attrs: { 'data-catalog-tool': tool.id, 'aria-labelledby': titleId } },
-        cardBanner(catalogArt(tool.banner_url)),
-        el('div', { className: 'tool-card__top' },
-          cardIcon(tool.name || tool.id, catalogArt(tool.icon_url)),
-          el('div', { className: 'tool-card__head' },
-            el('h2', { attrs: { id: titleId, title: `${tool.name} · ${tool.author} · ${tool.source}` } }, el('span', { className: 'tool-card__name', text: tool.name }), el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
-            el('p', { className: 'tool-card__status' },
-              ...interfaceChips(tool),
-              tool.shadowed || !official ? el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : 'User catalog' }) : null))),
-        tool.description ? el('p', { className: 'tool-card__description', text: tool.description }) : null);
-      if (list(tool.requires).length) card.append(el('p', { className: 'tool-card__description', text: `Requires ${tool.requires.map((r) => `${r.id} ${r.version}`).join(', ')}` }));
-      if (tool.replacement_of) card.append(el('p', { className: 'tool-card__description', text: `Replaces ${tool.replacement_of}; keeps data and settings.`, attrs: { title: `Moves data, settings, trust, enabled and autostart choices from ${tool.replacement_of} to ${tool.id}.` } }));
-      const actions = el('div', { className: 'tool-card__actions' });
-      if (tool.shadowed) actions.append(el('span', { className: 'field-help', text: 'An earlier source provides this id.' }));
-      else {
-        const action = update ? 'update' : 'install';
-        const button = actionButton(update ? 'Update' : 'Install', action, {
-          primary: !update, update, disabled: !tool.supported, describe: `${update ? 'Update' : 'Install'} ${tool.name}`,
-        });
-        button.addEventListener('click', () => catalogAction(button, tool, action));
-        actions.append(button);
-      }
-      if (!tool.supported) actions.append(el('span', { className: 'field-help', text: 'Not available for this platform' }));
-      card.append(actions);
-      return card;
-    }));
-    if (!shown.length && catalogTools.length) {
-      availableCards.append(el('p', { className: 'tools-loading', text: offered.length ? 'No matching tools.' : 'Every catalog tool is installed.' }));
-    }
-    availableGrid?.refresh();
-  }
-
-  async function fetchCatalog() {
-    setBusy(catalogRefresh, true, 'Fetching…');
-    try {
-      const payload = await requestJson('/api/tools/catalog');
-      catalogTools = list(payload.tools);
-      catalogTools.push(...list(payload.shadowed).filter((entry) => entry.kind === 'tool'));
-      // Sources are only worth a line when one failed.
-      catalogStatus.replaceChildren(...[sourceFailures(list(payload.sources), fetchCatalog)].filter(Boolean));
-      renderCatalog();
-      refreshOpenDetails();
-      // The fetch also refreshed vosu's update annotations for installed
-      // tools; re-read them so their cards gain or lose Update now.
-      refresh();
-    } catch (error) {
-      const failure = el('p', { className: 'catalog-failures', text: `Couldn't load the catalog: ${errorText(error)}. Installed tools still work. ` });
-      const retry = el('button', { className: 'link-button', text: 'Retry', attrs: { type: 'button' } });
-      retry.addEventListener('click', fetchCatalog);
-      failure.append(retry);
-      catalogStatus.replaceChildren(failure);
-    } finally { setBusy(catalogRefresh, false); }
-  }
-  catalogRefresh.addEventListener('click', fetchCatalog);
-
-  function chooseUninstall(button, tool) {
-    const { dialog, body } = createActionDialog(`Uninstall ${tool.name}?`);
-    body.append(el('p', { text: 'Keep or remove its saved data and cache?' }));
-    const cancel = el('button', { className: 'button', text: 'Cancel', attrs: { type: 'button' } });
-    cancel.addEventListener('click', () => dialog.close());
-    const actions = el('div', { className: 'dialog-actions' }, cancel);
-    for (const [label, removeData] of [['Uninstall, keep data', false], ['Uninstall, remove data', true]]) {
-      const choice = el('button', { className: `button ${removeData ? 'button-danger button-danger--solid' : 'button-danger'}`, text: label, attrs: { type: 'button' } });
-      choice.addEventListener('click', () => { dialog.close(); catalogAction(button, tool, 'uninstall', removeData); });
-      actions.append(choice);
-    }
-    body.append(actions);
-    cancel.focus();
-  }
-
-  async function catalogAction(button, tool, action, removeData) {
-    if (action === 'uninstall' && removeData === undefined) { chooseUninstall(button, tool); return; }
-    setBusy(button, true, 'Queued…');
-    try {
-      const id = action === 'update' ? (tool.replacement_of || tool.id) : tool.id;
-      const response = await requestJson(api(id, `/${action}`), { method: 'POST', body: JSON.stringify({ remove_data: removeData }) });
-      for (;;) {
-        const job = await requestJson(`/api/tools/catalog/jobs/${encodeURIComponent(response.job_id)}`);
-        if (button.isConnected) button.textContent = `${job.phase}…`;
-        if (job.status === 'completed') break;
-        if (job.status === 'failed') throw new Error(job.error || 'Installation failed');
-        await new Promise((resolve) => window.setTimeout(resolve, 350));
-      }
-      const done = { install: 'installed', update: 'updated', uninstall: 'uninstalled' };
-      notify(`${tool.name} was ${done[action] ?? 'updated'}.`, 'success');
-      await refresh();
-      await fetchCatalog();
-    } catch (error) { notify(`${tool.name}: ${errorText(error)}`, 'error'); }
-    finally { setBusy(button, false); }
-  }
 
   function tokensOf(query) {
     return String(query).toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -385,8 +262,6 @@ export function mountTools({
         ? actionButton('Stop', 'stop', { describe: `Stop ${name}` })
         : actionButton('Start', 'start', { describe: `Start ${name}` }));
     }
-    const update = updateButton(view, name);
-    if (update) actions.append(update);
     if (view.has_settings) {
       actions.append(actionButton('Settings', 'settings', { describe: `Settings for ${name}` }));
     }
@@ -443,13 +318,11 @@ export function mountTools({
     actions.append(
       actionButton('Data', 'data', { describe: `Data folders for ${name}` }),
       actionButton('Logs', 'logs', { describe: `Logs for ${name}` }));
-    const update = updateButton(view, name);
-    if (update) actions.append(update);
     if (status !== 'invalid' && view.trusted && view.enabled) {
       actions.append(actionButton('Disable', 'disable', { danger: true, describe: `Disable ${name}` }));
     }
-    // Catalog-installed tools are uninstalled here, not from Available.
-    if (view.managed) {
+    // Catalog-installed tools are uninstalled here, through a preview.
+    if (catalog.record('tool', view.id)) {
       actions.append(actionButton('Uninstall…', 'catalog-uninstall', { danger: true, describe: `Uninstall ${name}` }));
     }
     return [
@@ -548,8 +421,7 @@ export function mountTools({
     let previous = null;
     for (const view of state.tools) {
       seen.add(view.id);
-      // The Update button names the catalog version, which arrives separately.
-      const signature = JSON.stringify([view, catalogEntry(view.id)?.version ?? null]);
+      const signature = JSON.stringify([view, Boolean(catalog.record('tool', view.id))]);
       let card = state.cards.get(view.id);
       if (!card || (state.signatures.get(view.id) !== signature && !state.pending.has(view.id))) {
         const next = renderCard(view);
@@ -877,21 +749,18 @@ export function mountTools({
     else if (action === 'data') openData(view);
     else if (action === 'settings') openToolSettings(view.id, view.name || view.id);
     else if (action === 'logs') openLogs(view);
-    else if (action === 'catalog-update' || action === 'catalog-uninstall') {
-      // The catalog entry may be missing while its source is offline; the
-      // job needs only the id.
-      const tool = (action === 'catalog-update' ? catalogEntry(view.id) : null) ?? { id: view.id, name: view.name || view.id };
-      catalogAction(button, tool, action === 'catalog-update' ? 'update' : 'uninstall');
+    else if (action === 'catalog-uninstall') {
+      const record = catalog.record('tool', view.id);
+      if (record) catalog.uninstall(record, view.name || view.id);
     } else lifecycle(button, view, action);
   }
   root.addEventListener('click', handleAction);
 
   refresh();
-  fetchCatalog();
 
   return (query) => {
     state.query = query;
     applyFilter();
-    renderCatalog();
+    catalog.filter(query);
   };
 }

@@ -1,11 +1,11 @@
 //! Plugin registry: validates the root crate's explicit `BUNDLED` array
-//! (D13) and `--plugin <dir>` development packages into one
-//! [`LoadedPlugin`] shape — manifest, schemas and grants through one
-//! validation path — then applies the §7.1 runtime decision
+//! (D13), `--plugin <dir>` development packages and committed catalog
+//! packages into one [`LoadedPlugin`] shape — manifest, schemas and grants
+//! through one validation path — then applies the §7.1 runtime decision
 //! (`docs/v2/plugin-abi.md` §1, §2, §7.1). Only a local grant enters native
-//! code here (a linked bundled vtable, or a debug development library
-//! `dlopen`ed through `execution::descriptor::load_library`). A
-//! `runtime = "process"` package yields a confined
+//! code here (a linked bundled vtable, or a development or policy-authorized
+//! installed library `dlopen`ed through `execution::descriptor::load_library`).
+//! A `runtime = "process"` development package yields a confined
 //! [`super::execution::ProcessPackage`]; its library is never mapped in
 //! core.
 
@@ -68,6 +68,24 @@ impl LoadedPlugin {
         self.origin
     }
 
+    /// Provenance the state registry compiles this plugin's namespace
+    /// schemas with (`x-visibility` requires `TrustedOfficial`): only the
+    /// compiled `BUNDLED` array and catalog packages installed from an exact
+    /// official source identity (the rule catalog I0 compiles staged schemas
+    /// with). Debug `--plugin` overrides and trusted user-source packages
+    /// stay `Untrusted`; a dlopened library never implies official authority.
+    pub fn schema_provenance(&self) -> vosu_plugin_api::manifest::schema::SchemaProvenance {
+        use vosu_plugin_api::manifest::schema::SchemaProvenance;
+        match self.origin {
+            PackageOrigin::Bundled | PackageOrigin::Installed { official: true } => {
+                SchemaProvenance::TrustedOfficial
+            }
+            PackageOrigin::Development | PackageOrigin::Installed { official: false } => {
+                SchemaProvenance::Untrusted
+            }
+        }
+    }
+
     /// How this package runs: local code, or a process package core never
     /// enters. A local development library stays mapped for as long as
     /// either this value or an instance built from it is alive.
@@ -120,7 +138,13 @@ pub fn load_bundled(
     bundled
         .iter()
         .map(|entry| {
-            let manifest = parse_plugin(entry.manifest, application_version, snapshot, true)?;
+            let manifest = parse_plugin(
+                entry.manifest,
+                application_version,
+                snapshot,
+                "bundled",
+                true,
+            )?;
             if manifest.runtime != Runtime::InProcess {
                 return Err(HostError::InProcessRefused {
                     reason: "a bundled plugin's manifest must request runtime = \"in-process\"",
@@ -211,13 +235,63 @@ pub fn load_development(
         return Err(HostError::DevelopmentRefused);
     }
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
-    let manifest = parse_plugin(&text, application_version, snapshot, false)?;
+    let manifest = parse_plugin(&text, application_version, snapshot, "development", false)?;
     if !debug_build && manifest.runtime == Runtime::InProcess {
         return Err(HostError::InProcessRefused {
             reason: "a release build runs `--plugin` packages as user trust, which never grants in-process; request `runtime = \"process\"`",
         });
     }
-    let manifest_sha256: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
+    load_package(manifest, &text, dir, PackageOrigin::Development)
+}
+
+/// Loads one catalog-installed plugin from its committed package directory
+/// (catalog I0 runtime handoff). Trust is not decided here: the caller must
+/// have run `catalog::trust::CurrentPolicy::authorize_load` for this exact
+/// installed artifact under the catalog operation gate immediately before.
+/// `official` is that decision's tier (`TrustTier::Official`, i.e. the exact
+/// installed source identity is a fixed official one): it selects the SDK
+/// context and, through [`PackageOrigin::Installed`], `TrustedOfficial`
+/// schema registration, matching how I0 compiled the staged schemas. A
+/// trusted user source stays `Untrusted`. A `runtime = "process"` package is
+/// refused with `ProcessRuntimeUnavailable` until catalog X0 hands installed
+/// process packages to the plugin-host launcher; the daemon never `dlopen`s
+/// it as an in-process substitute.
+pub fn load_installed(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    source: &str,
+    official: bool,
+) -> Result<LoadedPlugin, HostError> {
+    use std::io::Read as _;
+    const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+    let mut text = String::new();
+    std::fs::File::open(dir.join("manifest.toml"))?
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(HostError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "manifest byte budget exceeded",
+        )));
+    }
+    let manifest = parse_plugin(&text, application_version, snapshot, source, official)?;
+    if manifest.runtime != Runtime::InProcess {
+        return Err(HostError::ProcessRuntimeUnavailable);
+    }
+    load_package(manifest, &text, dir, PackageOrigin::Installed { official })
+}
+
+/// Reads one validated external package's confined assets and attaches its
+/// granted execution: a development or policy-authorized installed
+/// in-process library is mapped here, a development process package only
+/// recorded.
+fn load_package(
+    manifest: PluginManifest,
+    manifest_text: &str,
+    dir: &Path,
+    origin: PackageOrigin,
+) -> Result<LoadedPlugin, HostError> {
     let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
@@ -257,19 +331,23 @@ pub fn load_development(
         .ok_or(HostError::MissingTarget)?;
     let library_path = confined_asset(&root, &target.library)?;
     let execution = match manifest.runtime {
-        // SAFETY: `library_path` names a file the developer passed via the
-        // debug-only `--plugin <dir>` flag with `runtime = "in-process"`;
-        // loading and running its code in-process is exactly the trust
-        // this development tier accepts (§7.1), the whole reason this path
-        // is refused outside debug builds.
+        // SAFETY: `library_path` is confined to a development directory the
+        // developer passed via `--plugin <dir>` in a debug build (release
+        // builds refuse a development in-process request in
+        // `load_development`), or to a committed catalog package whose exact
+        // artifact current §7.1 policy just authorized for in-process
+        // execution (`load_installed` refuses every other runtime before this
+        // point); loading and running its code in-process is exactly the
+        // trust either tier accepts.
         Runtime::InProcess => Execution::Local(unsafe { descriptor::load_library(&library_path) }?),
         Runtime::Process => {
+            let manifest_sha256: [u8; 32] = sha2::Sha256::digest(manifest_text.as_bytes()).into();
             Execution::Process(ProcessPackage::new(root, library_path, manifest_sha256))
         }
     };
     Ok(LoadedPlugin {
         manifest,
-        origin: PackageOrigin::Development,
+        origin,
         execution,
         settings_schema,
         namespace_schemas,
@@ -334,17 +412,13 @@ fn parse_plugin(
     text: &str,
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
-    bundled: bool,
+    source: &str,
+    official: bool,
 ) -> Result<PluginManifest, HostError> {
     let package =
         vosu_plugin_api::manifest::PackageManifest::parse(text).map_err(HostError::from)?;
     let support = snapshot
-        .validate(
-            &package,
-            application_version,
-            if bundled { "bundled" } else { "development" },
-            bundled,
-        )
+        .validate(&package, application_version, source, official)
         .map_err(HostError::from)?;
     if support != vosu_plugin_api::manifest::HostSupport::Supported {
         return Err(HostError::State(

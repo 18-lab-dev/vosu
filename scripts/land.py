@@ -19,6 +19,7 @@ EXPECTED_STEPS = {
     "fmt",
     "clippy-linux",
     "test-linux",
+    "catalog-forge",
     "doc-links",
     "file-length",
     "brand",

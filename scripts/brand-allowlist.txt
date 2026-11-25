@@ -9,7 +9,7 @@ AGENTS.md 2 history states the rename policy: tosu appears only as a migration s
 CONTRIBUTING.md 1 history states that the former name tosu appears only in migration, upstream, and history context
 scripts/check-brand.py 3 fixture the check must spell the old brand to detect it
 scripts/test_repo_checks.py 9 fixture brand-check tests plant old-brand occurrences to prove detection
-README.md 27 history documents the rename, migration precedence, and upstream tosu compatibility target for users
+README.md 26 history documents the rename, migration precedence, and upstream tosu compatibility target for users
 CHANGELOG.md 33 history pre-rename release notes and the rename itself are historical record, not current branding
 LICENSE 9 history retains the upstream copyright holder credit and relicensing permission text
 LICENSE-MIT 1 history retains the upstream copyright holder credit
@@ -32,7 +32,6 @@ docs/security.md 2 upstream describes the upstream tosu catalog network dependen
 docs/testing/benchmarks.md 73 history records historical released-tosu comparison measurements
 docs/testing/verification.md 5 upstream tosu.env migration precedence and the pinned upstream reference release used by live parity
 docs/testing/verification-history.md 8 history dated parity captures against the pinned upstream tosu reference build
-docs/tools/protocol.md 1 upstream references the upstream tosu tool/counter ecosystem this protocol is compatible with
 docs/workflows/compatibility-and-calculation.md 1 upstream references the upstream tosu compatibility target
 docs/workflows/runtime-and-config.md 3 upstream references legacy tosu.env migration handling
 crates/vosu-pp/rosu-pp-api/** 25 provenance pinned upstream rosu-pp-api fork; retains upstream doc comments and tests verbatim

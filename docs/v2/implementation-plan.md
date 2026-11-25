@@ -2042,6 +2042,167 @@ group), Codeberg, and one Gitea or Forgejo instance with read-only tokens
 that are never stored in the repository; results recorded in
 [verification](../testing/verification.md).
 
+#### M6b frozen service interfaces
+
+**A6b contract landing, approved 2026-11-24.** A6b.1–A6b.6 and A6b.8
+are adopted as recommended; A6b.7 adopts pending user restart, **not**
+automatic restart. Normative details are in
+[Sources and credentials](catalog-v2.md#sources-and-credentials),
+[Resolver algorithm](catalog-v2.md#resolver-algorithm) and
+[ADR 0023](../decisions/0023-authenticated-catalog-sources.md).
+This freezes implementation inputs/outputs, not a claim those services or
+their native evidence already exist at baseline `2c349eb`.
+
+The following names describe the shared logical records/operations; Rust
+ownership wrappers may borrow/share immutable data without changing their
+fields or authority. Integrator owns public exports/config/root wiring.
+W1 implementations must use these same records, not competing representations.
+
+| Owner / destination | Frozen input → output / invariant |
+| --- | --- |
+| S0 `vosu-core::catalog::sources` | `SourceIdentity` is the untouched configured string; equality, credential keys and officialness are exact-string. `ParsedSource` retains identity plus `Static { url }`, `GitHub { owner, repo, tag }` or `Repository { origin, project_path }`; parsing never grants trust. `Forge` is GitHub/GitLab/Gitea-compatible/Static. `DetectedSource` adds forge, configured host and derived credential origin. Successful/failure cache state is keyed by identity and source generation, not URL aliases. |
+| N0 `vosu-net` request policy | `Origin` is parsed HTTPS scheme/host/effective port. `RequestPurpose` distinguishes Probe, SourceMetadata, CatalogAsset, Package, Artwork, Updater and Counter. Source policy contains exact configured host, private permission and credential origin; it cannot authorize package/art/updater/counter. `RequestCredential` is sensitive Bearer/token/Basic material, not a public HeaderMap. Only metadata/asset requests may carry it, only on approved initial origin. Policy is immutable for one chain; cross-origin stripping is irreversible. |
+| N0 bounded request operation | URL + purpose/policy + optional scoped credential + body/deadline/redirect limits + cancellation → bounded bytes/status or redacted typed error. Probe is always credential-free with 5-second total deadline. Validate initial/hop URL and DNS, pin addresses, no proxy/auto-redirect/cookie ambient state. Existing public streaming/download methods stay credential-free/public-only. Package streaming accepts pinned exact size/hash/cap and never accepts source policy. Production TLS uses OS roots without losing public roots. |
+| C0 `vosu-core::catalog::credentials` | Inject channel-aware config root, do not rediscover release roots. `CredentialInput` is Token or Basic; secret values have no general Debug/Serialize. `set(identity, input)`, `delete(identity)` and explicit validated repair serialize durable publication, returning generation or redacted error. A private core-only credential lookup returns an immutable secret lease plus generation for a fetch; no secret getter is exported to dashboard/surface/ABI. `presence(identity)` returns boolean plus availability status only. |
+| S0 source publication | `SourceRecord` contains identity, enabled, trusted, private_network and order; officialness is derived from fixed identity allowlist, never loaded from list JSON. `replace` accepts ordered identity/enabled pairs only (32 maximum); `set_trust`/`set_private_network` are separate commands. Source removal and credential purge share one operation/recovery authority. C0 never publishes a newly created unknown source. |
+| S0 generation gate | Snapshot source/order/trust/private/credential generations before I/O; publish only if all still match and source is enabled/present. Disable/remove/reorder/flag/credential changes invalidate dependent fetches/plans. Hold no state mutex across network/await/filesystem/plugin callback. Explicit refresh retries failed detection; no detector timer or stale-last-good candidate fallback. |
+| S0 → F0 | Immutable `DetectedSource`, generation stamp, private policy and optional private credential lease → bounded fetched catalog bytes or typed source error. F0 derives exact forge endpoints/asset URL; N0 alone implements connection/redirect/TLS rules. Probe identity cannot be established across origins. F0 does not write source state. |
+| S0 → R0/P0/G0 | `SourceSnapshot` holds source generation/status and ordered validated candidates. Each candidate retains exact source, source ordinal, kind, catalog-array index, immutable SDK entry, host/target support and exact package/hash/size. Retain lower-ranked alternatives. Failed/invalid/disabled sources have status but no candidates. No secret or authenticated header is stored in snapshot, detection cache, plan or public view. |
+
+**One M6a seam, already present:** reuse SDK `catalog::{Catalog,
+CatalogEntry, EntrySupport}`, `Catalog::parse`, `validate_context`, `support`,
+and `manifest::{PackageManifest, ValidationContext, Registration,
+SchemaProvenance, Requirement, candidate_satisfies}`. Core supplies running
+version, all enabled successful-source registrations, installed and actual
+bundled registrations, and exact contextual provenance; SDK does not infer
+officialness from ids/URLs. Construct the whole registration context before
+contextual ingestion; do not first-wins merge candidates into a lossy map.
+Host/target/size support is distinct from document validity.
+
+I0 loads the **actual confined package schema bytes**, compiles through the
+SDK schema compiler and calls `catalog::compare_package(kind, entry,
+manifest, compiled_schemas)` before publication. Catalog-reconstructed lane
+metadata is not asset verification. Preserve Q1–Q7: wildcard/ref/full-document
+work bounds, trusted provenance, strict duplicates/fields, resolution
+`1..=16384`, portable matcher hints and game/provide equivalence.
+M4a's actual compiled manifests/current core schemas supply built-ins,
+including approved common/chart/internal grants and accurate schema additions;
+no copied M3 inventory, duplicate namespace walker or B1 restoration.
+
+**Graph/plan/install seam:** `ResolutionInput` is immutable validated
+sources + installed consumers/manifests + actual built-ins + app/target/cap +
+explicit requested/update intent. `Resolution` returns one selected candidate
+per plugin, resolved required/satisfied-optional edges (requirer, capability,
+range, selected provider), dependency-first adds or typed errors with empty
+adds. R0 owns centralized finite candidate/search-work bounds; no network
+or mutation. U0 reconstructs this graph, not a persisted reference counter.
+
+`PinnedPlan` adds an opaque random ID, creation/deadline, full public add
+fields, exact entries/hash/size/runtime approvals and all generation/fingerprint
+prerequisites. P0 owns 64 pending/10-minute TTL/one-running-operation admission
+and single-use confirmation; no expiry poller. I0 receives only a confirmed
+pinned plan and cancellation, not an arbitrary item ID to resolve again.
+Use the same checked `MAX_PACKAGE_MIB` byte cap in R0/P0/I0/N0.
+
+`InstalledRecord` contains kind/id/version, exact source and artifact hash,
+runtime/approval binding, requested/dependency origin and current manifest
+identity; no credential, frozen trust label as authority or refcount.
+`InstallTransaction` owns retained prepared objects, same-filesystem staging,
+before/after record/directory identities and a durable versioned recovery
+journal. Preparation does not expose packages. Journal each publication
+boundary; rollback an unpublished batch; recover before registry discovery.
+Only a durable graph commit publishes installed generation, then loaders
+recheck current trust/approval. U0 reuses that transaction for recursive
+removal and preserves data/settings. M8 may reuse recovery/import operations
+and no-overwrite replacement intents; it owns the one-time migration marker,
+not source scanning or credential reads.
+
+**M5 dependency, explicitly not implemented by M6b:** T0 hands validated
+package location/manifest, target library, exact source/hash/runtime approval
+binding and current-policy generation to the registry execution-backend seam.
+Process grant must produce a real M5 endpoint without parent `dlopen` or
+in-process fallback. Missing runtime/security prerequisite is an honest load
+refusal; it cannot count as native user-plugin exit. Stop/revoke invalidates
+instance generations and uses M5 cleanup; running in-process revocation
+remains pending user restart. A5.1's owner-pending Linux privilege policy and
+M5/S1 native gates remain external blockers, not permission to weaken §7.3.
+
+W2's pure `catalog::trust::CurrentPolicy` consumes a fresh S0 generation and
+records at plan/confirm/load. `catalog::approvals::{Artifact,Approval}` bind
+id, exact source, version, hash and runtime; neither a saved tier nor a matching
+hash grants trust. `InstalledPolicy::source_changed` clears prior approvals on
+trusted-to-user transitions (including source removal), returning `StopProcess`
+or `PendingRestart` for running code. W4 persists the cleared approval through
+I0 before another load/restart, applies M5 stop effects and retains the
+in-process disabled marker for the daemon lifetime, even after re-trust/rescan.
+`authorize_load` is a current-policy check, not a durable load permit; the
+shared operation gate must cover its final check and execution admission.
+H0 owns dashboard-listener/provenance/CSRF checks and shows `TRUST_WARNING`
+before every false-to-true grant. `TrustChange` accepts only `trusted`;
+`warning_shown` is rejected, not an authorization credential.
+
+**M7 seam:** core owns source/credential/trust/plan/install/remove/job
+handlers and bounded redacted views. Current root server handlers become thin
+listener/provenance/CSRF/DTO facades to those services; current web hosts retain
+static serving, installed web rescan and legacy installed-tool loading until
+M7's coherent deletion. M6b removes only superseded catalog-v1 fetch/install
+paths at full production cutover. H0 delivers working v2 UI now; M7 later moves
+assets/rendering to the bundled dashboard and consumes the same HTTP services.
+Neither `vosu-surface` nor ABI gains credential lookup, generic config/core
+handle or install authority. M7 A7.1's redacted rendering contract is a
+separate dependency; no dashboard → core crate edge is introduced here.
+
+Frozen dashboard-listener route inventory (no prefix/wrong-method fallback):
+
+| Method / exact path | Request / successful result |
+| --- | --- |
+| `GET /api/catalog` | Current redacted catalog/candidate/source status view; no implicit install. |
+| `GET /api/catalog/sources` | Ordered nonsecret source records/status and `has_credential`, never secret previews. |
+| `POST /api/catalog/sources` | Ordered source/enabled list replacement; no trust/private injection; durable success 204. |
+| `POST /api/catalog/sources/refresh` | Explicit refresh of enabled sources/detection failures; redacted status, no implicit install. |
+| `POST /api/catalog/sources/<source>/credential` | Token or Basic body from catalog spec; 204 with no echo. |
+| `DELETE /api/catalog/sources/<source>/credential` | 204, including absent credential on existing source. |
+| `POST /api/catalog/sources/<source>/trust` | `{"trusted": bool}`; 204; fixed official identity cannot be untrusted. |
+| `POST /api/catalog/sources/<source>/private-network` | `{"allowed": bool}`; 204; user-added source only. |
+| `POST /api/catalog/install` | `{"id","kind","source"}` → complete immutable plan, never immediate job. |
+| `POST /api/catalog/plans/<plan_id>/confirm` | `{"approve":[ids...]}` → `{"job_id"}` only after exact recheck/consume. |
+| `GET /api/catalog/jobs/<job_id>` | Existing catalog-job polling object; not `/api/v1/jobs`, never action authority. |
+| `POST /api/catalog/uninstall` | Exact installed `id/kind/source` plus explicit `remove_data` choice → catalog job; refuse named required dependents, preserve dependency-only data. |
+| `GET /api/catalog/art?url=...` | Existing listed-art proxy confinement/CSP/nosniff; credential-free/public-only even for private source. |
+
+Each `<source>` is one fully percent-encoded exact identity, decoded once.
+All POST/DELETE routes require dashboard provenance + CSRF **before** effects;
+credential mutations are no-store. Unknown sources/jobs/plans are 404,
+malformed inputs/approval sets are 400, stale/consumed/busy is 409; unauthorized
+provenance/CSRF is 403. Authentication guidance never confirms private-repo
+existence from a 404. Refresh publishes through the same generation gate.
+Trust UI shows the exact catalog warning immediately before **each** grant;
+backend accepts no `warning_shown` authority. Route corpus must cover encoded
+slashes, double decoding, wrong listener/method/near miss and token confusion.
+
+#### M6b baseline-to-destination ledger
+
+Baseline is `2c349eb` (M1–M3 + M6a); destinations below are required work,
+not claims of completed extraction. Preserve in-flight M4a/M5 changes.
+
+| Baseline authority | Destination / deletion boundary |
+| --- | --- |
+| `src/tools/catalog_sources.rs` Source/resolve/load_sources/fetch_sources; `catalog-sources.json` and v2/v3 migration markers | S0 core source parser/store/detection/snapshot; preserve exact strings/order/markers for M8, remove legacy resolver/first-wins fetch at H0 cutover. |
+| `src/tools/catalog.rs` v1 Catalog validation/order/catalog_view/begin_catalog/install_catalog | SDK validation + R0/P0/core I0; remove v1 fetch/immediate-install/duplicate solver only once v2 production UI/routes compose. Keep existing catalog-job envelope. |
+| `src/tools/catalog_sources.rs` overlay install/origin machinery; counter install/download facade | I0 shared prepared-package/transaction records and U0 graph; root web rescan facade until M7. No copied ZIP extractor. |
+| `crates/vosu-net/src/streaming.rs` manual redirect/DNS/pinning/ZIP | N0 focused immutable request policy/TLS modules, reused streaming/ZIP primitives; public defaults unchanged. |
+| `src/server/api_keys.rs` and broker atomic writers/readers | C0 follows existing tempfile/atomic_replace/read_published convention; do not rewrite API-key verifier or add independent secret backend. |
+| SDK `manifest/`, `catalog/` and core schema registration | M6a authority retained; S0 contextual ingestion, R0 predicates, I0 confined asset mirror check; no second validator. |
+| Core `plugin/registry.rs` and actual bundled manifests | T0 current source/hash approval decision + M5 real backend seam; registry wiring serialized with M5 owner. |
+| Root server route table/service facades and dashboard catalog assets | H0 core-backed exact catalog routes + UI now; M7 moves presentation/assets/final web hosts, no duplicate service. |
+| Installed origin/data/settings and old source migration inputs | I0/U0 durable graph/journal preserve data, M8 owns one-time import/no-overwrite replacement/day-0; no opportunistic migration on reads. |
+
+Required counterexamples and evidence workflow are frozen in
+[M6b verification](../testing/verification.md#m6b-contract-and-evidence-obligations).
+Functional, native Windows, real OS-CA, browser, M5 and owner-forge results
+remain separately attributable; contract approval is none of those passes.
+
+
 ### M7: dashboard, overlay host, tool host on the new model
 
 Scope:

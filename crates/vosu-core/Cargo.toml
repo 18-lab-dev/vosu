@@ -46,6 +46,7 @@ tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 toml = "=1.1.2"
 tracing = "=0.1.44"
+url = "=2.5.8"
 vosu-net = { path = "../vosu-net" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
 vosu-surface = { path = "../vosu-surface" }
@@ -66,6 +67,9 @@ wmi = "=0.18.4"
 proptest = "1.12"
 vosu-plugin-testkit = { path = "../vosu-plugin-testkit", features = ["test-harness"] }
 vosu-proptest = { path = "../vosu-proptest" }
+# I0 package-download tests observe real request headers over the exact
+# loopback harness; production never enables this feature.
+vosu-net = { path = "../vosu-net", features = ["test-harness"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 vosu-sys = { path = "../vosu-sys", features = ["test-harness"] }

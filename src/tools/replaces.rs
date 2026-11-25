@@ -1,5 +1,7 @@
-//! Catalog-authorized identity migration. The durable intent is written before
-//! any rename; recovery rolls forward before discovery can expose partial state.
+//! Roll-forward recovery of a 1.x catalog identity migration (`replaces`)
+//! whose durable intent was written before a crash. Catalog v2 never starts
+//! one (I0 refuses an add whose `replaces` names an installed package); a
+//! journal left by 1.x is completed before discovery can expose partial state.
 use super::*;
 
 #[derive(Deserialize, Serialize)]
@@ -95,7 +97,7 @@ impl ToolHost {
     fn replacement_journal(&self) -> PathBuf {
         self.config.join("tool-replacement.json")
     }
-    pub(super) fn replacement_stage(&self) -> PathBuf {
+    fn replacement_stage(&self) -> PathBuf {
         // Nested below a directory without a manifest: discovery never sees it.
         self.data.join(".replacement-stage").join("package")
     }
@@ -108,103 +110,6 @@ impl ToolHost {
     }
     fn tool_settings(&self, id: &str) -> PathBuf {
         self.config.join("settings").join(format!("{id}.json"))
-    }
-    pub(super) fn replacement_for(&self, id: &str) -> Result<Option<catalog::Tool>, String> {
-        let old = self.entry(id)?;
-        let saved = self.saved.lock();
-        let state = saved.get(id).ok_or("tool has no catalog install record")?;
-        let catalog = self.catalog.lock();
-        let claimed = catalog
-            .tools
-            .iter()
-            .any(|tool| tool.replaces.iter().any(|old| old == id));
-        if !claimed {
-            return Ok(None);
-        }
-        if old.source == "dev" || !state.trusted || state.catalog_source.is_none() {
-            return Err("replacement requires a trusted catalog-installed tool".into());
-        }
-        let mut candidates = catalog.tools.iter().filter(|tool| {
-            tool.replaces.iter().any(|old| old == id)
-                && state.catalog_source.as_deref() == Some(&tool.source)
-        });
-        let replacement = candidates.next().cloned();
-        if candidates.next().is_some() {
-            return Err(format!("ambiguous catalog replacement for {id}"));
-        }
-        if replacement.is_none() {
-            return Err("replacement is from a different catalog source".into());
-        }
-        Ok(replacement)
-    }
-    pub(super) fn update_target(&self, id: &str) -> Option<String> {
-        self.replacement_for(id).ok().flatten().map(|tool| tool.id)
-    }
-    pub(super) fn prepare_replacement(
-        &self,
-        old: &str,
-        tool: &catalog::Tool,
-        publish: bool,
-    ) -> Result<(), String> {
-        let entry = self.entry(old)?;
-        let mut state = self
-            .saved
-            .lock()
-            .get(old)
-            .cloned()
-            .ok_or("missing catalog install record")?;
-        if entry.source == "dev"
-            || !state.trusted
-            || state.catalog_source.as_deref() != Some(&tool.source)
-            || !tool.replaces.iter().any(|id| id == old)
-        {
-            return Err(
-                "replacement must come from the installed tool's trusted catalog source".into(),
-            );
-        }
-        if self.entry(&tool.id).is_ok() || self.saved.lock().contains_key(&tool.id) {
-            return Err(format!(
-                "replacement target {} already exists; nothing was overwritten",
-                tool.id
-            ));
-        }
-        for target in [
-            self.data.join(&tool.id),
-            self.tool_data(&tool.id),
-            self.tool_settings(&tool.id),
-            self.cache.join(&tool.id),
-        ] {
-            if exists(&target).map_err(|e| e.to_string())? {
-                return Err(format!(
-                    "replacement target {} already exists; nothing was overwritten",
-                    target.display()
-                ));
-            }
-        }
-        for id in &tool.replaces {
-            if id != old && self.entry(id).is_ok() {
-                return Err(
-                    "multiple replaced tools are installed; cannot merge their data".into(),
-                );
-            }
-        }
-        for id in &tool.replaces {
-            if !state.replaces.contains(id) {
-                state.replaces.push(id.clone());
-            }
-        }
-        let transaction = Replacement {
-            old: old.into(),
-            new: tool.id.clone(),
-            state,
-            data: exists(&self.tool_data(old)).map_err(|e| e.to_string())?,
-            settings: exists(&self.tool_settings(old)).map_err(|e| e.to_string())?,
-            cache: exists(&self.cache.join(old)).map_err(|e| e.to_string())?,
-        };
-        if publish {
-            atomic_json(&self.replacement_journal(), &transaction).map_err(|e| e.to_string())?;
-        }
-        Ok(())
     }
     pub(super) fn recover_replacement(&self) -> Result<(), String> {
         let path = self.replacement_journal();

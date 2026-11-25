@@ -78,6 +78,8 @@ pub enum Endpoint {
     /// Dashboard-only process-plugin approval and management
     /// (catalog-v2.md A5.5 "Management routes").
     PluginManagement,
+    /// Dashboard-only `/api/catalog/*` (M6b H0); exact paths in `catalog_api`.
+    Catalog,
     CounterStatic,
     WsV1,
     WsTokens,
@@ -504,6 +506,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::CounterUpdates
                     | Endpoint::ToolManagement
                     | Endpoint::PluginManagement
+                    | Endpoint::Catalog
             )
         {
             return not_found_for(&request);
@@ -631,11 +634,12 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
         Ok(None) => {}
     }
-    let tool_put = method == Method::PUT && endpoint == Endpoint::ToolManagement;
-    let plugin_delete = method == Method::DELETE && endpoint == Endpoint::PluginManagement;
+    // PUT (tool autostart) and every DELETE (catalog and plugin
+    // management) are mutations like POST.
+    let put_or_delete =
+        (method == Method::PUT && endpoint == Endpoint::ToolManagement) || method == Method::DELETE;
     let mutation = if method == Method::POST
-        || tool_put
-        || plugin_delete
+        || put_or_delete
         || websocket_upgrade
         || endpoint == Endpoint::ApiKeys
     {
@@ -653,8 +657,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         && endpoint != Endpoint::ToolOverlay
         && grant.is_none()
         && broker_grant.is_none())
-        || tool_put
-        || plugin_delete
+        || put_or_delete
         || endpoint == Endpoint::ApiKeys)
         && !trusted_management
     {
@@ -715,19 +718,20 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         },
         endpoint => {
             let (parts, body) = request.into_parts();
-            let body = if method == Method::POST || tool_put || endpoint == Endpoint::ToolOverlay {
-                match to_bytes(body, MAX_POST_BODY).await {
-                    Ok(body) => body,
-                    Err(_) => {
-                        return cors(json(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            error_json("payload too large"),
-                        ));
+            let body =
+                if method == Method::POST || put_or_delete || endpoint == Endpoint::ToolOverlay {
+                    match to_bytes(body, MAX_POST_BODY).await {
+                        Ok(body) => body,
+                        Err(_) => {
+                            return cors(json(
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                error_json("payload too large"),
+                            ));
+                        }
                     }
-                }
-            } else {
-                Bytes::new()
-            };
+                } else {
+                    Bytes::new()
+                };
             if broker_grant
                 .as_ref()
                 .is_some_and(|(broker, peer)| broker.authorize(&parts.headers, *peer) != Ok(true))
@@ -855,6 +859,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         }
         "/api/plugins" if get => Some(PluginManagement),
         _ if plugin_management_action(method, path) => Some(PluginManagement),
+        _ if (get || post || method == Method::DELETE) && path.starts_with("/api/catalog/") => {
+            Some(Catalog)
+        }
         "/ws" if get => Some(WsV1),
         "/tokens" if get => Some(WsTokens),
         "/websocket/v2" if get => Some(WsV2),

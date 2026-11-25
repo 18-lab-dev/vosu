@@ -56,9 +56,10 @@ pub(crate) fn check_descriptor(vtable: &vosu_plugin_vtable) -> Result<(), HostEr
 /// Mapping a library runs its static constructors, and the returned vtable
 /// calls its code: the caller must already hold the trust to execute this
 /// library in the current process. That is the debug-only local
-/// development grant (§7.1) in core, or the `vosu plugin-host` child after
-/// its capability drop or job confinement (§7.3, §7.4) — never core
-/// validating a `runtime = "process"` package.
+/// development grant (§7.1) or a committed catalog package whose exact
+/// artifact current §7.1 policy authorized in-process, in core; or the
+/// `vosu plugin-host` child after its capability drop or job confinement
+/// (§7.3, §7.4) — never core validating a `runtime = "process"` package.
 pub(crate) unsafe fn load_library(path: &Path) -> Result<LocalCode, HostError> {
     // SAFETY: the caller holds the trust to run this library's code in the
     // current process (this function's own contract).

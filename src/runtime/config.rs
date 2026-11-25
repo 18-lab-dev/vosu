@@ -144,6 +144,13 @@ impl ConfigUpdateService for RuntimeConfig {
                     "Network settings require Apply and confirmation within 30 seconds".into(),
                 );
             }
+            if let Some(raw) = object.get("MAX_PACKAGE_MIB") {
+                let value =
+                    json_number(raw).ok_or("MAX_PACKAGE_MIB must be an integer from 1 to 4096")?;
+                if !value.is_finite() || value.fract() != 0.0 || !(1.0..=4096.0).contains(&value) {
+                    return Err("MAX_PACKAGE_MIB must be an integer from 1 to 4096".into());
+                }
+            }
             // Reject instead of silently ignoring or clamping, so the dashboard
             // never reports a save that did not persist the submitted value.
             for (key, minimum, maximum) in [
@@ -343,6 +350,7 @@ pub(super) fn apply_config_values(
     number!("API_V1_SUBSCRIPTION_DEBOUNCE", api_v1_subscription_debounce);
     number!("SERVER_PORT", server_port);
     number!("DASHBOARD_PORT", dashboard_port);
+    number!("MAX_PACKAGE_MIB", max_package_mib);
     string!("DASHBOARD_IP", dashboard_ip);
     string!("SERVER_IP", server_ip);
     string!("STATIC_FOLDER_PATH", static_folder_path);
@@ -525,4 +533,40 @@ impl UpdaterHandoff for RuntimeUpdater {
 }
 pub(super) fn startup_role_allows_update_check(readiness: Option<&StartupReadiness>) -> bool {
     readiness.is_none()
+}
+pub(super) fn listen_target(config: &Config) -> io::Result<ListenTarget> {
+    if !config.server_port.is_finite()
+        || config.server_port.fract() != 0.0
+        || config.server_port < 0.0
+        || config.server_port > u16::MAX as f64
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SERVER_PORT must be an integral value in the u16 range",
+        ));
+    }
+    Ok(ListenTarget::new(
+        config.server_ip.clone(),
+        config.server_port as u16,
+    ))
+}
+pub(super) fn dashboard_listen_target(config: &Config) -> io::Result<ListenTarget> {
+    let mut dashboard = config.clone();
+    dashboard.server_ip = config.dashboard_ip.clone();
+    dashboard.server_port = config.dashboard_port;
+    listen_target(&dashboard)
+}
+
+pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> io::Result<PathBuf> {
+    paths.static_path(&config.static_folder_path)
+}
+
+pub(super) fn reload_counter_static_root(
+    paths: &Paths,
+    config: &Config,
+    counters: &ReloadableCounterService,
+) -> io::Result<()> {
+    let static_root = resolved_static_root(paths, config)?;
+    counters.reload_static_root(static_root);
+    Ok(())
 }

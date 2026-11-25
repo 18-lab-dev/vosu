@@ -20,7 +20,7 @@ FIXTURE_VALUES = ("songs_file", "songs_dir", "beatmap_relative", "skin_file", "c
 ASSET_KEYS = ("id", "relative", "media_type", "generator", "license")
 REQUIRED = ("authorization", "capture_root", "capture_slot", "route_roots", "other_roots",
             "inside_files", "fixture_values", "assets")
-OPTIONAL = ("sentinel_chart",)
+OPTIONAL = ("sentinel_chart", "client_source")
 _SLOT = r"^[A-Za-z0-9!_-][A-Za-z0-9!._-]{0,63}$"
 _NAME = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 
@@ -43,6 +43,7 @@ def golden_config_schema() -> dict[str, Any]:
             "inside_files": {**strings, "propertyNames": {"enum": list(ROUTE_PREFIXES)}},
             "fixture_values": {**strings, "propertyNames": {"enum": list(FIXTURE_VALUES)}},
             "sentinel_chart": text,
+            "client_source": text,
             "assets": {"type": "array", "items": {
                 "type": "object", "required": list(ASSET_KEYS),
                 "properties": {key: text for key in ASSET_KEYS},
@@ -95,6 +96,10 @@ def validate_golden_config(value: Any, os_name: str) -> list[str]:
     chart = value.get("sentinel_chart")
     if chart is not None and (not isinstance(chart, str) or not pm.isabs(chart)):
         errors.append("golden.sentinel_chart must be an absolute path")
+    source = value.get("client_source")
+    if source is not None and (not isinstance(source, str) or not pm.isabs(source)
+                               or pm.normpath(source) != source):
+        errors.append("golden.client_source must be an absolute normalized path")
     assets = value.get("assets")
     if not isinstance(assets, list):
         errors.append("golden.assets must be an array")

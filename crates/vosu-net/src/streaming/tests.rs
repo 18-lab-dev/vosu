@@ -866,3 +866,6 @@ fn zip_install_is_atomic_and_preserves_old_on_cancellation() {
 
 #[path = "tests_prop.rs"]
 mod tests_prop;
+
+#[path = "tests_policy.rs"]
+mod policy_tests;

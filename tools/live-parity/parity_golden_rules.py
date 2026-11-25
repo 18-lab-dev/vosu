@@ -517,9 +517,18 @@ def dump_sandwich_difference(before: dict[str, Any], after: dict[str, Any]) -> s
     `sc` reads release the streamCompanion chart-work handle, so its provider generation
     and derived revision advance on every read (GOLDEN_CONTRACT §6). For `sc` the
     sandwich therefore compares everything else: digest, selection, derived status and
-    HTTP bytes. `v1`/`v2`/`v2-precise` keep full equality.
+    HTTP bytes. `v1`/`v2`/`v2-precise` keep full equality, except the reviewed volatile
+    ledger (`parity_volatile`): the live track-clock entry and the adapter body's volatile
+    fields are compared by rule, the revision counters as non-decreasing and the digest,
+    which only summarizes the fields compared one by one, is not compared.
     """
+    import parity_volatile as volatile
+
     sc = before["schema"] == "sc" and after["schema"] == "sc"
+    try:
+        views = volatile.dump_view(before)[0], volatile.dump_view(after)[0]
+    except volatile.VolatileError as exc:
+        return f"a volatile field ({exc})"
     for key in ENVELOPE_KEYS:
         left, right = before[key], after[key]
         if sc and key == "provider_generation":
@@ -528,6 +537,12 @@ def dump_sandwich_difference(before: dict[str, Any], after: dict[str, Any]) -> s
             if left["status"] != right["status"]:
                 return "derived.status"
             continue
-        if left != right:
+        if key in volatile.MONOTONIC_KEYS:
+            if volatile.monotonic_difference(before, after, key):
+                return key
+            continue
+        if key == "digest":
+            continue
+        if views[0].get(key) != views[1].get(key):
             return key
     return None

@@ -84,8 +84,10 @@ pub enum HostError {
         entry_declares_one: bool,
     },
     State(String),
-    /// A `runtime = "process"` package reached instance creation with no
-    /// process launcher installed: core never runs it in-process instead.
+    /// A `runtime = "process"` package has no plugin-host launcher: one
+    /// reached instance creation with none installed, or a catalog-installed
+    /// one was loaded before catalog X0 hands installed process packages to
+    /// the launcher. Core never runs it in-process instead.
     ProcessRuntimeUnavailable,
     /// The plugin-host child for this instance did not become ready: it
     /// exited, broke its channel, or its plugin's `create` failed. The
