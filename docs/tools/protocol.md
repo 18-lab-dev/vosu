@@ -8,6 +8,131 @@ description: "Manifest, process, HTTP, browser-bridge, and dashboard contract be
 
 A **tool** is an application that vosu discovers, supervises, and serves next to overlays. Tools may ship a browser UI, a background HTTP service, or both. Any language that can read environment variables, write one stdout line, and serve HTTP on loopback can implement a tool. Rust tools may use the `vosu-tool-sdk` crate; [`examples/tools/hello-python`](../../examples/tools/hello-python/) is a dependency-free Python reference. The decision record is [ADR 0017](../decisions/0017-tool-host.md). Editors can validate manifests with [`tool.schema.json`](tool.schema.json).
 
+## 2.0 transition inventory (A7.2)
+
+Frozen 2026-11-24 (A7.2) for M7. Until T1 replaces this file with the 2.0
+tool protocol, the sections after this one describe the **1.x** contract.
+Where they conflict with this section, this section is the M7 target. The
+full route, owner and deletion inventory is the
+[A7 freeze](../v2/implementation-plan.md#a7-approved-contract-freeze-2026-11-24);
+the session rules are [API v1 "Tool launch sessions"](../v2/api-v1.md#tool-launch-sessions-a72).
+Each route is matched by exact method and path. No prefix decides whether a
+route survives, and every unlisted `/tools/…` method and path is 404 with no
+upgrade and no static fallthrough.
+
+**Retained on the overlay listener:**
+
+| Method and path | Owner | Contract |
+| --- | --- | --- |
+| `GET /tools` | core | 302 to the dashboard Tools page; 404 when the dashboard is off |
+| `POST /tools/_host/v1/session` | core | `{"tool","code"}` → `{"session"}` (single-use 60-second code; 400/403/429) |
+| `GET /tools/_host/v2/bridge.js` | tool host | The v2 bridge module below, `text/javascript; charset=utf-8` |
+| `GET /tools/_host/v1/theme.css` | tool host | `tokens.css` + `\n` + `system.css`, `text/css; charset=utf-8` |
+| `GET /tools/_host/v1/design` | tool host | `design.html`, `text/html; charset=utf-8` |
+| `GET`, `HEAD /tools/<id>/`, `/tools/<id>/<path>` | tool host | Root-confined static UI (`[ui].root`, `entry`), `nosniff`; `GET /tools/<id>` is 302 to `/tools/<id>/`; 503 while the tool is not servable |
+| `GET`, `HEAD /tools/<id>/_icon`, `/tools/<id>/_banner` | tool host | Declared art in every state, with the sandboxing CSP |
+| `GET /tools/<id>/_settings` | tool host | `{"values":{…}}`, effective values with defaults, `password` settings omitted; 503 while not servable |
+
+**Retained on the dashboard listener (core):** `GET /api/tools`,
+`GET /api/tools/<id>` (2.0 `ToolView`), `POST /api/tools/<id>/{enable,disable,trust,launch}`,
+and `GET`/`POST /api/tools/<id>/settings` (write-only `password` values,
+unchanged shapes).
+
+**Deleted (404):** `GET /tools/_host/v1/{self,settings,context,overlays}`;
+`GET /tools/_host/v1/bridge.js` and `assets/server/tool-bridge-v1.js`;
+`GET /tools/_host/v1/cli`, `POST /tools/_host/v1/cli/<id>`,
+`POST /tools/_host/v1/cli/<id>/open`, `PUT /tools/_host/v1/cli/<id>/autostart`
+and `DELETE /tools/_host/v1/cli/session/<session>`; every method on
+`/tools/<id>/api/<rest>`, including WebSocket upgrades;
+`POST /api/tools/<id>/{start,stop,restart,open-data,clear-cache}`,
+`GET /api/tools/<id>/logs` and `PUT /api/tools/<id>/autostart`; the
+`/assets/tool-bridge.js`, `/assets/tool-bridge-v1.js` and
+`/assets/design.html` copies. The `tool.toml` loader and its fallback,
+services, readiness, ports, service and CLI tokens, `VOSU_TOOL_*`
+environment, `tool.schema.json`, the vosux tool form and its `--list`,
+`--json`, `--open` and `--autostart` options are deleted too. A package with
+only `tool.toml` is listed with `status_detail: "needs-2.0-update"`, is
+never executed, and keeps its files, settings and data for M8.
+
+**Frozen v2 bridge type surface.** `GET /tools/_host/v2/bridge.js` is an ES
+module whose only export is `vosu`. F T0 (vosu-tools) codes against exactly
+this surface; it changes only through a later approved amendment.
+
+```ts
+type SessionTarget = string;              // a session id or "active"; nonempty
+type ActionTarget = SessionTarget | null; // null: the session-less action route
+type Progress = { fraction?: number; message?: string } | null; // API v1 job progress
+type SettingValue = string | number | boolean | null | unknown[] | Record<string, unknown>;
+
+interface ActionError extends Error {
+  code: string; // "cancelled", "forbidden" (no launch session), an API v1
+                // error code ("unauthorized", "forbidden", "invalid_arguments",
+                // "unknown_action", "timed_out", "plugin_crashed", …), or
+                // "http_error" / "invalid_job" when the response has none
+}
+
+interface ActionOptions {
+  session?: ActionTarget;      // default "active"
+  signal?: AbortSignal;        // abort before POST: no request; during POST: the
+                               // created job is cancelled by id; while polling:
+                               // DELETE /api/v1/jobs/{id}; after completion: nothing
+  onProgress?: (progress: Progress) => void;
+}
+
+interface JobHandle {
+  readonly id: string;
+  readonly done: Promise<unknown>;  // resolves with result; rejects with ActionError
+  cancel(): Promise<unknown>;       // advisory DELETE; a completed result stands
+  onProgress(fn: (progress: Progress) => void): () => boolean; // ≤ 256 per handle
+}
+
+type Status = "connecting" | "open" | "closed";
+
+declare const vosu: Readonly<{
+  ready: Promise<void>;           // exchanges the fragment code; rejects with Error
+                                  // when the code is expired or reused
+  tool: Readonly<{ id: string; name: string; version: string }>;
+  dashboardUrl: string | null;    // dashboard origin (no trailing slash); null
+                                  // when the dashboard is off (A7.3)
+  colorScheme: "dark" | "light";  // launch `theme=`, else prefers-color-scheme;
+                                  // applied once as <html data-theme>
+  readonly canWrite: boolean;     // true only while this page holds a session
+  settings(): Promise<Record<string, SettingValue>>;  // GET /tools/<id>/_settings
+  subscribe(
+    fields: string[],             // JSON Pointers, sent on every (re)connect
+    onFrame: (frame: unknown) => void,
+    onStatus?: (status: Status) => void,
+    options?: { session?: SessionTarget },  // default "active"; null is a TypeError
+  ): () => void;                  // stop: closes the socket, cancels reconnects
+  invoke(actionId: string, args?: unknown, options?: ActionOptions): Promise<unknown>;
+  start(actionId: string, args?: unknown, options?: ActionOptions): Promise<JobHandle>;
+}>;
+export { vosu };
+```
+
+Behavior frozen with the types:
+
+- `actionId` must match `^[a-z0-9][a-z0-9._-]*$`, or `start`/`invoke`
+  throws `TypeError` before any request. Without a session they reject with
+  `code: "forbidden"` and send nothing.
+- `start` posts `{"arguments": args}` with `wait=0` to
+  `/api/v1/sessions/{session}/actions/{actionId}`, or to
+  `/api/v1/actions/{actionId}` for `session: null`, then long-polls
+  `GET /api/v1/jobs/{id}?after=<revision>&wait=30000`. Progress callbacks run
+  once per changed progress value, in microtasks.
+- `subscribe` keeps one WebSocket to `/api/v1/sessions/{session}/subscribe`
+  per call. It reconnects with capped exponential backoff (0.5 s doubling to
+  30 s, jittered between half and all of the step, reset only after 10 s
+  open), retries at once on the browser `online` event, and never holds two
+  sockets. Unknown option keys, a non-object option and an invalid session
+  throw synchronously.
+- Every request uses `credentials: "omit"`. Action and job requests also use
+  `cache: "no-store"` and `redirect: "error"`. The bridge never writes
+  cookies, `localStorage`, `sessionStorage` or IndexedDB, and never sends the
+  session to any other route or origin.
+- `vosu.fetch` and the v1 bridge's proxy and `/websocket/v2/subscribe`
+  behavior no longer exist.
+
 ## Layout and discovery
 
 Each tool is one directory containing `tool.toml`. vosu scans these roots, in order:

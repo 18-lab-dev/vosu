@@ -2152,3 +2152,109 @@ native Windows staged the same commit through `vm-test.py`.
 
 Still open from the conventions above: the first-load time of a realistic
 release plugin DLL and of concurrent first loads is not measured.
+
+## M7 test and fixture conventions (A7)
+
+These are the frozen scenario identities and fixture rules the M7 units
+implement. They are not claims that a test exists or passes. The contract is
+the [A7 freeze](../v2/implementation-plan.md#a7-approved-contract-freeze-2026-11-24).
+Each rejection needs a minimally different positive control with an
+independently specified expected status, header and body. Test names start
+with their module path so each filter matches a nonzero set. Main lists
+`-- --list` before running, and a filter that matches zero tests is a failure.
+
+**Targets.** New children of the existing roots:
+
+- `tests/server_compat/m7_routes.rs`: the route inventory corpus;
+- `tests/server_compat/m7_management.rs`: the management operation matrix;
+- `tests/config_compat.rs` cases named `dashboard_off_*`;
+- `tests/daemon_smoke/dashboard_off.rs`;
+- `tests/api_v1_compat` cases named `tool_session_*`;
+- the host crates' own `cargo nextest run -p vosu-{dashboard,overlay-host,tool-host}` suites;
+- the rewritten `tests/{dashboard_smoke,tool_host_smoke,tool_catalog_smoke,catalog_art_smoke}.py`
+  with `tests/{dashboard_browser,tool_host_v2_browser}.mjs` (X0);
+- for landing G only, `tests/ingame_compat.rs`, derived from
+  `docs/v2/ingame-behavior.md` and nothing else.
+
+**Fixtures.**
+
+- Two attached sessions with distinct, nonzero A/B state from the testkit
+  synthetic game and the osu! fixture, and distinct selected providers.
+- `tests/fixtures/tool-host-v2/` (a valid `kind = "tool"` web tool requiring a
+  testkit action) and a second v2 tool that lacks that capability.
+- `tests/fixtures/tool-host/` kept only as the legacy `tool.toml` package,
+  with SHA-256 receipts of its files taken before and after.
+- A user overlay that opens `/websocket/v2/subscribe?l=<identity>`, plus a
+  second overlay whose metadata name contains `<img src=x onerror=…>`.
+- Native artifacts are built before tests through M5's existing preparation
+  (`scripts/plugin-host-fixtures.py`, Cargo JSON paths), never recursively.
+- Secret sentinels, each a unique string asserted absent from every page,
+  JSON body, asset, bridge, log line and browser console the scenario
+  produces: the CSRF token, a plugin `password` setting, a tool `password`
+  setting, a catalog credential, an API key, and an `internal.paths`
+  sentinel (`/vosu-a7-internal-A`, `/vosu-a7-internal-B`). The privacy
+  checks include a positive control: an authorized producer reads the
+  internal sentinel through its own grant.
+
+**Frozen scenario identities.**
+
+| ID | Unit | Scenario and discriminating counterexample |
+| --- | --- | --- |
+| M7-P01 | D0, C0 | Page context: dashboard shells carry `csrf`; a probe provider records its `SurfaceRequest` and never sees the CSRF sentinel; overlay-role HTML gets no context. |
+| M7-P02 | T0, O0 | Presentation views carry no path; replacing the generation stops new opens on the old lease, while an already opened file finishes. |
+| M7-P03 | I0 | `check-crate-boundaries`: host edges exactly as the A7 layout; core has no host edge. |
+| M7-P04 | S0, D0 | Privacy sentinels absent everywhere above; positive control present. |
+| M7-P05 | D1 | `/api/plugins/<id>/settings`: a password is never echoed, even after a failed save; an invalid POST changes nothing and sends no `SETTINGS_CHANGED`; a valid POST sends one complete object. |
+| M7-P06 | I0 | The registry equals `BUNDLED` exactly: the seven production ids (`vosu.osu`, three adapters, three hosts), plus test fixtures only in `test-harness` builds; a missing, duplicate or extra id fails startup. |
+| M7-R01 | I0, X0 | Every inventory row answers on its listed listener and method; the other listener, another method, an undefined trailing slash, an extra segment, double encoding and a case change are 404 (or the owner's existing 405). |
+| M7-R02 | T0 | Every deleted route is 404, including upgrades and `/tools/<id>/api/x` that must not fall through to a static 200; `/assets/report.html`, `/assets/homepage.html` and `/assets/tool-bridge-v1.js` are 404; no prefix reservation remains except core's own overlay-role `/api/v1`. |
+| M7-M01 | C0, D1 | Each management operation: a missing or wrong CSRF, overlay provenance, an API key or a tool session yields 403 and no effect; the two key-scoped overlay writes still work with their scope. |
+| M7-T01 | T0 | A launch code is single-use; a replay, an expired code, another tool's code and the 1,025th pending code all fail. |
+| M7-T02 | T0 | Session scope: the header is ignored on reads; a non-owned job is 404; a missing session is 401; a missing capability is 403; an API key never gains action scope. |
+| M7-T03 | T0 | Disable, untrust, uninstall and package replacement each invalidate sessions (401) and request cancellation; no job transfers to a new tab; provider change re-resolves without pinning. |
+| M7-T04 | T0 | A legacy `tool.toml`-only package is listed `needs-2.0-update`, its enable is refused, its files are byte-identical afterwards, and no process starts. |
+| M7-T05 | T1 | Browser: reload and bookmark have no session; the fragment is cleared before async work; abort before, during and after POST; one socket; unsubscribe cancels reconnect; no storage writes; the token is absent from Referer, URL and storage. |
+| M7-T06 | T0, C0 | The vosux dotless form exits 2; plugin-action vosux keeps progress, cancel and session rules. |
+| M7-O01 | D0, I0 | Off via config, off via `VOSU_DASHBOARD=off` over `ENABLE_DASHBOARD = true`, and default on. |
+| M7-O02 | D0, I0 | `VOSU_DASHBOARD` set to `""`, `on`, `OFF` or `0` fails startup before any bind. |
+| M7-O03 | D0, I0 | Off: no dashboard bind (the port is free, or occupied by another service without effect), no browser open, the tray has no **Open dashboard** but keeps **Show logs**, `/api/dashboard` is 404, and overlay, API v1, adapters and tools serve. The registry still equals `BUNDLED`, and `vosu.dashboard` is inactive. |
+| M7-O04 | D1 | `/api/settingsSave` naming `ENABLE_DASHBOARD` is 400 and publishes nothing; `SettingsView` omits it. |
+| M7-N01 | N1, X0 | A real fixture request to `/websocket/v2/subscribe` gets a 404 without upgrade; the status read reports it; the browser shows the escaped name, the count, the age and the fixed guide link through production UI, with no DOM insertion; the overlay stays enabled. |
+| M7-N02 | N1 | A spoofed Origin alone lands in the unknown bucket with no name; a malicious name is escaped; uninstalling the overlay drops its notice; the 129th identity evicts the LRU entry; expiry uses the injected clock; previews are not recorded; the skin-index feature is reported too. |
+| M7-OR01 | O0 | Traversal and absolute names are refused before any write. |
+| M7-OR02 | O0 | Symlinked archive entries and symlinked folders are refused or confined. |
+| M7-OR03 | O0 | The root changing during an in-flight download publishes into the original root or fails, never into the new root. |
+| M7-OR04 | O0 | A write racing a served read: the reader sees the complete old or the complete new file. |
+| M7-A01 | D0, T0, I0 | Each asset is served only at its owner's exact paths, and `python scripts/check-asset-hashes.py` passes with unchanged digests unless the reviewed workflow changed a byte. |
+| M7-G01 | G0 | `Deprecation` and `Link` on every `/api/ingame` response; exactly one WARN under concurrent first requests. |
+| M7-G02 | G0 | No banner before any request; the banner appears after one, and disappears 24 hours later by the injected clock. |
+| M7-G03 | G0, D1 | The banner button creates the ordinary `vosulay-editor` plan and confirms only with its listed approvals; already installed shows launch and manage; an offline source shows retry. |
+
+Native Linux and Windows run the host suites, `server_compat`,
+`config_compat` and `daemon_smoke`, including dashboard off and an occupied
+dashboard port, natively; cross-compilation is not native evidence.
+Windows evidence never relies on `/proc`, `/bin/sh`, POSIX signals or `.so`
+files. Landing G additionally needs its own browser and client exit, per
+its behavioral document.
+
+### A7 documentation acceptance
+
+Run in the assigned `m7-a7` checkout after `source scripts/dev-env.sh`.
+Documentation-only change: no runtime tests were added or run, there were no
+VM or browser operations, and no native, browser, clean-room or performance
+evidence is claimed.
+
+Observed on 2026-11-25 at the A7 working tree (base `33f957de`), Linux host,
+with `CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m7-a7`, every script exit 0:
+
+| Check | Result |
+| --- | --- |
+| `check-doc-links.py` | 70 maintained Markdown files, 0 missing paths |
+| `check-brand.py` | 117 tracked files with old-brand occurrences, 0 errors |
+| `check-asset-hashes.py` | 54 digests match (no asset byte changed) |
+| `check-crate-boundaries.py` | 21 crates, 84 edges, 0 errors |
+| `check-module-boundaries.py` | 100 module edges across 14 crates, 0 errors |
+| `check-file-length.py` | 1,331 code files, 16 baselined, 0 errors |
+| `check-lint-expectations.py` | 18 sites, 0 errors |
+| `check-deleted-assertions.py` | pass |
+| `check-standalone-crates.py` | 23 members, Linux and Windows (xwin) |

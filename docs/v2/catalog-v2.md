@@ -568,6 +568,27 @@ means queued/submitted, not completed game installation. Error/result text
 avoids unnecessary source/destination path disclosure. Workers are owned,
 cancelled and joined/reaped, never abandoned or self-joined.
 
+#### Bundled host manifests (A7)
+
+Frozen 2026-11-24 for M7 (D0, O0, T0; I0 embeds them). The three hosts are
+bundled `kind = "plugin"` packages registered in `BUNDLED` (D13). Each
+manifest has `manifest_version = 1`, `version` equal to the vosu package
+version, `host = ">=<that version>, <3.0.0"`, `abi_version = 1` and
+`runtime = "in-process"`, exactly like the bundled adapters:
+
+| `id` | `name` (D10: describes what it serves) | `provides` / `requires` / `optional` / `[[actions]]` / `[[resource_kinds]]` | `settings_schema` |
+| --- | --- | --- | --- |
+| `vosu.dashboard` | `Dashboard pages` | none | none |
+| `vosu.overlayhost` | `Overlay hosting and commands` | none | `settings.schema.json` with exactly one `text` setting, `static_folder_path` (A7.1-OR) |
+| `vosu.toolhost` | `Web tool hosting` | none | none |
+
+None of them declares a field, resource, action or game capability, so the
+resolver never offers one as a provider and no host gains state, resource
+or action authority through its manifest. Their HTTP authority is only their
+exact `vosu-surface` registrations. A bundled host manifest that requests
+`process` stays invalid (A5). When the dashboard is off, `vosu.dashboard` is
+still validated and registered, but no instance is created (A7.3).
+
 ### `kind = "tool"`
 
 Tools are web-only in the final 2.0 host
@@ -582,6 +603,16 @@ grants from legacy permissions. Each action/job request rechecks its exact live
 launch session, enabled/trusted status and resolved capability. Revocation never
 transfers job ownership to another launch/tab. M7 removes this exception; see
 [First-start migration](#first-start-migration-from-1x).
+
+**M7 (A7.2).** Core's tool registry loads only `manifest.toml` with `kind = "tool"`.
+A directory with only `tool.toml` is never parsed for execution, never run,
+and never served. It is listed with `status: "disabled"` and
+`status_detail: "needs-2.0-update"`, and enabling it is refused. Its files,
+settings, trust record and data stay untouched for M8's one-time migration;
+M7 writes no migration marker. Core owns the per-tool enabled, trust and
+settings state and the launch authority
+([API v1 "Tool launch sessions"](api-v1.md#tool-launch-sessions-a72)); the tool
+host only serves the UI, art, `_settings` and the bridge.
 
 ```toml
 kind = "tool"
@@ -863,6 +894,20 @@ do not broaden a route. API keys, broker/tool tokens and overlay provenance
 never substitute for dashboard provenance and CSRF. The frozen
 [M6b service and route inventory](implementation-plan.md#m6b-frozen-service-interfaces)
 defines the core-owned handlers; M7 moves presentation, not this authority.
+
+**M7 additions (A7.1, A7.5).** These rules also cover the core-owned
+dashboard-listener routes M7 adds or keeps: `GET`/`POST /api/plugins/<id>/settings`,
+`GET /api/settings`, and the `/api/tools/*` management routes
+([A7 inventory](implementation-plan.md#route-method-listener-and-provider-inventory)).
+The dashboard host only presents them. The `/api/ingame` banner's install
+button calls `POST /api/catalog/install` with
+`{"kind":"tool","id":"vosulay-editor","source":"18-lab-dev/vosulay"}`
+(AF.2; [ecosystem release matrix](ecosystem-release-matrix.md#vosulay)) and
+then follows the ordinary plan review, the D8 disclosure, the approvals the
+plan lists and `confirm`. It has no shortcut route and no implicit approval.
+When that entry is already installed, the banner offers launch and manage
+instead. When the source is disabled or offline, or the entry is missing,
+the banner states that and offers a retry, without inventing a plan.
 
 **H0 route inventory (`src/server/catalog_api`).** Exact paths and methods;
 a near miss (trailing slash, extra or empty segment, wrong case, malformed
