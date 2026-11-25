@@ -28,6 +28,45 @@ use vosu_core::plugin::{DiscoveryService, PluginHost, ProcessSource};
 
 pub(super) mod operational;
 
+/// `test-harness` builds only (`build.rs` rejects that feature in release):
+/// a daemon launched with this variable set discovers through
+/// [`IsolatedSource`] instead of the platform source, so a game client
+/// already running on the test host can never attach to a daemon smoke that
+/// asserts the no-client state (`tests/daemon_smoke/adapter_capture.rs`).
+/// Discovery itself, its service thread and every route stay the production
+/// ones.
+#[cfg(feature = "test-harness")]
+const ISOLATED_DISCOVERY_ENV: &str = "VOSU_TEST_ISOLATED_DISCOVERY";
+
+/// The `test-harness` [`ISOLATED_DISCOVERY_ENV`] source: a pure-poll source
+/// that sees no process at all.
+#[cfg(feature = "test-harness")]
+struct IsolatedSource;
+
+#[cfg(feature = "test-harness")]
+impl ProcessSource for IsolatedSource {
+    fn enumerate(&self) -> std::io::Result<Vec<vosu_core::plugin::ProcessRecord>> {
+        Ok(Vec::new())
+    }
+
+    fn inspect(&self, _pid: u32) -> std::io::Result<Option<vosu_core::plugin::ProcessRecord>> {
+        Ok(None)
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "isolated (test harness)"
+    }
+}
+
+/// The platform source, or the isolated one a `test-harness` launch asked for.
+fn process_source() -> Arc<dyn ProcessSource> {
+    #[cfg(feature = "test-harness")]
+    if std::env::var_os(ISOLATED_DISCOVERY_ENV).is_some() {
+        return Arc::new(IsolatedSource);
+    }
+    platform_process_source()
+}
+
 /// Builds this platform's production [`ProcessSource`]
 /// (`docs/v2/implementation-plan.md` M1 §4, phase d2b, unit d): Linux
 /// with the `linux-process-events` feature gets the real eBPF/CN_PROC-
@@ -148,7 +187,7 @@ pub(super) fn start_discovery(
         return None;
     }
     let source = Arc::new(operational::LoggedSource::new(
-        platform_process_source(),
+        process_source(),
         logger.clone(),
     ));
     logger.info(format!("Process events backend: {}", source.backend_name()));
