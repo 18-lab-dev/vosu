@@ -1103,6 +1103,113 @@ explicitly trusts". Untrusted-source plugins remain eligible only for
 `runtime = "process"`, after the same per-plugin approval 1.x already
 requires for user tools (the install plan's `needs_approval` above).
 
+#### Process-plugin approval and management (A5.5, approved 2026-11-24)
+
+Approval is the explicit user decision that lets a `user`-trust plugin run
+native code under `runtime = "process"`. It is never implied by a directory,
+an id, a source, a previous approval for other bytes, or a noninteractive
+start.
+
+**Builds.** A `--plugin <dir>` manifest is handled according to the build:
+
+- **Debug (`debug_assertions`).** A request for `in-process` uses the
+  documented developer exception and loads in-process. A request for
+  `process` is `user` trust and needs approval.
+- **Prerelease release** (a version with a semver prerelease part, D21).
+  `--plugin` is accepted without the release-forbidden `test-harness`
+  feature, and every such plugin is `user` trust. A request for `in-process`
+  is refused at load with `VOSU_ERR_PERMISSION_DENIED`: it is logged and left
+  unloaded, never rewritten to `process`. A request for `process` runs only
+  after approval.
+- **Stable release.** `--plugin` is still refused unless a separate approval
+  changes that.
+
+**Approval record.** A record holds:
+
+- the plugin `id`;
+- `runtime = "process"`;
+- the SHA-256 of the exact `manifest.toml` bytes;
+- the SHA-256 of the `[targets.<host triple>].library` bytes for the running
+  host;
+- the provenance. For M5 this is `{"kind": "development", "path": <canonical
+  absolute directory>}`. For M6b it is `{"kind": "installed", "source",
+  "version", "package_sha256"}`.
+
+Records live in `plugins/approvals.json` under the configuration root, inside
+the prerelease subdirectory for prerelease builds (D21). The file is replaced
+atomically in the same directory. It holds one record per `(id, provenance)`.
+Only an explicit approval writes it: the approval route below, or M6b's plan
+confirmation.
+
+**Checking a record.** Every load and every restart, automatic or manual,
+checks every bound value. Any difference leaves the plugin
+`approval_required`, and it does not execute.
+
+The plugin host also re-verifies the library digest from the file it opened
+(plugin-abi.md §7.6), so replacing the file after core's check fails startup
+with stage `approval`.
+
+M6b's install-plan `approve` list (A6b.6) produces records of this same
+shape. There is no second approval store.
+
+**Management routes.** These follow "API placement":
+
+- they are on the dashboard listener only;
+- every `POST` and `DELETE` needs dashboard-origin provenance plus
+  `X-Vosu-CSRF`;
+- responses carry `Cache-Control: no-store`;
+- `<id>` is percent-encoded.
+
+| Route | Effect |
+| --- | --- |
+| `GET /api/plugins` | Lists every plugin with `id`, `runtime`, `trust`, `provenance`, `generation`, `state`, `reason`, crash events in the current window and the next restart delay. A plugin that needs approval also has `approval: {"manifest_sha256", "library_sha256"}`. |
+| `POST /api/plugins/<id>/approval` `{"manifest_sha256", "library_sha256"}` | Both digests must equal the currently pending ones, or the result is 409 `approval_stale`. It persists the record, then starts the plugin. A plugin that is not `user`-trust `process` is 400 `approval_not_applicable`. |
+| `DELETE /api/plugins/<id>/approval` | Removes the record and runs the controlled teardown (plugin-abi.md §7.6). The plugin becomes `approval_required`. |
+| `POST /api/plugins/<id>/restart` `{"generation"}` | Manual restart (A5.3) of exactly that generation's plugin. It resets the crash window and the `failed` latch and starts a new generation. |
+| `POST /api/plugins/<id>/stop` `{"generation"}` | Controlled teardown of exactly that generation. The plugin becomes `stopped` and is not restarted until a manual restart. |
+
+A `generation` that is not the plugin's current generation is 409
+`generation_changed`. A stale button therefore never acts on a different
+generation or a similarly named plugin.
+
+Restart and stop apply to `process` instances. For an in-process plugin they
+are 409 `requires_daemon_restart`, consistent with A6b.7's "revocation pending
+restart".
+
+**States.** `state` is one of `approval_required`, `starting`, `running`,
+`backoff`, `failed` or `stopped`. `reason` names a startup stage or a loss
+reason from plugin-abi.md §7.6.
+
+A required bundled plugin's failure stays fatal to the daemon. An optional
+external plugin's failure never stops the daemon.
+
+**Noninteractive starts.** A plugin with no dashboard (`VOSU_DASHBOARD=off`) or
+no approving user stays `approval_required`. Core logs one WARN per load
+attempt naming the plugin and stating that approval needs the dashboard. M5
+has no CLI approval, no environment-variable approval and no automatic
+approval.
+
+**What the prompt shows.** The prompt is not a catalog installer. It shows:
+
+- the id, provenance, runtime and both digests;
+- `provides`, `requires` and `optional`;
+- D8's `requires_internal_paths` disclosure;
+- a statement that a process plugin runs with the user's OS account rights,
+  filesystem and network, and is not sandboxed.
+
+**What M6b depends on.** M6b keeps ownership of source trust, install plans and
+A6b.7 revocation semantics, and this section reopens none of them. M6b depends
+on two M5 deliverables:
+
+- **Teardown.** The per-plugin controlled teardown and unregistration
+  operation (plugin-abi.md §7.6), which untrust, revocation and uninstall
+  call. It stops `process` instances and reports in-process code as
+  revocation pending restart.
+- **Process load.** One process-plugin load path, which takes a validated
+  package, its provenance and its approval record. `--plugin` and M6b
+  installed plugins share it, and M6b X0 needs it for real installed
+  process-plugin load, restart and approval evidence.
+
 ## 1.x coexistence
 
 Every official repository (vosu-tools, vosulay, vosu-overlays) publishes both
