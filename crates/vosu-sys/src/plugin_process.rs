@@ -50,6 +50,14 @@ pub use region::{OutOfBounds, SharedRegion};
 pub use linux::Doorbell;
 #[cfg(windows)]
 pub use windows::Doorbell;
+/// Windows launch (W0, §7.4): strict job, suspended spawn with exactly the
+/// four ring objects inherited, and the child's validated endpoint adoption.
+#[cfg(windows)]
+pub use windows::{
+    CurrentJob, EndpointError, EndpointValues, InheritedEndpoints, JobProcessIds, KILL_EXIT_CODE,
+    PLUGIN_JOB_LIMIT_FLAGS, PluginHostProcess, PluginJob, SpawnError, SpawnStep, UNWIND_EXIT_CODE,
+    UNWIND_REAP_BOUND, UnwoundChild, adopt_inherited, current_job, spawn_plugin_host,
+};
 
 #[cfg(any(target_os = "linux", windows))]
 mod objects {
