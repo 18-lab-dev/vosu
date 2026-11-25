@@ -1401,9 +1401,9 @@ No measurement or D17 pass is claimed by the contract freeze.
 
 #### M4a outcome
 
-M4a is integrated on `m4a/projections` and merged with `v2/main` at `5ac185f`
-(M1 L3, M2 and the M3 exit). Every 1.x state route is now a projection of the
-state bus:
+M4a is integrated on `m4a/projections` and merged with `v2/main` at `49e95cf`
+(M1 L3, M2, the M3 exit and M6a SDK validation). Every 1.x state route is now
+a projection of the state bus:
 
 - **Registration.** `src/plugins.rs` lists the required bundled set
   explicitly: `vosu.osu`, `vosu.adapter.upstream`, `vosu.adapter.gosumemory`,
@@ -1494,6 +1494,25 @@ Exit evidence (2026-11-24, on the merged head):
     timeout did not reproduce, so its bound is unchanged.
     `destroy_cancels_every_timer_of_an_instance_and_none_fire_again`, which
     predates M4a, failed once in an earlier 12-iteration `plugin::` run.
+- **Hub freshness fix.** Stressing the X1 filter-isolation invariant on two
+  CPUs (1–3% failures) exposed two latest-only defects in the compatibility
+  hub's publication pass, both sending a client that became writable mid-pass
+  an older image than the latest committed one (an extra encode and ack round
+  trip each):
+  - a pass that captured before the client's acknowledgement still sent that
+    older capture. An acknowledgement now records the generation it observed
+    before the client becomes writable; a pass whose capture is older
+    recaptures instead of encoding or sending it (an integer compare per
+    writable client, no lock or allocation, idle path unchanged);
+  - shared unfiltered bytes were encoded only when a plain client was already
+    writable at the start of the pass, so a plain client acknowledging during
+    the pass received bytes kept from an earlier generation. They are now
+    encoded lazily for the pass's own generation.
+
+  Gated regression tests (`src/server/websocket/tests/stale_capture.rs`) fail
+  on the old loop (`unfiltered:2` instead of `:3`, `unfiltered:1` instead of
+  `:2`). After the fix the X1 test, unchanged and exact, passed 250
+  consecutive two-CPU runs.
 
 Not part of this exit:
 

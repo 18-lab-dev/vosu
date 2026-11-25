@@ -23,6 +23,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Shutdown still destroys plugins and joins every remaining service when the
   adapter providers fail to stop, and reports that failure with the other
   cleanup errors.
+- Compatibility WebSocket feeds no longer send a client a frame captured
+  before its last write acknowledgement observed a newer state, so the first
+  frame after an acknowledgement is always the latest.
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
   Capture, settings, resource/action ownership and precise ABI demand stay

@@ -192,6 +192,9 @@ struct Client {
     control: mpsc::Sender<Outbound>,
     state: AtomicU8,
     last_generation: AtomicU64,
+    /// Lowest snapshot generation this client may receive next: the image its
+    /// last write acknowledgement observed. Set before it becomes writable.
+    fresh_from: AtomicU64,
     cleaned: AtomicBool,
     cancellation: CancellationToken,
     terminal: Arc<Mutex<Option<Outbound>>>,
@@ -486,6 +489,7 @@ impl WebSocketHub {
             control,
             state: AtomicU8::new(CLIENT_OPEN),
             last_generation: AtomicU64::new(u64::MAX),
+            fresh_from: AtomicU64::new(0),
             cleaned: AtomicBool::new(false),
             cancellation: cancellation.clone(),
             demand: Mutex::new(None),
@@ -544,20 +548,40 @@ impl WebSocketHub {
         let next = self.0.wake.borrow().wrapping_add(1);
         self.0.wake.send_replace(next);
     }
-    fn wake_writable(&self) {
-        if !self
+    /// A transport finished writing `client`'s state frame. The generation
+    /// observed here bounds what the client may receive next, so a pass that
+    /// captured an older image before this acknowledgement cannot send it.
+    fn write_completed(&self, client: &Client) {
+        if client.state.load(Ordering::Acquire) != CLIENT_PENDING {
+            return;
+        }
+        let generation = self
             .0
             .clients
             .load()
             .values()
             .any(|client| client.publishes_state)
-        {
-            return;
+            .then(|| self.0.provider.capture(self.0.schema))
+            .flatten()
+            .map(|snapshot| snapshot.generation());
+        if let Some(generation) = generation {
+            client.fresh_from.fetch_max(generation, Ordering::Release);
         }
-        let Some(snapshot) = self.0.provider.capture(self.0.schema) else {
-            return;
-        };
-        let generation = snapshot.generation();
+        if client
+            .state
+            .compare_exchange(
+                CLIENT_PENDING,
+                CLIENT_OPEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+            && let Some(generation) = generation
+        {
+            self.wake_writable(generation);
+        }
+    }
+    fn wake_writable(&self, generation: u64) {
         // An unconsumed change already carrying this ceiling makes `run` read
         // every client's state after this caller's OPEN transition: the SeqCst
         // fences pair with the one after `run` clears the flag. Re-sending it
@@ -688,27 +712,38 @@ impl WebSocketHub {
                     force_delivery = false;
                     continue;
                 }
-                if cached.as_ref().is_none_or(|(seen, _)| *seen != generation)
-                    && clients.values().any(|client| {
-                        client.publishes_state
-                            && client.state.load(Ordering::Acquire) == CLIENT_OPEN
-                            && client.filters.load().filters.is_empty()
-                    })
-                {
-                    cached = snapshot
-                        .encode_unfiltered()
-                        .ok()
-                        .map(|bytes| (generation, bytes));
+                // A client that became writable during this pass may have
+                // acknowledged a newer image than this capture: recapture
+                // rather than encode or send stale state to anyone.
+                if clients.values().any(|client| {
+                    client.publishes_state
+                        && client.state.load(Ordering::Acquire) == CLIENT_OPEN
+                        && client.fresh_from.load(Ordering::Acquire) > generation
+                }) {
+                    force_delivery = true;
+                    continue;
                 }
                 let mut projections = SharedProjections::default();
                 for client in clients.values() {
                     if !client.publishes_state
                         || client.state.load(Ordering::Acquire) != CLIENT_OPEN
+                        || client.fresh_from.load(Ordering::Acquire) > generation
                     {
+                        // A client acknowledged after the check above waits
+                        // for its own pending writable wake.
                         continue;
                     }
                     let plan = client.filters.load();
                     let payload = if plan.filters.is_empty() {
+                        // Encode lazily for this pass's generation: a plain
+                        // client may become writable mid-pass, and bytes kept
+                        // from an earlier generation must never be sent.
+                        if cached.as_ref().is_none_or(|(seen, _)| *seen != generation) {
+                            cached = snapshot
+                                .encode_unfiltered()
+                                .ok()
+                                .map(|bytes| (generation, bytes));
+                        }
                         cached.as_ref().map(|(_, bytes)| bytes.clone())
                     } else if client.shares_plan.load(Ordering::Relaxed) {
                         projections.encode(snapshot.as_ref(), &plan)
@@ -740,3 +775,7 @@ mod tests;
 
 #[cfg(test)]
 mod demand_tests;
+
+#[cfg(test)]
+#[path = "websocket/tests/stale_capture.rs"]
+mod stale_capture_tests;
