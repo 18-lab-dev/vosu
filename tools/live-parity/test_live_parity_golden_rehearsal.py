@@ -55,7 +55,8 @@ class RehearsalTests(base.CaptureTestCase):
 
     def test_the_phase_runs_only_isolated_and_refuses_a_visible_game(self) -> None:
         state = self.tmp / "state.json"
-        with self.assertRaisesRegex(gc.CaptureError, "only as PID 1 of its private PID namespace"):
+        with mock.patch.object(rehearsal.os, "getpid", return_value=4243), \
+                self.assertRaisesRegex(gc.CaptureError, "only as PID 1 of its private PID namespace"):
             rehearsal.isolated_phase(str(state))
         game = {4242: {"pid": 4242, "parent_pid": None, "start_identity": None, "executable": None}}
         with mock.patch.object(rehearsal.os, "getpid", return_value=1), \
