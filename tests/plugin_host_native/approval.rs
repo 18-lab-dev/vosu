@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use super::support::artifacts::{Artifact, Staged, sha256};
 use super::support::fixture::Fixture;
 use super::support::host::{Identity, wait_until};
+use super::support::tracked::Tracked;
 
 const ID: &str = "test.p0.testkit";
 const BOUND: Duration = Duration::from_secs(30);
@@ -145,10 +146,14 @@ fn approval_approve_starts_the_package_in_a_plugin_host_and_persists() {
     );
 
     // The record persists: a new daemon runs it with no new approval.
-    let identity = Identity::of(host);
+    // The killed daemon's orphaned host is reaped by whatever adopts it,
+    // and a container's PID 1 (cargo-nextest in the CI-parity container)
+    // never reaps it: death is read from the host's pidfd or handle, which
+    // signals at exit, not from `/proc` absence.
+    let tracked = Tracked::open(host, None);
     daemon.kill();
     assert!(
-        wait_until(BOUND, || !identity.alive()),
+        tracked.wait_exit(BOUND).is_some(),
         "the plugin host outlived its daemon"
     );
     let daemon = scenario.start(&executable);
