@@ -124,6 +124,173 @@ and the native-only symlink-privilege and flake observations, is recorded in
 the [M4a outcome](../v2/implementation-plan.md#m4a-outcome). The D17 status is
 in the [benchmark guide](benchmarks.md#m4a-d17-status-at-the-exit).
 
+## M4b behavioral goldens
+
+The approved A4b freeze is the
+[behavioral golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md):
+capture authority, harness endpoint and dump envelope, case sandwiches, route
+families and header set, the closed normalization inventory, fixture layout,
+size budget, divergence-rule format, pin and brand policy. Upstream
+observations are the only expected values; vosu dumps are replay inputs. The
+source oracle stays the projection golden. A private raw capture is never a
+fixture, and `/api/ingame` is never captured.
+
+The commands below are frozen for the implementing units; they are required
+future evidence, not a claim that the targets or subcommands exist yet.
+`tests/adapter_golden.rs` requires the `test-harness` feature
+(`[[test]] required-features`), so the exit command names it:
+
+```sh
+# L1 tooling exit, at the integrated head
+python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
+cargo test --locked --features test-harness --test adapter_golden
+cargo test --locked --features test-harness --test daemon_smoke adapter_capture
+cargo test --locked --features test-harness --test server_compat adapter_capture
+cargo test --locked --test state_api_compat --test server_compat
+python scripts/check-brand.py
+python scripts/check-doc-links.py
+python scripts/check-file-length.py
+# Native Windows; the VM command must forward --features test-harness
+python scripts/vm-test.py --test adapter_golden -- --nocapture
+python scripts/vm-test.py --test daemon_smoke -- adapter_capture --nocapture
+```
+
+Also prove that a default build compiles and that a release-profile
+`test-harness` build still fails in a disposable target. Record nonzero case
+counts by platform and family. A featureless, zero-case or unpinned run, and
+any synthetic mechanics fixture, is not pilot or full evidence.
+
+Before the pilot fixtures land, `tests/fixtures/upstream/PENDING_PILOT` names
+the Cargo pin. The pinned test then passes but prints that it compared no
+upstream case. Without the marker it fails with "no golden fixtures for pin
+`<pin>`", and it also fails when the marker names another pin or sits beside
+fixtures. X0 deletes the marker in the fixture commit. Until then, report
+adapter goldens as pending. The comparator's nonzero coverage comes from the
+self-tests over `tests/fixtures/golden-synthetic/`. That tree is written by
+G0's writer with `provenance: "synthetic"`. Each of its platforms compares only
+on the host OS its name starts with (`windows-*` on Windows, `linux-*` on
+Linux), so run `adapter_golden` natively on both, for example with
+`python scripts/vm-test.py --jobs 16 --test adapter_golden`.
+`python tests/adapter_golden/generate_synthetic.py --foreign-export <path>`
+regenerates the tree from both hosts' exports.
+
+Captures run only under a written owner authorization for that session
+(commit and pin, client build/install/profile, scenario, data/media policy,
+private evidence path, GUI operator scope, review route); VM lifecycle
+approval is not capture authorization. On the authorized platform:
+
+```sh
+python tools/live-parity/run.py check-config --config "$PARITY_CONFIG"
+python tools/live-parity/run.py golden-capture --config "$PARITY_CONFIG" --scenario-set "$APPROVED_SCENARIO" --out "$PRIVATE_CAPTURE"
+python tools/live-parity/run.py golden --capture "$PRIVATE_CAPTURE" --candidate-dir "$CANDIDATE_DIR"
+cargo test --locked --features test-harness --test adapter_golden
+python scripts/check-brand.py
+```
+
+Report the evidence items listed in the contract's exit section; name the
+private evidence location by label only. Main reviews each candidate before a
+separate fixture commit, and nothing is uploaded or published.
+
+### O0 pilot run (`golden-capture`)
+
+`golden-capture` builds `cargo build --locked --features test-harness` (Windows:
+`--no-default-features --features test-harness`) from a clean committed tree
+and refuses a modified tracked tree. It also refuses an executable without the
+harness endpoint, which rules out every release or featureless build. It
+launches and owns both daemons, each on its own loopback port with isolated
+roots, and passes the vosu daemon a fresh `VOSU_TEST_ADAPTER_CAPTURE`
+capability. It checks that the endpoint answers only with that capability. It
+then prepares the run-owned path-security layout and launches the client.
+Operator prompts go to stderr, one per barrier, in the order menu → play →
+paused → result → no-client (close the client). At each barrier every
+golden-role route-matrix case runs as two sandwiches: upstream twice, then
+vosu dump → route → dump. A case gets at most three whole-case attempts.
+Every daemon and client process and every file the run created is removed
+before the command returns. Outputs are written once and never replaced,
+both mode 0600:
+
+- `--out`: the `vosu-golden-capture-v1` capture that `golden` reads. It is
+  written only for a complete run.
+- `<out>.transcript.json`: raw records of every attempt, the build, launch and
+  barrier attestations and the cleanup result. A failed run writes only this
+  file.
+
+A run whose evidence would contain the capability writes nothing.
+
+The run configuration adds a `golden` block (`config-schema` prints its
+schema):
+
+```json
+"golden": {
+  "authorization": {"reference": "<owner authorization id>", "platform": "windows-lazer",
+                    "source_revision": "<pin>", "vosu_commit": "<40-hex HEAD>",
+                    "client_version": "<client_expected_version>",
+                    "scenario_set": "m4b-dry-run-v1"},
+  "capture_root": "C:\\vosu-capture\\m4b-pilot-<utc>",
+  "capture_slot": "osu!",
+  "route_roots": {"/Songs/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files",
+                  "/files/beatmap/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
+  "other_roots": {"files": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
+  "inside_files": {"/Songs/": "<relative file under files>",
+                   "/files/beatmap/": "<relative file under files>"},
+  "fixture_values": {"songs_file": "<relative file under files>",
+                     "songs_dir": "<relative directory under files>",
+                     "beatmap_relative": "<file relative to the current beatmap>",
+                     "skin_file": "<legacy skin file name>",
+                     "calc_relative": "<relative chart under files>",
+                     "calc_absolute_inside": "<absolute chart under files>"},
+  "sentinel_chart": "<generated vosu-owned .osu to copy outside the roots>",
+  "assets": [{"id": "<asset id>", "relative": "<path under capture_root>",
+              "media_type": "<type>", "generator": "<generator>", "license": "<license>"}]
+}
+```
+
+Every root the client declares must lie inside `capture_root`, which is
+task-owned. For lazer, point the task-owned test profile's data directory
+inside it. The upstream daemon serves lazer's legacy `/Songs/` and
+`/files/beatmap/` routes from the files store, so both route roots name the
+files slot (also declared in `other_roots`), and those file and path cases run.
+Every golden case runs except these, each listed in the transcript with its
+authority:
+
+| Excluded cases | Platform | Authority |
+|---|---|---|
+| `files.skin.file.{get,head}` | lazer | GOLDEN_CONTRACT §6 stable `/files/skin/<name>` variant; lazer records `files.skin.lazer-file.*` instead (`lazer-legacy-skin-404`) |
+| `files.skin.lazer-file.{get,head}` | stable | GOLDEN_CONTRACT §6 lazer variant (`lazer-legacy-skin-404`) |
+| `path-security.skin.*` | lazer | ledger `lazer-legacy-skin-404`: lazer has no legacy skin root to traverse from |
+| drive, UNC, ADS, trailing dot/space spellings | Linux | GOLDEN_CONTRACT §6 path-security, Windows only |
+| `absolute-encoded`, `absolute-double-slash` spellings | Windows | GOLDEN_CONTRACT §6 path-security, POSIX absolute spellings |
+| `path-security.*.symlink` | Windows, only when the symlink cannot be created | GOLDEN_CONTRACT §6 "where the platform permits" |
+
+Any other unmet prerequisite (a missing fixture value or root) fails the run
+before anything is sent. A case whose connection closes without a response is
+recorded as the `closed` outcome and compared; it never fails the run. The
+authorization must name exactly this platform, pin, commit, client version and
+scenario set, or the run is refused before the build.
+
+1. **Mandatory dry run first.** Use a config whose
+   `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and
+   three cases. Then run `golden` on it into a scratch candidate directory, in
+   the VM, before the full pilot. This catches integration gaps cheaply.
+   Discard the dry-run outputs once reviewed; they are not pilot evidence.
+
+   ```powershell
+   python tools\live-parity\run.py check-config --config $env:DRY_RUN_CONFIG
+   python tools\live-parity\run.py golden-capture --config $env:DRY_RUN_CONFIG --scenario-set m4b-dry-run-v1 --out $env:DRY_RUN_CAPTURE
+   python tools\live-parity\run.py golden --capture $env:DRY_RUN_CAPTURE --candidate-dir $env:DRY_RUN_CANDIDATE
+   ```
+
+2. **Pilot.** Use the same config with `authorization.scenario_set` set to
+   `m4b-full-v1`, and a new `--out`:
+
+   ```powershell
+   python tools\live-parity\run.py golden-capture --config $env:PARITY_CONFIG --scenario-set m4b-full-v1 --out $env:PRIVATE_CAPTURE
+   ```
+
+   Then run `golden`, `adapter_golden` and the brand check as listed above.
+   Report the transcript's barrier log, retried cases, exclusions and cleanup
+   result alongside the contract's evidence items.
+
 ## M3 API, resources and actions
 
 A3 freezes the following exit commands for implementation/integration owners.
@@ -468,10 +635,11 @@ replaces nor relaxes the deterministic gate. That gate is `state_api_compat`
 adapter bytes), `server_compat` (the mounted production listener matrix) and
 `daemon_smoke` with `test-harness`. Fix a reported mismatch in the owning
 adapter or record an approved ledger row with exact route and member scope;
-never add a comparator exemption. M4b owns the pilot/full golden capture
-commands and owner artifacts; until they exist, report missing captures as
-pending M4b/release evidence, never as a pass. The 1.x captures in the
-verification history attest vosu 1.2.5 only.
+never add a comparator exemption. These release-build diagnostic captures are
+never golden evidence. M4b owns the pilot/full golden capture commands under
+its [own contract](#m4b-behavioral-goldens); until committed fixtures exist,
+report missing captures as pending M4b/release evidence, never as a pass. The
+1.x captures in the verification history attest vosu 1.2.5 only.
 
 Native-reference mode also accepts the exact compressed upstream Linux 4.26.2
 ELF (SHA-256 `fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f`).

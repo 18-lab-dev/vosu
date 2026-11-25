@@ -230,3 +230,46 @@ spellings confined inside the selected session's declared roots only; the
 new rejection is a named security divergence. D20 attribution uses validated
 overlay identity, bounded deduplication and separate unknown buckets, never
 Origin alone or arbitrary path/referrer logging.
+
+**2026-11-24 (A4b):** The
+[behavioral golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md)
+makes "commits the captures as golden fixtures" (above, line 84) precise.
+Raw live captures stay private and are never committed or uploaded; a
+`golden` command normalizes only a closed list of exact-scope volatile values
+and writes a candidate that main reviews before commit, using generated
+vosu-owned test media only. Fixtures live under
+`tests/fixtures/upstream/<pin>/`, the test reads only the current pin's
+directory, and a pin bump deletes the previous one and recaptures every
+platform. "Each divergence is listed with its reason in one file" (line 87)
+is extended: compatibility tests subtract a ledger row only through exact
+machine-readable rules in `divergence-rules.json` that name an existing
+non-`temporary` ledger ID, the affected cases and record part; unused rules
+and whole-route subtraction without whole-route ledger scope fail. The
+`/api/ingame` route is never captured or used as a golden.
+
+**2026-11-24** (AF, ecosystem fan-out contract freeze; full record in
+[`docs/v2/ecosystem-release-matrix.md`](../v2/ecosystem-release-matrix.md)):
+
+- **Job artifacts (AF.12).** Resources stay what this ADR says: references
+  published in session state, public under peer policy. A sessionless or
+  protected output (an offline export, a stored replay, a rendered video) is
+  not a resource. It is an artifact owned by one action job, served only at
+  `GET`/`HEAD /api/v1/jobs/{job}/artifacts/{artifact}` to that job's own
+  launch session or the broker, with `no-store` and the job's retention as
+  its lifetime ([`docs/v2/api-v1.md`](../v2/api-v1.md#job-artifacts-af12)).
+  Formerly private files never become public resources, and no fake session
+  is created to publish one.
+- **Long work and uploads (AF.3, AF.6).** The 30-second invocation deadline
+  stands; long work is a plugin-owned operation behind short actions, and
+  browser uploads use bounded staged upload actions, both specified in
+  `docs/v2/api-v1.md`.
+- **Upstream compatibility inside a private backend (AF.13).** The replay
+  renderer's private replay-overlay backend may serve upstream-compatible
+  routes only to render third-party overlays inside a replay; it is not a
+  vosu adapter, registers nothing with core and is never a first-party
+  fallback. Migrated v2 overlays read replay state there through API v1
+  playback semantics.
+- **`/api/ingame` successor (A7.5).** The dashboard banner's install action
+  targets the `kind = "tool"` entry `vosulay-editor` in
+  `18-lab-dev/vosulay`'s `catalog-v2.json`, whose requirements bring in the
+  `vosu.vosulay` supervisor through the normal install plan.

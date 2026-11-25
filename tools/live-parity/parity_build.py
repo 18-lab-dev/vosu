@@ -111,11 +111,8 @@ def _windows_msvc_environment(
     }
 
 
-def build_release_artifacts(
-        cfg: dict[str, Any], capture_path: str) -> dict[str, Any]:
-    """Build vosu in a fresh root and attest the selected upstream source reference."""
+def _build_toolchain(source_mode: str) -> tuple[dict[str, Path], tuple[str, ...]]:
     root = Path(__file__).resolve().parents[2]
-    source_mode = cfg["source_mode"]
     source_tools = (
         ("git", "node", "pnpm", "python", "powershell")
         if sys.platform == "win32"
@@ -144,9 +141,16 @@ def build_release_artifacts(
                 or (ancestor / ".cargo/config.toml").exists()):
             raise ValueError(
                 f"Cargo configuration is forbidden in build ancestor: {ancestor}")
+    return toolchain, tool_names
 
+
+def _build_source(cfg: dict[str, Any], capture_path: str, toolchain: dict[str, Path],
+                  tool_names: tuple[str, ...]) -> tuple[dict[str, Any], Path]:
+    """Build (node-build) or re-attest (native-reference) the pinned upstream source.
+
+    Returns its attestation and this capture's fresh vosu target directory."""
+    source_mode = cfg["source_mode"]
     capture_root = Path(capture_path).resolve()
-    started = time.monotonic_ns()
     source_attestation: dict[str, Any]
     if source_mode == "node-build":
         source_dir, vosu_target = _fresh_build_roots(capture_path)
@@ -266,6 +270,18 @@ def build_release_artifacts(
                 "command": expected_command,
             },
         }
+    return source_attestation, vosu_target
+
+
+def build_release_artifacts(
+        cfg: dict[str, Any], capture_path: str) -> dict[str, Any]:
+    """Build vosu in a fresh root and attest the selected upstream source reference."""
+    root = Path(__file__).resolve().parents[2]
+    source_mode = cfg["source_mode"]
+    capture_root = Path(capture_path).resolve()
+    started = time.monotonic_ns()
+    toolchain, tool_names = _build_toolchain(source_mode)
+    source_attestation, vosu_target = _build_source(cfg, capture_path, toolchain, tool_names)
 
     target_triple = ("x86_64-pc-windows-msvc" if sys.platform == "win32"
                      else "x86_64-unknown-linux-gnu")
@@ -334,6 +350,120 @@ def build_release_artifacts(
             [cargo, "--version", "--verbose"], vosu_environment),
         "cargo_lock_sha256": sha256_file(root / "Cargo.lock"),
         "cargo_toml_sha256": sha256_file(root / "Cargo.toml"),
+    }
+    cfg["_build_attestation"] = attestation
+    return attestation
+
+
+# A4b.2 / GOLDEN_CONTRACT §3: the golden capture build. Only a debug `test-harness`
+# executable serves the adapter capture endpoint; `build.rs` and the testkit reject the
+# feature in release builds, so these compiled-in names also prove the debug profile.
+HARNESS_MARKERS = (b"/__vosu_test/v1/adapter-capture", b"VOSU_TEST_ADAPTER_CAPTURE")
+
+
+def harness_build_command(cargo: str) -> tuple[list[str], list[str]]:
+    """The exact contract command and the feature set it builds on this host."""
+    if sys.platform == "win32":
+        return ([cargo, "build", "--locked", "--no-default-features", "--features",
+                 "test-harness"], ["test-harness"])
+    return ([cargo, "build", "--locked", "--features", "test-harness"],
+            ["linux-process-events", "test-harness"])
+
+
+def attest_harness_binary(executable: Path, *, commit: str, features: list[str],
+                          target: str) -> dict[str, Any]:
+    """The `attestation.vosu` record of a debug test-harness vosu executable.
+
+    Refuses a release or featureless executable: it lacks the harness endpoint."""
+    executable = executable.resolve(strict=True)
+    with executable.open("rb") as handle:
+        magic = handle.read(4)
+    if ((sys.platform == "win32" and magic[:2] != b"MZ")
+            or (sys.platform != "win32" and magic != b"\x7fELF")):
+        raise ValueError("vosu capture build is not a native executable")
+    if not file_contains(executable, PINNED_VOSU_VERSION.encode("ascii")):
+        raise ValueError("vosu capture build is not the pinned vosu version")
+    for marker in HARNESS_MARKERS:
+        if not file_contains(executable, marker):
+            raise ValueError(
+                "vosu capture build has no test-harness adapter capture endpoint; a release "
+                "or featureless build is never a golden capture build (GOLDEN_CONTRACT §3)")
+    if "test-harness" not in features:
+        raise ValueError("vosu capture build features do not include test-harness")
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise ValueError("vosu capture build commit is not a full lowercase hex commit")
+    return {"commit": commit, "version": PINNED_VOSU_VERSION, "profile": "debug",
+            "features": sorted(features), "target": target, "sha256": sha256_file(executable)}
+
+
+def _clean_commit(root: Path) -> str:
+    environment = _git_environment()
+    status = subprocess.run(
+        _git_command(root, "status", "--porcelain=v1", "--untracked-files=no"),
+        check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=environment).stdout
+    if status:
+        raise ValueError("golden capture builds only a committed tree; tracked files are modified")
+    return subprocess.run(
+        _git_command(root, "rev-parse", "HEAD"), check=True, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment).stdout.strip()
+
+
+def build_harness_artifacts(cfg: dict[str, Any], capture_path: str) -> dict[str, Any]:
+    """Attest the pinned upstream source and build the debug test-harness vosu.
+
+    Separate from `build_release_artifacts`: release live parity stays an independent
+    diagnostic and is never a golden capture build."""
+    root = Path(__file__).resolve().parents[2]
+    started = time.monotonic_ns()
+    commit = _clean_commit(root)
+    toolchain, tool_names = _build_toolchain(cfg["source_mode"])
+    source_attestation, release_target = _build_source(cfg, capture_path, toolchain, tool_names)
+    vosu_target = Path(str(release_target) + "-harness")
+    if vosu_target.exists():
+        shutil.rmtree(vosu_target)
+    vosu_build_home = Path(str(vosu_target) + "-home")
+    cargo = str(toolchain["cargo"])
+    vosu_command, features = harness_build_command(cargo)
+    vosu_environment = _controlled_build_environment(
+        vosu_build_home,
+        {"CARGO_TARGET_DIR": str(vosu_target), "CARGO_HOME": str(vosu_build_home / "cargo"),
+         "RUSTC": str(toolchain["rustc"])},
+        tool_names)
+    vosu_environment, vosu_msvc = _windows_msvc_environment(
+        vosu_environment, vosu_build_home, toolchain.get("cmd"))
+    subprocess.run(vosu_command, cwd=root, check=True, env=vosu_environment)
+    if _clean_commit(root) != commit:
+        raise ValueError("the vosu tree changed while the capture build ran")
+    rustc_version = _command_version(
+        [str(toolchain["rustc"]), "--version", "--verbose"], vosu_environment)
+    hosts = [line.split(":", 1)[1].strip() for line in rustc_version.splitlines()
+             if line.startswith("host:")]
+    if len(hosts) != 1:
+        raise ValueError("cannot read the rustc host target")
+    vosu = (vosu_target / "debug" / ("vosu.exe" if sys.platform == "win32" else "vosu")
+            ).resolve(strict=True)
+    vosu_record = attest_harness_binary(vosu, commit=commit, features=features, target=hosts[0])
+    cfg["daemons"]["vosu"]["command"] = [str(vosu)]
+    cfg["_artifact_identity"]["vosu"].update({
+        "executable": str(vosu), "sha256": vosu_record["sha256"], "target_triple": hosts[0]})
+    attestation = {
+        "started_monotonic_ns": started, "completed_monotonic_ns": time.monotonic_ns(),
+        "source_mode": cfg["source_mode"],
+        "toolchain": {name: {"path": str(path), "sha256": sha256_file(path)}
+                      for name, path in toolchain.items()},
+        **source_attestation,
+        "vosu": vosu_record,
+        "vosu_command": vosu_command,
+        "vosu_target_dir": str(vosu_target),
+        "vosu_build_home": str(vosu_build_home),
+        "vosu_environment_keys": sorted(vosu_environment),
+        "vosu_msvc": vosu_msvc,
+        "rustc_version": rustc_version,
+        "cargo_version": _command_version([cargo, "--version", "--verbose"], vosu_environment),
+        "cargo_lock_sha256": sha256_file(root / "Cargo.lock"),
+        "cargo_toml_sha256": sha256_file(root / "Cargo.toml"),
+        "owned_paths": [str(vosu_target), str(vosu_build_home)],
     }
     cfg["_build_attestation"] = attestation
     return attestation

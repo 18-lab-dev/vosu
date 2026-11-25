@@ -252,6 +252,102 @@ fn major_version_release_needs_consent_startup_never_supplies_and_asset_unvalida
     ));
 }
 
+fn stable_with_assets(version: &str) -> Vec<u8> {
+    let digest = format!("sha256:{}", "cd".repeat(32));
+    release(
+        &format!("v{version}"),
+        false,
+        false,
+        serde_json::json!([
+            asset(&format!("vosu-linux-v{version}.zip"), Some(&digest)),
+            asset(&format!("vosu-windows-v{version}.zip"), Some(&digest)),
+        ]),
+    )
+}
+
+#[test]
+fn prerelease_build_never_downgrades_to_an_older_stable_release() {
+    // The root package version is what the daemon passes to the updater. A
+    // library crate's own version (vosu-core is 0.1.0) once made an alpha
+    // treat stable 1.2.5 as a major update that consent would install.
+    let executable = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+    let alpha = Version::parse("2.0.0-alpha.1").unwrap();
+    for current in [&executable, &alpha] {
+        for consent in [false, true] {
+            for older in ["1.2.5", "1.99.99"] {
+                assert_eq!(
+                    parse_latest_release(&stable_with_assets(older), current, "linux", consent)
+                        .unwrap(),
+                    ReleaseDecision::Latest(Version::parse(older).unwrap()),
+                    "{current} with consent={consent} must not offer stable {older}"
+                );
+            }
+        }
+    }
+
+    // Prerelease < its release: stable 2.0.0 is a same-major update for the alpha.
+    let ReleaseDecision::Update(update) =
+        parse_latest_release(&stable_with_assets("2.0.0"), &alpha, "linux", false).unwrap()
+    else {
+        panic!("stable 2.0.0 must update 2.0.0-alpha.1")
+    };
+    assert_eq!(update.version, Version::parse("2.0.0").unwrap());
+    assert_eq!(update.asset_name, "vosu-linux-v2.0.0.zip");
+    assert!(matches!(
+        parse_latest_release(&stable_with_assets("3.0.0"), &alpha, "linux", false).unwrap(),
+        ReleaseDecision::MajorAvailable(_)
+    ));
+
+    // Another prerelease is never installed, however GitHub flags it.
+    for prerelease_flag in [false, true] {
+        let newer_alpha = release(
+            "v2.0.0-alpha.2",
+            false,
+            prerelease_flag,
+            serde_json::json!([asset(
+                "vosu-linux-v2.0.0-alpha.2.zip",
+                Some(&format!("sha256:{}", "cd".repeat(32)))
+            )]),
+        );
+        assert_eq!(
+            parse_latest_release(&newer_alpha, &alpha, "linux", true).unwrap(),
+            ReleaseDecision::Latest(alpha.clone())
+        );
+    }
+}
+
+#[test]
+fn stable_builds_never_take_a_prerelease_in_either_direction() {
+    let alpha_asset = serde_json::json!([asset(
+        "vosu-linux-v2.0.0-alpha.1.zip",
+        Some(&format!("sha256:{}", "cd".repeat(32)))
+    )]);
+    // 1.x below the alpha: neither an update nor a major-version report.
+    // 2.0.0 above the alpha: never a downgrade back to it.
+    for current in ["1.2.5", "2.0.0"] {
+        let current = Version::parse(current).unwrap();
+        for prerelease_flag in [false, true] {
+            for consent in [false, true] {
+                assert_eq!(
+                    parse_latest_release(
+                        &release(
+                            "v2.0.0-alpha.1",
+                            false,
+                            prerelease_flag,
+                            alpha_asset.clone()
+                        ),
+                        &current,
+                        "linux",
+                        consent
+                    )
+                    .unwrap(),
+                    ReleaseDecision::Latest(current.clone())
+                );
+            }
+        }
+    }
+}
+
 fn json_empty() -> serde_json::Value {
     serde_json::json!([])
 }

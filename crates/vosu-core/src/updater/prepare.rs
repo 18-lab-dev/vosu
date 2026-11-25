@@ -8,13 +8,14 @@ pub async fn prepare_update<'a, P: UpdatePlatform>(
     mut guard: TransactionGuard<'a, P>,
     release: ValidatedRelease,
     client: &StreamingClient,
+    user_agent: &str,
     cancel: &CancellationToken,
 ) -> Result<PreparedUpdate<'a, P>, UpdateError> {
     guard.set_metadata(release.digest)?;
     guard.persist_phase(InstallPhase::Downloading)?;
     guard.platform.checkpoint(UpdateCut::BeforePartDownload)?;
     client
-        .download_atomic(&release.archive_url, USER_AGENT, &guard.record.part, cancel)
+        .download_atomic(&release.archive_url, user_agent, &guard.record.part, cancel)
         .await?;
     if cancel.is_cancelled() {
         return Err(NetworkError::Cancelled.into());

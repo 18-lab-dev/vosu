@@ -1,0 +1,222 @@
+{
+  "format": "vosu-golden-inventory-v1",
+  "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
+  "normalization_version": 1,
+  "files": [
+    {
+      "path": "linux-lazer/assets.json",
+      "bytes": 898,
+      "sha256": "682be8580a84a7b2eea20aefba3738834faf9bea04d3d689884743b5e06ac214"
+    },
+    {
+      "path": "linux-lazer/assets/synthetic-chart",
+      "bytes": 271,
+      "sha256": "d9b6f314cf5d859f3f540e99b594c0903cfeb9cbf5e9b7350ed1f5840bc57bb0"
+    },
+    {
+      "path": "linux-lazer/assets/synthetic-second-chart",
+      "bytes": 271,
+      "sha256": "214ef877a4035f11f09c8bd7fd33f1c36fc8536e3248900513e609b8acfbe575"
+    },
+    {
+      "path": "linux-lazer/brand-inventory.txt",
+      "bytes": 136,
+      "sha256": "3c16cc2fba024366c9d43d3944b81bfa1d67c927f53f9337e5c3990481292e43"
+    },
+    {
+      "path": "linux-lazer/cases/calculation.no-query.json",
+      "bytes": 16714,
+      "sha256": "93d7e38eb6fbd7442917343eec0f7d334e610fa6d67add454353e13505cb6ab2"
+    },
+    {
+      "path": "linux-lazer/cases/files.get-beatmap-file.json",
+      "bytes": 17277,
+      "sha256": "ca849713d104395ebc6b9a70516a36d1a1005c783a6a32f7b66381854bf04f33"
+    },
+    {
+      "path": "linux-lazer/cases/files.head-beatmap-file.json",
+      "bytes": 16985,
+      "sha256": "4f764da1594f7b34f2006852a13479053a18c18636ccda7e638e1ba951808088"
+    },
+    {
+      "path": "linux-lazer/cases/files.if-modified-since-beatmap-file.json",
+      "bytes": 16919,
+      "sha256": "160ff45a9e2c41462beaedb12bcf6919ddb7bd9dfe0f2e8e734a723a87748902"
+    },
+    {
+      "path": "linux-lazer/cases/files.if-none-match-beatmap-file.json",
+      "bytes": 16899,
+      "sha256": "16987c2df39ff73e4f80a8ed4cc07177dceed9e3371ecc082c1b59b43bf8373d"
+    },
+    {
+      "path": "linux-lazer/cases/origin-peer.foreign-origin-json-v2.json",
+      "bytes": 5658,
+      "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
+    },
+    {
+      "path": "linux-lazer/cases/path-security.encoded-parent-files-beatmap.json",
+      "bytes": 5848,
+      "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.get-json-sc-second-chart.json",
+      "bytes": 16251,
+      "sha256": "d9994309593e0d7df13fac1e69b5d60a584d663f836a6e7182737c2f1bca2d39"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.get-json-sc.json",
+      "bytes": 16266,
+      "sha256": "88710ee28dbcfcc613d111549b3a38d6eeeb0e47da3ea9a5229c1af2a60ca4c4"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.get-json-v2-no-client.json",
+      "bytes": 5736,
+      "sha256": "e08b31a148d45644f720697a6f2565b6d7267dd87e82ffc79c6d892f17fd266d"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.get-json-v2.json",
+      "bytes": 22471,
+      "sha256": "643c94abc9f61255efdf48eee7760aa41aad88dbecef804480cec8e8eddc5e70"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.post-json-v2.json",
+      "bytes": 5711,
+      "sha256": "732563a3b180fca62c4e88e66c1659b8a3e66b365b3b51f96551cc7fe3f5c4ea"
+    },
+    {
+      "path": "linux-lazer/cases/state-http.trailing-slash-json-v2.json",
+      "bytes": 5700,
+      "sha256": "0be939718e861c631e6ccfadbcbc92bcadd738a27fbf1c85c46bfa36e4e4b801"
+    },
+    {
+      "path": "linux-lazer/cases/ws.get-without-upgrade-websocket-v2.json",
+      "bytes": 5751,
+      "sha256": "4ed6f4bce07c0cb76bf9116b0b35047117581442dd2c88ca4b0a7be0de7afc2c"
+    },
+    {
+      "path": "linux-lazer/cases/ws.upgrade-websocket-v2.json",
+      "bytes": 22782,
+      "sha256": "0847e19ce3c53667858a660263812caab5c5544e15b8ed759228dec73aebf8bd"
+    },
+    {
+      "path": "linux-lazer/inventory.json",
+      "bytes": 4223,
+      "sha256": "96125726f804cb89308afd81368065d1b327f6529bc8a8aeae092463a66e9694"
+    },
+    {
+      "path": "linux-lazer/manifest.json",
+      "bytes": 3982,
+      "sha256": "8a974a460c6173fc2e4a621f1c5ffcf76654dc6bc2aca68d0e91dc7a51ee565c"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 227,
+      "sha256": "d09505f9ab5b1d3c52f7512f0a49ae0a0d4f078e11f1d6602947a3633b03ea90"
+    },
+    {
+      "path": "windows-stable/assets.json",
+      "bytes": 914,
+      "sha256": "d60f9665c4b831ece2835f6f483fc3a64972f16ded4f71f5fcd461fd382de56b"
+    },
+    {
+      "path": "windows-stable/assets/synthetic-chart",
+      "bytes": 271,
+      "sha256": "d9b6f314cf5d859f3f540e99b594c0903cfeb9cbf5e9b7350ed1f5840bc57bb0"
+    },
+    {
+      "path": "windows-stable/assets/synthetic-second-chart",
+      "bytes": 271,
+      "sha256": "214ef877a4035f11f09c8bd7fd33f1c36fc8536e3248900513e609b8acfbe575"
+    },
+    {
+      "path": "windows-stable/brand-inventory.txt",
+      "bytes": 139,
+      "sha256": "ca426b42469d46c0d19dc07cbd02a529650b38902bec7be92405c8b177205d12"
+    },
+    {
+      "path": "windows-stable/cases/calculation.no-query.json",
+      "bytes": 17323,
+      "sha256": "28e7f83c9aef82edb27ddbcba2008ce560434aea6446cb6d9829676cf5b3b7c5"
+    },
+    {
+      "path": "windows-stable/cases/files.get-beatmap-file.json",
+      "bytes": 17886,
+      "sha256": "2a508d7cdef5ee14aac421c8d3e3fbde58e7036c9b05c1ec0ebfb9adac51fb19"
+    },
+    {
+      "path": "windows-stable/cases/files.head-beatmap-file.json",
+      "bytes": 17594,
+      "sha256": "90b9d55094c36336811ce22146b6defd76ab05e3188f5414b82f637b2688bcc1"
+    },
+    {
+      "path": "windows-stable/cases/files.if-modified-since-beatmap-file.json",
+      "bytes": 17528,
+      "sha256": "8f902ea2a4900626813128a2409568ec1ffa7149a12cec265e75343edd25fff6"
+    },
+    {
+      "path": "windows-stable/cases/files.if-none-match-beatmap-file.json",
+      "bytes": 17508,
+      "sha256": "1b825c7b6b8b1a1749ffebb95a8e7cbf276b9371116f9f2641acfef95a0748c0"
+    },
+    {
+      "path": "windows-stable/cases/origin-peer.foreign-origin-json-v2.json",
+      "bytes": 5658,
+      "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
+    },
+    {
+      "path": "windows-stable/cases/path-security.encoded-parent-files-beatmap.json",
+      "bytes": 5848,
+      "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
+    },
+    {
+      "path": "windows-stable/cases/state-http.get-json-sc-second-chart.json",
+      "bytes": 16811,
+      "sha256": "f51a0b5d9fc6162436d10c3bf34cd432b82ec68890b366867b7950a261a7c4c3"
+    },
+    {
+      "path": "windows-stable/cases/state-http.get-json-sc.json",
+      "bytes": 16852,
+      "sha256": "83ff8eeb040a10b1d4b193ee4c4e6152a5d2ee8bca28d5e1d48459fcc6487c14"
+    },
+    {
+      "path": "windows-stable/cases/state-http.get-json-v2-no-client.json",
+      "bytes": 5736,
+      "sha256": "e08b31a148d45644f720697a6f2565b6d7267dd87e82ffc79c6d892f17fd266d"
+    },
+    {
+      "path": "windows-stable/cases/state-http.get-json-v2.json",
+      "bytes": 23355,
+      "sha256": "8729a58d1c373ddb523f66511b2fccec516819fe0aa6636c8b51794e8ff93c1c"
+    },
+    {
+      "path": "windows-stable/cases/state-http.post-json-v2.json",
+      "bytes": 5711,
+      "sha256": "732563a3b180fca62c4e88e66c1659b8a3e66b365b3b51f96551cc7fe3f5c4ea"
+    },
+    {
+      "path": "windows-stable/cases/state-http.trailing-slash-json-v2.json",
+      "bytes": 5700,
+      "sha256": "0be939718e861c631e6ccfadbcbc92bcadd738a27fbf1c85c46bfa36e4e4b801"
+    },
+    {
+      "path": "windows-stable/cases/ws.get-without-upgrade-websocket-v2.json",
+      "bytes": 5751,
+      "sha256": "4ed6f4bce07c0cb76bf9116b0b35047117581442dd2c88ca4b0a7be0de7afc2c"
+    },
+    {
+      "path": "windows-stable/cases/ws.upgrade-websocket-v2.json",
+      "bytes": 23666,
+      "sha256": "944c88b2b41d2b03d125c624260de9ea086cfce64d773ca648e43dc159abe53f"
+    },
+    {
+      "path": "windows-stable/inventory.json",
+      "bytes": 4226,
+      "sha256": "74bb43226d2d09977f3947aa36869cc77a64d4a3b8e49320dff6ca92160e76d9"
+    },
+    {
+      "path": "windows-stable/manifest.json",
+      "bytes": 3991,
+      "sha256": "cea29b7136d5a747d9402c7c62b861fe474edc63b34f19acbe5d0ebc3233d103"
+    }
+  ]
+}

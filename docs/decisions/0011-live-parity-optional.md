@@ -32,6 +32,19 @@ specific client build. A divergence that targeted fixtures do not model can
 reach a release until a user report or an optional capture finds it. Historical
 captures remain evidence for their recorded source generations only.
 
+## Amendments
+
+**2026-11-24 (A4b.1, A4b.2):** vosu 2.0 adds M4b behavioral golden captures
+([golden contract](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md)). They
+do not make live parity a routine gate: the check that runs on every change is
+the deterministic `adapter_golden` replay of committed fixtures, and only the
+per-pin capture campaign (pilot, full set before the 2.0 release, recapture on
+a pin move) needs a live session. Golden captures are owner-authorized per
+session and may be agent-operated on isolated VM test installs; VM lifecycle
+approval does not authorize them. They use a separately attested debug
+`test-harness` build, so release-build `capture`, `compare` and `diff` remain
+the optional diagnostic described above and are never golden evidence.
+
 ## References
 
 - [Testing and verification](../testing/verification.md)

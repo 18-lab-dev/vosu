@@ -14,6 +14,24 @@ use vosu_proptest::bounded;
 
 use tempfile::TempDir;
 
+/// The test-harness adapter capture endpoint (GOLDEN_CONTRACT.md §5), which
+/// `build.rs` keeps out of every release build.
+const HARNESS_PATH: &str = "/__vosu_test/v1/adapter-capture?schema=v2";
+const HARNESS_HEADER: &str = "x-vosu-test-capture";
+const HARNESS_CAPABILITY_ENV: &str = "VOSU_TEST_ADAPTER_CAPTURE";
+const HARNESS_CAPABILITY: &str = "3e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f";
+
+fn assert_no_test_harness_endpoint(executable: &[u8]) {
+    for marker in ["/__vosu_test/", HARNESS_HEADER, HARNESS_CAPABILITY_ENV] {
+        assert!(
+            !executable
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes()),
+            "release executable contains {marker}"
+        );
+    }
+}
+
 struct ChildGuard(Option<Child>);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
@@ -44,6 +62,56 @@ fn toml_config(port: u16, static_root: &Path) -> String {
     format!(
         "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_PORT = 0\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
+}
+
+/// The release's own version. The release workflow validates the tag against
+/// this root manifest and builds the packaged executable from the same tree.
+fn release_version() -> String {
+    let manifest: toml::Table =
+        toml::from_str(include_str!("../../../Cargo.toml")).expect("root Cargo manifest");
+    manifest["package"]["version"]
+        .as_str()
+        .expect("root package version")
+        .to_owned()
+}
+
+/// Every regular file directly in `directory` with its bytes. A prerelease's
+/// own `prerelease/` subdirectory is not a file and so is not compared.
+fn config_files(directory: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(directory)
+        .expect("list normal config root")
+        .map(|entry| entry.expect("normal config root entry").path())
+        .filter(|path| path.is_file())
+        .map(|path| {
+            let bytes = fs::read(&path).expect("read normal config root file");
+            (path, bytes)
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+async fn wait_for_seeded_counter(client: &reqwest::Client, base: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let response = bounded!(
+            client
+                .get(format!("{base}/api/counters/search/seeded"))
+                .send()
+        )
+        .expect("search counters");
+        if bounded!(response.text())
+            .unwrap()
+            .contains("Seeded Counter")
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "static path reload never exposed the seeded counter"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
@@ -93,6 +161,20 @@ fn request_graceful_shutdown(child: &Child) {
 
 #[cfg(target_os = "linux")]
 fn assert_packaged_linux_cli_preflight(binary: &Path) {
+    let version = Command::new(binary)
+        .arg("--version")
+        .output()
+        .expect("run packaged Linux release --version");
+    assert!(
+        version.status.success(),
+        "--version failed with {}",
+        version.status
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout),
+        format!("vosu {}\n", release_version()),
+        "packaged executable is not this release's version"
+    );
     let help = Command::new(binary)
         .arg("--help")
         .output()
@@ -172,6 +254,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
 
     #[cfg(target_os = "linux")]
     assert_packaged_linux_cli_preflight(&binary);
+    assert_no_test_harness_endpoint(&fs::read(&binary).expect("read release executable"));
 
     let roots = TempDir::new().expect("temporary release roots");
     let static_root = roots.path().join("static");
@@ -202,6 +285,10 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
     fs::write(config_dir.join("vosu.env"), legacy_config(1, &static_root)).unwrap();
     fs::write(config_dir.join("tosu.env"), legacy_config(2, &static_root)).unwrap();
+    // A prerelease build must keep these normal-root files byte-identical.
+    let prerelease = release_version().contains('-');
+    let normal_dir = config_dir.clone();
+    let normal_files = config_files(&normal_dir);
 
     let mut command = Command::new(&binary);
     command
@@ -214,6 +301,9 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         // for the user's configured TEMP or OneDrive tree.
         .env("TEMP", roots.path().join("runtime-temp-sentinel"))
         .env("OneDrive", roots.path().join("onedrive-sentinel"))
+        // A release build has no harness endpoint to mount, even when offered
+        // a well-formed capability.
+        .env(HARNESS_CAPABILITY_ENV, HARNESS_CAPABILITY)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_process(&mut command);
@@ -239,6 +329,32 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .split('"')
         .next()
         .unwrap();
+    // A prerelease runs on its own `prerelease/` roots: it imports the 1.x
+    // config once, read-only, resetting the copied static path to its isolated
+    // default, and never writes the normal tree.
+    let (config_dir, config_path) = if prerelease {
+        let alpha_dir = normal_dir.join("prerelease");
+        let alpha_path = alpha_dir.join("vosu.toml");
+        let imported: toml::Table = toml::from_str(
+            &fs::read_to_string(&alpha_path).expect("prerelease imports the 1.x config"),
+        )
+        .expect("imported prerelease TOML");
+        assert_ne!(
+            imported
+                .get("STATIC_FOLDER_PATH")
+                .and_then(toml::Value::as_str),
+            Some(static_root.to_string_lossy().as_ref()),
+            "imported static path must reset to the isolated default"
+        );
+        assert_eq!(
+            config_files(&normal_dir),
+            normal_files,
+            "prerelease import wrote the normal config root"
+        );
+        (alpha_dir, alpha_path)
+    } else {
+        (config_dir, config_path)
+    };
     let canonical: toml::Table =
         toml::from_str(&fs::read_to_string(&config_path).expect("read canonical packaged config"))
             .expect("packaged daemon canonicalizes current TOML");
@@ -252,6 +368,25 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert_eq!(asset.status(), 200);
     assert!(!bounded!(asset.bytes()).unwrap().is_empty());
 
+    let mut replies = Vec::new();
+    for (path, capability) in [
+        ("/__vosu_test/v1/unknown-sibling?schema=v2", None),
+        (HARNESS_PATH, Some(HARNESS_CAPABILITY)),
+        (HARNESS_PATH, None),
+    ] {
+        let mut request = client.get(format!("{base}{path}"));
+        if let Some(capability) = capability {
+            request = request.header(HARNESS_HEADER, capability);
+        }
+        let response = bounded!(request.send()).unwrap();
+        replies.push((response.status(), bounded!(response.bytes()).unwrap()));
+    }
+    assert_eq!(replies[0].0, 404);
+    assert!(
+        replies.iter().all(|reply| reply == &replies[0]),
+        "release build answered the harness endpoint: {replies:?}"
+    );
+
     let state = bounded!(client.get(format!("{base}/json")).send()).unwrap();
     let state_status = state.status();
     assert!(
@@ -263,6 +398,12 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
             bounded!(state.text()).unwrap(),
             r#"{"error":"osu is not ready/running"}"#
         );
+    }
+
+    if prerelease {
+        // An explicit path in the prerelease's own config stays user-controlled.
+        fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
+        bounded!(wait_for_seeded_counter(&client, &base));
     }
 
     let counters = bounded!(
@@ -378,6 +519,21 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
             "release daemon failed to drain after native interrupt"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    if prerelease {
+        assert_eq!(
+            config_files(&normal_dir),
+            normal_files,
+            "prerelease wrote the normal config root"
+        );
+        #[cfg(unix)]
+        {
+            assert!(roots.path().join("data/vosu/prerelease/static").is_dir());
+            assert!(!roots.path().join("data/vosu/static").exists());
+        }
+    } else {
+        assert!(!normal_dir.join("prerelease").exists());
     }
 
     #[cfg(unix)]
