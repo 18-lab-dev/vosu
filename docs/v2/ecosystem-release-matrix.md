@@ -51,7 +51,7 @@ inherits their trust ([catalog v2](catalog-v2.md#trust)).
 | `18-lab-dev/vosulay` | official catalog source | `v1.5.3`, commit `a0eea2079f1e2e1fa7ec73c602f0e2d25769d373`, published 2026-11-08 | `e4c9dcd654bc280597778395215a54d76181193e00f7e12dc548a5c8d9bf1dd1` | 1 tool (`vosulay` 1.5.3; signed catalog and packages) | public |
 | `18-lab-dev/vosu-overlays` | official catalog source | `v0.4.0`, commit `a85a9ffb93a97810fa4d848cee540814d74a4a77` (branch `feat/official-overlays`, not an ancestor of `main` `90e6371`), published 2026-11-16 | `78b585a101b8877849c0fcec1177163475a701cf9959be427bc49a687f1d26fd` | 19 overlays | public |
 | `18-lab-dev/vosu-overlay-quickstart` | template; not a catalog source | none; no release published | none | none | **private** |
-| `18-lab-dev/vosu` | host | latest stable `v1.2.5`; `v2.0.0-alpha.1` **not published** | n/a | n/a | public |
+| `18-lab-dev/vosu` | host | latest stable `v1.2.6`; `v2.0.0-alpha.1` published 2026-11-25 as a signed GitHub prerelease (`make_latest=false`) from `v2/main` `025bf5f` | n/a | n/a | public |
 
 The release rows were read on 2026-11-24 with read-only `gh release view`,
 `gh repo view` and `gh release download -p catalog.json`; the hashes are of
@@ -92,7 +92,7 @@ be invented for an overlay without its source.
 | Application (`host` ranges match this) | `2.0.0-alpha.N` prereleases, then `2.0.0`. The F landing head (f/alpha with M4a and M4b merged), from which `v2.0.0-alpha.1` is cut, declares `2.0.0-alpha.1`. |
 | Alpha host range | `>=2.0.0-alpha.1, <3.0.0`, or a higher alpha minimum for a package that needs a later alpha's contract (B0 artifacts, P0 header asset). |
 | Stable host range | `>=2.0.0, <3.0.0` unless the owner explicitly asks to keep an alpha-compatible range (A8.5). |
-| SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. The workspace declares the unpublished `1.0.0-alpha.0`. crates.io had no `vosu-plugin-api` crate on 2026-11-24, so the first publication is `1.0.0-alpha.1` if it is still unoccupied when approved. Consumers pin it exactly (`=1.0.0-alpha.N`). |
+| SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. The workspace declares `1.0.0-alpha.1`, the first publication; crates.io had no `vosu-plugin-api` crate on 2026-11-25. Publication is a separate owner-approved operation (S1). Consumers pin it exactly (`=1.0.0-alpha.N`). |
 | ABI / `manifest_version` / `catalog_version` | ABI 1; manifest format 1; catalog 2 for `catalog-v2.json`, 1 for the frozen `catalog.json`. |
 | Core namespace schemas in `2.0.0-alpha.1` | `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin` 1.0.0; `vosu.osu` 1.3.0, including M4a's `keys.overlay` physical keys. A package that requires `vosu.osu` 1.3.0 needs no host minimum above `2.0.0-alpha.1`. |
 | Core action | `vosu.osu.beatmap.import` 1.0.0, `session = "required"`, `cli = true`. |
@@ -415,9 +415,9 @@ M8 E0/G0 consume these receipts inside its candidate evidence manifest
 
 ## 10. Owner-blocked and pending items
 
-- Every operation in [section 8](#8-publication-operations-and-owners), including the F
-  trigger itself: `v2.0.0-alpha.1` is unpublished, so ecosystem
-  implementation has not been triggered.
+- Every remaining operation in [section 8](#8-publication-operations-and-owners). The F
+  trigger is met: `v2.0.0-alpha.1` was published on 2026-11-25. The crates.io
+  publication of `vosu-plugin-api` `1.0.0-alpha.1` (S1) awaits its owner approval.
 - Exact ecosystem tags for vosu-tools and vosu-overlays.
 - Porting the 18 remaining `v0.4.0` overlays to v2 entries (O0; decided 2026-11-25, all ported, none retired; [section 2](#2-repositories-and-frozen-1x-sources)).
 - vosulay settings rows (V1) and the vosulay runtime's minimum compatible
