@@ -288,6 +288,26 @@ class FakeTraversalTests(CaptureTestCase):
         self.refuses("barrier menu was not reached", scenario, FakeClient(self.state), cfg,
                      timeout=5.0)
 
+    def test_caseless_play_barrier_passes_with_churning_views(self) -> None:
+        # Active play has no cases: its advancing clock and provider generation never
+        # stop it. The case-bearing barriers around it still need identical views.
+        scenario = gc.ScenarioSet("test-play-churn", ("menu", "play", "paused"),
+                                  ("state-http.json-v2.get.menu", "state-http.json-v2.get.paused"))
+        churn = {"unstable_upstream": ["play"]}, {"churn_generation": ["play"]}
+        cfg = self.config(scenario, source_options=churn[0], vosu_options=churn[1])
+        capture = self.capture(scenario, FakeClient(self.state), cfg)
+        self.assertEqual([case["id"] for case in capture["cases"]], list(scenario.cases))
+        self.assertEqual([(b["barrier"], b["identical_views"]) for b in self.transcript()["barriers"]],
+                         [("menu", True), ("play", False), ("paused", True)])
+
+    def test_churning_views_never_reach_a_barrier_with_cases(self) -> None:
+        scenario = gc.ScenarioSet("test-paused-churn", ("play", "paused"),
+                                  ("state-http.json-v2.get.paused",))
+        cfg = self.config(scenario, source_options={"unstable_upstream": ["paused"]},
+                          vosu_options={"churn_generation": ["paused"]})
+        self.refuses("barrier paused was not reached", scenario, FakeClient(self.state), cfg,
+                     timeout=8.0)
+
     def test_barrier_out_of_order_is_refused(self) -> None:
         scenario = gc.ScenarioSet("test-order", gc.TRAVERSAL, TRAVERSAL_CASES)
         client = FakeClient(self.state, script={"play": "paused"})

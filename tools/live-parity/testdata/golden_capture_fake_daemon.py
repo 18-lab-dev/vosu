@@ -56,6 +56,9 @@ def envelope(schema: str, advance: bool) -> dict:
         shift = index // len(reads) * len(reads)
         value["provider_generation"] += shift
         value["derived"] = dict(value["derived"], revision=value["derived"]["revision"] + shift)
+    if advance and current in OPTIONS.get("churn_generation", ()):
+        # A live clock in the captured entries starts a new provider snapshot per read.
+        value["provider_generation"] += index
     flaky = OPTIONS.get("flaky_dump_reads", {}).get(schema)
     if advance and flaky is not None and index in flaky:
         # The provider moved on between two dumps of one attempt; a retry must recover.
@@ -74,7 +77,8 @@ def state_body(schema: str) -> tuple[int, bytes]:
         return 500, NOT_READY
     # The upstream state is the same shape the vosu fixture envelopes carry.
     body = ENVELOPES_UPSTREAM[current]
-    if OPTIONS.get("unstable_upstream") and schema == "v2":
+    unstable = OPTIONS.get("unstable_upstream")
+    if unstable and (unstable is True or current in unstable) and schema == "v2":
         with LOCK:
             COUNTS["v2"] = COUNTS.get("v2", 0) + 1
             body = body[:-1] + f',"tick":{COUNTS["v2"]}}}'.encode()

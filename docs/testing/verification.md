@@ -349,7 +349,9 @@ upstream record keeps its raw value and the case file lists the ledger IDs
 it used (`volatile`). `adapter_golden` must apply the same rules to those
 IDs before such a case can replay. A barrier is reached only when both daemons
 report it across three consecutive observations whose non-volatile upstream
-v2 payload and vosu v2 dump are identical.
+v2 payload and vosu v2 dump are identical. A barrier without cases (`play`,
+whose clock and provider generation advance on every read) needs only both
+daemons reporting it across those three observations.
 
 ## M3 API, resources and actions
 

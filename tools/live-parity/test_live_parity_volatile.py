@@ -121,6 +121,15 @@ class BarrierTests(unittest.TestCase):
             session._wait_barrier("menu", None, None, [])
         self.assertEqual(len(calls), 7)
         self.assertEqual(session.transcript["barriers"][0]["stable_observations"], 3)
+        self.assertTrue(session.transcript["barriers"][0]["identical_views"])
+
+    def test_caseless_barrier_needs_only_the_reported_state(self) -> None:
+        # Active play: the clock and the provider generation change every observation.
+        session, calls = self.session(["a", None, "b", "c"])
+        with mock.patch.object(gc, "POLL_S", 0):
+            session._wait_barrier("menu", None, None, [], identical_views=False)
+        self.assertEqual(len(calls), 3)
+        self.assertFalse(session.transcript["barriers"][0]["identical_views"])
 
 
 class ClientRootTests(unittest.TestCase):
