@@ -207,12 +207,22 @@ impl Host {
     /// Offers a synthetic target process `pid` named `name` whose memory is
     /// `bytes` at address 0. The PID must be unique within this test binary.
     pub fn offer_target(&self, pid: u32, name: &str, bytes: Vec<u8>) {
-        vosu_core::plugin::test_support::set_session_memory(
-            pid,
-            Arc::new(TargetMemory { bytes }),
-            ProcessBitness::X64,
-        );
+        self.hook_memory(pid, Arc::new(TargetMemory { bytes }), ProcessBitness::X64);
+        self.offer_process(pid, name, vosu_plugin_api::Bitness::X64);
+    }
+
+    /// Makes core read `pid` through `memory` instead of opening it itself,
+    /// until this host is dropped. The PID must be unique within this test
+    /// binary: a live target process's own PID is.
+    pub fn hook_memory(&self, pid: u32, memory: Arc<dyn ProcessMemory>, bitness: ProcessBitness) {
+        vosu_core::plugin::test_support::set_session_memory(pid, memory, bitness);
         self.targets.lock().unwrap().push(pid);
+    }
+
+    /// Reports process `pid` named `name` to the matcher. Unless
+    /// [`Self::hook_memory`] hooked it, core opens and reads the real
+    /// process `pid` itself.
+    pub fn offer_process(&self, pid: u32, name: &str, bitness: vosu_plugin_api::Bitness) {
         let _enter = self.runtime.enter();
         self.host
             .process_appeared(vosu_core::plugin::ProcessRecord {
@@ -220,10 +230,16 @@ impl Host {
                 name: name.to_owned(),
                 path: format!("/fixture/{name}"),
                 command_line: name.to_owned(),
-                bitness: vosu_plugin_api::Bitness::X64,
+                bitness,
                 start_time: 1,
                 argv: None,
             });
+    }
+
+    /// Reports that process `pid` exited.
+    pub fn process_exited(&self, pid: u32) {
+        let _enter = self.runtime.enter();
+        self.host.process_exited(pid);
     }
 }
 
