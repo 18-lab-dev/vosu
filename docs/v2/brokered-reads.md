@@ -478,12 +478,21 @@ variants.
 `production_sync` and `production_async` now run the real transport and
 executor: a real `vosu plugin-host` child loads
 `examples/brokered_reads_plugin.rs`, whose plans cross the real relay, ring,
-ingress and broker against the same target. One exploratory, contended
-Linux run gave a `production_sync` p50 of 2.70× (precise) and 2.26×
-(regular) the same run's `shm`, above the 2.0 bar; no D17 result is claimed.
-Method, gates, numbers, the 25-ABI-stage precise mapping and the official
-command sequence are in the
-[benchmark guide](../testing/benchmarks.md#m5-p1-production-arm-and-x1-process-runtime-data-exploratory).
+ingress and broker against the same target. The first exploratory,
+contended Linux run gave a `production_sync` p50 of 2.70× (precise) and
+2.26× (regular) the same run's `shm`, above the 2.0 bar. The broker
+performance work after it took exploratory same-session ratios to
+1.46–1.59× (precise) and 1.71–1.81× (regular). That work batched each
+dependency level into one native read, removed the per-request `SYNC`
+budget-timer wake and two allocations, and validated `SYNC` plans flat in
+the relay. The rest of the gap is the four thread hand-offs that ABI §7.6
+requires. These figures come from a loaded, shared host. No D17 result is
+claimed, and the official run is pending. The benchmark guide has the
+method, gates and numbers, the 25-ABI-stage precise mapping, the per-hop
+breakdown, each change's A/B, the bundled `plan_memory` comparison and the
+official command sequence:
+[M5 P1 production arm](../testing/benchmarks.md#m5-p1-production-arm-and-x1-process-runtime-data-exploratory)
+and [broker performance work](../testing/benchmarks.md#broker-performance-work-exploratory-same-session-ab).
 
 ## Open questions
 

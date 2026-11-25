@@ -264,13 +264,16 @@ That is why only the same-run ratio is the gate.
 
 ### M5 P1 production arm and X1 process-runtime data (exploratory)
 
-**No D17 pass is claimed, and the exploratory Linux run misses the bar.**
-These are single exploratory runs on the shared Linux host (Ryzen 9 9950X3D,
-Rust 1.96.1, bench profile, default features), source `a5de65cb` plus the
-chunked ring census of the commit after it, pinned
-`taskset -c 0-7,16-23 nice -n 10` while other agents compiled (load average
-19–23; `load_other_busy_cpus` 2.4–6.8 busy CPUs during the production
-sessions). Nothing ran on the Windows VM.
+**No D17 pass is claimed; the official run is still pending.** The first
+production table below is the arm's first exploratory run, at `a5de65cb` plus
+the chunked ring census of the commit after it (`cf17e6fc`); it missed the
+bar. The [broker performance work](#broker-performance-work-exploratory-same-session-ab)
+after it brought the same-session ratios under 2.0 in exploratory runs. All
+of these are runs on the shared Linux host (Ryzen 9 9950X3D, Rust 1.96.1,
+bench profile, default features), pinned
+`taskset -c 0-7,16-23 nice -n 10` while other agents compiled. The first run
+had a load average of 19–23, with `load_other_busy_cpus` at 2.4–6.8 busy
+CPUs during the production sessions. Nothing ran on the Windows VM.
 
 **What runs.** `brokered_reads_bench` gains `production_sync` and
 `production_async` (`benches/support/brokered/production.rs`): this bench
@@ -338,6 +341,102 @@ lazer assertion had failed before any case ran.
 **Not implemented here:** `live_reader_bench --memory process` (no live
 client was authorized) and the X1 profiles (no client, subscribed precise,
 two plugins in contention, delayed dispatch, full stream, idle host).
+
+#### Broker performance work (exploratory, same-session A/B)
+
+These numbers come from the shared host under the same pinning as above,
+with load averages of 6–24 and up to 10.5 other CPUs busy in some rounds.
+They are exploratory and are not D17 evidence. Each A/B runs the two
+builds' bench executables in interleaved rounds (ABAB…). Each build has its
+own target directory and Criterion home. The figure given is the median of
+the round medians.
+
+**Where the time went at `cf17e6fc`.** `perf`, `strace` and root are
+unavailable on this host, so two other methods were used, and neither was
+committed:
+
+- Per-thread context switches were sampled from `/proc/<pid>/task/*`. Each
+  `SYNC` round trip woke five threads: core's ring reader, its `SYNC` budget
+  timer and a broker worker, then the child's ring reader and the plugin
+  thread.
+- Timestamp probes at every hop were joined by request id across both
+  processes, giving this precise-plan breakdown (p50, 29.8 µs in total):
+
+| Hop | p50 (µs) |
+|---|---:|
+| Plugin sends `ACK_NEXT` + submit and rings the doorbell | 1.17 |
+| Core's ring reader wakes | 1.65 |
+| Reader reads the submission | 0.45 |
+| Reader hand-off: notifies the budget timer, queues the broker job, 2 allocations (p90 21 µs) | 1.36 |
+| Broker worker wakes | about 1.6 |
+| **Broker: validate, execute, dispatch** | **17.8** |
+| Send `REPLY_NEXT` + result and ring | 1.29 |
+| Child's ring reader wakes | 2.05 |
+| Hand the result to the plugin thread | 0.57 |
+| Plugin thread wakes | 0.88 |
+
+The executor was the largest cost, because each of the 25 ABI stages was
+one `process_vm_readv`. The budget-timer wake added a futex wake to the
+reader's critical path, ahead of the broker hand-off.
+
+**Changes and their A/B runs.** Each change is a separate commit, measured
+over four interleaved rounds against the commit before it:
+
+| Commit | Change | Against | Result |
+|---|---|---|---|
+| `3f8c1d9b` | The executor reads each dependency level in one `read_many` batch (stack batches of 64). Precise goes from 25 native calls to 6, regular from 5 to 2. A failed batch falls back to per-op reads. The `SYNC` deadline is checked between levels. | `cf17e6fc` | `executor` p50 17.14 → 5.95 µs (precise) and 3.46 → 1.76 µs (regular). `production_sync` p50 30.32 → 18.52 µs and 14.89 → 12.87 µs. Ratio to `shm` 2.77 → 1.67 and 2.25 → 1.90. |
+| `a0c94fa6` | The reader wakes the budget timer only when a deadline precedes the one it is parked on, about once per 2 s budget. Pending deadlines are a sorted `Vec`, the broker job is boxed once, and emptied pool sub-queues are reused. | `3f8c1d9b` | Core wakeups per round trip 3.04 → 2.02. Core allocations 3.04 → 1.04. Regular core CPU 9.95 → 8.62 µs. Regular p50 12.87 → 11.98 µs, ratio 1.90 → 1.81. Precise ratio 1.67 → 1.59; its p50 median rose 18.52 → 19.58 µs because one round ran with 10.5 other CPUs busy. |
+| `201afe10` | The relay validates a `SYNC` plan flat (`ValidatedPlan` plus the module name's UTF-8 check) instead of decoding it into an owned `ReadPlanSubmit`. Statuses are unchanged. | `a0c94fa6` | Precise p50 17.35 → 16.87 µs, lower in every pair, ratio 1.59 → 1.46. Regular unchanged within noise: 11.55 → 11.63 µs, ratio 1.76 → 1.71. |
+| `be8d0e2d` | A level of one read uses `read_exact` directly, single-stage plans skip level scheduling, and the failure paths move out of line, to keep the bundled path from regressing. | `cf17e6fc` | Bundled `plan_memory` only; see the table below. The production arm was not re-measured at this commit. |
+
+**Final exploratory ratios.** The three measurements of changes 1–2 or 1–3
+gave a `production_sync` p50 over the same run's `shm` of **1.46–1.59**
+(precise) and **1.71–1.81** (regular). The last one (`201afe10`, load
+average 7–11) gave precise 16.87 µs against `shm` 11.52 µs, and regular
+11.63 µs against 6.98 µs. `executor` was 5.89 and 1.78 µs. A round trip still
+costs about 2 core wakeups, 2 plugin wakeups and 1.04 core allocations (the
+broker job's `Box`). Core CPU was 13.4 and 8.3 µs. These ratios come from a
+loaded, shared host and are not the D17 result. D17 is decided only by the
+official sequence below, on an exclusive host.
+
+**The remaining gap is four hops, and the contract fixes them.** About 8 µs
+of each round trip is four consecutive thread hand-offs: plugin thread →
+core's ring reader → broker worker → child's ring reader → plugin thread.
+The prototype `ring` has two. Each hop is required by the approved ABI §7.6
+([plugin-abi.md](../v2/plugin-abi.md#76-process-supervision-protocol-a5-approved-2026-11-24)):
+
+- core's ring reader never handles a message or writes a reply itself;
+- each `SYNC` plan is queued on core's bounded broker workers (M5 B0);
+- the child's waiting thread, not its ring reader, dispatches a `SYNC`
+  result.
+
+Removing any of these hops is a contract change, so none was made.
+
+**Bundled `plan_memory`, `be8d0e2d` against `cf17e6fc`.** Four interleaved
+rounds of the bundled cases, load average 5–20, ratio head/base:
+
+| Case | `cf17e6fc` | `be8d0e2d` | Ratio |
+|---|---:|---:|---:|
+| `floor_one_op` | 0.058 µs | 0.061 µs | **1.055** |
+| `floor_eighteen_independent_ops` | 0.254 µs | 0.205 µs | 0.805 |
+| `floor_fifty_six_independent_ops` | 0.689 µs | 0.551 µs | 0.800 |
+| `stable_precise_native` | 0.009 µs | 0.009 µs | 0.993 |
+| `stable_precise_plan` | 0.083 µs | 0.077 µs | 0.924 |
+| `stable_native` | 1.301 µs | 1.238 µs | 0.952 |
+| `stable_unfused_plans` | 2.847 µs | 2.614 µs | 0.918 |
+| `stable_regular_fields` | 2.849 µs | 2.715 µs | 0.953 |
+| `lazer_precise_native` | 0.515 µs | 0.510 µs | 0.991 |
+| `lazer_precise_plan` | 2.233 µs | 2.282 µs | 1.022 |
+| `lazer_regular_fields` | 11.772 µs | 11.957 µs | 1.016 |
+
+`floor_one_op` is 3 ns (5.5%) slower. That is a small regression, still
+open, though within D17's bundled bar of no regression over 10%. The
+`lazer_precise_plan` and `lazer_regular_fields` ratios of 1.022 and 1.016 are
+within the run-to-run spread: the session before measured the same two
+cases at 1.001 and 0.977. Before change 4, changes 1–3 measured
+`floor_one_op` at 1.155, `stable_precise_plan` at 1.184 and
+`stable_regular_fields` at 1.094 against `cf17e6fc` (three rounds, load
+average 8–15). That run is why change 4 exists.
 
 #### Official command sequence (Main, exclusive host and VM)
 
