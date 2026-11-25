@@ -4,7 +4,9 @@ The client's install folder is a root it declares (the v2 `folders.game`), so a 
 names it. A golden client therefore runs from a byte-identical copy inside the task-owned
 capture root. A lazer copy also gets an empty `framework.ini`, which makes osu!framework
 treat it as a portable install: its whole profile (realm, files store, logs, caches) stays
-in the copy instead of the shared default `%APPDATA%\\osu` (finding 8).
+in the copy instead of the shared default `%APPDATA%\\osu` (finding 8). One file escapes it:
+lazer still writes `<unix time>.nauth.log` into the shared `%APPDATA%\\osu\\logs` (pilot
+finding), so a run records and removes each such log that appeared while its client ran.
 """
 from __future__ import annotations
 
@@ -12,7 +14,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import sys
 from typing import Any
 
 from parity_process import sha256_file
@@ -80,3 +84,33 @@ def golden_client_copy(cfg: dict[str, Any]) -> int:
         raise ClientRootError("the copied client executable does not match client_expected_sha256")
     print(json.dumps({"client_copy": destination.name, **record}, sort_keys=True))
     return 0
+
+
+SHARED_LOG = re.compile(r"[0-9]+\.nauth\.log")
+
+
+def shared_profile_logs(cfg: dict[str, Any]) -> Path | None:
+    """The shared lazer log directory a Windows lazer client writes into, if any."""
+    appdata = os.environ.get("APPDATA")
+    if sys.platform != "win32" or cfg.get("client") != "lazer" or not appdata:
+        return None
+    return Path(appdata, "osu", "logs")
+
+
+def log_names(directory: Path | None) -> set[str]:
+    return {p.name for p in directory.iterdir()} if directory and directory.is_dir() else set()
+
+
+def remove_new_shared_logs(directory: Path | None, before: set[str]) -> dict[str, Any]:
+    """Remove the `.nauth.log` files that appeared since `before`, recording name, size and
+    digest (never content); any other new entry is only recorded."""
+    removed, other = [], []
+    for name in sorted(log_names(directory) - before):
+        path = directory / name
+        if not SHARED_LOG.fullmatch(name) or not path.is_file() or path.is_symlink():
+            other.append(name)
+            continue
+        removed.append({"name": name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
+        path.unlink()
+    return {"directory": None if directory is None else str(directory), "removed": removed,
+            "other_new_entries": other}

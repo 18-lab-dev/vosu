@@ -559,6 +559,49 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual([], pr.local_expectation_failures(
             case, {"daemon": "source", "response": {"status": 200}}))
 
+    def test_upstream_crash_inventory_is_every_target_upstream_cannot_decode(self) -> None:
+        # The pinned upstream logs each response through decodeURIComponent(req.url), which
+        # throws on a `%` not followed by two hex digits or on escapes that are not UTF-8,
+        # and the uncaught URIError ends the daemon. Every route-matrix request was sent to a
+        # client-less pinned upstream (M4b pilot 2 diagnostic): exactly these eight killed it.
+        inventory = {f"state-http.{slug}.near.{name}"
+                     for slug in ("json", "json-sc", "json-v2", "json-v2-precise")
+                     for name in ("malformed-percent", "malformed-percent-hex")}
+        crashing = {case.id for case in rm.MATRIX if rm.upstream_crash_ledger(case)}
+        self.assertEqual(inventory, crashing)
+
+        def decodable(target: str) -> bool:
+            data, index = bytearray(), 0
+            while index < len(target):
+                escape = target[index + 1:index + 3]
+                if target[index] != "%":
+                    data += target[index].encode()
+                    index += 1
+                elif len(escape) == 2 and all(ch in "0123456789abcdefABCDEF" for ch in escape):
+                    data.append(int(escape, 16))
+                    index += 3
+                else:
+                    return False
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError:
+                return False
+            return True
+
+        for platform in rm.PLATFORMS:
+            for item in rm.select(rm.MATRIX, rm.MatrixContext(platform, CONTEXT_VALUES))[0]:
+                target = item.request.split(b" ", 2)[1].decode("ascii")
+                self.assertEqual(item.case.id in crashing, not decodable(target), item.case.id)
+        for case_id in crashing:
+            case = rm.CASES[case_id]
+            self.assertEqual((case.role, case.barrier, case.method, case.websocket, case.validator),
+                             (rm.GOLDEN, "no-client", "GET", False, None), case_id)
+        bad = dataclasses.replace(rm.CASES["state-http.json.near.malformed-percent"],
+                                  id="origin-peer.crash-probe", barrier="menu")
+        with mock.patch.object(rm, "_origin_cases", lambda: [bad]), \
+                self.assertRaisesRegex(ValueError, "after the no-client barrier"):
+            rm._build()
+
     def test_every_ledger_reference_is_an_existing_non_temporary_row(self) -> None:
         ledger = (ROOT / "tests/fixtures/upstream/DIVERGENCES.md").read_text(encoding="utf-8")
         rows = dict(re.findall(r"^\| ([a-zA-Z0-9.-]+) \| (security|contract|licensing|temporary) \|",

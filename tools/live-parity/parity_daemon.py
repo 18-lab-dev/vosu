@@ -75,18 +75,22 @@ def _private_runtime_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
 
 
-def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dict[str, dict[str, Any]]]:
+def launch(cfg: dict[str, Any], names: tuple[str, ...] = ("source", "vosu"), *,
+           after_exit: bool = False,
+           ) -> tuple[dict[str, subprocess.Popen[bytes]], dict[str, dict[str, Any]]]:
+    """Launch and attest the named daemons. golden-capture relaunches only `source`, on the
+    port of the upstream an `upstream_crashed` case ended (`after_exit`)."""
     processes: dict[str, subprocess.Popen[bytes]] = {}
     evidence: dict[str, dict[str, Any]] = {}
     runtime_dirs: list[Path] = []
     seeded_configs: list[Path] = []
-    for name in ("source", "vosu"):
+    for name in names:
         port = urlsplit(cfg["daemons"][name]["base_url"]).port
         assert port is not None
-        if not _port_is_unused(port):
+        if not _port_is_unused(port, after_exit=after_exit):
             raise ValueError(f"{name} launch port {port} is already occupied")
     try:
-        for name in ("source", "vosu"):
+        for name in names:
             spec = cfg["daemons"][name]
             port = urlsplit(spec["base_url"]).port
             assert port is not None

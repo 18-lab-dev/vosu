@@ -342,6 +342,17 @@ LISTENER = ("adapter-listener-policy",)
 FILE_SANDBOX = ("legacy-game-file-sandbox",)
 CALC = ("legacy-calculation-engine",)
 UPGRADED = frozenset({"upgraded"})
+# The pinned upstream answers a request target with a malformed percent escape, then its
+# response logger throws and the daemon exits (parity_golden_crash). These cases run after
+# the no-client barrier and record the `upstream_crashed` outcome.
+UPSTREAM_CRASH_LEDGER = "upstream-malformed-uri-crash"
+
+
+def upstream_crash_ledger(case: RouteCase) -> str | None:
+    """The ledger row recording that this case's request kills the pinned upstream daemon."""
+    return UPSTREAM_CRASH_LEDGER if UPSTREAM_CRASH_LEDGER in case.ledger else None
+
+
 FILTER_V2 = b'["menu",{"field":"play","keys":["playerName",{"field":"hits","keys":["0","100","300"]}]}]'
 FILTER_PRECISE = (b'["currentTime",{"field":"keys","keys":["k1",{"field":"k2","keys":'
                   b'["isPressed","count"]}]}]')
@@ -389,7 +400,9 @@ def _state_cases() -> list[RouteCase]:
         if path.count("/") > 1:
             near["inner-double-slash"] = path.replace("/", "//", 2)[1:]
         for name, target in near.items():
-            cases.append(_http(f"{base}.near.{name}", "GET", target, outcomes=CLOSED_OK))
+            crash = {"barrier": "no-client", "ledger": (UPSTREAM_CRASH_LEDGER,)} \
+                if name.startswith("malformed-percent") else {}
+            cases.append(_http(f"{base}.near.{name}", "GET", target, outcomes=CLOSED_OK, **crash))
     pairs = lambda count: "/json/v2?" + "&".join(f"p{index}=0" for index in range(count))
     # MAX_METADATA_BYTES counts decoded key+value bytes: "q" plus the value.
     query_bytes = lambda total: "/json/v2?q=" + "x" * (total - 1)
@@ -641,6 +654,10 @@ def _build() -> tuple[RouteCase, ...]:
             raise ValueError("/api/ingame is excluded from M4b (GOLDEN_CONTRACT.md §8)")
         if any(name.lower() == "x-vosu-test-capture" for name, _ in case.headers):
             raise ValueError("route cases never carry the harness capability (§7)")
+        if upstream_crash_ledger(case) and (case.websocket or case.validator or case.role != GOLDEN
+                                            or case.barrier != "no-client"):
+            raise ValueError(f"{case.id}: an upstream-crashing case is a golden plain HTTP "
+                             "request run after the no-client barrier")
         seen.add(case.id)
     return cases
 
@@ -657,6 +674,7 @@ def golden_eligible(case: RouteCase) -> bool:
 __all__ = [
     "BARRIERS", "CASES", "COMPARED_HEADERS", "CaseUnavailable", "Close", "FAMILIES", "Hold",
     "MATRIX", "MatrixContext", "PLATFORMS", "Recv", "RenderedCase", "RequestLedger", "RouteCase",
-    "SecurityAbort", "Send", "Validator", "WS_COMPARED_HEADERS", "client_frame", "golden_eligible",
-    "manifest", "mask_frame", "render", "requirements_unmet", "select", "split_headers", "ws_key",
+    "SecurityAbort", "Send", "UPSTREAM_CRASH_LEDGER", "Validator", "WS_COMPARED_HEADERS",
+    "client_frame", "golden_eligible", "manifest", "mask_frame", "render", "requirements_unmet",
+    "select", "split_headers", "upstream_crash_ledger", "ws_key",
 ]
