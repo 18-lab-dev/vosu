@@ -17,8 +17,9 @@ use vosu_plugin_api::{vosu_opcode, vosu_status};
 
 use super::super::channel::{Endpoint, Receiver, RecvError, SendError, Sender, Termination};
 use super::super::control::{Failed, Ready, StartupFailure, StartupStage};
-use super::super::frame::{FrameHeader, PRIVATE_OPCODE_BIT, control};
+use super::super::frame::{FrameHeader, Ledger, PRIVATE_OPCODE_BIT, control};
 use super::super::ring::PayloadBuffer;
+use super::ingress::{Ingress, StatusGate, claim_sync_reply};
 use super::platform::{HostProcess, Started};
 use crate::plugin::error::HostError;
 use crate::plugin::execution::descriptor::check_header;
@@ -313,6 +314,7 @@ pub(super) fn start(
         sender,
         receiver,
         closer,
+        ledger,
     } = endpoint;
     let shared = Arc::new(Shared {
         state: Mutex::new(State {
@@ -330,22 +332,37 @@ pub(super) fn start(
         generation: start.generation,
         plugin_id: start.plugin_id,
     });
+    let gate = Arc::new(StatusGate::default());
+    // The endpoint's identity for SYNC reply claims: unique while it lives.
+    let identity = Arc::as_ptr(&shared) as usize;
     let mut threads = Vec::with_capacity(2);
+    let ingress = Ingress::start(
+        start.ingress,
+        sender.clone(),
+        Arc::clone(&ledger),
+        Arc::clone(&gate),
+        identity,
+    )
+    .map(Arc::new);
     let watcher = spawn_thread("vosu-plugin-exit", {
         let shared = Arc::clone(&shared);
         move || watch(&shared)
     });
-    let spawned = match watcher {
-        Ok(watcher) => {
+    let spawned = match (watcher, &ingress) {
+        (Ok(watcher), Ok(ingress)) => {
             threads.push(watcher);
             spawn_thread("vosu-plugin-ring", {
                 let shared = Arc::clone(&shared);
-                let sender = sender.clone();
-                let ingress = start.ingress;
-                move || read_ring(&shared, receiver, &sender, &ingress)
+                let ingress = Arc::clone(ingress);
+                move || read_ring(&shared, receiver, &ingress)
             })
         }
-        Err(error) => {
+        (Ok(watcher), Err(error)) => {
+            threads.push(watcher);
+            shared.kill();
+            Err(std::io::Error::new(error.kind(), error.to_string()))
+        }
+        (Err(error), _) => {
             // No watcher will ever reap it: do that here, so teardown's
             // wait for the exit ends.
             shared.kill();
@@ -356,6 +373,10 @@ pub(super) fn start(
     let endpoint = ChildEndpoint {
         shared,
         sender,
+        ledger,
+        gate,
+        identity,
+        ingress: ingress.ok(),
         threads: Mutex::new(threads),
     };
     let result = spawned
@@ -400,10 +421,10 @@ fn watch(shared: &Shared) {
     shared.exited(status);
 }
 
-/// The ring reader: lifecycle frames, and one `STATUS` per acknowledged
-/// plugin → host frame. A violation of the §7.6 state machine loses the
-/// channel.
-fn read_ring(shared: &Shared, mut receiver: Receiver, sender: &Sender, ingress: &PluginIngress) {
+/// The ring reader: lifecycle frames, and every public frame handed to the
+/// ingress lanes with the `ACK_NEXT` id the policy paired with it. A
+/// violation of the §7.6 state machine loses the channel.
+fn read_ring(shared: &Shared, mut receiver: Receiver, ingress: &Ingress) {
     let mut buffer = PayloadBuffer::new();
     let mut acknowledge: Option<u64> = None;
     let failure = loop {
@@ -432,23 +453,11 @@ fn read_ring(shared: &Shared, mut receiver: Receiver, sender: &Sender, ingress: 
             opcode if opcode & PRIVATE_OPCODE_BIT != 0 => {
                 Err(format!("unexpected private frame {opcode:#x}"))
             }
-            opcode => {
-                let status = ingress.deliver(MessageRef {
-                    opcode,
-                    flags: header.flags,
-                    correlation_id: header.correlation,
-                    payload: buffer.bytes(),
-                });
-                match acknowledge.take() {
-                    Some(request) => sender
-                        .send(
-                            &lifecycle(control::STATUS, request),
-                            &(status as u32).to_le_bytes(),
-                        )
-                        .map_err(|error| error.to_string()),
-                    None if opcode == vosu_opcode::VOSU_OP_LOG_RECORD as u32 => Ok(()),
-                    None => Err(format!("opcode {opcode} arrived without ACK_NEXT")),
-                }
+            // The policy already paired every public frame but a log record
+            // with its ACK_NEXT and admitted it under the request cap.
+            _ => {
+                ingress.submit(acknowledge.take(), header, &mut buffer);
+                Ok(())
             }
         };
         if let Err(reason) = outcome {
@@ -464,6 +473,11 @@ fn read_ring(shared: &Shared, mut receiver: Receiver, sender: &Sender, ingress: 
 struct ChildEndpoint {
     shared: Arc<Shared>,
     sender: Sender,
+    ledger: Arc<Ledger>,
+    gate: Arc<StatusGate>,
+    /// This endpoint's identity for [`claim_sync_reply`].
+    identity: usize,
+    ingress: Option<Arc<Ingress>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -474,6 +488,9 @@ impl ChildEndpoint {
         self.shared.kill();
         self.shared.wait_exit(None);
         let _ = self.shared.closer.close();
+        if let Some(ingress) = &self.ingress {
+            ingress.shutdown();
+        }
         let current = std::thread::current().id();
         for thread in std::mem::take(&mut *lock(&self.threads)) {
             if thread.thread().id() != current {
@@ -488,17 +505,32 @@ impl ProcessEndpoint for ChildEndpoint {
         if message.opcode & PRIVATE_OPCODE_BIT != 0 {
             return vosu_status::VOSU_ERR_UNSUPPORTED;
         }
+        let header = FrameHeader {
+            opcode: message.opcode,
+            flags: message.flags,
+            correlation: message.correlation_id,
+        };
+        // An accepted SYNC plan's result, delivered by the ingress SYNC
+        // worker handling it: REPLY_NEXT routes it to the child's waiter.
+        if message.opcode == vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32
+            && let Some(request) = claim_sync_reply(self.identity)
+        {
+            self.ledger.close(request);
+            return match self.sender.send_reply(request, &header, message.payload) {
+                Ok(()) => vosu_status::VOSU_OK,
+                Err(SendError::Oversize { .. }) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+                Err(_) => vosu_status::VOSU_ERR_NOT_READY,
+            };
+        }
         {
             let state = lock(&self.shared.state);
             if state.phase != Phase::Ready || state.lost {
                 return vosu_status::VOSU_ERR_NOT_READY;
             }
         }
-        let header = FrameHeader {
-            opcode: message.opcode,
-            flags: message.flags,
-            correlation: message.correlation_id,
-        };
+        // After the STATUS of whatever request the ingress worker is
+        // handling: that STATUS precedes the results it causes.
+        self.gate.pass();
         match self.sender.send(&header, message.payload) {
             Ok(()) => vosu_status::VOSU_OK,
             Err(SendError::Oversize { .. }) => vosu_status::VOSU_ERR_INVALID_ARGUMENT,

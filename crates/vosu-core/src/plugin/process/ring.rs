@@ -138,6 +138,13 @@ impl PayloadBuffer {
         self.words.capacity() * 8
     }
 
+    /// Replaces the payload with a copy of `bytes`, reusing the allocation.
+    /// For payloads built locally (a re-split `STATE_UPDATE`), which must
+    /// reach `dispatch` 8-byte aligned like every received one.
+    pub fn fill(&mut self, bytes: &[u8]) {
+        self.prepare(bytes.len()).copy_from_slice(bytes);
+    }
+
     /// Resizes the payload to `len` bytes (already validated against the
     /// cap) and returns it for filling.
     fn prepare(&mut self, len: usize) -> &mut [u8] {
@@ -297,6 +304,7 @@ impl RingConsumer {
             self.read.wrapping_add(HEAD_BYTES as u64),
             payload,
         )?;
+        policy.admit_payload(&header, payload)?;
         self.read = self.read.wrapping_add(needed);
         // Releases the bytes: the producer's acquiring load of this cursor
         // orders its next writes there after the copy above.

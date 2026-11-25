@@ -5,17 +5,19 @@
 //! by the root `plugin_host_native` target.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{
-    CborValue, LogLevel, LogRecord, Message, TimerSet, vosu_opcode, vosu_status,
+    CborValue, LogLevel, LogRecord, Message, PlanBase, ReadPlanResult, ReadPlanSubmit, ReadResult,
+    TimerSet, VOSU_READ_PLAN_SYNC, vosu_opcode, vosu_status,
 };
 use vosu_sys::plugin_process::RingObjects;
 
 use super::super::channel::{Endpoint, connect};
 use super::super::control::{self, Create, Failed, Ready, StartupFailure, StartupStage};
+use super::super::fake_plugin::Gate;
 use super::super::frame::{Direction, DirectionPolicy, FrameHeader, control as op};
 use super::super::ring::{PayloadBuffer, REGION_BYTES, initialize};
 use super::platform::{HostProcess, Started};
@@ -60,13 +62,13 @@ fn pair() -> (Endpoint, Endpoint) {
     let core = connect(
         to_plugin.into(),
         to_host.into(),
-        Box::new(DirectionPolicy::new(Direction::PluginToHost)),
+        Box::new(DirectionPolicy::with_ledger(Direction::PluginToHost)),
     )
     .unwrap();
     let child = connect(
         child_to_host.into(),
         child_to_plugin.into(),
-        Box::new(DirectionPolicy::new(Direction::HostToPlugin)),
+        Box::new(DirectionPolicy::with_ledger(Direction::HostToPlugin)),
     )
     .unwrap();
     (core, child)
@@ -117,12 +119,18 @@ impl HostProcess for ScriptedProcess {
     }
 }
 
+type MessageHook = Box<dyn Fn(&Message) + Send + Sync>;
+
 /// Core's handler: answers every message with `status` and records losses.
+/// `hook` runs inside `handle`; a SYNC plan is answered by dispatching a
+/// result through `endpoint` on the handling thread, as the host does.
 struct Handler {
     status: vosu_status,
     messages: Mutex<Vec<(Message, u64)>>,
     losses: Mutex<Vec<LossCause>>,
     changed: Condvar,
+    hook: Mutex<Option<MessageHook>>,
+    endpoint: OnceLock<std::sync::Weak<dyn ProcessEndpoint>>,
 }
 
 impl Handler {
@@ -132,6 +140,8 @@ impl Handler {
             messages: Mutex::new(Vec::new()),
             losses: Mutex::new(Vec::new()),
             changed: Condvar::new(),
+            hook: Mutex::new(None),
+            endpoint: OnceLock::new(),
         })
     }
 
@@ -151,6 +161,9 @@ impl Handler {
 
 impl PluginHostHandler for Handler {
     fn handle(&self, _: PluginInstanceId, message: Message, correlation_id: u64) -> vosu_status {
+        if let Some(hook) = self.hook.lock().unwrap().as_ref() {
+            hook(&message);
+        }
         self.messages
             .lock()
             .unwrap()
@@ -159,10 +172,35 @@ impl PluginHostHandler for Handler {
         self.status
     }
 
+    fn handle_read_plan_sync(
+        &self,
+        _: PluginInstanceId,
+        payload: &[u8],
+        _: u32,
+    ) -> Option<vosu_status> {
+        let endpoint = self.endpoint.get()?.upgrade()?;
+        let plan = u64::from_le_bytes(payload[..8].try_into().unwrap());
+        let result = sync_result(plan).encode_payload().unwrap();
+        endpoint.dispatch(MessageRef {
+            opcode: vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32,
+            flags: 0,
+            correlation_id: 0,
+            payload: &result,
+        });
+        Some(vosu_status::VOSU_OK)
+    }
+
     fn instance_lost(&self, _: PluginInstanceId, cause: LossCause) {
         self.losses.lock().unwrap().push(cause);
         self.changed.notify_all();
     }
+}
+
+fn sync_result(plan: u64) -> Message {
+    Message::ReadPlanResult(ReadPlanResult {
+        plan,
+        results: vec![ReadResult::Ok(plan.to_be_bytes().to_vec())],
+    })
 }
 
 type Launch = JoinHandle<Result<Arc<dyn ProcessEndpoint>, StartupFailure>>;
@@ -574,4 +612,174 @@ fn core_never_dispatches_a_private_opcode() {
         harness.recv().opcode,
         vosu_opcode::VOSU_OP_TIMER_FIRED as u32
     );
+}
+
+fn sync_submit(plan: u64) -> (FrameHeader, Vec<u8>) {
+    let message = Message::ReadPlanSubmit(ReadPlanSubmit {
+        plan,
+        handle: 1,
+        root: PlanBase::Absolute(0),
+        stages: Vec::new(),
+        sync: true,
+    });
+    (
+        FrameHeader {
+            opcode: message.opcode() as u32,
+            flags: VOSU_READ_PLAN_SYNC,
+            correlation: 0,
+        },
+        message.encode_payload().unwrap(),
+    )
+}
+
+/// T1/B0 transport: a SYNC plan is handled on its own worker and answered
+/// with `REPLY_NEXT` plus the unmodified result, while the ordinary lane
+/// is blocked in another request's handler.
+#[test]
+fn a_sync_plan_is_answered_by_reply_next_while_ordinary_handling_is_blocked() {
+    let mut harness = start_harness(vosu_status::VOSU_OK, BOUND);
+    let endpoint = harness.ready();
+    harness
+        .handler
+        .endpoint
+        .set(Arc::downgrade(&endpoint))
+        .unwrap();
+    let gate = Gate::new();
+    *harness.handler.hook.lock().unwrap() = Some(Box::new({
+        let gate = Arc::clone(&gate);
+        move |message| {
+            if matches!(message, Message::TimerSet(_)) {
+                gate.wait();
+            }
+        }
+    }));
+    let (header, payload) = public(&timer_set());
+    harness
+        .child
+        .sender
+        .send_acknowledged(1, &header, &payload)
+        .unwrap();
+    assert!(gate.wait_arrivals(1, BOUND), "the ordinary lane is blocked");
+    let (header, payload) = sync_submit(42);
+    harness
+        .child
+        .sender
+        .send_acknowledged(2, &header, &payload)
+        .unwrap();
+    assert_eq!(harness.recv(), private(op::REPLY_NEXT, 2));
+    let result = harness.recv();
+    assert_eq!(result.opcode, vosu_opcode::VOSU_OP_READ_PLAN_RESULT as u32);
+    assert_eq!(
+        harness.buffer.bytes(),
+        sync_result(42).encode_payload().unwrap(),
+        "the result crosses byte for byte"
+    );
+    gate.open();
+    assert_eq!(harness.recv(), private(op::STATUS, 1));
+    assert!(harness.losses().is_empty());
+    endpoint.terminate();
+}
+
+/// §7.6: an accepted request's `STATUS` precedes every result it causes.
+/// A frame another thread dispatches while the request is still being
+/// handled waits for that `STATUS`.
+#[test]
+fn a_status_precedes_the_frames_dispatched_while_its_request_is_handled() {
+    let mut harness = start_harness(vosu_status::VOSU_OK, BOUND);
+    let endpoint = harness.ready();
+    let finished_early = Arc::new(Mutex::new(None));
+    *harness.handler.hook.lock().unwrap() = Some(Box::new({
+        let endpoint = Arc::clone(&endpoint);
+        let finished_early = Arc::clone(&finished_early);
+        move |_| {
+            let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+            let endpoint = Arc::clone(&endpoint);
+            std::thread::spawn(move || {
+                endpoint.dispatch(MessageRef {
+                    opcode: vosu_opcode::VOSU_OP_TIMER_FIRED as u32,
+                    flags: 0,
+                    correlation_id: 0,
+                    payload: &[],
+                });
+                let _ = done_tx.send(());
+            });
+            // Without the gate the dispatch above would finish at once.
+            *finished_early.lock().unwrap() =
+                Some(done_rx.recv_timeout(Duration::from_millis(300)).is_ok());
+        }
+    }));
+    let (header, payload) = public(&timer_set());
+    harness
+        .child
+        .sender
+        .send_acknowledged(1, &header, &payload)
+        .unwrap();
+    assert_eq!(harness.recv(), private(op::STATUS, 1));
+    assert_eq!(
+        harness.recv().opcode,
+        vosu_opcode::VOSU_OP_TIMER_FIRED as u32
+    );
+    assert_eq!(*finished_early.lock().unwrap(), Some(false));
+    *harness.handler.hook.lock().unwrap() = None;
+    endpoint.terminate();
+}
+
+/// The ledger closes each request before its `STATUS` is written: a child
+/// that reuses each freed waiter at once never meets the 64 cap.
+#[test]
+fn a_freed_request_can_be_reused_at_once_without_a_cap_violation() {
+    let mut harness = start_harness(vosu_status::VOSU_OK, BOUND);
+    let endpoint = harness.ready();
+    let gate = Gate::new();
+    *harness.handler.hook.lock().unwrap() = Some(Box::new({
+        let gate = Arc::clone(&gate);
+        move |_| gate.wait()
+    }));
+    let (header, payload) = public(&timer_set());
+    for request in 1..=64 {
+        harness
+            .child
+            .sender
+            .send_acknowledged(request, &header, &payload)
+            .unwrap();
+    }
+    assert!(gate.wait_arrivals(1, BOUND));
+    gate.open();
+    for next in 65..=300 {
+        assert_eq!(harness.recv().opcode, op::STATUS);
+        harness
+            .child
+            .sender
+            .send_acknowledged(next, &header, &payload)
+            .unwrap();
+    }
+    for _ in 0..64 {
+        assert_eq!(harness.recv().opcode, op::STATUS);
+    }
+    assert!(harness.losses().is_empty(), "{:?}", harness.losses());
+    endpoint.terminate();
+}
+
+/// A child that skips its own 64-waiter refusal breaks the protocol.
+#[test]
+fn a_sixty_fifth_unanswered_request_is_one_channel_loss() {
+    let mut harness = start_harness(vosu_status::VOSU_OK, BOUND);
+    let endpoint = harness.ready();
+    let gate = Gate::new();
+    *harness.handler.hook.lock().unwrap() = Some(Box::new({
+        let gate = Arc::clone(&gate);
+        move |_| gate.wait()
+    }));
+    let (header, payload) = public(&timer_set());
+    for request in 1..=65 {
+        harness
+            .child
+            .sender
+            .send_acknowledged(request, &header, &payload)
+            .unwrap();
+    }
+    assert_eq!(harness.handler.wait_for(&harness.handler.losses, 1), 1);
+    assert_eq!(harness.losses(), vec![LossCause::ChannelFailed]);
+    gate.open();
+    endpoint.terminate();
 }

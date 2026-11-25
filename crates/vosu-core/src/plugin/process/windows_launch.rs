@@ -66,7 +66,7 @@ pub fn launch(program: &Path, leading_args: &[&OsStr]) -> Result<Launched, Launc
     let endpoint = connect(
         host_to_plugin.into(),
         plugin_to_host.into(),
-        Box::new(DirectionPolicy::new(Direction::PluginToHost)),
+        Box::new(DirectionPolicy::with_ledger(Direction::PluginToHost)),
     )?;
     Ok(Launched { endpoint, process })
 }
@@ -89,7 +89,7 @@ pub fn attach_inherited(endpoint_arg: &str) -> Result<Endpoint, AttachError> {
     Ok(connect(
         endpoints.plugin_to_host.into(),
         endpoints.host_to_plugin.into(),
-        Box::new(DirectionPolicy::new(Direction::HostToPlugin)),
+        Box::new(DirectionPolicy::with_ledger(Direction::HostToPlugin)),
     )?)
 }
 

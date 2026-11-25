@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use vosu_sys::plugin_process::{Doorbell, RingObjects, SharedRegion};
 
-use super::frame::{FrameHeader, FramePolicy, HEAD_BYTES, MAX_PAYLOAD_BYTES, encode_head};
+use super::frame::{FrameHeader, FramePolicy, HEAD_BYTES, Ledger, MAX_PAYLOAD_BYTES, encode_head};
 use super::ring::{PayloadBuffer, RingConsumer, RingError, RingProducer};
 
 /// The longest a legal frame waits for space in a full ring before the
@@ -96,12 +96,16 @@ impl From<RingObjects> for RingEnd {
     }
 }
 
-/// The three handles of one attached side.
+/// The handles of one attached side.
 #[derive(Debug)]
 pub struct Endpoint {
     pub sender: Sender,
     pub receiver: Receiver,
     pub closer: Closer,
+    /// The live acknowledged requests the receiving policy pairs replies
+    /// with (`frame::Ledger`); a fresh, unshared one for a policy that
+    /// keeps none.
+    pub ledger: Arc<Ledger>,
 }
 
 /// Attaches one side: `outbound` is the ring this side produces into,
@@ -124,6 +128,7 @@ pub fn connect(
         space_changed: Condvar::new(),
         space_waiters: AtomicUsize::new(0),
     });
+    let ledger = policy.ledger().unwrap_or_default();
     Ok(Endpoint {
         sender: Sender {
             shared: shared.clone(),
@@ -134,6 +139,7 @@ pub fn connect(
             policy,
         },
         closer: Closer { shared },
+        ledger,
     })
 }
 
@@ -270,6 +276,23 @@ impl Sender {
             correlation: request,
         };
         self.send_frames(&[(&ack, &[]), (header, payload)], FULL_RING_WAIT)
+    }
+
+    /// Writes a `REPLY_NEXT` frame carrying `request` and then the public
+    /// `READ_PLAN_RESULT` answering that `SYNC` request, back to back under
+    /// the one producer lock, like [`send_acknowledged`](Self::send_acknowledged).
+    pub fn send_reply(
+        &self,
+        request: u64,
+        header: &FrameHeader,
+        payload: &[u8],
+    ) -> Result<(), SendError> {
+        let reply = FrameHeader {
+            opcode: super::frame::control::REPLY_NEXT,
+            flags: 0,
+            correlation: request,
+        };
+        self.send_frames(&[(&reply, &[]), (header, payload)], FULL_RING_WAIT)
     }
 
     /// [`send`](Self::send) with an explicit backpressure window.
