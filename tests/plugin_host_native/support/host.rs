@@ -103,7 +103,7 @@ pub struct Host {
 /// that one-time cost for the freshly built `vosu.exe` inside the plugin
 /// host's 5-second startup deadline: they all took 3.3–4.3 s to start, against
 /// about 60 ms afterwards.
-fn prime_executable() {
+pub fn prime_executable() {
     static PRIMED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     PRIMED.get_or_init(|| {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_vosu"))

@@ -70,19 +70,18 @@ impl LoadedPlugin {
 
     /// Provenance the state registry compiles this plugin's namespace
     /// schemas with (`x-visibility` requires `TrustedOfficial`): only the
-    /// compiled `BUNDLED` array and catalog packages installed from an exact
+    /// compiled `BUNDLED` array, catalog packages installed from an exact
     /// official source identity (the rule catalog I0 compiles staged schemas
-    /// with). Debug `--plugin` overrides and trusted user-source packages
-    /// stay `Untrusted`; a dlopened library never implies official authority.
+    /// with) and the test harness's official fixture
+    /// ([`PackageOrigin::is_official`]). Debug `--plugin` overrides and
+    /// trusted user-source packages stay `Untrusted`; a dlopened library
+    /// never implies official authority.
     pub fn schema_provenance(&self) -> vosu_plugin_api::manifest::schema::SchemaProvenance {
         use vosu_plugin_api::manifest::schema::SchemaProvenance;
-        match self.origin {
-            PackageOrigin::Bundled | PackageOrigin::Installed { official: true } => {
-                SchemaProvenance::TrustedOfficial
-            }
-            PackageOrigin::Development | PackageOrigin::Installed { official: false } => {
-                SchemaProvenance::Untrusted
-            }
+        if self.origin.is_official() {
+            SchemaProvenance::TrustedOfficial
+        } else {
+            SchemaProvenance::Untrusted
         }
     }
 
@@ -234,14 +233,84 @@ pub fn load_development(
     if !debug_build && application_version.pre.is_empty() {
         return Err(HostError::DevelopmentRefused);
     }
+    load_package_dir(
+        application_version,
+        snapshot,
+        dir,
+        PackageOrigin::Development,
+        debug_build,
+    )
+}
+
+/// The test harness's official loading seam (M5 X0): loads the package in
+/// `dir` under its own official `vosu.*` manifest, so a native test runs
+/// the separately staged external osu! producer
+/// (`crates/vosu-osu/examples/osu_process_plugin.rs`) with the real
+/// `vosu.osu` identity in a plugin host. The ordinary development loader
+/// refuses that identity (M6a Q3: officialness is explicit provenance).
+///
+/// Never reachable from a release build, three times over: it exists only
+/// with `test-harness`, which `vosu-core` and the root build script reject
+/// in release builds; it refuses outright unless `debug_build`
+/// (`cfg!(debug_assertions)` at the call site); and only a
+/// `runtime = "process"` package is accepted, so it never maps a library
+/// in core. The package is [`PackageOrigin::OfficialTestFixture`]:
+/// official namespace and schema trust, never the bundled-only grants.
+#[cfg(feature = "test-harness")]
+pub fn load_official_test_fixture(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    debug_build: bool,
+) -> Result<LoadedPlugin, HostError> {
+    if !debug_build {
+        return Err(HostError::InProcessRefused {
+            reason: "the test harness's official fixture loading is refused outside debug builds",
+        });
+    }
+    load_package_dir(
+        application_version,
+        snapshot,
+        dir,
+        PackageOrigin::OfficialTestFixture,
+        debug_build,
+    )
+}
+
+/// Validates the package in `dir` for `origin` and grants its runtime,
+/// under `load_development`'s build policy for `debug_build`. Only a
+/// [`PackageOrigin::Development`] package in a debug build reaches the
+/// in-process arm: the official test fixture is refused before any library
+/// is mapped. Neither origin is approved here: a process package runs only
+/// through the installed launcher, which production composition makes the
+/// approval gate (`plugin::approval`) for every package alike.
+fn load_package_dir(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    origin: PackageOrigin,
+    debug_build: bool,
+) -> Result<LoadedPlugin, HostError> {
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
-    let manifest = parse_plugin(&text, application_version, snapshot, "development", false)?;
+    let manifest = parse_plugin(
+        &text,
+        application_version,
+        snapshot,
+        "development",
+        origin.is_official(),
+    )?;
+    #[cfg(feature = "test-harness")]
+    if origin == PackageOrigin::OfficialTestFixture && manifest.runtime != Runtime::Process {
+        return Err(HostError::InProcessRefused {
+            reason: "the test harness's official fixture loading accepts only `runtime = \"process\"` packages",
+        });
+    }
     if !debug_build && manifest.runtime == Runtime::InProcess {
         return Err(HostError::InProcessRefused {
             reason: "a release build runs `--plugin` packages as user trust, which never grants in-process; request `runtime = \"process\"`",
         });
     }
-    load_package(manifest, &text, dir, PackageOrigin::Development)
+    load_package(manifest, &text, dir, origin)
 }
 
 /// Loads one catalog-installed plugin from its committed package directory
@@ -466,3 +535,5 @@ fn compile_action_schemas(
 
 #[cfg(test)]
 mod action_tests;
+#[cfg(all(test, feature = "test-harness"))]
+mod official_fixture_tests;

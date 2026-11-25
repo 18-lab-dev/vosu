@@ -191,6 +191,43 @@ impl Fixture {
             &[],
             vosu_plugin_vtable,
         );
+        Self::with_adapters(serial, h, source, has_chart, engine, receiver, publishers)
+    }
+
+    /// The same adapters and providers over a game `create` makes as
+    /// instance 1 through [`host::Harness::create`] (M5 X0: the external
+    /// osu! producer in a plugin host). [`Self::attach`] drives only the
+    /// in-process fixture game, so it is never used with this game.
+    pub fn with_game(
+        source: ClientType,
+        has_chart: bool,
+        engine: Option<Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>>,
+        create: impl FnOnce(&mut host::Harness),
+    ) -> Self {
+        let serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let mut h = host::Harness::new();
+        create(&mut h);
+        let (_, receiver) = mpsc::sync_channel(1);
+        Self::with_adapters(
+            serial,
+            h,
+            source,
+            has_chart,
+            engine,
+            receiver,
+            Arc::default(),
+        )
+    }
+
+    fn with_adapters(
+        serial: MutexGuard<'static, ()>,
+        mut h: host::Harness,
+        source: ClientType,
+        has_chart: bool,
+        engine: Option<Arc<dyn vosu_osu_calc::beatmap::BeatmapEngine + Send + Sync>>,
+        receiver: mpsc::Receiver<(u64, VtableHostServices)>,
+        publishers: Publishers,
+    ) -> Self {
         h.load(
             vosu_adapter_upstream::MANIFEST,
             &[],
@@ -300,6 +337,10 @@ impl Fixture {
     /// The publisher the plugin would route `stream` to, or the production error.
     pub fn stream_owner(&self, stream: u64) -> Result<Arc<Publisher>, vosu_status> {
         route_stream(&self.publishers, stream)
+    }
+    /// The in-process fixture game's publisher for session `handle`.
+    pub fn publisher(&self, handle: u64) -> Option<Arc<Publisher>> {
+        self.publishers.lock().unwrap().get(&handle).cloned()
     }
     /// The provider's typed result, so callers can reject a vacuous not-ready
     /// response instead of comparing its corpus placeholder bytes.

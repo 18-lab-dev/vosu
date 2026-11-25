@@ -15,6 +15,8 @@
 mod actions;
 #[path = "plugin_host_native/approval.rs"]
 mod approval;
+#[path = "plugin_host_native/backpressure.rs"]
+mod backpressure;
 #[path = "plugin_host_native/broker.rs"]
 mod broker;
 #[path = "plugin_host_native/crash.rs"]
@@ -26,6 +28,8 @@ mod lifecycle;
 mod linux_security;
 #[path = "plugin_host_native/parent_death.rs"]
 mod parent_death;
+#[path = "plugin_host_native/parity.rs"]
+mod parity;
 #[path = "plugin_host_native/relay.rs"]
 mod relay;
 #[path = "plugin_host_native/resources.rs"]
@@ -36,6 +40,8 @@ mod restart;
 mod state;
 #[path = "plugin_host_native/support/mod.rs"]
 mod support;
+#[path = "plugin_host_native/sync.rs"]
+mod sync;
 #[cfg(windows)]
 #[path = "plugin_host_native/windows_job.rs"]
 mod windows_job;
