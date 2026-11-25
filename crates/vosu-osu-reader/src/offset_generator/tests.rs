@@ -143,3 +143,61 @@ fn cancelled_extraction_does_not_create_a_cache() {
     );
     assert!(!cache.exists());
 }
+
+static INJECTED_SPAWNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Records each use, then creates the child through the real gate.
+fn counting_gated_spawn(command: &mut Command) -> io::Result<tokio::process::Child> {
+    INJECTED_SPAWNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    vosu_sys::process_spawn::spawn_tokio(command)
+}
+
+fn echo_command() -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/D", "/Q", "/C", "echo generated"]);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "echo generated"]);
+        command
+    }
+}
+
+/// Counterexample "generator spawn bypasses the inheritance gate": every
+/// generator child is created by the injected spawner (the composer's
+/// `vosu_sys::process_spawn` gate), with captured output, and a cancelled
+/// generation creates no child at all.
+#[tokio::test]
+async fn generator_children_are_created_only_by_the_injected_spawner() {
+    let before = INJECTED_SPAWNS.load(std::sync::atomic::Ordering::SeqCst);
+    let mut command = echo_command();
+    let result = output(
+        counting_gated_spawn,
+        &mut command,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), "generated");
+    assert_eq!(
+        INJECTED_SPAWNS.load(std::sync::atomic::Ordering::SeqCst),
+        before + 1
+    );
+
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let mut command = echo_command();
+    let error = output(counting_gated_spawn, &mut command, &cancel)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    assert_eq!(
+        INJECTED_SPAWNS.load(std::sync::atomic::Ordering::SeqCst),
+        before + 1
+    );
+}

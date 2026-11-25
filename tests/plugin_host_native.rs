@@ -11,11 +11,31 @@
     reason = "fixtures write scratch packages and compile sources, and bounded marker waits sleep between checks"
 )]
 
+#[path = "plugin_host_native/actions.rs"]
+mod actions;
+#[path = "plugin_host_native/approval.rs"]
+mod approval;
 #[path = "plugin_host_native/broker.rs"]
 mod broker;
+#[path = "plugin_host_native/crash.rs"]
+mod crash;
 #[path = "plugin_host_native/lifecycle.rs"]
 mod lifecycle;
+#[cfg(target_os = "linux")]
+#[path = "plugin_host_native/linux_security.rs"]
+mod linux_security;
+#[path = "plugin_host_native/parent_death.rs"]
+mod parent_death;
 #[path = "plugin_host_native/relay.rs"]
 mod relay;
+#[path = "plugin_host_native/resources.rs"]
+mod resources;
+#[path = "plugin_host_native/restart.rs"]
+mod restart;
+#[path = "plugin_host_native/state.rs"]
+mod state;
 #[path = "plugin_host_native/support/mod.rs"]
 mod support;
+#[cfg(windows)]
+#[path = "plugin_host_native/windows_job.rs"]
+mod windows_job;

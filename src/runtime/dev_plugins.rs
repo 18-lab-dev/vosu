@@ -1,17 +1,39 @@
-//! Plugins loaded in-process at startup: the explicit `plugins::BUNDLED`
-//! array (D13, `docs/v2/plugin-abi.md` §2, §7.1 — granted `in-process`
-//! unconditionally) and `--plugin <dir>` development plugins
-//! (`docs/v2/plugin-abi.md` §7.1, the `--tool <dir>` analog
-//! `crate::tools::development_roots`), trusted only in debug builds. Every
-//! instance this module creates is destroyed with a grace period at
-//! shutdown (`lifecycle::ProductionRuntime::shutdown`).
+//! Plugins loaded at startup: the explicit `plugins::BUNDLED` array (D13,
+//! `docs/v2/plugin-abi.md` §2, §7.1 — granted `in-process` unconditionally)
+//! and `--plugin <dir>` development plugins (§7.1, the `--tool <dir>`
+//! analog `crate::tools::development_roots`) under catalog-v2.md A5.5's
+//! build policy (`vosu_core::plugin::load_development`):
+//!
+//! - debug builds keep the documented in-process developer exception;
+//! - prerelease release builds accept `--plugin` without the
+//!   release-forbidden `test-harness` feature, as `user` trust: an
+//!   in-process request is refused and left unloaded, a process request
+//!   runs only after approval;
+//! - stable release builds refuse every `--plugin` package.
+//!
+//! A `--plugin` process package starts only through the approval gate
+//! (`vosu_core::plugin::approval::ApprovalGate`), the one launcher
+//! production composition installs, and only when such a package exists.
+//! Every load and restart checks the package's approval record; without
+//! one it stays unloaded until the dashboard approves it
+//! (`plugin_management`). An optional plugin's failure is logged and never
+//! fails startup; a required bundled plugin's failure does. Every instance
+//! this module creates is destroyed with a grace period at shutdown
+//! (`lifecycle::ProductionRuntime::shutdown`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vosu_core::plugin::{self, DEFAULT_QUEUE_CAPACITY, PluginHost, PluginInstanceId, WorkerPool};
+use vosu_core::plugin::approval::{ApprovalGate, ApprovalStore};
+use vosu_core::plugin::process::control::StartupStage;
+use vosu_core::plugin::process::launcher::ProcessHostLauncher;
+use vosu_core::plugin::{
+    self, DEFAULT_QUEUE_CAPACITY, Execution, HostError, PluginHost, PluginInstanceId, WorkerPool,
+};
 use vosu_sys::platform::Paths;
+
+use super::plugin_management::{PluginManagement, Roster, Trust};
 
 /// Matches `src/server/runtime.rs::DRAIN_TIMEOUT` and the tool-process
 /// 5-second wait in `src/tools/process.rs`: the same shutdown-grace
@@ -41,6 +63,7 @@ pub(super) fn load_bundled(
     pool: &Arc<WorkerPool>,
     bundled: &[plugin::BundledPlugin<'_>],
     development_dirs: &[PathBuf],
+    roster: &mut Roster,
 ) -> std::io::Result<u64> {
     if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
@@ -48,31 +71,36 @@ pub(super) fn load_bundled(
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {
+        let instance = PluginInstanceId::new(index as u64);
         // Required identities and positions are explicit, not linker inventory.
-        let result = (|| {
-            let loaded = plugin::load_bundled(
-                crate::application_version(),
-                &source_snapshot(host, bundled, development_dirs),
-                std::slice::from_ref(entry),
-            )
-            .map_err(std::io::Error::other)?;
-            let loaded = &loaded[0];
-            let plugin_id = &loaded.manifest().id;
-            if let Some(required) = REQUIRED.get(index)
-                && plugin_id != required
-            {
-                return Err(std::io::Error::other(format!(
-                    "required bundled plugin {required} is missing"
-                )));
+        let loaded = plugin::load_bundled(
+            crate::application_version(),
+            &source_snapshot(host, bundled, development_dirs),
+            std::slice::from_ref(entry),
+        )
+        .map_err(std::io::Error::other)
+        .and_then(|mut loaded| {
+            let loaded = loaded.remove(0);
+            match REQUIRED.get(index) {
+                Some(required) if loaded.manifest().id != *required => Err(std::io::Error::other(
+                    format!("required bundled plugin {required} is missing"),
+                )),
+                _ => Ok(loaded),
             }
-            host.create_instance(
-                PluginInstanceId::new(index as u64),
-                loaded,
-                paths.bundled_plugin_data_dir(plugin_id),
-                Some(Arc::clone(pool)),
-            )
-            .map_err(std::io::Error::other)
-        })();
+        });
+        let result = loaded.and_then(|loaded| {
+            let created = host
+                .create_instance(
+                    instance,
+                    &loaded,
+                    paths.bundled_plugin_data_dir(&loaded.manifest().id),
+                    Some(Arc::clone(pool)),
+                )
+                .map_err(std::io::Error::other);
+            let reported = created.as_ref().map(|_| ()).map_err(ToString::to_string);
+            roster.loaded(instance, Trust::Bundled, None, &loaded, reported);
+            created
+        });
         if let Err(error) = result {
             if let Some(required) = REQUIRED.get(index) {
                 return Err(std::io::Error::other(format!(
@@ -82,62 +110,107 @@ pub(super) fn load_bundled(
             logger.warn(format!(
                 "optional bundled plugin at index {index} failed: {error}"
             ));
+            if !roster.has_instance(instance) {
+                roster.refused(instance, Trust::Bundled, None, error.to_string());
+            }
         }
     }
     Ok(bundled.len() as u64)
 }
 
+/// Installs the approval-gated process launcher once. `false` when this
+/// executable cannot start plugin hosts; process packages then fail to
+/// start, and the daemon keeps running.
+fn install_gate(
+    host: &PluginHost,
+    store: &Arc<ApprovalStore>,
+    logger: &vosu_core::logging::Logger,
+) -> bool {
+    let installed = ProcessHostLauncher::start(crate::plugin_host::BUILD_IDENTITY)
+        .map_err(HostError::Io)
+        .and_then(|launcher| {
+            host.install_process_launcher(Arc::new(ApprovalGate::new(Arc::clone(store), launcher)))
+        });
+    if let Err(error) = &installed {
+        logger.warn(format!("process plugins are unavailable: {error}"));
+    }
+    installed.is_ok()
+}
+
 /// Loads and registers every `--plugin <dir>` directory with `host`, in
 /// order, numbering instances starting at `id_offset` (past whatever
 /// [`load_bundled`] already assigned) so the two groups' ids never
-/// collide. A directory that fails to load is logged and skipped rather
-/// than failing startup: a development flag misusing one plugin should not
-/// take the whole daemon down.
+/// collide. A directory that fails to load or start is logged and listed,
+/// never fatal: a development plugin must not take the daemon down.
 pub(super) fn load_development(
     host: &Arc<PluginHost>,
     dirs: Vec<PathBuf>,
     id_offset: u64,
     logger: &vosu_core::logging::Logger,
     pool: &Arc<WorkerPool>,
+    store: &Arc<ApprovalStore>,
+    roster: &mut Roster,
 ) {
     let debug_build = cfg!(debug_assertions);
+    let mut gate = None;
     for (index, dir) in dirs.iter().enumerate() {
-        let loaded = match plugin::load_development(
+        let instance = PluginInstanceId::new(id_offset + index as u64);
+        let loaded = plugin::load_development(
             crate::application_version(),
             &source_snapshot(host, &[], &dirs),
             dir,
             debug_build,
-        ) {
+        );
+        let loaded = match loaded {
+            Ok(loaded) if roster.contains(&loaded.manifest().id) => {
+                let error = format!("plugin id {} is already loaded", loaded.manifest().id);
+                logger.warn(format!("--plugin {}: {error}", dir.display()));
+                roster.refused(instance, Trust::User, Some(dir.clone()), error);
+                continue;
+            }
             Ok(loaded) => loaded,
             Err(error) => {
                 logger.warn(format!("--plugin {}: {error}", dir.display()));
+                roster.refused(instance, Trust::User, Some(dir.clone()), error.to_string());
                 continue;
             }
         };
-        if let Err(error) = host.create_instance(
-            PluginInstanceId::new(id_offset + index as u64),
-            &loaded,
-            dir.clone(),
-            Some(Arc::clone(pool)),
-        ) {
-            logger.warn(format!(
+        if matches!(loaded.execution(), Execution::Process(_)) {
+            gate.get_or_insert_with(|| install_gate(host, store, logger));
+        }
+        let created = host.create_instance(instance, &loaded, dir.clone(), Some(Arc::clone(pool)));
+        match &created {
+            // The gate already logged that approval needs the dashboard.
+            Err(HostError::ProcessStartupFailed(failure))
+                if failure.stage == StartupStage::Approval => {}
+            Err(error) => logger.warn(format!(
                 "--plugin {}: create failed: {error}",
                 dir.display()
-            ));
+            )),
+            Ok(()) => {}
         }
+        roster.loaded(
+            instance,
+            Trust::development(loaded.manifest().runtime),
+            Some(dir.clone()),
+            &loaded,
+            created.map_err(|error| error.to_string()),
+        );
     }
 }
 
 /// Loads every bundled plugin, then every `--plugin <dir>` development
 /// plugin, as one combined, uniquely-numbered set registered with `host`
-/// (`lifecycle::ProductionRuntime::plugins`).
+/// (`lifecycle::ProductionRuntime::plugins`), and returns the dashboard's
+/// management of that set. Approvals live under `paths.config()`.
 pub(super) fn load_all(
     host: &Arc<PluginHost>,
     dev_dirs: Vec<PathBuf>,
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
-) -> std::io::Result<()> {
+) -> std::io::Result<PluginManagement> {
     let pool = WorkerPool::new(PLUGIN_CONCURRENT_WORKERS, DEFAULT_QUEUE_CAPACITY);
+    let mut roster = Roster::default();
     let offset = load_bundled(
         host,
         paths,
@@ -145,9 +218,11 @@ pub(super) fn load_all(
         &pool,
         crate::plugins::BUNDLED,
         &dev_dirs,
+        &mut roster,
     )?;
-    load_development(host, dev_dirs, offset, logger, &pool);
-    Ok(())
+    let store = Arc::new(ApprovalStore::open(paths.config()));
+    load_development(host, dev_dirs, offset, logger, &pool, &store, &mut roster);
+    Ok(PluginManagement::new(Arc::clone(host), store, roster))
 }
 
 /// Rebuild registered source identities directly from the currently enabled

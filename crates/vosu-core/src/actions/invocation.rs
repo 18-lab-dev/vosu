@@ -14,11 +14,17 @@ pub type InvocationResult = TerminalOutcome;
 #[derive(Clone, Copy, Debug)]
 pub struct InvocationPolicy {
     pub deadline: Duration,
+    /// After `deadline`, how long a `runtime = "process"` callee has to
+    /// answer the `ACTION_CANCEL` core sends before core kills it
+    /// (`docs/v2/plugin-abi.md` §7.6 A5.4). In-process callees are never
+    /// killed.
+    pub grace: Duration,
 }
 impl Default for InvocationPolicy {
     fn default() -> Self {
         Self {
             deadline: Duration::from_secs(30),
+            grace: Duration::from_secs(5),
         }
     }
 }

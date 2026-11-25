@@ -14,6 +14,7 @@ fn actions_relay_timeout_and_provider_loss_deliver_synthetic_terminals() {
     );
     host.set_invocation_policy_for_tests(InvocationPolicy {
         deadline: Duration::from_secs(1),
+        ..InvocationPolicy::default()
     });
     for original in [31, 32] {
         if original == 32 {

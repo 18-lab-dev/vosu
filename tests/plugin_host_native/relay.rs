@@ -510,3 +510,123 @@ fn relay_concurrent_dispatch_runs_two_deliveries_at_once() {
     assert_eq!((a.trim(), b.trim()), ("1", "1"), "both ran concurrently");
     scenario.destroy();
 }
+
+/// M5 I0: relayed action traffic into a caller child whose dispatch is
+/// blocked. A callee child sends 500 progress messages for each of eight
+/// calls and then answers each one. Once the blocked caller resumes,
+/// every call's result arrives exactly once, ahead of the progress
+/// backlog, and progress is coalesced to the latest message per call.
+#[test]
+fn relay_a_progress_flood_never_drops_or_delays_terminals_to_a_blocked_caller() {
+    use super::support::services::{Services, Spec, op};
+    let mut run = Services::empty();
+    run.add(&Spec {
+        name: "relay.callee",
+        ..Spec::default()
+    });
+    run.add(&Spec {
+        name: "relay.caller",
+        requires: vec![
+            "[[requires]]\nid = 'action:test.i0.relay.callee.work'\nversion = '^1.0'".to_owned(),
+        ],
+        ..Spec::default()
+    });
+    let (callee, caller) = (0, 1);
+    let drive = run.drive(
+        caller,
+        op(
+            "call_block",
+            serde_json::json!({
+                "action": "test.i0.relay.callee.work",
+                "count": 8,
+                "args": {"n": 0, "progress": 500},
+            }),
+        ),
+    );
+    let child = run.wait(caller, "blocked", |_| true).pid;
+    let worked = &run.plugin(callee).fixture;
+    assert!(
+        super::support::host::wait_until(BOUND, || worked.receipts("worked").len() == 8),
+        "the callee never answered all eight calls"
+    );
+    for answer in worked.receipts("worked") {
+        // Core accepted every progress message and the result before the
+        // callee wrote this receipt.
+        assert_eq!((answer.get("refused"), answer.get("result")), ("0", "0"));
+    }
+    // A frame dispatched now is written behind every relayed frame core
+    // queued for the caller before it; the probe's STATUS is behind that.
+    let written = {
+        let _enter = run.host.enter();
+        run.host()
+            .dispatch_to_instance(run.instance(caller), &focus(true), 0)
+            .expect("core queued the fence")
+    };
+    assert_eq!(written.recv_timeout(BOUND).unwrap(), vosu_status::VOSU_OK);
+    run.barrier(caller, "probe", child);
+    run.wait(caller, "probed", |_| true);
+    run.barrier(caller, "release", child);
+    assert!(matches!(
+        drive.outcome(),
+        vosu_core::actions::TerminalOutcome::Succeeded(_)
+    ));
+    // The drive finished on the eighth result; the coalesced progress the
+    // queue holds behind the terminals is dispatched after it. Every one
+    // of the 4000 frames was queued while dispatch was blocked, so exactly
+    // the latest one per call remains.
+    let fixture = &run.plugin(caller).fixture;
+    assert!(
+        super::support::host::wait_until(BOUND, || fixture.receipts("relay_progress").len() >= 8),
+        "the coalesced progress never arrived: {:?}",
+        fixture.receipts("relay_progress")
+    );
+    let journal = run.plugin(caller).fixture.journal(child);
+    let relayed: Vec<_> = journal
+        .iter()
+        .skip_while(|receipt| receipt.probe != "unblocked")
+        .filter(|receipt| receipt.probe.starts_with("relay_"))
+        .collect();
+    let results: Vec<_> = relayed
+        .iter()
+        .filter(|receipt| receipt.probe == "relay_result")
+        .collect();
+    let mut calls: Vec<&str> = results
+        .iter()
+        .map(|result| {
+            assert_eq!(result.get("status"), "Ok", "{result:?}");
+            result.get("invocation")
+        })
+        .collect();
+    calls.sort_unstable();
+    calls.dedup();
+    assert_eq!((results.len(), calls.len()), (8, 8), "one result per call");
+    assert!(
+        relayed[..8]
+            .iter()
+            .all(|receipt| receipt.probe == "relay_result"),
+        "the terminals overtook the progress backlog: {relayed:?}"
+    );
+    let progress: Vec<_> = relayed[8..].iter().collect();
+    let mut coalesced: Vec<&str> = progress
+        .iter()
+        .map(|receipt| {
+            assert_eq!(
+                receipt.get("fraction"),
+                "1",
+                "the latest progress: {receipt:?}"
+            );
+            receipt.get("invocation")
+        })
+        .collect();
+    coalesced.sort_unstable();
+    coalesced.dedup();
+    assert_eq!(
+        (progress.len(), coalesced),
+        (8, calls),
+        "exactly the latest progress of each call, of 4000 sent: {progress:?}"
+    );
+    println!(
+        "RECORD 4000 progress messages reached the blocked caller as {}",
+        progress.len()
+    );
+}

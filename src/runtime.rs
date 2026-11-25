@@ -100,6 +100,7 @@ mod config;
 mod dev_plugins;
 mod discovery;
 mod lifecycle;
+mod plugin_management;
 mod preview_scheme;
 mod projection;
 mod render;

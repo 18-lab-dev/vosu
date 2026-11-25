@@ -75,6 +75,9 @@ pub enum Endpoint {
     Tools,
     ToolOverlay,
     ToolManagement,
+    /// Dashboard-only process-plugin approval and management
+    /// (catalog-v2.md A5.5 "Management routes").
+    PluginManagement,
     /// Dashboard-only `/api/catalog/*` (M6b H0); exact paths in `catalog_api`.
     Catalog,
     CounterStatic,
@@ -502,6 +505,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::CounterNames
                     | Endpoint::CounterUpdates
                     | Endpoint::ToolManagement
+                    | Endpoint::PluginManagement
                     | Endpoint::Catalog
             )
         {
@@ -541,6 +545,9 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         {
             return not_found_for(&request);
         }
+    } else if endpoint == Endpoint::PluginManagement {
+        // Plugin management exists only on the dashboard listener.
+        return cors(not_found_for(&request));
     }
     let keys = providers.delegate.api_keys();
     let credential = if (method == Method::POST && endpoint != Endpoint::ToolOverlay)
@@ -627,7 +634,8 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
         Ok(None) => {}
     }
-    // PUT (tool autostart) and every DELETE are mutations like POST.
+    // PUT (tool autostart) and every DELETE (catalog and plugin
+    // management) are mutations like POST.
     let put_or_delete =
         (method == Method::PUT && endpoint == Endpoint::ToolManagement) || method == Method::DELETE;
     let mutation = if method == Method::POST
@@ -849,6 +857,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         _ if (get || post) && (path == "/api/tools" || path.starts_with("/api/tools/")) => {
             Some(ToolManagement)
         }
+        "/api/plugins" if get => Some(PluginManagement),
+        _ if plugin_management_action(method, path) => Some(PluginManagement),
         _ if (get || post || method == Method::DELETE) && path.starts_with("/api/catalog/") => {
             Some(Catalog)
         }
@@ -904,5 +914,24 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
     }
 }
 
+/// `POST /api/plugins/<id>/{approval,restart,stop}` and
+/// `DELETE /api/plugins/<id>/approval`, with one non-empty `<id>` segment.
+fn plugin_management_action(method: &Method, path: &str) -> bool {
+    let Some((id, action)) = path
+        .strip_prefix("/api/plugins/")
+        .and_then(|rest| rest.split_once('/'))
+    else {
+        return false;
+    };
+    !id.is_empty()
+        && match action {
+            "approval" => method == Method::POST || method == Method::DELETE,
+            "restart" | "stop" => method == Method::POST,
+            _ => false,
+        }
+}
+
+#[cfg(test)]
+mod plugin_tests;
 #[cfg(test)]
 mod tests;

@@ -134,12 +134,18 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
+    use vosu_sys::plugin_process::suppress_crash_reporting_hold;
+
     use super::super::bootstrap;
     use super::super::control::{EXIT_ARGUMENTS, EXIT_ENDPOINTS};
     use super::super::windows_launch::attach_inherited;
     use super::Arguments;
 
     pub(super) fn start(arguments: Arguments<'_>) -> i32 {
+        // Before any plugin code can run: a crash must exit at once, not
+        // be held by Windows Error Reporting past the startup deadline
+        // (§7.4 "Crash reporting").
+        suppress_crash_reporting_hold();
         let Some(endpoints) = arguments.endpoints.to_str() else {
             return EXIT_ARGUMENTS;
         };

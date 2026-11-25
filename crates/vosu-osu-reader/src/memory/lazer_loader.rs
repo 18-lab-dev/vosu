@@ -1,7 +1,7 @@
 //! Versioned cache, embedded, and local generator lazer offset resolution.
 
 use std::future::Future;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -168,8 +168,9 @@ fn template_fields(embedded: &[u8]) -> Vec<(String, String)> {
 
 /// Reads the lazer offset cache written by [`install_cache`] (possibly by a
 /// different process or thread resolving the same version concurrently).
-/// Goes through the retrying helper (`vosu_sys::platform::read_published_async`)
-/// to absorb the measured, load-dependent Windows missing-name window
+/// Goes through the convention's retrying read
+/// (`vosu_net::publish::read_published_async`, over `vosu-sys`'s helper) to
+/// absorb the measured, load-dependent Windows missing-name window
 /// documented on `vosu_sys::platform::atomic_replace`, without blocking the
 /// Tokio worker this runs on (`resolve` is spawned with `tokio::spawn`,
 /// `instance.rs:206`). A genuinely absent cache still returns `None` here,
@@ -180,7 +181,7 @@ async fn read_matching(
     version: &str,
     template_fields: &[(String, String)],
 ) -> Option<LazerOffsets> {
-    let bytes = vosu_sys::platform::read_published_async(path).await.ok()?;
+    let bytes = vosu_net::publish::read_published_async(path).await.ok()?;
     // The cache is keyed by client version only, so a file generated from an older
     // template would otherwise parse with its newer groups defaulted to zero and keep
     // those features off for that client version. Regenerate it instead.
@@ -197,26 +198,12 @@ async fn read_matching(
     (offsets.osu_version == version).then_some(offsets)
 }
 
+/// Publishes generated offsets for `read_matching` through the one atomic
+/// publish convention (`vosu_net::publish::publish_bytes`: a synced
+/// same-directory `.offsets-*.tmp` file replaced by
+/// `vosu_sys::platform::atomic_replace`).
 pub fn install_cache(target: &Path, bytes: &[u8], cancel: &CancellationToken) -> io::Result<()> {
-    if cancel.is_cancelled() {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
-    }
-    let parent = target
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cache target has no parent"))?;
-    std::fs::create_dir_all(parent)?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".offsets-")
-        .suffix(".tmp")
-        .tempfile_in(parent)?;
-    temp.write_all(bytes)?;
-    temp.as_file_mut().sync_all()?;
-    if cancel.is_cancelled() {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
-    }
-    let temp_path = temp.into_temp_path();
-    vosu_sys::platform::atomic_replace(&temp_path, target)?;
-    Ok(())
+    vosu_net::publish::publish_bytes(target, bytes, ".offsets-", cancel)
 }
 
 pub async fn retry_pending<D, Fut, S>(

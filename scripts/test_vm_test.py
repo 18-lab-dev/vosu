@@ -119,6 +119,21 @@ class InvocationConfigTests(unittest.TestCase):
         )
         self.assertIs(json.loads(json.dumps(config))["PluginHostFixtures"], True)
 
+    def test_release_daemon_default_off_and_implies_the_fixtures(self):
+        config = vm_test.build_invocation_config(
+            "V:\\bt\\vmt-abc-123", "deadbeefcafef00d", ["test"], has_patch=False, jobs=8, timeout_seconds=1200
+        )
+        self.assertIs(config["ReleaseDaemon"], False)
+        config = vm_test.build_invocation_config(
+            "V:\\bt\\vmt-abc-123", "deadbeefcafef00d", ["test"], has_patch=False, jobs=8, timeout_seconds=1200,
+            release_daemon=True,
+        )
+        decoded = json.loads(json.dumps(config))
+        self.assertIs(decoded["ReleaseDaemon"], True)
+        self.assertIs(decoded["PluginHostFixtures"], True)
+        runner = Path(__file__).with_name("vm-test.ps1").read_text(encoding="utf-8")
+        self.assertIn("-ReleaseDaemon:([bool]$config.ReleaseDaemon)", runner)
+
 
 class PluginHostFixtureSelectionTests(unittest.TestCase):
     def test_selections_that_can_run_the_root_native_target_prepare_fixtures(self):

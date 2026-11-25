@@ -709,7 +709,7 @@ fn read_plan_process_cancel_keeps_the_id_reserved_until_execution_finishes() {
 #[test]
 fn read_plan_process_results_never_reach_a_new_generation() {
     let mut rig = Rig::new(BOUND);
-    let (loaded, mut old) = rig.process_instance(9_641, "b0-generation");
+    let (_loaded, mut old) = rig.process_instance(9_641, "b0-generation");
     let pid = 500_964_001;
     let target = Target::chain(8, [4; 16]);
     let handle = rig.attach(&mut old, pid, "b0-generation", &target, ProcessBitness::X64);
@@ -732,17 +732,8 @@ fn read_plan_process_results_never_reach_a_new_generation() {
         assert!(!timeout.timed_out(), "the lost instance was retired");
         drop(instances);
     }
-    {
-        let _enter = rig.runtime.enter();
-        rig.host
-            .create_instance(
-                PluginInstanceId::new(9_641),
-                &loaded,
-                std::env::temp_dir(),
-                None,
-            )
-            .unwrap();
-    }
+    // Supervision starts the next generation under the same instance id
+    // after the first backoff (M5 C0).
     let mut new = rig.launcher.take_child();
     target.release();
     rig.drain_broker();

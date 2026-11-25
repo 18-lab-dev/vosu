@@ -230,6 +230,21 @@ impl PluginInstance {
         }
     }
 
+    /// Marks a process instance lost by core's own decision (§7.6 A5.4).
+    /// `true` only if this is the first loss of this generation; always
+    /// `false` for local code, which is never lost.
+    pub(crate) fn mark_lost(&self) -> bool {
+        match &self.backend {
+            Backend::Local { .. } => false,
+            Backend::Process { loss, .. } => loss.mark(),
+        }
+    }
+
+    /// Whether this instance runs in a `vosu plugin-host` child.
+    pub(crate) fn is_process(&self) -> bool {
+        matches!(self.backend, Backend::Process { .. })
+    }
+
     pub fn reserve_outbox(&self) -> Result<super::outbox::OutboxSlot, HostError> {
         self.outbox.reserve()
     }

@@ -7,6 +7,7 @@ use super::settings::SettingsError;
 use vosu_plugin_api::manifest::ValidationError;
 
 use super::matcher::RegisterError;
+use super::process::control::StartupFailure;
 
 /// Every way loading, starting, or tearing down a plugin instance can fail.
 #[derive(Debug)]
@@ -39,6 +40,9 @@ pub enum HostError {
     InProcessRefused {
         reason: &'static str,
     },
+    /// `--plugin <dir>` in a stable release build (catalog-v2.md A5.5):
+    /// only debug and prerelease builds accept development packages.
+    DevelopmentRefused,
     /// `create` returned `NULL`.
     CreateRejected,
     /// `concurrent_dispatch = true` but no shared worker pool was supplied.
@@ -87,10 +91,16 @@ pub enum HostError {
     ProcessRuntimeUnavailable,
     /// The plugin-host child for this instance did not become ready: it
     /// exited, broke its channel, or its plugin's `create` failed. The
-    /// launcher has already reaped it.
-    ProcessStartupFailed(String),
+    /// launcher has already reaped it. The failure keeps its §7.6 stage, so
+    /// supervision decides restarts from [`StartupFailure::stage`], never
+    /// from formatted text.
+    ProcessStartupFailed(StartupFailure),
     /// The instance's process was reported lost before it was published.
     InstanceLost,
+    /// A manual restart or stop named a process generation that is no
+    /// longer current (an automatic restart, another stop or restart came
+    /// first). Checked under the supervisor's lock, so nothing acted.
+    GenerationChanged,
 }
 
 impl fmt::Display for HostError {
@@ -116,6 +126,10 @@ impl fmt::Display for HostError {
             ),
             Self::MissingRequiredFunction => write!(f, "create, dispatch, or destroy is missing"),
             Self::InProcessRefused { reason } => write!(f, "in-process runtime refused: {reason}"),
+            Self::DevelopmentRefused => write!(
+                f,
+                "stable release builds refuse `--plugin <dir>`; use a debug or prerelease build"
+            ),
             Self::CreateRejected => write!(f, "create returned NULL"),
             Self::ConcurrentPoolMissing => write!(
                 f,
@@ -151,10 +165,11 @@ impl fmt::Display for HostError {
                 f,
                 "runtime = \"process\" requires the plugin-host launcher, which is not available"
             ),
-            Self::ProcessStartupFailed(reason) => {
-                write!(f, "plugin-host process did not start: {reason}")
+            Self::ProcessStartupFailed(failure) => {
+                write!(f, "plugin-host process did not start: {failure}")
             }
             Self::InstanceLost => write!(f, "the plugin-host process was lost"),
+            Self::GenerationChanged => write!(f, "the plugin's generation changed"),
         }
     }
 }

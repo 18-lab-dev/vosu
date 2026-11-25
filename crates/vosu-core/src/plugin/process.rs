@@ -28,6 +28,9 @@
 //!   shared status and `SYNC` waiters), `admission` (the per-instance caps
 //!   enforced before writing) and `delivery` (the non-blocking, semantically
 //!   coalescing delivery queue).
+//! - [`restart`] and [`supervisor`] (M5 C0): the A5.3 rolling crash window
+//!   and backoff, and the generation-scoped restart/stop state machine
+//!   `host::supervision` drives (§7.6 "Loss identity", "Restart").
 //!
 //! The OS objects (mapping and doorbell per direction) come from
 //! `vosu_sys::plugin_process::RingObjects`, whose module documents the
@@ -65,7 +68,9 @@ pub mod launcher;
 pub mod linux;
 #[cfg(any(target_os = "linux", windows))]
 mod relay;
+pub mod restart;
 pub mod ring;
+pub mod supervisor;
 #[cfg(any(target_os = "linux", windows))]
 mod waiters;
 #[cfg(windows)]

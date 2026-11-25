@@ -97,9 +97,19 @@ impl PluginHost {
     /// the map was empty and returned — leaking a running instance this
     /// function was supposed to have torn down. Waiting for
     /// `create_instance` to resolve its own placeholder closes that race.
+    ///
+    /// Process supervision stops first, so no restart delay survives and
+    /// no new generation starts; a start already in progress refuses or
+    /// tears down what it starts, and this call waits for it last.
     pub fn destroy_all(&self, grace: Duration) {
+        self.supervision_shutdown();
         self.shutting_down.store(true, Ordering::Release);
         self.api_shutdown();
+        self.destroy_registered(grace);
+        self.supervision_drained();
+    }
+
+    fn destroy_registered(&self, grace: Duration) {
         loop {
             let next = {
                 let mut guard = self
@@ -147,41 +157,43 @@ impl PluginHost {
                 }
             };
             let (id, instance) = next;
-            self.retire_instance(id, instance, Teardown::Destroy(grace));
+            if let Err(error) = self.retire_instance(id, instance, Teardown::Destroy(grace)) {
+                tracing::warn!(?id, %error, "plugin did not destroy within its grace period");
+            }
         }
     }
 
     /// Removes one instance already taken out of active duty (its slot is
-    /// `Destroying`) from every host service — actions, resources,
+    /// `Destroying`) from every host service — resources, actions,
     /// subscriptions, surface readers, bus sessions, timers — then tears
-    /// the instance itself down and drops its slot. Shared by shutdown and
-    /// process loss so both release exactly the same state. Timers are
-    /// cancelled both before and after the teardown: a local `destroy`'s
-    /// queue drain can run `TIMER_SET` again (§6.11's exit item).
+    /// the instance itself down and drops its slot. Shared by shutdown,
+    /// per-instance teardown and process loss so all release exactly the
+    /// same state. Pending resource and stream operations end before
+    /// running jobs and relay calls fail (§7.6 "Loss identity" order).
+    /// Timers are cancelled both before and after the teardown: a local
+    /// `destroy`'s queue drain can run `TIMER_SET` again (§6.11's exit
+    /// item). Returns the controlled `destroy`'s result.
     pub(super) fn retire_instance(
         &self,
         id: PluginInstanceId,
         instance: Option<super::super::instance::PluginInstance>,
         teardown: Teardown,
-    ) {
-        self.action_instance_lost(id);
+    ) -> Result<(), HostError> {
         self.resource_state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(id);
+        self.action_instance_lost(id);
         self.state_subscriber_removed(id);
         if let Some(plugin_id) = self.plugin_id_of(id) {
             self.surface_reader_removed(&plugin_id);
             self.close_bus_sessions_for(&plugin_id);
         }
         self.timers.cancel_all(id);
+        let mut result = Ok(());
         if let Some(instance) = instance {
             match teardown {
-                Teardown::Destroy(grace) => {
-                    if let Err(error) = instance.destroy(grace) {
-                        tracing::warn!(?id, %error, "plugin did not destroy within its grace period");
-                    }
-                }
+                Teardown::Destroy(grace) => result = instance.destroy(grace),
                 Teardown::Abandon(grace) => instance.abandon(grace),
             }
             self.timers.cancel_all(id);
@@ -191,6 +203,7 @@ impl PluginHost {
             .unwrap_or_else(|poison| poison.into_inner())
             .remove(&id);
         self.instances_changed.notify_all();
+        result
     }
     /// Discovery's own entry point for a process exit (phase (d2)):
     /// detaches whatever session, if any, this registry still tracks for

@@ -90,28 +90,44 @@ pub fn discover_from_root(executable_root: &Path) -> Result<String, LazerVersion
     version_from_deps(&bytes)
 }
 
-pub fn process_executable_root(pid: u32) -> Result<PathBuf, LazerVersionError> {
+/// The target's executable directory as the target itself sees it, derived
+/// only from core's authorized attach facts (plugin-abi.md §6.2): the
+/// session's `pid` and the directory of its `SESSION_ATTACHED` `path`.
+/// No process handle, module enumeration or `/proc/<pid>/exe` query runs
+/// here (M5 R1); the plugin reads ordinary files under the returned path.
+///
+/// On Linux this is that directory below `/proc/<pid>/root`, so a
+/// sandboxed (Flatpak/AppImage) lazer's own filesystem view is read, as the
+/// 1.x `process_root` did. On Windows it is the directory itself, which is
+/// the main module's directory the 1.x loader-table lookup returned.
+/// An empty or relative directory (an absent `path` fact) is
+/// [`LazerVersionError::MissingProcessRoot`], never a cwd-relative read.
+pub fn process_executable_root(
+    pid: u32,
+    executable_dir: &Path,
+) -> Result<PathBuf, LazerVersionError> {
+    if !executable_dir.is_absolute() {
+        return Err(LazerVersionError::MissingProcessRoot);
+    }
     #[cfg(target_os = "linux")]
     {
-        vosu_sys::process::process_root(pid)
-            .map_err(|error| io::Error::other(error.to_string()).into())
+        let relative = executable_dir
+            .strip_prefix("/")
+            .map_err(|_| LazerVersionError::MissingProcessRoot)?;
+        Ok(Path::new("/proc")
+            .join(pid.to_string())
+            .join("root")
+            .join(relative))
     }
-    #[cfg(windows)]
+    #[cfg(not(target_os = "linux"))]
     {
-        let module = vosu_sys::process::enumerate_modules(pid)
-            .map_err(|error| io::Error::other(error.to_string()))?
-            .into_iter()
-            .next()
-            .ok_or(LazerVersionError::MissingProcessRoot)?;
-        PathBuf::from(module.path)
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or(LazerVersionError::MissingProcessRoot)
+        let _ = pid;
+        Ok(executable_dir.to_path_buf())
     }
 }
 
-pub fn discover_for_process(pid: u32) -> Result<String, LazerVersionError> {
-    discover_from_root(&process_executable_root(pid)?)
+pub fn discover_for_process(pid: u32, executable_dir: &Path) -> Result<String, LazerVersionError> {
+    discover_from_root(&process_executable_root(pid, executable_dir)?)
 }
 
 #[cfg(test)]
@@ -154,6 +170,62 @@ mod tests {
         )
         .unwrap();
         assert_eq!(discover_from_root(root.path()).unwrap(), "2026.518.0");
+    }
+
+    /// The executable root comes from the attach `path` directory and the
+    /// pid alone; on Linux it reads through the target's own root view.
+    #[test]
+    fn discovers_for_process_through_the_attach_path_fact() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("osu!.deps.json"),
+            br#"{"libraries":{"osu!/2026.711.0-lazer":{}}}"#,
+        )
+        .unwrap();
+        let pid = std::process::id();
+        let resolved = process_executable_root(pid, root.path()).unwrap();
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            resolved,
+            Path::new("/proc")
+                .join(pid.to_string())
+                .join("root")
+                .join(root.path().strip_prefix("/").unwrap())
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(resolved, root.path());
+        assert_eq!(
+            discover_for_process(pid, root.path()).unwrap(),
+            "2026.711.0"
+        );
+    }
+
+    /// Moved from `vosu-sys`'s deleted `root_for` test (M5 R1): an AppImage
+    /// mount directory resolves relative to the target's own `/proc` root.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolves_an_appimage_mount_relative_to_the_target_proc_root() {
+        assert_eq!(
+            process_executable_root(30, Path::new("/tmp/.mount_osu/usr/bin")).unwrap(),
+            Path::new("/proc/30/root/tmp/.mount_osu/usr/bin"),
+        );
+    }
+
+    /// Counterexample "executable-root fallback selects another
+    /// installation": an absent (empty) or relative `path` fact never
+    /// becomes a cwd-relative read.
+    #[test]
+    fn missing_or_relative_attach_path_is_missing_process_root() {
+        for dir in [Path::new(""), Path::new("osu"), Path::new("./lazer")] {
+            assert!(matches!(
+                process_executable_root(std::process::id(), dir),
+                Err(LazerVersionError::MissingProcessRoot)
+            ));
+            assert!(matches!(
+                discover_for_process(std::process::id(), dir),
+                Err(LazerVersionError::MissingProcessRoot)
+            ));
+        }
     }
 
     #[test]

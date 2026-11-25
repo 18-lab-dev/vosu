@@ -84,7 +84,7 @@ def needs_plugin_host_fixtures(package, test, lib):
 
 
 def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds,
-                            env=None, plugin_host_fixtures=False):
+                            env=None, plugin_host_fixtures=False, release_daemon=False):
     """The JSON config vm-test.ps1 reads via -ConfigPath.
 
     schtasks' own /TR value is capped at 261 characters, far too short for
@@ -96,7 +96,9 @@ def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, tim
     fixture path scripts/test-catalog-forge.py --windows-vm stages; the
     scheduled task does not inherit the SSH session's environment.
     `PluginHostFixtures` makes vm-test.ps1 build and stage the plugin-host
-    fixture libraries in the guest before the test run.
+    fixture libraries in the guest before the test run; `ReleaseDaemon`
+    also builds and stages the release daemon the `approval` module runs
+    (plugin-host-fixtures.py --release-daemon).
     """
     return {
         "WorkRoot": remote_dir,
@@ -107,7 +109,8 @@ def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, tim
         "Jobs": jobs,
         "TimeoutSeconds": timeout_seconds,
         "Env": dict(env or {}),
-        "PluginHostFixtures": plugin_host_fixtures,
+        "PluginHostFixtures": plugin_host_fixtures or release_daemon,
+        "ReleaseDaemon": release_daemon,
     }
 
 
@@ -389,6 +392,7 @@ def run(args):
             config = build_invocation_config(
                 remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout, parse_env(args.env),
                 plugin_host_fixtures=needs_plugin_host_fixtures(args.package, args.test, args.lib),
+                release_daemon=args.release_daemon,
             )
             config_path = local_tmp / "invocation.json"
             config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -479,6 +483,11 @@ def parse_args(argv):
         type=int,
         default=DEFAULT_JOBS,
         help=f"CARGO_BUILD_JOBS cap in the VM (default {DEFAULT_JOBS} of 16 vCPUs)",
+    )
+    parser.add_argument(
+        "--release-daemon",
+        action="store_true",
+        help="also build the release daemon (no test-harness) for the plugin_host_native approval module",
     )
     parser.add_argument(
         "--env",

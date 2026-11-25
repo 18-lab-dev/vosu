@@ -121,6 +121,49 @@ class StageAndEnvTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class ReleaseDaemonTests(unittest.TestCase):
+    def test_builds_the_packaged_release_feature_set_without_test_harness(self):
+        linux = fixtures.daemon_build_command("x86_64-unknown-linux-gnu")
+        self.assertEqual(linux, [
+            "cargo", "build", "--locked", "--release", "-p", "vosu", "--bin", "vosu", "--no-default-features",
+            "--features", "linux-process-events", "--target", "x86_64-unknown-linux-gnu",
+            "--message-format=json-render-diagnostics",
+        ])
+        windows = fixtures.daemon_build_command("x86_64-pc-windows-msvc")
+        self.assertNotIn("--features", windows)
+        for command in (linux, windows):
+            self.assertNotIn("test-harness", " ".join(command))
+
+    def test_takes_the_reported_executable(self):
+        record = json.dumps({
+            "reason": "compiler-artifact",
+            "target": {"name": "vosu", "kind": ["bin"], "crate_types": ["bin"]},
+            "filenames": ["C:\\t\\release\\vosu.exe", "C:\\t\\release\\vosu.pdb"],
+            "executable": "C:\\t\\release\\vosu.exe",
+        })
+        library = artifact("vosu", ["/t/release/libvosu.rlib"], kind="lib", crate_types=("lib",))
+        self.assertEqual(fixtures.select_executable("\n".join([library, record]), "vosu"),
+                         Path("C:\\t\\release\\vosu.exe"))
+        with self.assertRaises(fixtures.FixtureError):
+            fixtures.select_executable(library, "vosu")
+
+    def test_the_daemon_is_opt_in(self):
+        paths = {"VOSU_PLUGIN_HOST_TESTKIT_LIBRARY": Path("/s/a.so")}
+        daemon = {"VOSU_PLUGIN_APPROVAL_DAEMON": Path("/s/vosu")}
+        for argv, expected in [([], paths), (["--release-daemon"], {**paths, **daemon})]:
+            with unittest.mock.patch.object(fixtures, "prepare", return_value=dict(paths)), \
+                    unittest.mock.patch.object(fixtures, "prepare_daemon", return_value=daemon) as built, \
+                    unittest.mock.patch.dict(fixtures.os.environ), \
+                    unittest.mock.patch.object(fixtures.subprocess, "run") as run:
+                fixtures.os.environ.pop("VOSU_PLUGIN_APPROVAL_DAEMON", None)
+                run.return_value.returncode = 0
+                self.assertEqual(fixtures.main([*argv, "--", "cargo", "test"]), 0)
+            self.assertEqual(built.called, bool(argv))
+            environment = run.call_args.kwargs["env"]
+            self.assertEqual({name: environment.get(name) for name in [*paths, *daemon]},
+                             {name: str(expected[name]) if name in expected else None for name in [*paths, *daemon]})
+
+
 class PrimeImageTests(unittest.TestCase):
     def test_priming_is_windows_only(self):
         with unittest.mock.patch.object(fixtures.os, "name", "posix"):

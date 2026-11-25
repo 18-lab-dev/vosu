@@ -89,7 +89,28 @@ impl PluginHost {
     /// plugin" first-ever tie-break (`FocusCandidate::install_order`'s
     /// own doc comment) if instances are ever created concurrently; today
     /// there is no production caller that does.
+    ///
+    /// A `runtime = "process"` package is supervised (`supervision.rs`,
+    /// §7.6 "Restart"): this call is its initial load, a failure leaves it
+    /// `failed` until a manual restart, and a later loss restarts it with
+    /// backoff under the same `id` as a new generation.
     pub fn create_instance(
+        self: &Arc<Self>,
+        id: PluginInstanceId,
+        plugin: &LoadedPlugin,
+        data_dir: PathBuf,
+        concurrent_pool: Option<Arc<WorkerPool>>,
+    ) -> Result<(), HostError> {
+        if super::supervision::is_process(plugin) {
+            self.start_supervised(id, plugin, data_dir, concurrent_pool)
+        } else {
+            self.create_generation(id, plugin, data_dir, concurrent_pool)
+        }
+    }
+
+    /// Creates and publishes one generation of instance `id`: everything
+    /// [`Self::create_instance`] describes, without supervision.
+    pub(super) fn create_generation(
         self: &Arc<Self>,
         id: PluginInstanceId,
         plugin: &LoadedPlugin,

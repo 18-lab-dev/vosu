@@ -269,22 +269,46 @@ fn generator_command(path: &Path) -> Command {
     command
 }
 
+/// Creates one generator child process from a fully configured command.
+///
+/// The reader has no `vosu-sys` edge (M5 R1), so it cannot reach the
+/// process-wide creation gate (`vosu_sys::process_spawn`, plugin-abi.md
+/// §7.4) that keeps a plugin host's inheritable ring handles out of every
+/// other child. Whoever composes the generator injects that gated spawn
+/// (the bundled osu! plugin passes `vosu_sys::process_spawn::spawn_tokio`);
+/// the reader never calls `Command::spawn` itself.
+pub type SpawnCommand = fn(&mut Command) -> io::Result<tokio::process::Child>;
+
+/// `Command::output` through the injected `spawn`: standard input null,
+/// output and error captured, the wait outside the spawn and cancellable
+/// (dropping the child kills it, `generator_command`'s `kill_on_drop`).
 async fn output(
+    spawn: SpawnCommand,
     command: &mut Command,
     cancel: &CancellationToken,
 ) -> io::Result<std::process::Output> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if cancel.is_cancelled() {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+    }
+    let child = spawn(command)?;
     tokio::select! {
         _ = cancel.cancelled() => Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
-        result = vosu_sys::process_spawn::output_tokio(command) => result,
+        result = child.wait_with_output() => result,
     }
 }
 
 pub struct EmbeddedOffsetGenerator {
     cache_root: PathBuf,
+    spawn: SpawnCommand,
 }
 impl EmbeddedOffsetGenerator {
-    pub fn new(cache_root: PathBuf) -> Self {
-        Self { cache_root }
+    /// `spawn` creates the generator's child processes; see [`SpawnCommand`].
+    pub fn new(cache_root: PathBuf, spawn: SpawnCommand) -> Self {
+        Self { cache_root, spawn }
     }
 }
 impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
@@ -300,12 +324,13 @@ impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
             let cancel = cancel.child_token();
             let _cancel_on_drop = cancel.clone().drop_guard();
             let cache = self.cache_root.clone();
+            let spawn = self.spawn;
             let runtime = tokio::runtime::Handle::current();
             // Keep filesystem work, JSON merging, and temporary-directory
             // destruction off async workers, including every error/cancel path.
             // Child processes still use cancellation-aware asynchronous output.
             tokio::task::spawn_blocking(move || {
-                runtime.block_on(generate_offsets(cache, root, version, cancel))
+                runtime.block_on(generate_offsets(cache, root, version, spawn, cancel))
             })
             .await
             .map_err(io::Error::other)?
@@ -318,6 +343,7 @@ async fn generate_offsets(
     cache: PathBuf,
     root: PathBuf,
     version: String,
+    spawn: SpawnCommand,
     cancel: CancellationToken,
 ) -> io::Result<Bytes> {
     if cancel.is_cancelled() {
@@ -361,7 +387,7 @@ async fn generate_offsets(
         .arg(&template)
         .args(["--output"])
         .arg(&generated);
-    let result = output(&mut cmd, &cancel).await?;
+    let result = output(spawn, &mut cmd, &cancel).await?;
     if !result.status.success() {
         return Err(io::Error::other(format!(
             "assembly-only offset generator failed: {}",
@@ -371,7 +397,7 @@ async fn generate_offsets(
     let mut sig = generator_command(&staged.join(TARGET_HOST));
     sig.args(["--game-base-signature", "--assembly-dir"])
         .arg(&assembly);
-    let signature = output(&mut sig, &cancel).await?;
+    let signature = output(spawn, &mut sig, &cancel).await?;
     if !signature.status.success() {
         return Err(io::Error::other(format!(
             "owned target could not derive GameBaseVtable: {}",

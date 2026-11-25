@@ -118,6 +118,15 @@ fn prime_executable() {
 impl Host {
     /// A host whose logs and instance data live under `root`.
     pub fn new(root: &Path) -> Self {
+        Self::with_launcher(root, |launcher| launcher)
+    }
+
+    /// [`Self::new`] with the production launcher adjusted by `configure`,
+    /// for example to shorten its startup deadlines.
+    pub fn with_launcher(
+        root: &Path,
+        configure: impl FnOnce(ProcessHostLauncher) -> ProcessHostLauncher,
+    ) -> Self {
         prime_executable();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let host = {
@@ -142,7 +151,8 @@ impl Host {
             vosu::plugin_host::BUILD_IDENTITY,
         )
         .unwrap();
-        host.install_process_launcher(Arc::new(launcher)).unwrap();
+        host.install_process_launcher(Arc::new(configure(launcher)))
+            .unwrap();
         Self {
             host,
             runtime,
@@ -172,6 +182,12 @@ impl Host {
             self.data.join(id.to_string()),
             None,
         )
+    }
+
+    /// Enters this host's runtime, for calls that start core timers (an
+    /// action invocation's deadline).
+    pub fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
+        self.runtime.enter()
     }
 
     pub fn dispatch(&self, id: u64, message: &Message) -> Result<(), HostError> {

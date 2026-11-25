@@ -21,10 +21,14 @@
 //! `DESTROY`, waits up to its grace (5 s) for the OS exit, then kills and
 //! reaps the child.
 //!
-//! **Installation.** Production composition does not install this launcher
-//! yet: process plugins stay unavailable until the approval flow (A5.5, M5
-//! U0) gates them. Tests and fixtures install it through
-//! `PluginHost::install_process_launcher`.
+//! **Installation.** Production composition never installs this launcher
+//! directly: it starts a child only through
+//! [`ApprovalGate`](crate::plugin::approval::ApprovalGate), which checks the
+//! package's approval record on every load and restart (catalog-v2.md A5.5)
+//! and passes the *approved* library digest to [`ProcessHostLauncher::launch_approved`].
+//! The direct [`ProcessLauncher`] implementation, which hashes the library
+//! at launch, exists only for tests and fixtures
+//! (`PluginHost::install_process_launcher`).
 //!
 //! **`SYNC` execution (M5 B0).** A broker worker runs the host's own
 //! synchronous read-plan path through `PluginIngress::deliver`, exactly as
@@ -35,21 +39,31 @@ mod ingress;
 mod platform;
 mod supervision;
 
+use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{Init, decode};
 
 use super::control::{Create, StartupFailure, StartupStage};
 use crate::plugin::error::HostError;
-use crate::plugin::execution::{ProcessEndpoint, ProcessLaunch, ProcessLauncher};
+#[cfg(any(test, feature = "test-harness"))]
+use crate::plugin::execution::ProcessLauncher;
+use crate::plugin::execution::{ProcessEndpoint, ProcessLaunch};
 
 pub use platform::LaunchTarget;
 
-/// From spawn (Linux) or resume (Windows) to `READY` (A5.8).
+/// From spawn (Linux) or resume (Windows) to `READY` (A5.8), for a library
+/// whose digest already reached `READY` in this core run.
 pub const STARTUP_DEADLINE: Duration = Duration::from_secs(5);
+/// The startup deadline of a library digest's first start in this core run
+/// (§7.6 "First load"). Windows evaluates a never-seen image on its first
+/// load (Smart App Control, user-mode code integrity, an on-access scan);
+/// a 0.8 MB DLL took 0.5–1.1 s and a fresh 31 MB executable about 3 s in
+/// the VM, and larger or concurrent first loads take longer.
+pub const FIRST_LOAD_DEADLINE: Duration = Duration::from_secs(30);
 /// The `SYNC` read-plan budget sent in `CREATE`: the same 2-second budget
 /// the in-process read-plan path applies (`host::read_plans`).
 const SYNC_BUDGET_MS: u32 = 2_000;
@@ -60,6 +74,11 @@ pub struct ProcessHostLauncher {
     /// The last generation handed out; never reused while core runs.
     generation: AtomicU64,
     startup_deadline: Duration,
+    first_load_deadline: Duration,
+    /// Library digests that reached `READY` in this core run. Bounded by
+    /// the distinct approved library contents started, each of which
+    /// needed its own approval or install.
+    loaded: Mutex<HashSet<[u8; 32]>>,
 }
 
 impl std::fmt::Debug for ProcessHostLauncher {
@@ -91,24 +110,58 @@ impl ProcessHostLauncher {
         )?))
     }
 
+    /// Replaces both startup deadlines, so a native test can observe which
+    /// one a launch received without waiting the production durations.
+    #[cfg(feature = "test-harness")]
+    #[must_use]
+    pub fn with_deadlines(mut self, startup: Duration, first_load: Duration) -> Self {
+        self.startup_deadline = startup;
+        self.first_load_deadline = first_load;
+        self
+    }
+
     fn new(target: LaunchTarget) -> Self {
         Self {
             target,
             generation: AtomicU64::new(0),
             startup_deadline: STARTUP_DEADLINE,
+            first_load_deadline: FIRST_LOAD_DEADLINE,
+            loaded: Mutex::new(HashSet::new()),
         }
+    }
+
+    fn loaded(&self) -> std::sync::MutexGuard<'_, HashSet<[u8; 32]>> {
+        self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Starts one child for `launch` whose `CREATE` carries
+    /// `library_sha256`: the digest the user approved, which the child
+    /// verifies against the library object it opens (§7.6 "Startup" step
+    /// 6). Core never maps the library.
+    pub fn launch_approved(
+        &self,
+        launch: ProcessLaunch<'_>,
+        library_sha256: [u8; 32],
+    ) -> Result<Arc<dyn ProcessEndpoint>, HostError> {
+        let plugin = launch.manifest.id.clone();
+        self.launch_child(launch, library_sha256)
+            .map_err(|failure| {
+                tracing::warn!(%plugin, %failure, "plugin host did not start");
+                HostError::ProcessStartupFailed(failure)
+            })
     }
 
     fn launch_child(
         &self,
         launch: ProcessLaunch<'_>,
+        library_sha256: [u8; 32],
     ) -> Result<Arc<dyn ProcessEndpoint>, StartupFailure> {
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         let create = Create {
             generation,
             plugin_id: launch.manifest.id.clone(),
             library: launch.package.library().to_owned(),
-            library_sha256: library_digest(launch.package.library())?,
+            library_sha256,
             concurrent_dispatch: launch.manifest.concurrent_dispatch,
             sync_budget_ms: SYNC_BUDGET_MS,
             init: decode::<Init>(launch.init).map_err(|error| {
@@ -119,9 +172,14 @@ impl ProcessHostLauncher {
         .map_err(|error| {
             StartupFailure::new(StartupStage::Create, "init_too_large", error.to_string())
         })?;
+        let budget = if self.loaded().contains(&library_sha256) {
+            self.startup_deadline
+        } else {
+            self.first_load_deadline
+        };
         let started = self.target.spawn()?;
-        let deadline = Instant::now() + self.startup_deadline;
-        supervision::start(
+        let deadline = Instant::now() + budget;
+        let endpoint = supervision::start(
             started,
             supervision::Start {
                 generation,
@@ -132,23 +190,26 @@ impl ProcessHostLauncher {
                 loss: launch.loss,
                 sync_budget: Duration::from_millis(u64::from(SYNC_BUDGET_MS)),
             },
-        )
+        )?;
+        self.loaded().insert(library_sha256);
+        Ok(endpoint)
     }
 }
 
+/// Tests and fixtures start children without an approval record: the
+/// digest is the library's bytes at launch.
+#[cfg(any(test, feature = "test-harness"))]
 impl ProcessLauncher for ProcessHostLauncher {
     fn launch(&self, launch: ProcessLaunch<'_>) -> Result<Arc<dyn ProcessEndpoint>, HostError> {
-        let plugin = launch.manifest.id.clone();
-        self.launch_child(launch).map_err(|failure| {
-            tracing::warn!(%plugin, %failure, "plugin host did not start");
-            HostError::ProcessStartupFailed(failure.to_string())
-        })
+        let digest =
+            library_digest(launch.package.library()).map_err(HostError::ProcessStartupFailed)?;
+        self.launch_approved(launch, digest)
     }
 }
 
-/// The SHA-256 the child must find in the library it opens. Core reads the
-/// bytes only to hash them, never maps them.
-fn library_digest(path: &Path) -> Result<[u8; 32], StartupFailure> {
+/// The SHA-256 of the library at `path`. Core reads the bytes only to hash
+/// them, never maps them.
+pub(crate) fn library_digest(path: &Path) -> Result<[u8; 32], StartupFailure> {
     let failure = |error: std::io::Error| StartupFailure {
         stage: StartupStage::Library,
         code: "read_failed".to_owned(),

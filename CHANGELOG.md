@@ -119,7 +119,17 @@ All notable user-visible changes to vosu are documented here. Older sections are
   drops privileges (Linux) or runs inside a kill-on-close job (Windows)
   before loading the plugin, and loads only a library whose SHA-256 matches.
   A malformed or foreign command line exits at once without starting the
-  daemon. Process plugins are not yet loadable from the command line.
+  daemon.
+- Prerelease builds now accept `--plugin <dir>` for `runtime = "process"`
+  plugins. Such a plugin stays unloaded until you approve it in the
+  dashboard's new Plugins section (Tools page), which shows its id, folder,
+  manifest and library SHA-256, capabilities, and that it runs with your
+  account's rights. The approval covers exactly those bytes: a changed
+  library or manifest is refused on the next start or restart until you
+  approve it again. The section also lists each plugin's state (starting,
+  running, restarting, failed, stopped) with restart, stop and revoke. An
+  `in-process` request from `--plugin` is refused in release builds, and
+  stable releases still refuse `--plugin`.
 - Child processes the daemon starts now go through one creation path, so a
   plugin host's inherited channel handles never leak into other children on
   Windows.

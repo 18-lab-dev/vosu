@@ -13,6 +13,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use sha2::Digest as _;
 use vosu_plugin_api::{PluginManifest, Runtime, vosu_plugin_vtable};
 
 use super::error::HostError;
@@ -39,6 +40,7 @@ pub struct BundledPlugin<'a> {
 
 /// A manifest-validated package with its one granted [`Execution`],
 /// ready for `super::instance::PluginInstance::create`.
+#[derive(Clone)]
 pub struct LoadedPlugin {
     manifest: PluginManifest,
     origin: PackageOrigin,
@@ -205,27 +207,41 @@ pub fn load_bundled(
 }
 
 /// Loads one development package from `--plugin <dir>` (§7.1, the
-/// `--tool <dir>` analog, `src/tools/mod.rs::development_roots`). Release
-/// builds refuse every such package outright rather than silently
-/// downgrading it. A debug build (`debug_build` is `cfg!(debug_assertions)`
-/// at the call site) grants a `runtime = "in-process"` request the local
-/// development trust and loads its library here; a `runtime = "process"`
-/// request is validated identically but returned as a process package
-/// whose library core never maps.
+/// `--tool <dir>` analog, `src/tools/mod.rs::development_roots`), under the
+/// build policy of catalog-v2.md A5.5:
+///
+/// - **Debug** (`debug_build` is `cfg!(debug_assertions)` at the call
+///   site): a `runtime = "in-process"` request gets the documented
+///   developer exception and its library is loaded here.
+/// - **Prerelease release** (not debug, and `application_version`, the
+///   executable's own version, has a semver prerelease part): every
+///   package is `user` trust. An `in-process` request is refused with
+///   [`HostError::InProcessRefused`] before any asset is read; it is never
+///   rewritten to `process`.
+/// - **Stable release**: every package is refused with
+///   [`HostError::DevelopmentRefused`].
+///
+/// A `runtime = "process"` request is validated identically in every
+/// allowed build and returned as a process package whose library core
+/// never maps. It runs only after approval, which the launcher installed
+/// by composition enforces (`plugin::approval`).
 pub fn load_development(
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
     dir: &Path,
     debug_build: bool,
 ) -> Result<LoadedPlugin, HostError> {
-    if !debug_build {
-        return Err(HostError::InProcessRefused {
-            reason: "release builds trust only bundled and officially sourced plugins in-process; `--plugin <dir>` is refused",
-        });
+    if !debug_build && application_version.pre.is_empty() {
+        return Err(HostError::DevelopmentRefused);
     }
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
     let manifest = parse_plugin(&text, application_version, snapshot, "development", false)?;
-    load_package(manifest, dir, PackageOrigin::Development)
+    if !debug_build && manifest.runtime == Runtime::InProcess {
+        return Err(HostError::InProcessRefused {
+            reason: "a release build runs `--plugin` packages as user trust, which never grants in-process; request `runtime = \"process\"`",
+        });
+    }
+    load_package(manifest, &text, dir, PackageOrigin::Development)
 }
 
 /// Loads one catalog-installed plugin from its committed package directory
@@ -263,7 +279,7 @@ pub fn load_installed(
     if manifest.runtime != Runtime::InProcess {
         return Err(HostError::ProcessRuntimeUnavailable);
     }
-    load_package(manifest, dir, PackageOrigin::Installed { official })
+    load_package(manifest, &text, dir, PackageOrigin::Installed { official })
 }
 
 /// Reads one validated external package's confined assets and attaches its
@@ -272,6 +288,7 @@ pub fn load_installed(
 /// recorded.
 fn load_package(
     manifest: PluginManifest,
+    manifest_text: &str,
     dir: &Path,
     origin: PackageOrigin,
 ) -> Result<LoadedPlugin, HostError> {
@@ -315,13 +332,18 @@ fn load_package(
     let library_path = confined_asset(&root, &target.library)?;
     let execution = match manifest.runtime {
         // SAFETY: `library_path` is confined to a development directory the
-        // developer passed via the debug-only `--plugin <dir>` flag, or to a
-        // committed catalog package whose exact artifact current §7.1 policy
-        // just authorized for in-process execution (`load_installed` refuses
-        // every other runtime before this point); loading and running its
-        // code in-process is exactly the trust either tier accepts.
+        // developer passed via `--plugin <dir>` in a debug build (release
+        // builds refuse a development in-process request in
+        // `load_development`), or to a committed catalog package whose exact
+        // artifact current §7.1 policy just authorized for in-process
+        // execution (`load_installed` refuses every other runtime before this
+        // point); loading and running its code in-process is exactly the
+        // trust either tier accepts.
         Runtime::InProcess => Execution::Local(unsafe { descriptor::load_library(&library_path) }?),
-        Runtime::Process => Execution::Process(ProcessPackage::new(root, library_path)),
+        Runtime::Process => {
+            let manifest_sha256: [u8; 32] = sha2::Sha256::digest(manifest_text.as_bytes()).into();
+            Execution::Process(ProcessPackage::new(root, library_path, manifest_sha256))
+        }
     };
     Ok(LoadedPlugin {
         manifest,

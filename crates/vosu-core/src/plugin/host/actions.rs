@@ -37,6 +37,20 @@ impl Drop for PendingInvocation {
     }
 }
 
+/// A timed-out invocation of a `runtime = "process"` callee waiting out its
+/// cancellation grace (§7.6 A5.4). Dropping it cancels the grace timer.
+pub(super) struct Grace {
+    provider: PluginInstanceId,
+    timer: Option<tokio::task::JoinHandle<()>>,
+}
+impl Drop for Grace {
+    fn drop(&mut self) {
+        if let Some(task) = self.timer.take() {
+            task.abort();
+        }
+    }
+}
+
 pub(super) struct ActionGrant {
     action: String,
     version: semver::VersionReq,
@@ -48,6 +62,10 @@ pub(super) struct ActionState {
     pub grants: HashMap<PluginInstanceId, Vec<ActionGrant>>,
     pub pending: HashMap<InvocationId, PendingInvocation>,
     pub relays: HashMap<(PluginInstanceId, u64), Option<InvocationId>>,
+    /// Timed-out process invocations in their grace. Each came from a
+    /// pending invocation (at most `MAX_INVOCATIONS` at once) and lasts one
+    /// grace, or ends earlier with its callee's answer or loss.
+    pub graces: HashMap<InvocationId, Grace>,
     pub next_id: u64,
     pub policy: InvocationPolicy,
     pub cli_updates: Option<tokio::sync::watch::Sender<()>>,
@@ -329,7 +347,7 @@ impl PluginHost {
         let timer = self.state_runtime.spawn(async move {
             tokio::time::sleep(policy.deadline).await;
             if let Some(host) = weak.upgrade() {
-                host.finish_action(invocation, failure("timed_out", "Action deadline elapsed"));
+                host.action_deadline_expired(invocation, policy.grace);
             }
         });
         {
@@ -407,6 +425,95 @@ impl PluginHost {
         }
     }
 
+    /// The core action deadline elapsed: the invocation becomes
+    /// `timed_out`. When its callee is a `runtime = "process"` instance that
+    /// received it, core also sends `ACTION_CANCEL` and starts the
+    /// invocation's cancellation grace (§7.6 A5.4): an `ACTION_RESULT` for it
+    /// before the grace ends proves the instance responsive, and otherwise
+    /// [`Self::action_grace_expired`] kills it. The deadline and grace are
+    /// decided under one hold of `instances` then `action_state` (the host's
+    /// lock order), so no result can fall between them.
+    fn action_deadline_expired(&self, id: InvocationId, grace: std::time::Duration) {
+        let (pending, cancel) = {
+            let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(pending) = state.pending.remove(&id) else {
+                return;
+            };
+            let provider = pending.action.provider;
+            let process = matches!(
+                instances.get(&provider),
+                Some(InstanceSlot::Live(entry)) if entry.instance.is_process()
+            );
+            let cancel = (pending.dispatched && process).then_some(provider);
+            if cancel.is_some() {
+                state.graces.insert(
+                    id,
+                    Grace {
+                        provider,
+                        timer: None,
+                    },
+                );
+            }
+            (pending, cancel)
+        };
+        if let Some(sink) = &pending.sink {
+            sink.finish(failure("timed_out", "Action deadline elapsed"));
+        }
+        drop(pending);
+        let Some(provider) = cancel else {
+            return;
+        };
+        let weak = self.self_ref.clone();
+        let timer = self.state_runtime.spawn(async move {
+            tokio::time::sleep(grace).await;
+            if let Some(host) = weak.upgrade() {
+                host.action_grace_expired(id);
+            }
+        });
+        if let Some(entry) = self
+            .action_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .graces
+            .get_mut(&id)
+        {
+            entry.timer = Some(timer);
+        }
+        let _ = self.dispatch_to_instance(
+            provider,
+            &Message::ActionCancel(ActionCancel { invocation: id }),
+            0,
+        );
+    }
+
+    /// An invocation's grace ended unanswered: its callee is killed, one
+    /// loss (`action_grace_expired`) however many of its invocations were
+    /// in grace. The loss fails its other running jobs and relay calls
+    /// with `plugin_crashed`; timed-out and terminal jobs keep their state.
+    fn action_grace_expired(&self, id: InvocationId) {
+        let grace = self
+            .action_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .graces
+            .remove(&id);
+        let Some(mut grace) = grace else {
+            return;
+        };
+        // This task is the timer itself: nothing to abort.
+        grace.timer.take();
+        tracing::warn!(
+            invocation = id,
+            provider = ?grace.provider,
+            "a process action ignored its cancellation past the grace; killing the plugin host"
+        );
+        self.lose_process_instance(
+            grace.provider,
+            super::super::execution::LossCause::ActionGraceExpired,
+        );
+    }
+
     pub(super) fn handle_action_progress(
         &self,
         instance: PluginInstanceId,
@@ -443,6 +550,17 @@ impl PluginHost {
         let pending = {
             let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
             let Some(pending) = state.pending.get(&result.invocation) else {
+                // A late result for an invocation in its cancellation
+                // grace proves the callee responsive: no kill. It is
+                // discarded with the same status as in-process, and the
+                // job stays `timed_out`.
+                if state
+                    .graces
+                    .get(&result.invocation)
+                    .is_some_and(|grace| grace.provider == instance)
+                {
+                    state.graces.remove(&result.invocation);
+                }
                 return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
             };
             if pending.action.provider != instance {
@@ -491,6 +609,7 @@ impl PluginHost {
             state.descriptors.retain(|_, d| d.provider != instance);
             state.grants.remove(&instance);
             state.relays.retain(|(caller, _), _| *caller != instance);
+            state.graces.retain(|_, grace| grace.provider != instance);
             if let Some(updates) = &state.cli_updates {
                 updates.send_replace(());
             }

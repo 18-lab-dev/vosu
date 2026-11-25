@@ -80,7 +80,7 @@ impl Run {
 
 fn startup_stage(result: Result<(), HostError>) -> String {
     match result {
-        Err(HostError::ProcessStartupFailed(reason)) => reason,
+        Err(HostError::ProcessStartupFailed(failure)) => failure.to_string(),
         other => panic!("expected a startup failure, got {other:?}"),
     }
 }
@@ -228,8 +228,9 @@ fn support_fault_dispatch_crash_aborts_the_child_on_its_trigger() {
 }
 
 /// The real `std::process::abort` mode C0/X0 use to prove crash handling
-/// (on Windows, a fail-fast that Windows Error Reporting holds before the
-/// process exits). The bound covers that hold; the exit delay is recorded.
+/// (on Windows, a fail-fast that the plugin host's error mode keeps Windows
+/// Error Reporting from holding, plugin-abi.md §7.4). The exit delay is
+/// recorded.
 #[test]
 fn support_fault_dispatch_abort_really_aborts_the_child() {
     let run = Run::testkit("dispatch_abort", Some(FOCUS));

@@ -13,6 +13,13 @@
 //!   fault; required for those faults.
 //! - `read`: `<address>:<length>` read from each attached session
 //!   (default `0:8`).
+//! - `mode=services`: run the host-services plugin (`services.rs`, M5 I0)
+//!   instead of the fault fixture's attach; with `root` (the absolute
+//!   directory declared as the `files` root), `observer=1` (never identify
+//!   a session) and `stream` (the generated stream's byte size).
+//! - `spawn`: the argument vector, separated by U+001F, of a descendant
+//!   process `create` starts before anything else it does (M5 N0's
+//!   core-death trees). It writes a `descendant` receipt naming the child.
 //!
 //! Receipts are appended as one line each to `<probe>-<pid>` and, in order,
 //! to `journal-<pid>` in `dir`. A line is
@@ -35,15 +42,16 @@ const RELEASE_BOUND: Duration = Duration::from_secs(120);
 pub enum Fault {
     None,
     /// The load-time constructor ends the process abnormally
-    /// (`native::crash`: `SIGABRT`, or the fail-fast status on Windows).
+    /// (`native::crash`: the real `std::process::abort` on every platform).
     ConstructorCrash,
     /// `create` ends the process abnormally.
     CreateCrash,
     /// The triggering dispatch ends the process abnormally.
     DispatchCrash,
     /// The triggering dispatch calls the real `std::process::abort` on every
-    /// platform: on Windows a fail-fast that Windows Error Reporting holds
-    /// (the open C0 crash-classification item in verification.md).
+    /// platform, writing an `abort` receipt (C0's crash evidence: on
+    /// Windows a fail-fast the plugin host's error mode keeps Windows Error
+    /// Reporting from holding).
     DispatchAbort,
     /// The triggering dispatch waits for `release-<pid>`.
     DispatchBlock,
@@ -57,13 +65,28 @@ pub enum Fault {
     /// The triggering dispatch publishes a malformed frame into the plugin →
     /// host ring and wakes core.
     CorruptFrame,
+    /// `create` waits for `release-<pid>` before it returns (C0's startup
+    /// deadline evidence).
+    CreateBlock,
+    /// `create` starts a thread that waits for `release-<pid>` and then
+    /// sends `VOSU_OP_LOG_RECORD`s until one send stays blocked on a full
+    /// plugin → host ring (M5 N0: core death during a blocked write). A
+    /// watchdog writes `write_blocked` once a send has waited
+    /// [`WRITE_BLOCKED_AFTER`].
+    WriteBlock,
 }
 
+/// How long one send must wait for ring space before the
+/// [`Fault::WriteBlock`] watchdog reports it blocked. Far below the 2 s
+/// full-ring window after which the plugin host gives up on its own.
+pub const WRITE_BLOCKED_AFTER: Duration = Duration::from_millis(250);
+
 impl Fault {
-    pub const NAMES: [(&'static str, Self); 10] = [
+    pub const NAMES: [(&'static str, Self); 12] = [
         ("none", Self::None),
         ("constructor_crash", Self::ConstructorCrash),
         ("create_crash", Self::CreateCrash),
+        ("create_block", Self::CreateBlock),
         ("dispatch_crash", Self::DispatchCrash),
         ("dispatch_abort", Self::DispatchAbort),
         ("dispatch_block", Self::DispatchBlock),
@@ -71,6 +94,7 @@ impl Fault {
         ("destroy_ignored", Self::DestroyIgnored),
         ("ring_stall", Self::RingStall),
         ("corrupt_frame", Self::CorruptFrame),
+        ("write_block", Self::WriteBlock),
     ];
 
     fn parse(name: &str) -> Option<Self> {
@@ -101,6 +125,19 @@ pub struct Control {
     pub fault: Fault,
     pub trigger: Option<u32>,
     pub read: (u64, u32),
+    /// `mode=services`: the plugin exercises core's host services
+    /// (`crate::services`) instead of the fixture's read-plan attach.
+    pub services: bool,
+    /// `root`: the absolute directory a services-mode owner declares as its
+    /// `files` root for each session it identifies.
+    pub root: Option<PathBuf>,
+    /// `observer=1`: a services-mode plugin that never identifies a session
+    /// it is told about (a `vosu.sessions` subscriber).
+    pub observer: bool,
+    /// `stream`: the byte size of the generated stream resource.
+    pub stream: u64,
+    /// The descendant's argument vector (`spawn`), program first.
+    pub spawn: Option<Vec<String>>,
 }
 
 static CONTROL: OnceLock<Option<Control>> = OnceLock::new();
@@ -141,6 +178,11 @@ fn read_control(library: &Path) -> Option<Control> {
     let mut fault = Fault::None;
     let mut trigger = None;
     let mut read = (0, 8);
+    let mut services = false;
+    let mut root = None;
+    let mut observer = false;
+    let mut stream = 0;
+    let mut spawn = None;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let (key, value) = line.split_once('=')?;
         match key {
@@ -153,6 +195,17 @@ fn read_control(library: &Path) -> Option<Control> {
             "read" => {
                 let (address, length) = value.split_once(':')?;
                 read = (address.parse().ok()?, length.parse().ok()?);
+            }
+            "mode" if value == "services" => services = true,
+            "root" if Path::new(value).is_absolute() => root = Some(PathBuf::from(value)),
+            "observer" if value == "1" => observer = true,
+            "stream" => stream = value.parse().ok()?,
+            "spawn" => {
+                let argv: Vec<String> = value.split('\u{1f}').map(str::to_owned).collect();
+                if !Path::new(&argv[0]).is_absolute() {
+                    return None;
+                }
+                spawn = Some(argv);
             }
             // An unknown or malformed key is a test setup error: refuse
             // the whole control rather than run a different scenario.
@@ -168,6 +221,11 @@ fn read_control(library: &Path) -> Option<Control> {
         fault,
         trigger,
         read,
+        services,
+        root,
+        observer,
+        stream,
+        spawn,
     })
 }
 
@@ -185,15 +243,21 @@ impl Control {
 
     /// Waits for the test's `release-<pid>` barrier file. Returns whether it
     /// appeared within [`RELEASE_BOUND`].
+    pub fn wait_release(&self) -> bool {
+        self.wait_barrier("release")
+    }
+
+    /// Waits for the test's `<name>-<pid>` barrier file holding this run's
+    /// nonce. Returns whether it appeared within [`RELEASE_BOUND`].
     #[expect(
         clippy::disallowed_methods,
         reason = "a blocked fixture dispatch polls the test's barrier file until a bounded deadline; no other wake source crosses the process boundary"
     )]
-    pub fn wait_release(&self) -> bool {
-        let release = self.dir.join(format!("release-{}", std::process::id()));
+    pub fn wait_barrier(&self, name: &str) -> bool {
+        let barrier = self.dir.join(format!("{name}-{}", std::process::id()));
         let deadline = Instant::now() + RELEASE_BOUND;
         loop {
-            if std::fs::read_to_string(&release).is_ok_and(|text| text.trim() == self.nonce) {
+            if std::fs::read_to_string(&barrier).is_ok_and(|text| text.trim() == self.nonce) {
                 return true;
             }
             if Instant::now() >= deadline {

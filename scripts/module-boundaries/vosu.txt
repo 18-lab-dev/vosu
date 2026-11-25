@@ -1,4 +1,5 @@
 runtime -> counters
+runtime -> plugin_host
 runtime -> plugins
 runtime -> server
 runtime -> tools

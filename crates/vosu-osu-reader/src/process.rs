@@ -1,6 +1,6 @@
 //! Pointer-width managed-heap read layer over the object-safe
 //! `vosu_plugin_api::memory::ProcessMemory` boundary, plus AOB pattern
-//! scanning built on it.
+//! scanning through an injected [`ScanBackend`].
 //!
 //! This is the generic client-decoding layer shared by the stable and lazer
 //! readers: it knows the .NET/Mono managed-heap layouts (strings, arrays,
@@ -15,24 +15,26 @@ use vosu_plugin_api::memory::{
     BatchScanResult, ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion,
     Pattern, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
-use vosu_sys::process::scanner;
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
 const MAX_MANAGED_COLLECTION_LENGTH: usize = 1_000_000;
 const DOTNET_UNIX_EPOCH_TICKS: u64 = 621_355_968_000_000_000;
 const DOTNET_TICKS_PER_SECOND: u64 = 10_000_000;
 
-/// Injectable AOB-scan backend: when set on a [`ProcessHandle`], every
-/// `scan_*` method routes through it instead of `vosu-sys`'s generic region
-/// walk. `scan_all`/`scan_batch` must return results in the region walk's
-/// own order (ascending region, then ascending offset within a region; at
-/// most one hit per pattern for `scan_batch`) so `scan_all` and `scan_batch`
-/// observe identical results regardless of backend
+/// Injectable AOB-scan backend, the only way a [`ProcessHandle`] scans.
+///
+/// The reader never walks the target's regions itself (M5 R1): production
+/// scans are the host's authorized `VOSU_OP_SCAN_REQUEST` path
+/// (`vosu-osu`'s `PlanScanBackend`, plugin-abi.md §6.4), which core runs
+/// with its own region walk against the session it owns, in either plugin
+/// runtime. A handle built without one ([`ProcessHandle::new`]) refuses
+/// every `scan_*` call instead of falling back to a native walk.
+///
+/// `scan_all`/`scan_batch` must return results in core's region-walk order
+/// (ascending region, then ascending offset within a region; at most one
+/// hit per pattern for `scan_batch`), the order a `SCAN_RESULT` carries
 /// (`prop_scan_backend_matches_region_walk`). `scan_first` and
-/// `scan_first_valid` are derived from `scan_all` when a backend is set and
-/// can differ from the region walk's own `scan_first`/`scan_first_valid` in
-/// two cases documented on those methods: an empty pattern, and a region
-/// that becomes unreadable partway through.
+/// `scan_first_valid` are derived from `scan_all`.
 pub trait ScanBackend: Send + Sync {
     /// Every match, in ascending region order then ascending offset.
     fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError>;
@@ -59,6 +61,9 @@ impl fmt::Debug for ProcessHandle {
 }
 
 impl ProcessHandle {
+    /// A read-only handle: every `scan_*` method refuses with
+    /// [`MemoryError::Backend`] (operation `"scan"`), never walking
+    /// `memory`'s regions natively.
     #[must_use]
     pub fn new(memory: Arc<dyn ProcessMemory>, bitness: ProcessBitness) -> Self {
         Self {
@@ -68,8 +73,7 @@ impl ProcessHandle {
         }
     }
 
-    /// Like [`Self::new`], but every `scan_*` method routes through `scans`
-    /// instead of walking `memory`'s readable regions directly.
+    /// Like [`Self::new`], but every `scan_*` method routes through `scans`.
     #[must_use]
     pub fn with_scan_backend(
         memory: Arc<dyn ProcessMemory>,
@@ -587,68 +591,49 @@ impl ProcessHandle {
         })
     }
 
-    /// Returns the first match in region order, then ascending offset order
-    /// (`vosu_sys::process::scanner`'s region walk over this
-    /// handle's own `ProcessMemory` backend, or the injected `ScanBackend`
-    /// when one was given to [`Self::with_scan_backend`]).
-    ///
-    /// With a backend, this is `scan_all(pattern).next()`, which differs
-    /// from the region walk in one case the backend path cannot express:
-    /// an **empty pattern** has no `scan_all` matches, so this returns
-    /// `None`, where the walk returns the first readable region's address.
-    pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
-        match &self.scans {
-            Some(backend) => Ok(backend.scan_all(pattern)?.into_iter().next()),
-            None => scanner::scan_first(&*self.memory, pattern),
-        }
+    /// The injected scan backend, or the refusal a read-only handle gives.
+    fn scans(&self) -> Result<&dyn ScanBackend, MemoryError> {
+        self.scans.as_deref().ok_or_else(|| MemoryError::Backend {
+            operation: "scan",
+            message: "this process handle has no scan backend; scans go through the host's \
+                      authorized SCAN_REQUEST path"
+                .to_owned(),
+        })
     }
 
-    /// Scans candidates in address order and stops at the first candidate
-    /// accepted by `validate`.
-    ///
-    /// Without a backend this stops at the first accepted candidate without
-    /// materializing every match. With a backend, it instead validates every
-    /// `scan_all(pattern)` result in order, which differs from the region
-    /// walk in one case: a **region that becomes unreadable partway
-    /// through** can still have the walk accept a candidate `validate`
-    /// found in an earlier, readable window of that region before it ever
-    /// reaches the later, unreadable one; `scan_all` discards the whole
-    /// region once any window in it fails to read (`scanner.rs`'s
-    /// `scan_all`), so that same candidate is never offered to `validate`
-    /// here.
+    /// Returns the first match in region order, then ascending offset
+    /// order: `scan_all(pattern)`'s first address. An **empty pattern** has
+    /// no `scan_all` matches, so this returns `None`.
+    pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
+        Ok(self.scans()?.scan_all(pattern)?.into_iter().next())
+    }
+
+    /// Validates every `scan_all(pattern)` result in address order and
+    /// stops at the first candidate `validate` accepts. A region that
+    /// becomes unreadable partway through is discarded whole by core's
+    /// `scan_all`, so no candidate from it is offered to `validate`.
     pub fn scan_first_valid(
         &self,
         pattern: &Pattern,
         mut validate: impl FnMut(usize) -> Result<bool, MemoryError>,
     ) -> Result<Option<usize>, MemoryError> {
-        match &self.scans {
-            Some(backend) => {
-                for candidate in backend.scan_all(pattern)? {
-                    if validate(candidate)? {
-                        return Ok(Some(candidate));
-                    }
-                }
-                Ok(None)
+        for candidate in self.scans()?.scan_all(pattern)? {
+            if validate(candidate)? {
+                return Ok(Some(candidate));
             }
-            None => scanner::scan_first_valid(&*self.memory, pattern, validate),
         }
+        Ok(None)
     }
 
     /// Returns every match in region order, then ascending offset order.
     pub fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
-        match &self.scans {
-            Some(backend) => backend.scan_all(pattern),
-            None => scanner::scan_all(&*self.memory, pattern),
-        }
+        self.scans()?.scan_all(pattern)
     }
 
     /// Finds at most one match per pattern. Regions are traversed first and
     /// unresolved patterns are emitted in caller-index order within a region.
     pub fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
-        match &self.scans {
-            Some(backend) => backend.scan_batch(patterns),
-            None => scanner::scan_batch(&*self.memory, patterns),
-        }
+        self.scans()?.scan_batch(patterns)
     }
 }
 
@@ -710,6 +695,8 @@ fn corrupt(context: &'static str, address: usize, message: &'static str) -> Memo
     }
 }
 
+#[cfg(test)]
+pub(crate) mod test_scans;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

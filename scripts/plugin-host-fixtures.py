@@ -3,7 +3,7 @@
 test (`docs/testing/verification.md`, "M5 test and fixture conventions").
 
 Usage:
-    python scripts/plugin-host-fixtures.py [--target TRIPLE] [--env-file PATH] [-- COMMAND...]
+    python scripts/plugin-host-fixtures.py [--target TRIPLE] [--release-daemon] [--env-file PATH] [-- COMMAND...]
 
 Builds both `cdylib` examples with `--message-format=json-render-diagnostics`
 and takes each library path from its `compiler-artifact` record, never from a
@@ -14,15 +14,24 @@ the same example with other features (the workspace `--all-features
 SHA-256 is printed as an `ARTIFACT` receipt.
 
 The two staged paths are exported as VOSU_PLUGIN_HOST_TESTKIT_LIBRARY and
-VOSU_PLUGIN_HOST_OSU_LIBRARY:
+VOSU_PLUGIN_HOST_OSU_LIBRARY.
 
-- with `-- COMMAND...`, the command runs with both set and its exit code is
-  returned;
+`--release-daemon` also builds the real prerelease release daemon the
+`approval` module runs (catalog-v2.md A5.5): the packaged feature set
+(`--release --no-default-features`, plus `linux-process-events` on Linux),
+never `test-harness`, after preparing the offset-generator bundle a release
+build embeds (`scripts/prepare-offset-generator.py`, which needs the .NET
+SDK). Its executable is staged the same way and exported as
+VOSU_PLUGIN_APPROVAL_DAEMON.
+
+- with `-- COMMAND...`, the command runs with every variable set and its
+  exit code is returned;
 - with `--env-file PATH`, `NAME=VALUE` lines are appended to PATH (the
   `$GITHUB_ENV` format, which the local gates read too);
 - otherwise shell `export` lines are printed.
 
-The tests never run Cargo themselves; they fail when a variable is unset.
+The tests never run Cargo themselves; they fail when a library variable is
+unset.
 """
 
 from __future__ import annotations
@@ -96,11 +105,12 @@ def sha256(path):
 
 
 def stage(library):
-    """Copies `library` into its directory's fixture stage, returning the copy."""
+    """Copies `library` (or the release daemon) into its directory's fixture
+    stage, permission bits included, returning the copy."""
     staged = library.parent / STAGE_DIR / library.name
     staged.parent.mkdir(parents=True, exist_ok=True)
     temporary = staged.with_name(staged.name + ".tmp")
-    shutil.copyfile(library, temporary)
+    shutil.copy(library, temporary)
     os.replace(temporary, staged)
     return staged
 
@@ -158,18 +168,89 @@ def prepare(target=None, cargo="cargo"):
     return paths
 
 
+DAEMON_VARIABLE = "VOSU_PLUGIN_APPROVAL_DAEMON"
+
+
+def windows_target(target=None):
+    return "windows" in target if target else os.name == "nt"
+
+
+def daemon_build_command(target=None):
+    """The exact `cargo build` argv for the release daemon: the packaged
+    release feature set (.github/workflows/release.yml), no test-harness."""
+    command = ["cargo", "build", "--locked", "--release", "-p", "vosu", "--bin", "vosu", "--no-default-features"]
+    if not windows_target(target):
+        command += ["--features", "linux-process-events"]
+    if target:
+        command += ["--target", target]
+    command.append("--message-format=json-render-diagnostics")
+    return command
+
+
+def select_executable(stdout, name):
+    """The one executable Cargo reported for binary target `name`."""
+    found = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        record = json.loads(line)
+        if record.get("reason") != "compiler-artifact":
+            continue
+        target = record.get("target", {})
+        if target.get("name") != name or "bin" not in target.get("kind", []):
+            continue
+        if record.get("executable"):
+            found.append(record["executable"])
+    if len(found) != 1:
+        raise FixtureError(f"expected exactly one executable for {name}, Cargo reported {found}")
+    return Path(found[0])
+
+
+def prepare_daemon(target=None, cargo="cargo"):
+    """Builds and stages the release daemon; returns {variable: staged path}."""
+    rid = "win-x64" if windows_target(target) else "linux-x64"
+    offsets = [sys.executable, str(ROOT / "scripts/prepare-offset-generator.py"), "--rid", rid]
+    print(f"$ {shlex.join(offsets)}", file=sys.stderr, flush=True)
+    if subprocess.run(offsets, cwd=ROOT, stdout=sys.stderr, check=False).returncode != 0:
+        raise FixtureError("preparing the offset-generator bundle failed")
+    command = daemon_build_command(target)
+    command[0] = cargo
+    print(f"$ {shlex.join(command)}", file=sys.stderr, flush=True)
+    completed = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, text=True, check=False)
+    if completed.returncode != 0:
+        raise FixtureError(f"building the release daemon failed with exit {completed.returncode}")
+    staged = stage(select_executable(completed.stdout, "vosu"))
+    print(f"ARTIFACT name=vosu-release sha256={sha256(staged)} path={staged}", file=sys.stderr, flush=True)
+    # One run outside any test, so Windows evaluates the new image hash
+    # here and not inside a test's daemon startup.
+    started = time.monotonic()
+    version = subprocess.run([str(staged), "--version"], stdout=subprocess.PIPE, text=True, check=False, timeout=120)
+    if version.returncode != 0:
+        raise FixtureError(f"{staged} --version failed with exit {version.returncode}")
+    elapsed = (time.monotonic() - started) * 1000
+    print(f"PRIMED name=vosu-release version={version.stdout.strip()!r} first_run_ms={elapsed:.0f}",
+          file=sys.stderr, flush=True)
+    return {DAEMON_VARIABLE: staged}
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", help="cargo --target triple, matching the test build's own --target")
+    parser.add_argument("--release-daemon", action="store_true",
+                        help=f"also build and stage the release daemon as {DAEMON_VARIABLE}")
     parser.add_argument("--env-file", help="append NAME=VALUE lines to this file (the $GITHUB_ENV format)")
-    parser.add_argument("command", nargs="*", help="command to run with both variables set (after `--`)")
+    parser.add_argument("command", nargs="*", help="command to run with every variable set (after `--`)")
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    cargo = os.environ.get("CARGO", "cargo")
     try:
-        paths = prepare(args.target, os.environ.get("CARGO", "cargo"))
+        paths = prepare(args.target, cargo)
+        if args.release_daemon:
+            paths.update(prepare_daemon(args.target, cargo))
     except FixtureError as error:
         print(f"plugin-host-fixtures.py: {error}", file=sys.stderr)
         return 2

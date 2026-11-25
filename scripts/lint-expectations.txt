@@ -21,3 +21,4 @@ examples/plan_process_bench.rs disallowed_methods 1 benchmark-helper diagnostic 
 examples/process_event_bench.rs disallowed_methods 1 benchmark-helper benchmark spawns its own workload children; no plugin host exists in this process
 examples/process_event_lazer_bench.rs disallowed_methods 1 benchmark-helper benchmark spawns its own workload children; no plugin host exists in this process
 crates/vosu-plugin-testkit/examples/testkit_process_plugin/control.rs disallowed_methods 1 bounded-poll a blocked test-fixture dispatch in a plugin host polls the test's release-barrier file until a 120-second deadline
+crates/vosu-plugin-testkit/examples/testkit_process_plugin/tree.rs disallowed_methods 1 spawn-gate the test fixture is plugin code inside a plugin host, which made its ring handles non-inheritable before loading it (plugin-abi.md §7.4); it starts the N0 core-death trees' descendant, the daemon's gate has nothing to protect there

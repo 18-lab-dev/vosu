@@ -30,7 +30,6 @@ pub use linux::{
     LinuxProcessMemory, LinuxProcessMetadata, ModuleEntry, enumerate_modules, enumerate_processes,
     enumerate_processes_matching, is_process_alive, open_process, process_bitness,
     process_command_line, process_cwd, process_executable, process_metadata_matching, process_name,
-    process_root,
 };
 
 #[cfg(all(test, any(windows, target_os = "linux")))]

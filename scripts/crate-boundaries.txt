@@ -4,15 +4,17 @@
 # current extracted crates; a bare crate name with no edges still must be
 # listed so introducing a crate is a deliberate, reviewed change.
 #
-# Interim edges (section 2 "Allowed workspace dependencies" notes, kept only
-# until the named milestone):
-# - vosu-osu-reader -> vosu-sys: interim until M5, DC (re-dated from the
-#   original "until M1" by the A1b amendment: the 1.x readers keep reading
-#   `ProcessMemory`/`MemoryError`/`ReadStatus`/`ReadRequest`/scanner
-#   `Pattern` directly through all of M1, section 2 table, `vosu-osu-reader`
-#   row). M5's brokered-reads boundary is where this edge is removed: a
-#   plugin may run out of process from M5 on, so the reader must move onto
-#   `vosu-plugin-api`/`PlanMemory` instead of touching `vosu-sys` directly.
+# Removed interim edges (section 2 "Allowed workspace dependencies" notes);
+# check-crate-boundaries.py rejects a normal, build or optional
+# (feature-gated) edge from either crate to vosu-sys even if recorded here:
+# - vosu-osu-reader -> vosu-sys: removed by M5 R1 (DC). Reads go through
+#   `vosu_plugin_api::memory`/`PlanMemory`; every scan through an injected
+#   `ScanBackend` (the host's SCAN_REQUEST path; no region-walk fallback);
+#   the lazer executable root comes from the attach `path` fact; the offset
+#   cache publishes/reads through `vosu_net::publish`; and the offset
+#   generator's composer injects the gated `vosu_sys::process_spawn` spawn.
+#   The `vosu-osu-reader -> vosu-sys` line below is a dev-dependency only:
+#   unit tests compare against core's region walk and inject the real gate.
 # - vosu-osu-state -> vosu-sys: removed by M5 R0. The reducer's read types
 #   (`MemoryRead`, `ReadStatus`, `MemoryError`) now come from the
 #   platform-neutral `vosu_plugin_api::memory`, which `vosu-sys` implements
@@ -20,7 +22,8 @@
 # - vosu-osu-reader -> vosu-net: F7, DD/R5. The lazer offset generator
 #   moved from the root crate into `vosu-osu-reader` and still needs
 #   `vosu_net::{ZipLimits, extract_zip_atomic}` for hardened extraction of
-#   its embedded bundle; not interim, unlike the vosu-sys edges above.
+#   its embedded bundle, and (M5 R1) `vosu_net::publish` for the atomic
+#   offset-cache publish/read convention; not interim.
 vosu-sys
 vosu-sys -> vosu-plugin-api
 vosu-sys -> vosu-proptest
@@ -53,7 +56,7 @@ vosu-osu-calc -> vosu-pp
 vosu-osu-reader -> vosu-net
 vosu-osu-reader -> vosu-osu-model
 vosu-osu-reader -> vosu-plugin-api
-vosu-osu-reader -> vosu-sys
+vosu-osu-reader -> vosu-sys  # dev-dependency only (M5 R1, see above)
 vosu-osu-reader -> vosu-proptest
 
 vosu-osu-state -> vosu-osu-reader

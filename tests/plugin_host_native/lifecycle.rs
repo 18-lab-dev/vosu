@@ -76,8 +76,15 @@ impl Scenario {
     /// A `runtime = "process"` package of the fixture in `mode`, with a host
     /// whose launcher starts the real `vosu` executable under `identity`.
     fn process(name: &str, mode: Mode, identity: &str) -> Self {
+        Self::process_with(
+            name,
+            mode,
+            ProcessHostLauncher::with_executable(vosu(), identity).unwrap(),
+        )
+    }
+
+    fn process_with(name: &str, mode: Mode, launcher: ProcessHostLauncher) -> Self {
         let scenario = Self::package(name, mode, "process");
-        let launcher = ProcessHostLauncher::with_executable(vosu(), identity).unwrap();
         scenario
             .host
             .install_process_launcher(Arc::new(launcher))
@@ -269,7 +276,7 @@ fn wait_gone(identity: &Identity, bound: Duration) -> bool {
 
 fn startup_error(result: Result<(), HostError>) -> String {
     match result {
-        Err(HostError::ProcessStartupFailed(reason)) => reason,
+        Err(HostError::ProcessStartupFailed(failure)) => failure.to_string(),
         other => panic!("expected a startup failure, got {other:?}"),
     }
 }
@@ -451,7 +458,17 @@ fn lifecycle_startup_failures_name_their_stage_and_publish_nothing() {
 
 #[test]
 fn lifecycle_a_create_that_hangs_is_killed_at_the_startup_deadline() {
-    let scenario = Scenario::process("hang", Mode::CreateHangs, vosu::plugin_host::BUILD_IDENTITY);
+    // The compiled fixture is a never-seen library, whose first start gets
+    // the longer first-load deadline (`restart` proves that choice); this
+    // case pins both to the regular 5 s to observe the kill itself.
+    let deadline = vosu_core::plugin::process::launcher::STARTUP_DEADLINE;
+    let scenario = Scenario::process_with(
+        "hang",
+        Mode::CreateHangs,
+        ProcessHostLauncher::with_executable(vosu(), vosu::plugin_host::BUILD_IDENTITY)
+            .unwrap()
+            .with_deadlines(deadline, deadline),
+    );
     let started = Instant::now();
     let reason = startup_error(scenario.create());
     let elapsed = started.elapsed();

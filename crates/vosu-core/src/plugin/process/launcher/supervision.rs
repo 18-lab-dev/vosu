@@ -173,8 +173,9 @@ impl Shared {
         self.changed.notify_all();
     }
 
-    /// The reader's report of a channel or protocol failure.
-    fn channel_failed(&self, reason: &str) {
+    /// The reader's report of a channel or protocol failure, lost as
+    /// `cause` once published.
+    fn channel_failed(&self, reason: &str, cause: LossCause) {
         let report = {
             let mut state = lock(&self.state);
             match state.phase {
@@ -197,7 +198,7 @@ impl Shared {
         let _ = self.closer.close();
         self.kill();
         if report {
-            self.loss.report(LossCause::ChannelFailed);
+            self.loss.report(cause);
         }
     }
 
@@ -446,7 +447,12 @@ fn read_ring(shared: &Shared, mut receiver: Receiver, ingress: &Ingress) {
                 shared.drained();
                 break None;
             }
-            Err(error) => break Some(error.to_string()),
+            // One of core's own writes found no ring space for the whole
+            // backpressure window.
+            Err(error @ RecvError::Terminated(Termination::Stalled)) => {
+                break Some((error.to_string(), LossCause::Stalled));
+            }
+            Err(error) => break Some((error.to_string(), LossCause::ChannelFailed)),
         };
         let outcome = match header.opcode {
             control::ACK_NEXT => {
@@ -471,11 +477,11 @@ fn read_ring(shared: &Shared, mut receiver: Receiver, ingress: &Ingress) {
             }
         };
         if let Err(reason) = outcome {
-            break Some(reason);
+            break Some((reason, LossCause::ChannelFailed));
         }
     };
-    if let Some(reason) = failure {
-        shared.channel_failed(&reason);
+    if let Some((reason, cause)) = failure {
+        shared.channel_failed(&reason, cause);
     }
 }
 

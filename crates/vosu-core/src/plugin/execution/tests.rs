@@ -121,20 +121,64 @@ fn process_package_library_symlink_cannot_escape_the_package() {
     }
 }
 
+/// catalog-v2.md A5.5 "Builds": a stable release refuses every `--plugin`
+/// package, whatever its runtime.
 #[test]
-fn release_builds_still_refuse_process_development_packages() {
+fn stable_release_builds_refuse_every_development_package() {
+    let stable = semver::Version::parse("2.0.0").unwrap();
+    for runtime in ["process", "in-process"] {
+        let dir = tempfile::tempdir().unwrap();
+        write_development_package(
+            dir.path(),
+            "test.h0.release",
+            "h0-release",
+            runtime,
+            "plugin.bin",
+            NOT_A_LIBRARY,
+        )
+        .unwrap();
+        assert!(matches!(
+            load_development(&stable, &ValidationSnapshot::default(), dir.path(), false),
+            Err(HostError::DevelopmentRefused)
+        ));
+    }
+}
+
+/// A5.5: a prerelease release build loads a process package as user trust
+/// (its library never mapped, execution waits for approval) and refuses an
+/// in-process request instead of rewriting it, before touching its library.
+#[test]
+fn prerelease_release_builds_load_process_and_refuse_in_process() {
     let dir = tempfile::tempdir().unwrap();
     write_development_package(
         dir.path(),
-        "test.h0.release",
-        "h0-release",
+        "test.h0.prerelease",
+        "h0-prerelease",
         "process",
         "plugin.bin",
         NOT_A_LIBRARY,
     )
     .unwrap();
+    let loaded = load_dev(dir.path(), false).expect("a prerelease release loads process packages");
+    let Execution::Process(package) = loaded.execution() else {
+        panic!("a process request must stay a process package");
+    };
+    let manifest = std::fs::read(dir.path().join("manifest.toml")).unwrap();
+    let expected: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(&manifest).into();
+    assert_eq!(package.manifest_sha256(), &expected);
+
+    let in_process = tempfile::tempdir().unwrap();
+    write_development_package(
+        in_process.path(),
+        "test.h0.prerelease-local",
+        "h0-prerelease-local",
+        "in-process",
+        "plugin.bin",
+        NOT_A_LIBRARY,
+    )
+    .unwrap();
     assert!(matches!(
-        load_dev(dir.path(), false),
+        load_dev(in_process.path(), false),
         Err(HostError::InProcessRefused { .. })
     ));
 }

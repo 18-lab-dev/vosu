@@ -6,7 +6,7 @@ use std::{
 #[cfg(target_os = "linux")]
 use std::env;
 
-pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n       vosu logs [--follow] [-n N]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n  --tool <dir>   Load a trusted development tool (repeatable)\n  --plugin <dir> Load a trusted development plugin, debug builds only (repeatable)\n\nLogs:\n  --follow      Follow live daemon logs (Ctrl-C to stop)\n  -n N          Print the last N lines (default: 50)\n";
+pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n       vosu logs [--follow] [-n N]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n  --tool <dir>   Load a trusted development tool (repeatable)\n  --plugin <dir> Load a development plugin (repeatable; debug and prerelease builds).\n                 A process plugin runs only after you approve it on the dashboard\n\nLogs:\n  --follow      Follow live daemon logs (Ctrl-C to stop)\n  -n N          Print the last N lines (default: 50)\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CliCommand {

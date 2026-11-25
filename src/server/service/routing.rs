@@ -16,6 +16,15 @@ pub trait RouteExtension: Send + Sync {
     ) -> ProviderFuture<'static, Response>;
 }
 
+/// The dashboard's process-plugin management routes (catalog-v2.md A5.5
+/// "Management routes"), so this module does not depend on the runtime that
+/// owns the plugin host. Routing has already enforced the dashboard
+/// listener, dashboard-origin provenance and `X-Vosu-CSRF` for mutations.
+pub trait PluginManagementRoutes: Send + Sync {
+    fn handle(self: Arc<Self>, request: Request<Body>, body: Bytes)
+    -> ProviderFuture<'static, Response>;
+}
+
 #[derive(Clone)]
 pub struct ProductionRouteDelegate {
     services: ProductionServices,
@@ -23,6 +32,7 @@ pub struct ProductionRouteDelegate {
     connections: OverlayConnections,
     removed: RemovedNotices,
     tools: Option<Arc<dyn RouteExtension>>,
+    plugins: Option<Arc<dyn PluginManagementRoutes>>,
     catalog: Option<crate::server::catalog_api::CatalogApi>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
     surface: Option<SurfaceRouter>,
@@ -37,7 +47,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, catalog: None, api_v1: None, surface: None, #[cfg(feature = "test-harness")] adapter_capture: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, #[cfg(feature = "test-harness")] adapter_capture: None }
     }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
     pub fn removed_notices(&self) -> Vec<RemovedNotice> {
@@ -52,6 +62,10 @@ impl ProductionRouteDelegate {
     }
     pub fn with_tools(mut self, tools: Arc<dyn RouteExtension>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+    pub fn with_plugins(mut self, plugins: Arc<dyn PluginManagementRoutes>) -> Self {
+        self.plugins = Some(plugins);
         self
     }
     /// M6b H0 dashboard-only catalog management facade.
@@ -96,6 +110,10 @@ impl ProductionRouteDelegate {
             },
             Endpoint::ToolManagement => match &self.tools {
                 Some(tools) => Arc::clone(tools).dashboard(request, body).await,
+                None => not_found(),
+            },
+            Endpoint::PluginManagement => match &self.plugins {
+                Some(plugins) => Arc::clone(plugins).handle(request, body).await,
                 None => not_found(),
             },
             Endpoint::Catalog => match &self.catalog {
