@@ -38,848 +38,367 @@
 //!
 //! ## Variants
 //!
-//! - `direct`: the bench process reads the target over `process_vm_readv`
-//!   itself (`vosu::process::open_process`), as a 1.x / in-process plugin does.
-//! - `uds`: a forked, unprivileged "plugin host" child sends the whole encoded
-//!   plan to the parent ("core") over a `UnixStream` pair and gets back one
-//!   response frame with every stage's bytes; core executes the dependent
-//!   multi-stage chain locally, so this is one round trip per sample regardless
-//!   of stage count.
-//! - `shm`: identical protocol, transported over a `MAP_SHARED` region with two
-//!   `eventfd`s for request/response wakeups instead of a socket.
-//! - `naive`: the plugin host does the pointer chasing itself, issuing one
-//!   request/response round trip per individual read instruction (so 43 round
-//!   trips/sample for the precise plan) — the case the brokered plan message
-//!   exists to avoid.
+//! Every variant submits the same encoded plans and must return the same
+//! bytes: `result_sha256` must equal both `direct`'s and the hash the target
+//! computes over its own memory (`EXPECT` lines), or the run fails.
 //!
-//! Run with `taskset -c <idle-cpus>` so the bench and its forked children do not
-//! share cores with anything else; CPUs reserved for a VM should be excluded.
-//! Reproduce: `taskset -c 2-5 cargo bench --locked --bench brokered_reads_bench`.
+//! - `direct` (both OSes): this process reads the target natively itself
+//!   (`process_vm_readv` / `ReadProcessMemory`), as an in-process plugin does.
+//! - Linux prototypes, unchanged in protocol and method
+//!   (`support/brokered/prototype_linux.rs`): `uds` (socketpair), `shm`
+//!   (anonymous shared mapping plus two eventfds) and `naive` (one round trip
+//!   per read) fork a plugin-host child that times its own round trips.
+//! - P1 candidates (`support/brokered/candidate.rs`): a dedicated plugin-side
+//!   helper (this executable re-run with `--p1-child`) inherits only its
+//!   endpoint and submits one `READ_PLAN_SUBMIT` frame per sample; core serves
+//!   it and answers with one `READ_PLAN_RESULT` frame. Frames, frame-policy
+//!   admission, aligned receive buffers, one write per frame, no flush and
+//!   blocking waits are identical for every candidate; only the byte carrier
+//!   differs:
+//!   - `ring` (Linux) and `section` (Windows): T0's production ring
+//!     (`vosu_core::plugin::process::channel` over
+//!     `vosu_sys::plugin_process::RingObjects`: sealed memfd + eventfd, or an
+//!     unnamed section + auto-reset event per direction). `ring` is the Linux
+//!     reference for `section`.
+//!   - `pipe` (Windows): the measurement-only named pipe
+//!     (`support/brokered/pipe_windows.rs`).
+//!
+//! The production broker variants (`production_sync`, `production_async`)
+//! belong to M5's production arm (B0/E0) and are not implemented here.
+//!
+//! ## Metrics
+//!
+//! `METRIC {shape}_{variant}_{metric}=value` lines. Every variant prints
+//! `p50_ns`, `p99_ns`, `mean_ns` (fixed samples timed by the submitting side),
+//! `core_cpu_ns`, `plugin_cpu_ns`, `round_trips` (logical submissions per
+//! sample), `reads`, `bytes`, `wire_frames`, `control_frames` and
+//! `result_sha256`. `direct` and the candidates also print Criterion's median
+//! with its 95% interval (`criterion_median_ns`,
+//! `criterion_median_ci95_{low,high}_ns`), `wakeups` (context switches;
+//! see `support/brokered/os.rs`), `allocations`, `copies` and `clock_reads`
+//! (transport-internal), split by side where both sides work. Candidates are
+//! measured per side over measured loops only (timed samples and Criterion
+//! batches, never warm-up or Criterion's analysis); core over the whole
+//! session between `READY` and `DESTROYED`. `load_other_busy_cpus` is the
+//! busy CPU time of the run's CPUs (Linux: those in this process's affinity;
+//! Windows: the whole machine) not explained by core and helper, divided by
+//! wall time. Cold startup is `cold_{variant}_startup_{p50,p99}_ns`: helper
+//! spawn to core receiving its `READY`. `run_affinity` is checked equal in
+//! the target and every helper, and on Linux each helper's descriptors must
+//! be exactly stdio plus its endpoint.
+//!
+//! ## Arguments
+//!
+//! The runner is `harness = false` and takes no Criterion flags. Supported:
+//!
+//! - `--bench` (passed by `cargo bench`): full measurement. Without it the
+//!   runner is a quick correctness pass (20 warm-up, 200 samples, 3 cold
+//!   starts, no Criterion).
+//! - `--warmup N`, `--samples N`, `--startup-samples N`: override the counts
+//!   (defaults 200, 5,000 and 50).
+//! - `--criterion-ms N`: Criterion measurement time per case (default 3,000;
+//!   `0` disables Criterion).
+//! - `--round N`: a paired-round label; even rounds run the candidates in
+//!   reverse order.
+//!
+//! Anything else is an error. `--p1-child ...` is internal.
+//!
+//! ## Reproduce
+//!
+//! Build the target first (`cargo bench` does not build examples):
+//!
+//! ```sh
+//! cargo build --locked --release --example brokered_reads_target
+//! taskset -c 0-7,16-23 cargo bench --locked --bench brokered_reads_bench
+//! ```
+//!
+//! On Windows run the built executable directly under an explicit affinity
+//! launcher (children inherit it), e.g.
+//! `cmd /c start /b /wait /affinity FFFF target\release\deps\brokered_reads_bench-HASH.exe --bench`.
 
-#[cfg(target_os = "linux")]
-mod linux_impl {
-    use std::io::{Read, Write};
-    use std::os::fd::RawFd;
-    use std::os::unix::net::UnixStream;
-    use std::process::{Child, Command, Stdio};
-    use std::ptr;
-    use std::sync::Arc;
-    use std::time::Instant;
+#[cfg(any(target_os = "linux", windows))]
+#[path = "support/brokered/mod.rs"]
+mod brokered;
 
-    use vosu_plugin_api::memory::{MemoryError, ProcessMemory, ReadRequest};
-    use vosu_sys::process::open_process;
+#[cfg(any(target_os = "linux", windows))]
+#[global_allocator]
+static ALLOCATOR: brokered::os::CountingAllocator = brokered::os::CountingAllocator;
 
-    const SAMPLES: usize = 5_000;
-    const WARMUP: usize = 200;
+#[cfg(any(target_os = "linux", windows))]
+mod runner {
+    use std::path::Path;
+    use std::time::{Duration, Instant};
 
-    #[derive(Clone, Copy, Debug)]
-    enum Source {
-        Root,
-        Prev(usize, usize),
+    use super::brokered::candidate::{self, Candidate, Settings};
+    use super::brokered::os::{self, Usage};
+    use super::brokered::plans::{Plan, shapes};
+    use super::brokered::stats::{self, metric, percentiles};
+    use super::brokered::target::Target;
+    use super::brokered::wire::{execute_plan, sha256_hex};
+
+    /// The frozen D17 shapes: `(stages, reads, bytes)`.
+    const FROZEN: [(&str, usize, usize, usize); 2] =
+        [("precise", 8, 43, 358), ("regular", 5, 8, 116)];
+
+    struct Options {
+        bench: bool,
+        warmup: Option<usize>,
+        samples: Option<usize>,
+        startup_samples: Option<usize>,
+        criterion_ms: Option<u64>,
+        round: u32,
     }
 
-    #[derive(Clone, Copy, Debug)]
-    struct ReadOp {
-        source: Source,
-        offset: i64,
-        len: u32,
-        as_pointer: bool,
-    }
-
-    impl ReadOp {
-        const fn new(source: Source, offset: i64, len: u32, as_pointer: bool) -> Self {
-            Self {
-                source,
-                offset,
-                len,
-                as_pointer,
-            }
-        }
-    }
-
-    struct Plan {
-        stages: Vec<Vec<ReadOp>>,
-    }
-
-    impl Plan {
-        fn reads(&self) -> usize {
-            self.stages.iter().map(Vec::len).sum()
-        }
-
-        fn bytes(&self) -> usize {
-            self.stages.iter().flatten().map(|op| op.len as usize).sum()
-        }
-
-        /// Flattens stage/op order into the sequence a naive per-read caller would
-        /// issue, each tagged with its own `(stage, index)` so later ops can name it
-        /// as a dependency.
-        fn flattened(&self) -> Vec<((usize, usize), ReadOp)> {
-            self.stages
-                .iter()
-                .enumerate()
-                .flat_map(|(stage_index, stage)| {
-                    stage
-                        .iter()
-                        .enumerate()
-                        .map(move |(op_index, op)| ((stage_index, op_index), *op))
-                })
-                .collect()
-        }
-    }
-
-    /// Models `key_overlay`/`global_precise`'s pointer chain; see module doc.
-    fn precise_plan() -> Plan {
-        let overlay = ReadOp::new(Source::Root, 0, 8, true);
-        let controller = ReadOp::new(Source::Prev(0, 0), 0, 8, true);
-        let trigger_list = ReadOp::new(Source::Prev(1, 0), 0, 8, true);
-        let list_count = ReadOp::new(Source::Prev(2, 0), 0x10, 4, false);
-        let trigger_array = ReadOp::new(Source::Prev(2, 0), 8, 8, true);
-        let per_key_pointer = (0..18)
-            .map(|index| ReadOp::new(Source::Prev(3, 1), 0x10 + i64::from(index) * 8, 8, true))
-            .collect::<Vec<_>>();
-        let per_key_fields = (0..18)
-            .map(|index| ReadOp::new(Source::Prev(4, index), 0x14, 9, false))
-            .collect::<Vec<_>>();
-        let clock_source = ReadOp::new(Source::Root, 8, 8, true);
-        let clock_time = ReadOp::new(Source::Prev(6, 0), 0, 8, false);
-
-        Plan {
-            stages: vec![
-                vec![overlay],
-                vec![controller],
-                vec![trigger_list],
-                vec![list_count, trigger_array],
-                per_key_pointer,
-                per_key_fields,
-                vec![clock_source],
-                vec![clock_time],
-            ],
-        }
-    }
-
-    /// Models `capture_regular`'s fan-out across independent decoder calls; see
-    /// module doc.
-    fn regular_plan() -> Plan {
-        let beatmap = ReadOp::new(Source::Root, 0x40, 8, true);
-        let settings = ReadOp::new(Source::Root, 0x48, 8, true);
-        let menu = ReadOp::new(Source::Root, 0x50, 8, true);
-        let mp3 = ReadOp::new(Source::Root, 0x58, 8, true);
-        let beatmap_fields = ReadOp::new(Source::Prev(0, 0), 0x20, 8, false);
-        let settings_fields = ReadOp::new(Source::Prev(0, 1), 0x40, 64, false);
-        let menu_field = ReadOp::new(Source::Prev(0, 2), 0x10, 8, false);
-        let mp3_field = ReadOp::new(Source::Prev(0, 3), 8, 4, false);
-
-        Plan {
-            stages: vec![
-                vec![beatmap, settings, menu, mp3],
-                vec![beatmap_fields],
-                vec![settings_fields],
-                vec![menu_field],
-                vec![mp3_field],
-            ],
-        }
-    }
-
-    /// Executes every stage of `plan` against `process`, resolving `Source::Prev`
-    /// references from the previous stages' bytes. Each stage becomes exactly one
-    /// `read_many` call (one native batch / one `process_vm_readv`).
-    fn execute_plan(
-        process: &dyn ProcessMemory,
-        root: u64,
-        plan: &Plan,
-    ) -> Result<Vec<Vec<u8>>, MemoryError> {
-        let mut resolved: Vec<Vec<u64>> = Vec::with_capacity(plan.stages.len());
-        let mut all_bytes: Vec<Vec<u8>> = Vec::with_capacity(plan.reads());
-
-        for stage in &plan.stages {
-            let mut buffers: Vec<Vec<u8>> =
-                stage.iter().map(|op| vec![0u8; op.len as usize]).collect();
-            let addresses: Vec<u64> = stage
-                .iter()
-                .map(|op| {
-                    let base = match op.source {
-                        Source::Root => root,
-                        Source::Prev(stage_index, op_index) => resolved[stage_index][op_index],
-                    };
-                    base.wrapping_add_signed(op.offset)
-                })
-                .collect();
-            let mut requests: Vec<ReadRequest<'_>> = addresses
-                .iter()
-                .zip(buffers.iter_mut())
-                .map(|(address, buffer)| ReadRequest::new(*address as usize, buffer.as_mut_slice()))
-                .collect();
-            process.read_many(&mut requests)?;
-            drop(requests);
-
-            let mut pointers = Vec::with_capacity(stage.len());
-            for (op, buffer) in stage.iter().zip(&buffers) {
-                pointers.push(if op.as_pointer {
-                    u64::from_le_bytes(buffer[..8].try_into().expect("pointer read is 8 bytes"))
-                } else {
-                    0
-                });
-            }
-            resolved.push(pointers);
-            all_bytes.extend(buffers);
-        }
-        Ok(all_bytes)
-    }
-
-    fn validate(process: &dyn ProcessMemory, root: u64, plan: &Plan, is_precise: bool) {
-        let results = execute_plan(process, root, plan).expect("validate plan executes cleanly");
-        if is_precise {
-            let count = i32::from_le_bytes(results[3][..4].try_into().unwrap());
-            assert_eq!(count, 18, "precise plan trigger list count");
-            let time = f64::from_le_bytes(results[42][..8].try_into().unwrap());
-            assert_eq!(time, 321.5, "precise plan clock time");
-            for index in 0..18usize {
-                let field = &results[23 + index];
-                let value = i32::from_le_bytes(field[..4].try_into().unwrap());
-                assert_eq!(value, (index * 10) as i32, "precise plan per-key count");
-            }
-        } else {
-            let beatmap = i32::from_le_bytes(results[4][..4].try_into().unwrap());
-            assert_eq!(beatmap, 42, "regular plan beatmap field");
-            let mp3 = i32::from_le_bytes(results[7][..4].try_into().unwrap());
-            assert_eq!(mp3, 180_000, "regular plan mp3 length");
-        }
-    }
-
-    // --- Wire encoding (message-based: no pointer crosses the IPC boundary) ---
-
-    fn encode_plan(plan: &Plan) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend((plan.stages.len() as u32).to_le_bytes());
-        for stage in &plan.stages {
-            bytes.extend((stage.len() as u32).to_le_bytes());
-            for op in stage {
-                match op.source {
-                    Source::Root => {
-                        bytes.push(0);
-                        bytes.extend(0u32.to_le_bytes());
-                        bytes.extend(0u32.to_le_bytes());
-                    }
-                    Source::Prev(stage_index, op_index) => {
-                        bytes.push(1);
-                        bytes.extend((stage_index as u32).to_le_bytes());
-                        bytes.extend((op_index as u32).to_le_bytes());
-                    }
-                }
-                bytes.extend(op.offset.to_le_bytes());
-                bytes.extend(op.len.to_le_bytes());
-                bytes.push(u8::from(op.as_pointer));
-            }
-        }
-        bytes
-    }
-
-    fn decode_plan(bytes: &[u8]) -> Plan {
-        let mut cursor = 0usize;
-        let mut take = |len: usize| {
-            let slice = &bytes[cursor..cursor + len];
-            cursor += len;
-            slice
+    fn parse(args: &[String]) -> Options {
+        let mut options = Options {
+            bench: false,
+            warmup: None,
+            samples: None,
+            startup_samples: None,
+            criterion_ms: None,
+            round: 1,
         };
-        let stage_count = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
-        let mut stages = Vec::with_capacity(stage_count);
-        for _ in 0..stage_count {
-            let op_count = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
-            let mut ops = Vec::with_capacity(op_count);
-            for _ in 0..op_count {
-                let tag = take(1)[0];
-                let prev_stage = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
-                let prev_index = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
-                let offset = i64::from_le_bytes(take(8).try_into().unwrap());
-                let len = u32::from_le_bytes(take(4).try_into().unwrap());
-                let as_pointer = take(1)[0] != 0;
-                let source = if tag == 0 {
-                    Source::Root
-                } else {
-                    Source::Prev(prev_stage, prev_index)
-                };
-                ops.push(ReadOp::new(source, offset, len, as_pointer));
-            }
-            stages.push(ops);
-        }
-        Plan { stages }
-    }
-
-    fn write_frame(stream: &mut UnixStream, payload: &[u8]) {
-        stream
-            .write_all(&(payload.len() as u32).to_le_bytes())
-            .expect("write frame length");
-        stream.write_all(payload).expect("write frame payload");
-    }
-
-    fn read_frame(stream: &mut UnixStream) -> Vec<u8> {
-        let mut len_bytes = [0u8; 4];
-        stream
-            .read_exact(&mut len_bytes)
-            .expect("read frame length");
-        let len = u32::from_le_bytes(len_bytes) as usize;
-        let mut payload = vec![0u8; len];
-        stream.read_exact(&mut payload).expect("read frame payload");
-        payload
-    }
-
-    // --- CPU accounting ---
-
-    fn cpu_now() -> libc::rusage {
-        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        // SAFETY: `RUSAGE_SELF` with a correctly sized, zero-initialized out
-        // pointer is the documented `getrusage` contract; the kernel only writes
-        // through it.
-        let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-        assert_eq!(result, 0, "getrusage(RUSAGE_SELF) failed");
-        // SAFETY: getrusage succeeded, so every field is initialized.
-        unsafe { usage.assume_init() }
-    }
-
-    fn cpu_children() -> libc::rusage {
-        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        // SAFETY: same contract as `cpu_now`, with `RUSAGE_CHILDREN` aggregating
-        // every waited-for child; called only after `waitpid` reaps the child.
-        let result = unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr()) };
-        assert_eq!(result, 0, "getrusage(RUSAGE_CHILDREN) failed");
-        // SAFETY: getrusage succeeded, so every field is initialized.
-        unsafe { usage.assume_init() }
-    }
-
-    fn cpu_total_ns(usage: &libc::rusage) -> u128 {
-        let user =
-            usage.ru_utime.tv_sec as u128 * 1_000_000_000 + usage.ru_utime.tv_usec as u128 * 1_000;
-        let sys =
-            usage.ru_stime.tv_sec as u128 * 1_000_000_000 + usage.ru_stime.tv_usec as u128 * 1_000;
-        user + sys
-    }
-
-    // --- Percentiles ---
-
-    struct Percentiles {
-        p50_ns: f64,
-        p99_ns: f64,
-        mean_ns: f64,
-    }
-
-    fn percentiles(mut samples: Vec<u128>) -> Percentiles {
-        samples.sort_unstable();
-        let len = samples.len();
-        let p50 = samples[len / 2] as f64;
-        let p99 = samples[(len * 99 / 100).min(len - 1)] as f64;
-        let mean = samples.iter().sum::<u128>() as f64 / len as f64;
-        Percentiles {
-            p50_ns: p50,
-            p99_ns: p99,
-            mean_ns: mean,
-        }
-    }
-
-    struct Report {
-        variant: &'static str,
-        plan: &'static str,
-        reads: usize,
-        bytes: usize,
-        round_trips_per_sample: usize,
-        timing: Percentiles,
-        core_cpu_ns_per_sample: f64,
-        plugin_cpu_ns_per_sample: f64,
-    }
-
-    fn print_report(report: &Report) {
-        println!(
-            "METRIC {}_{}_p50_ns={:.1}",
-            report.plan, report.variant, report.timing.p50_ns
-        );
-        println!(
-            "METRIC {}_{}_p99_ns={:.1}",
-            report.plan, report.variant, report.timing.p99_ns
-        );
-        println!(
-            "METRIC {}_{}_mean_ns={:.1}",
-            report.plan, report.variant, report.timing.mean_ns
-        );
-        println!(
-            "METRIC {}_{}_core_cpu_ns={:.1}",
-            report.plan, report.variant, report.core_cpu_ns_per_sample
-        );
-        println!(
-            "METRIC {}_{}_plugin_cpu_ns={:.1}",
-            report.plan, report.variant, report.plugin_cpu_ns_per_sample
-        );
-        println!(
-            "METRIC {}_{}_round_trips={}",
-            report.plan, report.variant, report.round_trips_per_sample
-        );
-        println!(
-            "METRIC {}_{}_reads={}",
-            report.plan, report.variant, report.reads
-        );
-        println!(
-            "METRIC {}_{}_bytes={}",
-            report.plan, report.variant, report.bytes
-        );
-    }
-
-    // --- Synthetic target process ---
-
-    struct Target {
-        child: Child,
-        root: u64,
-        process: Arc<dyn ProcessMemory>,
-    }
-
-    /// `CARGO_BIN_EXE_<name>` only covers `[[bin]]` targets, not `[[example]]`;
-    /// this bench's own executable sits at `target/<profile>/deps/<hash>`, one
-    /// level below the examples directory, so the helper built by
-    /// `cargo build --release --locked --example brokered_reads_target` is found
-    /// relative to that.
-    fn target_binary_path() -> std::path::PathBuf {
-        let mut dir = std::env::current_exe()
-            .expect("locate this bench's own executable")
-            .parent()
-            .expect("bench executable has a parent directory")
-            .to_path_buf();
-        dir.pop();
-        dir.push("examples");
-        dir.push("brokered_reads_target");
-        assert!(
-            dir.is_file(),
-            "missing {dir:?}; run `cargo build --release --locked --example brokered_reads_target` first"
-        );
-        dir
-    }
-
-    impl Target {
-        fn spawn() -> Self {
-            let mut child = Command::new(target_binary_path())
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .expect("spawn synthetic target process");
-            let pid = child.id();
-            let mut stdout = child.stdout.take().expect("target stdout is piped");
-            let mut line = Vec::new();
-            let mut byte = [0u8; 1];
-            loop {
-                stdout.read_exact(&mut byte).expect("read target base line");
-                if byte[0] == b'\n' {
-                    break;
-                }
-                line.push(byte[0]);
-            }
-            let text = String::from_utf8(line).expect("target base line is UTF-8");
-            let hex = text
-                .strip_prefix("BASE ")
-                .expect("target reports BASE <hex>");
-            let root =
-                u64::from_str_radix(hex.trim_start_matches("0x"), 16).expect("parse base address");
-
-            let memory = open_process(pid).expect("open synthetic target via process_vm_readv");
-            Self {
-                child,
-                root,
-                process: Arc::new(memory),
+        let mut args = args.iter();
+        while let Some(arg) = args.next() {
+            let mut number = || -> u64 {
+                args.next()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_else(|| panic!("{arg} needs a non-negative integer"))
+            };
+            match arg.as_str() {
+                "--bench" => options.bench = true,
+                "--warmup" => options.warmup = Some(number() as usize),
+                "--samples" => options.samples = Some(number() as usize),
+                "--startup-samples" => options.startup_samples = Some(number() as usize),
+                "--criterion-ms" => options.criterion_ms = Some(number()),
+                "--round" => options.round = number() as u32,
+                other => panic!(
+                    "unsupported argument {other:?}; see benches/brokered_reads_bench.rs \
+                     (`--bench`, `--warmup`, `--samples`, `--startup-samples`, \
+                     `--criterion-ms`, `--round`)"
+                ),
             }
         }
+        options
     }
 
-    impl Drop for Target {
-        fn drop(&mut self) {
-            drop(self.child.stdin.take());
-            let _ = self.child.wait();
+    /// The direct variant: this process reads the target itself.
+    fn run_direct(target: &Target, shape: &str, plan: &Plan, settings: &Settings) -> String {
+        let prefix = format!("{shape}_direct");
+        let read = || {
+            execute_plan(target.process.as_ref(), target.root, plan).expect("direct read sample")
+        };
+        let response: Vec<u8> = read().into_iter().flatten().collect();
+        let sha = sha256_hex(&response);
+        assert_eq!(
+            sha,
+            target.expected_sha256(shape),
+            "{prefix}: native reads differ from the target's own bytes; run invalid"
+        );
+        for _ in 0..settings.warmup {
+            read();
         }
-    }
-
-    // --- Variant: direct in-process reads ---
-
-    fn run_direct(target: &Target, plan: &Plan) -> Percentiles {
-        for _ in 0..WARMUP {
-            execute_plan(target.process.as_ref(), target.root, plan).expect("warm up direct reads");
-        }
-        let mut samples = Vec::with_capacity(SAMPLES);
-        for _ in 0..SAMPLES {
+        let mut samples = Vec::with_capacity(settings.samples);
+        let usage = Usage::begin();
+        for _ in 0..settings.samples {
             let start = Instant::now();
-            execute_plan(target.process.as_ref(), target.root, plan).expect("direct read sample");
+            let result = read();
             samples.push(start.elapsed().as_nanos());
+            drop(result);
         }
-        percentiles(samples)
+        let usage = Usage::end().since(usage);
+        let per = |value: u64| value as f64 / settings.samples as f64;
+        stats::print_percentiles(&prefix, &percentiles(samples));
+        metric(
+            &prefix,
+            "core_cpu_ns",
+            format_args!("{:.1}", per(usage.cpu_ns)),
+        );
+        metric(&prefix, "plugin_cpu_ns", 0);
+        metric(&prefix, "round_trips", 0);
+        metric(&prefix, "native_batches", plan.stages.len());
+        metric(&prefix, "reads", plan.reads());
+        metric(&prefix, "bytes", plan.bytes());
+        metric(&prefix, "wire_frames", 0);
+        metric(&prefix, "control_frames", 0);
+        metric(
+            &prefix,
+            "wakeups",
+            format_args!("{:.2}", per(usage.context_switches)),
+        );
+        metric(
+            &prefix,
+            "allocations",
+            format_args!("{:.2}", per(usage.allocations)),
+        );
+        metric(&prefix, "copies", 0);
+        metric(&prefix, "clock_reads", 0);
+        metric(&prefix, "result_sha256", &sha);
+        sha
     }
 
-    // --- fork/exit helpers shared by the brokered variants ---
-
-    /// # Safety
-    /// Caller must fork before starting any extra threads in this process (true
-    /// for every call site below: the bench never spawns Rust threads) so the
-    /// child inherits a single-threaded, consistent runtime.
-    unsafe fn fork() -> i32 {
-        // SAFETY: documented by the function; no locks are held across the fork
-        // boundary because nothing here has started a second thread.
-        unsafe { libc::fork() }
-    }
-
-    fn waitpid(pid: i32) {
-        let mut status = 0i32;
-        // SAFETY: `pid` names a real child of this process from a prior `fork`.
-        let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-        assert_eq!(result, pid, "waitpid for forked plugin host");
-    }
-
-    // --- Variant: brokered over a Unix domain socket ---
-
-    fn run_uds(target: &Target, plan_bytes: &[u8]) -> (Percentiles, f64, f64) {
-        let (mut plugin_end, mut core_end) = UnixStream::pair().expect("create socketpair");
-        let self_cpu_before = cpu_now();
-        let children_cpu_before = cpu_children();
-
-        // SAFETY: see `fork`'s contract; this process has started no threads.
-        let pid = unsafe { fork() };
-        assert!(pid >= 0, "fork brokered-uds plugin host");
-        if pid == 0 {
-            drop(core_end);
-            for _ in 0..WARMUP {
-                write_frame(&mut plugin_end, plan_bytes);
-                read_frame(&mut plugin_end);
-            }
-            let mut samples = Vec::with_capacity(SAMPLES);
-            for _ in 0..SAMPLES {
-                let start = Instant::now();
-                write_frame(&mut plugin_end, plan_bytes);
-                read_frame(&mut plugin_end);
-                samples.push(start.elapsed().as_nanos());
-            }
-            let encoded = encode_percentiles(&percentiles(samples));
-            write_frame(&mut plugin_end, &encoded);
-            std::process::exit(0);
-        }
-
-        drop(plugin_end);
-        loop {
-            let request = read_frame(&mut core_end);
-            if request.len() == 24 {
-                // A 24-byte frame is the child's encoded percentiles, not a plan.
-                let summary = decode_percentiles(&request);
-                waitpid(pid);
-                let core_cpu = cpu_total_ns(&cpu_now()) - cpu_total_ns(&self_cpu_before);
-                let plugin_cpu = cpu_total_ns(&cpu_children()) - cpu_total_ns(&children_cpu_before);
-                return (
-                    summary,
-                    core_cpu as f64 / SAMPLES as f64,
-                    plugin_cpu as f64 / SAMPLES as f64,
-                );
-            }
-            let requested = decode_plan(&request);
-            let results = execute_plan(target.process.as_ref(), target.root, &requested)
-                .expect("core executes brokered plan");
-            let response: Vec<u8> = results.into_iter().flatten().collect();
-            write_frame(&mut core_end, &response);
+    /// Criterion for `direct`, after every forking variant has finished
+    /// (Criterion's analysis may start threads).
+    fn criterion_direct(target: &Target, output: &Path, measurement: Duration) {
+        let mut criterion = stats::criterion(output, measurement);
+        for (shape, plan) in shapes() {
+            let id = format!("{shape}_direct");
+            criterion.bench_function(&id, |bencher| {
+                bencher.iter(|| {
+                    execute_plan(target.process.as_ref(), target.root, &plan)
+                        .expect("direct read sample")
+                });
+            });
+            stats::print_criterion(&id, &stats::criterion_median(output, &id));
         }
     }
 
-    fn encode_percentiles(percentiles: &Percentiles) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(24);
-        bytes.extend(percentiles.p50_ns.to_le_bytes());
-        bytes.extend(percentiles.p99_ns.to_le_bytes());
-        bytes.extend(percentiles.mean_ns.to_le_bytes());
-        bytes
-    }
+    #[cfg(target_os = "linux")]
+    fn run_prototypes(
+        target: &Target,
+        shape: &str,
+        plan: &Plan,
+        settings: &Settings,
+        direct: &str,
+    ) {
+        use super::brokered::prototype_linux::{run_naive, run_shm, run_uds};
+        use super::brokered::wire::encode_plan;
 
-    fn decode_percentiles(bytes: &[u8]) -> Percentiles {
-        Percentiles {
-            p50_ns: f64::from_le_bytes(bytes[0..8].try_into().unwrap()),
-            p99_ns: f64::from_le_bytes(bytes[8..16].try_into().unwrap()),
-            mean_ns: f64::from_le_bytes(bytes[16..24].try_into().unwrap()),
-        }
-    }
-
-    // --- Variant: brokered over shared memory with eventfd wakeups ---
-
-    const SHM_SLOT_BYTES: usize = 64 * 1024;
-
-    struct SharedRegion {
-        pointer: *mut u8,
-    }
-
-    // SAFETY: the region is only ever accessed strictly alternately by the two
-    // processes sharing it (request write -> signal -> response write -> signal),
-    // enforced by the eventfd read/write syscalls below, so no two accesses race.
-    unsafe impl Send for SharedRegion {}
-    // SAFETY: see the comment above; the same strict-alternation protocol rules
-    // out any concurrent access this `Sync` impl would otherwise have to justify.
-    unsafe impl Sync for SharedRegion {}
-
-    impl SharedRegion {
-        fn new() -> Self {
-            // SAFETY: `MAP_SHARED | MAP_ANONYMOUS` with a null address, no fd, and
-            // a non-zero length is the documented contract for a mapping that
-            // stays shared and valid across a later `fork`.
-            let pointer = unsafe {
-                libc::mmap(
-                    ptr::null_mut(),
-                    SHM_SLOT_BYTES * 2,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_SHARED | libc::MAP_ANONYMOUS,
-                    -1,
-                    0,
-                )
-            };
-            assert_ne!(pointer, libc::MAP_FAILED, "mmap shared region");
-            Self {
-                pointer: pointer.cast(),
-            }
-        }
-
-        fn write_slot(&self, slot: usize, payload: &[u8]) {
-            assert!(
-                payload.len() + 4 <= SHM_SLOT_BYTES,
-                "payload fits in shm slot"
-            );
-            // SAFETY: `slot` is 0 or 1 (request/response), each slot is
-            // `SHM_SLOT_BYTES` and the mapping covers two slots; the eventfd
-            // protocol guarantees the other side is not reading this slot now.
-            unsafe {
-                let base = self.pointer.add(slot * SHM_SLOT_BYTES);
-                ptr::copy_nonoverlapping((payload.len() as u32).to_le_bytes().as_ptr(), base, 4);
-                ptr::copy_nonoverlapping(payload.as_ptr(), base.add(4), payload.len());
-            }
-        }
-
-        fn read_slot(&self, slot: usize) -> Vec<u8> {
-            // SAFETY: same slot/protocol contract as `write_slot`.
-            unsafe {
-                let base = self.pointer.add(slot * SHM_SLOT_BYTES);
-                let mut len_bytes = [0u8; 4];
-                ptr::copy_nonoverlapping(base, len_bytes.as_mut_ptr(), 4);
-                let len = u32::from_le_bytes(len_bytes) as usize;
-                let mut payload = vec![0u8; len];
-                ptr::copy_nonoverlapping(base.add(4), payload.as_mut_ptr(), len);
-                payload
-            }
-        }
-    }
-
-    fn eventfd_new() -> RawFd {
-        // SAFETY: `eventfd(0, 0)` with no special flags is always valid; the
-        // returned fd is owned by the caller and inherited across `fork`.
-        let fd = unsafe { libc::eventfd(0, 0) };
-        assert!(fd >= 0, "create eventfd");
-        fd
-    }
-
-    fn eventfd_signal(fd: RawFd) {
-        let value: u64 = 1;
-        // SAFETY: `fd` is a live eventfd and `value` is an 8-byte buffer, the
-        // exact write contract eventfd documents.
-        let result = unsafe { libc::write(fd, (&raw const value).cast(), 8) };
-        assert_eq!(result, 8, "signal eventfd");
-    }
-
-    fn eventfd_wait(fd: RawFd) {
-        let mut value: u64 = 0;
-        // SAFETY: `fd` is a live eventfd and `value` is an 8-byte buffer, the
-        // exact read contract eventfd documents; it blocks until signaled.
-        let result = unsafe { libc::read(fd, (&raw mut value).cast(), 8) };
-        assert_eq!(result, 8, "wait on eventfd");
-    }
-
-    fn run_shm(target: &Target, plan_bytes: &[u8]) -> (Percentiles, f64, f64) {
-        let region = SharedRegion::new();
-        let request_ready = eventfd_new();
-        let response_ready = eventfd_new();
-        let (mut plugin_summary, mut core_summary) =
-            UnixStream::pair().expect("create summary pipe");
-        let self_cpu_before = cpu_now();
-        let children_cpu_before = cpu_children();
-
-        // SAFETY: see `fork`'s contract; this process has started no threads.
-        let pid = unsafe { fork() };
-        assert!(pid >= 0, "fork brokered-shm plugin host");
-        if pid == 0 {
-            drop(core_summary);
-            for _ in 0..WARMUP {
-                region.write_slot(0, plan_bytes);
-                eventfd_signal(request_ready);
-                eventfd_wait(response_ready);
-                region.read_slot(1);
-            }
-            let mut samples = Vec::with_capacity(SAMPLES);
-            for _ in 0..SAMPLES {
-                let start = Instant::now();
-                region.write_slot(0, plan_bytes);
-                eventfd_signal(request_ready);
-                eventfd_wait(response_ready);
-                region.read_slot(1);
-                samples.push(start.elapsed().as_nanos());
-            }
-            let encoded = encode_percentiles(&percentiles(samples));
-            write_frame(&mut plugin_summary, &encoded);
-            std::process::exit(0);
-        }
-
-        drop(plugin_summary);
-        for _ in 0..WARMUP + SAMPLES {
-            eventfd_wait(request_ready);
-            let requested = decode_plan(&region.read_slot(0));
-            let results = execute_plan(target.process.as_ref(), target.root, &requested)
-                .expect("core executes brokered shm plan");
-            let response: Vec<u8> = results.into_iter().flatten().collect();
-            region.write_slot(1, &response);
-            eventfd_signal(response_ready);
-        }
-        let summary = decode_percentiles(&read_frame(&mut core_summary));
-        waitpid(pid);
-        let core_cpu = cpu_total_ns(&cpu_now()) - cpu_total_ns(&self_cpu_before);
-        let plugin_cpu = cpu_total_ns(&cpu_children()) - cpu_total_ns(&children_cpu_before);
-        (
-            summary,
-            core_cpu as f64 / SAMPLES as f64,
-            plugin_cpu as f64 / SAMPLES as f64,
-        )
-    }
-
-    // --- Variant: naive per-read RPC (no plan batching) ---
-
-    fn run_naive(target: &Target, plan: &Plan) -> (Percentiles, f64, f64) {
-        let flattened = plan.flattened();
-        let (mut plugin_end, mut core_end) = UnixStream::pair().expect("create socketpair");
-        let self_cpu_before = cpu_now();
-        let children_cpu_before = cpu_children();
-
-        // SAFETY: see `fork`'s contract; this process has started no threads.
-        let pid = unsafe { fork() };
-        assert!(pid >= 0, "fork naive-per-read plugin host");
-        if pid == 0 {
-            drop(core_end);
-            let run_once = |plugin_end: &mut UnixStream| {
-                let mut resolved: std::collections::HashMap<(usize, usize), u64> =
-                    std::collections::HashMap::new();
-                for (key, op) in &flattened {
-                    let base = match op.source {
-                        Source::Root => 0u64,
-                        Source::Prev(stage, index) => resolved[&(stage, index)],
-                    };
-                    let mut request = Vec::with_capacity(13);
-                    request.push(u8::from(matches!(op.source, Source::Root)));
-                    request.extend(base.to_le_bytes());
-                    request.extend(op.offset.to_le_bytes());
-                    request.extend(op.len.to_le_bytes());
-                    write_frame(plugin_end, &request);
-                    let response = read_frame(plugin_end);
-                    if op.as_pointer {
-                        resolved
-                            .insert(*key, u64::from_le_bytes(response[..8].try_into().unwrap()));
-                    }
-                }
-            };
-            for _ in 0..WARMUP {
-                run_once(&mut plugin_end);
-            }
-            let mut samples = Vec::with_capacity(SAMPLES);
-            for _ in 0..SAMPLES {
-                let start = Instant::now();
-                run_once(&mut plugin_end);
-                samples.push(start.elapsed().as_nanos());
-            }
-            let encoded = encode_percentiles(&percentiles(samples));
-            write_frame(&mut plugin_end, &encoded);
-            std::process::exit(0);
-        }
-
-        drop(plugin_end);
-        loop {
-            let request = read_frame(&mut core_end);
-            if request.len() == 24 {
-                let summary = decode_percentiles(&request);
-                waitpid(pid);
-                let core_cpu = cpu_total_ns(&cpu_now()) - cpu_total_ns(&self_cpu_before);
-                let plugin_cpu = cpu_total_ns(&cpu_children()) - cpu_total_ns(&children_cpu_before);
-                return (
-                    summary,
-                    core_cpu as f64 / SAMPLES as f64,
-                    plugin_cpu as f64 / SAMPLES as f64,
-                );
-            }
-            let is_root = request[0] != 0;
-            let base = u64::from_le_bytes(request[1..9].try_into().unwrap());
-            let offset = i64::from_le_bytes(request[9..17].try_into().unwrap());
-            let len = u32::from_le_bytes(request[17..21].try_into().unwrap());
-            let root_or_base = if is_root { target.root } else { base };
-            let address = root_or_base.wrapping_add_signed(offset) as usize;
-            let mut buffer = vec![0u8; len as usize];
-            target
-                .process
-                .read_exact(address, &mut buffer)
-                .expect("core executes naive single read");
-            write_frame(&mut core_end, &buffer);
-        }
-    }
-
-    fn run_plan(target: &Target, plan_name: &'static str, plan: &Plan, is_precise: bool) {
-        validate(target.process.as_ref(), target.root, plan, is_precise);
         let plan_bytes = encode_plan(plan);
-
-        let direct = run_direct(target, plan);
-        print_report(&Report {
-            variant: "direct",
-            plan: plan_name,
-            reads: plan.reads(),
-            bytes: plan.bytes(),
-            round_trips_per_sample: plan.stages.len(),
-            timing: direct,
-            core_cpu_ns_per_sample: 0.0,
-            plugin_cpu_ns_per_sample: 0.0,
-        });
-
-        let (uds, uds_core_cpu, uds_plugin_cpu) = run_uds(target, &plan_bytes);
-        print_report(&Report {
-            variant: "uds",
-            plan: plan_name,
-            reads: plan.reads(),
-            bytes: plan.bytes(),
-            round_trips_per_sample: 1,
-            timing: uds,
-            core_cpu_ns_per_sample: uds_core_cpu,
-            plugin_cpu_ns_per_sample: uds_plugin_cpu,
-        });
-
-        let (shm, shm_core_cpu, shm_plugin_cpu) = run_shm(target, &plan_bytes);
-        print_report(&Report {
-            variant: "shm",
-            plan: plan_name,
-            reads: plan.reads(),
-            bytes: plan.bytes(),
-            round_trips_per_sample: 1,
-            timing: shm,
-            core_cpu_ns_per_sample: shm_core_cpu,
-            plugin_cpu_ns_per_sample: shm_plugin_cpu,
-        });
-
-        let (naive, naive_core_cpu, naive_plugin_cpu) = run_naive(target, plan);
-        print_report(&Report {
-            variant: "naive",
-            plan: plan_name,
-            reads: plan.reads(),
-            bytes: plan.bytes(),
-            round_trips_per_sample: plan.reads(),
-            timing: naive,
-            core_cpu_ns_per_sample: naive_core_cpu,
-            plugin_cpu_ns_per_sample: naive_plugin_cpu,
-        });
+        let (warmup, samples) = (settings.warmup, settings.samples);
+        let outcomes = [
+            ("uds", 1, run_uds(target, &plan_bytes, warmup, samples)),
+            ("shm", 1, run_shm(target, &plan_bytes, warmup, samples)),
+            (
+                "naive",
+                plan.reads(),
+                run_naive(target, plan, warmup, samples),
+            ),
+        ];
+        for (variant, round_trips, outcome) in outcomes {
+            let prefix = format!("{shape}_{variant}");
+            let sha = sha256_hex(&outcome.first_response);
+            assert_eq!(
+                sha, direct,
+                "{prefix}: response differs from direct; run invalid"
+            );
+            stats::print_percentiles(&prefix, &outcome.timing);
+            metric(
+                &prefix,
+                "core_cpu_ns",
+                format_args!("{:.1}", outcome.core_cpu_ns),
+            );
+            metric(
+                &prefix,
+                "plugin_cpu_ns",
+                format_args!("{:.1}", outcome.plugin_cpu_ns),
+            );
+            metric(&prefix, "round_trips", round_trips);
+            metric(&prefix, "reads", plan.reads());
+            metric(&prefix, "bytes", plan.bytes());
+            metric(&prefix, "wire_frames", 2 * round_trips);
+            metric(&prefix, "control_frames", 0);
+            metric(&prefix, "result_sha256", sha);
+        }
     }
 
-    pub(crate) fn run() {
+    #[cfg(windows)]
+    fn run_prototypes(_: &Target, _: &str, _: &Plan, _: &Settings, _: &str) {}
+
+    pub fn run(args: &[String]) {
+        let options = parse(args);
+        let output = tempfile::tempdir().expect("Criterion and summary directory");
+        let criterion_ms = options
+            .criterion_ms
+            .unwrap_or(if options.bench { 3_000 } else { 0 });
+        let settings = Settings {
+            warmup: options
+                .warmup
+                .unwrap_or(if options.bench { 200 } else { 20 }),
+            samples: options
+                .samples
+                .unwrap_or(if options.bench { 5_000 } else { 200 }),
+            startup_samples: options
+                .startup_samples
+                .unwrap_or(if options.bench { 50 } else { 3 }),
+            criterion: (criterion_ms > 0).then(|| Duration::from_millis(criterion_ms)),
+            output: output.path().to_path_buf(),
+        };
+        assert!(
+            settings.samples > 0 && settings.startup_samples > 0,
+            "counts must be nonzero"
+        );
+        let reverse = options.round.is_multiple_of(2);
+        let own_cpus = os::own_affinity();
+        println!(
+            "METRIC run_mode={}",
+            if options.bench { "bench" } else { "test" }
+        );
+        println!("METRIC run_round={}", options.round);
+        println!("METRIC run_os={}", std::env::consts::OS);
+        println!("METRIC run_affinity={}", os::cpu_list(&own_cpus));
+        println!(
+            "METRIC run_candidate_order={}",
+            Candidate::all(reverse)
+                .iter()
+                .map(|candidate| candidate.name())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
         let target = Target::spawn();
-        run_plan(&target, "precise", &precise_plan(), true);
-        run_plan(&target, "regular", &regular_plan(), false);
+        assert_eq!(
+            os::child_affinity(&target.child),
+            own_cpus,
+            "target affinity differs from the runner's"
+        );
+        for (shape, plan) in shapes() {
+            let frozen = FROZEN
+                .iter()
+                .find(|frozen| frozen.0 == shape)
+                .expect("frozen shape");
+            assert_eq!(
+                (plan.stages.len(), plan.reads(), plan.bytes()),
+                (frozen.1, frozen.2, frozen.3),
+                "{shape} plan shape is frozen by the D17 contract"
+            );
+            let direct = run_direct(&target, shape, &plan, &settings);
+            run_prototypes(&target, shape, &plan, &settings, &direct);
+            for candidate in Candidate::all(reverse) {
+                candidate::run_session(candidate, shape, &plan, &target, &settings, &direct);
+            }
+        }
+        for candidate in Candidate::all(reverse) {
+            let startup = candidate::run_startup(candidate, settings.startup_samples);
+            let prefix = format!("cold_{}", candidate.name());
+            metric(
+                &prefix,
+                "startup_p50_ns",
+                format_args!("{:.1}", startup.p50_ns),
+            );
+            metric(
+                &prefix,
+                "startup_p99_ns",
+                format_args!("{:.1}", startup.p99_ns),
+            );
+            metric(&prefix, "startup_samples", settings.startup_samples);
+        }
+        if let Some(measurement) = settings.criterion {
+            criterion_direct(&target, output.path(), measurement);
+        }
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 fn main() {
-    linux_impl::run();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--p1-child") {
+        brokered::candidate::child_main(&args);
+    } else {
+        runner::run(&args);
+    }
 }
 
-/// The brokered-reads IPC transport (`fork`, `eventfd`, Unix domain sockets,
-/// `process_vm_readv`) is Linux-only; this bench is a no-op stub elsewhere.
-#[cfg(not(target_os = "linux"))]
+/// The brokered-reads transports are Linux and Windows only.
+#[cfg(not(any(target_os = "linux", windows)))]
 fn main() {}
