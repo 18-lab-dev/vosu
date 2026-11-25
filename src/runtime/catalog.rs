@@ -16,7 +16,7 @@
 //! I0 never overwrites a directory it did not install, and its transaction
 //! names (`.stage-*`, `.vosu-backup-*`) differ from the legacy installers'.
 use super::*;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, atomic::AtomicU64};
 use vosu_core::{
     catalog::{
         install::{
