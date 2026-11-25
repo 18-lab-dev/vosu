@@ -4,7 +4,9 @@
 //! plugin side reports its figures to core in its summary file.
 //!
 //! - **CPU**: Linux `getrusage(RUSAGE_SELF)` user+system; Windows
-//!   `GetProcessTimes` kernel+user.
+//!   `GetProcessTimes` kernel+user, which Windows charges by clock-tick
+//!   sampling, so Windows also reports exact executed cycles
+//!   (`QueryProcessCycleTime`).
 //! - **Context switches** (the `wakeups` metric): Linux voluntary switches
 //!   (`ru_nvcsw`, one per blocking wait that actually slept); Windows the sum
 //!   of the process's threads' `ContextSwitches`
@@ -58,29 +60,38 @@ pub fn allocations() -> u64 {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Usage {
     pub cpu_ns: u64,
+    /// Windows `QueryProcessCycleTime` (exact executed cycles, unlike the
+    /// tick-sampled `GetProcessTimes`); always 0 on Linux.
+    pub cpu_cycles: u64,
     pub context_switches: u64,
     pub allocations: u64,
 }
 
 impl Usage {
-    /// Takes the expensive OS readings first and the allocation count last,
-    /// so any allocation the readings make falls before the window.
+    /// Opens a window: the context-switch reading (which allocates and,
+    /// on Windows, costs a system-wide query) first, then CPU, then the
+    /// allocation count, so none of the readings' own work lands inside.
     pub fn begin() -> Self {
-        let (cpu_ns, context_switches) = platform::cpu_and_switches();
+        let context_switches = platform::context_switches();
+        let cpu_ns = platform::cpu_ns();
+        let cpu_cycles = platform::cpu_cycles();
         Self {
             cpu_ns,
+            cpu_cycles,
             context_switches,
             allocations: allocations(),
         }
     }
 
-    /// The mirror of [`begin`](Self::begin): allocation count first.
+    /// Closes a window, mirroring [`begin`](Self::begin).
     pub fn end() -> Self {
         let allocations = allocations();
-        let (cpu_ns, context_switches) = platform::cpu_and_switches();
+        let cpu_cycles = platform::cpu_cycles();
+        let cpu_ns = platform::cpu_ns();
         Self {
             cpu_ns,
-            context_switches,
+            cpu_cycles,
+            context_switches: platform::context_switches(),
             allocations,
         }
     }
@@ -88,6 +99,7 @@ impl Usage {
     pub fn since(self, earlier: Self) -> Self {
         Self {
             cpu_ns: self.cpu_ns.saturating_sub(earlier.cpu_ns),
+            cpu_cycles: self.cpu_cycles.saturating_sub(earlier.cpu_cycles),
             context_switches: self
                 .context_switches
                 .saturating_sub(earlier.context_switches),
@@ -97,6 +109,7 @@ impl Usage {
 
     pub fn add(&mut self, delta: Self) {
         self.cpu_ns += delta.cpu_ns;
+        self.cpu_cycles += delta.cpu_cycles;
         self.context_switches += delta.context_switches;
         self.allocations += delta.allocations;
     }
@@ -141,19 +154,28 @@ pub fn cpu_list(cpus: &[usize]) -> String {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    pub fn cpu_and_switches() -> (u64, u64) {
+    fn rusage() -> libc::rusage {
         let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
         // SAFETY: `RUSAGE_SELF` with a correctly sized, zero-initialized out
         // pointer is `getrusage`'s documented contract.
         let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
         assert_eq!(result, 0, "getrusage(RUSAGE_SELF) failed");
         // SAFETY: getrusage succeeded, so every field is initialized.
-        let usage = unsafe { usage.assume_init() };
+        unsafe { usage.assume_init() }
+    }
+
+    pub fn cpu_ns() -> u64 {
+        let usage = rusage();
         let micros = |time: libc::timeval| time.tv_sec as u64 * 1_000_000 + time.tv_usec as u64;
-        (
-            (micros(usage.ru_utime) + micros(usage.ru_stime)) * 1_000,
-            usage.ru_nvcsw as u64,
-        )
+        (micros(usage.ru_utime) + micros(usage.ru_stime)) * 1_000
+    }
+
+    pub fn cpu_cycles() -> u64 {
+        0
+    }
+
+    pub fn context_switches() -> u64 {
+        rusage().ru_nvcsw as u64
     }
 
     pub fn host_busy_ns(cpus: &[usize]) -> u64 {
@@ -221,28 +243,36 @@ mod platform {
         GetSystemTimes,
     };
     use windows_sys::Win32::System::WindowsProgramming::{
-        SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION,
+        QueryProcessCycleTime, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION,
     };
 
     fn hundreds_ns(time: FILETIME) -> u64 {
         (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
     }
 
-    pub fn cpu_and_switches() -> (u64, u64) {
+    pub fn cpu_ns() -> u64 {
         let mut times = [FILETIME::default(); 4];
         let [creation, exit, kernel, user] = &mut times;
         // SAFETY: the pseudo-handle names this process; all four out pointers
         // are valid, writable `FILETIME`s.
         let ok = unsafe { GetProcessTimes(GetCurrentProcess(), creation, exit, kernel, user) };
         assert_ne!(ok, 0, "GetProcessTimes");
-        let cpu_ns = (hundreds_ns(times[2]) + hundreds_ns(times[3])) * 100;
-        (cpu_ns, own_context_switches())
+        (hundreds_ns(times[2]) + hundreds_ns(times[3])) * 100
+    }
+
+    pub fn cpu_cycles() -> u64 {
+        let mut cycles = 0u64;
+        // SAFETY: the pseudo-handle names this process; `cycles` is a valid
+        // out pointer.
+        let ok = unsafe { QueryProcessCycleTime(GetCurrentProcess(), &mut cycles) };
+        assert_ne!(ok, 0, "QueryProcessCycleTime");
+        cycles
     }
 
     /// The sum of this process's threads' `ContextSwitches`
     /// (`SYSTEM_THREAD_INFORMATION`'s third reserved word in `winternl.h`,
     /// named `ContextSwitches` in the documented `ntddk` layout).
-    fn own_context_switches() -> u64 {
+    pub fn context_switches() -> u64 {
         // SAFETY: no preconditions.
         let pid = unsafe { GetCurrentProcessId() } as usize;
         let mut capacity = 1 << 20;

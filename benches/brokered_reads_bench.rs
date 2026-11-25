@@ -214,6 +214,13 @@ mod runner {
             "core_cpu_ns",
             format_args!("{:.1}", per(usage.cpu_ns)),
         );
+        if cfg!(windows) {
+            metric(
+                &prefix,
+                "core_cpu_cycles",
+                format_args!("{:.0}", per(usage.cpu_cycles)),
+            );
+        }
         metric(&prefix, "plugin_cpu_ns", 0);
         metric(&prefix, "round_trips", 0);
         metric(&prefix, "native_batches", plan.stages.len());

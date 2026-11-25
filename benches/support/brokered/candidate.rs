@@ -345,6 +345,18 @@ pub fn run_session(
         "plugin_cpu_ns",
         format_args!("{:.1}", per(summary.number("loop_cpu_ns"), loops)),
     );
+    if cfg!(windows) {
+        metric(
+            &prefix,
+            "core_cpu_cycles",
+            format_args!("{:.0}", per(core.cpu_cycles, served)),
+        );
+        metric(
+            &prefix,
+            "plugin_cpu_cycles",
+            format_args!("{:.0}", per(summary.number("loop_cpu_cycles"), loops)),
+        );
+    }
     metric(&prefix, "round_trips", served / submissions);
     metric(&prefix, "reads", plan.reads());
     metric(&prefix, "bytes", plan.bytes());
@@ -684,6 +696,7 @@ pub fn child_main(args: &[String]) {
     line("submissions", &client.submissions);
     line("loop_round_trips", &client.measured_round_trips);
     line("loop_cpu_ns", &client.measured.cpu_ns);
+    line("loop_cpu_cycles", &client.measured.cpu_cycles);
     line("loop_switches", &client.measured.context_switches);
     line("loop_allocations", &client.measured.allocations);
     line("loop_copies", &client.measured_transport.copies);
