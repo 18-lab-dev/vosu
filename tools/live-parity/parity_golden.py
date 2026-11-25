@@ -598,8 +598,9 @@ class _Platform:
         self.cbor_texts: list[str] = []
         self.cbor_blobs: list[bytes] = []
 
-    def text(self, value: str, family: str, part: str | None, used: set[str]) -> str:
-        value, count = self.rewriter.text(value)
+    def text(self, value: str, family: str, part: str | None, used: set[str], *,
+             request_line: bool = False) -> str:
+        value, count = (self.rewriter.request_line if request_line else self.rewriter.text)(value)
         if count:
             used.add("root-prefix")
         if part is not None:
@@ -621,7 +622,7 @@ class _Platform:
                 replaced, rules = self.validators.request_value(name.strip(), stripped)
                 line = f"{name}:{value.replace(stripped, replaced, 1)}" if stripped else line
                 validators |= rules
-            lines[index] = self.text(line, case["family"], None, used)
+            lines[index] = self.text(line, case["family"], None, used, request_line=not index)
         if case["conditional"] is not None:
             rule = f"header-{case['conditional']}"
             if rule not in validators:

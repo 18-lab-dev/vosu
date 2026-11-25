@@ -144,9 +144,13 @@ future evidence, not a claim that the targets or subcommands exist yet.
 # L1 tooling exit, at the integrated head. VOSU_GOLDEN_HARNESS_BUILD=1 lets the real-daemon
 # golden-capture test build HEAD's harness vosu from the clean tree (never a prebuilt one);
 # without it that test skips and says so. Its daemons discover osu! processes, so it fails
-# while one is visible: run it in a private PID namespace with its own /proc.
-VOSU_GOLDEN_HARNESS_BUILD=1 unshare --user --map-current-user --pid --fork --mount-proc -- \
-    python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
+# while one is visible: run it in a private PID namespace with its own /proc. The rest of the
+# suite runs on the host: its build and git trust tests need the real owners of the system
+# tools, which the user namespace maps to nobody.
+python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py'
+(cd tools/live-parity && VOSU_GOLDEN_HARNESS_BUILD=1 \
+    unshare --user --map-current-user --pid --fork --mount-proc -- \
+    python -m unittest -v test_live_parity_golden_capture.RealHarnessDaemonTests)
 cargo test --locked --features test-harness --test adapter_golden
 cargo test --locked --features test-harness --test daemon_smoke adapter_capture
 cargo test --locked --features test-harness --test server_compat adapter_capture
@@ -297,13 +301,20 @@ scenario set, or the run is refused before the build.
    `upstream_crashed` cases last; the negative and diagnostic cases; and
    finally `golden`'s whole-capture validation of the natively rendered cases.
    Cases the linux-lazer plan excludes (Windows spellings, stable skin routes)
-   are rendered for windows-lazer or windows-stable and sent anyway. It
-   reports every failing case, including an upstream exit outside the crash
-   ledger, and writes the 0600 receipt and `<out>.transcript.json`. Its config
-   is a Linux run configuration without `client_*` fields whose `golden` block
-   has no `authorization`, `assets` or `client_source`; the Linux harness
-   build needs `python scripts/prepare-offset-generator.py --rid linux-x64`.
-   Copy the receipt into the VM and pass it as `--rehearsal-receipt`.
+   are rendered for windows-lazer or windows-stable and sent anyway. A case
+   that every platform excludes, each for a reason `golden-capture`'s
+   exclusion list attributes to the contract or a ledger row, is listed in the
+   receipt's `excluded` with each platform's reason and authority; any other
+   unrenderable case fails. It reports every failing case, including an
+   upstream exit outside the crash ledger, and writes the 0600 receipt and
+   `<out>.transcript.json`. Its config is a Linux run configuration without
+   `client_*` fields whose `golden` block has no `authorization`, `assets` or
+   `client_source`, and whose `capture_slot` is the pilot's (`osu!`); the
+   Linux harness build needs
+   `python scripts/prepare-offset-generator.py --rid linux-x64`. Its default
+   `--timeout` is 7200 s: the feed and filter cases wait out their receive
+   windows across three attempts, about 50 minutes in all. Copy the receipt
+   into the VM and pass it as `--rehearsal-receipt`.
 
    Both daemons discover osu! processes, so the rehearsal never runs where it
    could see one: after the build (whose protected-tool checks need the real
@@ -312,14 +323,25 @@ scenario set, or the run is refused before the build.
    (`unshare --user --map-current-user --pid --fork --mount-proc`; the network
    namespace and loopback ports stay shared), and that phase refuses to run
    unless it is PID 1 there and sees no osu! client. A game the user runs on
-   the host is invisible to it. The receipt records the isolation.
+   the host is invisible to it. The receipt records the isolation. As PID 1 the
+   phase handles SIGTERM, SIGHUP and SIGINT itself (PID 1 ignores a signal it
+   has no handler for), so each ends it through its cleanup and transcript, and
+   it exits as soon as the receipt is written, whatever threads remain. The
+   source worktree is removed by the outer phase, outside the namespace, where
+   git's trusted tool check can pass; the inner cleanup lists it as
+   `deferred_to_outer_phase`, and the outer phase adds `outer_cleanup` to the
+   receipt, failing it when a removal fails.
 
    A menu, paused or result case runs at `no-client`. When every attempt of
    one failed only because a daemon had no game data (a feed with no state
    frame, a request with no answer, a conditional request with no validator to
    send), the receipt lists it as `client_dependent` instead of failing it. A
    `no-client` case runs at its own barrier, exactly as in a pilot, and stays
-   strict.
+   strict. A `no-client` feed upgrade (`ws.*.upgrade.no-client`) is a
+   handshake-only golden (GOLDEN_CONTRACT §6): the receipt lists those cases in
+   `handshake_only`, and in `findings` any where one daemon sent a state frame
+   inside the window and the other sent none. `golden-capture` prints the same
+   `findings` in its summary. A finding is for review; it is never normalized.
 
 1. **Mandatory dry run first.** Use a config whose
    `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and

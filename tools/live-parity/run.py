@@ -117,7 +117,8 @@ def parser() -> argparse.ArgumentParser:
                                 "golden block without authorization or assets")
     rehearsal.add_argument("--out", required=True,
                            help="new private receipt; <out>.transcript.json holds the raw records")
-    rehearsal.add_argument("--timeout", type=float, default=3600.0)
+    rehearsal.add_argument("--timeout", type=float, default=7200.0,
+                           help="seconds; the full matrix takes about 50 minutes")
     gold = sub.add_parser(
         "golden", help="normalize complete attested golden captures into a new candidate directory")
     gold.add_argument("--capture", required=True, action="append",

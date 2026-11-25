@@ -5,9 +5,14 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
+import shutil
+import signal
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -18,15 +23,19 @@ import parity_golden_capture as gc
 import parity_golden_client as golden_client
 from parity_golden_config import validate_golden_config
 import parity_golden_rehearsal as rehearsal
+import parity_artifacts
 import route_matrix as rm
+import route_security as rs
 import test_live_parity_golden_capture as base
 
 BUDGET = ("state-http.json-v2.budget.query-pairs-128", "state-http.json-v2.budget.query-pairs-129")
 CRASHING = "state-http.json.near.malformed-percent"
 FOREIGN = "path-security.songs.absolute-drive"
+SKIN_EXCLUDED = "path-security.skin.absolute-encoded"
 SUBSET = ("state-http.json-v2.get.menu", "state-http.json-sc.get.no-client",
           "state-http.json-v2.head.no-client", *BUDGET, "state-http.negative.api-v1-suffix",
           FOREIGN, CRASHING)
+UNSHARE = shutil.which("unshare")
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the rehearsal runs on Linux")
@@ -37,14 +46,14 @@ class RehearsalTests(base.CaptureTestCase):
         cfg["_artifact_identity"]["client"] = None
         return cfg
 
-    def rehearse(self, cfg: dict, cases=SUBSET) -> tuple[int | Exception, dict, dict]:
+    def rehearse(self, cfg: dict, cases=SUBSET, build=None) -> tuple[int | Exception, dict, dict]:
         # The fakes report no-client throughout; the phase runs in its PID namespace.
         base.FakeClient(self.state)  # Writes the fakes' no-client state.
         receipt = self.out.with_name("receipt.json")
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 result: int | Exception = rehearsal.rehearse(
-                    cfg, str(receipt), timeout=120.0, build=self.stub_build(),
+                    cfg, str(receipt), timeout=120.0, build=build or self.stub_build(),
                     cases=[rm.CASES[case_id] for case_id in cases])
         except gc.CaptureError as exc:
             result = exc
@@ -65,10 +74,24 @@ class RehearsalTests(base.CaptureTestCase):
             rehearsal.isolated_phase(str(state))
         self.assertEqual(list(self.out.parent.iterdir()), [])
 
+    def source_worktree(self) -> dict:
+        """A real run-owned git worktree, as a node-build source build registers one."""
+        repository, tree = self.tmp / "source-repo", self.tmp / "source-worktree"
+        env = parity_artifacts._git_environment()
+        git = lambda *args: subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", *args], check=True, capture_output=True, env=env)
+        git("init", "-q", str(repository))
+        git("-C", str(repository), "commit", "-q", "--allow-empty", "-m", "base")
+        git("-C", str(repository), "worktree", "add", "-q", "--detach", str(tree))
+        return {"repository": str(repository), "path": str(tree)}
+
     def test_passing_rehearsal_writes_the_receipt_golden_capture_accepts(self) -> None:
         cfg = self.rehearsal_config(source_options={"crash_targets": ["/json%"]},
                                     vosu_options={"request_budget": True})
-        result, receipt, transcript = self.rehearse(cfg)
+        tree, stub = self.source_worktree(), self.stub_build()
+        build = lambda cfg, out: {**stub(cfg, out), "owned_worktrees": [tree]}
+        result, receipt, transcript = self.rehearse(cfg, (*SUBSET, SKIN_EXCLUDED), build)
         self.assertEqual((result, receipt["result"], receipt["failures"]), (0, "pass", []))
         self.assertEqual(receipt["isolation"]["pid"], 1)
         self.assertEqual((receipt["vosu_commit"], receipt["tooling_digest"]),
@@ -79,7 +102,15 @@ class RehearsalTests(base.CaptureTestCase):
         self.assertEqual([entry["case"] for entry in transcript["rehearsal"]][-1], CRASHING)
         self.assertEqual(receipt["golden"]["cases"], 5)
         self.assertEqual([b["barrier"] for b in receipt["barriers"]], ["no-client"])
+        # Every platform excludes the skin spelling under a listed authority.
+        self.assertEqual([case for case, _reasons in receipt["excluded"]], [SKIN_EXCLUDED])
+        # The worktree is not removed inside the namespace, where git's trusted tool check
+        # cannot pass, and that is no cleanup error; the outer phase removes it.
         self.assertEqual(receipt["cleanup"]["errors"], [])
+        self.assertEqual(receipt["cleanup"]["deferred_to_outer_phase"], ["source worktree"])
+        self.assertEqual(receipt["outer_cleanup"],
+                         {"worktrees_removed": 1, "paths_removed": 0, "errors": []})
+        self.assertFalse(Path(tree["path"]).exists())
         self.assertEqual(oct(self.out.with_name("receipt.json").stat().st_mode & 0o777), "0o600")
         scenario = gc.ScenarioSet("test-receipt", ("menu",), ("state-http.json-v2.get.menu",))
         self.capture(scenario, base.FakeClient(self.state), self.config(scenario),
@@ -89,7 +120,8 @@ class RehearsalTests(base.CaptureTestCase):
     def test_failing_cases_are_all_reported_and_the_receipt_is_refused(self) -> None:
         # Without the request budget the over-budget route answers like the dump; an
         # upstream that dies on a case outside the crash ledger is relaunched and reported;
-        # a feed with no state frame is client-dependent at a client barrier only.
+        # a feed with no state frame is client-dependent at a client barrier only, and a
+        # handshake-only golden at no-client, where vosu's frame is a finding.
         cfg = self.rehearsal_config(source_options={"crash_targets": ["/json%", "/json/v2/"],
                                                     "silent_ws": True})
         cases = (*SUBSET[:-1], "state-http.json-v2.near.trailing-slash", "ws.v2.upgrade.menu",
@@ -101,7 +133,11 @@ class RehearsalTests(base.CaptureTestCase):
         self.assertRegex(failed[BUDGET[1]], "must answer 404")
         self.assertRegex(failed["state-http.json-v2.near.trailing-slash"],
                          "upstream exited, but the case is not under ledger")
-        self.assertRegex(failed["ws.v2.upgrade.no-client"], "outcome 'upgraded-timeout' is not allowed")
+        self.assertNotIn("ws.v2.upgrade.no-client", failed)
+        self.assertEqual(receipt["handshake_only"], ["ws.v2.upgrade.no-client"])
+        self.assertEqual(receipt["findings"], [{
+            "case": "ws.v2.upgrade.no-client", "rule": "handshake-only", "source": "no frame",
+            "vosu": "state frame", "attempt": 1}])
         self.assertEqual([case for case, _reasons in receipt["client_dependent"]],
                          ["ws.v2.upgrade.menu"])
         self.assertNotIn("ws.v2.upgrade.menu", failed)
@@ -163,6 +199,92 @@ class RehearsalTests(base.CaptureTestCase):
                                         "client_executable": "/x", "golden": block}))
             with self.assertRaisesRegex(ValueError, "client_executable is forbidden"):
                 parity_config.load_config(str(path), rehearsal=True)
+
+
+class PlanTests(unittest.TestCase):
+    """Rehearsal 2026-11-25: six skin spellings were rendered on no platform."""
+
+    def native(self) -> rm.MatrixContext:
+        root = "/srv/vosu-rehearsal-plan"
+        files, probe = root + "/client/files", root + "/vosu-route-probe/"
+        layout = rs.SecurityLayout(
+            "linux", root, "token", {"/Songs/": files, "/files/beatmap/": files},
+            {"/Songs/": "d/dd/chart.osu", "/files/beatmap/": "d/dd/chart.osu"},
+            probe + rs.SENTINEL_FILE, probe + rs.SENTINEL_CHART, "0" * 64,
+            other_roots={"files": files})
+        return rm.MatrixContext("linux-lazer", {}, layout)
+
+    def test_a_case_every_platform_excludes_by_authority_is_listed_not_failed(self) -> None:
+        cases = [rm.CASES[case_id] for case_id in (
+            SKIN_EXCLUDED, "path-security.skin.ads", "path-security.songs.symlink")]
+        planned, excluded, unrendered = rehearsal.plan(self.native(), cases)
+        # The stable skin root takes the inside-root Windows spellings.
+        self.assertEqual([(platform, item.case.id) for platform, item in planned],
+                         [("windows-stable", "path-security.skin.ads")])
+        self.assertEqual([case_id for case_id, _reasons in excluded], [SKIN_EXCLUDED])
+        reasons = {platform: authority for platform, _reason, authority in excluded[0][1]}
+        self.assertEqual(list(reasons), ["linux-lazer", *rehearsal.FOREIGN_PLATFORMS])
+        self.assertRegex(reasons["linux-lazer"], "ledger lazer-legacy-skin-404")
+        self.assertRegex(reasons["windows-stable"], "POSIX absolute spellings")
+        # No authority excludes a symlink fixture Linux failed to create.
+        self.assertEqual([case_id for case_id, _reason in unrendered], ["path-security.songs.symlink"])
+        self.assertRegex(unrendered[0][1], "^linux-lazer: .*symlink fixture unavailable")
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and UNSHARE, "needs util-linux unshare")
+class IsolatedEntryTests(unittest.TestCase):
+    """Rehearsal 2026-11-25: the phase, PID 1 of its namespace, outlived its receipt."""
+
+    def phase(self, body: str) -> subprocess.Popen[str]:
+        code = "\n".join([
+            "import os, sys, threading, time",
+            f"sys.path.insert(0, {str(HERE)!r})",
+            "import parity_golden_rehearsal as rehearsal",
+            "def phase(path):",
+            "    assert os.getpid() == 1",
+            textwrap.indent(textwrap.dedent(body), "    "),
+            'rehearsal.main(["phase", "--isolated", "state"], phase)'])
+        # --kill-child only bounds a failing test: killing unshare then ends the phase.
+        return subprocess.Popen([UNSHARE, *rehearsal.ISOLATION, "--kill-child", "--",
+                                 sys.executable, "-c", code],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def finish(self, phase: subprocess.Popen[str], child: str | None = None) -> tuple[str, str]:
+        try:
+            return phase.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            status = "" if child is None else "".join(
+                line for line in Path(f"/proc/{child}/status").read_text().splitlines(True)
+                if line.startswith(("State", "Sig", "Shd", "NSpid")))
+            phase.kill()
+            phase.communicate()
+            self.fail(f"the isolated phase did not exit\n{status}")
+
+    def test_the_phase_exits_after_its_receipt_despite_a_lingering_thread(self) -> None:
+        with self.phase("""\
+                threading.Thread(target=time.sleep, args=(600,)).start()
+                print("receipt written", flush=True)
+                return 0
+                """) as phase:
+            out, err = self.finish(phase)
+        self.assertEqual((phase.returncode, out, err), (0, "receipt written\n", ""))
+
+    def test_sigterm_ends_the_phase_as_pid_1(self) -> None:
+        # The phase polls in short steps (a signal landing just before one long sleep
+        # would only be handled when it ends).
+        with self.phase("""\
+                print("ready", flush=True)
+                while True:
+                    time.sleep(0.1)
+                """) as phase:
+            assert phase.stdout is not None
+            self.assertEqual(phase.stdout.readline(), "ready\n")
+            children = Path(f"/proc/{phase.pid}/task/{phase.pid}/children").read_text().split()
+            self.assertEqual(len(children), 1, "unshare --fork has one child, the phase")
+            os.kill(int(children[0]), signal.SIGTERM)
+            _out, err = self.finish(phase, children[0])
+        self.assertEqual(phase.returncode, 128 + signal.SIGTERM)
+        self.assertIn("golden-rehearsal: terminated by SIGTERM", err)
 
 
 class SharedLogReleaseTests(unittest.TestCase):

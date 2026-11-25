@@ -531,6 +531,29 @@ class NormalizationTests(GoldenTestCase):
         self.assertTrue(normalized.startswith("/api/calculate/pp?path=C%3A%5Cvosu-golden%5Cosu"))
         self.assertEqual("/api/calculate/pp?path=" + SYN_ROOT + "Songs\\a.osu", unquote(normalized))
 
+    def test_absolute_root_right_after_a_route_prefix_is_replaced(self) -> None:
+        # Rehearsal 2026-11-25: a path-security target spells the absolute sentinel path
+        # right after its route prefix, so the prefix's `/` precedes the root.
+        from urllib.parse import quote
+        sentinel = WIN_ROOT + "vosu-route-probe\\sentinel.txt"
+        spellings = {"path-security.songs.absolute-drive": "/Songs/" + quote(sentinel, safe=""),
+                     "path-security.beatmap.absolute-drive-slash": "/files/beatmap/"
+                     + quote(sentinel.replace("\\", "/"), safe="/:")}
+        missing = response(text("{}"), status="HTTP/1.1 404 Not Found")
+        cases = [case(case_id, request(target=target), (missing, missing))
+                 for case_id, target in spellings.items()]
+        candidate = self.run_golden(capture(cases))
+        self.assertEqual(
+            self.case_file(candidate, "path-security.songs.absolute-drive")["request"]["text"]
+            .split(" ")[1], "/Songs/C%3A%5Cvosu-golden%5Cosu!%5Cvosu-route-probe%5Csentinel.txt")
+        self.assertEqual(
+            self.case_file(candidate, "path-security.beatmap.absolute-drive-slash")["request"]
+            ["text"].split(" ")[1], "/files/beatmap/C:/vosu-golden/osu!/vosu-route-probe/sentinel.txt")
+        # Only the route prefix ends a token: a root inside a path segment stays private.
+        inside = case("path-security.songs.absolute-drive",
+                      request(target="/Songs/a" + quote(sentinel, safe="")), (missing, missing))
+        self.rejects(capture([inside]), "unnormalized private root 'osu!'")
+
     def test_linux_root_and_private_home_paths(self) -> None:
         root = "/home/vosu/.local/share/osu/"
         linux = {"platform": "linux-lazer", "roots": [{"slot": "osu", "private": root}]}

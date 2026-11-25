@@ -67,8 +67,10 @@ POLL_S = 0.1
 # the vosu v2 dump to stay identical across them; a case-less one (play: its clock and
 # the provider generation advance on every read) needs only the reported state.
 STABLE_OBSERVATIONS = 3
-# A record must carry an HTTP response to be a golden record.
-RESPONSE_OUTCOMES = frozenset({"response", "rejected", "upgraded", "server-closed"})
+# A record must carry an HTTP response to be a golden record. `upgraded-timeout` is the
+# handshake of a feed that sent no frame in its window (route_matrix.HANDSHAKE_ONLY).
+RESPONSE_OUTCOMES = frozenset({"response", "rejected", "upgraded", "upgraded-timeout",
+                               "server-closed"})
 _SCHEMA_OF_PATH = {"/json": "v1", "/json/sc": "sc", "/json/v2": "v2",
                    "/json/v2/precise": "v2-precise", "/ws": "v1", "/tokens": "sc",
                    "/websocket/v2": "v2", "/websocket/v2/precise": "v2-precise"}
@@ -465,7 +467,7 @@ class Session:
         self.ledger = rm.RequestLedger()
         self.transcript: dict[str, Any] = {
             "format": TRANSCRIPT_FORMAT, "scenario_set": scenario.id, "barriers": [],
-            "cases": [], "diagnostics": [], "excluded": [], "cleanup": None}
+            "cases": [], "diagnostics": [], "excluded": [], "findings": [], "cleanup": None}
         self.client_started = False
 
     # -- setup
@@ -630,6 +632,9 @@ class Session:
             parity_golden._check_sandwiches(parity_golden._case(copy.deepcopy(value), 0))
         except GoldenError as exc:
             return str(exc)
+        finding = rm.handshake_only_finding(case, upstream[0]["outcome"], route["outcome"])
+        if finding is not None:
+            self.transcript["findings"].append({**finding, "attempt": number})
         return value
 
     def _run_case(self, item: rm.RenderedCase, source: Daemon, vosu: Daemon,
@@ -987,6 +992,7 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
         "upstream_crashed": sum(case["attempts"][-1]["outcome"] == crash.OUTCOME
                                 for case in capture["cases"]),
         "retried_cases": sum(len(case["attempts"]) > 1 for case in capture["cases"]),
+        "findings": session.transcript["findings"],
         "vosu_sha256": capture["attestation"]["vosu"]["sha256"],
         "sha256": hashlib.sha256(outputs[0][1]).hexdigest(),
     }, sort_keys=True))

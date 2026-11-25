@@ -20,6 +20,9 @@ check a capture applies:
 A case the native linux-lazer plan excludes (Windows spellings, the stable skin
 routes) is rendered for windows-lazer or windows-stable from a lexical layout and
 sent anyway: on the Linux daemons it can only miss, which still exercises its checks.
+A case that every platform excludes, each for a reason `EXCLUSIONS` attributes to the
+contract or ledger, is listed in the receipt as excluded with those authorities; any
+other unrenderable case fails the rehearsal.
 Every barrier other than `no-client` needs a client and is not rehearsed: those cases
 run at `no-client`, where their guards require both daemons to report it, and one that
 fails only for want of game data (`CLIENT_DATA`) is client-dependent, not a failure.
@@ -28,7 +31,10 @@ Both daemons discover osu! processes. The build runs on the host, where the
 protected-tool checks see the real file owners; the daemons and every case then run as
 PID 1 of a private PID namespace with its own /proc (`ISOLATION`), which the tool enters
 itself and which refuses to run if it can see any osu! client, so a game the host runs
-is invisible to both daemons.
+is invisible to both daemons. The phase handles termination signals itself (PID 1
+ignores the rest) and exits as soon as its receipt is written (`main`). The source
+worktree is removed by the outer phase, which adds its cleanup to the receipt: git's
+trusted tool check cannot pass inside the user namespace.
 
 The rehearsal reports every failing case instead of stopping at the first. It writes
 a private receipt (`--out`) and `<out>.transcript.json` with the raw records; the
@@ -46,9 +52,11 @@ from pathlib import Path
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
-from typing import Any, Callable, Iterable
+import traceback
+from typing import Any, Callable, Iterable, NoReturn
 
 from live_parity import PINNED_SOURCE_REVISION
 import parity_golden
@@ -64,6 +72,9 @@ SCENARIO = gc.ScenarioSet("golden-rehearsal-v1", ("no-client",))
 NATIVE_PLATFORM = "linux-lazer"
 FOREIGN_PLATFORMS = ("windows-lazer", "windows-stable")
 FOREIGN_ROOT = "C:\\vosu-rehearsal"
+# The lexical stable skin file that the inside-root skin spellings (ADS, trailing dot
+# and space) are rendered against; windows-stable is the only platform with a skin root.
+FOREIGN_SKIN_FILE = "vosu-rehearsal/skin.ini"
 # Executed tooling and the normative documents its checks read.
 TOOLING_DOCUMENTS = ("tests/fixtures/upstream/GOLDEN_CONTRACT.md",
                      "tests/fixtures/upstream/DIVERGENCES.md")
@@ -139,12 +150,14 @@ def _foreign_context(native: rm.MatrixContext, platform: str) -> rm.MatrixContex
     stable = platform == "windows-stable"
     files = FOREIGN_ROOT + ("\\osu\\Songs" if stable else "\\client\\files")
     roots = {"/Songs/": files, "/files/beatmap/": files}
+    inside = {prefix: value for prefix, value in native.security.inside_files.items()
+              if prefix in roots}
     if stable:
         roots["/files/skin/"] = FOREIGN_ROOT + "\\osu\\Skins"
+        inside["/files/skin/"] = FOREIGN_SKIN_FILE
     probe = f"{FOREIGN_ROOT}\\{rs.SENTINEL_DIR}\\"
     layout = rs.SecurityLayout(
-        "windows", FOREIGN_ROOT, native.security.token, roots,
-        {prefix: value for prefix, value in native.security.inside_files.items() if prefix in roots},
+        "windows", FOREIGN_ROOT, native.security.token, roots, inside,
         probe + rs.SENTINEL_FILE, probe + rs.SENTINEL_CHART, "0" * 64,
         other_roots={} if stable else {"files": files})
     values = dict(native.values)
@@ -154,17 +167,20 @@ def _foreign_context(native: rm.MatrixContext, platform: str) -> rm.MatrixContex
 
 
 def plan(native: rm.MatrixContext, cases: Iterable[rm.RouteCase]
-         ) -> tuple[list[tuple[str, rm.RenderedCase]], list[list[str]]]:
-    """(rendering, case) for every case, natively where possible; unrenderable ones listed."""
+         ) -> tuple[list[tuple[str, rm.RenderedCase]], list[list[Any]], list[list[str]]]:
+    """(rendering, case) for every case, natively where possible, then the cases every
+    platform excludes under a listed authority (`gc.EXCLUSIONS`) with each platform's
+    reason and authority, then the unrenderable rest, which fail the rehearsal."""
     foreign = [_foreign_context(native, platform) for platform in FOREIGN_PLATFORMS]
-    planned, unrendered = [], []
+    planned, excluded, unrendered = [], [], []
     for case in cases:
         reasons = []
         for context in (native, *foreign):
             try:
                 item = rm.render(case, context)
             except (rm.CaseUnavailable, rs.SecurityAbort) as exc:
-                reasons.append(f"{context.platform}: {exc}")
+                reasons.append([context.platform, str(exc),
+                                gc.exclusion_authority(str(exc), context.platform)])
                 continue
             if context is not native:  # Sent to the Linux daemons, where it can only miss.
                 item = dataclasses.replace(item, lexical_only=False)
@@ -173,10 +189,14 @@ def plan(native: rm.MatrixContext, cases: Iterable[rm.RouteCase]
             planned.append((context.platform, item))
             break
         else:
-            unrendered.append([case.id, "; ".join(reasons)])
+            if all(authority is not None for _platform, _reason, authority in reasons):
+                excluded.append([case.id, reasons])
+            else:
+                unrendered.append([case.id, "; ".join(f"{platform}: {reason}"
+                                                      for platform, reason, _ in reasons)])
     order = {False: 0, True: 1}  # upstream_crashed cases last
     planned.sort(key=lambda entry: order[bool(rm.upstream_crash_ledger(entry[1].case))])
-    return planned, unrendered
+    return planned, excluded, unrendered
 
 
 class Rehearsal(gc.Session):
@@ -257,7 +277,8 @@ class Rehearsal(gc.Session):
         context = self._prepare_layout()
         if context.platform != NATIVE_PLATFORM:
             raise gc.CaptureError(f"a rehearsal runs on {NATIVE_PLATFORM}, not {context.platform}")
-        planned, unrendered = plan(context, self.cases)
+        planned, excluded, unrendered = plan(context, self.cases)
+        self.transcript["excluded"] = excluded
         source, vosu = self._launch()
         self.transcript["launch"] = {"source": source.evidence, "vosu": vosu.evidence}
         dump = gc.HarnessDump(vosu, self.capability)
@@ -306,6 +327,11 @@ class Rehearsal(gc.Session):
                         if entry.get("failed_attempts")],
             "local_findings": [[entry["case"], entry["local_findings"]] for entry in entries
                                if entry.get("local_findings")],
+            "handshake_only": [entry["case"] for entry in entries if "failure" not in entry
+                               and "upgraded-timeout" in rm.CASES[entry["case"]].outcomes
+                               and entry["role"] == rm.GOLDEN],
+            "findings": self.transcript["findings"],
+            "excluded": excluded,
             "upstream_restarts": len(self.transcript.get("upstream_restarts", [])),
             "barriers": self.transcript["barriers"], "golden": summary, "failures": failures,
         }
@@ -393,21 +419,57 @@ def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
         code = phase.returncode
     finally:
         state.unlink(missing_ok=True)
-        _remove_leftovers(built)
+        outer = _remove_leftovers(built)
+        _record_outer_cleanup(out_path, outer)
+    if outer["errors"]:
+        raise gc.CaptureError("the outer cleanup failed: " + "; ".join(outer["errors"]))
     if code != 0:
         raise gc.CaptureError(f"the isolated rehearsal failed (exit {code}); receipt and "
                               f"transcript next to {out_path.name}")
     return 0
 
 
-def _remove_leftovers(build: dict[str, Any]) -> None:
-    """Build outputs the isolated phase did not reach (it removes them itself)."""
+def _remove_leftovers(build: dict[str, Any]) -> dict[str, Any]:
+    """The source worktree, which only this outer phase can remove (git's trusted tool
+    check fails inside the user namespace), and any build output the isolated phase
+    did not reach. Every step runs; failures are reported, never raised."""
+    report: dict[str, Any] = {"worktrees_removed": 0, "paths_removed": 0, "errors": []}
     for tree in build.get("owned_worktrees", []):
         if Path(tree["path"]).exists():
-            gc._remove_worktree(tree["repository"], tree["path"])
+            try:
+                gc._remove_worktree(tree["repository"], tree["path"])
+                report["worktrees_removed"] += 1
+            except Exception as exc:  # Cleanup must reach every owned resource.
+                report["errors"].append(f"source worktree: {type(exc).__name__}: {exc}")
     for owned in build.get("owned_paths", []):
         if Path(owned).exists():
-            shutil.rmtree(owned)
+            try:
+                shutil.rmtree(owned)
+                report["paths_removed"] += 1
+            except OSError as exc:
+                report["errors"].append(f"build output: {type(exc).__name__}: {exc}")
+    return report
+
+
+def _record_outer_cleanup(out_path: Path, outer: dict[str, Any]) -> None:
+    """Add the outer phase's cleanup to the receipt; a failed one fails the receipt."""
+    if not out_path.exists():
+        return  # The isolated phase wrote no receipt; its transcript says why.
+    receipt = json.loads(out_path.read_text("utf-8"))
+    receipt["outer_cleanup"] = outer
+    if outer["errors"]:
+        receipt["result"] = "fail"
+        receipt["failures"].append(["outer cleanup", "; ".join(outer["errors"])])
+    temporary = out_path.with_name(f".{out_path.name}.outer.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(gc._serialize(receipt))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, out_path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def isolated_phase(state_path: str) -> int:
@@ -421,8 +483,12 @@ def isolated_phase(state_path: str) -> int:
                               "runs with no game")
     state = json.loads(Path(state_path).read_text("utf-8"))
     out_path, transcript_path = _outputs(state["out"])
+    # git's trusted tool check cannot pass inside the user namespace, so the source
+    # worktree is the outer phase's to remove (`_remove_leftovers`), not this cleanup's.
+    deferred = state["build"].get("owned_worktrees", [])
+    build = {**state["build"], "owned_worktrees": [], "outer_phase_worktrees": deferred}
     session = Rehearsal(state["cfg"], out_path, timeout=state["timeout"],
-                        build=lambda _cfg, _out: state["build"],
+                        build=lambda _cfg, _out: build,
                         cases=[rm.CASES[case_id] for case_id in state["cases"]],
                         operator=gc.stderr_operator)
     receipt: dict[str, Any] | None = None
@@ -432,6 +498,8 @@ def isolated_phase(state_path: str) -> int:
     except BaseException as exc:  # Cleanup and the transcript run for every failure.
         failure = exc
     cleanup = session.cleanup()
+    if deferred:
+        cleanup["deferred_to_outer_phase"] = ["source worktree"] * len(deferred)
     if receipt is not None:
         receipt["isolation"] = {"unshare": list(ISOLATION), "pid": os.getpid()}
         receipt["cleanup"] = cleanup
@@ -458,18 +526,54 @@ def isolated_phase(state_path: str) -> int:
     assert receipt is not None
     print(json.dumps({key: receipt[key] for key in (
         "result", "vosu_commit", "tooling_digest", "cases", "rehearsed", "renderings",
-        "outcomes", "upstream_restarts", "failures")}, sort_keys=True))
+        "outcomes", "handshake_only", "findings", "upstream_restarts", "failures")},
+        sort_keys=True))
     if receipt["result"] != "pass":
         raise gc.CaptureError(f"the rehearsal failed {len(receipt['failures'])} checks; "
                               f"receipt: {out_path.name}")
     return 0
 
 
+class Terminated(BaseException):
+    """A termination signal reached the isolated phase; its cleanup still runs."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"terminated by {signal.Signals(signum).name}")
+        self.signum = signum
+
+
+def _terminate(signum: int, _frame: Any) -> None:
+    raise Terminated(signum)
+
+
+def main(argv: list[str], phase: Callable[[str], int] = isolated_phase) -> NoReturn:
+    """The isolated phase's entry, as PID 1 of its namespace.
+
+    PID 1 ignores every signal it has no handler for, so SIGTERM, SIGHUP and SIGINT get
+    one: each ends the phase through its cleanup and transcript. Once the receipt is
+    written the process exits at once (`os._exit`): it never waits for a lingering
+    thread, and PID 1's exit ends whatever is left in the namespace."""
+    for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(signum, _terminate)
+    if argv[1:2] != ["--isolated"] or len(argv) != 3:
+        print("usage: run.py golden-rehearsal (this module's entry is internal)", file=sys.stderr)
+        code = 2
+    else:
+        try:
+            code = phase(argv[2])
+        except gc.CaptureError as error:
+            print(f"golden-rehearsal: {error}", file=sys.stderr)
+            code = 2
+        except Terminated as error:
+            print(f"golden-rehearsal: {error}", file=sys.stderr)
+            code = 128 + error.signum
+        except BaseException:  # Reported, then the same immediate exit.
+            traceback.print_exc()
+            code = 1
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    if sys.argv[1:2] != ["--isolated"] or len(sys.argv) != 3:
-        raise SystemExit("usage: run.py golden-rehearsal (this module's entry is internal)")
-    try:
-        raise SystemExit(isolated_phase(sys.argv[2]))
-    except gc.CaptureError as error:
-        print(f"golden-rehearsal: {error}", file=sys.stderr)
-        raise SystemExit(2) from None
+    main(sys.argv)
