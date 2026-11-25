@@ -18,19 +18,37 @@
 //! - [`services`] (M5 I0) stages services-mode testkit packages and drives
 //!   them through core's actions; [`api`] serves the production API v1
 //!   router over the test's `PluginHost`.
+//!
+//! M5 N0's core-death trees: [`tree`] (a core of either kind, its plugin
+//! host, descendant and outside control), [`daemon`] (the real daemon as
+//! core), [`tracked`] (pidfd and handle identities), on Linux [`refusal`]
+//! (the seccomp refusal control's environment) and on Windows [`jobs`]
+//! (job, token and handle-table readbacks).
 
 #[path = "api.rs"]
 pub mod api;
 #[path = "artifacts.rs"]
 pub mod artifacts;
+#[path = "daemon.rs"]
+pub mod daemon;
 #[path = "fixture.rs"]
 pub mod fixture;
 #[path = "host.rs"]
 pub mod host;
+#[cfg(windows)]
+#[path = "jobs.rs"]
+pub mod jobs;
+#[cfg(target_os = "linux")]
+#[path = "refusal.rs"]
+pub mod refusal;
 #[path = "services.rs"]
 pub mod services;
 #[path = "smoke.rs"]
 mod smoke;
+#[path = "tracked.rs"]
+pub mod tracked;
+#[path = "tree.rs"]
+pub mod tree;
 
 /// A fresh per-test scratch directory for staged packages, receipts and
 /// instance data. `VOSU_PLUGIN_HOST_SCRATCH_DIR` places it under a chosen

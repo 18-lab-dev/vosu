@@ -21,6 +21,11 @@ mod broker;
 mod crash;
 #[path = "plugin_host_native/lifecycle.rs"]
 mod lifecycle;
+#[cfg(target_os = "linux")]
+#[path = "plugin_host_native/linux_security.rs"]
+mod linux_security;
+#[path = "plugin_host_native/parent_death.rs"]
+mod parent_death;
 #[path = "plugin_host_native/relay.rs"]
 mod relay;
 #[path = "plugin_host_native/resources.rs"]
@@ -31,3 +36,6 @@ mod restart;
 mod state;
 #[path = "plugin_host_native/support/mod.rs"]
 mod support;
+#[cfg(windows)]
+#[path = "plugin_host_native/windows_job.rs"]
+mod windows_job;
