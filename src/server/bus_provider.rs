@@ -69,6 +69,25 @@ impl StateSnapshot for Snapshot {
             .encode(filters)
     }
 }
+impl Snapshot {
+    /// The production HTTP result of exactly this snapshot, shared by the state
+    /// route and the test-harness capture.
+    fn http(&self) -> CachedJson {
+        self.http
+            .get_or_init(|| {
+                if self.capture.session.is_none()
+                    || matches!(self.view, Err(ProjectionError::NotReady))
+                {
+                    return CachedJson::NotReady;
+                }
+                match self.encode_unfiltered() {
+                    Ok(bytes) => CachedJson::Ready(bytes),
+                    Err(error) => failed(error),
+                }
+            })
+            .clone()
+    }
+}
 impl BusStateProvider {
     pub fn new(
         schema: Schema,
@@ -118,6 +137,36 @@ impl BusStateProvider {
         });
         latest.snapshot = Some(Arc::clone(&snapshot));
         Ok(snapshot)
+    }
+    /// The exact selection this provider's adapter decoded for one snapshot,
+    /// with the production HTTP result of that same snapshot. Derived work is
+    /// retained exactly as by a one-shot HTTP read, but never awaited: there is
+    /// one `snapshot()` call, no second capture, subscription, sampling demand
+    /// or retained history. Envelope encoding happens later, outside the
+    /// provider lock.
+    #[cfg(feature = "test-harness")]
+    pub fn capture_for_harness(
+        &self,
+    ) -> Result<super::adapter_capture::AdapterCaptureSample, String> {
+        use super::adapter_capture::{AdapterCaptureSample, DerivedStatus};
+        let _retained = self.adapter.retain(&[]);
+        let snapshot = self.snapshot()?;
+        let http = snapshot.http();
+        let derived = if self.adapter.changes().is_none() {
+            DerivedStatus::None
+        } else if self.adapter.pending() || self.adapter.revision() != snapshot.derived {
+            DerivedStatus::Pending
+        } else {
+            DerivedStatus::Ready
+        };
+        Ok(AdapterCaptureSample {
+            schema: self.schema,
+            provider_generation: snapshot.generation,
+            capture: snapshot.capture.clone(),
+            derived_revision: snapshot.derived,
+            derived,
+            http,
+        })
     }
 }
 fn same_inputs(adapter: &Adapter, left: &CapturedSelection, right: &CapturedSelection) -> bool {
@@ -196,20 +245,7 @@ impl StateJsonProvider for BusStateProvider {
                 }
             }
             match snapshot {
-                Ok(snapshot) => snapshot
-                    .http
-                    .get_or_init(|| {
-                        if snapshot.capture.session.is_none()
-                            || matches!(snapshot.view, Err(ProjectionError::NotReady))
-                        {
-                            return CachedJson::NotReady;
-                        }
-                        match snapshot.encode_unfiltered() {
-                            Ok(bytes) => CachedJson::Ready(bytes),
-                            Err(error) => failed(error),
-                        }
-                    })
-                    .clone(),
+                Ok(snapshot) => snapshot.http(),
                 Err(error) => failed(error),
             }
         })

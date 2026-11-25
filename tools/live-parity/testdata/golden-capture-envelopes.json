@@ -1,0 +1,3081 @@
+{
+  "format": "vosu-golden-capture-fake-envelopes-v1",
+  "generator": "src/server/adapter_capture/tests.rs export_golden_capture_fake_envelopes",
+  "reads_per_schema": 3,
+  "barriers": {
+    "no-client": {
+      "v1": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        }
+      ],
+      "sc": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        }
+      ],
+      "v2": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        }
+      ],
+      "v2-precise": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": null,
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": []
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": null,
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "not_ready",
+            "status": 500,
+            "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+          },
+          "digest": "sha256:958fac3341d7088e665026526c90c08b270fc44cf16b3942179089011b5d8105"
+        }
+      ]
+    },
+    "menu": {
+      "v1": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        }
+      ],
+      "sc": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 2,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 2,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 3,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 3,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        }
+      ],
+      "v2": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        }
+      ],
+      "v2-precise": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AA==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":0,\"name\":\"menu\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:e5d0ae9baaae817b464dc8877cd2245ae466ab408c1a0b05f7f28d4154519ece"
+        }
+      ]
+    },
+    "play": {
+      "v1": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        }
+      ],
+      "sc": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 2,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 2,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 3,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 3,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        }
+      ],
+      "v2": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        }
+      ],
+      "v2-precise": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "AQ==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:5265578f5df26d058eb515497d52da86d04e2e245747d0f019d45c0fa7c90261"
+        }
+      ]
+    },
+    "paused": {
+      "v1": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        }
+      ],
+      "sc": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 2,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 2,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 3,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 3,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        }
+      ],
+      "v2": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        }
+      ],
+      "v2-precise": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Ag==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":2,\"name\":\"play\"},\"game\":{\"paused\":true}}"
+          },
+          "digest": "sha256:56b939c944fcef6174e08e426ce736d5006174fadeebaca916cae3a7a42514e8"
+        }
+      ]
+    },
+    "result": {
+      "v1": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v1",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        }
+      ],
+      "sc": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 1,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 2,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 2,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "sc",
+          "provider_generation": 3,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 3,
+            "status": "ready"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        }
+      ],
+      "v2": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        }
+      ],
+      "v2-precise": [
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        },
+        {
+          "format": "vosu-adapter-capture-v1",
+          "schema": "v2-precise",
+          "provider_generation": 1,
+          "session": {
+            "ordinal": 0,
+            "generation": 1,
+            "owner": "vosu.osu",
+            "owner_instance": 0,
+            "game": "osu",
+            "variant": "lazer",
+            "foreground": true
+          },
+          "focus_revision": 3,
+          "roster": {
+            "revision": 5,
+            "sessions": [
+              {
+                "ordinal": 0,
+                "generation": 1,
+                "owner": "vosu.osu",
+                "owner_instance": 0,
+                "game": "osu",
+                "variant": "lazer",
+                "foreground": true
+              }
+            ]
+          },
+          "bus_revision": 9,
+          "namespace_revisions": [
+            [
+              "vosu.osu",
+              9
+            ]
+          ],
+          "entries": [
+            {
+              "ns": "vosu.osu",
+              "pointer": "/play/score",
+              "value_cbor_b64": "Aw==",
+              "error": null
+            }
+          ],
+          "derived": {
+            "revision": 0,
+            "status": "none"
+          },
+          "http": {
+            "kind": "ready",
+            "status": 200,
+            "body_utf8": "{\"state\":{\"number\":7,\"name\":\"resultScreen\"},\"game\":{\"paused\":false}}"
+          },
+          "digest": "sha256:ffbc4bfdcae121da117a8f38f9a50cd5b2dcbdde4574a7a62373492e1835a70d"
+        }
+      ]
+    }
+  }
+}

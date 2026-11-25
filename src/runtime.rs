@@ -116,7 +116,8 @@ pub use lifecycle::{ProductionRuntime, is_startup_owner_conflict, run_cli};
 pub use projection::ReloadableAuthorizer;
 #[cfg(feature = "test-harness")]
 pub use test_support::{
-    TestProductionComposition, TestProductionCompositionOptions, start_test_production_composition,
+    TestGame, TestProductionComposition, TestProductionCompositionOptions,
+    start_test_production_composition,
 };
 pub use worker::{ListenerOwner, WebSocketHubs};
 

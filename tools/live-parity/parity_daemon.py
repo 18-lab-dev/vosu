@@ -181,7 +181,10 @@ def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dic
                     "XDG_CONFIG_HOME": str(xdg_config),
                     "XDG_DATA_HOME": str(runtime_dir / ".local" / "share"),
                     "XDG_CACHE_HOME": str(runtime_dir / ".cache"),
+                    # Broker sockets and instance locks stay in the run's own root.
+                    "XDG_RUNTIME_DIR": str(runtime_dir / ".run"),
                 })
+                (runtime_dir / ".run").mkdir(mode=0o700)
                 config_path = xdg_config / config_root / config_name
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(config_text, encoding="utf-8")

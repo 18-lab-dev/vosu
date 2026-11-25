@@ -5,6 +5,9 @@
 #[path = "server_compat/removals.rs"]
 mod removals;
 
+#[cfg(feature = "test-harness")]
+#[path = "server_compat/adapter_capture.rs"]
+mod adapter_capture;
 #[path = "server_compat/declared_roots.rs"]
 mod declared_roots;
 #[path = "server_compat/mounted.rs"]

@@ -25,6 +25,8 @@ pub struct ProductionRouteDelegate {
     tools: Option<Arc<dyn RouteExtension>>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
     surface: Option<SurfaceRouter>,
+    #[cfg(feature = "test-harness")]
+    adapter_capture: Option<Arc<crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint>>,
 }
 
 impl ProductionRouteDelegate {
@@ -34,7 +36,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, api_v1: None, surface: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, api_v1: None, surface: None, #[cfg(feature = "test-harness")] adapter_capture: None }
     }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
     pub fn removed_notices(&self) -> Vec<RemovedNotice> {
@@ -57,6 +59,12 @@ impl ProductionRouteDelegate {
     }
     pub fn with_surface(mut self, router: SurfaceRouter) -> Self {
         self.surface = Some(router);
+        self
+    }
+    /// Mounts the test-harness adapter capture endpoint for this launch.
+    #[cfg(feature = "test-harness")]
+    pub fn with_adapter_capture(mut self, endpoint: crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint) -> Self {
+        self.adapter_capture = Some(Arc::new(endpoint));
         self
     }
     pub fn services(&self) -> &ProductionServices {
@@ -677,6 +685,8 @@ impl ProductionRouteDelegate {
 
 impl RouteDelegate for ProductionRouteDelegate {
     fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> { self.api_keys.clone() }
+    #[cfg(feature = "test-harness")]
+    fn adapter_capture(&self) -> Option<&crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint> { self.adapter_capture.as_deref() }
     fn registered_http<'a>(&'a self, request: &'a Request<Body>) -> Option<ProviderFuture<'a, Response>> {
         self.surface.as_ref().map(|surface| Box::pin(surface.http(request)) as ProviderFuture<'a, Response>)
     }

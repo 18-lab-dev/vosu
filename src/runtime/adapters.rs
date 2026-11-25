@@ -78,7 +78,7 @@ impl Adapters {
             config,
         })
     }
-    fn provider(&self, schema: WebSocketSchema) -> &Arc<BusStateProvider> {
+    pub(super) fn provider(&self, schema: WebSocketSchema) -> &Arc<BusStateProvider> {
         &self.schemas[match schema {
             WebSocketSchema::V1 => 0,
             WebSocketSchema::StreamCompanion => 1,
@@ -160,5 +160,14 @@ impl WebSocketStateProvider for Adapters {
         filters: &[Filter],
     ) -> Result<Option<Box<dyn StateDemand>>, String> {
         self.provider(schema).demand(schema, filters)
+    }
+}
+#[cfg(feature = "test-harness")]
+impl crate::server::adapter_capture::endpoint::CaptureSource for Adapters {
+    fn capture(
+        &self,
+        schema: WebSocketSchema,
+    ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
+        self.provider(schema).capture_for_harness()
     }
 }

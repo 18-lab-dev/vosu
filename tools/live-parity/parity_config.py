@@ -40,6 +40,7 @@ import parity_process as _parity_process
 globals().update({name: value for name, value in vars(_parity_process).items() if not name.startswith("__")})
 import parity_artifacts as _parity_artifacts
 globals().update({name: value for name, value in vars(_parity_artifacts).items() if not name.startswith("__")})
+from parity_golden_config import golden_config_schema, validate_golden_config
 def config_schema() -> dict[str, Any]:
     daemon = {
         "type": "object", "required": ["base_url", "command"],
@@ -79,6 +80,8 @@ def config_schema() -> dict[str, Any]:
             "poll_rate_ms": {"type": "integer", "const": 150},
             "daemons": {"type": "object", "required": ["source", "vosu"],
                         "properties": {"source": daemon, "vosu": daemon}, "additionalProperties": False},
+            # golden-capture only (GOLDEN_CONTRACT.md §2, §6); release capture ignores it.
+            "golden": golden_config_schema(),
         },
         "allOf": [{
             "oneOf": [
@@ -113,7 +116,7 @@ def load_config(path: str) -> dict[str, Any]:
         "scenario", "source_mode", "source_directory", "source_reference",
         "client_executable", "client_args", "client_launch_mode",
         "client_expected_sha256", "client_expected_version",
-        "os", "client", "poll_rate_ms", "daemons",
+        "os", "client", "poll_rate_ms", "daemons", "golden",
     }
     unknown = set(cfg) - allowed_top
     if unknown:
@@ -232,6 +235,8 @@ def load_config(path: str) -> dict[str, Any]:
                 errors.append(f"daemons.{name}.base_url has no valid port")
         if len(ports) == 2 and ports[0] == ports[1]:
             errors.append("source and vosu ports must be distinct")
+    if "golden" in cfg:
+        errors.extend(validate_golden_config(cfg["golden"], os_name))
     if errors:
         raise ValueError("; ".join(errors))
     try:

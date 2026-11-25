@@ -58,6 +58,12 @@ Plugin manifests, the plugin ABI and API v1 may still change before 2.0.0.
 - Compatibility WebSocket feeds no longer send a client a frame captured
   before its last write acknowledgement observed a newer state, so the first
   frame after an acknowledgement is always the latest.
+- Off Windows, where core has no OS-foreground source, report the foreground
+  fact as unknown again instead of `false`: plugins' `FOCUS_CHANGED` omits
+  `foreground` and identified-roster sessions carry `foreground: null`, as the
+  plugin ABI documents. Adapter wire output is unchanged; `game.focused` was
+  already omitted off Windows.
+
 
 - Delete both interim typed-snapshot bridge directions and root adapter models.
   Capture, settings, resource/action ownership and precise ABI demand stay

@@ -167,6 +167,8 @@ impl ProductionRuntime {
         // long-lived task.
         let target = listen_target(&config)?;
         let program = env::current_exe()?;
+        #[cfg(feature = "test-harness")]
+        let adapter_capture = crate::server::adapter_capture::endpoint::Capability::from_env()?;
         let static_root = resolved_static_root(&self.paths, &config)?;
         let counters = Arc::new(ReloadableCounterService::production(
             static_root,
@@ -274,6 +276,21 @@ impl ProductionRuntime {
                 relays: relays.clone(),
             },
         );
+        let delegate = ProductionRouteDelegate::new(services)
+            .with_surface(adapters.router(self.plugins.clone()))
+            .with_api_keys(Arc::new(api_keys))
+            .with_tools(tools.clone())
+            .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
+        #[cfg(feature = "test-harness")]
+        let delegate = match adapter_capture {
+            Some(capability) => delegate.with_adapter_capture(
+                crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint::new(
+                    capability,
+                    adapters.clone(),
+                ),
+            ),
+            None => delegate,
+        };
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {
                 inner: self.authorizer.clone(),
@@ -282,13 +299,7 @@ impl ProductionRuntime {
             }),
             state: adapters.clone(),
             calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
-            delegate: Arc::new(
-                ProductionRouteDelegate::new(services)
-                    .with_surface(adapters.router(self.plugins.clone()))
-                    .with_api_keys(Arc::new(api_keys))
-                    .with_tools(tools.clone())
-                    .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone())),
-            ),
+            delegate: Arc::new(delegate),
         };
         let mut dashboard_providers = providers.clone();
         dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {
