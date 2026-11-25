@@ -73,10 +73,23 @@ enum Backend {
     },
 }
 
+impl Backend {
+    /// Where this backend's host → plugin messages go: a copy of the local
+    /// vtable/context pair, or a shared reference to the process endpoint.
+    fn target(&self) -> DispatchTarget {
+        match self {
+            Self::Local { vtable, ctx, .. } => DispatchTarget::Local {
+                vtable: *vtable,
+                ctx: *ctx,
+            },
+            Self::Process { endpoint, .. } => DispatchTarget::Process(Arc::clone(endpoint)),
+        }
+    }
+}
+
 /// A created, running plugin instance.
 pub struct PluginInstance {
     id: PluginInstanceId,
-    target: DispatchTarget,
     backend: Backend,
     in_flight: InFlightTracker,
     dispatch: Dispatch,
@@ -125,7 +138,7 @@ impl PluginInstance {
         } else {
             None
         };
-        let (target, backend) = match plugin.execution() {
+        let backend = match plugin.execution() {
             Execution::Local(code) => Self::create_local(id, code, init, handler)?,
             Execution::Process(package) => {
                 let launcher = launcher.ok_or(HostError::ProcessRuntimeUnavailable)?;
@@ -138,10 +151,7 @@ impl PluginInstance {
                     ingress: PluginIngress::new(id, Arc::clone(&handler)),
                     loss: InstanceLoss::new(id, Arc::clone(&loss), &handler),
                 })?;
-                (
-                    DispatchTarget::Process(Arc::clone(&endpoint)),
-                    Backend::Process { endpoint, loss },
-                )
+                Backend::Process { endpoint, loss }
             }
         };
         let dispatch = match concurrent_pool {
@@ -156,10 +166,9 @@ impl PluginInstance {
             Dispatch::Serial(worker) => worker.queue(),
             Dispatch::Concurrent(pool) => pool.queue(),
         };
-        let outbox = super::outbox::ReservedOutbox::new(queue, target.clone(), in_flight.clone());
+        let outbox = super::outbox::ReservedOutbox::new(queue, backend.target(), in_flight.clone());
         Ok(Self {
             id,
-            target,
             backend,
             in_flight,
             outbox,
@@ -173,7 +182,7 @@ impl PluginInstance {
         code: &LocalCode,
         init: &[u8],
         handler: Arc<dyn PluginHostHandler>,
-    ) -> Result<(DispatchTarget, Backend), HostError> {
+    ) -> Result<Backend, HostError> {
         let vtable = code.vtable;
         let create = vtable.create.ok_or(HostError::MissingRequiredFunction)?;
         let mut host_ctx = Box::new(HostContext::new(id, handler));
@@ -200,16 +209,12 @@ impl PluginInstance {
         if plugin_ctx.is_null() {
             return Err(HostError::CreateRejected);
         }
-        let ctx = PluginCtx(plugin_ctx);
-        Ok((
-            DispatchTarget::Local { vtable, ctx },
-            Backend::Local {
-                vtable,
-                ctx,
-                host_ctx: Some(host_ctx),
-                library: code.library.clone(),
-            },
-        ))
+        Ok(Backend::Local {
+            vtable,
+            ctx: PluginCtx(plugin_ctx),
+            host_ctx: Some(host_ctx),
+            library: code.library.clone(),
+        })
     }
 
     pub fn id(&self) -> PluginInstanceId {
@@ -236,7 +241,7 @@ impl PluginInstance {
     pub fn dispatch(&self, message: OwnedMessage) -> Result<Receiver<vosu_status>, HostError> {
         let (reply_tx, reply_rx) = sync_channel(1);
         let job = Job {
-            target: self.target.clone(),
+            target: self.backend.target(),
             message,
             task: None,
             reply: Some(reply_tx),
@@ -251,7 +256,7 @@ impl PluginInstance {
         task: super::dispatch::DispatchTask,
     ) -> Result<(), HostError> {
         let job = Job {
-            target: self.target.clone(),
+            target: self.backend.target(),
             message: OwnedMessage {
                 opcode: 0,
                 flags: 0,
@@ -291,7 +296,7 @@ impl PluginInstance {
     /// need while making it (e.g. a plugin calling back into the host from
     /// inside this call).
     pub(crate) fn dispatch_target(&self) -> DispatchTarget {
-        self.target.clone()
+        self.backend.target()
     }
 
     /// Stops accepting new dispatch work, waits for every already queued
