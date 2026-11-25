@@ -89,9 +89,10 @@ pub struct ProcessLaunch<'a> {
 /// Starts one `vosu plugin-host` child per instance (§7.2).
 pub trait ProcessLauncher: Send + Sync {
     /// Returns only once the child reported its plugin's `create`
-    /// succeeded, or an error after reaping a child that did not. Every
-    /// call creates a distinct child and endpoint; nothing is shared
-    /// between instances.
+    /// succeeded, or an error after reaping a child that did not, within
+    /// the bounded startup deadline (A5.8). Core holds no host lock across
+    /// this call. Every call creates a distinct child and endpoint;
+    /// nothing is shared between instances.
     fn launch(&self, launch: ProcessLaunch<'_>) -> Result<Arc<dyn ProcessEndpoint>, HostError>;
 }
 
