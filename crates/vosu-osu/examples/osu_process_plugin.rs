@@ -18,15 +18,15 @@ use vosu_osu::plugin::OsuPlugin;
 use vosu_plugin_api::{ConcurrentPlugin, Init, Message, PluginError, VtableHostServices};
 
 enum ProcessOsu {
-    Producer(OsuPlugin),
-    Parity(parity::Parity),
+    Producer(Box<OsuPlugin>),
+    Parity(Box<parity::Parity>),
 }
 
 impl ConcurrentPlugin for ProcessOsu {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
         match parity::Parity::load(host, &init.data_dir) {
-            Some(parity) => Ok(Self::Parity(parity)),
-            None => OsuPlugin::create(host, init).map(Self::Producer),
+            Some(parity) => Ok(Self::Parity(Box::new(parity))),
+            None => OsuPlugin::create(host, init).map(|plugin| Self::Producer(Box::new(plugin))),
         }
     }
 
