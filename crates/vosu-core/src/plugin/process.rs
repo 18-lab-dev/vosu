@@ -10,6 +10,8 @@
 //!   peer-written cursor and head before use.
 //! - [`channel`]: one side's serialized producer, single consumer,
 //!   doorbell-driven waits, 2-second backpressure window and termination.
+//! - `linux` (Linux only): core's launch of one plugin host with exactly its
+//!   channel objects, and the child's adoption of them (§7.3, §7.6).
 //!
 //! The OS objects (mapping and doorbell per direction) come from
 //! `vosu_sys::plugin_process::RingObjects`, whose module documents the
@@ -30,4 +32,6 @@
 #[cfg(any(target_os = "linux", windows))]
 pub mod channel;
 pub mod frame;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod ring;
