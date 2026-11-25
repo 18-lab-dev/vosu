@@ -408,11 +408,22 @@ Once its capability drop (§7.3) or job-object confinement (§7.4) completes, `v
 
 **Amended by A5.1, owner decision 2026-11-24, option (b).** The earlier requirement to empty the bounding set is withdrawn. Option (a), adding `CAP_SETPCAP` to `vosu --setup`, was rejected because it broadens the daemon executable's authority.
 
-`vosu --setup` grants the `vosu` executable `CAP_SYS_PTRACE` (and, where eBPF process-event backends are available, `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`) so core itself can read arbitrary same-user process memory. That list is unchanged: plugin hosting gives the daemon no new privilege, and core never runs `setcap`, a privileged helper or an elevation prompt to launch a plugin. `vosu plugin-host` must never hold any of these: every memory read it needs goes through `VOSU_OP_READ_PLAN_SUBMIT` to core, which executes it against only the one process that plugin matched. Because core `execve`s the same file-capability executable, the kernel grants the child those file capabilities, and clears any parent-death signal set before the exec. The child removes them itself.
+`vosu --setup` grants the `vosu` executable `CAP_SYS_PTRACE` (and, where eBPF process-event backends are available, `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`) so core itself can read arbitrary same-user process memory. That list is unchanged: plugin hosting gives the daemon no new privilege, and core never runs `setcap`, a privileged helper or an elevation prompt to launch a plugin. `vosu plugin-host` must never hold any of these: every memory read it needs goes through `VOSU_OP_READ_PLAN_SUBMIT` to core, which executes it against only the one process that plugin matched.
+
+**Launch (accepted 2026-11-24 with M5 L0).** Core `execve`s the same file-capability executable, so without further care the kernel would grant the child those file capabilities and clear any parent-death signal set before the exec. Core's launcher therefore runs these steps in the forked child before `execve`, using only async-signal-safe syscalls:
+
+1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then `getppid()` must still be core. This covers the window between `fork` and `execve`.
+2. `prctl(PR_SET_NO_NEW_PRIVS, 1)`. With `no_new_privs` set, the `execve` grants no file capabilities, so the plugin host never holds one, not even while the dynamic loader and runtime start. The exec is then not a privileged exec, and the parent-death signal survives it.
+3. `setpgid(0, 0)`. Each plugin host gets its own process group, so terminal job-control signals aimed at core's group (for example Ctrl-C or a hangup) cannot kill plugin hosts behind core's controlled teardown (§7.6). Core-only death still kills the host through the parent-death signal.
+4. It clears the signal mask, installs the null device on 0–2 and exactly the four endpoint objects on 3–6, and closes every other descriptor.
+
+A failure at any of these steps is startup stage `spawn` (§7.6), reported to core with the step and `errno`. The §7.3 sequence below still runs in full after the exec and still verifies every set: it must not rely on these pre-exec steps, and with them its steps 4–5 are no-ops that must still succeed.
+
+**Kernel requirement.** Process plugins on Linux require kernel 5.4 or later: core holds every plugin host through a pidfd (`pidfd_open`, `waitid(P_PIDFD)`), so that killing it can never reach a reused PID and its exit can be awaited without polling. On an older kernel every process-plugin launch fails deterministically with startup stage `spawn`, is not retried and is not a crash. In-process plugins and core are unaffected.
 
 **Sequence.** On its initial thread, before it opens the plugin library and before any plugin code runs, `vosu plugin-host` performs the following steps and checks every return value. Step 1 runs immediately after argument parsing. Steps 2–6 run after the endpoints are validated and mapped, so that a failure can be reported over the channel (§7.6 startup). The process must have exactly one thread throughout (`/proc/self/status` `Threads: 1`, checked first; an unreadable procfs fails closed).
 
-1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then `getppid()` must equal the core PID named on its command line (§7.6). Re-arming is required because the file-capability exec cleared any signal core set before the exec.
+1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then `getppid()` must equal the core PID named on its command line (§7.6). Re-arming after the exec is required: the plugin host must not depend on how it was launched, and a privileged exec clears any signal set before it.
 2. `prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)`.
 3. `seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, …)` installs a filter that denies creating or entering a user namespace:
    - `unshare` and `clone` whose flags include `CLONE_NEWUSER` fail with `EPERM`;
@@ -434,6 +445,17 @@ Once its capability drop (§7.3) or job-object confinement (§7.4) completes, `v
 **Postcondition.** `CapInh = CapPrm = CapEff = CapAmb = 0`, `NoNewPrivs = 1`, the step-3 filter active (`Seccomp: 2`), and no root UID. `CapBnd` is **not** part of the postcondition and normally stays the full default set (for example `000001ffffffffff`). With `no_new_privs` set, `execve` cannot add permitted capabilities from file capabilities or set-user-ID bits. The ambient and inheritable sets are empty, and the remaining route to capabilities, a new or joined user namespace, is denied. Emptying the bounding set would need `CAP_SETPCAP`, which setup deliberately does not grant. Tests assert the five sets as observed and assert `CapBnd` only as recorded data.
 
 **Fail closed.** A step-1 failure is startup stage `parent` (§7.6). If any of steps 2–6 fails or any readback differs, `vosu plugin-host` reports startup stage `security` with the failing step and `errno`, then exits. It never opens the plugin library, never creates a thread, and has no fallback with partial privilege. It must never ignore `EPERM`, retry a weaker sequence, or continue with only `CapEff` cleared. Core marks that plugin `failed` with the reason and does not retry automatically. The daemon and every other plugin keep running.
+
+The `security` stage's `FAILED` `code` (§7.6) is one of:
+
+| Code | Meaning |
+| --- | --- |
+| `security_unavailable` | The environment refuses `no_new_privs` or the step-3 filter (no `CONFIG_SECCOMP_FILTER`, a container policy, an architecture without a verified filter), or hides the procfs files the checks read. |
+| `not_single_threaded` | Another thread existed when the sequence started or when the filter was synchronized, so the drop could not cover it. |
+| `drop_failed` | Step 4 or 5 failed, or a step-6 readback syscall failed. |
+| `readback_mismatch` | Every step succeeded but the step-6 readback differs from the postcondition; the message names the first differing field. |
+
+The failing step is reported as `threads`, `no_new_privs`, `seccomp`, `ambient`, `capset` or `readback`.
 
 **Without setup or capabilities.** The same sequence and postcondition apply whether or not setup ran.
 
@@ -555,9 +577,9 @@ Core publishes the instance only after `READY`. No session offer, action invocat
 
 | Startup stage | Detected by | Outcome |
 | --- | --- | --- |
-| `spawn`, `job` (Windows creation or assignment) | core | `failed`, not retried, not a crash |
+| `spawn` (including a Linux pre-exec launch step or a kernel older than 5.4, §7.3), `job` (Windows creation or assignment) | core | `failed`, not retried, not a crash |
 | `arguments`, `generation` (build mismatch, for example after an in-place update), `parent`, `endpoints` | exit before the channel exists | `failed`, not retried, not a crash. `generation` reports `executable_updated` and asks the user to restart vosu. |
-| `security` (including `security_unavailable`), `approval` (digest mismatch), `library`, `abi` | `FAILED` frame, then exit | `failed`, not retried, not a crash |
+| `security` (codes `security_unavailable`, `not_single_threaded`, `drop_failed`, `readback_mismatch`; §7.3 "Fail closed"), `approval` (digest mismatch), `library`, `abi` | `FAILED` frame, then exit | `failed`, not retried, not a crash |
 | `create` (non-OK `create`, or init over the frame cap), `timeout`, `crash` (exit before `READY` without `FAILED`) | `FAILED`, deadline, or OS exit | On the initial load: `failed`, waiting for a manual restart. During an automatic restart: one crash event (below), and backoff continues. |
 
 Before the channel is mapped, the child reports its stage only through its exit status. Exit codes 70 (`arguments`), 71 (`generation`), 72 (`parent`) and 73 (`endpoints`) are private to the shared executable generation and are not a public interface.

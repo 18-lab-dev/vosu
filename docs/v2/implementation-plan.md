@@ -1633,9 +1633,11 @@ Scope:
   bounded streams for generated resources.
 - Linux: the §7.3 sequence before `dlopen` on the single initial thread, as
   amended by A5.1(b) (below). `vosu --setup` grants file capabilities
-  (`crates/vosu-sys/src/platform/linux/capabilities.rs`), so the exec of
-  `vosu plugin-host` regains them and must remove them first. Setup does not
-  change.
+  (`crates/vosu-sys/src/platform/linux/capabilities.rs`). Core's launcher
+  sets `no_new_privs` before it execs `vosu plugin-host`, so the exec grants
+  none of them; the child still runs and verifies the full drop
+  (plugin-abi.md §7.3 "Launch"). Process plugins need Linux 5.4 or later.
+  Setup does not change.
 - Windows: `CREATE_SUSPENDED`, job object with
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` before resume (§7.4), reusing
   `src/tools/process.rs:59-70`. Then the measurement brokered-reads.md "Open
