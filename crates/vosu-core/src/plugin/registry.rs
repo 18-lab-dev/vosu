@@ -119,7 +119,12 @@ pub fn load_bundled(
     bundled
         .iter()
         .map(|entry| {
-            let manifest = parse_plugin(entry.manifest, application_version, snapshot, true)?;
+            let manifest = parse_plugin(
+                entry.manifest,
+                application_version,
+                snapshot,
+                PackageOrigin::Bundled,
+            )?;
             if manifest.runtime != Runtime::InProcess {
                 return Err(HostError::InProcessRefused {
                     reason: "a bundled plugin's manifest must request runtime = \"in-process\"",
@@ -200,8 +205,65 @@ pub fn load_development(
             reason: "release builds trust only bundled and officially sourced plugins in-process; `--plugin <dir>` is refused",
         });
     }
+    load_package_dir(
+        application_version,
+        snapshot,
+        dir,
+        PackageOrigin::Development,
+    )
+}
+
+/// The test harness's official loading seam (M5 X0): loads the package in
+/// `dir` under its own official `vosu.*` manifest, so a native test runs
+/// the separately staged external osu! producer
+/// (`crates/vosu-osu/examples/osu_process_plugin.rs`) with the real
+/// `vosu.osu` identity in a plugin host. The ordinary development loader
+/// refuses that identity (M6a Q3: officialness is explicit provenance).
+///
+/// Never reachable from a release build, three times over: it exists only
+/// with `test-harness`, which `vosu-core` and the root build script reject
+/// in release builds; it refuses outright unless `debug_build`
+/// (`cfg!(debug_assertions)` at the call site); and only a
+/// `runtime = "process"` package is accepted, so it never maps a library
+/// in core. The package is [`PackageOrigin::OfficialTestFixture`]:
+/// official namespace and schema trust, never the bundled-only grants.
+#[cfg(feature = "test-harness")]
+pub fn load_official_test_fixture(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    debug_build: bool,
+) -> Result<LoadedPlugin, HostError> {
+    if !debug_build {
+        return Err(HostError::InProcessRefused {
+            reason: "the test harness's official fixture loading is refused outside debug builds",
+        });
+    }
+    load_package_dir(
+        application_version,
+        snapshot,
+        dir,
+        PackageOrigin::OfficialTestFixture,
+    )
+}
+
+/// Validates the package in `dir` for `origin` and grants its runtime. Only
+/// [`PackageOrigin::Development`] reaches the in-process arm: the official
+/// test fixture is refused before any library is mapped.
+fn load_package_dir(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    origin: PackageOrigin,
+) -> Result<LoadedPlugin, HostError> {
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
-    let manifest = parse_plugin(&text, application_version, snapshot, false)?;
+    let manifest = parse_plugin(&text, application_version, snapshot, origin)?;
+    #[cfg(feature = "test-harness")]
+    if origin == PackageOrigin::OfficialTestFixture && manifest.runtime != Runtime::Process {
+        return Err(HostError::InProcessRefused {
+            reason: "the test harness's official fixture loading accepts only `runtime = \"process\"` packages",
+        });
+    }
     let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
@@ -251,7 +313,7 @@ pub fn load_development(
     };
     Ok(LoadedPlugin {
         manifest,
-        origin: PackageOrigin::Development,
+        origin,
         execution,
         settings_schema,
         namespace_schemas,
@@ -316,16 +378,17 @@ fn parse_plugin(
     text: &str,
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
-    bundled: bool,
+    origin: PackageOrigin,
 ) -> Result<PluginManifest, HostError> {
     let package =
         vosu_plugin_api::manifest::PackageManifest::parse(text).map_err(HostError::from)?;
+    let bundled = origin == PackageOrigin::Bundled;
     let support = snapshot
         .validate(
             &package,
             application_version,
             if bundled { "bundled" } else { "development" },
-            bundled,
+            origin.is_official(),
         )
         .map_err(HostError::from)?;
     if support != vosu_plugin_api::manifest::HostSupport::Supported {
@@ -374,3 +437,5 @@ fn compile_action_schemas(
 
 #[cfg(test)]
 mod action_tests;
+#[cfg(all(test, feature = "test-harness"))]
+mod official_fixture_tests;

@@ -295,6 +295,7 @@ impl PluginHost {
                         .filter_map(|cap| cap.id.strip_prefix("resource:").map(str::to_owned))
                         .collect(),
                     bundled: plugin.origin() == PackageOrigin::Bundled,
+                    official: plugin.origin().is_official(),
                     _registration: registration,
                 }),
             }),

@@ -123,6 +123,8 @@ pub use read_plan::{
     ModuleResolver, OutstandingPlans, OutstandingPlansError, ReadPlanError, SyncReadPlanError,
     deliver_sync, execute, execute_bytes, execute_into, execute_sync_into, on_dispatch_thread,
 };
+#[cfg(feature = "test-harness")]
+pub use registry::load_official_test_fixture;
 pub use registry::{
     BundledPlugin, LoadedPlugin, development_roots, load_bundled, load_development,
 };

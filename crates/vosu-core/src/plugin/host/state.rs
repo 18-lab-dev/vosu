@@ -139,6 +139,11 @@ pub(super) struct Publisher {
     pub(super) read_fields: Vec<String>,
     pub(super) read_resources: Vec<String>,
     pub(super) bundled: bool,
+    /// May own an official `vosu.*` identity ([`PackageOrigin::is_official`]):
+    /// bundled, or the test harness's official fixture.
+    ///
+    /// [`PackageOrigin::is_official`]: crate::plugin::PackageOrigin::is_official
+    pub(super) official: bool,
     pub(super) _registration: SchemaRegistration,
 }
 
@@ -183,7 +188,7 @@ impl SchemaRegistration {
                 .map_err(|error| HostError::State(error.to_string()))?;
             // Explicit provenance (M6a Q3), never inferred from the backend:
             // a process package has no local library either.
-            let provenance = if plugin.origin() == crate::plugin::PackageOrigin::Bundled {
+            let provenance = if plugin.origin().is_official() {
                 vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial
             } else {
                 vosu_plugin_api::manifest::schema::SchemaProvenance::Untrusted
