@@ -1110,6 +1110,23 @@ effect. Candidate mechanisms, for C0 to evaluate and choose:
 P0 does not implement a fix. C0/X0 prove it with `dispatch_abort`, and with an
 equivalent real-abort startup case if C0 adds one.
 
+**Open item (owners C0 for startup-deadline semantics, X0 for native
+evidence): a first load of a newly installed plugin DLL on Windows.** In
+production the plugin host is the daemon's own executable, which Windows has
+already evaluated. A newly installed or updated plugin DLL has not been
+evaluated. Its first `LoadLibrary` gets the image evaluation described above,
+inside the 5-second startup deadline. A first start can therefore fail
+spuriously as `timeout`, and a large DLL or concurrent first loads make that
+more likely.
+
+P0 measured this in the VM only with a 0.8 MB DLL. A never-seen hash took
+0.5–1.1 s to load, even in a Defender-excluded directory. A copy of the same
+hash then loaded in about 12 ms. The first-load time of a realistic release
+plugin DLL, and the effect of several concurrent first loads, were not
+measured. The test harness avoids the cost by loading each staged library
+once before the tests run. That is not a production answer, and P0 does not
+change the deadline.
+
 **Process identity.** A death proof reads a pidfd, or a process handle and its
 exit status. It never relies on PID absence alone.
 
