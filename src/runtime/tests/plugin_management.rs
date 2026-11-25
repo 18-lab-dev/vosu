@@ -1,0 +1,404 @@
+//! `/api/plugins` behavior over a real `PluginHost` whose launches pass
+//! through the approval gate (catalog-v2.md A5.5 "Management routes",
+//! "States"). Routing's dashboard-only and CSRF rules are
+//! `server::routes` tests; native children are `plugin_host_native`'s
+//! `approval` module.
+
+use std::sync::{Arc, Mutex, PoisonError};
+
+use axum::body::{Body, Bytes, to_bytes};
+use axum::http::{Method, Request, StatusCode, header};
+use serde_json::{Value, json};
+use vosu_core::plugin::approval::{ApprovalGate, ApprovalStore, ApprovedLaunch};
+use vosu_core::plugin::test_support::{
+    LaunchBehavior, RecordingLauncher, write_development_package,
+};
+use vosu_core::plugin::{
+    self, HostError, PluginHost, PluginInstanceId, ProcessEndpoint, ProcessLaunch, ProcessLauncher,
+};
+
+use super::*;
+
+#[test]
+fn ids_are_one_percent_decoded_segment() {
+    assert_eq!(decode_segment("test.u0").as_deref(), Some("test.u0"));
+    assert_eq!(decode_segment("test%2Eu0").as_deref(), Some("test.u0"));
+    assert_eq!(decode_segment("a%2Fb"), None, "an id never spans segments");
+    assert_eq!(decode_segment(""), None);
+    assert_eq!(decode_segment("bad%2"), None);
+    assert_eq!(decode_segment("bad%zz"), None);
+    assert_eq!(decode_segment("%ff"), None, "ids are UTF-8");
+}
+
+struct Approved {
+    inner: Arc<RecordingLauncher>,
+    digests: Mutex<Vec<[u8; 32]>>,
+}
+
+/// Records each approved digest, then launches nothing real.
+struct ApprovedLauncher(Arc<Approved>);
+
+impl ApprovedLaunch for ApprovedLauncher {
+    fn launch_approved(
+        &self,
+        launch: ProcessLaunch<'_>,
+        library_sha256: [u8; 32],
+    ) -> Result<Arc<dyn ProcessEndpoint>, HostError> {
+        self.0
+            .digests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(library_sha256);
+        self.0.inner.launch(launch)
+    }
+}
+
+struct Fixture {
+    _root: tempfile::TempDir,
+    package: tempfile::TempDir,
+    store: Arc<ApprovalStore>,
+    approved: Arc<Approved>,
+    management: Arc<PluginManagement>,
+}
+
+const PROCESS_ID: &str = "test.u0.managed";
+const LOCAL_ID: &str = "test.u0.local";
+
+async fn fixture() -> Fixture {
+    let root = tempfile::tempdir().unwrap();
+    let logger = vosu_core::logging::Logger::new(
+        root.path(),
+        vosu_core::logging::LoggerOptions::default(),
+        Arc::new(vosu_core::logging::StdoutConsole),
+    )
+    .unwrap();
+    let config = root.path().join("config");
+    let settings = Arc::new(
+        vosu_core::config::ConfigStore::initialize(root.path().join("vosu.toml"))
+            .await
+            .unwrap(),
+    );
+    let host = PluginHost::new(
+        logger,
+        Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
+            plugin::settings::ConfigSettingsBridgeB2::new(settings),
+        ))),
+        tokio::runtime::Handle::current(),
+    );
+    let store = Arc::new(ApprovalStore::open(&config));
+    let approved = Arc::new(Approved {
+        inner: RecordingLauncher::new(LaunchBehavior::Ready),
+        digests: Mutex::new(Vec::new()),
+    });
+    host.install_process_launcher(Arc::new(ApprovalGate::new(
+        Arc::clone(&store),
+        ApprovedLauncher(Arc::clone(&approved)),
+    )))
+    .unwrap();
+
+    let mut roster = Roster::default();
+    let local = plugin::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &plugin::ValidationSnapshot::default(),
+        &[plugin::BundledPlugin {
+            manifest: "kind='plugin'\nmanifest_version=1\nid='test.u0.local'\nname='Local'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n",
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
+        }],
+    )
+    .unwrap();
+    let instance = PluginInstanceId::new(0);
+    let created = host.create_instance(instance, &local[0], root.path().into(), None);
+    roster.loaded(
+        instance,
+        Trust::Bundled,
+        None,
+        &local[0],
+        created.map_err(|error| error.to_string()),
+    );
+
+    let package = tempfile::tempdir().unwrap();
+    write_development_package(
+        package.path(),
+        PROCESS_ID,
+        "u0-target",
+        "process",
+        "plugin.bin",
+        b"process library bytes",
+    )
+    .unwrap();
+    let loaded = plugin::load_development(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &plugin::ValidationSnapshot::default(),
+        package.path(),
+        false,
+    )
+    .unwrap();
+    let instance = PluginInstanceId::new(1);
+    let created = host.create_instance(instance, &loaded, root.path().into(), None);
+    assert!(created.is_err(), "an unapproved package must not start");
+    roster.loaded(
+        instance,
+        Trust::User,
+        Some(package.path().to_owned()),
+        &loaded,
+        created.map_err(|error| error.to_string()),
+    );
+    roster.refused(
+        PluginInstanceId::new(2),
+        Trust::User,
+        Some(root.path().join("broken")),
+        "manifest.toml: not found".into(),
+    );
+    let management = Arc::new(PluginManagement::new(host, Arc::clone(&store), roster));
+    Fixture {
+        _root: root,
+        package,
+        store,
+        approved,
+        management,
+    }
+}
+
+impl Fixture {
+    async fn call(&self, method: Method, path: &str, body: Value) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        let body = if body.is_null() {
+            Bytes::new()
+        } else {
+            Bytes::from(body.to_string())
+        };
+        let response = Arc::clone(&self.management).handle(request, body).await;
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "no-store",
+            "{path}"
+        );
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    async fn plugin(&self, id: &str) -> Value {
+        let (status, list) = self.call(Method::GET, "/api/plugins", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        list["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} is not listed: {list}"))
+    }
+
+    fn launches(&self) -> usize {
+        self.approved.inner.launches().len()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn approval_lifecycle_through_the_management_routes() {
+    vosu_proptest::bounded!(async {
+        let fixture = fixture().await;
+        let path = |action: &str| format!("/api/plugins/{PROCESS_ID}/{action}");
+
+        // Listed: every plugin, the unapproved one with its pending digests.
+        let (_, list) = fixture.call(Method::GET, "/api/plugins", Value::Null).await;
+        assert_eq!(list["plugins"].as_array().unwrap().len(), 3);
+        let broken = &list["plugins"][2];
+        assert_eq!(broken["id"], Value::Null);
+        assert_eq!(broken["state"], "failed");
+        assert_eq!(broken["reason"], "load");
+        let local = fixture.plugin(LOCAL_ID).await;
+        assert_eq!(local["state"], "running");
+        assert_eq!(local["trust"], "bundled");
+        let pending = fixture.plugin(PROCESS_ID).await;
+        assert_eq!(pending["state"], "approval_required");
+        assert_eq!(pending["trust"], "user");
+        assert_eq!(pending["runtime"], "process");
+        assert_eq!(pending["reason"], "approval");
+        assert_eq!(pending["generation"], 1);
+        assert_eq!(
+            pending["provenance"],
+            json!({"kind": "development", "path": fixture.package.path().canonicalize().unwrap()})
+        );
+        assert_eq!(pending["requires_internal_paths"], false);
+        let approval = pending["approval"].clone();
+        assert_eq!(approval["library_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(fixture.launches(), 0);
+
+        // Not applicable, malformed and stale approvals change nothing.
+        let (status, body) = fixture
+            .call(
+                Method::POST,
+                &format!("/api/plugins/{LOCAL_ID}/approval"),
+                approval.clone(),
+            )
+            .await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::BAD_REQUEST, &json!("approval_not_applicable"))
+        );
+        let (status, body) = fixture
+            .call(
+                Method::POST,
+                &path("approval"),
+                json!({"manifest_sha256": "x"}),
+            )
+            .await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::BAD_REQUEST, &json!("invalid_request"))
+        );
+        let mut stale = approval.clone();
+        stale["library_sha256"] = json!("0".repeat(64));
+        let (status, body) = fixture.call(Method::POST, &path("approval"), stale).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::CONFLICT, &json!("approval_stale"))
+        );
+        assert_eq!(fixture.launches(), 0);
+        assert!(
+            !fixture.store.path().exists(),
+            "a refused approval wrote the store"
+        );
+
+        // A restart or stop of the unapproved plugin never executes it.
+        let (status, _) = fixture
+            .call(Method::POST, &path("restart"), json!({"generation": 1}))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fixture.launches(), 0);
+        let pending = fixture.plugin(PROCESS_ID).await;
+        assert_eq!(pending["state"], "approval_required");
+        let generation = pending["generation"].clone();
+
+        // Approval persists the record and starts it with that digest.
+        let (status, body) = fixture
+            .call(Method::POST, &path("approval"), approval.clone())
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "running");
+        assert_eq!(body["approved"], true);
+        assert_eq!(fixture.launches(), 1);
+        let approved_digest: String = fixture.approved.digests.lock().unwrap()[0]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(json!(approved_digest), approval["library_sha256"]);
+        assert!(fixture.store.path().exists());
+
+        // Restart and stop act on exactly the generation shown.
+        let (status, body) = fixture
+            .call(
+                Method::POST,
+                &path("restart"),
+                json!({"generation": generation}),
+            )
+            .await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::CONFLICT, &json!("generation_changed"))
+        );
+        let current = fixture.plugin(PROCESS_ID).await["generation"].clone();
+        let (status, body) = fixture
+            .call(
+                Method::POST,
+                &path("restart"),
+                json!({"generation": current}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "running");
+        assert_eq!(body["generation"], current.as_u64().unwrap() + 1);
+        assert_eq!(fixture.launches(), 2);
+        let (status, body) = fixture
+            .call(
+                Method::POST,
+                &path("stop"),
+                json!({"generation": body["generation"]}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "stopped");
+
+        // In-process plugins restart only with the daemon.
+        for action in ["restart", "stop"] {
+            let (status, body) = fixture
+                .call(
+                    Method::POST,
+                    &format!("/api/plugins/{LOCAL_ID}/{action}"),
+                    json!({"generation": 1}),
+                )
+                .await;
+            assert_eq!(
+                (status, &body["code"]),
+                (StatusCode::CONFLICT, &json!("requires_daemon_restart"))
+            );
+        }
+        let (status, body) = fixture
+            .call(
+                Method::POST,
+                "/api/plugins/test.u0.unknown/stop",
+                json!({"generation": 1}),
+            )
+            .await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::NOT_FOUND, &json!("unknown_plugin"))
+        );
+
+        // Revocation removes the record and the next start is refused.
+        let current = fixture.plugin(PROCESS_ID).await["generation"].clone();
+        let (status, _) = fixture
+            .call(
+                Method::POST,
+                &path("restart"),
+                json!({"generation": current}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fixture.launches(), 3);
+        let (status, body) = fixture
+            .call(Method::DELETE, &path("approval"), Value::Null)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "approval_required");
+        let current = fixture.plugin(PROCESS_ID).await["generation"].clone();
+        fixture
+            .call(
+                Method::POST,
+                &path("restart"),
+                json!({"generation": current}),
+            )
+            .await;
+        assert_eq!(fixture.launches(), 3, "a revoked package executed");
+
+        // Changed bytes need a new approval: the old digests are stale.
+        std::fs::write(
+            fixture.package.path().join("lib/plugin.bin"),
+            b"changed library bytes",
+        )
+        .unwrap();
+        let (status, body) = fixture
+            .call(Method::POST, &path("approval"), approval.clone())
+            .await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::CONFLICT, &json!("approval_stale"))
+        );
+        let changed = fixture.plugin(PROCESS_ID).await["approval"].clone();
+        assert_ne!(changed["library_sha256"], approval["library_sha256"]);
+        assert_eq!(changed["manifest_sha256"], approval["manifest_sha256"]);
+        let (status, body) = fixture.call(Method::POST, &path("approval"), changed).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"], "running");
+        assert_eq!(fixture.launches(), 4);
+    });
+}

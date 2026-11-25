@@ -153,7 +153,7 @@ impl ProductionRuntime {
         let paths = self.paths.clone();
         let logger = self.logger.clone();
         let dev_dirs = std::mem::take(&mut self.dev_plugins);
-        tokio::task::spawn_blocking(move || {
+        let management = tokio::task::spawn_blocking(move || {
             dev_plugins::load_all(&host, dev_dirs, &paths, &logger)
         })
         .await
@@ -280,6 +280,7 @@ impl ProductionRuntime {
             .with_surface(adapters.router(self.plugins.clone()))
             .with_api_keys(Arc::new(api_keys))
             .with_tools(tools.clone())
+            .with_plugins(Arc::new(management))
             .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
         #[cfg(feature = "test-harness")]
         let delegate = match adapter_capture {
