@@ -97,7 +97,7 @@ impl HostSpawner {
         let channel = channel::connect(
             to_plugin.into(),
             to_host.into(),
-            Box::new(DirectionPolicy::new(Direction::PluginToHost)),
+            Box::new(DirectionPolicy::with_ledger(Direction::PluginToHost)),
         )
         .map_err(LaunchError::Ring)?;
         Ok(SpawnedHost { child, channel })
@@ -134,7 +134,7 @@ pub fn adopt_channel(argument: &OsStr) -> Result<Endpoint, AdoptError> {
     channel::connect(
         to_host.into(),
         to_plugin.into(),
-        Box::new(DirectionPolicy::new(Direction::HostToPlugin)),
+        Box::new(DirectionPolicy::with_ledger(Direction::HostToPlugin)),
     )
     .map_err(AdoptError::Ring)
 }

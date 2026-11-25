@@ -13,3 +13,5 @@
 
 #[path = "plugin_host_native/lifecycle.rs"]
 mod lifecycle;
+#[path = "plugin_host_native/relay.rs"]
+mod relay;

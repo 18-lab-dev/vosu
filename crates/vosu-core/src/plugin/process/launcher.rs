@@ -8,12 +8,15 @@
 //! endpoints and returns [`HostError::ProcessStartupFailed`] naming the
 //! §7.6 stage; nothing was published, so nothing needs rolling back here.
 //!
-//! Each instance then has two supervision threads, never holding a host
-//! lock: an **exit watcher**, the one thread that waits on and reaps the
-//! process, and a **ring reader**, which handles lifecycle frames and
-//! answers each acknowledged plugin → host frame with core's `STATUS`
-//! (§7.6 A5.2). An exit or channel failure that core did not request is
-//! reported once through [`InstanceLoss`](crate::plugin::InstanceLoss). Controlled destroy sends
+//! Each instance then has supervision threads that never hold a host lock:
+//! an **exit watcher**, the one thread that waits on and reaps the process;
+//! a **ring reader**, which handles lifecycle frames and hands every public
+//! plugin → host frame to the instance's **ingress** workers
+//! (`ingress`): one ordinary worker answering each acknowledged frame
+//! with core's `STATUS` in ring order, and on-demand `SYNC` workers that
+//! answer an accepted `VOSU_READ_PLAN_SYNC` plan with `REPLY_NEXT` and its
+//! result (§7.6 A5.2). An exit or channel failure that core did not request
+//! is reported once through [`InstanceLoss`](crate::plugin::InstanceLoss). Controlled destroy sends
 //! `DESTROY`, waits up to its grace (5 s) for the OS exit, then kills and
 //! reaps the child.
 //!
@@ -22,10 +25,13 @@
 //! U0) gates them. Tests and fixtures install it through
 //! `PluginHost::install_process_launcher`.
 //!
-//! **Interim until M5 B0/T1.** The ring reader delivers each plugin → host
-//! message to core's handler inline, and `VOSU_READ_PLAN_SYNC` submissions
-//! are refused by the child, so no `REPLY_NEXT` is ever sent.
+//! **`SYNC` execution.** A `SYNC` worker runs the host's own synchronous
+//! read-plan path through `PluginIngress::deliver`, exactly as an
+//! in-process `send` would on the submitting thread. M5 B0 owns moving that
+//! execution onto the broker's bounded work workers; the transport (lanes,
+//! ledger, `REPLY_NEXT` routing and the child's waiter) is complete here.
 
+mod ingress;
 mod platform;
 mod supervision;
 

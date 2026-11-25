@@ -30,6 +30,7 @@ fn helper_process_entry() {
         sender,
         mut receiver,
         closer: _closer,
+        ..
     } = attach_inherited(&arg).unwrap();
     let mut buffer = PayloadBuffer::new();
     let header = receiver
@@ -39,8 +40,10 @@ fn helper_process_entry() {
     let mut reply = buffer.bytes().to_vec();
     reply.extend_from_slice(&std::process::id().to_le_bytes());
     reply.push(u8::from(job_is_strict));
+    // Every public plugin → host frame but a log record is acknowledged.
     sender
-        .send(
+        .send_acknowledged(
+            1,
             &FrameHeader {
                 opcode: vosu_opcode::VOSU_OP_PUBLISH_BATCH as u32,
                 flags: 0,
@@ -68,6 +71,7 @@ fn launch_connects_core_and_a_confined_child_over_inherited_rings() {
                 sender,
                 mut receiver,
                 closer: _closer,
+                ..
             },
         process,
     } = launch_helper();
@@ -83,10 +87,18 @@ fn launch_connects_core_and_a_confined_child_over_inherited_rings() {
         )
         .unwrap();
     let mut buffer = PayloadBuffer::new();
-    let header = receiver
-        .recv_until(&mut buffer, Some(Instant::now() + BOUND))
-        .unwrap()
-        .expect("the child answered within the bound");
+    let mut recv = || {
+        receiver
+            .recv_until(&mut buffer, Some(Instant::now() + BOUND))
+            .unwrap()
+            .expect("the child answered within the bound")
+    };
+    assert_eq!(
+        recv().opcode,
+        super::super::frame::control::ACK_NEXT,
+        "its ACK_NEXT"
+    );
+    let header = recv();
     assert_eq!(header.opcode, vosu_opcode::VOSU_OP_PUBLISH_BATCH as u32);
     assert_eq!(header.correlation, 0x5157_0001);
     let reply = buffer.bytes();
