@@ -193,6 +193,74 @@ cargo test --locked --test performance_invariants --test runtime_wakeups
 None of these commands was run by A5. Record results only from an approved
 exclusive schedule.
 
+### M5 P1 candidate result and draft Windows bar (proposed; not approved)
+
+**This is the candidate result proposed to Main for approval under A5.6.**
+It is exploratory: other agents shared the CPUs and the VM, so it is not D17
+evidence and not an approved bar. The full method, every table and the
+contention record are in
+[brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result).
+The production variants `production_sync` and `production_async` do not
+exist yet; they need B0 and E0.
+
+The `brokered_reads_bench` runner now runs on Linux and Windows:
+
+- Linux runs `direct`, `uds`, `shm` and `naive`, plus `ring`, T0's ring over a
+  memfd and an eventfd, as the reference.
+- Windows runs `direct`, `section` (T0's ring over unnamed sections and
+  auto-reset events) and `pipe` (a measurement-only named pipe).
+
+Both candidate carriers use the same frames, policy, batching, handoff and no
+flush, against real target memory. Each run is checked against the target's
+own expected SHA-256 of the response. The runner takes `--bench`,
+`--warmup`, `--samples`, `--startup-samples`, `--criterion-ms` and `--round`,
+and nothing else.
+
+```sh
+# Linux, five rounds (round 1 through Cargo, rounds 2-5 the same executable)
+cargo build --locked --release --example brokered_reads_target
+taskset -c 0-7,16-23 cargo bench --locked --bench brokered_reads_bench -- --round 1
+taskset -c 0-7,16-23 target/release/deps/brokered_reads_bench-HASH --bench --round N
+```
+
+```powershell
+# Windows guest, after the same two builds with --no-default-features
+cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\brokered_reads_bench-HASH.exe --bench --round N
+```
+
+Medians of five rounds on `a63a0bb`, in µs:
+
+| Platform | Shape | `direct` p50 | Candidate p50 (p99) | Reference p50 | Ratio |
+|---|---|---:|---:|---:|---:|
+| Linux | precise | 7.59 | `ring` 14.56 (41.06) | `shm` 11.25 | 1.297 |
+| Linux | regular | 3.67 | `ring` 9.39 (20.33) | `shm` 6.85 | 1.383 |
+| Windows, set C | precise | 16.10 | `pipe` 89.80 (314.30) | `section` 80.50 | 1.256 |
+| Windows, set C | regular | 5.60 | `pipe` 71.80 (303.10) | `section` 65.00 | 1.058 |
+
+Across three Windows sets of five paired rounds, `pipe` was never lower in
+all five rounds; it was lower in 0, 1 or 2 of them. Its median p50 was 3–26%
+above `section`. Criterion's 95% intervals for set C do not overlap, with the
+pipe higher. Every result hash matched.
+
+**Proposed for approval:**
+
+- **Windows transport.** The unnamed section and events stay the production
+  transport. The pipe fails the frozen tie rule and stays measurement-only.
+- **Windows bar.** For each shape, the median over five paired rounds of
+  `production_sync p50 / section p50`, from the same invocation, is at most
+  2.0. A gated run holds the VM exclusively, uses the 16-vCPU
+  `/AFFINITY FFFF` launcher with child affinity verified, records
+  `load_other_busy_cpus`, and reruns any round in which other work kept 2 or
+  more CPUs busy.
+- **Windows reference.** 167.2 µs for precise and 129.7 µs for regular are
+  reported alongside the gate and never replace it. They are twice the
+  median `section` p50 over the eight quiet rounds (83.6 µs and 64.9 µs).
+
+Contention moved the absolute Windows numbers by up to 6×: in one busy round
+`section` had a regular-shape p50 of 11.2 µs, most likely (an inference, not
+profiled) because the busy guest avoided waking halted vCPUs.
+That is why only the same-run ratio is proposed as the gate.
+
 ## M4a D17 contract
 
 A4 freezes the following exact future case names in `state_bus_bench`; this
