@@ -207,6 +207,7 @@ Operator prompts go to stderr, one per barrier, in the order menu → play →
 paused → result → no-client (close the client). At each barrier every
 golden-role route-matrix case runs as two sandwiches: upstream twice, then
 vosu dump → route → dump. A case gets at most three whole-case attempts.
+The cases that kill upstream run after that, last (see below).
 Every daemon and client process and every file the run created is removed
 before the command returns. Outputs are written once and never replaced,
 both mode 0600:
@@ -267,6 +268,12 @@ authority:
 Any other unmet prerequisite (a missing fixture value or root) fails the run
 before anything is sent. A case whose connection closes without a response is
 recorded as the `closed` outcome and compared; it never fails the run. The
+eight `state-http.*.near.malformed-percent{,-hex}` cases kill the pinned upstream
+(ledger `upstream-malformed-uri-crash`; every route-matrix request was checked
+against a client-less pinned upstream). They run after the `no-client` barrier
+and its cases, with a re-attested upstream relaunched before each one
+(`upstream_restarts` in the transcript), and record the `upstream_crashed`
+outcome (GOLDEN_CONTRACT §6); vosu must answer them. The
 authorization must name exactly this platform, pin, commit, client version and
 scenario set, or the run is refused before the build.
 
@@ -304,8 +311,18 @@ scenario set, or the run is refused before the build.
   Every run re-verifies the copy file by file against the install and
   records its manifest in the transcript (`client_root`). A lazer copy gets
   an empty `framework.ini`, which makes it portable: its realm, files store,
-  logs and caches stay in the copy, and nothing is written to the shared
-  `%APPDATA%\osu`. The files root is then `<capture_root>\client\files`.
+  logs and caches stay in the copy instead of the shared `%APPDATA%\osu`. The
+  files root is then `<capture_root>\client\files`. One file still escapes the
+  copy: lazer writes `<unix time>.nauth.log` into the shared
+  `%APPDATA%\osu\logs`. `golden-capture` removes each one that
+  appeared while its client ran and records its name, size and SHA-256 as
+  `shared_profile` in the transcript. A launch outside the tool, such as the
+  beatmap import, leaves one that the operator removes.
+- **Line endings.** Clone the staged vosu tree with
+  `git clone -c core.autocrlf=false` (Git for Windows converts line endings by
+  default, so a later checkout would modify tracked files). On Windows,
+  `golden-capture` refuses a clone without a local `core.autocrlf=false` before
+  it builds anything, and names line endings when they are the only change.
 - **Offset-generator bundle.** The debug harness build embeds
   `target/offset-generator/<rid>/` when present; without it vosu cannot read
   a lazer version newer than the embedded offsets asset. Prepare it in the

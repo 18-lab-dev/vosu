@@ -233,6 +233,22 @@ partial response is never a golden. Golden captures hold only golden-role
 route-matrix cases. Negative and diagnostic cases carry a `negative` or
 `diagnostic` ID segment, and `golden` and `adapter_golden` refuse both.
 
+A case whose request kills the pinned upstream daemon has the explicit outcome
+`upstream_crashed`; it is neither a failure nor an exclusion (main's contract
+decision and the owner amendment of 2026-11-25). Only route-matrix cases under the
+reviewed ledger row `upstream-malformed-uri-crash` ([DIVERGENCES.md](DIVERGENCES.md))
+have it: upstream answers a request target with a malformed percent escape, then its
+response logger throws and the process exits. These cases run last, after the
+`no-client` barrier and its cases, so they can never abort the barrier sequence.
+Before each attempt that finds upstream exited, the capture launches and re-attests a
+fresh upstream and waits until both daemons report `no-client`. The record holds the
+request, every byte upstream sent before it died and its nonzero exit code, followed
+by the usual vosu sandwich: vosu must answer (a response, not a closed connection)
+and its dumps must agree. `golden` checks the record and the ledger row and treats
+the case as a documented divergence (upstream crashes, vosu answers): with no
+upstream answer to replay, it writes no case file and lists the case, its ledger ID
+and vosu's status in its summary.
+
 ### Route matrix families
 
 | Family | Required cases |
@@ -347,7 +363,8 @@ counts by family and the review receipt reference. It contains no private
 path, account, capability or credential. The platform `inventory.json`
 carries the privacy-scan result as `privacy_scan`. A case's `expected` record
 holds the status code, the §6 compared headers plus `date`, the body and the
-frames, all from upstream, or exactly `{"outcome": "closed"}` (§6).
+frames, all from upstream, or exactly `{"outcome": "closed"}` (§6). An
+`upstream_crashed` case has no case file (§6).
 
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so
