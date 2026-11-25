@@ -141,8 +141,10 @@ future evidence, not a claim that the targets or subcommands exist yet.
 (`[[test]] required-features`), so the exit command names it:
 
 ```sh
-# L1 tooling exit, at the integrated head
-python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
+# L1 tooling exit, at the integrated head. VOSU_GOLDEN_HARNESS_BUILD=1 lets the real-daemon
+# golden-capture test build HEAD's harness vosu from the clean tree (never a prebuilt one);
+# without it that test skips and says so.
+VOSU_GOLDEN_HARNESS_BUILD=1 python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
 cargo test --locked --features test-harness --test adapter_golden
 cargo test --locked --features test-harness --test daemon_smoke adapter_capture
 cargo test --locked --features test-harness --test server_compat adapter_capture
