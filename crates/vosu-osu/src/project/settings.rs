@@ -126,7 +126,6 @@ pub(super) fn project_all(
     project(snap, facts, sink);
     super::profile::project(snap, sink);
     super::room::project(snap, sink);
-    super::tourney::project(snap, facts, sink);
     super::internal::project(snap, facts, sink);
 }
 

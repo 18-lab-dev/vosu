@@ -7,10 +7,11 @@
     )
 )]
 
-pub mod api;
+#[cfg(test)]
+extern crate self as vosu;
+
 pub mod assets;
 pub mod counters;
-pub mod model;
 pub mod plugins;
 pub mod runtime;
 pub mod server;

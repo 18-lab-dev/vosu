@@ -1,3 +1,11 @@
+#[path = "support/adapter/mod.rs"]
+mod adapter;
+#[path = "support/adapter_cases.rs"]
+mod adapter_cases;
+#[path = "support/adapter_e2e.rs"]
+mod adapter_e2e;
+#[path = "../tests/adapter_fixture/mod.rs"]
+mod adapter_fixture;
 #[path = "support/api_e2e.rs"]
 mod api_e2e;
 #[path = "support/api_v1.rs"]
@@ -7,7 +15,6 @@ use std::{
     hint::black_box,
     sync::{Arc, Mutex, RwLock, atomic::AtomicBool},
 };
-use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu_core::state::{
     ClientFacts, InternalGrant, Pointer, PublisherGrant, SchemaRegistry, SessionKey, StateStore,
     SubscriberId, SubscriptionRegistry,
@@ -55,15 +62,6 @@ fn snapshot(n: i64) -> Arc<StateBundleSnapshot> {
         precise: Arc::new(precise),
     })
 }
-fn legacy(state: Arc<StateBundleSnapshot>) -> CombinedSnapshot {
-    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        1,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [ManagerInstanceSnapshot::new(7, settings(), false, state)],
-    )))
-}
 struct Bus {
     schemas: Arc<RwLock<SchemaRegistry>>,
     store: StateStore,
@@ -80,9 +78,11 @@ impl Bus {
         let grant = PublisherGrant::from_manifest(&manifest).unwrap();
         let mut schemas = SchemaRegistry::with_core().unwrap();
         schemas
-            .register(
+            .register_versioned(
                 "vosu.osu",
                 "vosu.osu",
+                &semver::Version::new(1, 3, 0),
+                vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
                 include_str!("../docs/v2/schemas/vosu.osu.schema.json"),
             )
             .unwrap();
@@ -278,18 +278,10 @@ fn bench(c: &mut Criterion) {
             bus.commit(&bytes.lock().unwrap(), true);
         })
     });
-    end.bench_function("legacy", |bencher| {
-        bencher.iter_batched(
-            || legacy(a.clone()),
-            |snap| {
-                black_box(vosu::api::v2::encode(&snap).unwrap());
-                black_box(vosu::api::precise::encode(&snap).unwrap());
-            },
-            BatchSize::SmallInput,
-        )
-    });
     end.finish();
     api_e2e::bench(c, "end_to_end", "api_frame");
+    adapter_e2e::bench(c);
+    adapter_cases::bench(c);
 }
 criterion_group!(benches, bench);
 criterion_main!(benches);

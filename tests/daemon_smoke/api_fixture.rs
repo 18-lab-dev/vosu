@@ -130,6 +130,8 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
     assert_eq!(identified["game"], "fixture");
     assert_eq!(identified["variant"], "synthetic");
     let id = identified["session"].as_str().unwrap();
+    // Identification exposes the session before its separate root declaration
+    // and PublishBatch commit. Wait for publication, not merely roster presence.
     let state = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let state: serde_json::Value = client
@@ -150,7 +152,7 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         }
     })
     .await
-    .expect("fixture resource publication deadline");
+    .expect("identified fixture must publish both resource URLs within 30s");
     for (kind, expected) in [
         (
             "file",
@@ -169,4 +171,54 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
             "published {kind} bytes"
         );
     }
+
+    // API v1 and all four mounted adapter feeds share the production daemon
+    // concurrently. The focused non-osu! session never renders as upstream
+    // adapter data, and adapter clients leaving never disturb API v1.
+    let url = state["test.api.fixture"]["resources"]["file"]["url"]
+        .as_str()
+        .unwrap();
+    let (mut api, mut api_buffer) =
+        websocket_connect(port, &format!("/api/v1/sessions/{id}/subscribe"), None).await;
+    let mut feeds = Vec::new();
+    for path in ["/ws", "/tokens", "/websocket/v2", "/websocket/v2/precise"] {
+        feeds.push(websocket_connect(port, path, None).await);
+    }
+    api.write_all(&masked_frame(
+        1,
+        br#"["/test.api.fixture/resources/file/url"]"#,
+    ))
+    .await
+    .unwrap();
+    let (opcode, payload) = read_server_frame(&mut api, &mut api_buffer).await;
+    assert_eq!(opcode, 1);
+    let initial: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    assert_eq!(initial[0], 0, "{initial}");
+    assert_eq!(initial[2], serde_json::json!([[0, url]]));
+    for path in ["/json", "/json/sc", "/json/v2", "/json/v2/precise"] {
+        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), 500, "{path}");
+        assert_eq!(
+            response.text().await.unwrap(),
+            r#"{"error":"osu is not ready/running"}"#,
+            "{path}"
+        );
+    }
+    drop(feeds);
+    let after: serde_json::Value = client
+        .get(format!("{base}/api/v1/sessions/{id}/state"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after["test.api.fixture"]["resources"]["file"]["url"], url);
+    api.write_all(&masked_frame(9, b"api-v1-alive"))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_server_frame(&mut api, &mut api_buffer).await,
+        (10, b"api-v1-alive".to_vec())
+    );
 }

@@ -3,6 +3,9 @@ use crate::state::{ClientFacts, PublisherGrant};
 use vosu_plugin_api::{CborValue, Selector};
 use vosu_surface::state::{SessionTarget, SurfaceError, SurfaceSubscription};
 
+mod capture;
+mod r0;
+
 fn selector(ns: &str, pointer: &str) -> Selector {
     Selector {
         ns: ns.into(),
@@ -190,7 +193,7 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         .register_versioned(
             "vosu.osu",
             "vosu.osu",
-            &semver::Version::parse("1.2.0").unwrap(),
+            &semver::Version::parse("1.3.0").unwrap(),
             vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
@@ -198,7 +201,7 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
             )),
         )
         .unwrap();
-    let manifest = vosu_plugin_api::manifest::PackageManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='osu.json'\n").and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='osu.json'\n").and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin).unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     host.state().store.close_session(SessionKey(handle));
     host.state().store.open_session(
@@ -279,7 +282,7 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
             official: true,
             builtin: true,
             replaces: Vec::new(),
-            revision: Some(semver::Version::parse("1.2.0").unwrap()),
+            revision: Some(semver::Version::parse("1.3.0").unwrap()),
         });
     let loaded = registry::load_bundled(
         &semver::Version::parse("2.0.0-alpha.1").unwrap(),
@@ -300,6 +303,21 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         None,
     )
     .unwrap();
+    let bound = host.surface_requester(PluginInstanceId::new(8706)).unwrap();
+    let captured = bound
+        .capture(SessionTarget::Focused, &[selector("vosu.osu", "")])
+        .unwrap();
+    let expected = CborValue::Map(vec![(
+        CborValue::Text("internal".into()),
+        CborValue::Map(vec![(
+            CborValue::Text("paths".into()),
+            CborValue::Map(vec![(
+                CborValue::Text("stable".into()),
+                CborValue::Text("private-path".into()),
+            )]),
+        )]),
+    )]);
+    assert_eq!(captured.values[0].value, Some(expected));
     let mut subscription = api
         .subscribe(granted, SessionTarget::Focused, vec![internal.clone()])
         .unwrap();

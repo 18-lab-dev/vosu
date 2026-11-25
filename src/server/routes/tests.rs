@@ -1,4 +1,6 @@
 use super::*;
+use serde_json::Value;
+use vosu_adapter_upstream::calculate::ModsInput;
 use vosu_proptest::bounded;
 #[path = "api_v1_tests.rs"]
 mod api_v1;
@@ -158,13 +160,12 @@ async fn management_mutations_require_post_and_exact_browser_origin() {
 }
 
 #[test]
-fn only_six_exact_websocket_paths_reach_upgrade_delegate() {
+fn only_five_exact_websocket_paths_reach_upgrade_delegate() {
     let paths = [
         ("/ws", Endpoint::WsV1),
         ("/tokens", Endpoint::WsTokens),
         ("/websocket/v2", Endpoint::WsV2),
         ("/websocket/v2/precise", Endpoint::WsV2Precise),
-        ("/websocket/v2/subscribe", Endpoint::WsV2Subscribe),
         ("/websocket/commands", Endpoint::WsCommands),
     ];
     for (path, endpoint) in paths {

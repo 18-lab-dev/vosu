@@ -1,9 +1,8 @@
 //! Attach-time classification: `SESSION_DECLINE` (D6), the stable/lazer
 //! variant, and root resolution (R19). Reuses F8's
-//! `vosu_osu_reader::discovery` predicates (`should_skip`,
-//! `instance_settings`, `is_linux_candidate_name`, `is_linux_named_name`,
-//! `windows_client`) rather than re-deriving the 1.x name rules; only the
-//! settle timing (DF/R3) and the facts/root plumbing are new here.
+//! `vosu_osu_reader::discovery` classification predicates and startup argument
+//! parser. Debug clients are declined; tournament managers are stable priority
+//! sessions. Only settle timing and facts/root plumbing are owned here.
 //!
 //! [`decide`] is a pure function of [`AttachFacts`] so every row of §7 this
 //! unit owns (1, 4, 5, 6) is testable on either host OS: `platform` is a
@@ -17,8 +16,7 @@ use std::path::{Path, PathBuf};
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_reader::discovery::{
-    StartupArgs, instance_settings, is_linux_candidate_name, is_linux_named_name, should_skip,
-    windows_client,
+    StartupArgs, instance_settings, is_linux_candidate_name, is_linux_named_name, windows_client,
 };
 use vosu_osu_reader::process::ProcessBitness;
 use vosu_plugin_api::{Bitness, SessionAttached};
@@ -161,7 +159,7 @@ pub struct Identified {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttachDecision {
-    /// `should_skip` (D6): `SESSION_DECLINE`, nothing else.
+    /// A truthy debug-client-id: `SESSION_DECLINE`, nothing else.
     Decline,
     Identify(Identified),
     /// A Linux fallback candidate (`osu!`, but neither `osu!.exe` nor
@@ -185,9 +183,8 @@ fn default_settings() -> InstanceSettings {
 /// `TIMER_FIRED` (`AttachDecision::Settle`).
 ///
 /// Conservative identification on missing facts (never declines on them):
-/// `args` absent (no `argv`, no `command_line`) skips `should_skip`
-/// entirely — a decline needs positive evidence of `--tournament` or a
-/// truthy `debug-client-id`, not "we can't tell" — and yields
+/// `args` absent skips the debug-client check: a decline needs positive
+/// evidence of a truthy `debug-client-id`, not "we can't tell", and yields
 /// `InstanceSettings::default`-shaped settings (R10/owner note: an older
 /// host simply cannot express spectator/devserver flags). `name` absent on
 /// Linux (no `comm` fact) cannot be told apart from a lone `osu!` fallback
@@ -199,13 +196,32 @@ pub fn decide(
     platform: Platform,
     named_sibling_attached: bool,
 ) -> AttachDecision {
-    if facts.args.as_ref().is_some_and(should_skip) {
+    if facts.args.as_ref().is_some_and(|args| {
+        args.get("debug-client-id")
+            .is_some_and(|value| value.is_truthy())
+    }) {
         return AttachDecision::Decline;
     }
     let settings = facts
         .args
         .as_ref()
         .map_or_else(default_settings, instance_settings);
+    if facts
+        .args
+        .as_ref()
+        .is_some_and(|args| args.get("tournament").is_some())
+    {
+        return AttachDecision::Identify(Identified {
+            client: ClientType::Stable,
+            settings,
+            root: facts.root.clone(),
+            executable_root: facts.executable_root.clone(),
+            pid: facts.pid,
+            generation: facts.generation,
+            bitness: facts.bitness,
+            named: false,
+        });
+    }
     let (client, named) = match platform {
         Platform::Windows => (windows_client(to_process_bitness(facts.bitness)), false),
         Platform::Linux => match facts.name_os() {
@@ -382,10 +398,13 @@ mod tests {
     #[test]
     fn command_filters_decline_before_classification() {
         let tournament = facts(Some("osu!.exe"), Bitness::X86, args(&["--tournament="]));
-        assert_eq!(
+        assert!(matches!(
             decide(&tournament, Platform::Windows, false),
-            AttachDecision::Decline
-        );
+            AttachDecision::Identify(Identified {
+                client: ClientType::Stable,
+                ..
+            })
+        ));
 
         let truthy_debug = facts(
             Some("osu!.exe"),

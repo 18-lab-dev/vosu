@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -79,6 +79,9 @@ test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/tes
 # Diagnostic-only; never included in packaged release feature sets.
 read-plan-profile = ["vosu-plugin-api/read-plan-profile"]
 [dependencies]
+vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
+vosu-adapter-gosumemory = { path = "crates/vosu-adapter-gosumemory" }
+vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion" }
 arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
 bytes = "=1.12.1"
@@ -104,6 +107,7 @@ tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
+vosu-adapter-support = { path = "crates/vosu-adapter-support" }
 vosu-pp = { path = "crates/vosu-pp" }
 vosu-core = { path = "crates/vosu-core" }
 vosu-plugin-api = { path = "crates/vosu-plugin-api" }
@@ -131,6 +135,8 @@ windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation",
 libc = "=0.2.186"
 
 [dev-dependencies]
+vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion", features = ["test-harness"] }
+ciborium = "=0.2.2"
 criterion = "0.7.0"
 jsonschema = { version = "=0.61.2", default-features = false }
 proptest = "1.12"
@@ -138,6 +144,7 @@ serde-value = "=0.7.0"
 vosu-proptest = { path = "crates/vosu-proptest" }
 vosu-core = { path = "crates/vosu-core", features = ["bench-harness"] }
 vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", features = ["bench-harness"] }
+vosu-osu = { path = "crates/vosu-osu", features = ["bench-harness"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [[bench]]

@@ -22,15 +22,6 @@
 #   moved from the root crate into `vosu-osu-reader` and still needs
 #   `vosu_net::{ZipLimits, extract_zip_atomic}` for hardened extraction of
 #   its embedded bundle; not interim, unlike the vosu-sys edges above.
-# - vosu-osu -> vosu-surface: interim bridge B1 (P1, plan D3/plan:447-452),
-#   until M4a. The root installs the process-wide `LegacySink` slot;
-#   `vosu-osu` needs this edge only to call
-#   `vosu_surface::bridge_b1::current()` and reach it, because the ABI's
-#   `create(host, init)` has no Rust-level parameter to thread a
-#   per-instance hook through instead (`crates/vosu-surface/src/lib.rs`
-#   module doc); deleted alongside `vosu_surface::bridge_b1` itself at
-#   M4a (`vosu-surface` otherwise continues on as the permanent D3
-#   surface API).
 vosu-sys
 vosu-sys -> vosu-proptest
 vosu-proptest
@@ -75,7 +66,6 @@ vosu-osu -> vosu-osu-model
 vosu-osu -> vosu-osu-reader
 vosu-osu -> vosu-osu-state
 vosu-osu -> vosu-osu-calc
-vosu-osu -> vosu-surface
 vosu-osu -> vosu-net
 vosu-osu -> vosu-sys
 
@@ -97,3 +87,31 @@ vosu -> vosu-proptest
 vosu -> vosu-surface
 vosu -> vosu-osu
 vosu-osu -> vosu-proptest
+
+vosu-adapter-support -> vosu-osu-model
+vosu -> vosu-adapter-support
+vosu -> vosu-adapter-upstream
+vosu -> vosu-adapter-gosumemory
+vosu -> vosu-adapter-streamcompanion
+
+vosu-adapter-gosumemory -> vosu-adapter-support
+vosu-adapter-gosumemory -> vosu-osu-model
+vosu-adapter-gosumemory -> vosu-plugin-api
+vosu-adapter-gosumemory -> vosu-surface
+vosu-adapter-streamcompanion -> vosu-adapter-support
+vosu-adapter-streamcompanion -> vosu-osu-calc
+vosu-adapter-streamcompanion -> vosu-osu-model
+vosu-adapter-streamcompanion -> vosu-plugin-api
+vosu-adapter-streamcompanion -> vosu-surface
+# Real core requester capture regression fixture; development dependency only.
+vosu-adapter-streamcompanion -> vosu-core
+# Upstream projection production edges; core/state/osu below are test-only ingress.
+vosu-adapter-upstream -> vosu-adapter-support
+vosu-adapter-upstream -> vosu-osu-model
+vosu-adapter-upstream -> vosu-plugin-api
+vosu-adapter-upstream -> vosu-surface
+vosu-adapter-upstream -> vosu-core
+vosu-adapter-upstream -> vosu-osu
+vosu-adapter-upstream -> vosu-osu-state
+vosu-adapter-upstream -> vosu-osu-calc
+vosu -> vosu-adapter-upstream

@@ -2,7 +2,19 @@
     clippy::disallowed_methods,
     reason = "test fixtures write scratch files and sleep"
 )]
+#[path = "server_compat/removals.rs"]
+mod removals;
 
+#[path = "server_compat/declared_roots.rs"]
+mod declared_roots;
+#[path = "server_compat/mounted.rs"]
+mod mounted;
+#[path = "server_compat/mounted_http.rs"]
+mod mounted_http;
+#[path = "server_compat/mounted_sc.rs"]
+mod mounted_sc;
+#[path = "server_compat/mounted_ws.rs"]
+mod mounted_ws;
 use std::{
     future::Future,
     io::{self, Write},
@@ -15,6 +27,7 @@ use std::{
     },
     time::Duration,
 };
+use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
 
 use axum::{
@@ -44,7 +57,7 @@ use vosu::{
         },
         pages::{PageLookup, PageService},
         routes::{
-            self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, PpQuery,
+            self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
             ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
         },
         runtime::{
@@ -52,11 +65,12 @@ use vosu::{
             RuntimeFuture,
         },
         websocket::{
-            Filter, Inbound, MAX_MESSAGE_BYTES, MESSAGE_TOO_BIG, Outbound, Schema, StateProvider,
+            Inbound, MAX_MESSAGE_BYTES, MESSAGE_TOO_BIG, Outbound, Schema, StateProvider,
             StateSnapshot, WebSocketHub,
         },
     },
 };
+use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_core::report::escape_html;
 use vosu_net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast};
 use vosu_osu_model::{
@@ -530,21 +544,6 @@ fn authorization_matrix_requires_both_peer_and_authoritative_header() {
                 }
             )
             .allowed()
-    );
-}
-
-#[tokio::test]
-async fn rejected_origin_is_403_not_found_and_never_reaches_upgrade() {
-    let response = bounded!(dispatch(
-        Method::GET,
-        "/websocket/v2/subscribe",
-        Some("http://evil.invalid"),
-        Body::empty(),
-    ));
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        bounded!(to_bytes(response.into_body(), 1024)).unwrap(),
-        "Not Found"
     );
 }
 

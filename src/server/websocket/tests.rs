@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Notify;
 use vosu_proptest::bounded;
 
+#[path = "tests/surface_feed.rs"]
+mod surface_feed;
+
 struct Provider {
     focused: AtomicBool,
     generation: Arc<AtomicU64>,
@@ -187,10 +190,7 @@ fn exact_endpoint_classification_rejects_near_misses() {
         Endpoint::classify("/websocket/v2/precise"),
         Some(Endpoint::V2Precise)
     );
-    assert_eq!(
-        Endpoint::classify("/websocket/v2/subscribe"),
-        Some(Endpoint::V2Subscribe)
-    );
+    assert_eq!(Endpoint::classify("/websocket/v2/subscribe"), None);
     assert_eq!(
         Endpoint::classify("/websocket/commands"),
         Some(Endpoint::Commands)
@@ -207,7 +207,6 @@ fn handshake_gate_matrix_never_upgrades_denied_or_unknown_requests() {
         ("/tokens", Endpoint::StreamCompanion),
         ("/websocket/v2", Endpoint::V2),
         ("/websocket/v2/precise", Endpoint::V2Precise),
-        ("/websocket/v2/subscribe", Endpoint::V2Subscribe),
         ("/websocket/commands", Endpoint::Commands),
     ];
     for (path, endpoint) in endpoints {
@@ -242,7 +241,7 @@ fn handshake_gate_matrix_never_upgrades_denied_or_unknown_requests() {
 }
 
 #[tokio::test]
-async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
+async fn real_axum_handshake_returns_101_only_for_exact_five_paths() {
     use axum::{Router, body::Body, http::StatusCode};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -306,7 +305,6 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         "/tokens",
         "/websocket/v2",
         "/websocket/v2/precise",
-        "/websocket/v2/subscribe",
         "/websocket/commands",
     ] {
         assert_eq!(
@@ -315,6 +313,7 @@ async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
         );
     }
     for path in [
+        "/websocket/v2/subscribe",
         "/ws/",
         "/websocket/v2/precise/",
         "/websocket/v2/subscribe/",
@@ -1085,59 +1084,6 @@ fn shared_projections_are_bounded_and_never_cross_plans() {
 }
 
 #[tokio::test]
-async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() {
-    let provider = EchoProvider::new();
-    let hub = WebSocketHub::new(Schema::V2, provider.clone());
-    let plan = || vec![Filter::Field("a".into())];
-    let mut clients: Vec<_> = (0..3)
-        .map(|_| {
-            let (connection, receiver) = hub.connect();
-            connection.set_filters(plan());
-            (connection, receiver)
-        })
-        .collect();
-    let runner = tokio::spawn({
-        let hub = hub.clone();
-        async move { bounded!(hub.run()) }
-    });
-    for (_, receiver) in &mut clients {
-        assert_eq!(bounded!(echo_text(receiver)), echo(1, &plan()));
-    }
-
-    // Generation 2 arrives while every client is still writing frame 1.
-    provider.publish();
-    hub.wake();
-    tokio::task::yield_now().await;
-    for (_, receiver) in &mut clients {
-        assert!(receiver.try_recv().is_none());
-    }
-
-    // Each acknowledgement carries the same ceiling after the previous wake
-    // was consumed; none may be suppressed until the 60 s cadence.
-    for index in 0..clients.len() {
-        clients[index].0.write_completed();
-        assert_eq!(bounded!(echo_text(&mut clients[index].1)), echo(2, &plan()));
-        for (_, receiver) in &mut clients[index + 1..] {
-            assert!(receiver.try_recv().is_none());
-        }
-    }
-
-    // Acknowledgements batched before the hub runs coalesce yet all deliver.
-    provider.publish();
-    hub.wake();
-    tokio::task::yield_now().await;
-    for (connection, _) in &clients {
-        connection.write_completed();
-    }
-    for (_, receiver) in &mut clients {
-        assert_eq!(bounded!(echo_text(receiver)), echo(3, &plan()));
-    }
-
-    hub.shutdown();
-    bounded!(runner).unwrap();
-}
-
-#[tokio::test]
 async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
     let hub = WebSocketHub::new(Schema::V2, EchoProvider::new());
     let (connection, mut receiver) = hub.connect();
@@ -1162,7 +1108,7 @@ async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
     assert!(!connection.client.send_data(frame, 3, false));
     assert_eq!(
         connection.client.state.load(Ordering::Acquire),
-        CLIENT_OPEN,
-        "a refused frame leaves the client writable"
+        CLIENT_CLOSED,
+        "receiver loss synchronously closes the client and releases demand"
     );
 }

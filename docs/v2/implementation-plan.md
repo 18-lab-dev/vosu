@@ -98,7 +98,7 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`, `vosu-net` (the moved offset-generator's hardened ZIP extraction, `vosu_net::extract_zip_atomic`, DD); interim `vosu-sys` until M5 (DC, re-dated from the original "until M1": the 1.x readers keep reading `ProcessMemory`/`MemoryError`/`ReadStatus`/`ReadRequest`/scanner `Pattern` and publishing offsets through `vosu_sys::platform::atomic_replace` unchanged for all of M1, plan:440; M5's brokered-reads boundary — a plugin may run out of process from M5 on, so direct `vosu-sys` access cannot survive it — is where the reader must move onto `PlanMemory` instead and this edge is removed) |
 | `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`; interim `vosu-sys` until M5, same reason and same re-dating as the `vosu-osu-reader` row above (the reducer reads `MemoryRead`/`ReadStatus`/`MemoryError` directly; DC) |
-| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; interim `vosu-surface` for bridge B1, M1→M4a |
+| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; no `vosu-surface` dependency after M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
 | `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
 | `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model` |
@@ -110,6 +110,12 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-plugin-testkit` (test-harness only) | Bundled test plugin with echo/progress/cancel/stream actions and a synthetic game, for API v1, bridge, and plugin-host tests and as the SDK reference example; also `vosu-core`'s own dev-dependency for `PluginHost` session/focus end-to-end tests (`session.rs`'s `SessionPlugin`). | `vosu-plugin-api` |
 | `.` (`vosu`) | `main.rs`, `vosux` and `plugin-host` argv dispatch, Windows resources, the explicit `BUNDLED` registration array (D13), integration tests, benches, examples. | every crate above |
 | `crates/vosu-pp` and members, `crates/vosu-test-harness`, `crates/vosu-release-smoke` | Unchanged roles (`AGENTS.md` "Source ownership"); the harness depends on the specific crates it drives instead of the old monolith. | unchanged |
+
+M4a H0's root provider/cache tests exercise all three adapters through the real
+producer and bus. gosuMemory and streamCompanion are root **dev-dependencies**;
+R1 already supplies the upstream dependency for its unmounted file providers.
+The generic hub consumes only the surface projection contract; production
+registration remains I0's atomic cutover, not a second root-owned implementation.
 
 Layout rules:
 
@@ -888,7 +894,7 @@ Scope:
   by its `settings_schema` (D19). **Interim bridge B2** (deleted in M8):
   core serves the plugin's settings from the existing `vosu.toml` values
   until the M8 migration moves them into plugin settings storage.
-- **Interim bridge B1** (deleted in M4a): byte-identical 1.x surfaces need
+- **Historical M1 bridge B1** (removed by M4a): byte-identical 1.x surfaces needed
   more than `StateBundleSnapshot`
   (DE). Plugin → root: `StateBundleSnapshot`; per-session lifecycle phase
   (dashboard status "resolving offsets"/"starting reader"/"reading",
@@ -987,22 +993,24 @@ exception text are in the [benchmark guide](../testing/benchmarks.md#m1-planmemo
 The following parity map is the replacement evidence cited by C4's
 `Assertions-Removed` trailer. Old names are from `src/instance/tests.rs`
 (M1 remainder plan §7); replacement names are present at this cutover.
-Paths are relative to the repository root.
+Paths are relative to the repository root. M4a replacements below supersede
+the deleted bridge-specific entries; the M1 bridge description above is
+historical, not an allowed fallback.
 
 | Deleted 1.x test | Replacement tests at cutover |
 |---|---|
-| `windows_names_and_bitness_classify_and_btree_orders` | `tests/discovery_parity.rs`: `manifest_matches_both_platform_name_tables`, `windows_names_and_bitness`; B1 lifecycle ordering below |
+| `windows_names_and_bitness_classify_and_btree_orders` | `tests/discovery_parity.rs`: `manifest_matches_both_platform_name_tables`, `windows_names_and_bitness`; host diagnostics remain PID-ordered |
 | `targeted_discovery_inserts_only_the_requested_pid` | Core discovery `tests/cadence.rs`: `targeted_discovery_inserts_only_the_requested_pid` |
 | `targeted_discovery_replaces_a_dead_same_pid_generation` | Core discovery `tests/mod.rs`: `reused_pid_with_a_new_start_time_is_reported_as_exit_then_a_fresh_appearance`; `tests/discovery_parity.rs`: `explicit_exit_then_appearance_advances_plugin_generation` |
 | `linux_named_first_pass_is_stable_and_fallback_is_lazer` | `tests/discovery_parity.rs`: `linux_named_sibling_and_lone_fallback_variants` |
-| `command_filters_follow_presence_and_truthiness` | `tests/discovery_parity.rs`: `command_filters_decline_and_suppress_reoffers`; `tests/osu_plugin.rs`: `tournament_and_debug_clients_decline_without_b1` |
-| `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_b1`; `tests/osu_plugin.rs`: `stable_session_b1_settings_and_exit` |
+| `command_filters_follow_presence_and_truthiness` | `tests/discovery_parity.rs`: `command_filters_decline_and_suppress_reoffers`; `tests/osu_plugin.rs`: `debug_clients_decline_without_publication` |
+| `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_bus`; `tests/osu_plugin.rs`: `stable_session_settings_and_exit` |
 | `duplicate_discovery_and_removal_are_idempotent_and_close_once` | `tests/discovery_parity.rs`: `duplicate_discovery_and_removal_close_memory_once` |
-| `tournament_precedence_matching_and_fallback_selection` | `src/runtime/tests/bridge_b1.rs`: `b1_tournament_precedence_lowest_pid_and_absent_client` |
-| `foreground_exact_match_and_unavailable_focus_fallback` | `src/runtime/tests/bridge_b1.rs`: `b1_foreground_exact_and_unavailable_focus_fallback` |
-| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `src/runtime/tests/bridge_b1.rs`: `b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown` |
+| `tournament_precedence_matching_and_fallback_selection` | `tests/osu_plugin/tournament.rs`: `stable_manager_priority_aggregate_all_sessions_and_generation_replacement` |
+| `foreground_exact_match_and_unavailable_focus_fallback` | `src/server/bus_provider/tests.rs`: `production_focus_generation_prevents_numeric_revision_collision`; permanent core Focus tests |
+| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `tests/discovery_parity.rs`: duplicate attach/removal and fresh bus-generation assertions; `src/runtime/tests/context.rs`: host lifecycle/dashboard shape |
 | `lazer_discovery_starts_one_resolver_and_shutdown_joins_it` | `crates/vosu-osu/src/plugin/tests.rs`: `lazer_identify_starts_one_resolver_and_detach_joins_it`, `destroy_joins_every_live_sessions_resolver_within_the_grace_period` |
-| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | B1 lifecycle test above; `src/runtime/tests/lifecycle_owner.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
+| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | Host lifecycle/bus tests above; `src/runtime/tests/lifecycle_owner.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
 | `failed_full_scan_retries_early_and_counts_only_success` | Core discovery `tests/cadence.rs`: `failed_full_scan_retries_early_and_counts_only_success` |
 | `failed_targeted_inspection_is_not_counted` | Core discovery `tests/cadence.rs`: `failed_targeted_inspection_is_not_counted` |
 | `full_reconcile_replaces_a_dead_same_pid_in_one_pass` | Core discovery `tests/cadence.rs`: `full_reconcile_replaces_a_dead_same_pid_in_one_pass` |
@@ -1275,9 +1283,9 @@ Scope:
   including ADR 0004's `LegacyCalculateProvider`), the stable
   `/files/skin/{path}` behavior, and the WebSocket encoders from
   `src/runtime/projection.rs`. Builders take a typed view assembled from
-  `vosu-surface` reads of `vosu.osu`, `vosu.client`, and
-  `vosu.osu/internal/paths`, which the adapters `require` (D2); the
-  streamCompanion adapter computes `mapStrains`, breaks, kiai points, and
+  `vosu-surface` coherent reads of explicitly granted common namespaces,
+  `vosu.client`, `vosu.osu`, and `vosu.osu.internal.paths` (D2).
+  The streamCompanion adapter computes `mapStrains`, breaks, kiai points, and
   timing points (`src/model/api/sc.rs:132-141`) from `vosu-osu-calc` and the
   chart resource. Core's hub keeps latest-only publication and per-snapshot
   encoding caches (`tests/performance_invariants.rs:509-701`).
@@ -1296,8 +1304,23 @@ Scope:
   list. Requests to a removed route are attributed to the requesting overlay
   for the D20 dashboard notice. Delete bridge B1, its interim crate edge,
   and `src/api/snapshot.rs`.
-- **Stable tournament-manager aggregate (D6, M4a-or-later; must land before
-  the 2.0 release).** The osu! plugin attaches the `--tournament` process
+  **M8 migration inventory:** delete exactly the four uppercase TOML/environment
+  bindings above, idempotently; preserve `API_V1_SUBSCRIPTION_DEBOUNCE`,
+  unrelated unknown keys/tables, overlays, profiles and settings. No new
+  replacement flag is written: authorized subscription selectors own demand.
+  Removed-route attribution retains at most 128 validated installed overlays
+  (LRU, 24-hour inactivity expiry) and one unknown bucket per fixed feature.
+  D20 consumes only identity, feature, first/last seen and saturating count;
+  unknown requests never acquire a guessed overlay name. M8 day-0 execution,
+  M7's migration-guide notice UI and the clean-room page remain separate work.
+  First-party consumer migration inputs include
+  `assets/server/tool-bridge-v1.js` (selected-v2 URL and renderer pointer map),
+  the overlay quickstart's selected-v2 client, and consumers of legacy skin
+  metadata/lazer files. Their owners move to API v1 namespace subscriptions
+  and skin trees/resources at M8; preserving those consumers does not restore
+  removed endpoints. Keep user overlays installed and enabled.
+- **Stable tournament-manager aggregate (D6, mandatory M4a exit).** The osu!
+  plugin attaches the `--tournament` process
   as an identified `stable` session, setting `focus_priority: true` on its
   `SESSION_IDENTIFY` (`docs/v2/plugin-abi.md` §6.2), instead of declining
   it — `--tournament` leaves plugin-abi.md:140's decline list once this task
@@ -1333,10 +1356,10 @@ Scope:
 
 Exit: `cargo test --locked --test state_api_compat`, rewritten to drive the
 adapters from bus input and compared byte for byte with the committed source
-oracle — except `stable-tournament`'s `tourney` members (`v1`, `v2`,
-`v2-precise`), exempted per the temporary divergence above until the
-manager aggregate task lands; `strip_vosu_extensions` (`tests/state_api_compat.rs:198`) is deleted
-because the adapters no longer emit those fields;
+oracle, including the stable manager aggregate. The temporary tournament
+exemption must be closed with T0 evidence before completed M4a; it is not
+removed merely by this A4 contract freeze. Delete `strip_vosu_extensions`
+and ad hoc regular `keys` normalization because encoders no longer emit them;
 `cargo test --locked --test server_compat` updated in the same change for each
 intentional removal, plus traversal attempts proving file routes stay inside
 declared roots; `--test performance_invariants` ported to the adapters;
@@ -1346,6 +1369,193 @@ serializers.
 
 Risks: per-frame projection from the bus may cost more than 1.x encoding
 from typed snapshots (the end-to-end bench decides).
+
+#### A4 approved contract freeze (2026-11-24)
+
+The owner-delegated approvals A4.1–A4.6 are normative:
+
+1. Declare consumed common field namespaces and chart resource authority
+   explicitly; no duplication into private state or loopback HTTP.
+2. Publish missing accurate public facts, including independent physical
+   key slots, with the owning schema version/partition/lanes and producers.
+   Numeric inversions require oracle and boundary/property equivalence.
+3. Distinguish pending tournament data from missing-score failure; only
+   adapters implement upstream omission/500, never API v1.
+4. Legacy calculation paths are relative to the current captured session's
+   declared songs root or absolute spellings confined within its declared
+   roots; all others are rejected as the named
+   `legacy-calculate-declared-roots` security divergence. Keep the engine,
+   query, mods and result contract unchanged.
+5. Attribute removed requests only to validated installed overlay identity;
+   unknown is separate. Retain at most 128 known overlays, deduplicated with
+   24-hour inactivity TTL, plus fixed unknown feature buckets; no path/referrer
+   logging. Notice data and exact lease/cache/worker bounds are frozen below.
+6. Remove extensions endpoint by endpoint, including direct/filtered writers
+   and nested tournament copies. Regular v2 has no `keys`; upstream precise
+   slots and legitimate all-hit histories remain.
+
+P0/R0 implement [permanent bundled surface contracts](adapter-surfaces.md).
+P1/T0 and V0/G0/C0 implement the
+[per-field fidelity and removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md).
+Approved public additions ship in osu! schema 1.3.0 together with producers;
+A4 alone does not claim that schema implementation or parity evidence.
+State-schema differences do not exempt adapter wire output. M8 retires
+exactly the four keys listed above, preserving API-v1 debounce/unknown keys.
+M4b retains capture/golden tooling ownership; M8 day-0 execution and separate
+clean-room page work are not completed by M4a.
+
+The approved D17 case names, common baseline harness and evidence requirements
+are [frozen in the benchmark guide](../testing/benchmarks.md#m4a-d17-contract).
+No measurement or D17 pass is claimed by the contract freeze.
+
+#### M4a outcome
+
+M4a is integrated on `m4a/projections` and merged with `v2/main` at `49e95cf`
+(M1 L3, M2, the M3 exit and M6a SDK validation). Every 1.x state route is now
+a projection of the state bus:
+
+- **Registration.** `src/plugins.rs` lists the required bundled set
+  explicitly: `vosu.osu`, `vosu.adapter.upstream`, `vosu.adapter.gosumemory`,
+  `vosu.adapter.streamcompanion`. If any of the four fails to load or create,
+  composition fails (`src/runtime/dev_plugins.rs`).
+- **Reads.** The adapters read only through `vosu-surface`: one coherent,
+  manifest-granted capture of the focused session per view. Private path
+  echoes need an explicit `vosu.osu.internal` subtree grant and are data only.
+  The production adapter crates depend on `vosu-surface`,
+  `vosu-adapter-support`, `vosu-osu-model`, `vosu-plugin-api` and (upstream,
+  streamCompanion) `vosu-osu-calc`. Their `vosu-core`/`vosu-osu`/
+  `vosu-osu-state` edges are test ingress only (`scripts/crate-boundaries.txt`).
+- **Serving.** One `BusStateProvider` per schema serves HTTP and WebSocket from
+  shared latest-only encodings. HTTP reads create no demand; each WebSocket
+  connection owns one RAII selector lease. Game files and legacy calculation
+  use the session's declared roots (ADR 0005, A4.4); streamCompanion chart
+  facts come from chart-resource bytes and `vosu-osu-calc`.
+- **B1 is deleted in both directions.** The snapshot/event flow and the root
+  control inputs are gone, as are `src/api/snapshot.rs`, the root adapter
+  models and the interim `vosu-osu -> vosu-surface` edge. The crate checker
+  rejects reviving that edge.
+- **Removals.** ADR 0021 removals hold at every nesting level. The four
+  retired configuration keys are ignored and never saved. Removed-route
+  requests are attributed for the future D20 notice.
+- **Tournaments.** D6's stable tournament-manager aggregate landed, and the
+  `stable-tournament` temporary exemption is closed with distinct
+  manager/spectator fixtures.
+
+The [divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md) has 18
+rows: 6 `security`, 12 `contract`, 0 `licensing` and 0 `temporary`. The four
+`vosu.osu`-scoped contract rows authorize no adapter wire difference.
+
+Exit evidence (2026-11-24, on the merged head):
+
+- **Linux.** Formatting, workspace Clippy, Windows cross-Clippy, all nine
+  `check-*.py` scripts and the 234 `scripts/test_*.py` tests passed. So did
+  the tool-host smoke (curl and Chromium phases) and the dashboard smoke
+  against a `test-harness` build. The full workspace nextest run
+  (`--lib --bins --tests --examples --all-features`) passed 2,514 tests
+  (4 skipped). Listed targets:
+  - `cargo test --locked`: `state_api_compat` 7, `server_compat` 27,
+    `state_bus_compat` 5, `config_compat` 9, `performance_invariants` 20
+    (22 with all features), `runtime_wakeups` 3 (1 ignored).
+  - `--features test-harness`: `state_bus` 6, `osu_plugin` 10,
+    `api_v1_compat` 33, `daemon_smoke` 2.
+  - `cargo test --workspace --lib --all-features --locked prop_`: 39.
+- **Native Windows (`vm-test.py`, which always passes `--all-features`).**
+  `server_compat` 27/27, `state_api_compat` 7/7 (including the stable
+  tournament aggregate, the extension-absence proofs and the byte-for-byte
+  oracle replay), `vosu-core` lib `state_subscribe` 17/17 and
+  `api_v1_compat` 33/33 passed. A per-package sweep (`34691a0` plus the
+  allocation fix; `vosu` rerun on `c1a8596`) passed every package except the
+  symlink cases below: `vosu` 556 across all 28 test binaries
+  (1 ignored; `daemon_smoke` is Linux-only and runs 0), `vosu-osu` 211,
+  `vosu-osu-reader` 188, `vosu-plugin-api` 147, `vosu-osu-state` 104,
+  `vosu-rosu-pp-api` 207, `vosu-rosu-map` 83, `vosu-pp` 72, `vosu-osu-calc` 38,
+  `vosu-net` 28, `vosu-osu-model` 24, the three adapters 12/19/22 and
+  `vosu-adapter-support` 9.
+  - Four tests create file symlinks or reparse points, which need
+    `SeCreateSymbolicLinkPrivilege`; `vm-test.py`'s LIMITED task lacks it
+    (error 1314): `vosu-core`'s `surface_calculation_rejects_canonical_non_osu_alias`,
+    `vosu-sys`'s two file-symlink cases and `vosu-adapter-upstream`'s
+    `windows_reparse_files_and_directories_cannot_escape_declared_routes`.
+    The `prepush.py` native phase runs them at High integrity.
+  - Native runs exposed and the exit fixed four test defects. A
+    tool-context expectation mixed path separators and expected the `\\?\`
+    prefix of `std::fs::canonicalize`. `runtime_wakeups`' positive control
+    expected over 10 cadence wakes in 100 ms, but the 1 ms interval fires at
+    the ~15.6 ms Windows timer resolution (15 wakes in 250 ms natively, 116 on
+    Linux); instrumented idle phases saw 0 wakes. The adapter cost
+    invariants raced the osu! resource worker's first asynchronous
+    references commit through the publisher mailbox (measured: 42
+    allocations per steady commit, 54 when one absorbed it, 14 when the
+    worker held the mailbox). `Publication` now records its applied epoch,
+    and the bench fixture waits for that commit before measuring. The live
+    adapter-mode example test expected one commit to show thread CPU, but
+    Windows `GetThreadTimes` charges whole ~15.6 ms ticks, so it now commits
+    until a tick is attributed (bounded). A 16,384-entry surface directory
+    page opens every child through the retained root (R0 confinement): 73 ms
+    on Linux, 2.3 s on native Windows alone, over the test's 5 s operation
+    bound under the parallel native suite. The test now has a 60 s hang
+    bound. The per-entry Windows open cost (~140 µs, so a 131,072-entry
+    legacy listing takes ~18 s) is an open performance finding, not fixed here.
+  - Stress (`vm-stress.py`): `performance_invariants` adapter cases 0/15
+    failures and `runtime_wakeups` 0/15 after the fixes;
+    `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`
+    0/12 alone and 0/10 in parallel `plugin::` runs. Its single earlier 5 s
+    timeout did not reproduce, so its bound is unchanged.
+    `destroy_cancels_every_timer_of_an_instance_and_none_fire_again`, which
+    predates M4a, failed once in an earlier 12-iteration `plugin::` run.
+- **Hub freshness fix.** Stressing the X1 filter-isolation invariant on two
+  CPUs (1–3% failures) exposed two latest-only defects in the compatibility
+  hub's publication pass, both sending a client that became writable mid-pass
+  an older image than the latest committed one (an extra encode and ack round
+  trip each):
+  - a pass that captured before the client's acknowledgement still sent that
+    older capture. An acknowledgement now records the generation it observed
+    before the client becomes writable; a pass whose capture is older
+    recaptures instead of encoding or sending it (an integer compare per
+    writable client, no lock or allocation, idle path unchanged);
+  - shared unfiltered bytes were encoded only when a plain client was already
+    writable at the start of the pass, so a plain client acknowledging during
+    the pass received bytes kept from an earlier generation. They are now
+    encoded lazily for the pass's own generation.
+
+  Gated regression tests (`src/server/websocket/tests/stale_capture.rs`) fail
+  on the old loop (`unfiltered:2` instead of `:3`, `unfiltered:1` instead of
+  `:2`). After the fix the X1 test, unchanged and exact, passed 250
+  consecutive two-CPU runs.
+
+Not part of this exit:
+
+- **D17 for M4a is pending.** It needs Main's official pinned Criterion run
+  and native `live_reader_bench --adapter` runs on Windows stable/lazer and
+  Linux lazer. It is not a pass. The M1 rows stay open under their owner
+  exception ([benchmark guide](../testing/benchmarks.md#m4a-d17-status-at-the-exit)).
+- Live parity is an optional diagnostic and did not run. M4b owns the
+  pilot/full owner captures and `adapter_golden`; no capture exists, and
+  none is claimed.
+- The clean-room `/api/ingame` page (licensing), M5 process execution and the
+  M8 day-0 gate and migration remain separate work.
+
+**M8 migration inventory.** Delete exactly `ENABLE_KEY_OVERLAY`,
+`ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS` and
+`V2_SUBSCRIPTION_DEBOUNCE` from `vosu.toml` and the dotenv migration inputs,
+idempotently. Preserve `API_V1_SUBSCRIPTION_DEBOUNCE` and every unrelated
+unknown key or table. Write no replacement flag: subscription selectors own
+collection.
+
+**First-party consumers of removed surfaces.** These still request routes that
+M4a removed, so those requests now fail. Their owners move them to API v1
+namespace subscriptions and skin trees/resources; the routes do not return:
+
+| Consumer | Removed surface it uses | Owner |
+|---|---|---|
+| `assets/server/tool-bridge-v1.js` `subscribe()` | `/websocket/v2/subscribe` (now 404) | M7 tool-host replacement; v2 bridge already uses API v1 |
+| vosu-tools `packages/client-skin` | `GET /files/skin/` index, lazer `/files/skin/{path}`, selected-v2 pointers | vosu-tools, before M8 |
+| vosu-tools `packages/tool-web` bridge typings and the tools calling `vosu.subscribe` (downloader, map-analysis, map-preview, practice, replay-renderer, server-pp, skin-studio) | `/websocket/v2/subscribe` through the v1 bridge | vosu-tools, before M8 |
+| vosu-overlays `ratings-timeline` | `/websocket/v2/subscribe` | vosu-overlays, before M8 |
+| vosu-overlay-quickstart (`app.js`, README, TUTORIAL) | `/websocket/v2/subscribe` | quickstart owner, before M8 |
+
+M8's D20 notice flags user overlays that still request removed routes; they
+stay installed and enabled.
 
 ### M4b: golden fixtures from live captures (owner-dependent)
 

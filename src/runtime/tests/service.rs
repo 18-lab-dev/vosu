@@ -1,35 +1,4 @@
 
-#[test]
-fn tool_context_exposes_only_selected_instance_game_and_skin_paths() {
-    let root = tempfile::tempdir().unwrap();
-    let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default()))));
-    let provider = RuntimeBeatmap {
-        snapshots: snapshots.clone(),
-        counters: Arc::new(ReloadableCounterService::production(root.path().join("static"), root.path().join("settings"), root.path().join("cache"))),
-    };
-    assert!(provider.tool_context()["osu_dir"].is_null());
-    assert!(provider.tool_context()["skin"].is_null());
-    let game = root.path().join("selected-game");
-    for source in [ClientType::Stable, ClientType::Lazer] {
-        let mut state = (*state_bundle(1, 0)).clone();
-        state.source = source;
-        let regular = Arc::make_mut(&mut state.regular);
-        regular.global.game_folder = game.to_string_lossy().into_owned();
-        regular.global.skin_folder = "Selected Skin".into();
-        snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
-            ManagerInstanceSnapshot::new(42, vosu_osu_model::launch::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
-        ])));
-        let context = provider.tool_context();
-        assert_eq!(context["skin"]["name"], "Selected Skin");
-        if source == ClientType::Stable {
-            assert_eq!(context["osu_dir"], serde_json::json!(game));
-            assert_eq!(context["skin"]["folder"], serde_json::json!(game.join("Skins").join("Selected Skin")));
-        } else {
-            assert!(context["osu_dir"].is_null());
-            assert!(context["skin"]["folder"].is_null());
-        }
-    }
-}
 
 #[test]
 fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
@@ -116,10 +85,8 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "START_AT_LOGIN",
         "CALCULATE_PP",
         "READ_MANIA_SCROLL_SPEED",
-        "ENABLE_KEY_OVERLAY",
         "POLL_RATE",
         "PRECISE_DATA_POLL_RATE",
-        "V2_SUBSCRIPTION_DEBOUNCE",
         "API_V1_SUBSCRIPTION_DEBOUNCE",
         "SERVER_IP",
         "SERVER_PORT",
@@ -157,13 +124,9 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         ));
         assert!(settings.contains("Updates are managed by your Linux package manager"));
     }
-    assert!(settings.contains("V2 subscription debounce"));
-    assert!(settings.contains(
-        "Wait at least this long between updates sent to overlays that request selected V2 fields."
-    ));
-    assert!(settings.contains(
-        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
-    ));
+    for key in ["ENABLE_KEY_OVERLAY", "ENABLE_MANIA_KEY_HIT_ERRORS", "ENABLE_HIT_OFFSETS", "V2_SUBSCRIPTION_DEBOUNCE"] {
+        assert!(!settings.contains(key), "{key}");
+    }
     assert!(settings.contains(
         r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
     ));
@@ -172,7 +135,6 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     ));
     let distinct = render_runtime_settings(&Config {
         api_v1_subscription_debounce: 7.375,
-        v2_subscription_debounce: 19.25,
         ..Config::default()
     });
     assert!(distinct.contains(
@@ -299,7 +261,6 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let current = store.current();
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
-    assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(
         listen_target(&current).unwrap(),
@@ -314,7 +275,6 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let current = reloaded.current();
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
-    assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(current.server_port, 24_890.0);
     bounded!(reloaded.shutdown()).unwrap();
@@ -422,7 +382,7 @@ fn settings_save_accepts_finite_json_numbers_and_ignores_invalid_or_nonfinite_va
 
     assert_eq!(config.poll_rate, 144.5);
     assert_eq!(config.precise_data_poll_rate, 8.0);
-    assert_eq!(config.v2_subscription_debounce, 0.25);
+    assert_eq!(config.api_v1_subscription_debounce, 1.0);
     assert_eq!(config.server_port, 24_060.0);
 
     let unchanged = config.clone();
@@ -784,40 +744,6 @@ fn production_catalog_query_matches_source_token_rules() {
     ));
 }
 
-#[test]
-fn report_adapter_reads_real_instance_client_version() {
-    let mut settings = vosu_osu_model::states::SettingsObject::new();
-    settings.insert("client".into(), serde_json::json!({"version":"2026.714.0"}));
-    assert_eq!(report_instance_version(&settings), "2026.714.0");
-    settings.insert("client".into(), serde_json::json!({"version":42}));
-    assert_eq!(report_instance_version(&settings), "");
-}
-
-#[test]
-fn production_adapter_keeps_current_files_relative_to_songs() {
-    assert_eq!(
-        current_file_relative(Some("123 Artist - Title"), Some("map.osu")),
-        Some(PathBuf::from("123 Artist - Title").join("map.osu"))
-    );
-    assert_eq!(
-        current_file_relative(Some("../outside"), Some("map.osu")),
-        Some(PathBuf::from("../outside").join("map.osu")),
-        "the provider must not turn a request-derived path into a trust root"
-    );
-}
-
-#[test]
-fn production_adapter_builds_only_trusted_stable_skin_roots() {
-    assert_eq!(
-        stable_skin_root("/games/osu", "Default"),
-        Some(PathBuf::from("/games/osu/Skins/Default"))
-    );
-    assert_eq!(stable_skin_root("/games/osu", ""), None);
-    assert_eq!(stable_skin_root("/games/osu", "../outside"), None);
-    assert_eq!(stable_skin_root("/games/osu", "nested/skin"), None);
-    let absolute = format!("{}outside", std::path::MAIN_SEPARATOR);
-    assert_eq!(stable_skin_root("/games/osu", &absolute), None);
-}
 #[test]
 fn fractional_server_port_is_rejected() {
     let config = Config {

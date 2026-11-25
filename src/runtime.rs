@@ -5,15 +5,14 @@
 //! rather than hidden behind global state.
 
 use std::{
-    collections::BTreeMap,
     env,
     ffi::OsString,
     future::Future,
     io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -23,22 +22,19 @@ use std::fs;
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use serde::Serialize;
+#[cfg(test)]
+use std::path::Path;
 use tokio::{
     runtime::Handle,
     sync::{Mutex as AsyncMutex, broadcast, watch},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use vosu_adapter_support::filtered::Filter;
 use vosu_osu::capture::poll_duration;
-use vosu_osu_model::enums::ClientType;
 use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
-    api::{
-        ApiError, ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot,
-        ManagerSnapshot, SnapshotManager,
-    },
     counters::ReloadableCounterService,
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
@@ -51,14 +47,12 @@ use crate::{
             TokioResolver,
         },
         service::{
-            BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, LegacyCalculateProvider,
+            BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
             PageDataProvider, ProductionRouteDelegate, ProductionServices, ReportInputProvider,
-            SnapshotStateProvider, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
-            WebSocketRelaySink,
+            UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
         },
-        v2_subscription::{V2SubscriptionHub, V2SubscriptionProvider, V2SubscriptionSnapshot},
         websocket::{
-            Filter, Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
+            Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,
         },
     },
@@ -82,7 +76,6 @@ use vosu_core::{
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
-use vosu_osu_state::{StateBundleSnapshot, StateWorkerError, duration_from_millis_saturating};
 
 /// The running executable's version: the root package's, never a library
 /// crate's own package version. The updater, dashboard, catalog and log
@@ -100,7 +93,7 @@ fn daemon_logger_options(debug_log: bool) -> LoggerOptions {
     }
 }
 
-pub(crate) mod bridge_b1;
+mod adapters;
 mod cli;
 mod config;
 mod dev_plugins;
@@ -113,23 +106,20 @@ mod service;
 mod signals;
 #[cfg(feature = "test-harness")]
 mod test_support;
+mod tool_context;
 mod tracing_log;
 mod worker;
 
 #[cfg(feature = "test-harness")]
 pub use config::test_updater_handoff;
 pub use lifecycle::{ProductionRuntime, is_startup_owner_conflict, run_cli};
-pub use projection::{
-    ProductionSnapshotEncoder, ReloadableAuthorizer, SnapshotEncoder, SnapshotProviders,
-};
+pub use projection::ReloadableAuthorizer;
 #[cfg(feature = "test-harness")]
 pub use test_support::{
     TestProductionComposition, TestProductionCompositionOptions, start_test_production_composition,
 };
 pub use worker::{ListenerOwner, WebSocketHubs};
 
-#[cfg(test)]
-use bridge_b1::*;
 use config::*;
 #[cfg(test)]
 use lifecycle::*;
@@ -138,21 +128,18 @@ use render::*;
 use service::*;
 #[cfg(test)]
 use signals::cancel_on_signal;
-#[cfg(test)]
-use vosu_osu_state::{Delivery, SnapshotPublisher};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, atomic::Ordering};
+    use std::sync::atomic::Ordering;
 
     use tokio::sync::mpsc;
 
     use super::*;
 
     include!("runtime/tests/cli.rs");
-    include!("runtime/tests/worker.rs");
-    include!("runtime/tests/bridge_b1.rs");
     include!("runtime/tests/projection.rs");
+    include!("runtime/tests/worker.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/version.rs");

@@ -15,8 +15,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::websocket::Filter;
-use framing::{error_value, parse_filters, reply};
+use framing::{error_value, reply};
+use vosu_adapter_support::filtered::Filter;
+use vosu_adapter_support::filtered::parse_filters;
 
 pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 

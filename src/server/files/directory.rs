@@ -232,13 +232,19 @@ fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
 }
 
 pub fn build_directory_index(directory: &fs::File, request_target: &str) -> io::Result<String> {
+    Ok(directory_index(
+        directory_entries(directory)?,
+        request_target,
+    ))
+}
+
+pub fn directory_index(mut entries: Vec<(String, bool)>, request_target: &str) -> String {
     let base = request_target.split(['?', '#']).next().unwrap_or("/");
     let base = if base.ends_with('/') {
         base.to_owned()
     } else {
         format!("{base}/")
     };
-    let mut entries = directory_entries(directory)?;
     entries.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut items = String::new();
@@ -254,9 +260,9 @@ pub fn build_directory_index(directory: &fs::File, request_target: &str) -> io::
         );
     }
     let page_url = html_escape(&format!("vosu - {base}"));
-    Ok(OVERLAYS_STATIC
+    OVERLAYS_STATIC
         .replace("{OVERLAYS_LIST}", items.trim_end())
-        .replace("{PAGE_URL}", &page_url))
+        .replace("{PAGE_URL}", &page_url)
 }
 
 pub fn html_escape(value: &str) -> String {

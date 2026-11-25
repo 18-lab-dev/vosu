@@ -1,10 +1,31 @@
-//! Latest-only precise histories and logical keys; legacy key aliases are not published.
+//! Latest-only precise histories, logical keys and independent legacy overlay slots.
 use super::play::{Encode, array, field, map, text};
 use super::{OsuPointer as P, ProjectionSink};
 use vosu_osu_state::StateBundleSnapshot;
 
 pub(super) fn project(s: &StateBundleSnapshot, sink: &mut dyn ProjectionSink) {
     let p = &s.precise;
+    sink.put(
+        P::OsuPlayPreciseUnstableRate,
+        vosu_plugin_api::PublishValueRef::F64(p.unstable_rate),
+    );
+    sink.put_cbor(P::OsuKeysOverlay, &mut |b| {
+        if p.key_overlay.is_empty() {
+            b.push(0xf6);
+            return;
+        }
+        map(b, 4);
+        for (index, name) in ["k1", "k2", "m1", "m2"].into_iter().enumerate() {
+            text(b, name);
+            if let Some(key) = p.key_overlay.get(index) {
+                map(b, 2);
+                field(b, "isPressed", &key.is_pressed);
+                field(b, "count", &key.count);
+            } else {
+                b.push(0xf6);
+            }
+        }
+    });
     sink.put_cbor(P::OsuPlayHitErrors, &mut |b| {
         map(b, 3);
         field(b, "all", &p.hit_errors.all);

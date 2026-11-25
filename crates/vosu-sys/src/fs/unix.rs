@@ -107,3 +107,14 @@ pub(super) fn open_fallback(
     }
     Ok(file)
 }
+
+pub(super) fn root_path(file: &fs::File) -> Result<std::path::PathBuf, SafePathError> {
+    use std::os::fd::AsRawFd;
+    Ok(fs::read_link(format!(
+        "/proc/self/fd/{}",
+        file.as_raw_fd()
+    ))?)
+}
+pub(super) fn strip_root<'a>(root: &Path, child: &'a Path) -> Option<&'a Path> {
+    child.strip_prefix(root).ok()
+}

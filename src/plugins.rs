@@ -6,12 +6,12 @@
 //! guarantee a compile-time list does not give more simply — forgetting an
 //! entry here is a visible, reviewed omission, not a silent one.
 //!
-//! Production ships `vosu.osu`; the echo fixture is test-harness-only.
+//! Production ships the game provider followed by three required projections.
 
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
 
-/// The required `vosu.osu` entry is first; later entries are optional fixtures.
+/// Required game/provider entries precede optional test fixtures.
 pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
     vosu_core::plugin::BundledPlugin {
         manifest: vosu_osu::MANIFEST,
@@ -19,6 +19,27 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
         action_schemas: vosu_osu::ACTION_SCHEMAS,
         vtable: vosu_osu::vosu_plugin_vtable,
+    },
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_adapter_upstream::MANIFEST,
+        settings_schema: None,
+        namespace_schemas: &[],
+        action_schemas: &[],
+        vtable: vosu_adapter_upstream::vosu_plugin_vtable,
+    },
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_adapter_gosumemory::MANIFEST,
+        settings_schema: None,
+        namespace_schemas: &[],
+        action_schemas: &[],
+        vtable: vosu_adapter_gosumemory::vosu_plugin_vtable,
+    },
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_adapter_streamcompanion::MANIFEST,
+        settings_schema: None,
+        namespace_schemas: &[],
+        action_schemas: &[],
+        vtable: vosu_adapter_streamcompanion::vosu_plugin_vtable,
     },
     #[cfg(feature = "test-harness")]
     vosu_core::plugin::BundledPlugin {

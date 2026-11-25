@@ -16,8 +16,6 @@ mod context;
 mod reader_settings;
 mod readers;
 pub mod state_backend;
-#[cfg(feature = "test-harness")]
-pub mod test_fixtures;
 #[cfg(windows)]
 mod windows_timer;
 mod worker;

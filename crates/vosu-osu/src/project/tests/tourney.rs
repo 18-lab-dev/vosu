@@ -9,6 +9,38 @@ fn lazer_status_11_without_data_is_null() {
     tourney::project(&s, &facts(ClientType::Lazer), &mut out);
     assert!(out.get(OsuPointer::OsuTourney).is_null());
 }
+
+#[test]
+fn availability_distinguishes_pending_ready_empty_and_missing_score() {
+    let mut s = sample();
+    Arc::make_mut(&mut s.precise).status = 11;
+    let f = facts(ClientType::Lazer);
+    let mut out = Collect::default();
+    tourney::project(&s, &f, &mut out);
+    assert_eq!(out.get(OsuPointer::OsuTourneyAvailability), "pending");
+    Arc::make_mut(&mut s.regular).lazer_multi_spectating.data =
+        Some(serde_json::from_value(json!({"chat":[],"spectatingClients":[]})).unwrap());
+    let mut out = Collect::default();
+    tourney::project(&s, &f, &mut out);
+    assert_eq!(out.get(OsuPointer::OsuTourneyAvailability), "ready");
+    assert_eq!(out.get(OsuPointer::OsuTourney)["clients"], json!([]));
+    let user = json!({"name":"spectated","accuracy":97.5,"rankedScore":123.0,"id":4,"level":1.0,"playCount":5,"playMode":3,"rank":6,"countryCode":1,"performancePoints":7.0,"rawBanchoStatus":0,"backgroundColour":0,"rawLoginStatus":0,"matchmaking":null});
+    Arc::make_mut(&mut s.regular).lazer_multi_spectating.data = Some(
+        serde_json::from_value(
+            json!({"chat":[],"spectatingClients":[{"team":"red","user":user,"score":null}]}),
+        )
+        .unwrap(),
+    );
+    let mut out = Collect::default();
+    tourney::project(&s, &f, &mut out);
+    assert_eq!(out.get(OsuPointer::OsuTourneyAvailability), "missingScore");
+    assert!(out.get(OsuPointer::OsuTourney).is_null());
+    Arc::make_mut(&mut s.regular).lazer_multi_spectating.data = None;
+    let mut out = Collect::default();
+    tourney::project(&s, &f, &mut out);
+    assert_eq!(out.get(OsuPointer::OsuTourneyAvailability), "pending");
+    assert!(out.get(OsuPointer::OsuTourney).is_null());
+}
 #[test]
 fn stable_and_lazer_non_11_publish_default_object() {
     let mut s = sample();

@@ -578,7 +578,13 @@ impl ToolHost {
                 Ok(values) => json_response(StatusCode::OK, json!(values)),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
             },
-            "context" if context => json_response(StatusCode::OK, (self.context)()),
+            "context" if context => {
+                let context = Arc::clone(&self.context);
+                match tokio::task::spawn_blocking(move || context()).await {
+                    Ok(value) => json_response(StatusCode::OK, value),
+                    Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+                }
+            }
             "overlays" if context => {
                 let Some(counters) = self.counters.lock().clone() else {
                     return error(StatusCode::SERVICE_UNAVAILABLE, "overlays are unavailable");

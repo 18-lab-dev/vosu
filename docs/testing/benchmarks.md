@@ -11,6 +11,15 @@ This guide keeps only the latest result of each benchmark. A rerun replaces
 its section; earlier results stay in this file's Git history
 (`git log -p -- docs/testing/benchmarks.md`).
 
+ADR 0021 removes `/websocket/v2/subscribe` in M4a. The selected-feed-only
+`v2_subscription/*`, `v2_subscription_document/*` Criterion groups and
+`subscription_cadence_cpu_and_wakeups` ignored benchmark are removed with that
+protocol, not reported as performance regressions. Shared subscription wire
+properties remain tested under `server::subscription_wire`; API v1 and legacy
+filter benchmarks remain. M4a D17's bus-to-adapter cases replace measurements of
+the removed transport rather than comparing unlike protocols.
+
+
 ## Reproduce
 
 Run from the repository root with the pinned Rust toolchain. Bench profiles
@@ -68,6 +77,208 @@ as the absolute delta, or overlapping bootstrap intervals, is **inconclusive**.
 Intervals describe these rounds, not immunity to systematic fixture or host
 bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 `--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
+
+## M4a D17 contract
+
+A4 freezes the following exact future case names in `state_bus_bench`; this
+is a contract, not measurement evidence or a claim those cases exist yet:
+
+- `end_to_end/adapter`: source snapshot → real osu! projection → ABI batch →
+  bus commit → coherent surface → actual `/json/v2` bytes **and encoded API-v1
+  subscription frame**, including delivery/write acknowledgement;
+- `end_to_end/adapter_precise`: the same production path for a precise-only
+  change and precise frame, retaining the unchanged regular view;
+- equivalent `end_to_end/legacy` output work from M3 and pre-M0 serializers;
+- `adapter/idle_no_clients`, `adapter/http_then_ws_cache`,
+  `adapter/plain_100_clients`, `adapter/filtered_clients`,
+  `adapter/slow_consumer`, `adapter/focus_switch`,
+  `adapter/sc_unchanged_chart`, `adapter/sc_changed_chart`.
+
+List actual matched names/nonzero work counts before timing. New adapter case
+names require a common harness around both implementations; never pass a
+nonexistent name to a baseline binary. Cold chart I/O/parser cost is reported
+separately. Preserve nonzero distinctive input and equivalent actual output
+work, not a prebuilt DTO or publication-only comparison. Production counters
+prove shared HTTP/WS bytes, one in-flight/latest-only frame, bounded filters,
+zero no-client work, regular-cache retention and unchanged-chart parse count.
+The bounds and instance-owned hooks are in
+[adapter surfaces](../v2/adapter-surfaces.md#derived-work-encoding-and-test-seams).
+
+```sh
+cargo bench --locked -p vosu --bench state_bus_bench -- '^end_to_end/'
+cargo bench --locked -p vosu --bench hot_paths -- 'publication|serializers'
+cargo bench --locked -p vosu --bench state_bus_bench -- '^adapter/'
+```
+
+Build with `taskset -c 0-7,16-23 nice -n 10`, `RUSTC_WRAPPER=sccache` and
+independent `CARGO_TARGET_DIR`/Criterion output directories per checkout.
+Use the interleaved comparison tool above, one approved pinned physical core,
+five paired rounds and an output artifact. Non-exclusive shared-machine runs
+are exploratory, never official D17 evidence. Record commit/binary/harness,
+profile/features, CPU/exclusivity, matched names, equivalent output, medians,
+95% intervals, per-milestone and cumulative pre-M0 deltas; preserve inherited
+M1/M2/M3 findings. The bar remains no >10% median regression judged with
+non-overlapping 95% intervals. Record allocations, clocks, wakeups, CPU/tick
+and source-read-to-real-frame latency for idle/subscribed profiles, separately
+on native Windows stable/lazer and Linux lazer. Existing live reader `--bus`
+mode is not adapter-frame evidence; X1 must add/document the actual adapter
+output mode before measuring. No native/live/capture run is authorized by A4.
+
+## M4a D17 status at the exit
+
+**Status at the M4a exit (2026-11-24): D17 for M4a is pending. It is not a
+pass.** Two measurements decide it, and neither has run:
+
+1. Main's official pinned Criterion comparison of the frozen cases above, on
+   one approved physical core with five paired rounds, independent targets
+   and Criterion homes. It compares `end_to_end/adapter` and
+   `end_to_end/adapter_precise` with the equivalent `end_to_end/legacy`
+   workload at M3 `e1df38f` and pre-M0 `3a91ff9`, once that legacy harness
+   and the `bench-compare.py` case alias below exist.
+2. Native `live_reader_bench --adapter` runs (CPU/tick per stage and
+   read-to-frame latency, idle and subscribed) on native Windows stable and
+   lazer, and on Linux lazer. On Windows the stage CPU comes from
+   `GetThreadTimes`, which charges whole ~15.6 ms scheduler ticks, so a
+   per-tick median of a sub-millisecond stage reads 0 there. Use a mean
+   over many ticks, or a finer thread clock, before comparing stages.
+
+The exploratory numbers in the next section decide nothing. They also predate
+the exit merge with `v2/main`, which brought M1 L3's reader and read-plan
+changes, so every case runs again on the final head.
+
+**Inherited M1 rows, carried forward unchanged.** The owner's 2026-11-24
+exception permits the M1 landing on `v2/main` only. Every row below is still
+open and must close at Main's official M4a re-measurement or the M5 re-check,
+or receive a fresh explicit exception
+([source](#m1-planmemory-paired-d17)):
+
+| M1 row (native Windows, source `1162fe6`) | Mean paired overhead | Status |
+|---|---:|---|
+| stable regular fixture, flat | +19.51% | Miss, open |
+| stable precise fixture, flat | +30.81% | Miss, open |
+| lazer regular fixture | — | Not established: no populated fixture |
+| lazer precise fixture, flat | +10.26% | Miss, open |
+| lazer precise fixture, routed | +13.61% | Miss, open |
+| stable regular live | +22.07% | Miss, open |
+| stable precise live | +7.36% | Point pass only; interval inconclusive |
+| lazer regular live | +17.11% | Miss, open |
+| lazer precise live | +31.11% | Miss, open |
+
+The M2 and M3 D17 decisions are also still pending their quiet pinned runs
+([M2](#m2-comparison-status), [M3](#m3-d17-contract)).
+
+## M4a D17 implementation (exploratory, non-exclusive)
+
+**No D17 pass is claimed.** These are short exploratory runs of X1 commit
+`89824bc` on the shared Linux workstation (Ryzen 9 9950X3D, Rust 1.96.1,
+release bench profile, default features), timed with `taskset -c 0 nice -n 10`
+while other work used the host, CPU 0's SMT sibling not reserved, with
+`--warm-up-time 0.5 --measurement-time 2 --sample-size 20`. Criterion home
+`~/.cache/vosu-criterion/m4a-x1-exploratory`, target
+`~/.cache/vosu-targets/m4a-x1`. No baseline binary was run, so no milestone or
+cumulative delta is reported.
+
+All cases share `benches/support/adapter/` (also used by the invariants): the
+real osu! `BusPublisher` projection and ABI batch, host bus commit, the bundled
+adapters' own surface requesters, the production `BusStateProvider` and
+`WebSocketHub`. Inputs are `adapter/input.rs`: stable gameplay with scores
+12345/23456 (regular) or `k1` counts 41/42 (precise-only; regular v2 emits no
+keys). Each iteration publishes a different value and asserts a new encoding
+or frame; exact view/encode/parse counts are asserted after timing through
+instance-owned counters around the real adapters.
+
+| Exact case | Timed work | Median [95% CI] |
+|---|---|---|
+| `end_to_end/adapter` | regular change → `/json/v2` HTTP bytes + encoded, delivered and acknowledged API v1 frame | 96.8 [90.6, 102.3] µs |
+| `end_to_end/adapter_precise` | precise-only change → `/json/v2/precise` hub frame; regular bytes retained (same allocation, zero regular decodes) | 33.8 [32.3, 35.9] µs |
+| `adapter/idle_no_clients` | one commit with four providers, four hubs and an API v1 hub but no client; zero adapter work and demand | 8.41 [8.33, 8.51] µs |
+| `adapter/http_then_ws_cache` | change → HTTP bytes → WS frame sharing that allocation | 204.5 [201.0, 209.1] µs |
+| `adapter/slow_consumer` | 16 commits while one frame is in flight, then ack → latest frame; one view/encoding | 1.147 [1.136, 1.155] ms |
+| `adapter/focus_switch` | foreground switch between two stable sessions → HTTP + WS | 488 [461, 516] µs |
+| `adapter/sc_unchanged_chart` | score change with the chart unchanged; zero chart opens/reads/parses | 199 [189, 210] µs |
+| `adapter/plain_100_clients` | change fanned out to 100 acknowledging plain clients; one encoding | 8.34 [7.99, 8.70] ms |
+| `adapter/filtered_clients` | 16 clients, 8 plans in pairs; 10.96 filtered encodings per change observed | 1.63 [1.48, 1.75] ms |
+
+Cold chart work, reported separately from hot cases:
+`adapter/sc_changed_chart` 654.7 [616.3, 710.8] µs per change: the osu!
+cold-resource worker declares the songs root and publishes the new chart
+reference, the SC worker opens, reads and parses it (4383 changes, exactly
+4383 opens/reads/parses), then HTTP and WS share the derived bytes. Tiny
+two-file fixture; OS page cache not flushed.
+
+Unchanged comparison cases from the same run: `end_to_end/bus` 23.2, `bus_precise`
+17.7, `api_frame` 18.1 µs; `serializers_cold/{v1,v2,v2_precise,stream_companion}`
+3.08, 7.89, 0.234, 4.35 µs; `publication/unfiltered_clients/{1,100,1000}` 2.13,
+2.08, 2.11 ms (synthetic hub only; dominated by its 1 ms cadence, not adapter
+evidence).
+
+**Exploratory findings for the official run.** `plain_100_clients` costs about
+83 µs per client although one encoding is shared: every transport
+acknowledgement runs `wake_writable`, which captures the surface selection and
+compares it with the cached image. `http_then_ws_cache` (204 µs) is likewise
+about twice `end_to_end/adapter`. Filtered pairs share bytes only when both
+acknowledgements reach one delivery pass. These are measurements, not yet
+attributed regressions.
+
+The 1.x `end_to_end/legacy` workload over these same inputs is **not built
+yet**: the benchmark-only legacy harness commits for pre-M0 `3a91ff9` and M3
+`e1df38f`, and a `scripts/bench-compare.py` case-alias option to pair
+`end_to_end/adapter` with `end_to_end/legacy`, remain to be added. Compare only
+case names present in every binary until then.
+
+### Live adapter-output mode
+
+`examples/live_reader_bench.rs --adapter` loads the production osu! grants and
+the bundled upstream adapter in a private host attached to the live client.
+Per lane (regular → `/json/v2`, precise → `/json/v2/precise`):
+
+- `adapter_stages`: median tick-thread CPU per tick by stage: `read` (capture
+  plan execution), `reduce`, `projection` (projection, diff, batch encoding),
+  `commit` (host commit inside the synchronous publish call), `surface_view`
+  (coherent capture plus typed decode) and `encode`. A tick whose captured
+  selection equals the previous one is a cache hit, as in the provider.
+- `adapter_frame`: wall time from read start to the real hub frame, delivered by
+  acknowledgement/wake; it excludes the 1.x cadence wait (up to one poll
+  interval) an idle, already-acknowledged client sees.
+
+These stages attribute the residual left open in the
+[M1 PlanMemory](#m1-planmemory-paired-d17) exception. `--bus` remains bus-only.
+
+```powershell
+# Native Windows, release examples, client in gameplay; repeat idle in menu.
+cargo build --release --locked --no-default-features --example live_reader_bench
+target\release\examples\live_reader_bench.exe --pid <stable-pid> --client stable --adapter
+target\release\examples\live_reader_bench.exe --pid <stable-pid> --client stable --adapter --memory plan
+target\release\examples\live_reader_bench.exe --pid <lazer-pid> --client lazer --adapter
+target\release\examples\live_reader_bench.exe --pid <lazer-pid> --client lazer --adapter --memory plan
+```
+
+Linux lazer: `cargo build --release --locked --example live_reader_bench`, then
+`target/release/examples/live_reader_bench --pid <pid> --client lazer --adapter`
+(add `--memory plan`). Each JSON result holds both lanes and both modes.
+### streamCompanion HTTP chart wait bound (X0)
+
+HTTP-only `/json/sc` readers keep chart facts: releasing the last consumer no
+longer cancels the selected key's chart job or drops its completed result,
+and an HTTP read whose exact-input job is in flight waits at most
+`DERIVED_HTTP_WAIT` = **80 ms** (`src/server/bus_provider.rs`) before
+falling back to the pinned chart-less bytes. The bound is 2 × the largest
+measured p99 and stays under the 500 ms cap. Measured 2026-11-24 with a
+throwaway release-build test (not a committed benchmark), Ryzen 9 9950X3D
+pinned to CPUs 0-7, **non-exclusive**, 60 cold `BeatmapCache::load` +
+projection runs per map; resource open/read through the retained root is
+excluded:
+
+| Map | Size | Median | p99 | Max |
+| --- | --- | --- | --- | --- |
+| source-oracle fixture chart (1 object) | 226 B | 0.11 ms | 0.23 ms | 0.27 ms |
+| `crates/vosu-pp/rosu-pp-api/resources/2785319.osu` | 33,573 B | 3.52 ms | 4.62 ms | 4.94 ms |
+| `Within Temptation - The Unforgiving (Armin) [Marathon].osu` | 243,197 B | 36.68 ms | 40.08 ms | 40.17 ms |
+
+Slower hosts that exceed the bound on a very large map serve chart-less bytes
+for that first read only; the job still completes and later reads reuse its
+result. X1's `adapter/sc_unchanged_chart` and `adapter/sc_changed_chart`
+cases measure this path and must be re-baselined after this change.
 
 ## M3 D17 contract
 
@@ -284,10 +495,11 @@ encoding path, not a second implementation of the osu! projector:
 | `end_to_end/bus`, `bus_precise` | Both-lane or precise-only snapshots → projector → flat batch → commit → `api_json` → changed selection and one `STATE_UPDATE` encoding for a ten-selector subscriber |
 | `end_to_end/legacy` | The same gameplay snapshot → uncached v2 and precise serializers |
 
-The fixture changes score and play time; it is not an oracle for every client
-state or a long hit-error-history stress test. Setup and snapshot allocation
-are outside both end-to-end measurements. Each legacy iteration gets a fresh
-`CombinedSnapshot`, so it cannot time a cached `Bytes` clone.
+The M2 measurements below are historical pre-M4a evidence. Their legacy path
+used a fresh root snapshot per iteration. That production architecture has
+been removed; current benchmark fixtures use actual producer → ABI bus →
+authorized surface → adapter encoding. Changed workloads need new matched-case
+measurements before comparing against these historical values.
 
 ```sh
 cargo bench --locked --package vosu --bench state_bus_bench

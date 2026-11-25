@@ -1,3 +1,7 @@
+    fn resolve_exact(root: Option<&Path>, relative: Option<&Path>, missing: MissingKind) -> Result<ResourceOutcome, vosu_sys::fs::SafePathError> {
+        let Some(relative) = relative.and_then(Path::to_str) else { return Ok(ResourceOutcome::Missing(missing)); };
+        files::resolve_resource(root, relative, relative, missing)
+    }
     #[tokio::test]
     async fn dashboard_read_apis_report_counts_and_safe_folder_details() {
         let root = tempfile::tempdir().unwrap();
@@ -21,7 +25,6 @@
                 v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
                 precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
                 commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
                 processor: processor.clone(), relays: relays.clone(),
             },
         ));
@@ -74,7 +77,6 @@
                 v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
                 precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
                 commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
                 processor: processor.clone(), relays: relays.clone(),
             },
         ));
@@ -115,117 +117,6 @@
         assert_eq!(pinned, Bytes::from_static(br#"<script>window.COUNTER_PATH="/@vosu-profile/stream/counter";window.VOSU_PROFILE="stream";</script>"#));
     }
 
-    #[test]
-    fn pp_query_maps_every_documented_knob() {
-        let query = PpQuery {
-            path: None,
-            lazer: Some(true),
-            mode: Some(3),
-            ar: Some(9.1),
-            cs: Some(4.2),
-            hp: Some(6.3),
-            od: Some(8.4),
-            clock_rate: Some(1.25),
-            passed_objects: Some(99),
-            combo: Some(88),
-            n_misses: Some(1),
-            n100: Some(2),
-            n300: Some(3),
-            n50: Some(4),
-            n_geki: Some(5),
-            n_katu: Some(6),
-            mods: Some(ModsInput::Acronyms("HD, DT".into())),
-            accuracy: Some(97.5),
-            slider_end_hits: Some(7),
-            small_tick_hits: Some(8),
-            large_tick_hits: Some(9),
-            hitresult_priority: Some(1),
-        };
-        let request = performance_request(&query).unwrap();
-        assert_eq!(
-            request.mode,
-            Some(vosu_osu_calc::engine::Ruleset::Mania)
-        );
-        assert_eq!(request.lazer, Some(true));
-        assert_eq!(request.clock_rate, Some(1.25));
-        assert_eq!(
-            (request.ar, request.cs, request.hp, request.od),
-            (Some(9.1), Some(4.2), Some(6.3), Some(8.4))
-        );
-        assert_eq!(
-            (request.passed_objects, request.combo),
-            (Some(99), Some(88))
-        );
-        assert_eq!(
-            (request.n_misses, request.n100, request.n300, request.n50),
-            (Some(1), Some(2), Some(3), Some(4))
-        );
-        assert_eq!((request.n_geki, request.n_katu), (Some(5), Some(6)));
-        assert_eq!(
-            (
-                request.slider_end_hits,
-                request.small_tick_hits,
-                request.large_tick_hits
-            ),
-            (Some(7), Some(8), Some(9))
-        );
-        assert_eq!(request.accuracy, Some(97.5));
-        assert_eq!(request.hitresult_priority, HitResultPriority::WorstCase);
-        let LegacyMods::Structured(mods) = request.mods else {
-            panic!("expected structured acronyms")
-        };
-        assert_eq!(
-            mods.iter()
-                .map(|item| item.acronym.as_str())
-                .collect::<Vec<_>>(),
-            ["HD", "DT"]
-        );
-    }
-
-    #[tokio::test]
-    async fn pp_selects_current_or_safe_canonical_regular_osu_file() {
-        let provider = LegacyCalculateProvider::new(Arc::new(Current {
-            bytes: Some(Bytes::from_static(b"current")),
-            files: None,
-        }));
-        assert_eq!(
-            bounded!(provider.select_beatmap(&PpQuery::default())).unwrap(),
-            Some(Bytes::from_static(b"current")),
-        );
-
-        let directory = tempfile::tempdir().unwrap();
-        let osu = directory.path().join("map.osu");
-        bounded!(tokio::fs::write(&osu, b"path")).unwrap();
-        let selected = bounded!(provider
-            .select_beatmap(&PpQuery {
-                path: Some(osu.to_string_lossy().into_owned()),
-                ..PpQuery::default()
-            }))
-            .unwrap();
-        assert_eq!(selected, Some(Bytes::from_static(b"path")));
-
-        let wrong_extension = directory.path().join("map.txt");
-        bounded!(tokio::fs::write(&wrong_extension, b"path")).unwrap();
-        assert!(
-            bounded!(provider
-                .select_beatmap(&PpQuery {
-                    path: Some(wrong_extension.to_string_lossy().into_owned()),
-                    ..PpQuery::default()
-                }))
-                .is_err()
-        );
-
-        let directory_named_osu = directory.path().join("folder.osu");
-        bounded!(tokio::fs::create_dir(&directory_named_osu)).unwrap();
-        assert!(
-            bounded!(provider
-                .select_beatmap(&PpQuery {
-                    path: Some(directory_named_osu.to_string_lossy().into_owned()),
-                    ..PpQuery::default()
-                }))
-                .is_err()
-        );
-    }
 
     #[test]
     fn raw_splat_decodes_once_and_query_is_separate() {

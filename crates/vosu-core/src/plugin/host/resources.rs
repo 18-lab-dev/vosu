@@ -60,6 +60,9 @@ impl RootCapability {
     }
 }
 
+mod surface;
+mod surface_files;
+
 struct Owner {
     slots: HashSet<String>,
     roots: HashMap<(Option<u64>, String), RootCapability>,
@@ -246,6 +249,46 @@ impl PluginHost {
                 .or_insert_with(|| Arc::new(AtomicBool::new(true))),
         ));
         Ok(root)
+    }
+
+    /// Host-only display metadata for the pre-M7 tool context contract.
+    /// This grants no handle or bytes and must never be used to reopen a file.
+    /// Call off async workers: confinement and final spelling use one retained
+    /// opened object, not a canonicalized pathname followed by another open.
+    pub fn display_path(
+        &self,
+        selected: &vosu_surface::state::IdentifiedSession,
+        slot: &str,
+        relative: Option<&str>,
+    ) -> Option<std::path::PathBuf> {
+        let instance = PluginInstanceId::new(selected.owner_instance);
+        let handle = {
+            let instances = self.instances.lock().ok()?;
+            let InstanceSlot::Live(entry) = instances.get(&instance)? else {
+                return None;
+            };
+            if entry.plugin_id != selected.owner {
+                return None;
+            }
+            let sessions = self.sessions.lock().ok()?;
+            let (handle, owner, _) = sessions.identified_sessions().find(|(handle, _, _)| {
+                sessions.public_id_of(*handle) == Some(selected.session.as_str())
+            })?;
+            if owner.as_str() != selected.owner
+                || sessions.generation_of(handle)?.0 != selected.generation
+                || sessions
+                    .identify_of(handle)
+                    .is_none_or(|id| id.game != selected.game || id.variant != selected.variant)
+            {
+                return None;
+            }
+            handle.0
+        };
+        let root = self.resource_root(instance, handle, slot).ok()?;
+        let relative = SafeRelativePath::parse(relative.unwrap_or("")).ok()?;
+        let child = root.open_child(&relative).ok()?;
+        let path = child.canonical_path().ok()?;
+        root.is_current().then_some(path)
     }
 
     /// Lock order: instances -> reference registry. Release both before checking

@@ -485,7 +485,7 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
             .header(reqwest::header::ORIGIN, format!("http://{address}"))
             .json(&serde_json::json!({
                 "DEBUG_LOG": true,
-                "V2_SUBSCRIPTION_DEBOUNCE": 1.125
+                "API_V1_SUBSCRIPTION_DEBOUNCE": 1.125
             }))
             .send()
     )
@@ -500,7 +500,7 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
     )
     .expect("settingsSave persists valid typed TOML");
     assert!(persisted.config().debug_log);
-    assert_eq!(persisted.config().v2_subscription_debounce, 1.125);
+    assert_eq!(persisted.config().api_v1_subscription_debounce, 1.125);
 
     let response = bounded!(
         client

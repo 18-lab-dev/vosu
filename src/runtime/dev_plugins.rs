@@ -24,7 +24,14 @@ pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 /// it across instances is the whole point of `concurrent_dispatch`.
 const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
-/// Loads the production-required osu! entry first, followed by optional bundled
+pub(super) const REQUIRED: &[&str] = &[
+    "vosu.osu",
+    "vosu.adapter.upstream",
+    "vosu.adapter.gosumemory",
+    "vosu.adapter.streamcompanion",
+];
+
+/// Loads required production plugins first, followed by optional bundled
 /// fixtures. Required-plugin failure aborts composition; optional fixtures keep
 /// warn-and-continue behavior. Array positions remain reserved even on failure.
 pub(super) fn load_bundled(
@@ -35,14 +42,13 @@ pub(super) fn load_bundled(
     bundled: &[plugin::BundledPlugin<'_>],
     development_dirs: &[PathBuf],
 ) -> std::io::Result<u64> {
-    if bundled.is_empty() {
+    if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
-            "required bundled plugin vosu.osu is missing",
+            "required bundled plugin set is incomplete: osu and all three adapters are required",
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {
-        // BUNDLED's first entry is the production-required plugin. Check the
-        // identity after parsing too, so omission/reordering cannot half-start.
+        // Required identities and positions are explicit, not linker inventory.
         let result = (|| {
             let loaded = plugin::load_bundled(
                 crate::application_version(),
@@ -52,10 +58,12 @@ pub(super) fn load_bundled(
             .map_err(std::io::Error::other)?;
             let loaded = &loaded[0];
             let plugin_id = &loaded.manifest().id;
-            if index == 0 && plugin_id != "vosu.osu" {
-                return Err(std::io::Error::other(
-                    "required bundled plugin vosu.osu is missing",
-                ));
+            if let Some(required) = REQUIRED.get(index)
+                && plugin_id != required
+            {
+                return Err(std::io::Error::other(format!(
+                    "required bundled plugin {required} is missing"
+                )));
             }
             host.create_instance(
                 PluginInstanceId::new(index as u64),
@@ -66,9 +74,9 @@ pub(super) fn load_bundled(
             .map_err(std::io::Error::other)
         })();
         if let Err(error) = result {
-            if index == 0 {
+            if let Some(required) = REQUIRED.get(index) {
                 return Err(std::io::Error::other(format!(
-                    "required bundled plugin vosu.osu failed: {error}"
+                    "required bundled plugin {required} failed: {error}"
                 )));
             }
             logger.warn(format!(
@@ -144,7 +152,7 @@ pub(super) fn load_all(
 
 /// Rebuild registered source identities directly from the currently enabled
 /// inputs. Pending providers are known namespaces, never live capability grants.
-fn source_snapshot(
+pub(super) fn source_snapshot(
     host: &PluginHost,
     bundled: &[plugin::BundledPlugin<'_>],
     development_dirs: &[PathBuf],

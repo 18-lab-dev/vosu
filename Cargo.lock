@@ -3486,6 +3486,7 @@ dependencies = [
  "axum",
  "bytes",
  "chrono",
+ "ciborium",
  "criterion",
  "dotenvy",
  "futures-util",
@@ -3518,6 +3519,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "vosu-adapter-gosumemory",
+ "vosu-adapter-streamcompanion",
+ "vosu-adapter-support",
+ "vosu-adapter-upstream",
  "vosu-core",
  "vosu-net",
  "vosu-osu",
@@ -3535,6 +3540,71 @@ dependencies = [
  "winresource",
  "zip",
  "zmij",
+]
+
+[[package]]
+name = "vosu-adapter-gosumemory"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde_json",
+ "vosu-adapter-support",
+ "vosu-osu-model",
+ "vosu-plugin-api",
+ "vosu-surface",
+]
+
+[[package]]
+name = "vosu-adapter-streamcompanion"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "ciborium",
+ "indexmap",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "vosu-adapter-support",
+ "vosu-core",
+ "vosu-osu-calc",
+ "vosu-osu-model",
+ "vosu-plugin-api",
+ "vosu-surface",
+]
+
+[[package]]
+name = "vosu-adapter-support"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde_json",
+ "vosu-osu-model",
+]
+
+[[package]]
+name = "vosu-adapter-upstream"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "bytes",
+ "ciborium",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+ "vosu-adapter-support",
+ "vosu-core",
+ "vosu-osu",
+ "vosu-osu-calc",
+ "vosu-osu-model",
+ "vosu-osu-state",
+ "vosu-plugin-api",
+ "vosu-surface",
 ]
 
 [[package]]
@@ -3626,7 +3696,6 @@ dependencies = [
  "vosu-osu-state",
  "vosu-plugin-api",
  "vosu-proptest",
- "vosu-surface",
  "vosu-sys",
  "zip",
 ]
@@ -3788,6 +3857,7 @@ dependencies = [
 name = "vosu-surface"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "tokio",
  "vosu-plugin-api",
 ]

@@ -6,7 +6,6 @@ const _: fn() = benchmark::benches;
 use benchmark::*;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
-use vosu::runtime::{ProductionSnapshotEncoder, SnapshotEncoder};
 use vosu::server::websocket::{Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_proptest::bounded;
 
@@ -17,9 +16,7 @@ fn frozen_reference_bytes_all_schemas_and_filter_variants() {
             let snapshot = fixture_offset(offset);
             let identical = filters(schema, 0);
             assert_eq!(
-                ProductionSnapshotEncoder
-                    .encode(&snapshot, api_schema, &identical)
-                    .unwrap(),
+                encode(&snapshot, api_schema, &identical).unwrap(),
                 reference_offset(schema, 0, offset)
             );
             let mut canonical = std::collections::HashSet::new();
@@ -27,9 +24,7 @@ fn frozen_reference_bytes_all_schemas_and_filter_variants() {
                 let unique = filters(schema, index);
                 assert!(canonical.insert(serde_json::to_vec(&unique).unwrap()));
                 assert_eq!(
-                    ProductionSnapshotEncoder
-                        .encode(&snapshot, api_schema, &unique)
-                        .unwrap(),
+                    encode(&snapshot, api_schema, &unique).unwrap(),
                     reference_offset(schema, index, offset)
                 );
             }
@@ -111,19 +106,14 @@ async fn unchanged_changed_and_blocked_latest_only_then_cleanup() {
 
 #[test]
 fn escaped_unicode_metadata_and_populated_tournament_reference() {
-    use vosu::api::ApiSchema;
-    use vosu::api::{
-        ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
-    };
-    use vosu::server::websocket::Filter;
+    use vosu_adapter_support::filtered::Filter;
     use vosu_osu_model::launch::InstanceSettings;
     let base = fixture();
-    let mut state = (**base.focused().unwrap()).clone();
+    let mut state = (*base.state).clone();
     Arc::make_mut(&mut state.regular).menu.title = Some("狐 \"kitsune\"\n\\尾".into());
     let state = Arc::new(state);
-    let entry = |pid, ipc: Option<f64>| {
-        ManagerInstanceSnapshot::new(
-            pid,
+    let entry = |ipc: Option<f64>| {
+        (
             InstanceSettings {
                 tournament_spectator: ipc.is_some(),
                 tournament_ipc_id: ipc,
@@ -133,17 +123,11 @@ fn escaped_unicode_metadata_and_populated_tournament_reference() {
             state.clone(),
         )
     };
-    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        2,
-        Some(7),
-        true,
-        ApiRuntimeSettings::default(),
-        [entry(7, None), entry(8, Some(9.0)), entry(9, Some(2.5))],
-    )));
+    let snapshot = fixture_states(vec![entry(None), entry(Some(9.0)), entry(Some(2.5))]);
     let field = || Filter::Field("title".into());
     let cases = [
         (
-            ApiSchema::V1,
+            Schema::V1,
             vec![nested(
                 "menu",
                 vec![nested("bm", vec![nested("metadata", vec![field()])])],
@@ -151,17 +135,17 @@ fn escaped_unicode_metadata_and_populated_tournament_reference() {
             r#"{"menu":{"bm":{"metadata":{"title":"狐 \"kitsune\"\n\\尾"}}}}"#,
         ),
         (
-            ApiSchema::V2,
+            Schema::V2,
             vec![nested("beatmap", vec![field()])],
             r#"{"beatmap":{"title":"狐 \"kitsune\"\n\\尾"}}"#,
         ),
         (
-            ApiSchema::StreamCompanion,
+            Schema::StreamCompanion,
             vec![Filter::Field("titleRoman".into())],
             r#"{"titleRoman":"狐 \"kitsune\"\n\\尾"}"#,
         ),
         (
-            ApiSchema::V2Precise,
+            Schema::V2Precise,
             vec![nested(
                 "tourney",
                 vec![
@@ -180,9 +164,7 @@ fn escaped_unicode_metadata_and_populated_tournament_reference() {
     ];
     for (schema, filters, expected) in cases {
         assert_eq!(
-            ProductionSnapshotEncoder
-                .encode(&snapshot, schema, &filters)
-                .unwrap(),
+            encode(&snapshot, schema, &filters).unwrap(),
             expected.as_bytes()
         );
     }

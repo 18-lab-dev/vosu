@@ -1,278 +1,262 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vosu.dev/schemas/v2/vosu.osu.schema.json",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "title": "vosu.osu",
   "description": "The official osu! plugin's namespace (ADR 0020): every osu!-specific datum 1.x exposed, restructured for clarity. See docs/v2/state-schema.md for the full 1.x-to-2.0 field mapping and the common-layer coverage this plugin declares.",
   "type": "object",
-  "required": [
-    "session", "profile", "beatmap", "play", "keys", "leaderboard",
-    "performance", "result", "settings", "skin", "rankedPlay", "room", "tourney"
-  ],
+  "required": ["session","profile","beatmap","play","keys","leaderboard","performance","result","settings","skin","rankedPlay","room","tourney"],
   "additionalProperties": false,
   "$defs": {
-    "numberName": {
-      "type": "object",
-      "required": ["number", "name"],
+    "overlayButton": {
+      "type": ["object","null"],
+      "required": ["isPressed","count"],
+      "additionalProperties": false,
+      "properties": {"isPressed":{"type":"boolean"},"count":{"type":"integer"}}
+    },
+    "rawJudgements": {
+      "type": ["object","null"],
+      "required": ["miss","meh","ok","good","great","perfect"],
       "additionalProperties": false,
       "properties": {
-        "number": { "type": ["integer", "null"] },
-        "name": { "type": "string" }
+        "miss": {"type":"integer"},
+        "meh": {"type":"integer"},
+        "ok": {"type":"integer"},
+        "good": {"type":"integer"},
+        "great": {"type":"integer"},
+        "perfect": {"type":"integer"}
       }
+    },
+    "numberName": {
+      "type": "object",
+      "required": ["number","name"],
+      "additionalProperties": false,
+      "properties": {"number":{"type":["integer","null"]},"name":{"type":"string"}}
     },
     "difficultyPair": {
       "type": "object",
-      "required": ["original", "converted"],
+      "required": ["original","converted"],
       "additionalProperties": false,
-      "properties": {
-        "original": { "type": "number" },
-        "converted": { "type": "number" }
-      },
+      "properties": {"original":{"type":"number"},"converted":{"type":"number"}},
       "description": "Raw difficulty value and the value after ruleset conversion/mod application."
     },
     "hitErrorTriplet": {
       "type": "object",
-      "required": ["all", "press", "release"],
+      "required": ["all","press","release"],
       "additionalProperties": false,
       "description": "The original upstream-compatible timing-error array plus vosu's press/release split (README: each original value appears exactly once, in order, in press or release).",
       "properties": {
-        "all": { "type": "array", "items": { "type": "number" } },
-        "press": { "type": "array", "items": { "type": "number" } },
-        "release": { "type": "array", "items": { "type": "number" } }
+        "all": {"type":"array","items":{"type":"number"}},
+        "press": {"type":"array","items":{"type":"number"}},
+        "release": {"type":"array","items":{"type":"number"}}
       }
     },
     "keyHitErrors": {
       "type": "object",
-      "required": ["press", "release"],
+      "required": ["press","release"],
       "additionalProperties": false,
       "description": "Per-lane split of hitErrors, zero-based displayed mania lane. Only matched events are classified (see state-schema.md for exclusions).",
       "properties": {
-        "press": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } },
-        "release": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }
+        "press": {"type":"array","items":{"type":"array","items":{"type":"number"}}},
+        "release": {"type":"array","items":{"type":"array","items":{"type":"number"}}}
       }
     },
     "keypress": {
       "type": "object",
-      "required": ["name", "isPressed", "count", "pressedAt", "releasedAt"],
+      "required": ["name","isPressed","count","pressedAt","releasedAt"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "description": "Logical action name, e.g. `B1`; not a physical key name." },
-        "isPressed": { "type": "boolean" },
-        "count": { "type": "integer", "minimum": 0 },
-        "pressedAt": { "type": ["number", "null"], "description": "Gameplay milliseconds of the most recent down edge." },
-        "releasedAt": { "type": ["number", "null"] }
+        "name": {"type":"string","description":"Logical action name, e.g. `B1`; not a physical key name."},
+        "isPressed": {"type":"boolean"},
+        "count": {"type":"integer","minimum":0},
+        "pressedAt": {"type":["number","null"],"description":"Gameplay milliseconds of the most recent down edge."},
+        "releasedAt": {"type":["number","null"]}
       }
     },
-    "mod": {
-      "type": "object",
-      "required": ["acronym"],
-      "additionalProperties": false,
-      "properties": {
-        "acronym": { "type": "string" },
-        "settings": { "type": "object" }
-      }
-    },
+    "mod": {"type":"object","required":["acronym"],"additionalProperties":false,"properties":{"acronym":{"type":"string"},"settings":{"type":"object"}}},
     "mods": {
       "type": "object",
-      "required": ["checksum", "number", "name", "array", "rate"],
+      "required": ["checksum","number","name","array","rate"],
       "additionalProperties": false,
       "properties": {
-        "checksum": { "type": "string" },
-        "number": { "type": "integer", "description": "Legacy mod bitflags." },
-        "name": { "type": "string", "description": "Combined mod acronym string, e.g. `HDHR`." },
-        "array": { "type": "array", "items": { "$ref": "#/$defs/mod" } },
-        "rate": { "type": "number", "exclusiveMinimum": 0 }
+        "checksum": {"type":"string"},
+        "number": {"type":"integer","description":"Legacy mod bitflags."},
+        "name": {"type":"string","description":"Combined mod acronym string, e.g. `HDHR`."},
+        "array": {"type":"array","items":{"$ref":"#/$defs/mod"}},
+        "rate": {"type":"number","exclusiveMinimum":0}
       }
     },
     "statistics": {
       "type": "object",
       "description": "osu!-specific hit-outcome counts not expressed by the common `vosu.play.judgements` breakdown: slider/hold ticks and bonuses, combo breaks, and legacy-scoring bookkeeping (1.x `Statistics`/`Hits`/`LazerHits`).",
-      "required": [
-        "smallTickMiss", "smallTickHit", "largeTickMiss", "largeTickHit",
-        "smallBonus", "largeBonus", "ignoreMiss", "ignoreHit",
-        "comboBreak", "sliderTailHit", "sliderBreaks", "sliderEndHits", "legacyComboIncrease", "good"
-      ],
+      "required": ["smallTickMiss","smallTickHit","largeTickMiss","largeTickHit","smallBonus","largeBonus","ignoreMiss","ignoreHit","comboBreak","sliderTailHit","sliderBreaks","sliderEndHits","legacyComboIncrease","good"],
       "additionalProperties": false,
       "properties": {
-        "smallTickMiss": { "type": "integer", "minimum": 0 },
-        "smallTickHit": { "type": "integer", "minimum": 0 },
-        "largeTickMiss": { "type": "integer", "minimum": 0 },
-        "largeTickHit": { "type": "integer", "minimum": 0 },
-        "smallBonus": { "type": "integer", "minimum": 0 },
-        "largeBonus": { "type": "integer", "minimum": 0 },
-        "ignoreMiss": { "type": "integer", "minimum": 0 },
-        "ignoreHit": { "type": "integer", "minimum": 0 },
-        "comboBreak": { "type": "integer", "minimum": 0 },
-        "sliderTailHit": { "type": "integer", "minimum": 0 },
-        "sliderBreaks": { "type": "integer", "minimum": 0 },
-        "sliderEndHits": { "type": "integer", "minimum": 0 },
-        "good": { "type": "integer", "minimum": 0, "description": "1.x katu (1.2.0, additive)." },
-        "legacyComboIncrease": { "type": ["integer", "null"] }
+        "smallTickMiss": {"type":"integer","minimum":0},
+        "smallTickHit": {"type":"integer","minimum":0},
+        "largeTickMiss": {"type":"integer","minimum":0},
+        "largeTickHit": {"type":"integer","minimum":0},
+        "smallBonus": {"type":"integer","minimum":0},
+        "largeBonus": {"type":"integer","minimum":0},
+        "ignoreMiss": {"type":"integer","minimum":0},
+        "ignoreHit": {"type":"integer","minimum":0},
+        "comboBreak": {"type":"integer","minimum":0},
+        "sliderTailHit": {"type":"integer","minimum":0},
+        "sliderBreaks": {"type":"integer","minimum":0},
+        "sliderEndHits": {"type":"integer","minimum":0},
+        "good": {"type":"integer","minimum":0,"description":"1.x katu (1.2.0, additive)."},
+        "legacyComboIncrease": {"type":["integer","null"]}
       }
     },
     "combo": {
       "type": "object",
-      "required": ["current", "max"],
+      "required": ["current","max"],
       "additionalProperties": false,
-      "properties": {
-        "current": { "type": "integer", "minimum": 0 },
-        "max": { "type": "integer", "minimum": 0 }
-      }
+      "properties": {"current":{"type":"integer","minimum":0},"max":{"type":"integer","minimum":0}}
     },
     "hitWindow": {
       "type": "object",
       "additionalProperties": false,
       "description": "Maximum absolute timing error in ms per judgement, after the active clock rate; unsupported judgements omitted. Catch publishes all six as zero.",
       "properties": {
-        "miss": { "type": "number" },
-        "meh": { "type": "number" },
-        "ok": { "type": "number" },
-        "good": { "type": "number" },
-        "great": { "type": "number" },
-        "perfect": { "type": "number" }
+        "miss": {"type":"number"},
+        "meh": {"type":"number"},
+        "ok": {"type":"number"},
+        "good": {"type":"number"},
+        "great": {"type":"number"},
+        "perfect": {"type":"number"}
       }
     },
     "stats": {
       "type": "object",
-      "required": ["stars", "ar", "cs", "od", "hp", "bpm", "objects", "hitWindow", "maxCombo"],
+      "required": ["stars","ar","cs","od","hp","bpm","objects","hitWindow","maxCombo"],
       "additionalProperties": false,
       "properties": {
         "stars": {
           "type": "object",
-          "required": ["live", "total"],
+          "required": ["live","total"],
           "additionalProperties": false,
           "properties": {
-            "live": { "type": "number", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-            "aim": { "type": "number" },
-            "speed": { "type": "number" },
-            "flashlight": { "type": "number" },
-            "sliderFactor": { "type": "number" },
-            "stamina": { "type": "number" },
-            "rhythm": { "type": "number" },
-            "color": { "type": "number" },
-            "reading": { "type": "number" },
-            "hitWindow": { "type": "number" },
-            "total": { "type": "number" }
+            "live": {"type":"number","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+            "aim": {"type":"number"},
+            "speed": {"type":"number"},
+            "flashlight": {"type":"number"},
+            "sliderFactor": {"type":"number"},
+            "stamina": {"type":"number"},
+            "rhythm": {"type":"number"},
+            "color": {"type":"number"},
+            "reading": {"type":"number"},
+            "hitWindow": {"type":"number"},
+            "total": {"type":"number"}
           }
         },
-        "ar": { "$ref": "#/$defs/difficultyPair" },
-        "cs": { "$ref": "#/$defs/difficultyPair" },
-        "od": { "$ref": "#/$defs/difficultyPair" },
-        "hp": { "$ref": "#/$defs/difficultyPair" },
+        "ar": {"$ref":"#/$defs/difficultyPair"},
+        "cs": {"$ref":"#/$defs/difficultyPair"},
+        "od": {"$ref":"#/$defs/difficultyPair"},
+        "hp": {"$ref":"#/$defs/difficultyPair"},
         "bpm": {
           "type": "object",
-          "required": ["realtime", "common", "min", "max"],
+          "required": ["realtime","common","min","max"],
           "additionalProperties": false,
-          "properties": {
-            "realtime": { "type": "number" },
-            "common": { "type": "number" },
-            "min": { "type": "number" },
-            "max": { "type": "number" }
-          }
+          "properties": {"realtime":{"type":"number"},"common":{"type":"number"},"min":{"type":"number"},"max":{"type":"number"}}
         },
         "objects": {
           "type": "object",
-          "required": ["circles", "sliders", "spinners", "holds", "total"],
+          "required": ["circles","sliders","spinners","holds","total"],
           "additionalProperties": false,
           "properties": {
-            "circles": { "type": "integer", "minimum": 0 },
-            "sliders": { "type": "integer", "minimum": 0 },
-            "spinners": { "type": "integer", "minimum": 0 },
-            "holds": { "type": "integer", "minimum": 0 },
-            "total": { "type": "integer", "minimum": 0 }
+            "circles": {"type":"integer","minimum":0},
+            "sliders": {"type":"integer","minimum":0},
+            "spinners": {"type":"integer","minimum":0},
+            "holds": {"type":"integer","minimum":0},
+            "total": {"type":"integer","minimum":0}
           }
         },
-        "hitWindow": { "$ref": "#/$defs/hitWindow" },
-        "maxCombo": { "type": "integer", "minimum": 0 }
+        "hitWindow": {"$ref":"#/$defs/hitWindow"},
+        "maxCombo": {"type":"integer","minimum":0}
       }
     },
     "ppAttributes": {
       "type": "object",
-      "required": ["aim", "speed", "accuracy", "difficulty", "flashlight", "total"],
+      "required": ["aim","speed","accuracy","difficulty","flashlight","total"],
       "additionalProperties": false,
       "properties": {
-        "aim": { "type": "number" },
-        "speed": { "type": "number" },
-        "accuracy": { "type": "number" },
-        "difficulty": { "type": "number" },
-        "flashlight": { "type": "number" },
-        "total": { "type": "number" }
+        "aim": {"type":"number"},
+        "speed": {"type":"number"},
+        "accuracy": {"type":"number"},
+        "difficulty": {"type":"number"},
+        "flashlight": {"type":"number"},
+        "total": {"type":"number"}
       }
     },
     "sides": {
       "type": "object",
-      "required": ["left", "right"],
+      "required": ["left","right"],
       "additionalProperties": false,
       "description": "One value per tourney team side.",
-      "properties": {
-        "left": {},
-        "right": {}
-      }
+      "properties": {"left":{},"right":{}}
     },
     "tourneyClientPlay": {
       "type": "object",
       "description": "One tourney client's play snapshot: the same shape as the top-level `play` namespace member's osu!-specific fields.",
-      "required": [
-        "source", "failed", "playerName", "mode", "healthBar", "statistics",
-        "hitErrors", "mods", "rank", "pp", "unstableRate"
-      ],
+      "required": ["source","failed","playerName","mode","healthBar","statistics","hitErrors","mods","rank","pp","unstableRate"],
       "additionalProperties": false,
       "properties": {
-        "source": { "enum": ["player", "replay", "spectator", "watching", "autoplay", null] },
-        "failed": { "type": "boolean" },
-        "playerName": { "type": "string" },
-        "mode": { "$ref": "#/$defs/numberName" },
+        "healthRaw": {"type":"object","required":["normal","smooth"],"additionalProperties":false,"properties":{"normal":{"type":"number"},"smooth":{"type":"number"}}},
+        "rawJudgements": {"$ref":"#/$defs/rawJudgements"},
+        "preciseUnstableRate": {"type":"number","minimum":0,"x-sampling-lane":{"lane":"precise","activity":"always"}},
+        "source": {"enum":["player","replay","spectator","watching","autoplay",null]},
+        "failed": {"type":"boolean"},
+        "playerName": {"type":"string"},
+        "mode": {"$ref":"#/$defs/numberName"},
         "healthBar": {
           "type": "object",
-          "required": ["normal", "smooth"],
+          "required": ["normal","smooth"],
           "additionalProperties": false,
-          "properties": { "normal": { "type": "number" }, "smooth": { "type": "number" } }
+          "properties": {"normal":{"type":"number"},"smooth":{"type":"number"}}
         },
-        "statistics": { "$ref": "#/$defs/statistics" },
-        "hitErrors": { "$ref": "#/$defs/hitErrorTriplet" },
-        "mods": { "$ref": "#/$defs/mods" },
+        "statistics": {"$ref":"#/$defs/statistics"},
+        "hitErrors": {"$ref":"#/$defs/hitErrorTriplet","x-sampling-lane":{"lane":"precise","activity":"always"}},
+        "mods": {"$ref":"#/$defs/mods"},
         "rank": {
           "type": "object",
-          "required": ["current", "maxThisPlay"],
+          "required": ["current","maxThisPlay"],
           "additionalProperties": false,
-          "properties": { "current": { "type": "string" }, "maxThisPlay": { "type": "string" } }
+          "properties": {"current":{"type":"string"},"maxThisPlay":{"type":"string"}}
         },
         "pp": {
           "type": "object",
-          "required": ["current", "fc", "maxAchieved", "maxAchievable", "detailed"],
+          "required": ["current","fc","maxAchieved","maxAchievable","detailed"],
           "additionalProperties": false,
           "properties": {
-            "current": { "type": "number" },
-            "fc": { "type": "number" },
-            "maxAchieved": { "type": "number" },
-            "maxAchievable": { "type": "number" },
+            "current": {"type":"number"},
+            "fc": {"type":"number"},
+            "maxAchieved": {"type":"number"},
+            "maxAchievable": {"type":"number"},
             "detailed": {
               "type": "object",
-              "required": ["current", "fc"],
+              "required": ["current","fc"],
               "additionalProperties": false,
-              "properties": {
-                "current": { "$ref": "#/$defs/ppAttributes" },
-                "fc": { "$ref": "#/$defs/ppAttributes" }
-              }
+              "properties": {"current":{"$ref":"#/$defs/ppAttributes"},"fc":{"$ref":"#/$defs/ppAttributes"}}
             }
           }
         },
-        "unstableRate": { "type": "number", "minimum": 0 },
-        "score": { "type": "number", "minimum": 0, "description": "1.2.0, additive: matches the lazer spectator client's `play.score` (R6)." },
-        "accuracy": { "type": "number", "description": "1.2.0, additive: matches the lazer spectator client's `play.accuracy` (R6, 0-100 as 1.x reports it)." },
-        "combo": { "$ref": "#/$defs/combo", "description": "1.2.0, additive: matches the lazer spectator client's `play.combo` (R6)." },
+        "unstableRate": {"type":"number","minimum":0},
+        "score": {"type":"number","minimum":0,"description":"1.2.0, additive: matches the lazer spectator client's `play.score` (R6)."},
+        "accuracy": {"type":"number","description":"1.2.0, additive: matches the lazer spectator client's `play.accuracy` (R6, 0-100 as 1.x reports it)."},
+        "combo": {"$ref":"#/$defs/combo","description":"1.2.0, additive: matches the lazer spectator client's `play.combo` (R6)."},
         "judgements": {
           "type": "object",
           "description": "1.2.0, additive (R6): this client's own judgement breakdown, the same counts shape as `result.statistics`.",
-          "required": ["miss", "meh", "ok", "great", "perfect"],
+          "required": ["miss","meh","ok","great","perfect"],
           "additionalProperties": false,
           "properties": {
-            "miss": { "type": "integer", "minimum": 0 },
-            "meh": { "type": "integer", "minimum": 0 },
-            "ok": { "type": "integer", "minimum": 0 },
-            "great": { "type": "integer", "minimum": 0 },
-            "perfect": { "type": "integer", "minimum": 0 },
-            "good": { "type": "integer", "minimum": 0 }
+            "miss": {"type":"integer","minimum":0},
+            "meh": {"type":"integer","minimum":0},
+            "ok": {"type":"integer","minimum":0},
+            "great": {"type":"integer","minimum":0},
+            "perfect": {"type":"integer","minimum":0},
+            "good": {"type":"integer","minimum":0}
           }
         }
       }
@@ -281,194 +265,193 @@
   "properties": {
     "session": {
       "type": "object",
-      "required": ["playTime", "playCount", "paused", "focused"],
+      "required": ["playTime","playCount","paused","focused"],
       "additionalProperties": false,
       "description": "osu!-specific session bookkeeping not covered by vosu.client.",
       "properties": {
-        "playTime": { "type": "number", "x-sampling-lane": { "lane": "regular", "activity": "always" } },
-        "playCount": { "type": "integer", "minimum": 0 },
-        "paused": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "focused": { "type": ["boolean", "null"], "description": "Windows-only: whether the client window has OS input focus. `null` elsewhere." },
-        "ipcId": { "type": ["number", "null"], "description": "D6, optional (1.1.0 bump, additive alongside `internal`): the tournament spectator client's IPC id, as 1.x stores it (`Option<f64>`); `null` or absent for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one." },
-        "state": { "$ref": "#/$defs/numberName", "description": "1.2.0, additive (MA, R1): the verbatim 1.x `GameState` `{number,name}` pair this session is in, kept beside the coarse `vosu.status.status` for osu!-specific consumers (results/edit/select variants the common enum collapses).", "x-sampling-lane": { "lane": "precise", "activity": "always" } },
-        "server": { "type": ["string", "null"], "description": "1.2.0, additive (R7): 1.x `server`, the bancho host string; `null` when unknown." }
+        "watchingReplay": {"type":["boolean","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "playTime": {"type":"number","x-sampling-lane":{"lane":"regular","activity":"always"}},
+        "playCount": {"type":"integer","minimum":0},
+        "paused": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "focused": {"type":["boolean","null"],"description":"Windows-only: whether the client window has OS input focus. `null` elsewhere."},
+        "ipcId": {
+          "type": ["number","null"],
+          "description": "D6, optional (1.1.0 bump, additive alongside `internal`): the tournament spectator client's IPC id, as 1.x stores it (`Option<f64>`); `null` or absent for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one."
+        },
+        "state": {
+          "$ref": "#/$defs/numberName",
+          "description": "1.2.0, additive (MA, R1): the verbatim 1.x `GameState` `{number,name}` pair this session is in, kept beside the coarse `vosu.status.status` for osu!-specific consumers (results/edit/select variants the common enum collapses).",
+          "x-sampling-lane": {"lane":"precise","activity":"always"}
+        },
+        "server": {"type":["string","null"],"description":"1.2.0, additive (R7): 1.x `server`, the bancho host string; `null` when unknown."}
       }
     },
     "profile": {
       "type": "object",
-      "required": [
-        "userStatus", "banchoStatus", "id", "name", "mode", "rankedScore",
-        "level", "accuracy", "pp", "playCount", "globalRank", "countryCode",
-        "backgroundColour", "matchmaking"
-      ],
+      "required": ["userStatus","banchoStatus","id","name","mode","rankedScore","level","accuracy","pp","playCount","globalRank","countryCode","backgroundColour","matchmaking"],
       "additionalProperties": false,
       "properties": {
-        "userStatus": { "$ref": "#/$defs/numberName" },
-        "banchoStatus": { "$ref": "#/$defs/numberName" },
-        "id": { "type": ["integer", "null"] },
-        "name": { "type": ["string", "null"] },
-        "mode": { "$ref": "#/$defs/numberName" },
-        "rankedScore": { "type": ["number", "null"], "minimum": 0 },
-        "level": { "type": ["number", "null"] },
-        "accuracy": { "type": ["number", "null"] },
-        "pp": { "type": ["number", "null"] },
-        "playCount": { "type": ["integer", "null"], "minimum": 0 },
-        "globalRank": { "type": ["integer", "null"] },
-        "countryCode": { "$ref": "#/$defs/numberName" },
-        "backgroundColour": { "type": ["string", "null"] },
+        "userStatus": {"$ref":"#/$defs/numberName"},
+        "banchoStatus": {"$ref":"#/$defs/numberName"},
+        "id": {"type":["integer","null"]},
+        "name": {"type":["string","null"]},
+        "mode": {"$ref":"#/$defs/numberName"},
+        "rankedScore": {"type":["number","null"],"minimum":0},
+        "level": {"type":["number","null"]},
+        "accuracy": {"type":["number","null"]},
+        "pp": {"type":["number","null"]},
+        "playCount": {"type":["integer","null"],"minimum":0},
+        "globalRank": {"type":["integer","null"]},
+        "countryCode": {"$ref":"#/$defs/numberName"},
+        "backgroundColour": {"type":["string","null"]},
         "matchmaking": {
           "oneOf": [
             {
               "type": "object",
-              "required": ["rating", "rank", "plays", "wins", "isProvisional"],
+              "required": ["rating","rank","plays","wins","isProvisional"],
               "additionalProperties": false,
               "properties": {
-                "rating": { "type": "number" },
-                "rank": { "type": ["integer", "null"] },
-                "plays": { "type": "integer", "minimum": 0 },
-                "wins": { "type": "integer", "minimum": 0 },
-                "isProvisional": { "type": "boolean" }
+                "rating": {"type":"number"},
+                "rank": {"type":["integer","null"]},
+                "plays": {"type":"integer","minimum":0},
+                "wins": {"type":"integer","minimum":0},
+                "isProvisional": {"type":"boolean"}
               }
             },
-            { "type": "null" }
+            {"type":"null"}
           ]
         }
       }
     },
     "beatmap": {
       "type": "object",
-      "required": [
-        "isKiai", "isBreak", "isConvert", "time", "status", "checksum",
-        "id", "set", "mode", "artist", "artistUnicode", "title",
-        "titleUnicode", "mapper", "version", "source", "tags", "stats"
-      ],
+      "required": ["isKiai","isBreak","isConvert","time","status","checksum","id","set","mode","artist","artistUnicode","title","titleUnicode","mapper","version","source","tags","stats"],
       "additionalProperties": false,
       "description": "Full osu! beatmap detail. `title`/`artist`/`version`/`mapper`/time.length/stats.bpm.common/stats.objects` keyCount feed the vosu.chart projection; see state-schema.md's mapping table.",
       "properties": {
-        "isKiai": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "isBreak": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "isConvert": { "type": "boolean" },
+        "selectionMode": {"type":["integer","null"]},
+        "isKiai": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "isBreak": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "isConvert": {"type":"boolean"},
         "time": {
           "type": "object",
-          "required": ["live", "rate", "running", "firstObject", "lastObject", "mp3Length"],
+          "required": ["live","rate","running","firstObject","lastObject","mp3Length"],
           "additionalProperties": false,
           "properties": {
-            "live": { "type": "number", "x-sampling-lane": { "lane": "precise", "activity": "always" } },
-            "rate": { "type": ["number", "null"], "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-            "running": { "type": ["boolean", "null"], "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-            "firstObject": { "type": "integer" },
-            "lastObject": { "type": "number" },
-            "mp3Length": { "type": ["number", "null"] }
+            "firstHitObject": {"type":["integer","null"]},
+            "preview": {"type":["integer","null"]},
+            "live": {"type":"number","x-sampling-lane":{"lane":"precise","activity":"always"}},
+            "rate": {"type":["number","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+            "running": {"type":["boolean","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+            "firstObject": {"type":"integer"},
+            "lastObject": {"type":"number"},
+            "mp3Length": {"type":["number","null"]}
           }
         },
-        "status": { "$ref": "#/$defs/numberName" },
-        "checksum": { "type": ["string", "null"] },
-        "id": { "type": ["integer", "null"] },
-        "set": { "type": ["integer", "null"] },
-        "mode": { "$ref": "#/$defs/numberName" },
-        "artist": { "type": ["string", "null"] },
-        "artistUnicode": { "type": ["string", "null"] },
-        "title": { "type": ["string", "null"] },
-        "titleUnicode": { "type": ["string", "null"] },
-        "mapper": { "type": ["string", "null"] },
-        "version": { "type": ["string", "null"] },
-        "source": { "type": "string" },
-        "tags": { "type": "string" },
-        "stats": { "$ref": "#/$defs/stats" }
+        "status": {"$ref":"#/$defs/numberName"},
+        "checksum": {"type":["string","null"]},
+        "id": {"type":["integer","null"]},
+        "set": {"type":["integer","null"]},
+        "mode": {"$ref":"#/$defs/numberName"},
+        "artist": {"type":["string","null"]},
+        "artistUnicode": {"type":["string","null"]},
+        "title": {"type":["string","null"]},
+        "titleUnicode": {"type":["string","null"]},
+        "mapper": {"type":["string","null"]},
+        "version": {"type":["string","null"]},
+        "source": {"type":"string"},
+        "tags": {"type":"string"},
+        "stats": {"$ref":"#/$defs/stats"}
       }
     },
     "play": {
       "type": "object",
-      "required": [
-        "source", "failed", "playerName", "mode", "healthBar", "statistics",
-        "hitErrors", "hitOffsets", "keyHitErrors", "catcher", "mods",
-        "rank", "pp", "unstableRate"
-      ],
+      "required": ["source","failed","playerName","mode","healthBar","statistics","hitErrors","hitOffsets","keyHitErrors","catcher","mods","rank","pp","unstableRate"],
       "additionalProperties": false,
       "description": "osu!-specific play detail layered beside the common vosu.play fields this plugin also fills (score, combo, maxCombo, accuracy, health, progress, rate, judgements).",
       "properties": {
-        "source": {
-          "enum": ["player", "replay", "spectator", "watching", "autoplay", null],
-          "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+        "score": {"type":["number","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "combo": {
+          "type": ["object","null"],
+          "required": ["current","max"],
+          "additionalProperties": false,
+          "properties": {"current":{"type":"integer"},"max":{"type":"integer"}},
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
         },
-        "failed": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "playerName": { "type": "string", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "mode": { "$ref": "#/$defs/numberName", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
+        "accuracyPercent": {"type":["number","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "healthRaw": {
+          "type": ["object","null"],
+          "required": ["normal","smooth"],
+          "additionalProperties": false,
+          "properties": {"normal":{"type":"number"},"smooth":{"type":"number"}},
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
+        },
+        "judgements": {"$ref":"#/$defs/rawJudgements","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "retries": {"type":["integer","null"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "preciseUnstableRate": {"type":["number","null"],"x-sampling-lane":{"lane":"precise","activity":"gameplay"}},
+        "source": {"enum":["player","replay","spectator","watching","autoplay",null],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "failed": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "playerName": {"type":"string","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "mode": {"$ref":"#/$defs/numberName","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "healthBar": {
           "type": "object",
-          "required": ["normal", "smooth"],
+          "required": ["normal","smooth"],
           "additionalProperties": false,
-          "properties": {
-            "normal": { "type": "number" },
-            "smooth": { "type": "number" }
-          },
-          "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+          "properties": {"normal":{"type":"number"},"smooth":{"type":"number"}},
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
         },
-        "statistics": { "$ref": "#/$defs/statistics", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "hitErrors": { "$ref": "#/$defs/hitErrorTriplet", "x-sampling-lane": { "lane": "precise", "activity": "gameplay" } },
+        "statistics": {"$ref":"#/$defs/statistics","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "hitErrors": {"$ref":"#/$defs/hitErrorTriplet","x-sampling-lane":{"lane":"precise","activity":"gameplay"}},
         "hitOffsets": {
-          "type": ["array", "null"],
-          "items": { "type": "number" },
+          "type": ["array","null"],
+          "items": {"type":"number"},
           "description": "Flat stride-3 `[x, y, error, ...]`, osu!standard circle/slider-head hits only. Subscribing opts in; there is no separate enable flag in 2.0.",
-          "x-sampling-lane": { "lane": "precise", "activity": "gameplay" }
+          "x-sampling-lane": {"lane":"precise","activity":"gameplay"}
         },
-        "keyHitErrors": {
-          "oneOf": [{ "$ref": "#/$defs/keyHitErrors" }, { "type": "null" }],
-          "x-sampling-lane": { "lane": "precise", "activity": "gameplay" }
-        },
+        "keyHitErrors": {"oneOf":[{"$ref":"#/$defs/keyHitErrors"},{"type":"null"}],"x-sampling-lane":{"lane":"precise","activity":"gameplay"}},
         "catcher": {
           "oneOf": [
             {
               "type": "object",
-              "required": ["x", "dashing"],
+              "required": ["x","dashing"],
               "additionalProperties": false,
               "properties": {
-                "x": { "type": "number", "minimum": 0, "maximum": 512, "description": "Stored playfield position in osu! pixels, not screen-space." },
-                "dashing": { "type": "boolean" }
+                "x": {"type":"number","minimum":0,"maximum":512,"description":"Stored playfield position in osu! pixels, not screen-space."},
+                "dashing": {"type":"boolean"}
               }
             },
-            { "type": "null" }
+            {"type":"null"}
           ],
           "description": "Catch only; omitted (null) in menus, results, and other rulesets.",
-          "x-sampling-lane": { "lane": "precise", "activity": "gameplay" }
+          "x-sampling-lane": {"lane":"precise","activity":"gameplay"}
         },
-        "mods": { "$ref": "#/$defs/mods", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
+        "mods": {"$ref":"#/$defs/mods","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
         "rank": {
           "type": "object",
-          "required": ["current", "maxThisPlay"],
+          "required": ["current","maxThisPlay"],
           "additionalProperties": false,
-          "properties": {
-            "current": { "type": "string" },
-            "maxThisPlay": { "type": "string" }
-          },
-          "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+          "properties": {"current":{"type":"string"},"maxThisPlay":{"type":"string"}},
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
         },
         "pp": {
           "type": "object",
-          "required": ["current", "fc", "maxAchieved", "maxAchievable", "detailed"],
+          "required": ["current","fc","maxAchieved","maxAchievable","detailed"],
           "additionalProperties": false,
           "properties": {
-            "current": { "type": "number" },
-            "fc": { "type": "number" },
-            "maxAchieved": { "type": "number" },
-            "maxAchievable": { "type": "number" },
+            "current": {"type":"number"},
+            "fc": {"type":"number"},
+            "maxAchieved": {"type":"number"},
+            "maxAchievable": {"type":"number"},
             "detailed": {
               "type": "object",
-              "required": ["current", "fc"],
+              "required": ["current","fc"],
               "additionalProperties": false,
-              "properties": {
-                "current": { "$ref": "#/$defs/ppAttributes" },
-                "fc": { "$ref": "#/$defs/ppAttributes" }
-              }
+              "properties": {"current":{"$ref":"#/$defs/ppAttributes"},"fc":{"$ref":"#/$defs/ppAttributes"}}
             }
           },
-          "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
         },
-        "unstableRate": {
-          "type": "number",
-          "minimum": 0,
-          "x-sampling-lane": { "lane": "both", "activity": "gameplay" }
-        }
+        "unstableRate": {"type":"number","minimum":0,"x-sampling-lane":{"lane":"both","activity":"gameplay"}}
       }
     },
     "keys": {
@@ -476,310 +459,297 @@
       "required": ["all"],
       "additionalProperties": false,
       "description": "Mode-free key/button state. `all` is the canonical logical-action list; see state-schema.md for the per-ruleset `B1..BN` mapping table.",
-      "x-sampling-lane": { "lane": "precise", "activity": "gameplay" },
+      "x-sampling-lane": {"lane":"precise","activity":"gameplay"},
       "properties": {
-        "all": { "type": "array", "items": { "$ref": "#/$defs/keypress" } }
+        "overlay": {
+          "type": ["object","null"],
+          "required": ["k1","k2","m1","m2"],
+          "additionalProperties": false,
+          "properties": {
+            "k1": {"$ref":"#/$defs/overlayButton"},
+            "k2": {"$ref":"#/$defs/overlayButton"},
+            "m1": {"$ref":"#/$defs/overlayButton"},
+            "m2": {"$ref":"#/$defs/overlayButton"}
+          }
+        },
+        "all": {"type":"array","items":{"$ref":"#/$defs/keypress"}}
+      }
+    },
+    "tourneyAvailability": {"enum":["pending","ready","missingScore"],"x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+    "leaderboardState": {
+      "type": ["object","null"],
+      "required": ["visible","player"],
+      "additionalProperties": false,
+      "x-sampling-lane": {"lane":"regular","activity":"gameplay"},
+      "properties": {
+        "visible": {"type":"boolean"},
+        "player": {
+          "type": "object",
+          "required": ["name","score","combo","maxCombo","mods","judgements","team","position","isPassing"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {"type":"string"},
+            "score": {"type":"number"},
+            "combo": {"type":"integer"},
+            "maxCombo": {"type":"integer"},
+            "mods": {"$ref":"#/$defs/mods"},
+            "judgements": {"$ref":"#/$defs/rawJudgements"},
+            "team": {"type":"integer"},
+            "position": {"type":"integer"},
+            "isPassing": {"type":"boolean"}
+          }
+        }
       }
     },
     "leaderboard": {
       "type": "array",
-      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" },
+      "x-sampling-lane": {"lane":"regular","activity":"gameplay"},
       "items": {
         "type": "object",
-        "required": ["isFailed", "position", "team", "id", "name", "score", "accuracy", "statistics", "combo", "mods", "rank"],
+        "required": ["isFailed","position","team","id","name","score","accuracy","statistics","combo","mods","rank"],
         "additionalProperties": false,
         "properties": {
-          "isFailed": { "type": "boolean" },
-          "position": { "type": "integer" },
-          "team": { "type": "integer" },
-          "id": { "type": "integer" },
-          "name": { "type": "string" },
-          "score": { "type": "number", "minimum": 0 },
-          "accuracy": { "type": "number" },
+          "isFailed": {"type":"boolean"},
+          "position": {"type":"integer"},
+          "team": {"type":"integer"},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "score": {"type":"number","minimum":0},
+          "accuracy": {"type":"number"},
           "statistics": {
             "type": "object",
-            "required": ["miss", "meh", "ok", "great", "perfect"],
+            "required": ["miss","meh","ok","great","perfect"],
             "additionalProperties": false,
             "description": "This entry's own judgement breakdown; shaped like vosu.play.judgements counts rather than the full common list, since a leaderboard entry is not the subscribed session.",
             "properties": {
-              "miss": { "type": "integer", "minimum": 0 },
-              "meh": { "type": "integer", "minimum": 0 },
-              "ok": { "type": "integer", "minimum": 0 },
-              "great": { "type": "integer", "minimum": 0 },
-              "perfect": { "type": "integer", "minimum": 0 },
-              "good": { "type": "integer", "minimum": 0, "description": "1.x `katu` (1.2.0, additive)." }
+              "miss": {"type":"integer","minimum":0},
+              "meh": {"type":"integer","minimum":0},
+              "ok": {"type":"integer","minimum":0},
+              "great": {"type":"integer","minimum":0},
+              "perfect": {"type":"integer","minimum":0},
+              "good": {"type":"integer","minimum":0,"description":"1.x `katu` (1.2.0, additive)."}
             }
           },
-          "combo": { "$ref": "#/$defs/combo" },
-          "mods": { "$ref": "#/$defs/mods" },
-          "rank": { "type": "string" }
+          "combo": {"$ref":"#/$defs/combo"},
+          "mods": {"$ref":"#/$defs/mods"},
+          "rank": {"type":"string"}
         }
       }
     },
     "performance": {
       "type": "object",
-      "required": ["accuracy", "graph"],
+      "required": ["accuracy","graph"],
       "additionalProperties": false,
       "description": "The legacy calculation facade's pp-by-accuracy table and difficulty-over-time graph.",
       "properties": {
         "accuracy": {
           "type": "object",
           "description": "pp at fixed accuracy percentiles 90-100, keyed by percentile.",
-          "required": ["90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100"],
+          "required": ["90","91","92","93","94","95","96","97","98","99","100"],
           "additionalProperties": false,
           "properties": {
-            "90": { "type": "number" }, "91": { "type": "number" }, "92": { "type": "number" },
-            "93": { "type": "number" }, "94": { "type": "number" }, "95": { "type": "number" },
-            "96": { "type": "number" }, "97": { "type": "number" }, "98": { "type": "number" },
-            "99": { "type": "number" }, "100": { "type": "number" }
+            "90": {"type":"number"},
+            "91": {"type":"number"},
+            "92": {"type":"number"},
+            "93": {"type":"number"},
+            "94": {"type":"number"},
+            "95": {"type":"number"},
+            "96": {"type":"number"},
+            "97": {"type":"number"},
+            "98": {"type":"number"},
+            "99": {"type":"number"},
+            "100": {"type":"number"}
           },
-          "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+          "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
         },
         "graph": {
           "type": "object",
-          "required": ["series", "xaxis"],
+          "required": ["series","xaxis"],
           "additionalProperties": false,
           "properties": {
+            "primary": {"type":"array","items":{"type":"number"},"description":"1.3.0: independently captured primary strain history; not inferred from series."},
             "series": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["name", "data"],
+                "required": ["name","data"],
                 "additionalProperties": false,
-                "properties": {
-                  "name": { "type": "string" },
-                  "data": { "type": "array", "items": { "type": "number" } }
-                }
+                "properties": {"name":{"type":"string"},"data":{"type":"array","items":{"type":"number"}}}
               }
             },
-            "xaxis": { "type": "array", "items": { "type": "number" } }
+            "xaxis": {"type":"array","items":{"type":"number"}}
           }
         }
       }
     },
     "result": {
       "type": "object",
-      "required": ["scoreId", "playerName", "mode", "score", "accuracy", "name", "statistics", "mods", "maxCombo", "rank", "pp", "createdAt"],
+      "required": ["scoreId","playerName","mode","score","accuracy","name","statistics","mods","maxCombo","rank","pp","createdAt"],
       "additionalProperties": false,
       "description": "The results-screen snapshot of the just-finished attempt (1.x `resultsScreen`). Distinct from `vosu.status.status == \"results\"`, which only marks the coarse status.",
       "properties": {
-        "scoreId": { "type": "number" },
-        "playerName": { "type": "string" },
-        "mode": { "$ref": "#/$defs/numberName" },
-        "score": { "type": "number", "minimum": 0 },
-        "accuracy": { "type": "number" },
-        "name": { "type": "string", "description": "Score display label, in the client's own results-screen terms." },
+        "scoreId": {"type":"number"},
+        "playerName": {"type":"string"},
+        "mode": {"$ref":"#/$defs/numberName"},
+        "score": {"type":"number","minimum":0},
+        "accuracy": {"type":"number"},
+        "name": {"type":"string","description":"Score display label, in the client's own results-screen terms."},
         "statistics": {
           "type": "object",
-          "required": ["miss", "meh", "ok", "great", "perfect", "sliderEndHits", "smallTickHits", "largeTickHits", "sliderBreaks"],
+          "required": ["miss","meh","ok","great","perfect","sliderEndHits","smallTickHits","largeTickHits","sliderBreaks"],
           "additionalProperties": false,
           "properties": {
-            "miss": { "type": "integer", "minimum": 0 },
-            "meh": { "type": "integer", "minimum": 0 },
-            "ok": { "type": "integer", "minimum": 0 },
-            "great": { "type": "integer", "minimum": 0 },
-            "perfect": { "type": "integer", "minimum": 0 },
-            "sliderEndHits": { "type": "integer", "minimum": 0 },
-            "smallTickHits": { "type": "integer", "minimum": 0 },
-            "largeTickHits": { "type": "integer", "minimum": 0 },
-            "sliderBreaks": { "type": "integer", "const": 0, "description": "Known limitation: always 0, matching the 1.x v1 precedent at src/api/v1.rs:692 (A2b)." },
-            "good": { "type": "integer", "minimum": 0, "description": "1.x `katu` (1.2.0, additive)." }
+            "miss": {"type":"integer","minimum":0},
+            "meh": {"type":"integer","minimum":0},
+            "ok": {"type":"integer","minimum":0},
+            "great": {"type":"integer","minimum":0},
+            "perfect": {"type":"integer","minimum":0},
+            "sliderEndHits": {"type":"integer","minimum":0},
+            "smallTickHits": {"type":"integer","minimum":0},
+            "largeTickHits": {"type":"integer","minimum":0},
+            "sliderBreaks": {"type":"integer","const":0,"description":"Known limitation: always 0, matching the 1.x v1 precedent at src/api/v1.rs:692 (A2b)."},
+            "good": {"type":"integer","minimum":0,"description":"1.x `katu` (1.2.0, additive)."}
           }
         },
-        "mods": { "$ref": "#/$defs/mods" },
-        "maxCombo": { "type": "integer", "minimum": 0 },
-        "rank": { "type": "string" },
-        "pp": {
-          "type": "object",
-          "required": ["current", "fc"],
-          "additionalProperties": false,
-          "properties": {
-            "current": { "type": "number" },
-            "fc": { "type": "number" }
-          }
-        },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "mods": {"$ref":"#/$defs/mods"},
+        "maxCombo": {"type":"integer","minimum":0},
+        "rank": {"type":"string"},
+        "pp": {"type":"object","required":["current","fc"],"additionalProperties":false,"properties":{"current":{"type":"number"},"fc":{"type":"number"}}},
+        "createdAt": {"type":"string","format":"date-time"}
       }
     },
     "settings": {
       "type": "object",
       "description": "osu!-specific client settings. `interfaceVisible`/`replayUIVisible`/`bassDensity` feed demand-driven sampling as in 1.x.",
-      "required": [
-        "interfaceVisible", "replayUIVisible", "chatVisibilityStatus", "leaderboard",
-        "progressBar", "bassDensity", "resolution", "client", "scoreMeter", "cursor",
-        "mouse", "tablet", "mania", "sort", "group", "mode", "audio", "background",
-        "keybinds", "visual"
-      ],
+      "required": ["interfaceVisible","replayUIVisible","chatVisibilityStatus","leaderboard","progressBar","bassDensity","resolution","client","scoreMeter","cursor","mouse","tablet","mania","sort","group","mode","audio","background","keybinds","visual"],
       "additionalProperties": false,
       "properties": {
-        "interfaceVisible": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "replayUIVisible": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "chatVisibilityStatus": { "$ref": "#/$defs/numberName" },
+        "interfaceVisible": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "replayUIVisible": {"type":"boolean","x-sampling-lane":{"lane":"regular","activity":"gameplay"}},
+        "chatVisibilityStatus": {"$ref":"#/$defs/numberName"},
         "leaderboard": {
           "type": "object",
-          "required": ["visible", "type"],
+          "required": ["visible","type"],
           "additionalProperties": false,
-          "properties": {
-            "visible": { "type": "boolean" },
-            "type": { "$ref": "#/$defs/numberName" }
-          }
+          "properties": {"visible":{"type":"boolean"},"type":{"$ref":"#/$defs/numberName"}}
         },
-        "progressBar": { "$ref": "#/$defs/numberName" },
-        "bassDensity": { "type": "number", "x-sampling-lane": { "lane": "regular", "activity": "always" } },
+        "progressBar": {"$ref":"#/$defs/numberName"},
+        "bassDensity": {"type":"number","x-sampling-lane":{"lane":"regular","activity":"always"}},
         "resolution": {
           "type": "object",
-          "required": ["fullscreen", "width", "height", "widthFullscreen", "heightFullscreen"],
+          "required": ["fullscreen","width","height","widthFullscreen","heightFullscreen"],
           "additionalProperties": false,
           "properties": {
-            "fullscreen": { "type": "boolean" },
-            "width": { "type": "integer" },
-            "height": { "type": "integer" },
-            "widthFullscreen": { "type": "integer" },
-            "heightFullscreen": { "type": "integer" }
+            "fullscreen": {"type":"boolean"},
+            "width": {"type":"integer"},
+            "height": {"type":"integer"},
+            "widthFullscreen": {"type":"integer"},
+            "heightFullscreen": {"type":"integer"}
           }
         },
         "client": {
           "type": "object",
-          "required": ["updateAvailable", "branch", "version"],
+          "required": ["updateAvailable","branch","version"],
           "additionalProperties": false,
           "description": "osu!-specific client build info, beside the shared vosu.client identity namespace.",
-          "properties": {
-            "updateAvailable": { "type": "boolean" },
-            "branch": { "type": "integer" },
-            "version": { "type": "string" }
-          }
+          "properties": {"updateAvailable":{"type":"boolean"},"branch":{"type":"integer"},"version":{"type":"string"}}
         },
         "scoreMeter": {
           "type": "object",
-          "required": ["type", "size"],
+          "required": ["type","size"],
           "additionalProperties": false,
-          "properties": {
-            "type": { "$ref": "#/$defs/numberName" },
-            "size": { "type": "number" }
-          }
+          "properties": {"type":{"$ref":"#/$defs/numberName"},"size":{"type":"number"}}
         },
         "cursor": {
           "type": "object",
-          "required": ["useSkinCursor", "autoSize", "size", "menuSize"],
+          "required": ["useSkinCursor","autoSize","size","menuSize"],
           "additionalProperties": false,
-          "properties": {
-            "useSkinCursor": { "type": "boolean" },
-            "autoSize": { "type": "boolean" },
-            "size": { "type": "number" },
-            "menuSize": { "type": "number" }
-          }
+          "properties": {"useSkinCursor":{"type":"boolean"},"autoSize":{"type":"boolean"},"size":{"type":"number"},"menuSize":{"type":"number"}}
         },
         "mouse": {
           "type": "object",
-          "required": ["rawInput", "disableButtons", "disableWheel", "sensitivity"],
+          "required": ["rawInput","disableButtons","disableWheel","sensitivity"],
           "additionalProperties": false,
-          "properties": {
-            "rawInput": { "type": "boolean" },
-            "disableButtons": { "type": "boolean" },
-            "disableWheel": { "type": "boolean" },
-            "sensitivity": { "type": "number" }
-          }
+          "properties": {"rawInput":{"type":"boolean"},"disableButtons":{"type":"boolean"},"disableWheel":{"type":"boolean"},"sensitivity":{"type":"number"}}
         },
         "tablet": {
           "type": "object",
-          "required": ["enabled", "x", "y", "width", "height", "rotation", "pressureThreshold"],
+          "required": ["enabled","x","y","width","height","rotation","pressureThreshold"],
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" },
-            "x": { "type": "number" },
-            "y": { "type": "number" },
-            "width": { "type": "number" },
-            "height": { "type": "number" },
-            "rotation": { "type": "number" },
-            "pressureThreshold": { "type": "number" }
+            "enabled": {"type":"boolean"},
+            "x": {"type":"number"},
+            "y": {"type":"number"},
+            "width": {"type":"number"},
+            "height": {"type":"number"},
+            "rotation": {"type":"number"},
+            "pressureThreshold": {"type":"number"}
           }
         },
         "mania": {
           "type": "object",
-          "required": ["speedBPMScale", "usePerBeatmapSpeedScale", "scrollSpeed", "scrollDirection"],
+          "required": ["speedBPMScale","usePerBeatmapSpeedScale","scrollSpeed","scrollDirection"],
           "additionalProperties": false,
           "properties": {
-            "speedBPMScale": { "type": "boolean" },
-            "usePerBeatmapSpeedScale": { "type": "boolean" },
-            "scrollSpeed": { "type": "integer" },
-            "scrollDirection": {
-              "type": "object",
-              "required": ["number"],
-              "additionalProperties": false,
-              "properties": {
-                "number": { "type": "integer" },
-                "name": { "type": "string" }
-              }
-            },
-            "scrollSpeedValue": { "type": "number", "description": "Optional lazer double-precision speed." },
-            "scrollTime": { "type": "number", "description": "Unadjusted base visible-time range, `11485 / speed` ms." },
-            "timingBasedNoteColouring": { "type": "boolean" },
-            "perBeatmapScrollSpeed": { "type": "number" }
+            "speedBPMScale": {"type":"boolean"},
+            "usePerBeatmapSpeedScale": {"type":"boolean"},
+            "scrollSpeed": {"type":"integer"},
+            "scrollDirection": {"type":"object","required":["number"],"additionalProperties":false,"properties":{"number":{"type":"integer"},"name":{"type":"string"}}},
+            "scrollSpeedValue": {"type":"number","description":"Optional lazer double-precision speed."},
+            "scrollTime": {"type":"number","description":"Unadjusted base visible-time range, `11485 / speed` ms."},
+            "timingBasedNoteColouring": {"type":"boolean"},
+            "perBeatmapScrollSpeed": {"type":"number"}
           }
         },
-        "sort": { "$ref": "#/$defs/numberName" },
-        "group": { "$ref": "#/$defs/numberName" },
-        "mode": { "$ref": "#/$defs/numberName" },
+        "sort": {"$ref":"#/$defs/numberName"},
+        "group": {"$ref":"#/$defs/numberName"},
+        "mode": {"$ref":"#/$defs/numberName"},
         "audio": {
           "type": "object",
-          "required": ["ignoreBeatmapSounds", "useSkinSamples", "volume", "offset"],
+          "required": ["ignoreBeatmapSounds","useSkinSamples","volume","offset"],
           "additionalProperties": false,
           "properties": {
-            "ignoreBeatmapSounds": { "type": "boolean" },
-            "useSkinSamples": { "type": "boolean" },
+            "ignoreBeatmapSounds": {"type":"boolean"},
+            "useSkinSamples": {"type":"boolean"},
             "volume": {
               "type": "object",
-              "required": ["masterInactive", "master", "music", "effect"],
+              "required": ["masterInactive","master","music","effect"],
               "additionalProperties": false,
-              "properties": {
-                "masterInactive": { "type": "number" },
-                "master": { "type": "number" },
-                "music": { "type": "number" },
-                "effect": { "type": "number" }
-              }
+              "properties": {"masterInactive":{"type":"number"},"master":{"type":"number"},"music":{"type":"number"},"effect":{"type":"number"}}
             },
-            "offset": {
-              "type": "object",
-              "required": ["universal"],
-              "additionalProperties": false,
-              "properties": { "universal": { "type": "number" } }
-            }
+            "offset": {"type":"object","required":["universal"],"additionalProperties":false,"properties":{"universal":{"type":"number"}}}
           }
         },
         "background": {
           "type": "object",
-          "required": ["storyboard", "video", "blur", "dim"],
+          "required": ["storyboard","video","blur","dim"],
           "additionalProperties": false,
-          "properties": {
-            "storyboard": { "type": "boolean" },
-            "video": { "type": "boolean" },
-            "blur": { "type": "number" },
-            "dim": { "type": "number" }
-          }
+          "properties": {"storyboard":{"type":"boolean"},"video":{"type":"boolean"},"blur":{"type":"number"},"dim":{"type":"number"}}
         },
         "keybinds": {
           "type": "object",
-          "required": ["osu", "fruits", "taiko", "quickRetry"],
+          "required": ["osu","fruits","taiko","quickRetry"],
           "additionalProperties": false,
           "properties": {
             "osu": {
-              "type": "object", "required": ["k1", "k2", "smokeKey"], "additionalProperties": false,
-              "properties": { "k1": { "type": "string" }, "k2": { "type": "string" }, "smokeKey": { "type": "string" } }
+              "type": "object",
+              "required": ["k1","k2","smokeKey"],
+              "additionalProperties": false,
+              "properties": {"k1":{"type":"string"},"k2":{"type":"string"},"smokeKey":{"type":"string"}}
             },
             "fruits": {
-              "type": "object", "required": ["k1", "k2", "Dash"], "additionalProperties": false,
-              "properties": { "k1": { "type": "string" }, "k2": { "type": "string" }, "Dash": { "type": "string" } }
+              "type": "object",
+              "required": ["k1","k2","Dash"],
+              "additionalProperties": false,
+              "properties": {"k1":{"type":"string"},"k2":{"type":"string"},"Dash":{"type":"string"}}
             },
             "taiko": {
               "type": "object",
-              "required": ["innerLeft", "innerRight", "outerLeft", "outerRight"],
+              "required": ["innerLeft","innerRight","outerLeft","outerRight"],
               "additionalProperties": false,
-              "properties": {
-                "innerLeft": { "type": "string" }, "innerRight": { "type": "string" },
-                "outerLeft": { "type": "string" }, "outerRight": { "type": "string" }
-              }
+              "properties": {"innerLeft":{"type":"string"},"innerRight":{"type":"string"},"outerLeft":{"type":"string"},"outerRight":{"type":"string"}}
             },
-            "quickRetry": { "type": "string" }
+            "quickRetry": {"type":"string"}
           }
         },
         "visual": {
@@ -788,192 +758,177 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "snakingInSliders": { "type": ["boolean", "null"] },
-                "snakingOutSliders": { "type": ["boolean", "null"] },
-                "hitLighting": { "type": ["boolean", "null"] },
-                "beatmapColours": { "type": ["boolean", "null"] },
-                "comboColourNormalisation": { "type": ["number", "null"] },
-                "hitAnimations": { "type": ["boolean", "null"] },
-                "rateAdjustedHitAnimation": { "type": ["boolean", "null"] },
-                "scalingMode": { "type": ["integer", "null"] },
-                "positionX": { "type": ["number", "null"] },
-                "positionY": { "type": ["number", "null"] },
-                "sizeX": { "type": ["number", "null"] },
-                "sizeY": { "type": ["number", "null"] }
+                "snakingInSliders": {"type":["boolean","null"]},
+                "snakingOutSliders": {"type":["boolean","null"]},
+                "hitLighting": {"type":["boolean","null"]},
+                "beatmapColours": {"type":["boolean","null"]},
+                "comboColourNormalisation": {"type":["number","null"]},
+                "hitAnimations": {"type":["boolean","null"]},
+                "rateAdjustedHitAnimation": {"type":["boolean","null"]},
+                "scalingMode": {"type":["integer","null"]},
+                "positionX": {"type":["number","null"]},
+                "positionY": {"type":["number","null"]},
+                "sizeX": {"type":["number","null"]},
+                "sizeY": {"type":["number","null"]}
               }
             },
-            { "type": "null" }
+            {"type":"null"}
           ]
         },
         "skin": {
           "type": "object",
           "description": "1.2.0, additive (R7): skin-editor toggle settings; distinct from the asset-identity `vosu.osu.skin`/common `vosu.skin` this plugin also fills.",
-          "required": ["useDefaultSkinInEditor", "ignoreBeatmapSkins", "tintSliderBall", "useTaikoSkin"],
+          "required": ["useDefaultSkinInEditor","ignoreBeatmapSkins","tintSliderBall","useTaikoSkin"],
           "additionalProperties": false,
           "properties": {
-            "useDefaultSkinInEditor": { "type": "boolean" },
-            "ignoreBeatmapSkins": { "type": "boolean" },
-            "tintSliderBall": { "type": "boolean" },
-            "useTaikoSkin": { "type": "boolean" }
+            "useDefaultSkinInEditor": {"type":"boolean"},
+            "ignoreBeatmapSkins": {"type":"boolean"},
+            "tintSliderBall": {"type":"boolean"},
+            "useTaikoSkin": {"type":"boolean"}
           }
         }
       }
     },
     "skin": {
       "type": "object",
-      "required": ["builtin", "base", "variant", "files"],
+      "required": ["builtin","base","variant","files"],
       "additionalProperties": false,
       "description": "osu!-specific skin detail beside the common vosu.skin.name/tree this plugin also fills.",
       "properties": {
-        "builtin": { "type": ["string", "null"], "enum": ["argon", "argon-pro", "triangles", "legacy", "retro", null] },
-        "base": { "type": ["string", "null"], "description": "Rendering family for built-in and imported skins; stable skins are always `legacy`.", "enum": ["argon", "argon-pro", "triangles", "legacy", "retro", null] },
-        "variant": { "enum": ["stable", "lazer", null] },
-        "files": { "type": "boolean", "description": "Whether the skin has any browsable files (false for a built-in lazer skin)." }
+        "builtin": {"type":["string","null"],"enum":["argon","argon-pro","triangles","legacy","retro",null]},
+        "base": {
+          "type": ["string","null"],
+          "description": "Rendering family for built-in and imported skins; stable skins are always `legacy`.",
+          "enum": ["argon","argon-pro","triangles","legacy","retro",null]
+        },
+        "variant": {"enum":["stable","lazer",null]},
+        "files": {"type":"boolean","description":"Whether the skin has any browsable files (false for a built-in lazer skin)."}
       }
     },
     "rankedPlay": {
       "oneOf": [
         {
           "type": "object",
-          "required": ["stage", "currentRound", "starRating", "damageMultiplier", "activeUserId", "winningUserId", "users"],
+          "required": ["stage","currentRound","starRating","damageMultiplier","activeUserId","winningUserId","users"],
           "additionalProperties": false,
           "properties": {
-            "stage": { "type": "integer" },
-            "currentRound": { "type": "integer" },
-            "starRating": { "type": "number" },
-            "damageMultiplier": { "type": "number" },
-            "activeUserId": { "type": "integer" },
-            "winningUserId": { "type": "integer" },
+            "stage": {"type":"integer"},
+            "currentRound": {"type":"integer"},
+            "starRating": {"type":"number"},
+            "damageMultiplier": {"type":"number"},
+            "activeUserId": {"type":"integer"},
+            "winningUserId": {"type":"integer"},
             "users": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "rating", "life", "roundsWon", "damageMultiplier"],
+                "required": ["id","rating","life","roundsWon","damageMultiplier"],
                 "additionalProperties": false,
                 "properties": {
-                  "id": { "type": "integer" },
-                  "rating": { "type": "number" },
-                  "life": { "type": "number" },
-                  "roundsWon": { "type": "integer" },
-                  "damageMultiplier": { "type": "number" }
+                  "id": {"type":"integer"},
+                  "rating": {"type":"number"},
+                  "life": {"type":"number"},
+                  "roundsWon": {"type":"integer"},
+                  "damageMultiplier": {"type":"number"}
                 }
               }
             }
           }
         },
-        { "type": "null" }
+        {"type":"null"}
       ],
-      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+      "x-sampling-lane": {"lane":"regular","activity":"gameplay"}
     },
     "room": {
       "oneOf": [
         {
           "type": "object",
-          "required": ["roomId", "users"],
+          "required": ["roomId","users"],
           "additionalProperties": false,
           "properties": {
-            "roomId": { "type": "integer" },
+            "roomId": {"type":"integer"},
             "users": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "username", "countryCode"],
+                "required": ["id","username","countryCode"],
                 "additionalProperties": false,
-                "properties": {
-                  "id": { "type": "integer" },
-                  "username": { "type": "string" },
-                  "countryCode": { "type": "integer" },
-                  "avatarUrl": { "type": "string" }
-                }
+                "properties": {"id":{"type":"integer"},"username":{"type":"string"},"countryCode":{"type":"integer"},"avatarUrl":{"type":"string"}}
               }
             }
           }
         },
-        { "type": "null" }
+        {"type":"null"}
       ],
-      "x-sampling-lane": { "lane": "regular", "activity": "always" }
+      "x-sampling-lane": {"lane":"regular","activity":"always"}
     },
     "tourney": {
       "oneOf": [
         {
           "type": "object",
-          "required": ["scoreVisible", "starsVisible", "ipcState", "bestOf", "team", "points", "chat", "totalScore", "clients"],
+          "required": ["scoreVisible","starsVisible","ipcState","bestOf","team","points","chat","totalScore","clients"],
           "additionalProperties": false,
           "properties": {
-            "scoreVisible": { "type": "boolean" },
-            "starsVisible": { "type": "boolean" },
-            "ipcState": { "type": "integer" },
-            "bestOf": { "type": "integer" },
-            "team": { "$ref": "#/$defs/sides" },
-            "points": { "$ref": "#/$defs/sides" },
+            "scoreVisible": {"type":"boolean"},
+            "starsVisible": {"type":"boolean"},
+            "ipcState": {"type":"integer"},
+            "bestOf": {"type":"integer"},
+            "team": {"$ref":"#/$defs/sides"},
+            "points": {"$ref":"#/$defs/sides"},
             "chat": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["team", "name", "message", "timestamp"],
+                "required": ["team","name","message","timestamp"],
                 "additionalProperties": false,
-                "properties": {
-                  "team": { "type": "string" },
-                  "name": { "type": "string" },
-                  "message": { "type": "string" },
-                  "timestamp": { "type": "string" }
-                }
+                "properties": {"team":{"type":"string"},"name":{"type":"string"},"message":{"type":"string"},"timestamp":{"type":"string"}}
               }
             },
-            "totalScore": { "$ref": "#/$defs/sides" },
+            "totalScore": {"$ref":"#/$defs/sides"},
             "clients": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["ipcId", "team", "settings", "user", "beatmap", "play"],
+                "required": ["ipcId","team","settings","user","beatmap","play"],
                 "additionalProperties": false,
                 "properties": {
-                  "ipcId": { "type": "number" },
-                  "team": { "enum": ["left", "right"] },
+                  "keysOverlay": {"type":["object","null"],"required":["k1","k2","m1","m2"],"additionalProperties":false,"properties":{"k1":{"$ref":"#/$defs/overlayButton"},"k2":{"$ref":"#/$defs/overlayButton"},"m1":{"$ref":"#/$defs/overlayButton"},"m2":{"$ref":"#/$defs/overlayButton"}},"x-sampling-lane":{"lane":"precise","activity":"always"}},
+                  "ipcId": {"type":"number"},
+                  "team": {"enum":["left","right"]},
                   "settings": {
                     "type": "object",
                     "required": ["mania"],
                     "additionalProperties": false,
                     "properties": {
-                      "mania": {
-                        "type": "object",
-                        "required": ["scrollSpeed"],
-                        "additionalProperties": false,
-                        "properties": { "scrollSpeed": { "type": "integer" } }
-                      }
+                      "mania": {"type":"object","required":["scrollSpeed"],"additionalProperties":false,"properties":{"scrollSpeed":{"type":"integer"}}}
                     }
                   },
                   "user": {
                     "type": "object",
-                    "required": ["id", "name", "country", "accuracy", "rankedScore", "playCount", "globalRank", "totalPP"],
+                    "required": ["id","name","country","accuracy","rankedScore","playCount","globalRank","totalPP"],
                     "additionalProperties": false,
                     "properties": {
-                      "id": { "type": "integer" },
-                      "name": { "type": "string" },
-                      "country": { "type": "string" },
-                      "accuracy": { "type": "number" },
-                      "rankedScore": { "type": "number" },
-                      "playCount": { "type": "integer" },
-                      "globalRank": { "type": "integer" },
-                      "totalPP": { "type": "number" }
+                      "id": {"type":"integer"},
+                      "name": {"type":"string"},
+                      "country": {"type":"string"},
+                      "accuracy": {"type":"number"},
+                      "rankedScore": {"type":"number"},
+                      "playCount": {"type":"integer"},
+                      "globalRank": {"type":"integer"},
+                      "totalPP": {"type":"number"}
                     }
                   },
-                  "beatmap": {
-                    "type": "object",
-                    "required": ["stats"],
-                    "additionalProperties": false,
-                    "properties": { "stats": { "$ref": "#/$defs/stats" } }
-                  },
-                  "play": { "$ref": "#/$defs/tourneyClientPlay" }
+                  "beatmap": {"type":"object","required":["stats"],"additionalProperties":false,"properties":{"stats":{"$ref":"#/$defs/stats"}}},
+                  "play": {"$ref":"#/$defs/tourneyClientPlay"}
                 }
               }
             }
           }
         },
-        { "type": "null" }
+        {"type":"null"}
       ],
-      "description": "D6: `null` only on the lazer multi-spectating path (ipcState 11) before the first lobby read lands (matching 1.x, which omits the key entirely until then; the adapters drop the key when this value is null); populated with real data once that read lands; 1.x's default empty object (scoreVisible: false, clients: [], and so on) in every other case. The stable tournament-manager aggregate is deferred: until it lands (M4a or later, `docs/v2/implementation-plan.md`), the osu! plugin takes 1.x's no-manager-found branch unconditionally on stable, and the stable-tournament oracle case is a recorded temporary divergence, not a passing comparison.",
-      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+      "description": "Stable manager aggregate on every stable session, or the default empty aggregate without a manager. Null with tourneyAvailability pending before participating source samples exist; null with missingScore for an unavailable lazer spectator score. Wire omission/error policy belongs to adapters.",
+      "x-sampling-lane": {"lane":"regular","activity":"always"}
     },
     "internal": {
       "type": "object",
@@ -985,58 +940,55 @@
         "paths": {
           "type": "object",
           "description": "Per-variant install paths (D8), the current chart's folder/file names, and the active skin's folder (R8); the variant not matching the session's own client is entirely null. A plugin importing a file uses the vosu.osu.beatmap.import action (M3), never a write through this path.",
-          "required": ["stable", "lazer"],
+          "required": ["stable","lazer"],
           "additionalProperties": false,
           "properties": {
             "stable": {
               "oneOf": [
                 {
                   "type": "object",
-                  "required": ["game", "songs", "skins", "replays"],
+                  "required": ["game","songs","skins","replays"],
                   "additionalProperties": false,
                   "properties": {
-                    "game": { "type": ["string", "null"] },
-                    "songs": { "type": ["string", "null"] },
-                    "skins": { "type": ["string", "null"] },
-                    "replays": { "type": ["string", "null"] }
+                    "game": {"type":["string","null"]},
+                    "songs": {"type":["string","null"]},
+                    "skins": {"type":["string","null"]},
+                    "replays": {"type":["string","null"]}
                   }
                 },
-                { "type": "null" }
+                {"type":"null"}
               ]
             },
             "lazer": {
               "oneOf": [
                 {
                   "type": "object",
-                  "required": ["data", "files"],
+                  "required": ["data","files"],
                   "additionalProperties": false,
-                  "properties": {
-                    "data": { "type": ["string", "null"] },
-                    "files": { "type": ["string", "null"] }
-                  }
+                  "properties": {"data":{"type":["string","null"]},"files":{"type":["string","null"]}}
                 },
-                { "type": "null" }
+                {"type":"null"}
               ]
             },
             "current": {
-              "description": "1.2.0, additive (R8, M4a-blocking): the current chart's folder/file names only, never a joined path (ADR 0021); `null` entirely when no chart is selected; `background`/`audio` are independently `null` when the chart has none. Home for the 1.x `folders.beatmap`/`files.*` sources M4a's upstream adapter must echo byte-identically.",
+              "description": "Independent captured chart folder/file, background and audio names, never root authority (ADR 0021). Null entirely only when all four sources are absent; a missing chart folder/file never discards a present background/audio name. Each leaf retains null versus an empty string.",
               "oneOf": [
                 {
                   "type": "object",
-                  "required": ["beatmapFolder", "beatmapFile", "background", "audio"],
+                  "required": ["beatmapFolder","beatmapFile","background","audio"],
                   "additionalProperties": false,
                   "properties": {
-                    "beatmapFolder": { "type": ["string", "null"] },
-                    "beatmapFile": { "type": ["string", "null"] },
-                    "background": { "type": ["string", "null"] },
-                    "audio": { "type": ["string", "null"] }
+                    "beatmapFolder": {"type":["string","null"]},
+                    "beatmapFile": {"type":["string","null"]},
+                    "background": {"type":["string","null"]},
+                    "audio": {"type":["string","null"]}
                   }
                 },
-                { "type": "null" }
+                {"type":"null"}
               ]
             },
             "skinFolder": {
-              "type": ["string", "null"],
+              "type": ["string","null"],
               "description": "1.2.0, additive (R8): the active skin's folder (1.x `global.skin_folder`/`folders.skin`/`directPath.skinFolder`), present independent of whether a chart is selected, unlike `current`. `null` on a lazer session (content-addressed skin storage has no folder) or when 1.x's own value is the empty string it normalizes at read time."
             }
           }

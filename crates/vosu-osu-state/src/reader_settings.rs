@@ -9,12 +9,10 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReaderSettings {
     pub calculate_pp: bool,
-    pub enable_key_overlay: bool,
-    pub enable_mania_key_hit_errors: bool,
-    pub enable_hit_offsets: bool,
+    /// Accurate extended hit-error collection requested by state-bus subscribers.
+    pub collect_hit_errors: bool,
     pub poll_rate: f64,
     pub precise_data_poll_rate: f64,
-    pub v2_subscription_debounce: f64,
     pub show_mp_commands: bool,
     pub read_mania_scroll_speed: bool,
 }
@@ -24,12 +22,9 @@ impl Default for ReaderSettings {
     fn default() -> Self {
         Self {
             calculate_pp: true,
-            enable_key_overlay: true,
-            enable_mania_key_hit_errors: false,
-            enable_hit_offsets: false,
+            collect_hit_errors: false,
             poll_rate: 150.0,
             precise_data_poll_rate: 10.0,
-            v2_subscription_debounce: 1.0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
         }

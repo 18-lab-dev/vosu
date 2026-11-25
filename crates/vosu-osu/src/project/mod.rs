@@ -27,6 +27,12 @@ use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::StateBundleSnapshot;
 use vosu_plugin_api::PublishBatchWriter;
 
+#[derive(Clone)]
+pub(crate) struct StableTourney {
+    pub revision: u64,
+    pub bytes: Arc<[u8]>,
+    pub availability: &'static str,
+}
 pub struct SessionFacts {
     pub client: ClientType,
     pub settings: InstanceSettings,
@@ -41,6 +47,7 @@ const PROJECTIONS: &[Projection] = &[common::project, play::project, settings::p
 pub struct Caches {
     skin: skin::SkinCache,
     tourney: tourney::AvailabilityCache,
+    pub(crate) stable_tourney: Option<StableTourney>,
 }
 impl Caches {
     pub(crate) fn take_error(&mut self) -> Option<std::io::Error> {
@@ -61,6 +68,18 @@ pub(crate) fn project_stateful(
     }
     if sink.wants(OsuPointer::OsuTourney) {
         caches.tourney.update(snapshot, facts);
+    }
+    if let Some(aggregate) = caches.stable_tourney.as_ref() {
+        sink.put(
+            OsuPointer::OsuTourney,
+            vosu_plugin_api::PublishValueRef::Cbor(&aggregate.bytes),
+        );
+        sink.put(
+            OsuPointer::OsuTourneyAvailability,
+            vosu_plugin_api::PublishValueRef::String(aggregate.availability),
+        );
+    } else {
+        tourney::project(snapshot, facts, sink);
     }
 }
 
@@ -114,13 +133,19 @@ impl Projector {
 pub(crate) fn projections() -> &'static [Projection] {
     PROJECTIONS
 }
+pub(crate) fn stable_tourney(
+    manager: Option<&StateBundleSnapshot>,
+    clients: &[(f64, &StateBundleSnapshot)],
+) -> Vec<u8> {
+    tourney::stable::encode(manager, clients)
+}
 
 #[cfg(test)]
 #[path = "tests/o5_parity.rs"]
 mod o5_parity;
 #[cfg(test)]
 #[path = "tests/o5.rs"]
-mod o5_tests;
+pub(crate) mod o5_tests;
 #[cfg(test)]
 #[path = "tests/skin_paths.rs"]
 mod skin_paths_tests;

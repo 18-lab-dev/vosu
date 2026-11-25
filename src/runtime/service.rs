@@ -1,176 +1,18 @@
 use super::*;
-use serde_json::{Value, json};
+use serde_json::json;
 
 /// Process-wide resource owner used by [`App`].
 ///
 #[derive(Clone)]
 pub(super) struct RuntimeBeatmap {
-    pub(super) snapshots: Arc<SnapshotManager>,
     pub(super) counters: Arc<ReloadableCounterService>,
-}
-
-impl RuntimeBeatmap {
-    pub(super) fn tool_context(&self) -> Value {
-        let manager = self.snapshots.load();
-        let Some(focused) = manager.focused() else {
-            return json!({"client":null,"songs_dir":null,"osu_dir":null,"skin":null,"beatmap":null});
-        };
-        let regular = &focused.regular;
-        let files = runtime_beatmap_files(regular, focused.source, &self.counters.current_root());
-        let root = files.songs_root.and_then(|p| std::fs::canonicalize(p).ok());
-        let resolve = |relative: &Option<PathBuf>| -> Option<PathBuf> {
-            let root = root.as_ref()?;
-            let relative = relative.as_ref()?;
-            let path = std::fs::canonicalize(root.join(relative)).ok()?;
-            path.starts_with(root).then_some(path)
-        };
-        let file = resolve(&files.beatmap_file);
-        let mode = match regular.global.status {
-            2 => Some(regular.gameplay.mode),
-            7 => Some(regular.result_screen.raw.mode),
-            _ => regular.menu.gamemode,
-        };
-        let beatmap = file.map(|file| json!({
-            "checksum": regular.menu.checksum,
-            "mode": match mode { Some(1) => "taiko", Some(2) => "fruits", Some(3) => "mania", _ => "osu" },
-            "folder": file.parent(),
-            "file": file,
-            "audio": resolve(&files.audio_file),
-            "background": resolve(&files.background_file),
-        }));
-        let stable = focused.source != ClientType::Lazer;
-        let osu_dir = stable
-            .then(|| PathBuf::from(&regular.global.game_folder))
-            .filter(|path| path.is_absolute());
-        let skin_folder = stable
-            .then(|| stable_skin_root(&regular.global.game_folder, &regular.global.skin_folder))
-            .flatten()
-            .filter(|path| path.is_absolute());
-        let skin = regular.global.current_skin.as_deref();
-        json!({"client": if stable { "stable" } else { "lazer" }, "songs_dir":root,
-            "osu_dir":osu_dir,"skin":{"name":skin.map(|s| s.name.as_str()).unwrap_or(&regular.global.skin_folder),
-                "folder":skin_folder,"files":if stable { skin_folder.as_ref().is_some_and(|p| p.is_dir()) } else { skin.is_some_and(|s| !s.files.is_empty()) },
-                "builtin":skin.and_then(|s| s.builtin.as_deref()),
-                "base":if stable { Some("legacy") } else { skin.and_then(|s| s.base.as_deref()) }},"beatmap":beatmap})
-    }
-}
-
-pub(super) fn current_file_relative(
-    folder: Option<&str>,
-    filename: Option<&str>,
-) -> Option<PathBuf> {
-    let filename = filename.filter(|value| !value.is_empty())?;
-    let mut relative = PathBuf::new();
-    if let Some(folder) = folder.filter(|value| !value.is_empty()) {
-        relative.push(folder);
-    }
-    relative.push(filename);
-    Some(relative)
-}
-
-pub(super) fn stable_skin_root(game_folder: &str, skin_name: &str) -> Option<PathBuf> {
-    let game_folder = (!game_folder.is_empty()).then(|| PathBuf::from(game_folder))?;
-    let mut components = Path::new(skin_name).components();
-    let std::path::Component::Normal(name) = components.next()? else {
-        return None;
-    };
-    if components.next().is_some() {
-        return None;
-    }
-    Some(game_folder.join("Skins").join(name))
-}
-
-pub(super) fn runtime_beatmap_files(
-    regular: &vosu_osu_state::RegularState,
-    source: ClientType,
-    static_root: &Path,
-) -> BeatmapFiles {
-    let songs = PathBuf::from(&regular.global.songs_folder);
-    let songs_root = (!songs.as_os_str().is_empty()).then_some(songs);
-    let ready = songs_root.is_some();
-    let folder = regular.menu.folder.as_deref();
-    BeatmapFiles {
-        beatmap_file: current_file_relative(folder, regular.menu.filename.as_deref()),
-        background_file: current_file_relative(folder, regular.menu.background_filename.as_deref()),
-        audio_file: current_file_relative(folder, regular.menu.audio_filename.as_deref()),
-        songs_root,
-        skin_root: if source == ClientType::Lazer {
-            None
-        } else {
-            stable_skin_root(&regular.global.game_folder, &regular.global.skin_folder)
-        },
-        skin: regular.global.current_skin.clone(),
-        skin_client: Some(if source == ClientType::Lazer {
-            "lazer"
-        } else {
-            "stable"
-        }),
-        skin_name: Some(
-            regular
-                .global
-                .current_skin
-                .as_ref()
-                .map(|s| &s.name)
-                .unwrap_or(&regular.global.skin_folder)
-                .clone(),
-        ),
-        static_root: Some(static_root.to_owned()),
-        lazer: source == ClientType::Lazer,
-        ready,
-    }
 }
 
 impl CurrentBeatmapProvider for RuntimeBeatmap {
     fn files(&self) -> BeatmapFiles {
-        let manager = self.snapshots.load();
-        let static_root = self.counters.current_root();
-        let Some(focused) = manager.focused() else {
-            return BeatmapFiles {
-                static_root: Some(static_root),
-                ..BeatmapFiles::default()
-            };
-        };
-        runtime_beatmap_files(&focused.regular, focused.source, &static_root)
-    }
-
-    fn current_beatmap_bytes(&self) -> Result<Option<Bytes>, String> {
-        use std::io::Read as _;
-
-        const MAX_BEATMAP_BYTES: u64 = 64 * 1024 * 1024;
-        let files = self.files();
-        let (Some(root), Some(relative)) =
-            (files.songs_root.as_deref(), files.beatmap_file.as_deref())
-        else {
-            return Ok(None);
-        };
-        let Some(relative) = relative.to_str() else {
-            return Ok(None);
-        };
-        match crate::server::files::resolve_resource(
-            Some(root),
-            relative,
-            relative,
-            crate::server::files::MissingKind::NotFound,
-        )
-        .map_err(|error| error.to_string())?
-        {
-            crate::server::files::ResourceOutcome::File(mut target) => {
-                if target.length > MAX_BEATMAP_BYTES {
-                    return Err("beatmap exceeds the 64 MiB input limit".into());
-                }
-                let mut bytes = Vec::with_capacity(target.length as usize);
-                target
-                    .file
-                    .by_ref()
-                    .take(MAX_BEATMAP_BYTES + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                if bytes.len() as u64 > MAX_BEATMAP_BYTES {
-                    return Err("beatmap exceeds the 64 MiB input limit".into());
-                }
-                Ok(Some(Bytes::from(bytes)))
-            }
-            _ => Ok(None),
+        BeatmapFiles {
+            static_root: Some(self.counters.current_root()),
+            ..BeatmapFiles::default()
         }
     }
 }

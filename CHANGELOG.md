@@ -34,6 +34,85 @@ Plugin manifests, the plugin ABI and API v1 may still change before 2.0.0.
 - Verify that a packaged prerelease build imports 1.x settings read-only and
   keeps the normal configuration root byte-identical.
 
+### M4a
+
+- Remove vosu-only `/json/v2` fields `beatmap.time.rate`, `beatmap.time.running`
+  and `play.source` (including filtered and WebSocket output). Accurate facts
+  remain available as `vosu.osu.beatmap.time.{rate,running}` and
+  `vosu.osu.play.source` on the state bus; `vosu.play.rate` is unchanged.
+- The optional live-parity diagnostic now targets the 2.0 bus-backed adapters:
+  it attests the 2.0 package version, reports any reappearing 1.x extension
+  member instead of exempting it, and no longer writes the retired
+  `ENABLE_KEY_OVERLAY`/`V2_SUBSCRIPTION_DEBOUNCE` keys into its vosu config.
+- Fix `/json/sc` HTTP reads with no streamCompanion WebSocket client always
+  serving chart-less values (bpm 0, empty `mapStrains`) and cancelling their own
+  chart work, as 1.x always served chart facts. The selected chart's job now
+  completes after its reader leaves and its one result is reused; an HTTP read
+  waits at most 80 ms for an in-flight job of its exact map. A new map still
+  cancels old work, and nothing is parsed while no client reads.
+- Announce a session to `vosu.sessions` watchers only once its bus state is
+  open, so their immediate subscription is never refused.
+- Shutdown still destroys plugins and joins every remaining service when the
+  adapter providers fail to stop, and reports that failure with the other
+  cleanup errors.
+- Compatibility WebSocket feeds no longer send a client a frame captured
+  before its last write acknowledgement observed a newer state, so the first
+  frame after an acknowledgement is always the latest.
+
+- Delete both interim typed-snapshot bridge directions and root adapter models.
+  Capture, settings, resource/action ownership and precise ABI demand stay
+  game-plugin-owned; selector demand is composed without a forwarding task.
+- Preserve tool context with adapter-selected facts and host-only confined
+  display metadata. Dashboard/report metadata now comes from host sessions;
+  the obsolete "resolving offsets" side-channel label is replaced by the
+  host lifecycle states "starting reader" and "reading".
+- Retire pending identification offers as well as identified sessions when a
+  plugin owner is torn down, so shutdown leaves no stale host diagnostics.
+
+- Mount gosuMemory, streamCompanion and upstream v2/precise HTTP/WebSocket
+  projections through their explicit bundled plugin registrations and permanent
+  surface API. Share latest-only encodings and independent selector demand;
+  stream legacy game files through retained roots and keep calculation confined.
+  Remove the old root file/index and calculation serving paths. Core retains
+  peer/Origin/API-key policy, command framing, limits and listener ownership.
+- Remove the selected-v2 subscription feed, legacy skin metadata index and four
+  extension-only config flags. API v1 subscriptions retain their own debounce;
+  real selector demand owns collection. Keep bounded validated removed-route
+  attribution for the future D20 notice, and preserve unrelated unknown config.
+- Share the pure chart calculation engine from `vosu-osu-calc`, independently of state orchestration.
+- Derive streamCompanion strains, breaks, timing and kiai facts from authorized chart resources with bounded latest-only, joined workers; preserve the upstream empty `mapKiaiPoints` wire quirk.
+
+- Add the bus-backed upstream v2/precise projection crate, with
+  explicit private-path grants, source-faithful key slots and tournament
+  readiness, upstream wire names and ADR 0021 field removals.
+
+- Extract shared legacy wire mechanics into `vosu-adapter-support` without
+  changing served routes, payloads, filters or transport behavior.
+- Publish osu! schema 1.3 source facts for independent overlay buttons, raw
+  gameplay values, parsed chart clocks, leaderboard identity and tournament
+  readiness, without changing existing common fields or legacy routes.
+- Identify stable tournament managers as priority sessions and publish their
+  IPC-ordered spectator aggregate to every stable session, with source readiness,
+  raw score facts and subscription-owned spectator precision demand.
+- Preserve independent primary strain histories and captured background/audio
+  names even while the chart folder and filename are unavailable.
+- Add coherent, demand-free bundled adapter captures with identified session
+  rosters, per-namespace revisions and independent foreground observations;
+  add atomic route/feed registration and RAII demand/registration cleanup.
+- Add the bus-backed streamCompanion base projection and direct/DTO encoders,
+  with explicit path grants and a chart-resource-derived input seam. The new
+  wire model omits extension-only press/release histories.
+- Add the bus-backed gosuMemory builder and borrowing encoder, preserving
+  state-specific values and tournament quirks without extension hit histories.
+- Add opaque declared-root file/directory operations and capability-checked
+  chart-resource readers for bundled adapters, reusing M3 confinement and stream
+  leases without changing API v1 resource membership or legacy routes.
+- Add requester-injected upstream file/calculation providers for the M4a atomic
+  cutover: retained declared-root reads, stable case/directory lookup, lazer
+  legacy skin 404 and root-confined legacy calculation without changing its engine.
+  Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
+  truncation marker. Production mounts all adapters through requester-bound routes.
+
 ### M6a
 
 - Validate plugin, web-tool and overlay package manifests through the SDK's

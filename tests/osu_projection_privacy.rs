@@ -125,7 +125,7 @@ fn actual_osu_paths_are_visible_only_to_explicit_internal_grant() {
         .register_versioned(
             "vosu.osu",
             "vosu.osu",
-            &semver::Version::new(1, 2, 0),
+            &semver::Version::new(1, 3, 0),
             vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             vosu_osu::OSU_NAMESPACE_SCHEMA,
         )

@@ -10,12 +10,8 @@ pub struct Config {
     pub start_at_login: bool,
     pub debug_log: bool,
     pub calculate_pp: bool,
-    pub enable_key_overlay: bool,
-    pub enable_mania_key_hit_errors: bool,
-    pub enable_hit_offsets: bool,
     pub poll_rate: f64,
     pub precise_data_poll_rate: f64,
-    pub v2_subscription_debounce: f64,
     pub api_v1_subscription_debounce: f64,
     pub show_mp_commands: bool,
     pub read_mania_scroll_speed: bool,
@@ -35,12 +31,8 @@ impl Default for Config {
             start_at_login: false,
             debug_log: false,
             calculate_pp: true,
-            enable_key_overlay: true,
-            enable_mania_key_hit_errors: false,
-            enable_hit_offsets: false,
             poll_rate: 150.0,
             precise_data_poll_rate: 10.0,
-            v2_subscription_debounce: 1.0,
             api_v1_subscription_debounce: 1.0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
@@ -68,12 +60,8 @@ pub enum ConfigKey {
     StartAtLogin,
     DebugLog,
     CalculatePp,
-    EnableKeyOverlay,
-    EnableManiaKeyHitErrors,
-    EnableHitOffsets,
     PollRate,
     PreciseDataPollRate,
-    V2SubscriptionDebounce,
     ApiV1SubscriptionDebounce,
     ShowMpCommands,
     ReadManiaScrollSpeed,
@@ -119,7 +107,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 20] = [
+const SCHEMA_ITEMS: [ConfigItem; 16] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -151,24 +139,6 @@ const SCHEMA_ITEMS: [ConfigItem; 20] = [
         None,
     ),
     item(
-        ConfigKey::EnableKeyOverlay,
-        "ENABLE_KEY_OVERLAY",
-        ConfigDefault::Boolean(true),
-        None,
-    ),
-    item(
-        ConfigKey::EnableManiaKeyHitErrors,
-        "ENABLE_MANIA_KEY_HIT_ERRORS",
-        ConfigDefault::Boolean(false),
-        None,
-    ),
-    item(
-        ConfigKey::EnableHitOffsets,
-        "ENABLE_HIT_OFFSETS",
-        ConfigDefault::Boolean(false),
-        None,
-    ),
-    item(
         ConfigKey::PollRate,
         "POLL_RATE",
         ConfigDefault::Number(150.0),
@@ -178,12 +148,6 @@ const SCHEMA_ITEMS: [ConfigItem; 20] = [
         ConfigKey::PreciseDataPollRate,
         "PRECISE_DATA_POLL_RATE",
         ConfigDefault::Number(10.0),
-        Some(1.0),
-    ),
-    item(
-        ConfigKey::V2SubscriptionDebounce,
-        "V2_SUBSCRIPTION_DEBOUNCE",
-        ConfigDefault::Number(1.0),
         Some(1.0),
     ),
     item(
@@ -262,7 +226,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 20] = [
+pub const BINDING_ORDER: [&str; 16] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -270,12 +234,8 @@ pub const BINDING_ORDER: [&str; 20] = [
     "SHOW_MP_COMMANDS",
     "CALCULATE_PP",
     "READ_MANIA_SCROLL_SPEED",
-    "ENABLE_KEY_OVERLAY",
-    "ENABLE_MANIA_KEY_HIT_ERRORS",
-    "ENABLE_HIT_OFFSETS",
     "POLL_RATE",
     "PRECISE_DATA_POLL_RATE",
-    "V2_SUBSCRIPTION_DEBOUNCE",
     "API_V1_SUBSCRIPTION_DEBOUNCE",
     "SERVER_IP",
     "SERVER_PORT",
@@ -286,10 +246,9 @@ pub const BINDING_ORDER: [&str; 20] = [
 ];
 
 /// A blank line is inserted after each of these bindings.
-pub const NEWLINE_INSERTIONS: [&str; 5] = [
+pub const NEWLINE_INSERTIONS: [&str; 4] = [
     "START_AT_LOGIN",
     "READ_MANIA_SCROLL_SPEED",
-    "ENABLE_KEY_OVERLAY",
     "API_V1_SUBSCRIPTION_DEBOUNCE",
     "ALLOWED_IPS",
 ];

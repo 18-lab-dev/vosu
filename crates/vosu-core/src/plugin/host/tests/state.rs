@@ -148,6 +148,69 @@ fn send(id: &str, bytes: &[u8]) -> vosu_status {
 }
 
 #[test]
+fn owner_teardown_and_destroy_all_retire_pending_and_identified_sessions() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_logs, host) = test_host(rt.handle().clone());
+    let pending = [
+        (8491_u32, "test.k4.teardown.pending-a", "k4-teardown-a"),
+        (8493_u32, "test.k4.teardown.pending-b", "k4-teardown-b"),
+    ]
+    .map(|(pid, plugin, name)| {
+        let events = create_session_instance(
+            &host,
+            PluginInstanceId::new(u64::from(pid)),
+            plugin,
+            &[name],
+            SessionPluginConfig {
+                on_attach: OnAttach::Ignore,
+                ..Default::default()
+            },
+        );
+        host.process_appeared(test_process(pid, name));
+        let SessionEvent::Attached(attached) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+            panic!("expected pending attach")
+        };
+        attached
+    });
+    let identified = publisher_instance(&host, "test.k4.teardown.identified", 8492, 8492);
+    assert_eq!(host.diagnostic_sessions().len(), 3);
+    for attached in &pending {
+        assert!(
+            host.state()
+                .store
+                .current(SessionKey(attached.handle))
+                .is_none()
+        );
+    }
+    assert!(host.state().store.current(SessionKey(identified)).is_some());
+
+    // Owner cleanup must not erase another owner's pending offer or live bus.
+    host.close_bus_sessions_for("test.k4.teardown.pending-a");
+    let retained = host.diagnostic_sessions();
+    assert_eq!(retained.len(), 2);
+    assert!(
+        retained
+            .iter()
+            .any(|session| session.handle == pending[1].handle)
+    );
+    assert!(retained.iter().any(|session| session.handle == identified));
+    assert!(
+        !retained
+            .iter()
+            .any(|session| session.handle == pending[0].handle)
+    );
+    assert!(host.state().store.current(SessionKey(identified)).is_some());
+
+    // Shutdown now has both a genuinely pending offer and an identified bus.
+    host.destroy_all(Duration::from_secs(5));
+    assert!(host.diagnostic_sessions().is_empty());
+    for handle in [pending[0].handle, pending[1].handle, identified] {
+        assert!(host.state().store.current(SessionKey(handle)).is_none());
+    }
+}
+
+#[test]
 fn publish_before_identify_refused() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _enter = rt.enter();

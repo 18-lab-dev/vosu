@@ -21,9 +21,10 @@ pub struct ProductionRouteDelegate {
     services: ProductionServices,
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
+    removed: RemovedNotices,
     tools: Option<Arc<dyn RouteExtension>>,
-    skin_index: Arc<Mutex<files::SkinIndexCache>>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
+    surface: Option<SurfaceRouter>,
 }
 
 impl ProductionRouteDelegate {
@@ -33,8 +34,15 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, api_v1: None, surface: None }
     }
+    /// D20 consumes only bounded notices, revalidating identities before actionable links.
+    pub fn removed_notices(&self) -> Vec<RemovedNotice> {
+        self.removed.snapshot(std::time::Instant::now(), |overlay| {
+            self.services.counters.settings_store().counter_values(overlay).is_ok()
+        })
+    }
+
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
         self
@@ -47,12 +55,23 @@ impl ProductionRouteDelegate {
         self.api_v1 = Some(router);
         self
     }
+    pub fn with_surface(mut self, router: SurfaceRouter) -> Self {
+        self.surface = Some(router);
+        self
+    }
     pub fn services(&self) -> &ProductionServices {
         &self.services
     }
 
     async fn dispatch(&self, endpoint: Endpoint, request: Request<Body>, body: Bytes) -> Response {
         match endpoint {
+            Endpoint::Removed(feature) => {
+                let overlay = socket_overlay(&request).filter(|overlay| {
+                    self.services.counters.settings_store().counter_values(overlay).is_ok()
+                });
+                self.removed.record(overlay, feature, std::time::Instant::now());
+                not_found()
+            }
             Endpoint::ApiV1 => match &self.api_v1 {
                 Some(router) => router.handle(request).await,
                 None => crate::server::api_v1::error::error(StatusCode::NOT_FOUND, "invalid_request", "Unknown API route"),
@@ -117,7 +136,6 @@ impl ProductionRouteDelegate {
             | Endpoint::WsTokens
             | Endpoint::WsV2
             | Endpoint::WsV2Precise
-            | Endpoint::WsV2Subscribe
             | Endpoint::WsCommands => self.websocket(endpoint, request).await,
         }
     }
@@ -503,6 +521,12 @@ impl ProductionRouteDelegate {
         path.to_owned()
     }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
+        if endpoint != Endpoint::CounterStatic && let Some(surface) = &self.surface {
+            return surface.http(&request).await;
+        }
+        if endpoint != Endpoint::CounterStatic {
+            return surface_http_response(surface_not_ready());
+        }
         if endpoint == Endpoint::CounterStatic
             && let Some(redirect) = self.alias_redirect(&request)
         {
@@ -510,14 +534,6 @@ impl ProductionRouteDelegate {
         }
         let current = self.services.beatmap.files();
         let path = request.uri().path();
-        if endpoint == Endpoint::SkinFile && path == "/files/skin/" {
-            let root = if current.lazer { current.songs_root.as_deref() } else { current.skin_root.as_deref() };
-            let index = self.skin_index.lock().unwrap_or_else(PoisonError::into_inner)
-                .get(root, current.skin.as_ref(), current.skin_name.as_deref(), current.lazer, true);
-            let bytes = serde_json::to_vec(&skin_metadata(&current, &index)).expect("skin index serializes");
-            let validators = files::representation_validators(&bytes, index.modified());
-            return conditional_response(response(StatusCode::OK, JSON, Bytes::from(bytes)), &validators, request.headers(), request.method() == Method::HEAD);
-        }
         let counter_html_path = (endpoint == Endpoint::CounterStatic).then(|| {
             let relative = path.trim_start_matches('/');
             if path.ends_with('/') {
@@ -527,12 +543,7 @@ impl ProductionRouteDelegate {
             }
         });
         let target = request.uri().to_string();
-        let resolved = if endpoint == Endpoint::SkinFile && !current.lazer {
-            let mut index = self.skin_index.lock().unwrap_or_else(PoisonError::into_inner);
-            resolve_file_endpoint(endpoint, &current, path, &target, &mut index)
-        } else {
-            resolve_file_endpoint(endpoint, &current, path, &target, &mut files::SkinIndexCache::default())
-        };
+        let resolved = resolve_counter_endpoint(current.static_root.as_deref(), path, &target);
         let outcome = match resolved {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -555,23 +566,7 @@ impl ProductionRouteDelegate {
             )
             .await
         } else {
-            let mut response = if matches!(endpoint, Endpoint::SkinFile | Endpoint::BeatmapPath | Endpoint::BeatmapFile | Endpoint::BeatmapAudio | Endpoint::BeatmapBackground) {
-                game_resource_response(outcome, range, current.lazer, request.headers(), request.method() == Method::HEAD).await
-            } else {
-                resource_response(outcome, range).await
-            };
-            // Beatmap and skin folders hold whatever an imported archive contained,
-            // and an HTML or SVG file opened from them would otherwise run script on
-            // the overlay origin that counters and tool UIs share. `sandbox` alone
-            // removes that origin and script. Content types stay as they are for
-            // compatibility with the upstream API, which also rules out `nosniff`
-            // (it lets browsers block cross-origin embeds of the nonstandard types)
-            // and `default-src 'none'` (it can block media opened directly in a tab).
-            response.headers_mut().insert(
-                header::CONTENT_SECURITY_POLICY,
-                axum::http::HeaderValue::from_static("sandbox"),
-            );
-            response
+            unreachable!("game files were dispatched through the declared requester")
         }
     }
 
@@ -622,21 +617,13 @@ impl ProductionRouteDelegate {
         };
         let connections = self.connections.clone();
         let overlay = socket_overlay(&request);
-        if endpoint == Endpoint::WsV2Subscribe {
-            let hub = self.services.websocket.subscriptions.clone();
-            return websocket::upgrade_response(
-                websocket::Endpoint::V2Subscribe,
-                request,
-                tracker,
-                move |_, socket| async move {
-                    let _registration = connections.register(overlay);
-                    bridge_v2_subscription_socket(socket, hub).await;
-                },
-            )
-            .await;
-        }
         let (hub, commands, client_namespace) = self.services.websocket.hub(endpoint);
-        let hub = hub.clone();
+        let feed = if !commands && let Some(surface) = &self.surface {
+            match surface.dispatch(&request, true).await {
+                Some(ProviderResponse::Feed(feed)) => feed,
+                _ => return not_found(),
+            }
+        } else { hub.surface_feed(commands) };
         let processor = Arc::clone(&self.services.websocket.processor);
         let relays = Arc::clone(&self.services.websocket.relays);
         let query = request.uri().query().map(str::to_owned);
@@ -671,9 +658,8 @@ impl ProductionRouteDelegate {
                 let _registration = connections.register(overlay);
                 bridge_socket(
                     socket,
-                    hub,
+                    feed,
                     processor,
-                    commands,
                     client_namespace,
                     relays,
                     (query.as_deref(), mutation, key_grant),
@@ -691,6 +677,9 @@ impl ProductionRouteDelegate {
 
 impl RouteDelegate for ProductionRouteDelegate {
     fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> { self.api_keys.clone() }
+    fn registered_http<'a>(&'a self, request: &'a Request<Body>) -> Option<ProviderFuture<'a, Response>> {
+        self.surface.as_ref().map(|surface| Box::pin(surface.http(request)) as ProviderFuture<'a, Response>)
+    }
     fn handle(
         &self,
         endpoint: Endpoint,
@@ -737,7 +726,6 @@ fn websocket_endpoint(endpoint: Endpoint) -> websocket::Endpoint {
         Endpoint::WsTokens => websocket::Endpoint::StreamCompanion,
         Endpoint::WsV2 => websocket::Endpoint::V2,
         Endpoint::WsV2Precise => websocket::Endpoint::V2Precise,
-        Endpoint::WsV2Subscribe => websocket::Endpoint::V2Subscribe,
         Endpoint::WsCommands => websocket::Endpoint::Commands,
         _ => unreachable!(),
     }

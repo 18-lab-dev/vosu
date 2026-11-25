@@ -11,7 +11,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use support::*;
 use vosu_core::plugin::{CandidateProcess, MatchPlatform, MatcherEngine, test_support};
-use vosu_osu_model::enums::ClientType;
+fn ready(harness: &Harness, count: usize) -> Vec<vosu_core::plugin::DiagnosticSession> {
+    eventually(|| {
+        let sessions = harness.host.diagnostic_sessions();
+        sessions.len() == count
+            && sessions.iter().all(|s| {
+                !s.client.is_empty()
+                    && harness
+                        .host
+                        .state()
+                        .store
+                        .current(vosu_core::state::SessionKey(s.handle))
+                        .is_some()
+            })
+    });
+    harness.host.diagnostic_sessions()
+}
 use vosu_plugin_api::DetachReason;
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
@@ -74,7 +89,7 @@ fn manifest_matches_both_platform_name_tables() {
 #[cfg(windows)]
 #[test]
 fn windows_names_and_bitness() {
-    let harness = Harness::new("test.osu.p7.windows", 0x7a00_0000, 3);
+    let harness = Harness::new("vosu.osu", 0x7a00_0000, 3);
     let mut lazer = Harness::record(harness.pids[1], &[]);
     lazer.name = "OSULAZER.EXE".into();
     lazer.bitness = vosu_plugin_api::Bitness::X64;
@@ -85,23 +100,16 @@ fn windows_names_and_bitness() {
     let mut other = Harness::record(harness.pids[2], &[]);
     other.name = "other.exe".into();
     harness.host.process_appeared(other);
-    harness
-        .sink
-        .until(WAIT, |events| events.identified.len() == 2);
-    harness.host.destroy_all(WAIT);
-    let events = harness.sink.events.lock().unwrap();
-    let retained: Vec<_> = events
-        .identified
-        .iter()
-        .map(|(key, (client, _))| (key.pid, *client))
-        .collect();
+    let sessions = ready(&harness, 2);
     assert_eq!(
-        retained,
-        vec![
-            (harness.pids[0], ClientType::Stable),
-            (harness.pids[1], ClientType::Lazer)
-        ]
+        sessions
+            .iter()
+            .map(|s| (s.pid, s.client.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(harness.pids[0], "stable"), (harness.pids[1], "lazer")]
     );
+    harness.host.destroy_all(WAIT);
+    assert!(harness.host.diagnostic_sessions().is_empty());
     assert_dispatches_ok();
 }
 
@@ -111,69 +119,39 @@ fn windows_names_and_bitness() {
 #[test]
 fn linux_named_sibling_and_lone_fallback_variants() {
     {
-        let harness = Harness::new("test.osu.p7.siblings", 0x7a00_0100, 2);
+        let harness = Harness::new("vosu.osu", 0x7a00_0100, 2);
         let mut named = Harness::record(harness.pids[1], &[]);
         named.name = "wine-osu!.exe".into();
         harness.host.process_appeared(named);
-        // Observe the named sibling before offering the fallback: this is not
-        // an assertion about concurrent dispatch scheduling or timer speed.
-        harness
-            .sink
-            .until(WAIT, |events| events.identified.len() == 1);
+        ready(&harness, 1);
         let mut fallback = Harness::record(harness.pids[0], &[]);
         fallback.name = "osu!".into();
         harness.host.process_appeared(fallback);
-        harness
-            .sink
-            .until(WAIT, |events| events.identified.len() == 2);
-        harness.host.destroy_all(WAIT);
-        let events = harness.sink.events.lock().unwrap();
-        assert!(
-            events
-                .identified
-                .values()
-                .all(|(client, _)| *client == ClientType::Stable)
-        );
+        let sessions = ready(&harness, 2);
+        assert!(sessions.iter().all(|s| s.client == "stable"));
         assert_eq!(
-            events
-                .identified
-                .keys()
-                .map(|key| key.pid)
-                .collect::<Vec<_>>(),
+            sessions.iter().map(|s| s.pid).collect::<Vec<_>>(),
             harness.pids
         );
+        harness.host.destroy_all(WAIT);
+        assert!(harness.host.diagnostic_sessions().is_empty());
     }
-    let harness = Harness::new("test.osu.p7.fallback", 0x7a00_0200, 1);
+    let harness = Harness::new("vosu.osu", 0x7a00_0200, 1);
     let mut fallback = Harness::record(harness.pids[0], &[]);
     fallback.name = "osu!".into();
     harness.host.process_appeared(fallback);
-    harness
-        .sink
-        .until(WAIT, |events| events.identified.len() == 1);
+    assert_eq!(ready(&harness, 1)[0].client, "lazer");
     harness.host.destroy_all(WAIT);
-    assert_eq!(
-        harness
-            .sink
-            .events
-            .lock()
-            .unwrap()
-            .identified
-            .values()
-            .next()
-            .unwrap()
-            .0,
-        ClientType::Lazer
-    );
     assert_dispatches_ok();
 }
 
-/// Row 5: presence/truthiness is preserved through host decline delivery;
-/// declined generations stay dropped when rediscovered, false/zero identify.
+/// Row 5: debug-client presence/truthiness is preserved through host decline
+/// delivery; declined generations stay dropped, while false/zero identify.
 #[test]
 fn command_filters_decline_and_suppress_reoffers() {
-    let harness = Harness::new("test.osu.p7.filters", 0x7a00_0300, 6);
+    let harness = Harness::new("vosu.osu", 0x7a00_0300, 6);
     let args = [
-        "--tournament=",
+        "--debug-client-id=7",
         "--debug-client-id=1",
         "--debug-client-id=true",
         "--debug-client-id=false",
@@ -186,61 +164,119 @@ fn command_filters_decline_and_suppress_reoffers() {
             .process_appeared(Harness::record(pid, &[argument]));
     }
     eventually(|| DECLINES.lock().unwrap().len() == 3);
-    harness
-        .sink
-        .until(WAIT, |events| events.identified.len() == 3);
+    let sessions = ready(&harness, 3);
     for (&pid, argument) in harness.pids.iter().zip(args).take(3) {
         harness
             .host
             .process_appeared(Harness::record(pid, &[argument]));
     }
     harness.host.destroy_all(WAIT);
-    let attaches = support::ATTACHES.lock().unwrap();
+    let attaches = ATTACHES.lock().unwrap();
     assert_eq!(attaches.values().sum::<usize>(), 6);
     assert!(harness.pids.iter().all(|pid| attaches.get(pid) == Some(&1)));
-    let reasons = DECLINES.lock().unwrap();
     assert_eq!(
-        reasons
+        DECLINES
+            .lock()
+            .unwrap()
             .iter()
             .filter(|&&reason| reason == DetachReason::Declined)
             .count(),
         3
     );
-    let events = harness.sink.events.lock().unwrap();
     assert_eq!(
-        events
-            .identified
-            .keys()
-            .map(|key| key.pid)
-            .collect::<Vec<_>>(),
+        sessions.iter().map(|s| s.pid).collect::<Vec<_>>(),
         harness.pids[3..]
     );
-    assert!(!events.late_publish);
+    assert!(sessions.iter().all(|s| {
+        harness
+            .host
+            .state()
+            .store
+            .current(vosu_core::state::SessionKey(s.handle))
+            .is_none()
+    }));
     assert_dispatches_ok();
 }
 
-/// Row 6: spectator/devserver arguments identify normally and reach B1 as
-/// typed settings, rather than being mistaken for the tournament filter.
+/// M4a/T0 intentionally replaces the old tournament decline with an identified
+/// stable priority manager. Rediscovery must still never attach its generation
+/// twice; readiness comes from host lifecycle and committed state.
 #[test]
-fn spectator_devserver_settings_reach_b1() {
-    let harness = Harness::new("test.osu.p7.spectator", 0x7a00_0400, 1);
+fn tournament_manager_identifies_through_bus_and_suppresses_reoffers() {
+    use vosu_core::state::{Pointer, SessionKey, StateValue};
+    let harness = Harness::new("vosu.osu", 0x7a00_0600, 1);
+    let pid = harness.pids[0];
+    harness
+        .host
+        .process_appeared(Harness::record(pid, &["--tournament="]));
+    let handle = ready(&harness, 1)[0].handle;
+    let state = harness
+        .host
+        .state()
+        .store
+        .current(SessionKey(handle))
+        .unwrap();
+    assert!(
+        matches!(state.get("vosu.client", &Pointer::parse("/variant").unwrap()), Some(StateValue::String(variant)) if variant.as_ref() == "stable")
+    );
+    assert!(DECLINES.lock().unwrap().is_empty());
+    for _ in 0..3 {
+        harness
+            .host
+            .process_appeared(Harness::record(pid, &["--tournament="]));
+    }
+    assert_eq!(ATTACHES.lock().unwrap().get(&pid), Some(&1));
+    harness.host.destroy_all(WAIT);
+    assert!(
+        harness
+            .host
+            .state()
+            .store
+            .current(SessionKey(handle))
+            .is_none()
+    );
+    assert_dispatches_ok();
+}
+
+/// Row 6: spectator/devserver arguments reach the public session projection,
+/// rather than being mistaken for the tournament filter.
+#[test]
+fn spectator_devserver_settings_reach_bus() {
+    use vosu_core::state::{Pointer, SessionKey};
+    let harness = Harness::new("vosu.osu", 0x7a00_0400, 1);
     harness.host.process_appeared(Harness::record(
         harness.pids[0],
         &["--spectateclient=12", "--devserver=example.test"],
     ));
-    harness
-        .sink
-        .until(WAIT, |events| events.identified.len() == 1);
-    harness.host.destroy_all(WAIT);
-    let events = harness.sink.events.lock().unwrap();
-    let (_, settings) = events.identified.values().next().unwrap();
-    assert!(settings.tournament_spectator);
-    assert_eq!(settings.tournament_ipc_id, Some(12.0));
-    assert_eq!(
-        settings.devserver_endpoint.as_deref(),
-        Some(std::ffi::OsStr::new("example.test"))
-    );
+    let sessions = ready(&harness, 1);
+    eventually(|| {
+        harness
+            .host
+            .state()
+            .store
+            .current(SessionKey(sessions[0].handle))
+            .is_some_and(|state| {
+                state
+                    .get("vosu.osu", &Pointer::parse("/session").unwrap())
+                    .is_some()
+            })
+    });
+    let state = harness
+        .host
+        .state()
+        .store
+        .current(SessionKey(sessions[0].handle))
+        .unwrap();
+    let mut bytes = Vec::new();
+    state
+        .get("vosu.osu", &Pointer::parse("/session").unwrap())
+        .unwrap()
+        .write_json(&mut bytes);
+    let session: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(session["ipcId"], 12.0);
+    assert_eq!(session["server"], "example.test");
     assert!(!DECLINES.lock().unwrap().contains(&DetachReason::Declined));
+    harness.host.destroy_all(WAIT);
     assert_dispatches_ok();
 }
 
@@ -248,35 +284,46 @@ fn spectator_devserver_settings_reach_b1() {
 /// by appearance. The real plugin must retire the old lifecycle generation.
 #[test]
 fn explicit_exit_then_appearance_advances_plugin_generation() {
-    let harness = Harness::new("test.osu.p7.generation", 0x7a00_0500, 1);
+    use vosu_core::state::SessionKey;
+    let harness = Harness::new("vosu.osu", 0x7a00_0500, 1);
     let pid = harness.pids[0];
     harness.host.process_appeared(Harness::record(pid, &[]));
-    harness
-        .sink
-        .until(WAIT, |events| !events.published.is_empty());
-    let old = *harness
-        .sink
-        .events
-        .lock()
-        .unwrap()
-        .attached
-        .first()
-        .unwrap();
+    let old = ready(&harness, 1).remove(0);
+    eventually(|| harness.memory.plans.load(Ordering::Relaxed) > 0);
+    let previous_plans = harness.memory.plans.load(Ordering::Relaxed);
     harness.host.process_exited(pid);
-    harness
-        .sink
-        .until(WAIT, |events| events.detached.contains(&old));
-    harness.host.process_appeared(Harness::record(pid, &[]));
-    harness.sink.until(WAIT, |events| {
-        events.identified.len() == 2 && events.published.len() == 2
+    eventually(|| {
+        harness
+            .host
+            .state()
+            .store
+            .current(SessionKey(old.handle))
+            .is_none()
     });
+    harness.host.process_appeared(Harness::record(pid, &[]));
+    let next = ready(&harness, 1).remove(0);
+    eventually(|| harness.memory.plans.load(Ordering::Relaxed) > previous_plans);
+    assert_eq!(old.pid, next.pid);
+    assert_ne!(old.handle, next.handle);
     harness.host.destroy_all(WAIT);
-    let events = harness.sink.events.lock().unwrap();
-    let keys: Vec<_> = events.identified.keys().copied().collect();
-    assert_eq!(keys[0].pid, keys[1].pid);
-    assert_ne!(keys[0].generation, keys[1].generation);
-    assert_eq!(events.detached.len(), 2);
-    assert!(!events.late_publish);
+    assert_eq!(ATTACHES.lock().unwrap().get(&pid), Some(&2));
+    assert_eq!(DECLINES.lock().unwrap().len(), 1);
+    assert!(
+        harness
+            .host
+            .state()
+            .store
+            .current(SessionKey(old.handle))
+            .is_none()
+    );
+    assert!(
+        harness
+            .host
+            .state()
+            .store
+            .current(SessionKey(next.handle))
+            .is_none()
+    );
     assert_dispatches_ok();
 }
 
@@ -305,7 +352,7 @@ impl ProcessMemory for CountedMemory {
 /// host's cached memory exactly once, without needing host destruction.
 #[test]
 fn duplicate_discovery_and_removal_close_memory_once() {
-    let harness = Harness::new("test.osu.p7.idempotent", 0x7a00_0600, 1);
+    let harness = Harness::new("vosu.osu", 0x7a00_0600, 1);
     let pid = harness.pids[0];
     let drops = Arc::new(AtomicUsize::new(0));
     test_support::clear_session_memory(pid);
@@ -320,9 +367,8 @@ fn duplicate_discovery_and_removal_close_memory_once() {
     for _ in 0..2 {
         harness.host.process_appeared(Harness::record(pid, &[]));
     }
-    harness
-        .sink
-        .until(WAIT, |events| !events.published.is_empty());
+    let session = ready(&harness, 1).remove(0);
+    eventually(|| harness.memory.plans.load(Ordering::Relaxed) > 0);
     test_support::clear_session_memory(pid);
     assert_eq!(
         drops.load(Ordering::SeqCst),
@@ -332,15 +378,21 @@ fn duplicate_discovery_and_removal_close_memory_once() {
     for _ in 0..2 {
         harness.host.process_exited(pid);
     }
-    harness
-        .sink
-        .until(WAIT, |events| events.detached.len() == 1);
     eventually(|| drops.load(Ordering::SeqCst) == 1);
+    // Cache eviction precedes asynchronous terminal delivery. Observe both
+    // before destroying the instance, which may retire its queued deliveries.
+    eventually(|| DECLINES.lock().unwrap().as_slice() == [DetachReason::Exited]);
     harness.host.destroy_all(WAIT);
-    let events = harness.sink.events.lock().unwrap();
-    assert_eq!(events.identified.len(), 1);
-    assert_eq!(events.detached.len(), 1);
+    assert_eq!(ATTACHES.lock().unwrap().get(&pid), Some(&1));
+    assert_eq!(DECLINES.lock().unwrap().len(), 1);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert!(!events.late_publish);
+    assert!(
+        harness
+            .host
+            .state()
+            .store
+            .current(vosu_core::state::SessionKey(session.handle))
+            .is_none()
+    );
     assert_dispatches_ok();
 }

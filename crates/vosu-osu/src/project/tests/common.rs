@@ -275,7 +275,7 @@ fn beatmap_metadata_rows_and_missing_parsed_defaults() {
     assert_eq!(b["isConvert"], true);
     assert_eq!(
         b["time"],
-        json!({"live":123.5,"firstObject":100,"lastObject":0.0,"mp3Length":5000.0,"rate":1.0,"running":null})
+        json!({"live":123.5,"firstObject":100,"lastObject":0.0,"mp3Length":5000.0,"rate":1.0,"running":null,"firstHitObject":null,"preview":null})
     );
     for (chart, value) in [
         ("artist", "artist"),
@@ -325,7 +325,7 @@ fn projection_is_allocation_free_after_warmup() {
 fn parsed_sample() -> StateBundleSnapshot {
     use vosu_osu_calc::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
     let content = "osu file format v14\n[General]\nMode:0\n[Metadata]\nSource:source text\nTags:tag1 tag2\n[Difficulty]\nCircleSize:4\nOverallDifficulty:8\nApproachRate:9\nHPDrainRate:5\n[TimingPoints]\n0,500,4,2,1,80,1,0\n[HitObjects]\n64,192,1000,1,0,0:0:0:0:\n128,192,2000,1,0,0:0:0:0:\n";
-    let mut cache = BeatmapCache::new(vosu_osu_state::state_backend::LiveBeatmapEngine);
+    let mut cache = BeatmapCache::new(vosu_osu_calc::live_beatmap::LiveBeatmapEngine);
     let mut parsed = cache
         .load(
             BeatmapInput::Content {
@@ -649,7 +649,7 @@ fn optional_stats_omit_only_missing_components_and_match_embedded_schema() {
         json!({"live":7.89,"total":6.12,"flashlight":3.12,"sliderFactor":4.12,"stamina":5.12,"rhythm":6.12,"color":7.12,"hitWindow":50.12})
     );
     let schema: Value = serde_json::from_str(crate::OSU_NAMESPACE_SCHEMA).unwrap();
-    assert_eq!(schema["version"], "1.2.0");
+    assert_eq!(schema["version"], "1.3.0");
     assert_eq!(
         schema["$defs"]["stats"]["properties"]["stars"]["properties"]["hitWindow"],
         json!({"type":"number"})
@@ -666,4 +666,26 @@ fn optional_stats_omit_only_missing_components_and_match_embedded_schema() {
             assert!(value.is_number(), "{group}.{key}");
         }
     }
+}
+
+#[test]
+fn parsed_source_times_and_selection_mode_are_independent() {
+    let mut s = parsed_sample();
+    let r = Arc::make_mut(&mut s.regular);
+    r.menu.gamemode = Some(1);
+    r.gameplay.mode = 2;
+    r.beatmap.mode = Some(3);
+    r.beatmap.first_object_time = Some(101);
+    r.global.is_watching_replay = true;
+    let p = Arc::make_mut(r.beatmap.parsed.as_mut().unwrap());
+    p.times.first_object = 203;
+    p.times.preview = 307;
+    let d = document(&s, &facts());
+    assert_eq!(d["vosu.osu"]["beatmap"]["selectionMode"], 1);
+    assert_eq!(d["vosu.osu"]["beatmap"]["mode"]["number"], 3);
+    assert_eq!(s.regular.gameplay.mode, 2);
+    assert_eq!(d["vosu.osu"]["beatmap"]["time"]["firstObject"], 101);
+    assert_eq!(d["vosu.osu"]["beatmap"]["time"]["firstHitObject"], 203);
+    assert_eq!(d["vosu.osu"]["beatmap"]["time"]["preview"], 307);
+    assert_eq!(d["vosu.osu"]["session"]["watchingReplay"], true);
 }

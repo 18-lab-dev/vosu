@@ -130,14 +130,15 @@ fn hit_error_arrays_are_whole_values() {
 }
 
 #[test]
-fn keys_all_only() {
+fn logical_keys_and_unavailable_overlay_are_separate() {
     let mut s = fixture();
     let doc = collect(&s);
     assert_eq!(
         doc["/keys/all"],
         json!([{"name":"B1", "isPressed":true, "count":19, "pressedAt":12.5, "releasedAt":null}])
     );
-    assert_eq!(doc.keys().filter(|k| k.starts_with("/keys/")).count(), 1);
+    assert_eq!(doc.keys().filter(|k| k.starts_with("/keys/")).count(), 2);
+    assert!(doc["/keys/overlay"].is_null());
     Arc::make_mut(&mut s.precise).keypresses = Arc::new(Vec::new());
     assert_eq!(collect(&s)["/keys/all"], json!([]));
 }
@@ -343,6 +344,7 @@ fn graph_published_once_per_change() {
         r.beatmap.pp_acc.insert(n, f64::from(n) + 0.12345);
     }
     let graph = Arc::make_mut(&mut r.beatmap.graph);
+    graph.primary = vec![9.5, 8.25];
     graph.series.push(vosu_osu_calc::beatmap::GraphSeries {
         name: "Aim".into(),
         data: vec![1.25, 2.5],
@@ -365,7 +367,7 @@ fn graph_published_once_per_change() {
         .filter(|e| expected.contains(e.pointer))
         .map(|e| e.pointer)
         .collect();
-    assert_eq!(actual.len(), 19);
+    assert_eq!(actual.len(), 28);
     assert_eq!(actual, expected);
     let doc = collect(&s);
     for n in 90..=100 {
@@ -376,7 +378,7 @@ fn graph_published_once_per_change() {
     }
     assert_eq!(
         doc["/performance/graph"],
-        json!({"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[]})
+        json!({"primary":[9.5,8.25],"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[]})
     );
     writer.begin(4);
     projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
@@ -396,7 +398,17 @@ fn graph_published_once_per_change() {
     );
     assert_eq!(
         collect(&s)["/performance/graph"],
-        json!({"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[1.5]})
+        json!({"primary":[9.5,8.25],"series":[{"name":"Aim","data":[1.25,2.5]},{"name":"Speed","data":[3.75,4.5]}],"xaxis":[1.5]})
+    );
+    Arc::make_mut(&mut Arc::make_mut(&mut s.regular).beatmap.graph)
+        .primary
+        .push(7.125);
+    writer.begin(4);
+    projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
+    assert_eq!(writer.len(), 1);
+    assert_eq!(
+        collect(&s)["/performance/graph"]["primary"],
+        json!([9.5, 8.25, 7.125])
     );
 }
 
@@ -512,7 +524,7 @@ fn mods_settings_preserve_json_values_and_integer_extremes() {
 #[test]
 fn embedded_schema_requires_the_good_statistics_count() {
     let schema: Value = serde_json::from_str(crate::OSU_NAMESPACE_SCHEMA).unwrap();
-    assert_eq!(schema["version"], "1.2.0");
+    assert_eq!(schema["version"], "1.3.0");
     assert_eq!(
         schema["$defs"]["statistics"]["properties"]["good"]["type"],
         "integer"
@@ -525,3 +537,9 @@ fn embedded_schema_requires_the_good_statistics_count() {
             .any(|v| v == "good")
     );
 }
+
+#[path = "fidelity.rs"]
+mod fidelity;
+
+#[path = "p1b.rs"]
+mod p1b;

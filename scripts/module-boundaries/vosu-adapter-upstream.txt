@@ -1,0 +1,15 @@
+calculate -> files
+files -> view
+precise -> dto
+precise -> source
+precise -> view
+precise -> wire
+regular -> dto
+regular -> paths
+regular -> source
+regular -> view
+regular -> wire
+source -> dto
+wire -> dto
+provider -> precise
+provider -> regular

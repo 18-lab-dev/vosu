@@ -2,7 +2,7 @@
 use super::*;
 /// Prepare the action target before making it public through SESSION_IDENTIFY.
 /// B2 settings/control delivery remains serialized by PluginState; no host call
-/// runs under that lock. Capture/B1 and lazer resolution start only after the
+/// runs under that lock. Capture and lazer resolution start only after the
 /// host accepts identification. Rejection rolls back the prepared session.
 #[expect(
     clippy::too_many_arguments,
@@ -59,6 +59,29 @@ where
             alive,
         }),
     );
+    let tournament = {
+        let state = state.lock().expect("plugin state mutex poisoned");
+        let manager = state.attached_facts.get(&handle).is_some_and(|attached| {
+            let args = attached
+                .argv
+                .as_ref()
+                .map(|argv| {
+                    vosu_osu_reader::discovery::StartupArgs::parse(
+                        argv.iter().map(std::ffi::OsString::from),
+                    )
+                })
+                .or_else(|| {
+                    attached
+                        .command_line
+                        .as_deref()
+                        .map(vosu_osu_reader::discovery::StartupArgs::parse_command_line)
+                });
+            args.is_some_and(|args| args.get("tournament").is_some())
+        });
+        session.set_tournament_manager(manager);
+        Arc::clone(&state.tournament)
+    };
+    let _ = session.tournament.set(Arc::clone(&tournament));
     if identified.client == ClientType::Lazer {
         let attached = state
             .lock()
@@ -72,7 +95,7 @@ where
             let _ = session.import_context.set((attached, context));
         }
     }
-    session.configure_publication(Arc::clone(host), runtime_handle);
+    session.configure_publication(Arc::clone(host));
     let stream_ids = state
         .lock()
         .expect("plugin state mutex poisoned")
@@ -91,6 +114,10 @@ where
                     controls.precise,
                     controls.collect_errors,
                 );
+                publication
+                    .demand
+                    .tournament
+                    .request(controls.tourney.0, controls.tourney.1);
             }
             state.sessions.insert(handle, Arc::clone(&session));
             true
@@ -132,6 +159,35 @@ where
         });
         return identification.map(|_| ());
     }
+    let _ = session
+        .publication
+        .get()
+        .expect("publication configured")
+        .bus
+        .tournament
+        .set((Arc::clone(&tournament), handle));
+    if session.client == ClientType::Stable {
+        tournament.attach(
+            &session
+                .publication
+                .get()
+                .expect("publication configured")
+                .bus,
+            handle,
+            session.is_tournament_manager(),
+            session.settings.clone(),
+            crate::publish::tournament::Controls {
+                selected: Arc::clone(&session.selected),
+                demand: session
+                    .publication
+                    .get()
+                    .expect("publication configured")
+                    .demand
+                    .tournament
+                    .clone(),
+            },
+        );
+    }
     if identified.client == ClientType::Lazer {
         let loader = Arc::clone(loader);
         let warn = log_warn(host);
@@ -140,7 +196,6 @@ where
         });
     }
     if registered {
-        let sink = vosu_surface::current::<B1Event, B1Inputs>();
         let warn = log_warn(host);
         let error = log_error(host);
         let session = {
@@ -149,7 +204,7 @@ where
         };
         if let Some(session) = session {
             runtime_handle.spawn(async move {
-                session.start_capture(sink, warn, error).await;
+                session.start_capture(warn, error).await;
             });
         }
     }

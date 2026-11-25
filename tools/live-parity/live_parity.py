@@ -17,7 +17,9 @@ SCHEMAS = {
 }
 PINNED_SOURCE_REVISION = "2359305a63f2aaebb201bc8d2eee58177f52590e"
 PINNED_SOURCE_VERSION = "4.26.2"
-PINNED_VOSU_VERSION = "1.2.5"
+# The bus-backed 2.0 adapters. Their wire must equal the pinned upstream
+# reference: ADR 0021 removed every 1.x extension, so none is exempted below.
+PINNED_VOSU_VERSION = "2.0.0-alpha.1"
 SOURCE_BUILD_LABEL = (
     f"upstream-tosu-source-v{PINNED_SOURCE_VERSION}@{PINNED_SOURCE_REVISION[:12]}"
 )
@@ -329,35 +331,6 @@ def _within_one_ulp(left: float, right: float) -> bool:
     )
 
 
-def _is_vosu_extension(schema: str, parts: tuple[str, ...]) -> bool:
-    """Exact additive API paths documented in CHANGELOG 1.0.0, not wildcards."""
-    if schema == "precise":
-        if len(parts) >= 3 and parts[0] == "tourney" and parts[1].isdigit():
-            parts = parts[2:]
-        return parts in {
-            ("pressHitErrors",), ("releaseHitErrors",), ("keys", "all")}
-    if schema == "v2":
-        if (
-                len(parts) == 5 and parts[:2] == ("tourney", "clients")
-                and parts[2].isdigit() and parts[3] == "play"):
-            parts = parts[3:]
-        return parts in {
-            ("play", "pressHitErrors"), ("play", "releaseHitErrors"),
-            ("keys",), ("keys", "all")}
-    if schema == "v1":
-        if (
-                len(parts) == 6 and parts[:2] == ("tourney", "ipcClients")
-                and parts[2].isdigit()):
-            parts = parts[3:]
-        return parts in {
-            ("gameplay", "hits", "pressHitErrors"),
-            ("gameplay", "hits", "releaseHitErrors")}
-    if schema == "sc":
-        return parts in {("pressHitErrors",), ("releaseHitErrors",)}
-    return False
-
-
-
 def compare_pair(
         left: Sample, right: Sample, alignment_window_ms: int,
         active_override: bool | None = None,
@@ -423,8 +396,7 @@ def compare_pair(
                 if has_observable(value, parts + (key,))}
             observable_b = {
                 key for key, value in b.items()
-                if (key in a or not _is_vosu_extension(left.schema, parts + (key,)))
-                and has_observable(value, parts + (key,))}
+                if has_observable(value, parts + (key,))}
             if observable_a != observable_b:
                 add(parts, "keys", sorted(observable_a), sorted(observable_b),
                     "object key set differs")

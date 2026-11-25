@@ -299,12 +299,23 @@ fn development_settings_schema_is_read_from_the_manifest_dir() {
 
 #[test]
 fn bundled_echo_create_dispatch_destroy() {
+    // The required adapters in BUNDLED need `vosu.osu`'s fields, which only
+    // composition's bundled-provider snapshot supplies; load the echo entry.
+    let echo_entry: Vec<_> = vosu::plugins::BUNDLED
+        .iter()
+        .filter(|entry| {
+            vosu_plugin_api::manifest::PackageManifest::parse(entry.manifest)
+                .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+                .is_ok_and(|manifest| manifest.id == "vosu.testkit.echo")
+        })
+        .cloned()
+        .collect();
     let loaded = plugin::load_bundled(
         &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
         &vosu_core::plugin::ValidationSnapshot::default(),
-        vosu::plugins::BUNDLED,
+        &echo_entry,
     )
-    .expect("loading vosu::plugins::BUNDLED");
+    .expect("loading the BUNDLED echo entry");
     let echo = loaded
         .iter()
         .find(|plugin| plugin.manifest().id == "vosu.testkit.echo")

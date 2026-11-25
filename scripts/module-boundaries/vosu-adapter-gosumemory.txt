@@ -1,0 +1,8 @@
+tourney -> model
+tourney -> view
+wire -> helpers
+wire -> tourney
+wire -> view
+view -> number
+provider -> view
+provider -> model

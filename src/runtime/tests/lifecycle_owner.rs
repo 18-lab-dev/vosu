@@ -1,8 +1,6 @@
 use super::*;
 use vosu_core::logging::ConsoleSink;
 use vosu_core::plugin::{DiscoveryService, ProcessRecord, ProcessSource, WorkerPool};
-use vosu_osu::bridge_b1::{B1Event, B1Inputs};
-use vosu_surface::LegacySink;
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -52,10 +50,6 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             config,
             logger,
             paths: crate::runtime::tests::runtime_test_paths(root),
-            snapshots: Arc::new(SnapshotProviders::new(
-                Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default())),
-                Arc::new(ProductionSnapshotEncoder),
-            )),
             shutdown_token: CancellationToken::new(),
             signal_task: AsyncMutex::new(None),
             startup_readiness: None,
@@ -83,10 +77,9 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
                 .unwrap(),
             ),
             hubs: AsyncMutex::new(None),
+            adapters: AsyncMutex::new(None),
             processor: AsyncMutex::new(None),
             relays: AsyncMutex::new(None),
-            bridge: AsyncMutex::new(None),
-            bridge_installed: AsyncMutex::new(None),
             ordinary_role: false,
             tray: AsyncMutex::new(None),
             discovery: AsyncMutex::new(None),
@@ -107,11 +100,19 @@ async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_service
         // Deterministically make create_instance fail, without a process-global
         // fault switch or a different production plugin loading path.
         owner.plugins.destroy_all(Duration::ZERO);
-        *owner.hubs.get_mut() = Some(WebSocketHubs::start(
-            owner.snapshots.clone(),
-            owner.snapshots.clone(),
-            Duration::ZERO,
-        ));
+        struct NoState;
+        impl WebSocketStateProvider for NoState {
+            fn poll_rate(&self, _: WebSocketSchema) -> Duration {
+                Duration::from_millis(10)
+            }
+            fn subscribe(&self, _: WebSocketSchema) -> watch::Receiver<u64> {
+                watch::channel(0).1
+            }
+            fn capture(&self, _: WebSocketSchema) -> Option<Arc<dyn WebSocketStateSnapshot>> {
+                None
+            }
+        }
+        *owner.hubs.get_mut() = Some(WebSocketHubs::start(Arc::new(NoState)));
         let error = owner.compose().await.unwrap_err();
         assert!(
             error
@@ -158,16 +159,8 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
             .is_err()
         );
         assert!(!owner.plugins.has_enabled_matchers());
-        let entries = [
-            vosu_core::plugin::BundledPlugin {
-                manifest: vosu_osu::MANIFEST,
-                settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
-                namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
-                action_schemas: vosu_osu::ACTION_SCHEMAS,
-                vtable: vosu_osu::vosu_plugin_vtable,
-            },
-            broken,
-        ];
+        let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
+        entries.push(broken);
         assert_eq!(
             dev_plugins::load_bundled(
                 &owner.plugins,
@@ -178,7 +171,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &[]
             )
             .unwrap(),
-            2
+            5
         );
         assert!(owner.plugins.has_enabled_matchers());
         owner.shutdown().await.unwrap();
@@ -187,7 +180,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 .0
                 .lock()
                 .unwrap()
-                .contains("optional bundled plugin at index 1 failed")
+                .contains("optional bundled plugin at index 4 failed")
         );
     })
     .await
@@ -217,59 +210,15 @@ impl ProcessSource for Source {
     }
 }
 
-struct ObserveDetach {
-    bridge: Arc<bridge_b1::LegacyBridge>,
-    discovery_stopped: Arc<AtomicBool>,
-    ordered_detach: AtomicBool,
-}
-impl LegacySink<B1Event, B1Inputs> for ObserveDetach {
-    fn inputs(&self) -> watch::Receiver<B1Inputs> {
-        self.bridge.inputs()
-    }
-    fn send(&self, event: B1Event) {
-        if let B1Event::Detached { key } = &event {
-            // A bridge closed before destroy has already cleared its roster;
-            // a discovery service stopped after destroy still owns its Source.
-            let was_attached = self
-                .bridge
-                .lifecycle()
-                .borrow()
-                .sessions
-                .iter()
-                .any(|s| s.pid == key.pid && s.generation == key.generation);
-            self.ordered_detach.store(
-                was_attached && self.discovery_stopped.load(Ordering::Acquire),
-                Ordering::Release,
-            );
-        }
-        self.bridge.send(event);
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
         let (mut owner, console) = owner(root.path()).await;
-        let (_demand, demand) = watch::channel(Default::default());
-        let bridge = bridge_b1::LegacyBridge::new(
-            owner.config.subscribe_current(),
-            demand,
-            owner.snapshots.clone(),
-            owner.logger.clone(),
-        );
         let stopped = Arc::new(AtomicBool::new(false));
-        let sink = Arc::new(ObserveDetach {
-            bridge: bridge.clone(),
-            discovery_stopped: stopped.clone(),
-            ordered_detach: AtomicBool::new(false),
-        });
-        *owner.bridge_installed.get_mut() = Some(vosu_surface::install(sink.clone()).unwrap());
-        *owner.bridge.get_mut() = Some(bridge.start(owner.plugins.subscribe_foreground()));
-        let mut lifecycle = bridge.lifecycle();
         dev_plugins::load_all(&owner.plugins, vec![], &owner.paths, &owner.logger).unwrap();
         let source = Arc::new(super::super::discovery::operational::LoggedSource::new(
-            Arc::new(Source(stopped)),
+            Arc::new(Source(stopped.clone())),
             owner.logger.clone(),
         ));
         *owner.discovery.get_mut() = Some(DiscoveryService::start(
@@ -277,33 +226,158 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
             source,
             Handle::current(),
         ));
-        while lifecycle.borrow_and_update().sessions.is_empty() {
-            lifecycle.changed().await.unwrap();
+        loop {
+            if !owner.plugins.diagnostic_sessions().is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
         }
-        assert_eq!(lifecycle.borrow().sessions[0].pid, 0x7c30_0001);
-        owner.shutdown().await.unwrap();
-        assert!(
-            sink.ordered_detach.load(Ordering::Acquire),
-            "discovery must stop before plugin detach, while the bridge remains open"
-        );
-        assert!(lifecycle.borrow().sessions.is_empty());
+        let sessions = owner.plugins.diagnostic_sessions();
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions[0];
+        assert_eq!(session.pid, 0x7c30_0001);
+        assert_eq!(session.bitness, vosu_plugin_api::Bitness::X86);
+        assert_eq!(session.state, "starting reader");
+        assert!(!session.session.is_empty());
+        let plugins = owner.plugins.clone();
+        owner
+            .shutdown_with_plugin_destroy(async move {
+                assert!(
+                    stopped.load(Ordering::Acquire),
+                    "discovery stops before plugin destruction"
+                );
+                tokio::task::spawn_blocking(move || {
+                    plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+                })
+                .await
+                .map_err(io::Error::other)
+            })
+            .await
+            .unwrap();
+        assert!(owner.plugins.diagnostic_sessions().is_empty());
         assert!(owner.discovery.lock().await.is_none());
-        assert!(owner.bridge.lock().await.is_none());
-        assert!(vosu_surface::current::<B1Event, B1Inputs>().is_none());
         {
             let output = console.0.lock().unwrap();
-            assert!(output.contains(&format!(
-                "Found osu! process PID {} (Stable); probing memory",
-                0x7c30_0001
-            )));
             assert!(
                 output.contains("Initial process discovery completed: 1 osu! process candidate(s)")
             );
         }
-        lifecycle.borrow_and_update();
-        drop(sink);
-        drop(bridge);
-        assert!(lifecycle.changed().await.is_err());
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let (owner, _) = owner(root.path()).await;
+        let pool = WorkerPool::new(2, 65536);
+        dev_plugins::load_bundled(
+            &owner.plugins,
+            &owner.paths,
+            &owner.logger,
+            &pool,
+            crate::plugins::BUNDLED,
+            &[],
+        )
+        .unwrap();
+        let (adapters, hubs) = adapters::Adapters::start(&owner.plugins, owner.config.clone())
+            .await
+            .unwrap();
+        let router = adapters.router(owner.plugins.clone());
+        for path in [
+            "/json",
+            "/json/sc",
+            "/json/v2",
+            "/json/v2/precise",
+            "/Songs/missing",
+            "/files/beatmap/file",
+            "/api/calculate/pp",
+        ] {
+            let request = axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            assert_eq!(
+                router.http(&request).await.status(),
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "{path}"
+            );
+        }
+        use vosu_surface::{
+            listener::ListenerRole,
+            routes::{ProviderResponse, RegistrationError, RouteDescriptor, RoutePath},
+        };
+        let requester = owner
+            .plugins
+            .surface_requester(vosu_core::plugin::PluginInstanceId::new(1))
+            .unwrap();
+        let conflict = requester.register_routes(vec![(
+            RouteDescriptor {
+                listener: ListenerRole::Overlay,
+                method: "GET".into(),
+                path: RoutePath::Exact("/api/v1/sessions".into()),
+                websocket: false,
+            },
+            Arc::new(crate::server::service::RegisteredProvider::Calculate(
+                Default::default(),
+            )),
+        )]);
+        assert!(matches!(conflict, Err(RegistrationError::Collision)));
+        let mut feeds = Vec::new();
+        for path in ["/ws", "/tokens", "/websocket/v2", "/websocket/v2/precise"] {
+            let request = axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let Some(ProviderResponse::Feed(feed)) = router.dispatch(&request, true).await else {
+                panic!("missing registered feed: {path}");
+            };
+            feeds.push(feed);
+        }
+        adapters.shutdown().await.unwrap();
+        assert!(feeds.iter().all(|feed| feed.state.is_closed()));
+        let request = axum::http::Request::builder()
+            .uri("/json/v2")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            router.http(&request).await.status(),
+            axum::http::StatusCode::NOT_FOUND
+        );
+        drop(feeds);
+        hubs.shutdown().await;
+        owner.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
+    tokio::time::timeout(WAIT, async {
+        for omitted in 0..dev_plugins::REQUIRED.len() {
+            let root = tempfile::tempdir().unwrap();
+            let (owner, _) = owner(root.path()).await;
+            let pool = WorkerPool::new(2, 65536);
+            let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
+            entries.remove(omitted);
+            assert!(
+                dev_plugins::load_bundled(
+                    &owner.plugins,
+                    &owner.paths,
+                    &owner.logger,
+                    &pool,
+                    &entries,
+                    &[]
+                )
+                .is_err(),
+                "required slot {omitted}"
+            );
+            assert!(!owner.plugins.has_enabled_matchers());
+            owner.shutdown().await.unwrap();
+        }
     })
     .await
     .unwrap();

@@ -16,6 +16,8 @@ workspace = true
 # Per-crate test-harness seam (mirrors vosu-core, vosu-osu-state): never
 # enabled in a release build (src/lib.rs's `compile_error!` guard).
 test-harness = []
+# Instance-owned production-publisher fixtures, including release benchmarks.
+bench-harness = []
 
 [dependencies]
 arc-swap = "1.8.2"
@@ -29,7 +31,6 @@ vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-osu-reader = { path = "../vosu-osu-reader" }
 vosu-osu-state = { path = "../vosu-osu-state" }
 vosu-plugin-api = { path = "../vosu-plugin-api", features = ["bundled", "unstable-sync-reads"] }
-vosu-surface = { path = "../vosu-surface" }
 tempfile = "3.26.0"
 thiserror = "2.0.18"
 rosu-map = "=0.2.1"

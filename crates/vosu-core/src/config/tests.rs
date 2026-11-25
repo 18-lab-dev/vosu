@@ -78,13 +78,8 @@ SHOW_MP_COMMANDS = false
 CALCULATE_PP = true
 READ_MANIA_SCROLL_SPEED = true
 
-ENABLE_KEY_OVERLAY = true
-
-ENABLE_MANIA_KEY_HIT_ERRORS = false
-ENABLE_HIT_OFFSETS = false
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
-V2_SUBSCRIPTION_DEBOUNCE = 1.0
 API_V1_SUBSCRIPTION_DEBOUNCE = 1.0
 
 SERVER_IP = \"127.0.0.1\"
@@ -113,12 +108,8 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "START_AT_LOGIN",
             "DEBUG_LOG",
             "CALCULATE_PP",
-            "ENABLE_KEY_OVERLAY",
-            "ENABLE_MANIA_KEY_HIT_ERRORS",
-            "ENABLE_HIT_OFFSETS",
             "POLL_RATE",
             "PRECISE_DATA_POLL_RATE",
-            "V2_SUBSCRIPTION_DEBOUNCE",
             "API_V1_SUBSCRIPTION_DEBOUNCE",
             "SHOW_MP_COMMANDS",
             "READ_MANIA_SCROLL_SPEED",
@@ -133,39 +124,35 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
 }
 
 #[test]
-fn mania_key_hit_errors_defaults_off_and_round_trips() {
-    assert!(
-        !ConfigDocument::parse("")
-            .unwrap()
-            .config()
-            .enable_mania_key_hit_errors
-    );
-    let document = ConfigDocument::parse("ENABLE_MANIA_KEY_HIT_ERRORS = true\n").unwrap();
-    assert!(document.config().enable_mania_key_hit_errors);
-    assert!(
-        ConfigDocument::parse(&document.serialize())
-            .unwrap()
-            .config()
-            .enable_mania_key_hit_errors
-    );
-}
-
-#[test]
-fn hit_offsets_defaults_off_and_round_trips() {
-    assert!(
-        !ConfigDocument::parse("")
-            .unwrap()
-            .config()
-            .enable_hit_offsets
-    );
-    let document = ConfigDocument::parse("ENABLE_HIT_OFFSETS = true\n").unwrap();
-    assert!(document.config().enable_hit_offsets);
-    assert!(
-        ConfigDocument::parse(&document.serialize())
-            .unwrap()
-            .config()
-            .enable_hit_offsets
-    );
+fn retired_keys_have_no_schema_or_runtime_storage() {
+    for key in [
+        "ENABLE_KEY_OVERLAY",
+        "ENABLE_MANIA_KEY_HIT_ERRORS",
+        "ENABLE_HIT_OFFSETS",
+        "V2_SUBSCRIPTION_DEBOUNCE",
+    ] {
+        let mut document = ConfigDocument::parse(&format!("{key} = true\n")).unwrap();
+        assert_eq!(document.config(), &Config::default());
+        assert!(
+            !DEFAULT_SCHEMA
+                .items()
+                .iter()
+                .any(|item| item.binding == key)
+        );
+        assert!(
+            !document
+                .serialize()
+                .lines()
+                .any(|line| line.starts_with(key))
+        );
+        assert!(
+            document
+                .refresh(&format!("{key} = \"ignored\"\n"))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(document.config(), &Config::default());
+    }
 }
 
 #[test]
@@ -304,7 +291,7 @@ fn schema_minima_are_clamped() {
             "\
 POLL_RATE = -5.0
 PRECISE_DATA_POLL_RATE = 0.0
-V2_SUBSCRIPTION_DEBOUNCE = -0.25
+API_V1_SUBSCRIPTION_DEBOUNCE = -0.25
 SERVER_PORT = -1.5
 ",
         )
@@ -312,14 +299,14 @@ SERVER_PORT = -1.5
 
     assert_eq!(document.config().poll_rate, 100.0);
     assert_eq!(document.config().precise_data_poll_rate, 1.0);
-    assert_eq!(document.config().v2_subscription_debounce, 1.0);
+    assert_eq!(document.config().api_v1_subscription_debounce, 1.0);
     assert_eq!(document.config().server_port, -1.5);
 }
 
 #[test]
 fn oversized_disk_intervals_are_bounded_before_publication() {
     let document = ConfigDocument::parse(
-        "POLL_RATE = 1e100\nPRECISE_DATA_POLL_RATE = 1e300\nV2_SUBSCRIPTION_DEBOUNCE = 1e200\n",
+        "POLL_RATE = 1e100\nPRECISE_DATA_POLL_RATE = 1e300\nAPI_V1_SUBSCRIPTION_DEBOUNCE = 1e200\n",
     )
     .unwrap();
     assert_eq!(document.config().poll_rate, ConfigDocument::MAX_INTERVAL_MS);
@@ -328,7 +315,7 @@ fn oversized_disk_intervals_are_bounded_before_publication() {
         ConfigDocument::MAX_INTERVAL_MS
     );
     assert_eq!(
-        document.config().v2_subscription_debounce,
+        document.config().api_v1_subscription_debounce,
         ConfigDocument::MAX_INTERVAL_MS
     );
 }
@@ -394,8 +381,8 @@ UNKNOWN_BINDING = true
     );
     let canonical = toml::from_str::<toml::Table>(std::str::from_utf8(&initial.bytes).unwrap())
         .expect("canonical TOML");
-    assert_eq!(canonical.len(), BINDING_ORDER.len());
-    assert!(!canonical.contains_key("UNKNOWN_BINDING"));
+    assert_eq!(canonical.len(), BINDING_ORDER.len() + 1);
+    assert_eq!(canonical["UNKNOWN_BINDING"].as_bool(), Some(true));
     assert_eq!(
         std::fs::read(&path).expect("read canonical file"),
         initial.bytes
