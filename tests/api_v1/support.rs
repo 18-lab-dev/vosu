@@ -138,10 +138,15 @@ impl Harness {
             }],
         )
         .unwrap();
+        self.create(&loaded[0]);
+    }
+    /// Creates `loaded`, of either runtime, as the next instance with this
+    /// harness's root as its data directory.
+    pub fn create(&mut self, loaded: &plugin::LoadedPlugin) {
         self.host
             .create_instance(
                 PluginInstanceId::new(self.next),
-                &loaded[0],
+                loaded,
                 self.root.path().into(),
                 None,
             )
