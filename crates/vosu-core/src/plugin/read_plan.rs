@@ -843,9 +843,7 @@ impl OutstandingPlans {
     pub fn cancel(&self, plan: vosu_plan_id) -> Option<u64> {
         let (ticket, _released_after_unlock) = {
             let mut state = self.lock();
-            if state.outstanding.remove(&plan).is_none() {
-                return None;
-            }
+            state.outstanding.remove(&plan)?;
             state.cancelled.insert(plan);
             (
                 state.queue_tickets.remove(&plan),
