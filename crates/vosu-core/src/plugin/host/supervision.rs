@@ -73,7 +73,9 @@ impl PluginHost {
                 .register(id, template.clone())
                 .map_err(|refused| match refused {
                     RestartRefused::ShuttingDown => HostError::ShuttingDown,
-                    RestartRefused::Busy | RestartRefused::Unknown => {
+                    RestartRefused::Busy
+                    | RestartRefused::Unknown
+                    | RestartRefused::GenerationChanged => {
                         HostError::State(format!("process instance {} is already running", id.0))
                     }
                 })?;
@@ -194,7 +196,27 @@ impl PluginHost {
     /// is registered or supervised under `id`. Never call it from the
     /// plugin's own dispatch thread, whose drain it waits for.
     pub fn teardown_instance(&self, id: PluginInstanceId) -> Result<(), HostError> {
-        let supervised = self.supervisor.stop(id);
+        self.teardown(id, None)
+    }
+
+    /// The management stop (§7.6): [`Self::teardown_instance`] of process
+    /// instance `id` only while `generation` is still its current one.
+    /// The check and the `Stopped` transition share the supervisor's lock,
+    /// so an automatic restart in between makes it refuse with
+    /// `GenerationChanged` before anything is torn down.
+    pub fn stop_process_generation(
+        &self,
+        id: PluginInstanceId,
+        generation: u64,
+    ) -> Result<(), HostError> {
+        self.teardown(id, Some(generation))
+    }
+
+    fn teardown(&self, id: PluginInstanceId, expected: Option<u64>) -> Result<(), HostError> {
+        let supervised = self
+            .supervisor
+            .stop(id, expected)
+            .map_err(|refused| restart_refused(id, refused))?;
         if let Some(result) = self.stop_live(id) {
             return result;
         }
@@ -227,16 +249,25 @@ impl PluginHost {
     /// resets the crash window and the `failed` latch, cancels any delay,
     /// tears a running generation down, and starts a new generation.
     pub fn restart_process_instance(&self, id: PluginInstanceId) -> Result<(), HostError> {
-        let (template, guard) =
-            self.supervisor
-                .manual_restart(id)
-                .map_err(|refused| match refused {
-                    RestartRefused::Unknown => HostError::UnknownInstance,
-                    RestartRefused::ShuttingDown => HostError::ShuttingDown,
-                    RestartRefused::Busy => {
-                        HostError::State(format!("process instance {} is already starting", id.0))
-                    }
-                })?;
+        self.restart(id, None)
+    }
+
+    /// The management restart (§7.6): [`Self::restart_process_instance`]
+    /// only while `generation` is still the current one, checked under the
+    /// same supervisor lock that begins the new generation.
+    pub fn restart_process_generation(
+        &self,
+        id: PluginInstanceId,
+        generation: u64,
+    ) -> Result<(), HostError> {
+        self.restart(id, Some(generation))
+    }
+
+    fn restart(&self, id: PluginInstanceId, expected: Option<u64>) -> Result<(), HostError> {
+        let (template, guard) = self
+            .supervisor
+            .manual_restart(id, expected)
+            .map_err(|refused| restart_refused(id, refused))?;
         if let Some(Err(error)) = self.stop_live(id) {
             tracing::warn!(?id, %error, "the running generation needed a kill before the manual restart");
         }
@@ -358,4 +389,15 @@ impl PluginHost {
 /// Whether `plugin` runs as a supervised process instance.
 pub(super) fn is_process(plugin: &LoadedPlugin) -> bool {
     matches!(plugin.execution(), Execution::Process(_))
+}
+
+fn restart_refused(id: PluginInstanceId, refused: RestartRefused) -> HostError {
+    match refused {
+        RestartRefused::Unknown => HostError::UnknownInstance,
+        RestartRefused::ShuttingDown => HostError::ShuttingDown,
+        RestartRefused::GenerationChanged => HostError::GenerationChanged,
+        RestartRefused::Busy => {
+            HostError::State(format!("process instance {} is already starting", id.0))
+        }
+    }
 }

@@ -95,6 +95,10 @@ pub enum HostError {
     ProcessStartupFailed(StartupFailure),
     /// The instance's process was reported lost before it was published.
     InstanceLost,
+    /// A manual restart or stop named a process generation that is no
+    /// longer current (an automatic restart, another stop or restart came
+    /// first). Checked under the supervisor's lock, so nothing acted.
+    GenerationChanged,
 }
 
 impl fmt::Display for HostError {
@@ -163,6 +167,7 @@ impl fmt::Display for HostError {
                 write!(f, "plugin-host process did not start: {failure}")
             }
             Self::InstanceLost => write!(f, "the plugin-host process was lost"),
+            Self::GenerationChanged => write!(f, "the plugin's generation changed"),
         }
     }
 }

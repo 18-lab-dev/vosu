@@ -5,6 +5,7 @@
 //! `approval` module.
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -53,11 +54,18 @@ impl ApprovedLaunch for ApprovedLauncher {
     }
 }
 
+/// Owns what the daemon's shutdown would stop. The config store's reload
+/// worker is a blocking task that runs until `ConfigStore::shutdown` (or
+/// its last sender drops), and the runtime's drop waits for every blocking
+/// task, so [`Fixture::shutdown`] must run before the test returns.
 struct Fixture {
     _root: tempfile::TempDir,
     package: tempfile::TempDir,
     store: Arc<ApprovalStore>,
     approved: Arc<Approved>,
+    host: Arc<PluginHost>,
+    config: Arc<vosu_core::config::ConfigStore>,
+    logger: vosu_core::logging::Logger,
     management: Arc<PluginManagement>,
 }
 
@@ -79,9 +87,9 @@ async fn fixture() -> Fixture {
             .unwrap(),
     );
     let host = PluginHost::new(
-        logger,
+        logger.clone(),
         Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
-            plugin::settings::ConfigSettingsBridgeB2::new(settings),
+            plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&settings)),
         ))),
         tokio::runtime::Handle::current(),
     );
@@ -152,17 +160,34 @@ async fn fixture() -> Fixture {
         Some(root.path().join("broken")),
         "manifest.toml: not found".into(),
     );
-    let management = Arc::new(PluginManagement::new(host, Arc::clone(&store), roster));
+    let management = Arc::new(PluginManagement::new(
+        Arc::clone(&host),
+        Arc::clone(&store),
+        roster,
+    ));
     Fixture {
         _root: root,
         package,
         store,
         approved,
+        host,
+        config: settings,
+        logger,
         management,
     }
 }
 
 impl Fixture {
+    /// The daemon's shutdown order: plugins, then config, then logging.
+    async fn shutdown(self) {
+        let host = Arc::clone(&self.host);
+        tokio::task::spawn_blocking(move || host.destroy_all(Duration::from_secs(2)))
+            .await
+            .unwrap();
+        self.config.shutdown().await.unwrap();
+        self.logger.shutdown().await.unwrap();
+    }
+
     async fn call(&self, method: Method, path: &str, body: Value) -> (StatusCode, Value) {
         let request = Request::builder()
             .method(method)
@@ -400,5 +425,6 @@ async fn approval_lifecycle_through_the_management_routes() {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["state"], "running");
         assert_eq!(fixture.launches(), 4);
+        fixture.shutdown().await;
     });
 }

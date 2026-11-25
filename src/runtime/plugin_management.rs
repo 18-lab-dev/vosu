@@ -183,6 +183,15 @@ fn refusal(status: StatusCode, code: &str, message: impl Into<String>) -> Respon
     respond(status, json!({"code": code, "error": message.into()}))
 }
 
+/// A restart or stop named a generation that is no longer current.
+fn generation_changed() -> Response {
+    refusal(
+        StatusCode::CONFLICT,
+        "generation_changed",
+        "the plugin changed since it was shown",
+    )
+}
+
 fn respond(status: StatusCode, value: Value) -> Response {
     let mut response = Response::new(Body::from(value.to_string()));
     *response.status_mut() = status;
@@ -302,7 +311,7 @@ impl PluginManagement {
     }
 
     fn generation(status: Option<&ProcessStatus>) -> u64 {
-        status.map_or(0, |status| status.restarts + 1)
+        status.map_or(0, |status| status.generation)
     }
 
     /// One plugin's list entry.
@@ -499,7 +508,7 @@ impl PluginManagement {
             )
         });
         if !(unchanged && live) {
-            self.start(instance, id);
+            self.start(instance, id, None);
         }
         respond(
             StatusCode::OK,
@@ -508,9 +517,21 @@ impl PluginManagement {
     }
 
     /// A manual restart (§7.6): its outcome is the plugin's new state.
-    fn start(&self, instance: PluginInstanceId, id: &str) -> Option<Response> {
-        match self.host.restart_process_instance(instance) {
+    /// With `generation`, the host refuses unless it is still current,
+    /// under the same lock that begins the next one.
+    fn start(
+        &self,
+        instance: PluginInstanceId,
+        id: &str,
+        generation: Option<u64>,
+    ) -> Option<Response> {
+        let started = match generation {
+            Some(generation) => self.host.restart_process_generation(instance, generation),
+            None => self.host.restart_process_instance(instance),
+        };
+        match started {
             Ok(()) | Err(HostError::ProcessStartupFailed(_) | HostError::InstanceLost) => None,
+            Err(HostError::GenerationChanged) => Some(generation_changed()),
             Err(error @ HostError::State(_)) => {
                 Some(refusal(StatusCode::CONFLICT, "busy", error.to_string()))
             }
@@ -525,12 +546,26 @@ impl PluginManagement {
         }
     }
 
-    /// The controlled teardown of the instance at `index` (§7.6).
-    fn tear_down(&self, index: usize) {
+    /// The controlled teardown of the instance at `index` (§7.6). With
+    /// `generation`, the host refuses unless it is still current, under
+    /// the same lock that marks it stopped.
+    fn tear_down(&self, index: usize, generation: Option<u64>) -> Option<Response> {
         let plugin = &self.roster.0[index];
-        match self.host.teardown_instance(plugin.instance) {
-            Ok(()) | Err(HostError::UnknownInstance) => {}
-            Err(error) => tracing::warn!(instance = ?plugin.instance, %error, "plugin teardown"),
+        let stopped = match generation {
+            Some(generation) => self
+                .host
+                .stop_process_generation(plugin.instance, generation),
+            None => self.host.teardown_instance(plugin.instance),
+        };
+        match stopped {
+            Ok(()) | Err(HostError::UnknownInstance) => None,
+            Err(HostError::GenerationChanged) => Some(generation_changed()),
+            Err(error) => {
+                // The teardown still released the instance; only its
+                // `destroy` grace ran out or a start was slow to retire.
+                tracing::warn!(instance = ?plugin.instance, %error, "plugin teardown");
+                None
+            }
         }
     }
 
@@ -551,12 +586,14 @@ impl PluginManagement {
                 format!("the approval was not removed: {error}"),
             );
         }
-        self.tear_down(index);
+        self.tear_down(index, None);
         respond(StatusCode::OK, self.view(&self.roster.0[index], None))
     }
 
     /// `POST /api/plugins/<id>/restart` and `/stop`: exactly the generation
-    /// the caller saw, of a process instance.
+    /// the caller saw, of a process instance. The host compares it under
+    /// its own lock, so an automatic restart after this request was sent
+    /// refuses it instead of letting it act on the new generation.
     fn lifecycle(&self, index: usize, body: &[u8], restart: bool) -> Response {
         let plugin = &self.roster.0[index];
         let Some(package) = &plugin.package else {
@@ -580,20 +617,13 @@ impl PluginManagement {
                 "expected {\"generation\"}",
             );
         };
-        let status = self.host.process_status(plugin.instance);
-        if input.generation != Self::generation(status.as_ref()) {
-            return refusal(
-                StatusCode::CONFLICT,
-                "generation_changed",
-                "the plugin changed since it was shown",
-            );
-        }
-        if restart {
-            if let Some(refused) = self.start(plugin.instance, &package.id) {
-                return refused;
-            }
+        let refused = if restart {
+            self.start(plugin.instance, &package.id, Some(input.generation))
         } else {
-            self.tear_down(index);
+            self.tear_down(index, Some(input.generation))
+        };
+        if let Some(refused) = refused {
+            return refused;
         }
         respond(StatusCode::OK, self.view(plugin, None))
     }

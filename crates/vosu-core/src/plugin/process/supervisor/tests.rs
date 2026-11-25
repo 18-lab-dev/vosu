@@ -144,7 +144,7 @@ fn the_fifth_crash_inside_the_window_latches_failed_instead_of_retrying() {
 fn a_stop_during_the_backoff_delay_never_respawns() {
     let (_dir, supervisor) = running();
     let (epoch, _) = restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
-    assert!(supervisor.stop(ID));
+    assert_eq!(supervisor.stop(ID, None), Ok(true));
     assert!(supervisor.begin_restart(ID, epoch).is_none());
     assert_eq!(phase(&supervisor), ProcessPhase::Stopped);
     // A late loss report of the stopped generation records nothing.
@@ -160,7 +160,7 @@ fn a_stop_during_a_start_tears_the_new_generation_down() {
     let (_dir, supervisor) = running();
     let (epoch, _) = restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
     let guard = begin(&supervisor, epoch);
-    assert!(supervisor.stop(ID));
+    assert_eq!(supervisor.stop(ID, None), Ok(true));
     assert_eq!(supervisor.published(ID, guard.epoch), Published::TearDown);
     assert_eq!(phase(&supervisor), ProcessPhase::Stopped);
 }
@@ -173,7 +173,7 @@ fn shutdown_cancels_every_delay_and_refuses_every_start() {
     assert!(supervisor.begin_restart(ID, epoch).is_none());
     assert_eq!(phase(&supervisor), ProcessPhase::Stopped);
     assert!(matches!(
-        supervisor.manual_restart(ID),
+        supervisor.manual_restart(ID, None),
         Err(RestartRefused::ShuttingDown)
     ));
     let (_other, template) = template();
@@ -199,10 +199,10 @@ fn a_manual_restart_resets_the_window_and_the_latch() {
     supervisor.lost(ID, LossCause::ChannelFailed, start + Duration::from_secs(4));
     assert_eq!(phase(&supervisor), ProcessPhase::Failed);
 
-    let (_, guard) = supervisor.manual_restart(ID).unwrap();
+    let (_, guard) = supervisor.manual_restart(ID, None).unwrap();
     assert_eq!(supervisor.status(ID).unwrap().crash_events, 0);
     assert!(matches!(
-        supervisor.manual_restart(ID),
+        supervisor.manual_restart(ID, None),
         Err(RestartRefused::Busy)
     ));
     assert_eq!(supervisor.published(ID, guard.epoch), Published::Keep);
@@ -278,8 +278,43 @@ fn an_active_instance_cannot_be_registered_twice() {
         supervisor.register(ID, template.clone()),
         Err(RestartRefused::Busy)
     ));
-    assert!(supervisor.stop(ID));
+    assert_eq!(supervisor.stop(ID, None), Ok(true));
+    let generation = supervisor.status(ID).unwrap().generation;
     assert!(supervisor.register(ID, template).is_ok());
+    assert_eq!(
+        supervisor.status(ID).unwrap().generation,
+        generation + 1,
+        "a re-register never reuses a generation"
+    );
+}
+
+#[test]
+fn a_stale_generation_never_restarts_or_stops_the_current_one() {
+    let (_dir, supervisor) = running();
+    let shown = supervisor.status(ID).unwrap().generation;
+    assert_eq!(shown, 1);
+    // An automatic restart lands between the caller's look and its action.
+    let (epoch, _) = restart(supervisor.lost(ID, LossCause::ChannelFailed, Instant::now()));
+    let guard = begin(&supervisor, epoch);
+    assert_eq!(supervisor.published(ID, guard.epoch), Published::Keep);
+    drop(guard);
+    assert_eq!(supervisor.status(ID).unwrap().generation, shown + 1);
+    assert!(matches!(
+        supervisor.manual_restart(ID, Some(shown)),
+        Err(RestartRefused::GenerationChanged)
+    ));
+    assert_eq!(
+        supervisor.stop(ID, Some(shown)),
+        Err(RestartRefused::GenerationChanged)
+    );
+    assert_eq!(phase(&supervisor), ProcessPhase::Running, "nothing acted");
+    // The current generation acts, and the next one is new.
+    let (_, guard) = supervisor.manual_restart(ID, Some(shown + 1)).unwrap();
+    assert_eq!(supervisor.published(ID, guard.epoch), Published::Keep);
+    drop(guard);
+    assert_eq!(supervisor.status(ID).unwrap().generation, shown + 2);
+    assert_eq!(supervisor.stop(ID, Some(shown + 2)), Ok(true));
+    assert_eq!(phase(&supervisor), ProcessPhase::Stopped);
 }
 
 #[test]
