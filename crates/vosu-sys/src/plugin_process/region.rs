@@ -27,8 +27,8 @@ pub struct OutOfBounds {
 /// What keeps a region's memory alive and releases it on drop.
 pub(super) enum Backing {
     /// In-process memory: tests and same-process peers. Never shared with
-    /// another process.
-    Heap(#[expect(dead_code, reason = "owns the allocation `base` points into")] Box<[AtomicU64]>),
+    /// another process. Only owns the allocation `base` points into.
+    Heap { _words: Box<[AtomicU64]> },
     /// A `memfd` mapping; it also owns the descriptor spawn code inherits.
     #[cfg(target_os = "linux")]
     Memfd(super::linux::Mapping),
@@ -56,7 +56,7 @@ unsafe impl Sync for SharedRegion {}
 impl std::fmt::Debug for SharedRegion {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let backing = match self.backing {
-            Backing::Heap(_) => "heap",
+            Backing::Heap { .. } => "heap",
             #[cfg(target_os = "linux")]
             Backing::Memfd(_) => "memfd",
             #[cfg(windows)]
@@ -80,7 +80,7 @@ impl SharedRegion {
         Ok(Self {
             base,
             len,
-            backing: Backing::Heap(words),
+            backing: Backing::Heap { _words: words },
         })
     }
 

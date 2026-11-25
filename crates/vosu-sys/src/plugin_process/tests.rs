@@ -7,6 +7,7 @@ const BOUND: Duration = Duration::from_secs(10);
 
 /// Runs `body` on a helper thread and fails (rather than hangs) if it does
 /// not finish within `BOUND`.
+#[cfg(target_os = "linux")]
 fn bounded<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -48,7 +49,10 @@ fn region_refuses_out_of_bounds_overflowing_and_misaligned_accesses() {
     assert!(region.read(30, &mut [0; 3]).is_err());
     assert!(region.write(usize::MAX, &[1]).is_err());
     assert!(region.read(usize::MAX - 1, &mut [0; 4]).is_err());
-    assert!(region.read(32, &mut []).is_ok(), "an empty access at the end is in bounds");
+    assert!(
+        region.read(32, &mut []).is_ok(),
+        "an empty access at the end is in bounds"
+    );
     assert!(region.word(4).is_err());
     assert!(region.word(32).is_err());
     assert!(region.word(usize::MAX - 7).is_err());
@@ -105,9 +109,15 @@ mod native {
     #[test]
     fn adopting_a_mapping_of_the_wrong_size_is_refused() {
         let parent = RingObjects::create(LEN).unwrap();
-        assert!(adopt_copy(&parent, LEN + 4096).is_err(), "larger than the object");
+        assert!(
+            adopt_copy(&parent, LEN + 4096).is_err(),
+            "larger than the object"
+        );
         #[cfg(target_os = "linux")]
-        assert!(adopt_copy(&parent, LEN - 8).is_err(), "Linux requires the exact size");
+        assert!(
+            adopt_copy(&parent, LEN - 8).is_err(),
+            "Linux requires the exact size"
+        );
     }
 
     #[test]
@@ -115,7 +125,10 @@ mod native {
         let bell = std::sync::Arc::new(Doorbell::create().unwrap());
         let start = Instant::now();
         assert!(!bell.wait(Some(Duration::from_millis(30))).unwrap());
-        assert!(start.elapsed() >= Duration::from_millis(30), "timeout honored");
+        assert!(
+            start.elapsed() >= Duration::from_millis(30),
+            "timeout honored"
+        );
         assert!(!bell.consume().unwrap(), "nothing pending");
 
         // Several rings before a wait are one pending wake, not a queue.
@@ -157,9 +170,20 @@ mod native {
             parent
         });
         let parent = bounded(move || {
-            assert!(parent.doorbell().consume().unwrap(), "saturated counter is a pending wake");
-            assert!(!parent.doorbell().consume().unwrap(), "empty blocking eventfd never blocks");
-            assert!(!parent.doorbell().wait(Some(Duration::from_millis(20))).unwrap());
+            assert!(
+                parent.doorbell().consume().unwrap(),
+                "saturated counter is a pending wake"
+            );
+            assert!(
+                !parent.doorbell().consume().unwrap(),
+                "empty blocking eventfd never blocks"
+            );
+            assert!(
+                !parent
+                    .doorbell()
+                    .wait(Some(Duration::from_millis(20)))
+                    .unwrap()
+            );
             parent
         });
         drop(parent);
@@ -178,12 +202,9 @@ mod native {
             OwnedFd::from_raw_fd(raw)
         };
         let bell = Doorbell::create().unwrap();
-        let error = RingObjects::from_inherited(
-            unsealed,
-            bell.as_fd().try_clone_to_owned().unwrap(),
-            LEN,
-        )
-        .unwrap_err();
+        let error =
+            RingObjects::from_inherited(unsealed, bell.as_fd().try_clone_to_owned().unwrap(), LEN)
+                .unwrap_err();
         assert!(error.to_string().contains("not sealed"), "{error}");
 
         let parent = RingObjects::create(LEN).unwrap();

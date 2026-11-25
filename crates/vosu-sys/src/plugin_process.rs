@@ -118,7 +118,7 @@ mod objects {
         pub fn mapping_fd(&self) -> std::os::fd::BorrowedFd<'_> {
             match self.region.backing() {
                 Backing::Memfd(mapping) => mapping.fd(),
-                Backing::Heap(_) => unreachable!("RingObjects regions are always memfd-backed"),
+                Backing::Heap { .. } => unreachable!("RingObjects regions are always memfd-backed"),
             }
         }
 
@@ -150,7 +150,9 @@ mod objects {
         pub fn mapping_handle(&self) -> std::os::windows::io::BorrowedHandle<'_> {
             match self.region.backing() {
                 Backing::Section(mapping) => mapping.handle(),
-                Backing::Heap(_) => unreachable!("RingObjects regions are always section-backed"),
+                Backing::Heap { .. } => {
+                    unreachable!("RingObjects regions are always section-backed")
+                }
             }
         }
 
