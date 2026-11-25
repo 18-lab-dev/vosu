@@ -62,6 +62,7 @@ mod instance;
 pub mod logging;
 mod matcher;
 pub mod outbox;
+pub mod process;
 mod read_plan;
 mod registry;
 pub(crate) mod resource_lease;
