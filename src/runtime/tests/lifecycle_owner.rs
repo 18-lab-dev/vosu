@@ -61,6 +61,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             update_notice: None,
             counters: AsyncMutex::new(None),
             tools: AsyncMutex::new(None),
+            catalog: AsyncMutex::new(None),
             dev_tools: vec![],
             dev_plugins: vec![],
             api_v1: api_v1::ApiV1Service::new(&plugins, &current),

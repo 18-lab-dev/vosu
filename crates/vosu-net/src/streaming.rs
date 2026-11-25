@@ -15,6 +15,15 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use url::{Host, Url};
 
+mod policy;
+mod redirect;
+use redirect::redirect_target;
+mod request;
+mod tls;
+pub use policy::{
+    MetadataAccept, Origin, RequestCredential, RequestPolicy, RequestPurpose, SourcePolicy,
+};
+
 pub type ResolverFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>>;
 
 pub type SleepFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
@@ -207,15 +216,28 @@ impl Default for ZipLimits {
     }
 }
 
-#[derive(Debug)]
+/// Body and final URL may contain private data; diagnostics omit both.
 pub struct NetworkResponse {
     pub status: u16,
     pub body: Bytes,
     pub final_url: Url,
 }
 
+impl std::fmt::Debug for NetworkResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NetworkResponse")
+            .field("status", &self.status)
+            .field("body_bytes", &self.body.len())
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum NetworkError {
+    #[error("invalid request policy")]
+    InvalidPolicy,
+    #[error("invalid credential")]
+    InvalidCredential,
     #[error("invalid URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("only HTTPS URLs are allowed")]
@@ -224,8 +246,8 @@ pub enum NetworkError {
     Destination(String),
     #[error("DNS resolution failed: {0}")]
     Resolve(#[source] io::Error),
-    #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    #[error("request failed")]
+    Request(#[source] reqwest::Error),
     #[error("request timed out")]
     Timeout,
     #[error("request was cancelled")]
@@ -250,6 +272,12 @@ pub enum NetworkError {
     UnsafeZip(String),
     #[error("response is not a ZIP archive")]
     NotZip,
+}
+
+impl From<reqwest::Error> for NetworkError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 #[derive(Clone)]
@@ -316,8 +344,35 @@ impl StreamingClient {
         user_agent: &str,
         cancel: &CancellationToken,
     ) -> Result<NetworkResponse, NetworkError> {
-        self.with_total(self.request_inner(url, user_agent, cancel, None))
+        self.with_total(self.request_inner(url, user_agent, cancel, None, None))
             .await
+    }
+
+    /// Request-local source authority; probes never authenticate and have a 5s cap.
+    pub async fn request_scoped(
+        &self,
+        url: &str,
+        user_agent: &str,
+        policy: &RequestPolicy,
+        credential: Option<&RequestCredential>,
+        cancel: &CancellationToken,
+    ) -> Result<NetworkResponse, NetworkError> {
+        policy.validate_initial(&Url::parse(url)?)?;
+        if policy.purpose == RequestPurpose::Probe && credential.is_some() {
+            return Err(NetworkError::InvalidPolicy);
+        }
+        let future = self.with_total(self.request_inner(
+            url,
+            user_agent,
+            cancel,
+            None,
+            Some((policy, credential)),
+        ));
+        if policy.purpose == RequestPurpose::Probe {
+            wait_for(self.clock.as_ref(), Duration::from_secs(5), future).await?
+        } else {
+            future.await
+        }
     }
 
     pub async fn request_json<T: DeserializeOwned>(
@@ -352,7 +407,7 @@ impl StreamingClient {
         let path_guard = PartialFile(path.clone());
         let file = tokio::fs::File::from_std(file);
         let response = self
-            .with_total(self.request_inner(url, user_agent, cancel, Some(file)))
+            .with_total(self.request_inner(url, user_agent, cancel, Some(file), None))
             .await?;
         if !(200..300).contains(&response.status) {
             return Err(NetworkError::Status(response.status));
@@ -380,179 +435,6 @@ impl StreamingClient {
             () = self.clock.sleep(self.deadlines.total) => Err(NetworkError::Timeout),
         }
     }
-
-    async fn request_inner(
-        &self,
-        url: &str,
-        user_agent: &str,
-        cancel: &CancellationToken,
-        mut output: Option<tokio::fs::File>,
-    ) -> Result<NetworkResponse, NetworkError> {
-        let mut current = Url::parse(url)?;
-        let original_https = current.scheme() == "https";
-        let mut redirects = 0usize;
-        loop {
-            if cancel.is_cancelled() {
-                return Err(NetworkError::Cancelled);
-            }
-            let resolved = tokio::select! {
-                () = cancel.cancelled() => return Err(NetworkError::Cancelled),
-                result = self.resolve_and_validate(&current) => result?,
-            };
-            let (host, port, addresses) = resolved;
-            if original_https && current.scheme() != "https" {
-                return Err(NetworkError::Downgrade);
-            }
-            let sockets: Vec<_> = addresses
-                .iter()
-                .map(|ip| SocketAddr::new(*ip, port))
-                .collect();
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(self.deadlines.connect)
-                .resolve_to_addrs(&host, &sockets)
-                .build()?;
-            let response = tokio::select! {
-                () = cancel.cancelled() => return Err(NetworkError::Cancelled),
-                result = wait_for(
-                    self.clock.as_ref(),
-                    self.deadlines.idle,
-                    client.get(current.clone()).header(reqwest::header::USER_AGENT, user_agent).send(),
-                ) => {
-                    match result? {
-                        Ok(response) => response,
-                        Err(error) if error.is_timeout() => return Err(NetworkError::Timeout),
-                        Err(error) => return Err(NetworkError::Request(error)),
-                    }
-                },
-            };
-            if response.status().is_redirection() {
-                current = redirect_target(
-                    &current,
-                    response.headers().get(reqwest::header::LOCATION),
-                    redirects,
-                    self.limits.max_redirects,
-                )?;
-                redirects += 1;
-                continue;
-            }
-            let status = response.status().as_u16();
-            // Security and resource invariant: never poll a status-error body.
-            if !(200..300).contains(&status) {
-                return Ok(NetworkResponse {
-                    status,
-                    body: Bytes::new(),
-                    final_url: current,
-                });
-            }
-            if response
-                .content_length()
-                .is_some_and(|length| length > self.limits.max_bytes)
-            {
-                return Err(NetworkError::TooLarge(self.limits.max_bytes));
-            }
-            let mut stream = response.bytes_stream();
-            let mut body = Vec::new();
-            let mut count = 0u64;
-            while let Some(chunk) = tokio::select! {
-                () = cancel.cancelled() => return Err(NetworkError::Cancelled),
-                result = wait_for(self.clock.as_ref(), self.deadlines.idle, stream.next()) => result?,
-            } {
-                let chunk = chunk?;
-                count = count
-                    .checked_add(chunk.len() as u64)
-                    .ok_or(NetworkError::TooLarge(self.limits.max_bytes))?;
-                if count > self.limits.max_bytes {
-                    return Err(NetworkError::TooLarge(self.limits.max_bytes));
-                }
-                if let Some(file) = output.as_mut() {
-                    tokio::select! {
-                        () = cancel.cancelled() => return Err(NetworkError::Cancelled),
-                        result = file.write_all(&chunk) => result?,
-                    }
-                } else {
-                    body.extend_from_slice(&chunk);
-                }
-            }
-            if let Some(file) = output.as_mut() {
-                tokio::select! {
-                    () = cancel.cancelled() => return Err(NetworkError::Cancelled),
-                    result = file.flush() => result?,
-                }
-            }
-            return Ok(NetworkResponse {
-                status,
-                body: Bytes::from(body),
-                final_url: current,
-            });
-        }
-    }
-
-    async fn resolve_and_validate(
-        &self,
-        url: &Url,
-    ) -> Result<(String, u16, Vec<IpAddr>), NetworkError> {
-        let host = url
-            .host()
-            .ok_or_else(|| NetworkError::Destination("URL has no host".into()))?;
-        let host_text = match host {
-            Host::Domain(value) => value.to_owned(),
-            Host::Ipv4(value) => value.to_string(),
-            Host::Ipv6(value) => value.to_string(),
-        };
-        let port = url
-            .port_or_known_default()
-            .ok_or_else(|| NetworkError::Destination("URL has no port".into()))?;
-        let addresses = match host {
-            Host::Ipv4(value) => vec![IpAddr::V4(value)],
-            Host::Ipv6(value) => vec![normalize_ip(IpAddr::V6(value))],
-            Host::Domain(_) => self
-                .resolver
-                .resolve(&host_text)
-                .await
-                .map_err(NetworkError::Resolve)?,
-        };
-        if addresses.is_empty() {
-            return Err(NetworkError::Destination("empty DNS answer".into()));
-        }
-        let addresses: Vec<_> = addresses.into_iter().map(normalize_ip).collect();
-        match &self.policy {
-            DestinationPolicy::PublicOnly => {
-                if url.scheme() != "https" {
-                    return Err(NetworkError::Scheme);
-                }
-                if let Some(address) = addresses
-                    .iter()
-                    .find(|address| !is_global_unicast(**address))
-                {
-                    return Err(NetworkError::Destination(address.to_string()));
-                }
-            }
-            #[cfg(feature = "test-harness")]
-            DestinationPolicy::LoopbackHarness(policy) => {
-                if !policy
-                    .reserved_hosts
-                    .iter()
-                    .any(|allowed| allowed.eq_ignore_ascii_case(&host_text))
-                {
-                    return Err(NetworkError::Destination(host_text));
-                }
-                if url.scheme() != "https" && url.scheme() != "http" {
-                    return Err(NetworkError::Scheme);
-                }
-                if addresses
-                    .iter()
-                    .any(|ip| !policy.allowed_sockets.contains(&SocketAddr::new(*ip, port)))
-                {
-                    return Err(NetworkError::Destination(
-                        "socket is outside harness allowlist".into(),
-                    ));
-                }
-            }
-        }
-        Ok((host_text, port, addresses))
-    }
 }
 
 async fn wait_for<T>(
@@ -564,25 +446,6 @@ async fn wait_for<T>(
         result = future => Ok(result),
         () = clock.sleep(duration) => Err(NetworkError::Timeout),
     }
-}
-
-fn redirect_target(
-    current: &Url,
-    location: Option<&reqwest::header::HeaderValue>,
-    redirects: usize,
-    maximum: usize,
-) -> Result<Url, NetworkError> {
-    if redirects >= maximum {
-        return Err(NetworkError::RedirectLimit);
-    }
-    let location = location
-        .and_then(|value| value.to_str().ok())
-        .ok_or(NetworkError::RedirectLocation)?;
-    let next = current.join(location)?;
-    if current.scheme() == "https" && next.scheme() != "https" {
-        return Err(NetworkError::Downgrade);
-    }
-    Ok(next)
 }
 
 struct PartialFile(PathBuf);
@@ -665,8 +528,13 @@ pub fn is_global_unicast(address: IpAddr) -> bool {
 
 mod archive;
 
-pub use archive::{extract_zip_atomic, extract_zip_atomic_validated};
+pub use archive::{
+    StagedTree, extract_zip_atomic, extract_zip_atomic_validated, extract_zip_staged,
+    portable_component, rename_directory_no_replace,
+};
 pub use archive::{open_preflighted_zip, preflight_zip_entries, validate_zip_entry};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_staged;

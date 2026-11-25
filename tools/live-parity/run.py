@@ -24,6 +24,7 @@ import parity_diff
 # monkey-patched names.
 import parity_golden
 import parity_golden_capture
+import parity_golden_client
 
 _MODULES = (
     parity_process,
@@ -113,6 +114,10 @@ def parser() -> argparse.ArgumentParser:
     gold.add_argument("--approved-rules", default=str(parity_golden.DEFAULT_APPROVED_RULES),
                       help="normalization contract (default: tests/fixtures/upstream/GOLDEN_CONTRACT.md)")
     gold.add_argument("--review-receipt", help="main's review receipt reference, once reviewed")
+    client_copy = sub.add_parser(
+        "golden-client-copy",
+        help="copy golden.client_source into the capture root as the configured client_executable")
+    client_copy.add_argument("--config", required=True, help="JSON run configuration")
     return p
 
 
@@ -134,6 +139,9 @@ def main() -> int:
                 load_config(args.config),
                 parity_golden_capture.SCENARIO_SETS[args.scenario_set], args.out,
                 timeout=args.timeout)
+        if args.action == "golden-client-copy":
+            with open(args.config, encoding="utf-8") as handle:
+                return parity_golden_client.golden_client_copy(json.load(handle))
         if args.action == "golden":
             return parity_golden.golden(args.capture, args.candidate_dir, args.approved_rules,
                                         review_receipt=args.review_receipt)

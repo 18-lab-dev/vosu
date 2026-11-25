@@ -3,7 +3,7 @@
 
 Usage:
     python scripts/vm-test.py [--package P] [--test T] [--lib] [--timeout SECS]
-                               [--jobs N] [-- <test filter/args>]
+                               [--jobs N] [--env NAME=VALUE ...] [-- <test filter/args>]
 
 This is a lightweight lever, not the full prepush gate: it stages exactly
 HEAD plus the agent's uncommitted working tree into a unique directory under
@@ -84,13 +84,17 @@ def needs_plugin_host_fixtures(package, test, lib):
 
 
 def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds,
-                            plugin_host_fixtures=False, release_daemon=False):
+                            env=None, plugin_host_fixtures=False, release_daemon=False):
     """The JSON config vm-test.ps1 reads via -ConfigPath.
 
     schtasks' own /TR value is capped at 261 characters, far too short for
     a command line carrying a full cargo argv (a test filter can be long,
     or contain spaces/quotes); writing it to a file next to the bundle
     keeps the scheduled command itself short and argument-content-free.
+
+    `env` holds extra process environment for the cargo step, e.g. the D15
+    fixture path scripts/test-catalog-forge.py --windows-vm stages; the
+    scheduled task does not inherit the SSH session's environment.
     `PluginHostFixtures` makes vm-test.ps1 build and stage the plugin-host
     fixture libraries in the guest before the test run; `ReleaseDaemon`
     also builds and stages the release daemon the `approval` module runs
@@ -104,9 +108,21 @@ def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, tim
         "CargoArgs": cargo_args,
         "Jobs": jobs,
         "TimeoutSeconds": timeout_seconds,
+        "Env": dict(env or {}),
         "PluginHostFixtures": plugin_host_fixtures or release_daemon,
         "ReleaseDaemon": release_daemon,
     }
+
+
+def parse_env(pairs):
+    """`NAME=VALUE` strings to a dict; a malformed or duplicate name is an error."""
+    env = {}
+    for pair in pairs:
+        name, separator, value = pair.partition("=")
+        if not separator or not name or name in env or not name.replace("_", "").isalnum():
+            raise VmTestError(f"--env expects a unique NAME=VALUE, got {pair!r}")
+        env[name] = value
+    return env
 
 
 def remote_work_root(short_sha, token):
@@ -374,7 +390,7 @@ def run(args):
             has_patch = create_uncommitted_patch(patch_path)
 
             config = build_invocation_config(
-                remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout,
+                remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout, parse_env(args.env),
                 plugin_host_fixtures=needs_plugin_host_fixtures(args.package, args.test, args.lib),
                 release_daemon=args.release_daemon,
             )
@@ -472,6 +488,13 @@ def parse_args(argv):
         "--release-daemon",
         action="store_true",
         help="also build the release daemon (no test-harness) for the plugin_host_native approval module",
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="extra environment for the remote cargo step (repeatable)",
     )
     parser.add_argument(
         "extra",

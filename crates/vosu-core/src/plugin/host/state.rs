@@ -182,17 +182,14 @@ impl SchemaRegistration {
                 "namespace provider already registered".into(),
             ));
         }
+        // Explicit package-origin provenance (M6a Q3: bundled, or an exact
+        // official installed source), never inferred from the backend: a
+        // dlopened library or a process package proves nothing either way.
+        let provenance = plugin.schema_provenance();
         for (provided, text) in provided.iter().zip(plugin.namespace_schemas()) {
             let ns = provided.id.strip_prefix("field:").unwrap_or(&provided.id);
             let version = semver::Version::parse(&provided.version)
                 .map_err(|error| HostError::State(error.to_string()))?;
-            // Explicit provenance (M6a Q3), never inferred from the backend:
-            // a process package has no local library either.
-            let provenance = if plugin.origin().is_official() {
-                vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial
-            } else {
-                vosu_plugin_api::manifest::schema::SchemaProvenance::Untrusted
-            };
             if let Err(error) =
                 registry.register_versioned(&manifest.id, ns, &version, provenance, text)
             {

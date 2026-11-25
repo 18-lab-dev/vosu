@@ -96,6 +96,13 @@ impl ConfigDocument {
     /// Clamps polling and subscription intervals to supported timer bounds.
     pub fn validate(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
+        if self.config.max_package_bytes().is_none() {
+            warnings.push(
+                "Config %MAX_PACKAGE_MIB% must be an integer from %1% to %4096%; using %512%."
+                    .into(),
+            );
+            self.config.max_package_mib = 512.0;
+        }
 
         if self.config.poll_rate < 100.0 {
             warnings.push(format!(
@@ -190,6 +197,7 @@ impl ConfigDocument {
                 self.config.api_v1_subscription_debounce = value
             }
             ConfigKey::ServerPort => self.config.server_port = value,
+            ConfigKey::MaxPackageMib => self.config.max_package_mib = value,
             ConfigKey::DashboardPort => self.config.dashboard_port = value,
             _ => unreachable!("schema number key has number storage"),
         }
@@ -227,6 +235,7 @@ impl ConfigDocument {
             "DASHBOARD_PORT" => toml::Value::Float(self.config.dashboard_port),
             "STATIC_FOLDER_PATH" => toml::Value::String(self.config.static_folder_path.clone()),
             "ALLOWED_IPS" => toml::Value::String(self.config.allowed_ips.clone()),
+            "MAX_PACKAGE_MIB" => toml::Value::Integer(self.config.max_package_mib as i64),
             _ => unreachable!("binding order contains only schema bindings"),
         }
     }

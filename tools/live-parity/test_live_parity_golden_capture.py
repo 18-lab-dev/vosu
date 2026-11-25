@@ -14,6 +14,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
 import subprocess
@@ -67,14 +68,40 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def harness_binary() -> Path | None:
-    configured = os.environ.get("VOSU_GOLDEN_HARNESS_BINARY")
-    target = os.environ.get("CARGO_TARGET_DIR")
-    for candidate in (configured, target and str(Path(target) / "debug" / "vosu"),
-                      str(REPO / "target" / "debug" / "vosu")):
-        if candidate and Path(candidate).is_file():
-            return Path(candidate).resolve()
-    return None
+HARNESS_BUILD_ENV = "VOSU_GOLDEN_HARNESS_BUILD"
+
+
+def head_harness_binary() -> tuple[Path, str, list[str]]:
+    """HEAD's debug test-harness vosu, built here from the clean committed tree.
+
+    A prebuilt executable on the machine is never used: nothing attests that it was built
+    from HEAD, and a stale one fails attestation for an unrelated reason. Returns the
+    executable, the commit it was built from and its features; skips with the reason when
+    the build is not requested or cannot be attributed to HEAD."""
+    if os.environ.get(HARNESS_BUILD_ENV) != "1":
+        raise unittest.SkipTest(
+            f"set {HARNESS_BUILD_ENV}=1 to build HEAD's debug test-harness vosu "
+            "(cargo build --locked --features test-harness) for this test; a prebuilt "
+            "executable is never used because nothing attests it is HEAD's")
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        raise unittest.SkipTest("cargo is not on PATH, so HEAD's test-harness vosu cannot be built")
+    try:
+        commit = parity_build._clean_commit(REPO)
+    except ValueError as error:
+        raise unittest.SkipTest(f"{error}, so the built daemon would not be HEAD's") from None
+    command, features = parity_build.harness_build_command(cargo)
+    build = subprocess.run([*command, "--message-format=json-render-diagnostics"], cwd=REPO,
+                           check=True, text=True, stdout=subprocess.PIPE)
+    executables = [
+        message["executable"] for message in map(json.loads, build.stdout.splitlines())
+        if message.get("reason") == "compiler-artifact" and message.get("executable")
+        and message["target"]["name"] == "vosu" and "bin" in message["target"]["kind"]]
+    if len(executables) != 1:
+        raise AssertionError(f"the harness build reported {len(executables)} vosu executables")
+    if parity_build._clean_commit(REPO) != commit:
+        raise AssertionError("the tree changed while HEAD's harness daemon was built")
+    return Path(executables[0]).resolve(strict=True), commit, features
 
 
 class FakeClient:
@@ -252,10 +279,14 @@ class FakeTraversalTests(CaptureTestCase):
         self.refuses("failed 3 whole-case attempts", scenario, FakeClient(self.state), cfg)
         self.assertTrue(self.transcript()["result"].startswith("failed"))
 
-    def test_upstream_sandwich_mismatch_is_never_accepted(self) -> None:
+    def test_unstable_upstream_never_reaches_a_barrier(self) -> None:
+        # A non-volatile value that changes on every read never yields identical barrier
+        # views, so no case is ever recorded (upstream sandwich mismatches of non-volatile
+        # bytes are covered by test_live_parity_volatile.LedgerTests).
         scenario = gc.ScenarioSet("test-unstable", ("menu",), ("state-http.json-v2.get.menu",))
         cfg = self.config(scenario, source_options={"unstable_upstream": True})
-        self.refuses("upstream sandwich responses differ", scenario, FakeClient(self.state), cfg)
+        self.refuses("barrier menu was not reached", scenario, FakeClient(self.state), cfg,
+                     timeout=5.0)
 
     def test_barrier_out_of_order_is_refused(self) -> None:
         scenario = gc.ScenarioSet("test-order", gc.TRAVERSAL, TRAVERSAL_CASES)
@@ -505,21 +536,18 @@ class HarnessAttestationTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the local end-to-end runs on Linux")
 class RealHarnessDaemonTests(CaptureTestCase):
-    """The locally built `cargo build --locked --features test-harness` vosu daemon."""
+    """HEAD's `cargo build --locked --features test-harness` vosu daemon, built by the test."""
 
     def test_end_to_end_with_the_real_harness_daemon(self) -> None:
-        binary = harness_binary()
-        if binary is None:
-            self.skipTest("build it with `cargo build --locked --features test-harness` or set "
-                          "VOSU_GOLDEN_HARNESS_BINARY")
+        binary, commit, features = head_harness_binary()
+        self.assertEqual(commit, self.commit)
         scenario = gc.ScenarioSet("test-real-daemon", ("no-client",), NO_CLIENT_CASES)
         cfg = self.config(scenario, vosu_command=[str(binary)])
         attested = []
 
         def build(cfg: dict, out: str) -> dict:
             record = parity_build.attest_harness_binary(
-                binary, commit=self.commit, features=["linux-process-events", "test-harness"],
-                target="x86_64-unknown-linux-gnu")
+                binary, commit=commit, features=features, target="x86_64-unknown-linux-gnu")
             attested.append(record)
             return {"vosu": record, "owned_paths": []}
 

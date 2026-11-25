@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 from tool_host_smoke import ROOT, channel_root, curl, wait_for
+from catalog_v2_fixture import Catalog, api, dashboard_headers, facts, set_sources
 
 # A classic inline script in <body> that opens a socket immediately, like
 # most overlays: the preview marker must already be in place.
@@ -83,35 +84,32 @@ STATIC_FOLDER_PATH = {json.dumps(str(static))}
                 text = text.replace('[service]', '[service]\nrole = "backend"')
             manifest.write_text(text)
             tools += ['--tool', str(tool)]
-        # A catalog source with two overlays, so the Available page has
-        # source cards beside the (unreachable) community catalog. This needs
-        # a `--features test-harness` build.
+        # A catalog-v2 source with two overlays and two tools, so the
+        # Available and Tools pages have catalog cards beside the
+        # (unreachable) community catalog. Needs a `--features test-harness`
+        # build; packages are listed but never downloaded here.
         packages = root / 'packages'
         packages.mkdir()
         server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(SimpleHTTPRequestHandler, directory=str(packages)))
         port = server.server_address[1]
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f'http://tools.invalid:{port}'
-        overlays = [{'id': f'source-overlay-{index}', 'name': f'Source overlay {index}', 'version': '1.0.0',
-                     'description': 'A catalog-source overlay for keyboard checks.', 'author': '18-LAB',
-                     'homepage': None, 'resolution': [640, 120], 'preview': None, 'requires_tools': [],
-                     'package': {'url': f'{base}/overlay-{index}.zip', 'sha256': '0' * 64, 'size': 1}}
-                    for index in range(2)]
-        catalog_tools = [{'id': f'catalog-tool-{index}', 'name': f'Catalog tool {index}', 'version': '1.0.0',
-                          'description': 'A catalog tool for keyboard checks.', 'author': '18-LAB',
-                          'homepage': None, 'protocol': 1, 'interfaces': ['ui'], 'requires': [],
-                          'packages': {'any': {'url': f'{base}/tool-{index}.zip', 'sha256': '0' * 64, 'size': 1}}}
-                         for index in range(2)]
-        (packages / 'catalog.json').write_text(json.dumps({'catalog_version': 1, 'published': '2026-10-23T00:00:00Z',
-                                                           'tools': catalog_tools, 'overlays': overlays}))
-        (config / 'tools').mkdir()
-        (config / 'tools/catalog-sources.json').write_text(json.dumps([{'source': f'{base}/catalog.json', 'enabled': True}]))
-        environment['VOSU_TOOL_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
+        host_range, target = facts(binary)
+        catalog = Catalog(packages, port, host_range, target)
+        catalog.publish('keyboard',
+                        tools=[catalog.tool(f'catalog-tool-{index}', f'Catalog tool {index}',
+                                            description='A catalog tool for keyboard checks.') for index in range(2)],
+                        overlays=[catalog.overlay(f'source-overlay-{index}', f'Source overlay {index}',
+                                                  description='A catalog-source overlay for keyboard checks.')
+                                  for index in range(2)])
+        environment['VOSU_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
         with (args.evidence / 'daemon.log').open('w') as log:
             daemon = subprocess.Popen([str(binary), '--update=false', *tools], cwd=root, env=environment,
                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
             try:
                 wait_for(lambda: curl('/api/tools', dashboard=True)[0] == 200)
+                headers = dashboard_headers()
+                set_sources(headers, [catalog.source('keyboard')])
+                assert api('refresh', headers, 'POST')['sources'][0]['status'] == 'ok'
                 # Unknown routes: the styled page for a person, the plain
                 # body for scripts, on both listeners.
                 for dashboard in [False, True]:

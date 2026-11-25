@@ -46,6 +46,10 @@ pub enum PackageOrigin {
     Bundled,
     /// A `--plugin <dir>` development package (§7.1).
     Development,
+    /// A catalog-installed package. `official` is current §7.1 policy's
+    /// `TrustTier::Official` decision for its exact installed source
+    /// identity; a trusted user source is `false`.
+    Installed { official: bool },
     /// A separately staged external library under an official `vosu.*`
     /// identity, loaded only by the test harness
     /// ([`super::registry::load_official_test_fixture`]) so a native test
@@ -62,8 +66,8 @@ impl PackageOrigin {
     /// register its schemas as trusted official ones.
     pub fn is_official(self) -> bool {
         match self {
-            Self::Bundled => true,
-            Self::Development => false,
+            Self::Bundled | Self::Installed { official: true } => true,
+            Self::Development | Self::Installed { official: false } => false,
             #[cfg(feature = "test-harness")]
             Self::OfficialTestFixture => true,
         }

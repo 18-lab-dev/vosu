@@ -74,6 +74,22 @@ class InvocationConfigTests(unittest.TestCase):
         self.assertEqual(config["CargoArgs"], ["test", "--workspace"])
         self.assertEqual(config["Jobs"], 8)
         self.assertEqual(config["TimeoutSeconds"], 1200)
+        self.assertEqual(config["Env"], {})
+
+    def test_env_is_carried_to_the_remote_cargo_step(self):
+        env = vm_test.parse_env(["VOSU_X1_FIXTURE=V:\\x1\\ab\\fixture.json", "EMPTY="])
+        config = vm_test.build_invocation_config(
+            "V:\\bt\\vmt-abc-123", "deadbeefcafef00d", ["test"], has_patch=False, jobs=8, timeout_seconds=1200, env=env
+        )
+        self.assertEqual(json.loads(json.dumps(config))["Env"], {
+            "VOSU_X1_FIXTURE": "V:\\x1\\ab\\fixture.json",
+            "EMPTY": "",
+        })
+
+    def test_malformed_or_duplicate_env_is_refused(self):
+        for pairs in (["NOEQUALS"], ["=value"], ["A=1", "A=2"], ["BAD-NAME=1"]):
+            with self.assertRaises(vm_test.VmTestError, msg=pairs):
+                vm_test.parse_env(pairs)
 
     def test_empty_patch_path_when_no_uncommitted_changes(self):
         config = vm_test.build_invocation_config(
@@ -246,6 +262,7 @@ class ArgParsingTests(unittest.TestCase):
         self.assertEqual(args.timeout, vm_test.DEFAULT_TIMEOUT_SECONDS)
         self.assertEqual(args.jobs, vm_test.DEFAULT_JOBS)
         self.assertEqual(args.extra, [])
+        self.assertEqual(args.env, [])
 
     def test_filter_after_double_dash(self):
         args = vm_test.parse_args(["--package", "vosu-core", "--lib", "--", "config::tests::", "--nocapture"])

@@ -30,6 +30,7 @@ const EXPECTED_DEFAULT: &str = concat!(
     "ALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n",
     "\n",
     "STATIC_FOLDER_PATH = \"./static\"\n",
+    "MAX_PACKAGE_MIB = 512\n",
 );
 
 #[test]
@@ -327,6 +328,35 @@ fn api_v1_debounce_duration_uses_validated_fractional_milliseconds() {
         );
         assert!(!document.serialize().contains("\nV2_SUBSCRIPTION_DEBOUNCE"));
     }
+}
+
+#[test]
+fn package_limit_is_integer_bounded_and_checked_in_bytes() {
+    for (raw, expected) in [
+        ("1", 1),
+        ("4096", 4096),
+        ("0", 512),
+        ("4097", 512),
+        ("1.5", 512),
+        ("\"bad\"", 512),
+        ("inf", 512),
+    ] {
+        let document = ConfigDocument::parse(&format!("MAX_PACKAGE_MIB = {raw}")).unwrap();
+        assert_eq!(
+            document.config().max_package_bytes(),
+            Some(expected * 1_048_576)
+        );
+        assert!(
+            document
+                .serialize()
+                .contains(&format!("MAX_PACKAGE_MIB = {expected}\n"))
+        );
+    }
+    let mut document = ConfigDocument::default();
+    document.config_mut().max_package_mib = f64::MAX;
+    assert_eq!(document.config().max_package_bytes(), None);
+    assert_eq!(document.validate().len(), 1);
+    assert_eq!(document.config().max_package_bytes(), Some(536_870_912));
 }
 
 #[tokio::test]

@@ -42,8 +42,17 @@ A source is one of:
 - The dashboard API can set or remove a credential but never returns it.
   Credentials are never exposed to plugins, tools, or overlays, and catalog
   package URLs remain credential-free.
-- A credential is sent only to the source's exact origin (scheme, host, and
-  port). The redirect loop drops it whenever a redirect changes the origin.
+- Credentials are keyed by the verbatim configured source, never a parsed
+  alias. Their authorized network origin is `(scheme, host, effective port)`.
+  **A6b.1, approved 2026-11-24:** GitHub shorthand and repository URLs on
+  `https://github.com` derive exactly `https://api.github.com:443` for release
+  metadata and API catalog-asset requests only. Static GitHub-host URLs keep
+  their literal origin; other forges keep their repository origin. No arbitrary
+  API override or inferred enterprise host is permitted.
+- Validate the initial asset URL as well as every redirect. Any origin change
+  strips all credential headers permanently for that request chain, including
+  A→B→A. Probe/package/art/updater/counter requests never carry source secrets;
+  use immutable typed purpose policy, not a shared authenticated client.
 - Forge-specific asset retrieval (the GitHub API asset endpoint, GitLab
   `Authorization: Bearer` on its API, Gitea and Forgejo `Authorization: token`
   on their release attachments) is verified against each forge when
@@ -52,12 +61,15 @@ A source is one of:
 ### Private networks
 
 A user-added source may allow private-network destinations for its own exact
-host. HTTPS remains mandatory, and the exception never applies to package or
-artwork URLs on other hosts. Certificate validation uses the operating system's
-trust store, so an internal certificate authority installed there is accepted.
-This narrows, for one user-chosen host, the private-destination rule that
-`AGENTS.md` states for downloads; that statement is updated with the
-implementation.
+configured host, only for catalog, unauthenticated forge-probe and catalog-asset
+requests. HTTPS and OS trust-store certificate/hostname verification remain
+mandatory, including installed internal CAs and existing public roots. The
+exception **never** applies to package or artwork URLs, even on the same host,
+nor to suffixes/subdomains/CNAME target names or foreign redirect hosts.
+Same-host different-port requests may retain private-host permission but lose
+credentials because their origins differ. Validate/pin DNS answers at every
+hop and retain no-proxy/manual redirects. `AGENTS.md` is amended by the
+transport implementation, not by weakening its unrelated download invariants.
 
 ### Trust
 
@@ -69,9 +81,12 @@ not establish author trust.
 
 ### User experience
 
-The user pastes a repository URL. If the repository is private, the dashboard
-says so, links to the forge's token page, and names the minimal read-only scope
-for that forge. After the token is saved, the source behaves like any other.
+The user pastes a repository URL. A 404 alone does not establish a private
+repository exists; offer credential guidance without asserting existence or
+echoing response bodies. Link to the forge token page and name its verified
+minimal read-only scopes. Once a credential is saved, the source uses the same
+validation/plan flow. Private package/art authentication is not supported:
+authors need unauthenticated public HTTPS or presigned artifacts.
 
 ## Consequences
 
@@ -81,6 +96,13 @@ for that forge. After the token is saved, the source behaves like any other.
   exception, both of which need regression tests for redirects across origins.
 - A trusted private source can run in-process plugins; that is the user's
   explicit decision.
+- **A6b.2–A6b.8, approved 2026-11-24:** the normative
+  [source and credential lifecycle](../v2/catalog-v2.md#sources-and-credentials)
+  freezes grammar/detection, bounded secret persistence/repair, dedicated
+  source flags, exact-identity removal, ranked graph search, immutable plans,
+  transactional publication, revocation pending user restart and package limits.
+  Windows uses inherited directory ACLs and shared atomic replacement, not an
+  invented owner-only DACL or encrypted store.
 
 ## Alternatives considered
 
