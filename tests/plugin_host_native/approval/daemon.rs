@@ -49,13 +49,33 @@ pub fn executable() -> (PathBuf, bool) {
     }
 }
 
+/// Runs `run` until it does not fail with "text file busy". A parallel
+/// test's fork can briefly inherit the write descriptor of a freshly copied
+/// executable (the close-on-exec flag takes effect only at its exec), and
+/// Linux refuses to execute a file open for writing.
+fn spawn_retrying<T>(mut run: impl FnMut() -> std::io::Result<T>) -> T {
+    let deadline = Instant::now() + STARTUP;
+    loop {
+        match run() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => return result.unwrap(),
+        }
+    }
+}
+
 /// `vosu --version`'s semver.
 pub fn version(executable: &Path) -> semver::Version {
-    let output = Command::new(executable)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
+    let output = spawn_retrying(|| {
+        Command::new(executable)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .output()
+    });
     assert!(
         output.status.success(),
         "{} --version failed",
@@ -107,16 +127,22 @@ impl Daemon {
         let home = root.join("home");
         // A release daemon owns its program directory (the updater's owner
         // lock), and Windows keeps a portable install's config beside the
-        // executable, so each root runs its own link or copy.
+        // executable, so those run their own link or copy per root. The
+        // debug test-harness daemon (half a gigabyte) runs in place on
+        // Linux.
         let bin = home.join("bin");
-        let copy = bin.join(executable.file_name().unwrap());
-        if !copy.exists() {
-            std::fs::create_dir_all(&bin).unwrap();
-            if std::fs::hard_link(executable, &copy).is_err() {
-                std::fs::copy(executable, &copy).unwrap();
+        let executable = if cfg!(windows) || executable != Path::new(env!("CARGO_BIN_EXE_vosu")) {
+            let copy = bin.join(executable.file_name().unwrap());
+            if !copy.exists() {
+                std::fs::create_dir_all(&bin).unwrap();
+                if std::fs::hard_link(executable, &copy).is_err() {
+                    std::fs::copy(executable, &copy).unwrap();
+                }
             }
-        }
-        let executable = copy;
+            copy
+        } else {
+            executable.to_owned()
+        };
         #[cfg(windows)]
         let config = bin;
         #[cfg(not(windows))]
@@ -164,7 +190,7 @@ impl Daemon {
             .stdin(Stdio::null())
             .stdout(output.try_clone().unwrap())
             .stderr(output);
-        let child = command.spawn().unwrap();
+        let child = spawn_retrying(|| command.spawn());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
