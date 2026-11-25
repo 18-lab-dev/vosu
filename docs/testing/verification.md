@@ -1043,3 +1043,45 @@ cargo test --locked --test process_memory -- --nocapture
 ```
 
 None of these commands were run by A5.
+
+**W0 Windows launch evidence.** These native Windows unit tests run with
+`python scripts/vm-test.py --package vosu-sys --lib -- plugin_process` and
+`python scripts/vm-test.py --package vosu-core --lib -- plugin::process`.
+Their child processes are the test binaries themselves, run again in a helper
+role.
+
+- `spawn_assigns_the_strict_job_before_resume_and_inherits_exactly_the_ring_objects`:
+  - Before resume, the suspended child's handle table holds exactly the four
+    ring objects, each with only the access it needs, at the values named on
+    its command line.
+  - No handle refers to an inheritable sentinel, the parent process or the
+    job.
+  - At its first test instruction, the child reads its own immediate job and
+    finds it holds only itself.
+- The `failure_*` and `missing_program_*` tests inject an assignment failure
+  and a resume failure, and trigger a real `CreateProcessW` failure. Each one:
+  - proves through an independent handle that the child was terminated with
+    the unwind exit code;
+  - finds no marker, so the child never ran;
+  - finds the parent holding exactly one handle per ring object.
+- `nested_job_core_death_kills_plugin_host_and_descendant` builds the tree
+  test → core (job O) → plugin host (job I, nested in O) → descendant, and
+  terminates only the core process. The plugin host and its descendant exit
+  even though the test still holds job O.
+- Two negative controls survive the same core-only death for 2 s: one skips
+  the assignment, and one leaks a job handle into the child.
+- `concurrent_ordinary_spawns_never_inherit_plugin_host_ring_handles` checks
+  the handle table of every suspended ordinary child spawned during 64
+  plugin-host spawns. With the `vosu_sys::process_spawn` gate removed, the
+  first ordinary child inherited a ring handle.
+
+The real-daemon core-only kill remains `windows_job::windows_core_death_kills_job_tree`
+(N0).
+
+**Finding (tools follow-up, not fixed in M5).** `src/tools/process.rs`
+assigns a tool service to its kill-on-close job only after
+`tokio::process::Command` has spawned and started it. The tool therefore runs
+unconfined for a short time, and anything it starts in that window is outside
+the job. The plugin-host spawn does not have this race: it creates the child
+suspended and assigns the job before resume (plugin-abi.md §7.4). Tool spawns
+do take the process-wide inheritance gate.
