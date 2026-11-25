@@ -129,18 +129,11 @@ fn actions_an_unanswered_grace_kills_only_the_process_callee_once() {
         "{:?}",
         started.elapsed()
     );
-    // Retirement finishes on its own thread: the kill, then supervision.
+    // Supervision records the loss first; retirement then kills the child
+    // on its own thread.
     let deadline = Instant::now() + WAIT;
-    while host
-        .process_status(PluginInstanceId(9_701))
-        .unwrap()
-        .crash_events
-        == 0
-    {
-        assert!(
-            Instant::now() < deadline,
-            "the grace kill was never recorded"
-        );
+    while endpoint.terminate_calls() == 0 {
+        assert!(Instant::now() < deadline, "the grace kill never happened");
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(endpoint.terminate_calls(), 1);

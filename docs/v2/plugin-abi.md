@@ -787,6 +787,8 @@ An unexpected exit with code 0 is still a loss. The owner cancels and collects w
 
 A job that already timed out stays `timed_out`, and an already-terminal job never changes. Old endpoints are closed and the process reaped before any restart. A restart is a new generation with new handles, re-offered sessions and identification before public exposure. Nothing from an old generation can complete a new generation's request.
 
+Supervision records the loss before any of those notifications. `PluginHost::process_status` already reports the loss as `last_failure`, counts its crash event, and shows `backoff` or `failed` before a session detaches or a waiter gets `plugin_crashed`. A reader that has observed an ended waiter therefore never sees the lost generation as `running` with no failure. The backoff timer is armed only after the lost generation is retired: its endpoints are closed and its process is reaped. So the 1, 2, 4, 8 or 16 s delay counts from the end of retirement, and during retirement the status already shows `backoff`.
+
 **Restart (A5.3).** Each of these counts as exactly one crash event:
 
 - a loss;
