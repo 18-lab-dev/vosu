@@ -396,13 +396,32 @@ def attest_harness_binary(executable: Path, *, commit: str, features: list[str],
             "features": sorted(features), "target": target, "sha256": sha256_file(executable)}
 
 
-def _clean_commit(root: Path) -> str:
+AUTOCRLF_HINT = (
+    "clone the vosu tree with `git clone -c core.autocrlf=false` (or run `git config "
+    "core.autocrlf false` in the clone and check its files out again): golden capture builds "
+    "the committed bytes, and a line-ending conversion modifies tracked files")
+
+
+def _clean_commit(root: Path, *, windows: bool = sys.platform == "win32") -> str:
+    """HEAD of a clean tree. On Windows the clone must say `core.autocrlf=false` itself, since
+    Git for Windows converts line endings by default and this git reads no system config."""
     environment = _git_environment()
+    autocrlf = subprocess.run(
+        _git_command(root, "config", "--local", "--get", "core.autocrlf"), check=False, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment).stdout.strip().lower()
+    if autocrlf == "true" or (windows and autocrlf != "false"):
+        raise ValueError(f"the vosu clone sets core.autocrlf={autocrlf or '<unset>'}; "
+                         + AUTOCRLF_HINT)
     status = subprocess.run(
         _git_command(root, "status", "--porcelain=v1", "--untracked-files=no"),
         check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env=environment).stdout
     if status:
+        line_endings = subprocess.run(
+            _git_command(root, "diff", "--quiet", "--ignore-cr-at-eol", "HEAD"),
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+        if line_endings.returncode == 0:
+            raise ValueError("tracked files differ from HEAD only in line endings; " + AUTOCRLF_HINT)
         raise ValueError("golden capture builds only a committed tree; tracked files are modified")
     return subprocess.run(
         _git_command(root, "rev-parse", "HEAD"), check=True, text=True,

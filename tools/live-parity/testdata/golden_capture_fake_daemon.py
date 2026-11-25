@@ -168,6 +168,11 @@ class Handler(socketserver.BaseRequestHandler):
                 pass
             return
         sock.sendall(response(404, b'{"error":"not found"}', head=method == "HEAD"))
+        if target in OPTIONS.get("crash_targets", ()):
+            # The pinned upstream answers, then its response logger throws and the
+            # process exits (parity_golden_crash).
+            sock.close()
+            os._exit(1)
 
 
 class Server(socketserver.ThreadingTCPServer):

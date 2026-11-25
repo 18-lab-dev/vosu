@@ -9,6 +9,8 @@ P0's route matrix for that barrier runs as two sandwiches: upstream twice with
 identical bytes, then vosu dump -> route -> dump. A failed sandwich retries the whole
 case, at most three attempts, and every attempt is recorded; attempts are never
 mixed. Upstream records are the only expected values; vosu dumps are replay input.
+Cases whose request kills upstream run last, after the no-client barrier, and record
+the `upstream_crashed` outcome (`parity_golden_crash`).
 
 Outputs, both private and never published: the capture `--out`, exactly the shape
 `golden` reads, and `<out>.transcript.json` with the raw records, attestations,
@@ -46,7 +48,9 @@ import parity_routes as pr
 import route_matrix as rm
 import route_security as rs
 import parity_volatile as volatile
-from parity_golden_client import check_client_root
+import parity_golden_crash as crash
+from parity_golden_client import (check_client_root, log_names, remove_new_shared_logs,
+                                  shared_profile_logs)
 
 TRANSCRIPT_FORMAT = "vosu-golden-capture-transcript-v1"
 CAPABILITY_ENV = "VOSU_TEST_ADAPTER_CAPTURE"
@@ -116,8 +120,11 @@ class LiveClient:
         self.cfg = cfg
         self.artifact = cfg["_artifact_identity"]["client"]
         self.process: subprocess.Popen[bytes] | None = None
+        self.shared_logs = shared_profile_logs(cfg)
+        self.shared_profile: dict[str, Any] | None = None
 
     def start(self) -> dict[str, Any]:
+        self.shared_before = log_names(self.shared_logs)
         self.process, evidence = daemon_mod._launch_client(self.cfg)
         return evidence
 
@@ -141,6 +148,7 @@ class LiveClient:
             daemon_mod._terminate_client_descendants(self.artifact, hard=True)
             if not daemon_mod._wait_for_client_descendants(self.artifact, 1):
                 errors.append("attested osu client descendants survived cleanup")
+        self.shared_profile = remove_new_shared_logs(self.shared_logs, self.shared_before)
         return errors
 
 
@@ -492,6 +500,19 @@ class Session:
                    for name in ("source", "vosu")]
         return daemons[0], daemons[1]
 
+    def relaunch_source(self) -> Daemon:
+        """A fresh, re-attested upstream in place of one an `upstream_crashed` case ended;
+        the exited process stays owned, under its own label, until cleanup."""
+        restarts = self.transcript.setdefault("upstream_restarts", [])
+        label = f"source-exited-{len(restarts) + 1}"
+        self.processes[label] = self.processes.pop("source")
+        self.starts[label] = self.starts.pop("source")
+        processes, evidence = daemon_mod.launch(self.cfg, ("source",), after_exit=True)
+        self.processes["source"] = processes["source"]
+        self.starts["source"] = evidence["source"]["start_identity"]
+        restarts.append(evidence["source"])
+        return Daemon("source", evidence["source"]["port"], evidence["source"])
+
     # -- barriers
 
     def _observe(self, source: Daemon, dump: HarnessDump) -> tuple[dict[str, str | None], Any]:
@@ -664,11 +685,12 @@ class Session:
         self.client_started = True
         cases: list[dict[str, Any]] = []
         reached: list[str] = []
+        crashing = [item for item in golden if rm.upstream_crash_ledger(item.case)]
         for barrier in self.scenario.barriers:
             has_cases = any(item.case.barrier == barrier for item in (*golden, *others))
             self._wait_barrier(barrier, source, dump, reached, identical_views=has_cases)
             for item in golden:
-                if item.case.barrier == barrier:
+                if item.case.barrier == barrier and item not in crashing:
                     cases.append(self._run_case(item, source, vosu, dump))
             for item in others:
                 if item.case.barrier == barrier:
@@ -679,6 +701,9 @@ class Session:
                         "local_failures": [f for r in records
                                            for f in pr.local_expectation_failures(item.case, r)]})
             self.operator(barrier, f"barrier {barrier} recorded")
+        if crashing:  # Last: no barrier is left for a crashed upstream to abort.
+            self.operator("no-client", f"running {len(crashing)} upstream_crashed cases")
+            cases += crash.run_cases(self, crashing, source, vosu, dump)
         expected = [item.case.id for item in golden]
         check_expected_cases(expected, self.scenario, context)
         recorded = {case["id"]: case for case in cases}
@@ -717,6 +742,7 @@ class Session:
 
         if self.client_started:
             errors += step("client", self.client.stop) or []
+            self.transcript["shared_profile"] = getattr(self.client, "shared_profile", None)
         groups = {name: process.pid for name, process in self.processes.items()}
         # Record each daemon's process tree while it still runs: a child that outlives
         # its daemon is reparented and only this record still ties it to the run.
@@ -942,6 +968,8 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
         "capture": out_path.name, "transcript": transcript_path.name,
         "platform": capture["platform"], "scenario_set": scenario.id,
         "cases": len(capture["cases"]),
+        "upstream_crashed": sum(case["attempts"][-1]["outcome"] == crash.OUTCOME
+                                for case in capture["cases"]),
         "retried_cases": sum(len(case["attempts"]) > 1 for case in capture["cases"]),
         "vosu_sha256": capture["attestation"]["vosu"]["sha256"],
         "sha256": hashlib.sha256(outputs[0][1]).hexdigest(),

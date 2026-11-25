@@ -31,8 +31,10 @@ from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION
 import parity_build
 import parity_golden
 import parity_golden_capture as gc
+import parity_golden_crash as crash
 from parity_golden_config import validate_golden_config
 from parity_golden_rules import NON_GOLDEN_SEGMENTS
+import parity_golden_client as golden_client
 import route_matrix as rm
 import route_security as rs
 
@@ -394,6 +396,72 @@ class FakeTraversalTests(CaptureTestCase):
                              .read_text("utf-8"))
         self.assertEqual(written["expected"], {"outcome": "closed"})
 
+    CRASHING = ("state-http.json.near.malformed-percent", "state-http.json-v2.near.malformed-percent-hex")
+
+    def crash_scenario(self) -> gc.ScenarioSet:
+        return gc.ScenarioSet("test-crash", ("menu", "no-client"), (
+            "state-http.json-v2.get.menu", "state-http.json-v2.get.no-client", *self.CRASHING))
+
+    def test_upstream_crashed_cases_run_last_and_golden_lists_them(self) -> None:
+        scenario = self.crash_scenario()
+        crash_targets = {"crash_targets": ["/json%", "/json/v2%zz"]}
+        client = FakeClient(self.state)
+        capture = self.capture(scenario, client, self.config(scenario, source_options=crash_targets))
+        self.assertEqual(client.requests, ["menu", "no-client"])
+        transcript = self.transcript()
+        # After every barrier and its cases; the second needs a relaunched, re-attested upstream.
+        self.assertEqual([raw["case"] for raw in transcript["cases"]][-2:], list(self.CRASHING))
+        self.assertEqual(len(transcript["upstream_restarts"]), 1)
+        self.assertNotEqual(transcript["upstream_restarts"][0]["pid"],
+                            transcript["launch"]["source"]["pid"])
+        self.assertEqual(transcript["cleanup"]["errors"], [])
+        self.assertIn("source-exited-1", transcript["cleanup"]["daemons"])
+        crashed = {case["id"]: case for case in capture["cases"] if case["id"] in self.CRASHING}
+        self.assertEqual(sorted(crashed), sorted(self.CRASHING))
+        for case in crashed.values():
+            (attempt,) = case["attempts"]
+            self.assertEqual((attempt["outcome"], attempt["ledger_id"], case["barrier"]),
+                             ("upstream_crashed", rm.UPSTREAM_CRASH_LEDGER, "no-client"))
+            self.assertTrue(attempt["source"]["received"]["text"].startswith("HTTP/1.1 404 "))
+            self.assertEqual(attempt["source"]["exit_code"], 1)
+            self.assertTrue(attempt["vosu"]["route"]["status_line"].startswith("HTTP/1.1 404"))
+        _platform, files, summary = parity_golden._platform_files(capture, None, "captured")
+        self.assertEqual([entry["id"] for entry in summary["upstream_crashed"]], sorted(self.CRASHING))
+        self.assertEqual({entry["vosu_status"] for entry in summary["upstream_crashed"]}, {404})
+        self.assertEqual(summary["cases"], 2)
+        for case_id in self.CRASHING:
+            self.assertNotIn(f"cases/{case_id}.json", files)
+        self.golden(self.out)
+
+        def refused(pattern: str, edit) -> None:
+            changed = json.loads(self.out.read_text("utf-8"))
+            edit(next(case for case in changed["cases"] if case["id"] == self.CRASHING[0]))
+            with self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                parity_golden._platform_files(changed, None, "captured")
+
+        final = lambda case: case["attempts"][-1]
+        refused("not an upstream_crashed case", lambda c: final(c).update(ledger_id="adapter-listener-policy"))
+        refused("exited with a failure code", lambda c: final(c)["source"].update(exit_code=0))
+        refused("vosu must answer", lambda c: final(c)["vosu"].update(route={
+            "attempt": 1, "request": final(c)["source"]["request"], "outcome": "closed"}))
+        refused("never mixed", lambda c: final(c)["source"].update(attempt=2))
+        refused("request bytes differ", lambda c: final(c)["source"].update(
+            request={"text": final(c)["source"]["request"]["text"].replace("%", "%25", 1)}))
+
+        def unlisted(changed: dict) -> None:
+            case = next(case for case in changed["cases"] if case["id"] == "state-http.json-v2.get.menu")
+            case["attempts"][-1] = final(next(c for c in changed["cases"] if c["id"] in self.CRASHING))
+        changed = json.loads(self.out.read_text("utf-8"))
+        unlisted(changed)
+        with self.assertRaisesRegex(parity_golden.GoldenError, "not an upstream_crashed case"):
+            parity_golden._platform_files(changed, None, "captured")
+
+    def test_upstream_that_survives_a_crash_case_fails_the_run(self) -> None:
+        scenario = self.crash_scenario()
+        with mock.patch.object(crash, "EXIT_TIMEOUT_S", 0.5):
+            self.refuses("upstream survived a request the ledger", scenario, FakeClient(self.state),
+                         self.config(scenario))
+
 
 class PlanTests(unittest.TestCase):
     def test_incomplete_case_set_and_platform_exclusions(self) -> None:
@@ -552,6 +620,53 @@ class HarnessAttestationTests(unittest.TestCase):
                     else ["cargo", "build", "--locked", "--features", "test-harness"])
         self.assertEqual(command, expected)
         self.assertIn("test-harness", features)
+
+
+class OperatorFindingTests(unittest.TestCase):
+    """Findings of the first full pilot: line-ending conversions and the shared lazer log."""
+
+    def test_autocrlf_clone_is_refused_early_with_the_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve()
+            env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+            git = lambda *args: subprocess.run(
+                ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                 *args], check=True, capture_output=True, env=env)
+            git("init", "-q")
+            (repo / "a.txt").write_bytes(b"one\ntwo\n")
+            git("add", "a.txt")
+            git("commit", "-q", "-m", "a")
+            self.assertEqual(len(parity_build._clean_commit(repo, windows=False)), 40)
+            with self.assertRaisesRegex(ValueError, r"core\.autocrlf=<unset>; clone .*autocrlf=false"):
+                parity_build._clean_commit(repo, windows=True)
+            git("config", "core.autocrlf", "true")
+            with self.assertRaisesRegex(ValueError, r"core\.autocrlf=true"):
+                parity_build._clean_commit(repo, windows=False)
+            git("config", "core.autocrlf", "false")
+            self.assertEqual(len(parity_build._clean_commit(repo, windows=True)), 40)
+            (repo / "a.txt").write_bytes(b"one\r\ntwo\r\n")
+            with self.assertRaisesRegex(ValueError, "only in line endings; clone"):
+                parity_build._clean_commit(repo, windows=True)
+            (repo / "a.txt").write_bytes(b"three\n")
+            with self.assertRaisesRegex(ValueError, "tracked files are modified"):
+                parity_build._clean_commit(repo, windows=True)
+
+    def test_new_shared_nauth_logs_are_recorded_and_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            (logs / "1795492097.nauth.log").write_text("earlier run")
+            before = golden_client.log_names(logs)
+            (logs / "1795614438.nauth.log").write_text("this run")
+            (logs / "runtime.log").write_text("not ours to remove")
+            record = golden_client.remove_new_shared_logs(logs, before)
+            self.assertEqual([entry["name"] for entry in record["removed"]], ["1795614438.nauth.log"])
+            self.assertEqual(record["removed"][0]["bytes"], len("this run"))
+            self.assertEqual(record["other_new_entries"], ["runtime.log"])
+            self.assertEqual(sorted(golden_client.log_names(logs)),
+                             ["1795492097.nauth.log", "runtime.log"])
+        self.assertEqual(golden_client.remove_new_shared_logs(None, set())["removed"], [])
+        if sys.platform != "win32":
+            self.assertIsNone(golden_client.shared_profile_logs({"client": "lazer"}))
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the local end-to-end runs on Linux")

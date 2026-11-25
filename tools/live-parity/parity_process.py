@@ -538,10 +538,14 @@ def _connection_owner(connection: socket.socket) -> int | None:
     return next(iter(owners)) if len(owners) == 1 else None
 
 
-def _port_is_unused(port: int) -> bool:
+def _port_is_unused(port: int, *, after_exit: bool = False) -> bool:
+    """Nothing holds `port`. `after_exit` (relaunching on the port of an exited daemon) lets
+    its connections left in TIME_WAIT pass on Linux, which binds over them only with
+    SO_REUSEADDR and still refuses a live listener; Windows already binds over them."""
+    reuse = int(after_exit and sys.platform.startswith("linux"))
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, reuse)
         probe.bind(("127.0.0.1", port))
         return True
     except OSError:

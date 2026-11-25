@@ -33,6 +33,7 @@ Capture shape (written by `golden-capture`; every object is closed):
               "body": bytes (after transfer-coding removal), "frames": [frame] (ws only)}
            | {"attempt", "request": bytes, "outcome": "closed", "frames": [] (ws only)}
              (the connection closed without a response byte; expected {"outcome": "closed"})
+    A final attempt may be `upstream_crashed` instead (parity_golden_crash): no case file.
     frame  = {"from": "client"|"server", "fin", "opcode", "masked", "mask_key": hex|null,
               "length", "payload": bytes}
     dump   = {"attempt", "envelope": vosu-adapter-capture-v1}
@@ -48,6 +49,7 @@ import json
 import os
 from pathlib import Path
 import re
+import parity_golden_crash as crash
 import parity_volatile as volatile
 import shutil
 import subprocess
@@ -510,6 +512,10 @@ def _case(value: Any, index: int) -> dict[str, Any]:
             _obj(attempt, at, ("attempt", "outcome", "reason"))
             _str(attempt["reason"], f"{at}.reason")
             continue
+        if attempt.get("outcome") == crash.OUTCOME and last:
+            return {"id": case_id, "family": family, "barrier": value["barrier"],
+                    "dump_schema": value["dump_schema"], "attempts": len(attempts),
+                    crash.OUTCOME: crash.parse_attempt(attempt, at, case_id, family, number)}
         if attempt.get("outcome") != "complete" or not last:
             raise GoldenError(f"case {case_id}: incomplete; only the final attempt may be "
                               "complete and every earlier one must be failed")
@@ -736,6 +742,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
     if (not all(isinstance(item, str) for item in expected_ids)
             or sorted(expected_ids) != sorted(ids) or len(set(expected_ids)) != len(expected_ids)):
         raise GoldenError("capture is incomplete: recorded cases differ from expected_cases")
+    crashed = [crash.check_case(case) for case in cases if crash.OUTCOME in case]
+    cases = [case for case in cases if crash.OUTCOME not in case]
     cases.sort(key=lambda case: case["id"])
     for case in cases:
         _check_sandwiches(case)
@@ -811,7 +819,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
         raise GoldenError(f"{platform}: over budget ({json_bytes} JSON bytes of {JSON_BUDGET}, "
                           f"{asset_bytes} asset bytes of {ASSET_BUDGET}); reduce the scenario "
                           "or get owner approval")
-    summary = {"cases": len(cases), "families": json.loads(files["manifest.json"])["case_counts"]}
+    summary = {"cases": len(cases), "families": json.loads(files["manifest.json"])["case_counts"],
+               crash.OUTCOME: sorted(crashed, key=lambda case: case["id"])}
     return platform, files, summary
 
 
