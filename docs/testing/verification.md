@@ -1246,6 +1246,7 @@ process environment.
   ran" claim needs the marker's absence and the absence of a leftover PID.
 
 The testkit fault modes are `constructor_crash`, `create_crash`,
+`create_block` (`create` waits for `release-<pid>` before it returns),
 `dispatch_crash`, `dispatch_abort`, `dispatch_block`, `cancel_ignored`,
 `destroy_ignored`, `ring_stall` (the child stops itself: `SIGSTOP`, or
 `NtSuspendProcess`) and `corrupt_frame` (the child publishes a
@@ -1253,47 +1254,55 @@ length-mismatched frame into its own plugin → host ring and wakes core).
 Distinct data-source targets come from per-package plugin ids and process
 names. Each instance reads its own target's bytes through one read plan per
 attached session. The `support::smoke` tests prove that each mode triggers
-under the production launcher.
+under the production launcher; `restart` uses `create_block` for the
+first-load deadline.
 
-The `*_crash` modes end the child at once, for deterministic fixtures. Linux
-uses `abort` (`SIGABRT`). Windows terminates the process itself with the
-fail-fast status `0xC0000409`. `dispatch_abort` calls the real
-`std::process::abort` on both platforms. It is the mode that proves real
-crash handling.
+The `*_crash` modes and `dispatch_abort` all end the child with the real
+`std::process::abort`: `SIGABRT` on Linux, the fail-fast status `0xC0000409`
+on Windows. `dispatch_abort` also writes an `abort` receipt first. It is the
+mode `restart` and `crash` use to prove real crash handling, and
+`constructor_crash` and `create_crash` are the real-abort startup cases.
 
-**Open item (owner C0): Windows Error Reporting holds crashed plugin hosts.**
-A real Windows fail-fast (`std::process::abort`) is held by Windows Error
-Reporting for several seconds before the process exits. In the guest,
-Application Error 1000 (exception `0xc0000409`, faulting module
-`testkit_process_plugin.dll`) was followed 3–4 s later by WER 1001. A
-constructor or `create` crash therefore reached core as a startup `timeout`,
-not a `crash`. That is a production misclassification, not only a fixture
-effect. Candidate mechanisms, for C0 to evaluate and choose:
+**Closed (C0, 2026-11-25): Windows Error Reporting held crashed plugin
+hosts.** P0 found that a real Windows fail-fast was held by Windows Error
+Reporting for 3–4 s before the process exited (Application Error 1000, then
+WER 1001), so a constructor or `create` crash reached core as a startup
+`timeout`, not a `crash`. C0 measured the candidates in the VM:
 
-- `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` on the plugin-host job;
-- child-side `SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)`
-  or `WerSetFlags`;
-- whether `__fastfail`, which `std::process::abort` uses, bypasses both.
+- without a fix, a real abort was held 1.2–5.6 s and an access violation
+  1.3–5.8 s;
+- `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` ended the access violation
+  promptly but not the fail-fast, so the job's limits are unchanged;
+- the plugin host now adds `SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS`
+  to its error mode before it maps its channel or loads plugin code
+  (`vosu_sys::plugin_process::suppress_crash_reporting_hold`,
+  plugin-abi.md §7.4 "Crash reporting"). Both faults then exited within
+  about 125 ms.
 
-P0 does not implement a fix. C0/X0 prove it with `dispatch_abort`, and with an
-equivalent real-abort startup case if C0 adds one.
+Evidence on native Windows: `constructor_crash` and `create_crash` report
+stage `crash` with exit status `0xC0000409`, and
+`crash::crash_a_real_abort_with_a_live_job_and_session_detaches_only_its_own`
+asserts that status as an `exited` loss (see "M5 C0 unit evidence").
 
-**Open item (owners C0 for startup-deadline semantics, X0 for native
-evidence): a first load of a newly installed plugin DLL on Windows.** In
-production the plugin host is the daemon's own executable, which Windows has
-already evaluated. A newly installed or updated plugin DLL has not been
-evaluated. Its first `LoadLibrary` gets the image evaluation described above,
-inside the 5-second startup deadline. A first start can therefore fail
-spuriously as `timeout`, and a large DLL or concurrent first loads make that
-more likely.
+**Closed for startup-deadline semantics (C0, 2026-11-25): a first load of a
+newly installed plugin DLL.** A newly installed or updated plugin DLL has not
+been evaluated by Windows, so its first `LoadLibrary` pays the image
+evaluation described above inside the startup deadline. P0 measured 0.5–1.1 s
+for a never-seen 0.8 MB DLL against about 12 ms for a copy of a seen hash.
+Core now gives the first start of each library digest in a core run a
+30-second first-load deadline; every later start of that digest, automatic
+restarts included, keeps the 5-second deadline (plugin-abi.md §7.6 "First
+load", the [spec] decision). The cost is that a genuine `create` hang on a
+library's first start is detected after 30 s instead of 5 s.
+`restart::restart_a_never_seen_library_gets_the_first_load_deadline` proves
+both deadlines on Linux and native Windows with shortened values (2 s and
+6 s), holding `create` through `create_block`. The test harness still loads
+each staged library once before the tests run, so its own timing stays
+independent of the evaluation.
 
-P0 measured this in the VM only with a 0.8 MB DLL. A never-seen hash took
-0.5–1.1 s to load, even in a Defender-excluded directory. A copy of the same
-hash then loaded in about 12 ms. The first-load time of a realistic release
-plugin DLL, and the effect of several concurrent first loads, were not
-measured. The test harness avoids the cost by loading each staged library
-once before the tests run. That is not a production answer, and P0 does not
-change the deadline.
+Still open for X0: the first-load time of a realistic release plugin DLL and
+of several concurrent first loads were not measured, so the 30-second margin
+is not yet proven against them.
 
 **Process identity.** A death proof reads a pidfd, or a process handle and its
 exit status. It never relies on PID absence alone.
@@ -1391,3 +1400,65 @@ before integration.
     - an old child's result never completes a new child's waiter.
 - **Integrated head.** Workspace nextest through
   `scripts/plugin-host-fixtures.py` passed 2862 (6 skipped).
+
+### M5 C0 unit evidence (2026-11-25)
+
+Results from the C0 checkout (`m5/process`), before integration. Native
+Windows runs went through `vm-test.py`; every native run went through
+`scripts/plugin-host-fixtures.py`.
+
+- **Core.** `cargo test --locked -p vosu-core --lib plugin::process` passed
+  136 on Linux. It covers the restart window (`restart`), the supervisor
+  state machine (`supervisor`), and a core write stalled past the 2-second
+  window as one `pressure_timeout` loss (`launcher::tests`).
+  `host::tests::supervision` and `host::actions::tests::grace` cover the
+  host side: restart as a new endpoint, stop or shutdown during the backoff,
+  per-instance teardown, and the A5.4 grace.
+- **Native `restart`** (4 tests): a real abort chain backs off and then
+  latches `failed`, with no sixth start until a manual restart; a teardown
+  during the backoff never respawns; teardown destroys one real child and
+  keeps another; and the first-load deadline. Restart delays were 1.05,
+  2.04, 4.05 and 8.04 s on Linux, and 1.05, 2.04, 4.05 and 8.02 s on
+  Windows.
+- **Native `crash`** (4 tests, each with a second plugin that must stay
+  healthy: same child, no loss, still answering a job):
+  - `crash_an_os_kill_is_one_loss_that_restarts_after_the_backoff`: `SIGKILL`
+    or `TerminateProcess` of a child with a live job and session. It is one
+    `exited` loss with the kill's exit status: the job fails
+    `plugin_crashed`, the session's state closes, `destroy` never runs, and
+    the restart comes 1.04 s (Linux) or 1.03 s (Windows) after the reap.
+  - `crash_a_ring_stall_that_fills_the_ring_is_one_pressure_timeout`: the
+    child stops itself and core writes three 768 KiB frames into the real
+    2 MiB ring. Two are accepted, the third answers `VOSU_ERR_NOT_READY`,
+    and the loss is `pressure_timeout` after 2.02 s on both platforms. The
+    stopped child is killed and reaped, then restarted.
+  - `crash_an_ignored_cancel_is_killed_when_the_grace_expires`: a job times
+    out (`timed_out`, never changed later). The child receives
+    `ACTION_CANCEL` for exactly that invocation and ignores it, and is killed
+    1.50 s (Linux) or 1.51 s (Windows) after the deadline, with the grace
+    set to 1.5 s. The loss is `action_grace_expired`. The callee's other
+    running job fails `plugin_crashed`, while another plugin's running job
+    and child are untouched.
+  - `crash_a_real_abort_with_a_live_job_and_session_detaches_only_its_own`:
+    the job's own delivery calls `std::process::abort`. The child is reaped
+    292 ms (Linux) or 104 ms (Windows) after the abort, with exit status
+    `-6` (`SIGABRT`) or `0xC0000409`. The job fails `plugin_crashed`, the
+    session detaches and its state closes, and the next generation attaches
+    to the same target under a new handle. The other plugin keeps its
+    session and state and gets no detach.
+- **WER fix, native Windows.** `support_fault_constructor_crash_*` and
+  `support_fault_create_crash_*` report `stage crash` with exit status
+  3221226505 (`0xC0000409`), not `timeout`.
+- **Counts.**
+  - Linux: `plugin_host_native -- lifecycle restart crash::` passed 17.
+  - Native Windows: `crash:: restart lifecycle` passed 16 (the Linux-only
+    constructor privilege-drop test is not built there), and `broker::
+    support_fault` passed 14.
+  - Workspace nextest passed 2908 (6 skipped), and `prop_` passed 45.
+  - fmt, Linux and xwin Clippy, and every `check-*.py` were clean
+    (deleted-assertions against `v2/main`).
+- **Integration fix.** B0's
+  `broker_an_old_childs_result_never_completes_a_new_childs_waiter` used to
+  create instance 1 again by hand after its loss. Under C0 supervision, the
+  instance restarts by itself after its backoff, so the test now waits for
+  that restart.
