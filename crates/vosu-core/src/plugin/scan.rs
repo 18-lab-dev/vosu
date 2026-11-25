@@ -454,6 +454,10 @@ pub struct ScanWorkerPool {
     workers: Vec<thread::JoinHandle<()>>,
 }
 
+/// Emptied sub-queues kept for reuse, so a key whose queue drains after
+/// every job (the usual one-plan-at-a-time plugin) allocates none per job.
+const SPARE_QUEUES: usize = 8;
+
 #[derive(Default)]
 struct PoolState {
     queues: HashMap<u64, VecDeque<(u64, Job)>>,
@@ -461,7 +465,20 @@ struct PoolState {
     /// A key appears at most once: pushed back onto the end when its
     /// sub-queue is still non-empty after a worker takes one job from it.
     ready: VecDeque<u64>,
+    /// At most [`SPARE_QUEUES`] empty sub-queues with their capacity.
+    spare: Vec<VecDeque<(u64, Job)>>,
     closed: bool,
+}
+
+impl PoolState {
+    /// Drops `key`'s now-empty sub-queue, keeping its buffer as a spare.
+    fn retire_queue(&mut self, key: u64) {
+        if let Some(queue) = self.queues.remove(&key)
+            && self.spare.len() < SPARE_QUEUES
+        {
+            self.spare.push(queue);
+        }
+    }
 }
 
 struct PoolInner {
@@ -486,7 +503,7 @@ fn worker_loop(inner: Arc<PoolInner>) {
                         .expect("a ready key always has a non-empty queue");
                     let (_id, job) = queue.pop_front().expect("ready implies a queued job");
                     if queue.is_empty() {
-                        state.queues.remove(&key);
+                        state.retire_queue(key);
                     } else {
                         state.ready.push_back(key);
                     }
@@ -531,16 +548,30 @@ impl ScanWorkerPool {
     /// [`Self::cancel`] can later use to remove `job` again, if a worker
     /// has not already dequeued it (F1).
     pub fn submit(&self, key: u64, job: impl FnOnce() + Send + 'static) -> u64 {
+        self.submit_boxed(key, Box::new(job))
+    }
+
+    /// [`Self::submit`] for a job that is already boxed, without boxing it
+    /// again.
+    pub fn submit_boxed(&self, key: u64, job: Job) -> u64 {
         let mut state = self
             .inner
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let id = self.inner.next_job_id.fetch_add(1, Ordering::Relaxed);
-        let queue = state.queues.entry(key).or_default();
-        queue.push_back((id, Box::new(job) as Job));
+        let PoolState {
+            queues,
+            ready,
+            spare,
+            ..
+        } = &mut *state;
+        let queue = queues
+            .entry(key)
+            .or_insert_with(|| spare.pop().unwrap_or_default());
+        queue.push_back((id, job));
         if queue.len() == 1 {
-            state.ready.push_back(key);
+            ready.push_back(key);
         }
         drop(state);
         self.inner.not_empty.notify_one();
@@ -570,7 +601,7 @@ impl ScanWorkerPool {
             // is never left in `queues`, and its key is never left in
             // `ready` either, or a later worker's `expect` above would
             // panic finding a `ready` key with no queue behind it.
-            state.queues.remove(&key);
+            state.retire_queue(key);
             state.ready.retain(|&ready_key| ready_key != key);
         }
         removed

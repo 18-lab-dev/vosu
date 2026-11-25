@@ -813,7 +813,7 @@ impl PluginHostHandler for PluginHost {
         instance: PluginInstanceId,
         job: super::host_services::BrokerJob,
     ) -> Result<(), super::host_services::BrokerJob> {
-        self.background_pool.submit(instance.0, job);
+        self.background_pool.submit_boxed(instance.0, job);
         Ok(())
     }
 }
