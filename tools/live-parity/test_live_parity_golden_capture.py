@@ -252,10 +252,14 @@ class FakeTraversalTests(CaptureTestCase):
         self.refuses("failed 3 whole-case attempts", scenario, FakeClient(self.state), cfg)
         self.assertTrue(self.transcript()["result"].startswith("failed"))
 
-    def test_upstream_sandwich_mismatch_is_never_accepted(self) -> None:
+    def test_unstable_upstream_never_reaches_a_barrier(self) -> None:
+        # A non-volatile value that changes on every read never yields identical barrier
+        # views, so no case is ever recorded (upstream sandwich mismatches of non-volatile
+        # bytes are covered by test_live_parity_volatile.LedgerTests).
         scenario = gc.ScenarioSet("test-unstable", ("menu",), ("state-http.json-v2.get.menu",))
         cfg = self.config(scenario, source_options={"unstable_upstream": True})
-        self.refuses("upstream sandwich responses differ", scenario, FakeClient(self.state), cfg)
+        self.refuses("barrier menu was not reached", scenario, FakeClient(self.state), cfg,
+                     timeout=5.0)
 
     def test_barrier_out_of_order_is_refused(self) -> None:
         scenario = gc.ScenarioSet("test-order", gc.TRAVERSAL, TRAVERSAL_CASES)

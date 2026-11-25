@@ -48,6 +48,7 @@ import json
 import os
 from pathlib import Path
 import re
+import parity_volatile as volatile
 import shutil
 import subprocess
 import tempfile
@@ -564,7 +565,8 @@ def _check_sandwiches(case: dict[str, Any]) -> None:
         # (GOLDEN_CONTRACT §6: status and headers come from the route record).
         if method == "GET" and route["status"] != before["http"]["status"]:
             raise GoldenError(f"case {case_id}: vosu route status differs from the dump's adapter status")
-        if method == "GET" and route["body"] != before["http"]["body_utf8"].encode("utf-8"):
+        if method == "GET" and volatile.payload_view(path, route["body"])[0] != volatile.payload_view(
+                path, before["http"]["body_utf8"].encode("utf-8"))[0]:
             raise GoldenError(f"case {case_id}: vosu route bytes differ from the dump's adapter bytes")
     if case["family"] == "files":
         for name in ("etag", "last-modified"):
@@ -756,16 +758,24 @@ def _platform_files(capture: Any, review_receipt: str | None,
         request = state.request(case, used)
         first = state.expected(case, case["source"][0], used, get_lengths)
         second = state.expected(case, case["source"][1], set(), get_lengths)
-        if first != second:
+        target = _request_line(case["source"][0]["request"])[1].partition("?")[0]
+        try:
+            views = [volatile.expected_view(target, item) for item in (first, second)]
+        except volatile.VolatileError as exc:
+            raise GoldenError(f"case {case['id']}: {exc}") from exc
+        if views[0][0] != views[1][0]:
             raise GoldenError(f"case {case['id']}: upstream sandwich responses differ after "
-                              "approved normalization")
-        files[f"cases/{case['id']}.json"] = _dump({
+                              "approved normalization and the volatile ledger")
+        case_file = {
             "format": CASE_FORMAT, "id": case["id"], "family": case["family"],
             "barrier": case["barrier"], "conditional": case["conditional"],
             "attempts": case["attempts"], "normalized": sorted(used),
             "request": {"text": request}, "expected": first,
             "replay": state.envelope(case["dumps"][0], used),
-        })
+        }
+        if views[0][1]:
+            case_file["volatile"] = views[0][1]
+        files[f"cases/{case['id']}.json"] = _dump(case_file)
         listing.append({"id": case["id"], "family": case["family"], "barrier": case["barrier"],
                         "attempts": case["attempts"], "file": f"cases/{case['id']}.json"})
     for asset in state.assets.values():

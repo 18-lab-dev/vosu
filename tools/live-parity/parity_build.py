@@ -409,6 +409,38 @@ def _clean_commit(root: Path) -> str:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment).stdout.strip()
 
 
+def offset_generator_bundle(root: Path) -> dict[str, Any]:
+    """The prepared offset-generator bundle that the debug harness build embeds.
+
+    `crates/vosu-osu-reader/build.rs` embeds `target/offset-generator/<rid>/` when present;
+    without it vosu cannot read a lazer version newer than the embedded offsets asset. The
+    bundle must match its checksum and the current generator sources."""
+    import importlib.util
+
+    rid = "win-x64" if sys.platform == "win32" else "linux-x64"
+    base = root / "target" / "offset-generator" / rid
+    archive = base / f"offset-generator-v1-{rid}.zip"
+    checksum = base / f"offset-generator-v1-{rid}.zip.sha256"
+    marker = base / f"offset-generator-v1-{rid}.inputs.sha256"
+    hint = (f"run `python scripts/prepare-offset-generator.py --rid {rid}` (needs the .NET 8 "
+            "SDK) before golden-capture")
+    if not (archive.is_file() and checksum.is_file() and marker.is_file()):
+        raise ValueError(f"the offset-generator bundle is missing; {hint}: a harness build "
+                         "without it cannot read a lazer version newer than its embedded offsets")
+    digest = sha256_file(archive)
+    if (checksum.read_text(encoding="utf-8").split() or [""])[0].lower() != digest:
+        raise ValueError(f"the offset-generator bundle fails its checksum; {hint}")
+    spec = importlib.util.spec_from_file_location(
+        "prepare_offset_generator", root / "scripts" / "prepare-offset-generator.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fingerprint = module.fingerprint()
+    if marker.read_text(encoding="utf-8").strip() != fingerprint:
+        raise ValueError(f"the offset-generator bundle was prepared from other generator sources; {hint}")
+    return {"rid": rid, "sha256": digest, "bytes": archive.stat().st_size,
+            "inputs_fingerprint": fingerprint}
+
+
 def build_harness_artifacts(cfg: dict[str, Any], capture_path: str) -> dict[str, Any]:
     """Attest the pinned upstream source and build the debug test-harness vosu.
 
@@ -417,6 +449,7 @@ def build_harness_artifacts(cfg: dict[str, Any], capture_path: str) -> dict[str,
     root = Path(__file__).resolve().parents[2]
     started = time.monotonic_ns()
     commit = _clean_commit(root)
+    bundle = offset_generator_bundle(root)
     toolchain, tool_names = _build_toolchain(cfg["source_mode"])
     source_attestation, release_target = _build_source(cfg, capture_path, toolchain, tool_names)
     vosu_target = Path(str(release_target) + "-harness")
@@ -435,6 +468,8 @@ def build_harness_artifacts(cfg: dict[str, Any], capture_path: str) -> dict[str,
     subprocess.run(vosu_command, cwd=root, check=True, env=vosu_environment)
     if _clean_commit(root) != commit:
         raise ValueError("the vosu tree changed while the capture build ran")
+    if offset_generator_bundle(root) != bundle:
+        raise ValueError("the offset-generator bundle changed while the capture build ran")
     rustc_version = _command_version(
         [str(toolchain["rustc"]), "--version", "--verbose"], vosu_environment)
     hosts = [line.split(":", 1)[1].strip() for line in rustc_version.splitlines()
@@ -463,7 +498,18 @@ def build_harness_artifacts(cfg: dict[str, Any], capture_path: str) -> dict[str,
         "cargo_version": _command_version([cargo, "--version", "--verbose"], vosu_environment),
         "cargo_lock_sha256": sha256_file(root / "Cargo.lock"),
         "cargo_toml_sha256": sha256_file(root / "Cargo.toml"),
+        "offset_generator_bundle": bundle,
         "owned_paths": [str(vosu_target), str(vosu_build_home)],
+        "owned_worktrees": [],
+        "owned_parents": [],
     }
+    if cfg["source_mode"] == "node-build":
+        # The detached source worktree, its build home and its git registration are run-owned.
+        source = cfg["_artifact_identity"]["source"]
+        attestation["owned_paths"].append(source_attestation["source_build_home"])
+        attestation["owned_worktrees"].append(
+            {"repository": source["repository"], "path": source["checkout"]})
+        if sys.platform == "win32":
+            attestation["owned_parents"].append(str(Path(source["checkout"]).parent))
     cfg["_build_attestation"] = attestation
     return attestation

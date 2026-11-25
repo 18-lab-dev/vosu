@@ -291,6 +291,64 @@ scenario set, or the run is refused before the build.
    Report the transcript's barrier log, retried cases, exclusions and cleanup
    result alongside the contract's evidence items.
 
+#### Operator prerequisites (from the O0 dry run)
+
+- **Copy-client mode.** The client's install folder is a root it declares
+  (the v2 `folders.game`), so `golden-capture` refuses a client that runs
+  from outside `capture_root`. Set `golden.client_source` to the installed
+  build (lazer: its `current` directory), point `client_executable` at
+  `<capture_root>\client\osu!.exe`, then copy it once before `check-config`:
+  `python tools\live-parity\run.py golden-client-copy --config $env:PARITY_CONFIG`.
+  Every run re-verifies the copy file by file against the install and
+  records its manifest in the transcript (`client_root`). A lazer copy gets
+  an empty `framework.ini`, which makes it portable: its realm, files store,
+  logs and caches stay in the copy, and nothing is written to the shared
+  `%APPDATA%\osu`. The files root is then `<capture_root>\client\files`.
+- **Offset-generator bundle.** The debug harness build embeds
+  `target/offset-generator/<rid>/` when present; without it vosu cannot read
+  a lazer version newer than the embedded offsets asset. Prepare it in the
+  staged clone with `python scripts/prepare-offset-generator.py --rid win-x64`
+  (.NET 8 SDK). `golden-capture` refuses a missing, mismatched or stale
+  bundle before building and records its SHA-256 and inputs fingerprint in
+  the transcript (`build.offset_generator_bundle`).
+- **Limited token and protected tools.** `golden-capture` refuses an
+  elevated (or root) process. On Windows run it as the console user in
+  session 1 with the limited token, for example through a one-shot
+  scheduled task (`New-ScheduledTaskPrincipal -LogonType Interactive
+  -RunLevel Limited`), with output redirected to files: an elevated SSH
+  session would see `Program Files` as writable and fails the
+  protected-tool check. Every build tool (`git`, `node`, `pnpm`, `python`,
+  `cargo`, `rustc`, `cmd`, `powershell`) must resolve on `PATH` to a
+  location the capture user cannot write, such as a `Program Files`
+  install; a user-writable `V:` or profile path is refused.
+- **Owned files.** Cleanup also removes the detached source worktree and its
+  `git worktree` registration, the source build home, the build root and
+  the vosu daemon's `LOCALAPPDATA` (its broker credential lives there).
+- **GUI.** The VM is agent-owned: foreground input inside the guest is
+  permitted for the osu! client window only, because lazer ignores posted
+  background input (including its exit confirmation). Never use a host
+  viewer.
+
+#### Volatile ledger and stable barriers
+
+Two reads of one stable barrier can differ in live-advancing values: the menu
+and song-select track clock and upstream's decaying `settings.bassDensity`.
+`tools/live-parity/parity_volatile.py` holds the reviewed ledger (Main's
+contract decision of 2026-11-25); each entry names its exact route and JSON
+Pointer (or dump entry and CBOR pointer), its rule and its authority, and
+the transcript records it as `volatile_ledger`. Upstream sandwiches, the
+vosu dump sandwich and `golden` compare a ledger field by presence, JSON
+type and its rule (a finite non-negative number, or a string), never by
+value. A content-length or frame length that changes with such a field must
+still equal its payload's length. The dump revision counters compare as
+non-decreasing. Everything else, including number spelling and member
+order, stays exact, and nothing is rewritten in the fixture: the first
+upstream record keeps its raw value and the case file lists the ledger IDs
+it used (`volatile`). `adapter_golden` must apply the same rules to those
+IDs before such a case can replay. A barrier is reached only when both daemons
+report it across three consecutive observations whose non-volatile upstream
+v2 payload and vosu v2 dump are identical.
+
 ## M3 API, resources and actions
 
 A3 freezes the following exit commands for implementation/integration owners.
