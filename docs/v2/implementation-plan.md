@@ -1068,8 +1068,11 @@ evidence, artifact hashes, receipts and script defects are in
   residuals).
 - **Evidence classes stay separate.** The 2026-11-23 host-only Linux run, with
   no file capabilities, is death-signal evidence only. The Linux VM daemon was
-  a debug build with file capabilities, and its receipts lack `getcap` and a
-  daemon status readback.
+  a debug build with file capabilities, and no artifact hashes were recorded.
+  Its `getcap` output and `/proc` status (`CapPrm`/`CapEff` exactly
+  `0xc001080000`, the four setup capabilities, with the child's `CapPrm` and
+  `CapEff` at zero) are in `daemon-capability-receipt.txt`, which Main transcribed
+  from the same VM session.
 
 Requirements this records:
 
@@ -1094,7 +1097,8 @@ Residuals, owned by F/vosulay and not M5 blockers:
 
 - setuid-helper evidence on a kernel that forbids unprivileged user
   namespaces (AF.7's separately installed runtime owns that provisioning);
-- a direct daemon capability receipt;
+- a capability readback captured in the same evidence directory as the
+  CEF/forced-death run, with artifact hashes;
 - packaged-release evidence for the daemon.
 
 ### M2: state bus and `vosu.*` namespaces

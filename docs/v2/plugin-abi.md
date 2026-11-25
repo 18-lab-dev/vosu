@@ -442,7 +442,17 @@ Once its capability drop (§7.3) or job-object confinement (§7.4) completes, `v
 - There is no configuration switch, environment variable or build feature that runs a plugin host without this sequence.
 - A daemon running as root is refused through the step-6 UID check; packaged vosu never runs the daemon as root.
 
-**Scope.** This policy is only for `vosu plugin-host`. Plugin code may still spawn helpers; they inherit `no_new_privs` and the filter. Core death kills the plugin host through the death signal, but Linux has no job-object equivalent here: descendants a plugin spawns itself are not killed by core death unless the plugin arranges it. N0 records this difference from Windows.
+**Scope.** This policy is only for `vosu plugin-host`. Plugin code may still spawn helpers; they inherit `no_new_privs` and the filter. Core death kills the plugin host through the death signal, but Linux has no job-object equivalent here: descendants a plugin spawns itself are not killed by core death unless the plugin arranges it.
+
+**Descendant cleanup follow-up.** M5 N0 owns this gap and evaluates a cgroup v2 confinement for it: each plugin host gets its own cgroup leaf, either a transient systemd user scope created through the user manager's `StartTransientUnit`, or a delegated cgroup v2 subtree that core already owns. Core empties that leaf with `cgroup.kill` on every loss and teardown, and the leaf's lifetime is bound to core so that a core-only `SIGKILL` also removes every descendant.
+
+N0 accepts an option only if all of these hold:
+
+- it needs no new privilege and no setup change;
+- it works without a systemd user session, or fails visibly when there is none;
+- its native evidence shows a plugin-spawned grandchild gone after a core-only kill.
+
+L0 implements the accepted option. If no option qualifies, X2 records the gap as an accepted residual with N0's receipt, and the gap stays documented rather than open-ended.
 
 The D16 vosulay supervisor child is a different launch policy ([implementation plan D16](implementation-plan.md#10-adopted-decisions-and-risks)). It must keep zero active capabilities and must **not** inherit `no_new_privs` or this filter. Chromium's Linux sandbox needs either the setuid helper, which `no_new_privs` disables, or unprivileged user namespaces, which this filter denies. S1 observed the user-namespace sandbox. Process isolation is not an OS sandbox: a plugin host keeps the user's filesystem and network access.
 

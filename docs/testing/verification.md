@@ -820,11 +820,13 @@ Environment:
 `02-grant-caps.sh` gave the daemon binary the capabilities `vosu --setup`
 grants, `cap_sys_ptrace,cap_sys_resource,cap_perfmon,cap_bpf=ep`, and staged
 `chrome-sandbox` as root:root 4755. The receipts come from `evidence2/` unless
-noted otherwise.
+noted otherwise. `daemon-capability-receipt.txt` was transcribed verbatim by
+Main from the session transcript of the same VM run.
 
 | Criterion | Result |
 | --- | --- |
 | Supervision | vosu 77973 → vosulay host 77995, a direct child (`process-tree.txt`). |
+| Daemon capability status | `getcap` on the daemon binary, read right after the grant, prints `cap_sys_ptrace,cap_sys_resource,cap_perfmon,cap_bpf=ep`. In the `s1-ev.sh` runs, daemon PIDs 68050 and 70843 show UID 1000, `CapPrm`/`CapEff` `000000c001080000`, `NoNewPrivs: 0` and `Seccomp: 0`. That mask is bits 19, 24, 38 and 39 (`CAP_SYS_PTRACE`, `CAP_SYS_RESOURCE`, `CAP_PERFMON`, `CAP_BPF`): exactly the four file capabilities. The supervised vosulay children in those same runs (68073 and 70865) show `CapPrm` 0, `CapEff` 0 and `NoNewPrivs: 0`. `vosu.log` also reports `Process events backend: eBPF`. Source: `daemon-capability-receipt.txt`. |
 | vosulay host status | `CapInh`, `CapPrm` and `CapEff` are zero, `NoNewPrivs: 0`, and `CapBnd` is the full default `000001ffffffffff`. The host inherited no daemon capability. Recorded in `evidence/vosulay-status.txt` and in the `CapEff`/`NoNewPrivs` lines of `process-security.txt`. |
 | Live CEF sandbox | The renderer zygotes run in fresh PID, user and net namespaces, for example `pid:[4026532715]` and `user:[4026532554]`, against the host's `4026531836`/`4026531837`. Their status shows `NoNewPrivs: 1` and `Seccomp: 2`. Zygote 78056 holds `CapEff 0x200000` (`CAP_SYS_ADMIN`) only inside its own user namespace, as Chromium's namespace sandbox does. |
 | Core-only forced death | After SIGKILL of the daemon alone, `kill-verification.txt` reports **0 of 25** surviving. The 25 entries are 13 distinct PIDs: the host plus 12 CEF processes. The script's two `pgrep` patterns matched each CEF PID twice. So 0 of 13 distinct processes survived after 3 s, with zombies excluded. |
@@ -832,11 +834,11 @@ noted otherwise.
 
 Evidence limits recorded with the PASS:
 
-- The retained receipts contain no `getcap` output and no daemon
-  `/proc/<pid>/status` readback. The only daemon-side evidence that the
-  capabilities were effective is `vosu.log`'s `Process events backend: eBPF`.
-  That selection needs `CAP_BPF` and `CAP_PERFMON` in an unprivileged process,
-  which makes it indirect.
+- The daemon capability readback comes from the `s1-ev.sh` runs, not from the
+  `evidence2/` run (daemon 77973) that produced the CEF and forced-death
+  receipts. For daemon 77973 itself, the only capability evidence is its
+  `Process events backend: eBPF` log line. The binary, file capabilities and
+  launch path were the same across those runs.
 - No vosu or vosulay artifact hashes were recorded.
 - The daemon was a debug build. This is file-capability evidence, not
   packaged-release evidence.
@@ -898,8 +900,10 @@ is imported into production.
   and `XAUTHORITY`.
 - vosulay sometimes exits a few seconds after `--toggle-edit` in the headless
   setup. Evidence was captured 4 s after the toggle.
-- Record `getcap` and the daemon's `/proc/<pid>/status`, plus SHA-256 of every
-  binary, so that capability evidence is direct rather than inferred.
+- Record `getcap`, the daemon's `/proc/<pid>/status` and the SHA-256 of every
+  binary inside the evidence directory of the same run. In the 2026-11-25 run,
+  Main transcribed the capability readback separately afterwards, and no
+  hashes were taken.
 - osu!lazer's Velopack self-update needs root for `/opt/osu`. The pending
   package was moved to `/home/vosu/s1-spike/velopack-held/` for the run and
   then restored.
