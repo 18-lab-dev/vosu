@@ -214,6 +214,14 @@ impl Host {
         self.host.destroy_all(DESTROY_GRACE);
     }
 
+    /// The controlled teardown of instance `id` (§7.6): also cancels a
+    /// lost instance's pending automatic restart, so the id can be created
+    /// again.
+    pub fn teardown(&self, id: u64) -> Result<(), HostError> {
+        let _enter = self.runtime.enter();
+        self.host.teardown_instance(PluginInstanceId::new(id))
+    }
+
     /// Offers a synthetic target process `pid` named `name` whose memory is
     /// `bytes` at address 0. The PID must be unique within this test binary.
     pub fn offer_target(&self, pid: u32, name: &str, bytes: Vec<u8>) {

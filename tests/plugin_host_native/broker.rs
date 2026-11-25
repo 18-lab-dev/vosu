@@ -941,6 +941,9 @@ fn broker_an_old_childs_result_never_completes_a_new_childs_waiter() {
         "the lost instance stayed live"
     );
 
+    // The loss scheduled an automatic restart (§7.6 A5.3); the controlled
+    // teardown cancels it, so the id is created again as a new generation.
+    host.teardown(1).unwrap();
     host.create(1, &plugin.loaded).unwrap();
     let new_gate = probe(&host, &new_target, &process);
     let (new, new_handle) = plugin.session(&new_target, &[old]);
