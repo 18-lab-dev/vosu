@@ -17,8 +17,9 @@
 //!
 //! M5 N0's core-death trees: [`tree`] (a core of either kind, its plugin
 //! host, descendant and outside control), [`daemon`] (the real daemon as
-//! core), [`tracked`] (pidfd and handle identities) and, on Windows,
-//! [`jobs`] (job, token and handle-table readbacks).
+//! core), [`tracked`] (pidfd and handle identities), on Linux [`refusal`]
+//! (the seccomp refusal control's environment) and on Windows [`jobs`]
+//! (job, token and handle-table readbacks).
 
 #[path = "artifacts.rs"]
 pub mod artifacts;
