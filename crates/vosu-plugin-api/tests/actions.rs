@@ -1,7 +1,7 @@
 //! F2: exact action declarations and discriminated wire contracts.
 use vosu_plugin_api::{
-    ActionInvoke, ActionSessionMode, Caller, CallerKind, CborValue, PluginManifest,
-    ResourceResolved, decode, encode,
+    ActionInvoke, ActionSessionMode, Caller, CallerKind, CborValue, ResourceResolved, decode,
+    encode,
 };
 
 const BASE: &str = "kind='plugin'\nmanifest_version=1\nid='test.actions.plugin'\nname='Actions'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
@@ -28,7 +28,9 @@ fn fixture() -> String {
 
 #[test]
 fn two_actions_have_exact_names_modes_and_default_cli() {
-    let manifest = PluginManifest::parse(&fixture()).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(&fixture())
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     assert_eq!(manifest.actions.len(), 2);
     assert_eq!(manifest.actions[0].name, "first.run");
     assert_eq!(manifest.actions[1].name, "second.run");
@@ -36,7 +38,9 @@ fn two_actions_have_exact_names_modes_and_default_cli() {
     assert_eq!(manifest.actions[1].session, ActionSessionMode::None);
     assert!(!manifest.actions[0].cli);
     let optional = fixture().replace("session='none'", "session='optional'\ncli=true");
-    let manifest = PluginManifest::parse(&optional).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(&optional)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     assert_eq!(manifest.actions[1].session, ActionSessionMode::Optional);
     assert!(manifest.actions[1].cli);
 }
@@ -58,7 +62,7 @@ fn invalid_action_contracts_are_rejected() {
         valid.replace("session='none'", "session='sometimes'"),
     ] {
         assert!(
-            PluginManifest::parse(&invalid).is_err(),
+            vosu_plugin_api::manifest::PackageManifest::parse(&invalid).is_err(),
             "accepted {invalid}"
         );
     }

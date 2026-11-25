@@ -292,9 +292,11 @@ fn merge_newer_wins_per_key_and_keeps_older_others() {
 fn internal_selector_without_grant_reports_absent() {
     let mut schemas = SchemaRegistry::with_core().unwrap();
     schemas
-        .register(
+        .register_versioned(
             "vosu.osu",
             "vosu.osu",
+            &semver::Version::new(1, 3, 0),
+            vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             include_str!("../../../../../docs/v2/schemas/vosu.osu.schema.json"),
         )
         .unwrap();

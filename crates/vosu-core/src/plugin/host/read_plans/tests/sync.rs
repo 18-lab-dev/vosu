@@ -570,15 +570,19 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
     let plugin_id = "testkit.readplan.nestedsync";
     let (events, trigger) = nested_sync_plugin::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-nestedsync']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-nestedsync']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     );
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: nested_sync_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: nested_sync_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the nested-sync testkit plugin");
     let data_dir = tempfile::tempdir().unwrap();
     host.create_instance(
@@ -629,4 +633,52 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
         vosu_status::VOSU_OK,
         "the outer submission itself (from the reader thread, not nested) must still succeed"
     );
+}
+
+#[test]
+fn detach_generation_and_destroy_revoke_warm_lookup() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let (_directory, host) = test_host(runtime.handle().clone());
+    let instance = PluginInstanceId::new(6301);
+    let (events, _commands) = create_read_plan_instance(
+        &host,
+        instance,
+        "testkit.readplan.cache-generation",
+        &["cache-generation"],
+        ReadPlanPluginConfig::default(),
+    );
+    let pid = 500_163_001;
+    set_session_memory_hook_for_tests(pid, Arc::new(AlwaysOkMemory), ProcessBitness::X64);
+    host.process_appeared(test_process(pid, "cache-generation"));
+    let handle = SessionHandle(expect_attached(&events));
+    let first = host.sync_session_memory(instance, handle).unwrap();
+    assert!(Arc::ptr_eq(
+        &first,
+        &host.sync_session_memory(instance, handle).unwrap()
+    ));
+    host.process_exited(pid);
+    assert!(matches!(
+        host.sync_session_memory(instance, handle),
+        Err(vosu_status::VOSU_ERR_TARGET_GONE)
+    ));
+    assert!(
+        matches!(events.recv_timeout(RECV_TIMEOUT).unwrap(), ReadPlanEvent::Detached { handle: retired } if retired == handle.0)
+    );
+    host.process_appeared(test_process(pid, "cache-generation"));
+    let next = SessionHandle(expect_attached(&events));
+    assert_ne!(handle, next);
+    assert!(host.sync_session_memory(instance, next).is_ok());
+    assert!(matches!(
+        host.sync_session_memory(instance, handle),
+        Err(vosu_status::VOSU_ERR_TARGET_GONE)
+    ));
+    // Prime the new handle again immediately before tearing down its instance.
+    assert!(host.sync_session_memory(instance, next).is_ok());
+    host.destroy_all(Duration::from_secs(1));
+    assert!(matches!(
+        host.sync_session_memory(instance, next),
+        Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT)
+    ));
+    clear_session_memory_hook_for_tests(pid);
 }

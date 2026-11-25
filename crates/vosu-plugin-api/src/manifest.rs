@@ -1,13 +1,21 @@
-//! `manifest.toml` runtime fields for `kind = "plugin"`
-//! (`docs/v2/plugin-abi.md` §8). Shared identity/display metadata and
-//! `covers`'s common-namespace coverage rule are owned by
-//! `docs/v2/catalog-v2.md`; this module validates the ABI-level fields §8
-//! defines, plus the minimal `[[provides]]`/`[[requires]]`/`[[optional]]`
-//! subset M2 consumes (`crate::capability::parse_capability`). Full
-//! catalog business rules — semver resolution, tool/overlay permission
-//! surfaces, `catalog-v2.json` mirroring — are M6a's; this module
-//! tolerates unknown top-level fields so a full manifest (which also
-//! carries those catalog-owned fields) still parses here.
+//! Unified package validation and typed plugin runtime view.
+//! Intrinsic validation is separate from explicit registration context,
+//! application host support, and V2/V3 asset-backed schema verification.
+//!
+//! Cutover consumers: core `plugin/registry.rs`, `plugin/host/capabilities.rs`,
+//! `state/{grant,projector}.rs` and root `tools/{manifest_v2,capabilities}.rs`.
+//! Core keeps runtime matchers, schema registry lifetimes and live authorization.
+//! `PackageManifest::parse` validates intrinsic rules; `validate_context`
+//! requires complete enabled-source registrations and an application version.
+//! `Requirement`/`candidate_satisfies` are the M6b resolver's shared predicates,
+//! not a source selector, permission grant or installation plan.
+//!
+//! V2 consumes `Capability` (own whole namespace, schema path, version) and
+//! explicit `SchemaProvenance`, returning namespace/version, canonical
+//! pointer/lane/activity triples, required-top-level and visibility metadata.
+//! V3 reuses these declarations and `validate_actions`, and compares loaded
+//! schema metadata plus ordered package fields before attesting equivalence.
+//! Neither intrinsic nor context validation attests absent schema bytes.
 
 use std::fmt;
 
@@ -20,11 +28,29 @@ use crate::capability::{
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
 mod actions;
-pub use actions::{ActionDeclaration, ActionSessionMode};
+pub mod legacy_metadata;
+pub mod schema;
+pub use actions::{ActionDeclaration, ActionSessionMode, validate_actions};
+mod context;
+mod diagnostics;
+mod package;
+#[cfg(test)]
+mod package_tests;
+mod plugin;
+mod requirements;
+mod shared;
+pub use context::{
+    HostSupport, NamespaceIndex, NamespaceRevision, PackageKind, Registration, SchemaProvenance,
+    ValidationContext,
+};
+pub use package::{OverlayManifest, PackageFields, PackageManifest, ToolManifest, ToolUi};
+pub use plugin::valid_native_target;
+pub use requirements::{Requirement, candidate_satisfies};
+pub use shared::{SharedManifest, ValidationError};
 
-/// A validated `manifest.toml` for `kind = "plugin"` (`docs/v2/plugin-abi.md`
-/// §8's runtime fields only).
+/// Plugin-specific typed view of the unified package document.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginManifest {
     pub kind: String,
     pub manifest_version: u32,
@@ -32,6 +58,13 @@ pub struct PluginManifest {
     pub name: String,
     pub version: String,
     pub host: String,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub homepage: Option<String>,
+    pub icon: Option<String>,
+    pub banner: Option<String>,
+    #[serde(default)]
+    pub replaces: Vec<String>,
     pub abi_version: u32,
     pub runtime: Runtime,
     #[serde(default)]
@@ -180,12 +213,14 @@ pub enum ManifestError {
     CapabilitySelfDependency(String),
     /// An action declaration or its matching provide is invalid.
     Action(String),
+    Rule(ValidationError),
 }
 
 impl fmt::Display for ManifestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml(e) => write!(f, "manifest.toml: {e}"),
+            Self::Rule(error) => error.fmt(f),
             Self::Action(reason) => write!(f, "actions: {reason}"),
             Self::Kind => write!(f, "kind must be \"plugin\""),
             Self::ManifestVersion => write!(f, "manifest_version must be 1"),
@@ -244,12 +279,9 @@ impl std::error::Error for ManifestError {}
 /// component is a plain name (mirrors `src/tools/manifest.rs::relative`,
 /// this ABI's manifest having the same confinement need).
 fn relative(path: &str) -> bool {
-    use std::path::{Component, Path};
     !path.is_empty()
         && !path.contains(['\\', '\0', ':'])
-        && Path::new(path)
-            .components()
-            .all(|c| matches!(c, Component::Normal(_)))
+        && path.split('/').all(|c| !matches!(c, "" | "." | ".."))
 }
 
 /// `[a-z0-9][a-z0-9_-]{0,63}` grammar (`root_slots`, `docs/v2/naming.md`
@@ -266,9 +298,9 @@ fn valid_root_slot(s: &str) -> bool {
 /// that equals or extends any core-owned namespace ... is always
 /// rejected, from any source").
 fn valid_plugin_id(id: &str) -> bool {
-    let segments: Vec<&str> = id.split('.').collect();
-    (2..=4).contains(&segments.len())
-        && segments.iter().all(|s| valid_kind_segment(s))
+    (2..=4).contains(&id.split('.').count())
+        && id.split('.').all(valid_kind_segment)
+        && !matches!(id.split('.').next(), Some("chart" | "skin"))
         && !is_reserved_namespace(id)
 }
 
@@ -321,13 +353,6 @@ fn valid_covers_entry(cover: &str) -> bool {
 }
 
 impl PluginManifest {
-    pub fn parse(text: &str) -> Result<Self, ManifestError> {
-        let manifest: Self =
-            toml::from_str(text).map_err(|e| ManifestError::Toml(e.to_string()))?;
-        manifest.validate()?;
-        Ok(manifest)
-    }
-
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.kind != "plugin" {
             return Err(ManifestError::Kind);
@@ -400,7 +425,7 @@ impl PluginManifest {
                         if cap.schema.is_some() {
                             return Err(ManifestError::CapabilityUnexpectedSchema(cap.id.clone()));
                         }
-                        if !suffix.starts_with(&format!("{}.", self.id)) {
+                        if CORE_NAMESPACES.contains(&suffix) {
                             return Err(ManifestError::CapabilityForeignNamespace(cap.id.clone()));
                         }
                     }
@@ -438,6 +463,13 @@ impl PluginManifest {
                     Some(suffix)
                 }
             };
+            if self
+                .provides
+                .iter()
+                .any(|provided| crate::capability::covers(&provided.id, &cap.id))
+            {
+                return Err(ManifestError::CapabilitySelfDependency(cap.id.clone()));
+            }
             if let Some(suffix) = own_namespace_suffix
                 && (suffix == self.id.as_str() || suffix.starts_with(&format!("{}.", self.id)))
             {
@@ -452,6 +484,7 @@ impl PluginManifest {
             }
         }
         actions::validate(self)?;
+        plugin::validate(self).map_err(ManifestError::Rule)?;
         Ok(())
     }
 }
@@ -460,13 +493,21 @@ impl PluginManifest {
 mod tests {
     use super::*;
 
+    // Typed validator diagnostics are exercised without exporting a second parser.
+    fn parse(text: &str) -> Result<PluginManifest, ManifestError> {
+        let manifest: PluginManifest =
+            toml::from_str(text).map_err(|error| ManifestError::Toml(error.to_string()))?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
     fn base() -> String {
         "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu!'\nversion='2.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n".into()
     }
 
     #[test]
     fn valid_manifest_parses() {
-        let manifest = PluginManifest::parse(&base()).unwrap();
+        let manifest = parse(&base()).unwrap();
         assert_eq!(manifest.id, "vosu.osu");
         assert_eq!(manifest.runtime, Runtime::InProcess);
         assert!(!manifest.concurrent_dispatch);
@@ -475,10 +516,10 @@ mod tests {
     #[test]
     fn accepts_full_targets_match_and_resource_kinds() {
         let text = format!(
-            "{}concurrent_dispatch=true\nsettings_schema='settings.schema.json'\nroot_slots=['songs']\ncovers=['field:vosu.play.combo', 'field:vosu.chart.title']\n\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libvosu_osu.so'\n\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/vosu_osu.dll'\n\n[match]\nprocess_names=['osu!.exe']\n\n[[resource_kinds]]\nkind='file'\ntree=false\nfamilies=['chart-text']\n",
+            "{}concurrent_dispatch=true\nsettings_schema='settings.schema.json'\nroot_slots=['songs']\ncovers=['field:vosu.play.combo', 'field:vosu.chart.title']\n\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libvosu_osu.so'\n\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/vosu_osu.dll'\n\n[match]\nprocess_names=['osu!.exe']\n\n[[resource_kinds]]\nkind='file'\ntree=false\nfamilies=['chart-text']\n\n[[provides]]\nid='game:osu'\nversion='*'\n",
             base()
         );
-        let manifest = PluginManifest::parse(&text).unwrap();
+        let manifest = parse(&text).unwrap();
         assert!(manifest.concurrent_dispatch);
         assert_eq!(manifest.root_slots, vec!["songs"]);
         assert_eq!(manifest.targets.len(), 2);
@@ -492,7 +533,7 @@ mod tests {
     #[test]
     fn rejects_wrong_kind() {
         assert_eq!(
-            PluginManifest::parse(&base().replace("kind='plugin'", "kind='tool'")).unwrap_err(),
+            parse(&base().replace("kind='plugin'", "kind='tool'")).unwrap_err(),
             ManifestError::Kind
         );
     }
@@ -500,8 +541,7 @@ mod tests {
     #[test]
     fn rejects_wrong_manifest_version() {
         assert_eq!(
-            PluginManifest::parse(&base().replace("manifest_version=1", "manifest_version=2"))
-                .unwrap_err(),
+            parse(&base().replace("manifest_version=1", "manifest_version=2")).unwrap_err(),
             ManifestError::ManifestVersion
         );
     }
@@ -516,8 +556,7 @@ mod tests {
             "-vosu.osu",
         ] {
             assert_eq!(
-                PluginManifest::parse(&base().replace("id='vosu.osu'", &format!("id='{bad}'")))
-                    .unwrap_err(),
+                parse(&base().replace("id='vosu.osu'", &format!("id='{bad}'"))).unwrap_err(),
                 ManifestError::Id,
                 "expected {bad:?} to be rejected"
             );
@@ -527,7 +566,7 @@ mod tests {
     #[test]
     fn rejects_empty_name() {
         assert_eq!(
-            PluginManifest::parse(&base().replace("name='osu!'", "name=''")).unwrap_err(),
+            parse(&base().replace("name='osu!'", "name=''")).unwrap_err(),
             ManifestError::Name
         );
     }
@@ -535,15 +574,12 @@ mod tests {
     #[test]
     fn rejects_bad_version_and_host() {
         assert!(matches!(
-            PluginManifest::parse(&base().replace("version='2.0.0'", "version='latest'"))
-                .unwrap_err(),
+            parse(&base().replace("version='2.0.0'", "version='latest'")).unwrap_err(),
             ManifestError::Version(_)
         ));
         assert!(matches!(
-            PluginManifest::parse(
-                &base().replace("host='>=2.0.0-alpha.1, <3.0.0'", "host='nonsense'")
-            )
-            .unwrap_err(),
+            parse(&base().replace("host='>=2.0.0-alpha.1, <3.0.0'", "host='nonsense'"))
+                .unwrap_err(),
             ManifestError::Host(_)
         ));
     }
@@ -551,33 +587,27 @@ mod tests {
     #[test]
     fn rejects_mismatched_abi_version() {
         assert_eq!(
-            PluginManifest::parse(&base().replace("abi_version=1", "abi_version=2")).unwrap_err(),
+            parse(&base().replace("abi_version=1", "abi_version=2")).unwrap_err(),
             ManifestError::AbiVersion
         );
     }
 
     #[test]
     fn rejects_bad_runtime() {
-        assert!(
-            PluginManifest::parse(&base().replace("runtime='in-process'", "runtime='native'"))
-                .is_err()
-        );
+        assert!(parse(&base().replace("runtime='in-process'", "runtime='native'")).is_err());
     }
 
     #[test]
     fn rejects_unconfined_settings_schema() {
         let text = format!("{}settings_schema='../settings.schema.json'\n", base());
-        assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
-            ManifestError::SettingsSchema
-        );
+        assert_eq!(parse(&text).unwrap_err(), ManifestError::SettingsSchema);
     }
 
     #[test]
     fn rejects_bad_root_slot() {
         let text = format!("{}root_slots=['Songs']\n", base());
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::RootSlot("Songs".into())
         );
     }
@@ -586,7 +616,7 @@ mod tests {
     fn rejects_bad_covers_entry() {
         let text = format!("{}covers=['vosu.play.combo']\n", base());
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::Covers("vosu.play.combo".into())
         );
     }
@@ -602,8 +632,7 @@ mod tests {
             "field:vosu.skin.name",
         ] {
             let text = format!("{}covers=['{entry}']\n", base());
-            PluginManifest::parse(&text)
-                .unwrap_or_else(|e| panic!("expected {entry:?} to be accepted, got {e}"));
+            parse(&text).unwrap_or_else(|e| panic!("expected {entry:?} to be accepted, got {e}"));
         }
     }
 
@@ -616,7 +645,7 @@ mod tests {
         ] {
             let text = format!("{}covers=['{entry}']\n", base());
             assert_eq!(
-                PluginManifest::parse(&text).unwrap_err(),
+                parse(&text).unwrap_err(),
                 ManifestError::Covers(entry.into()),
                 "expected {entry:?} to be rejected"
             );
@@ -633,7 +662,7 @@ mod tests {
         ] {
             let text = format!("{}covers=['{entry}']\n", base());
             assert_eq!(
-                PluginManifest::parse(&text).unwrap_err(),
+                parse(&text).unwrap_err(),
                 ManifestError::Covers(entry.into()),
                 "expected {entry:?} to be rejected"
             );
@@ -650,7 +679,7 @@ mod tests {
         ] {
             let text = format!("{}covers=['{entry}']\n", base());
             assert_eq!(
-                PluginManifest::parse(&text).unwrap_err(),
+                parse(&text).unwrap_err(),
                 ManifestError::Covers(entry.into()),
                 "expected {entry:?} to be rejected"
             );
@@ -664,7 +693,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::Target("/etc/passwd".into())
         );
     }
@@ -676,7 +705,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::ResourceKind("Beatmap_Background".into())
         );
     }
@@ -687,9 +716,9 @@ mod tests {
             "{}\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/x.so'\nextra=1\n",
             base()
         );
-        assert!(PluginManifest::parse(&text).is_err());
+        assert!(parse(&text).is_err());
         let text = format!("{}\n[match]\nbogus=1\n", base());
-        assert!(PluginManifest::parse(&text).is_err());
+        assert!(parse(&text).is_err());
     }
 
     #[test]
@@ -698,7 +727,7 @@ mod tests {
             "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\nschema = 'schemas/vosu.osu.schema.json'\n\n[[requires]]\nid = 'field:vosu.play.combo'\nversion = '^1.0.0'\n\n[[optional]]\nid = 'resource:chart.background'\nversion = '^1.0.0'\n",
             base()
         );
-        let manifest = PluginManifest::parse(&text).unwrap();
+        let manifest = parse(&text).unwrap();
         assert_eq!(manifest.provides.len(), 1);
         assert_eq!(manifest.provides[0].id, "field:vosu.osu");
         assert_eq!(
@@ -718,14 +747,14 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&without_schema).unwrap_err(),
+            parse(&without_schema).unwrap_err(),
             ManifestError::CapabilityMissingSchema("field:vosu.osu".into())
         );
         let with_schema = format!(
             "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\nschema = 'schemas/vosu.osu.schema.json'\n",
             base()
         );
-        PluginManifest::parse(&with_schema).unwrap();
+        parse(&with_schema).unwrap();
     }
 
     #[test]
@@ -735,7 +764,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityDuplicate("field:vosu.play.combo".into())
         );
     }
@@ -747,7 +776,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityForeignNamespace("field:vosu.play".into())
         );
     }
@@ -759,7 +788,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityGameVersion("game:osu".into())
         );
     }
@@ -771,7 +800,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::Capability("vosu.play.combo".into())
         );
     }
@@ -784,7 +813,7 @@ mod tests {
                 base()
             );
             assert_eq!(
-                PluginManifest::parse(&text).unwrap_err(),
+                parse(&text).unwrap_err(),
                 ManifestError::CapabilitySchemaPath(bad.into()),
                 "expected {bad:?} to be rejected"
             );
@@ -800,8 +829,7 @@ mod tests {
             "vosu.sessions.focused",
         ] {
             assert_eq!(
-                PluginManifest::parse(&base().replace("id='vosu.osu'", &format!("id='{bad}'")))
-                    .unwrap_err(),
+                parse(&base().replace("id='vosu.osu'", &format!("id='{bad}'"))).unwrap_err(),
                 ManifestError::Id,
                 "expected {bad:?} to be rejected"
             );
@@ -821,7 +849,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityUnexpectedSchema("field:vosu.play".into())
         );
     }
@@ -833,7 +861,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityUnexpectedSchema("field:vosu.osu.play".into())
         );
     }
@@ -845,7 +873,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityUnexpectedSchema("field:vosu.play.combo".into())
         );
     }
@@ -857,7 +885,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityForeignNamespace("resource:chart.background".into())
         );
         let text = format!(
@@ -865,7 +893,7 @@ mod tests {
             base()
         );
         assert_eq!(
-            PluginManifest::parse(&text).unwrap_err(),
+            parse(&text).unwrap_err(),
             ManifestError::CapabilityForeignNamespace("resource:skin".into())
         );
     }
@@ -878,7 +906,7 @@ mod tests {
                 base()
             );
             assert_eq!(
-                PluginManifest::parse(&text).unwrap_err(),
+                parse(&text).unwrap_err(),
                 ManifestError::CapabilitySelfDependency(id.into()),
                 "expected {id:?} to be rejected"
             );

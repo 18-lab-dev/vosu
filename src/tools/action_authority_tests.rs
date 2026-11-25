@@ -47,6 +47,26 @@ impl capabilities::InstalledCapabilities for Registry {
     fn version(&self, id: &str) -> Option<semver::Version> {
         self.get(id).map(|descriptor| descriptor.version.clone())
     }
+
+    fn validation_snapshot(&self) -> vosu_core::plugin::ValidationSnapshot {
+        let providers = self
+            .0
+            .lock()
+            .values()
+            .map(|descriptor| vosu_core::plugin::ProviderRegistration {
+                id: descriptor.provider_id.clone(),
+                official: false,
+                builtin: false,
+                replaces: Vec::new(),
+                revision: None,
+            })
+            .collect();
+        vosu_core::plugin::ValidationSnapshot {
+            providers,
+            core_revisions: Vec::new(),
+            packages: Vec::new(),
+        }
+    }
 }
 fn fixture() -> String {
     FIXTURE.replace(
@@ -379,15 +399,21 @@ async fn launch_sessions_are_bounded_and_revocation_releases_capacity() {
 fn game_requirements_use_literal_star_and_presence_not_semver() {
     let registry = Registry::default();
     registry.insert("game:osu", "1.0.0-alpha.1");
-    let requirement: capabilities::Requirement =
-        toml::from_str("id='game:osu'\nversion='*'").unwrap();
-    requirement.validate().unwrap();
+    let requirement =
+        capabilities::Requirement::from_capability(&vosu_plugin_api::manifest::Capability {
+            id: "game:osu".into(),
+            version: "*".into(),
+            schema: None,
+        })
+        .unwrap();
     assert!(requirement.resolved(&registry, &registry));
     for version in ["*.*", ">=0", "^1"] {
         assert!(
-            toml::from_str::<capabilities::Requirement>(&format!(
-                "id='game:osu'\nversion='{version}'"
-            ))
+            capabilities::Requirement::from_capability(&vosu_plugin_api::manifest::Capability {
+                id: "game:osu".into(),
+                version: version.into(),
+                schema: None,
+            },)
             .is_err()
         );
     }

@@ -31,21 +31,16 @@ pub(super) const REQUIRED: &[&str] = &[
     "vosu.adapter.streamcompanion",
 ];
 
-/// A bundled plugin instance has no directory of its own on disk (unlike a
-/// `--plugin <dir>` development plugin): its data directory lives under the
-/// data root, named by its plugin id.
-fn bundled_data_dir(paths: &Paths, plugin_id: &str) -> PathBuf {
-    paths.data().join("plugins").join(plugin_id)
-}
-
-/// Loads required production plugins first, followed by optional fixtures.
-/// Array positions remain reserved even when an optional fixture fails.
+/// Loads required production plugins first, followed by optional bundled
+/// fixtures. Required-plugin failure aborts composition; optional fixtures keep
+/// warn-and-continue behavior. Array positions remain reserved even on failure.
 pub(super) fn load_bundled(
     host: &Arc<PluginHost>,
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
     pool: &Arc<WorkerPool>,
     bundled: &[plugin::BundledPlugin<'_>],
+    development_dirs: &[PathBuf],
 ) -> std::io::Result<u64> {
     if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
@@ -55,8 +50,12 @@ pub(super) fn load_bundled(
     for (index, entry) in bundled.iter().enumerate() {
         // Required identities and positions are explicit, not linker inventory.
         let result = (|| {
-            let loaded =
-                plugin::load_bundled(std::slice::from_ref(entry)).map_err(std::io::Error::other)?;
+            let loaded = plugin::load_bundled(
+                crate::application_version(),
+                &source_snapshot(host, bundled, development_dirs),
+                std::slice::from_ref(entry),
+            )
+            .map_err(std::io::Error::other)?;
             let loaded = &loaded[0];
             let plugin_id = &loaded.manifest().id;
             if let Some(required) = REQUIRED.get(index)
@@ -69,7 +68,7 @@ pub(super) fn load_bundled(
             host.create_instance(
                 PluginInstanceId::new(index as u64),
                 loaded,
-                bundled_data_dir(paths, plugin_id),
+                paths.bundled_plugin_data_dir(plugin_id),
                 Some(Arc::clone(pool)),
             )
             .map_err(std::io::Error::other)
@@ -102,8 +101,13 @@ pub(super) fn load_development(
     pool: &Arc<WorkerPool>,
 ) {
     let debug_build = cfg!(debug_assertions);
-    for (index, dir) in dirs.into_iter().enumerate() {
-        let loaded = match plugin::load_development(&dir, debug_build) {
+    for (index, dir) in dirs.iter().enumerate() {
+        let loaded = match plugin::load_development(
+            crate::application_version(),
+            &source_snapshot(host, &[], &dirs),
+            dir,
+            debug_build,
+        ) {
             Ok(loaded) => loaded,
             Err(error) => {
                 logger.warn(format!("--plugin {}: {error}", dir.display()));
@@ -134,7 +138,46 @@ pub(super) fn load_all(
     logger: &vosu_core::logging::Logger,
 ) -> std::io::Result<()> {
     let pool = WorkerPool::new(PLUGIN_CONCURRENT_WORKERS, DEFAULT_QUEUE_CAPACITY);
-    let offset = load_bundled(host, paths, logger, &pool, crate::plugins::BUNDLED)?;
+    let offset = load_bundled(
+        host,
+        paths,
+        logger,
+        &pool,
+        crate::plugins::BUNDLED,
+        &dev_dirs,
+    )?;
     load_development(host, dev_dirs, offset, logger, &pool);
     Ok(())
+}
+
+/// Rebuild registered source identities directly from the currently enabled
+/// inputs. Pending providers are known namespaces, never live capability grants.
+pub(super) fn source_snapshot(
+    host: &PluginHost,
+    bundled: &[plugin::BundledPlugin<'_>],
+    development_dirs: &[PathBuf],
+) -> plugin::ValidationSnapshot {
+    use vosu_plugin_api::manifest::PackageManifest;
+    let mut snapshot = host.validation_snapshot();
+    let mut register = |text: &str, builtin: bool| {
+        if let Ok(PackageManifest::Plugin(manifest)) = PackageManifest::parse(text) {
+            snapshot.providers.push(plugin::ProviderRegistration {
+                id: manifest.id,
+                official: builtin,
+                builtin,
+                replaces: manifest.replaces,
+                // Only loaded/compiled schemas attest authoritative revisions.
+                revision: None,
+            });
+        }
+    };
+    for entry in bundled {
+        register(entry.manifest, true);
+    }
+    for directory in development_dirs {
+        if let Ok(text) = std::fs::read_to_string(directory.join("manifest.toml")) {
+            register(&text, false);
+        }
+    }
+    snapshot
 }

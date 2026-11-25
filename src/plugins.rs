@@ -9,7 +9,7 @@
 //! Production ships the game provider followed by three required projections.
 
 #[cfg(feature = "test-harness")]
-const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n";
+const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
 
 /// Required game/provider entries precede optional test fixtures.
 pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[

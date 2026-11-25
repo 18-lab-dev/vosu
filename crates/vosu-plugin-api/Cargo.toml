@@ -27,10 +27,27 @@ bundled = []
 # plugin's whole dependency graph to our exact serde/ciborium patch would be
 # a publishable-SDK regression, not just an internal consistency choice.
 ciborium = "0.2.2"
+regex = "1.13.1"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order", "raw_value"] }
+thiserror = "2.0.18"
 toml = "1.1.2"
+url = "2.5.8"
 
 [dev-dependencies]
+jsonschema = { version = "=0.61.2", default-features = false }
 proptest = "1.12"
 vosu-proptest = { path = "../vosu-proptest" }
+
+[[test]]
+name = "plan_memory_alloc"
+required-features = ["unstable-sync-reads"]
+
+[[test]]
+name = "plan_memory_validation"
+required-features = ["unstable-sync-reads"]
+
+[[test]]
+name = "plan_memory_unwind"
+required-features = ["unstable-sync-reads"]

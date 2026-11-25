@@ -471,10 +471,14 @@ fn idle_adapter_hubs_arm_no_timer_and_wake_nothing() {
         .block_on(adapter::bounded(receiver.recv()))
         .expect("first frame");
     let armed = wakes.load(Ordering::Relaxed);
-    window(Duration::from_millis(100));
+    // The 1 ms cadence fires at the OS timer granularity: 116 wakes in 250 ms
+    // on Linux, but 15 on native Windows (~15.6 ms default resolution), so the
+    // former 100 ms window saw at most ~6 there. 250 ms clears five on both.
+    window(Duration::from_millis(250));
+    let ticks = wakes.load(Ordering::Relaxed) - armed;
     assert!(
-        wakes.load(Ordering::Relaxed) > armed + 10,
-        "instrumentation observes the cadence timer of a real client"
+        ticks > 5,
+        "instrumentation observes the cadence timer of a real client ({ticks} wakes)"
     );
     drop((connection, receiver));
     for (hub, run, _) in hubs {

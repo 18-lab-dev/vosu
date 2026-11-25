@@ -309,15 +309,19 @@ mod tests {
                 SessionPluginConfig::default(),
             );
             let manifest = format!(
-                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=['{comm}']\n"
+                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=['{comm}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
             );
-            let loaded = load_bundled(&[BundledPlugin {
-                manifest: &manifest,
-                settings_schema: None,
-                namespace_schemas: &[],
-                action_schemas: &[],
-                vtable: session::vosu_plugin_vtable,
-            }])
+            let loaded = load_bundled(
+                &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                &vosu_core::plugin::ValidationSnapshot::default(),
+                &[BundledPlugin {
+                    manifest: &manifest,
+                    settings_schema: None,
+                    namespace_schemas: &[],
+                    action_schemas: &[],
+                    vtable: session::vosu_plugin_vtable,
+                }],
+            )
             .expect("loading the session testkit plugin");
             let data_dir = tempfile::tempdir().unwrap();
             host.create_instance(
@@ -388,15 +392,19 @@ mod tests {
                 SessionPluginConfig::default(),
             );
             let manifest = format!(
-                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=[]\n"
+                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=[]\n[[provides]]\nid='game:fixture'\nversion='*'\n"
             );
-            let loaded = load_bundled(&[BundledPlugin {
-                manifest: &manifest,
-                settings_schema: None,
-                namespace_schemas: &[],
-                action_schemas: &[],
-                vtable: session::vosu_plugin_vtable,
-            }])
+            let loaded = load_bundled(
+                &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                &vosu_core::plugin::ValidationSnapshot::default(),
+                &[BundledPlugin {
+                    manifest: &manifest,
+                    settings_schema: None,
+                    namespace_schemas: &[],
+                    action_schemas: &[],
+                    vtable: session::vosu_plugin_vtable,
+                }],
+            )
             .expect("loading the session testkit plugin");
             let data_dir = tempfile::tempdir().unwrap();
             host.create_instance(
@@ -531,15 +539,19 @@ mod tests {
                 SessionPluginConfig::default(),
             );
             let manifest = format!(
-                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{name}'\nname='vosu.testkit.{name}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{name}']\n"
+                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{name}'\nname='vosu.testkit.{name}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{name}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
             );
-            let loaded = load_bundled(&[BundledPlugin {
-                manifest: &manifest,
-                settings_schema: None,
-                namespace_schemas: &[],
-                action_schemas: &[],
-                vtable: session::vosu_plugin_vtable,
-            }])
+            let loaded = load_bundled(
+                &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                &vosu_core::plugin::ValidationSnapshot::default(),
+                &[BundledPlugin {
+                    manifest: &manifest,
+                    settings_schema: None,
+                    namespace_schemas: &[],
+                    action_schemas: &[],
+                    vtable: session::vosu_plugin_vtable,
+                }],
+            )
             .expect("loading the session testkit plugin");
             let data_dir = tempfile::tempdir().unwrap();
             host.create_instance(

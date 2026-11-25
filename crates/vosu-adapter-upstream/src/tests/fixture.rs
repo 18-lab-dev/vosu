@@ -11,7 +11,7 @@ use vosu_osu_model::{
 };
 use vosu_osu_state::*;
 use vosu_plugin_api::{
-    PluginManifest, PublishBatchWriter, Selector, StateEntry, decode_publish_batch_ref,
+    PublishBatchWriter, Selector, StateEntry, decode_publish_batch_ref, manifest::PackageManifest,
 };
 use vosu_surface::state::{CapturedSelection, IdentifiedRoster, IdentifiedSession};
 
@@ -99,11 +99,19 @@ pub(super) fn source() -> StateBundleSnapshot {
 pub(super) fn capture(snapshot: &StateBundleSnapshot, selectors: &[Selector]) -> CapturedSelection {
     let mut registry = SchemaRegistry::with_core().unwrap();
     registry
-        .register("vosu.osu", "vosu.osu", vosu_osu::OSU_NAMESPACE_SCHEMA)
+        .register_versioned(
+            "vosu.osu",
+            "vosu.osu",
+            &semver::Version::new(1, 3, 0),
+            vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
+            vosu_osu::OSU_NAMESPACE_SCHEMA,
+        )
         .unwrap();
     let registry = Arc::new(RwLock::new(registry));
     let store = StateStore::new(registry.clone());
-    let manifest = PluginManifest::parse(vosu_osu::MANIFEST).unwrap();
+    let manifest = PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(PackageManifest::into_plugin)
+        .unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     let variant = if snapshot.source == ClientType::Stable {
         "stable"

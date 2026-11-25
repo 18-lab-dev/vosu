@@ -593,7 +593,7 @@ fn execute_sync(
 mod deadline;
 mod raw;
 pub(crate) use raw::ValidatedPlan;
-pub use raw::{execute_bytes, execute_into};
+pub use raw::{execute_bytes, execute_into, execute_sync_into};
 
 thread_local! {
     /// Set for the duration of this instance's own serialized `dispatch`

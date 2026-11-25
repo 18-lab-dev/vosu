@@ -5,6 +5,33 @@
 //! state stay exactly those of the sequential read order.
 use super::*;
 
+pub(super) fn read_many_key_fields<const WIDTH: usize>(
+    process: &ProcessHandle,
+    addresses: &[usize; KeyOverlayButton::lazer_button_count()],
+    destinations: &mut [[u8; WIDTH]; KeyOverlayButton::lazer_button_count()],
+    len: usize,
+    pressed_addresses: &[usize],
+    pressed_destinations: &mut [[u8; 1]],
+) -> Result<(), MemoryError> {
+    let request_count = len + pressed_destinations.len();
+    let mut fields = addresses[..len]
+        .iter()
+        .zip(&mut destinations[..len])
+        .map(|(&address, dst)| ReadRequest::new(address, dst))
+        .chain(
+            pressed_addresses
+                .iter()
+                .zip(pressed_destinations)
+                .map(|(&address, dst)| ReadRequest::new(address, dst)),
+        );
+    let mut requests: [_; 30] = std::array::from_fn(|_| {
+        fields
+            .next()
+            .unwrap_or_else(|| ReadRequest::new(0, &mut []))
+    });
+    process.read_many(&mut requests[..request_count])
+}
+
 /// The smallest protection granule on supported targets. Bytes on the same 4 KiB page as a
 /// readable byte are readable, so a read extended only to the end of the page holding the last
 /// required byte succeeds exactly when the required read would.

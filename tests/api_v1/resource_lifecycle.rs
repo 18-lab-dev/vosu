@@ -181,7 +181,7 @@ fn setup(
             .is_none()
     );
     let manifest = format!(
-        "{}\nroot_slots=['fixture']\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='field:{id}'\nversion='1.0.0'\nschema='namespace.json'\n[[resource_kinds]]\nkind='fixture-file'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-stream'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-tree'\ntree=true\nfamilies=['chart-text']\n",
+        "{}\nroot_slots=['fixture']\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='field:{id}'\nversion='1.0.0'\nschema='namespace.json'\n[[provides]]\nid='resource:{id}.fixture-file'\nversion='1.0.0'\n[[provides]]\nid='resource:{id}.fixture-stream'\nversion='1.0.0'\n[[provides]]\nid='resource:{id}.fixture-tree'\nversion='1.0.0'\n[[resource_kinds]]\nkind='fixture-file'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-stream'\nfamilies=['chart-text']\n[[resource_kinds]]\nkind='fixture-tree'\ntree=true\nfamilies=['chart-text']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
         manifest(id)
     );
     let schema =

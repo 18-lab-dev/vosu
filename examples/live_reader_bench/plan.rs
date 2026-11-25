@@ -98,6 +98,7 @@ pub struct Attachment {
     pub publication: Option<(VtableHostServices, u64)>,
     /// The bundled upstream adapter's own surface requester (`--adapter` only).
     pub adapter: Option<Arc<dyn vosu_surface::requester::BundledRequester>>,
+    pub submissions: Arc<std::sync::atomic::AtomicU64>,
     host: Arc<PluginHost>,
     pid: u32,
     submitter: (VtableHostServices, u64),
@@ -170,7 +171,7 @@ impl Attachment {
         let host = PluginHost::new(logger, settings, runtime.handle().clone());
         let (tx, rx) = sync_channel(1);
         let manifest = format!(
-            "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Reader benchmark'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=[{}]\n",
+            "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Reader benchmark'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=[{}]\n[[provides]]\nid='game:osu'\nversion='*'\n",
             serde_json::to_string(&record.name)?
         );
         let manifest = if adapter.is_some() {
@@ -198,30 +199,35 @@ impl Attachment {
             production.insert("match".into(), matcher.into());
             toml::to_string(&production)?
         } else if bus {
-            let production = vosu_plugin_api::PluginManifest::parse(include_str!(
+            let production = vosu_plugin_api::manifest::PackageManifest::parse(include_str!(
                 "../../crates/vosu-osu/manifest.toml"
-            ))?;
+            ))?
+            .into_plugin()?;
             format!(
-                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Bus benchmark'\nversion='2.0.0-alpha.0'\nhost='*'\nabi_version=1\nruntime='in-process'\ncovers={}\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='schema.json'\n[match]\nprocess_names=[{}]\n",
+                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Bus benchmark'\nversion='2.0.0-alpha.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\ncovers={}\n[[provides]]\nid='field:vosu.osu'\nversion='1.3.0'\nschema='schema.json'\n[match]\nprocess_names=[{}]\n[[provides]]\nid='game:osu'\nversion='*'\n",
                 serde_json::to_string(&production.covers)?,
                 serde_json::to_string(&record.name)?
             )
         } else {
             manifest
         };
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: if adapter.is_some() {
-                &[vosu_osu::OSU_NAMESPACE_SCHEMA]
-            } else if bus {
-                &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")]
-            } else {
-                &[]
-            },
-            action_schemas: &[],
-            vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
-        }])?;
+        let loaded = plugin::load_bundled(
+            vosu::application_version(),
+            &host.validation_snapshot(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: if adapter.is_some() {
+                    &[vosu_osu::OSU_NAMESPACE_SCHEMA]
+                } else if bus {
+                    &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")]
+                } else {
+                    &[]
+                },
+                action_schemas: &[],
+                vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
+            }],
+        )?;
         let creating = CREATE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -243,13 +249,17 @@ impl Attachment {
         created?;
         let requester = match adapter {
             Some(_) => {
-                let upstream = plugin::load_bundled(&[plugin::BundledPlugin {
-                    manifest: vosu_adapter_upstream::MANIFEST,
-                    settings_schema: None,
-                    namespace_schemas: &[],
-                    action_schemas: &[],
-                    vtable: vosu_adapter_upstream::vosu_plugin_vtable,
-                }])?;
+                let upstream = plugin::load_bundled(
+                    vosu::application_version(),
+                    &host.validation_snapshot(),
+                    &[plugin::BundledPlugin {
+                        manifest: vosu_adapter_upstream::MANIFEST,
+                        settings_schema: None,
+                        namespace_schemas: &[],
+                        action_schemas: &[],
+                        vtable: vosu_adapter_upstream::vosu_plugin_vtable,
+                    }],
+                )?;
                 let id = PluginInstanceId::new(2);
                 host.create_instance(id, &upstream[0], data.path().join("upstream"), None)?;
                 Some(host.surface_requester(id)?)
@@ -264,6 +274,7 @@ impl Attachment {
         host.process_appeared(record);
         let (services, handle, scans) = rx.recv_timeout(Duration::from_secs(5))?;
         let memory = PlanProcessMemory::new(services, handle, pid, bitness);
+        let submissions = memory.plan_counter();
         let scan = PlanScanBackend::new(services, handle, scans);
         let process = ProcessHandle::with_scan_backend(Arc::new(memory), bitness, Arc::new(scan));
         drop(entered);
@@ -271,6 +282,7 @@ impl Attachment {
             process,
             publication: bus.then_some((services, handle)),
             adapter: requester,
+            submissions,
             host,
             pid,
             submitter: (services, handle),

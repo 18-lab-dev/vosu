@@ -25,6 +25,24 @@ Documentation-only changes still run the documentation-link, provenance, and rel
 
 A state endpoint returning `500 {"error":"osu is not ready/running"}` means no focused ready instance is currently published; it is not by itself evidence that the server failed.
 
+### Background daemon and logs
+
+Graphical launches use the tray rather than an always-open console. **Show logs**
+runs `vosu logs --follow` in a visible terminal; Ctrl-C closes only that viewer.
+`vosu logs -n 100` reads the channel-aware data root's `logs/latest.log` and
+retained archives without needing a working daemon or a network connection.
+Following survives truncation and rotation. Windows retains the console
+subsystem so terminal launches and CLI actions still print, wait and propagate
+exit codes normally. Its embedded detached-allocation policy applies on Windows
+11 24H2/Server 2025 and newer; older Windows detaches daemon-only private consoles
+after startup (a brief flash is possible). Linux terminal selection is
+`xdg-terminal-exec`, then `$TERMINAL`, then common installed terminals; the
+last-resort default file handler is reported in the daemon log.
+
+The internal `logs --window` switch is for the Windows tray: it explicitly
+allocates a visible window despite the detached manifest. No HTTP log endpoint
+or second executable is installed. See [ADR 0024](../decisions/0024-background-daemon-console.md).
+
 ## Configuration
 
 Edit the platform config root's `vosu.toml`; it is a flat, typed TOML file with uppercase binding names. For example:

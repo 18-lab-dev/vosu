@@ -979,12 +979,15 @@ prerelease tuple (for example `>=2.0.0-alpha.1, <3.0.0`); `>=2.0.0` and the
 old `>=1.2.0, <3.0.0` range do not match it under semver prerelease rules.
 M8 still owns the final `2.0.0` release; range enforcement belongs to M6a.
 
-D17 M1 remains open: the stable PlanMemory microbench measures 2.65x native
-(3.22 vs 1.22 µs per capture, about 71 ns per plan plus 12 ns per op,
-13 plans). The decision is pending a live daemon-CPU comparison; the owner
-will record that outcome later. See the
-[benchmark guide](../testing/benchmarks.md). This microbench alone is not a
-D17 pass.
+D17 is **not a pass** for M1. On the final measured source `1162fe6`, stable
+regular, stable precise (fixture), lazer regular and lazer precise exceed the
+10% bar on native Windows. Zero read errors were recorded on every run. The
+owner granted a documented exception on 2026-11-24 for every missed row. It
+permits the M1 landing on `v2/main` only; D17 remains a hard release gate.
+Main owns the M4a X1 attribution and re-measurement of the unattributed
+residual and the M5 process-runtime re-check. Each over-10% row must close
+there or get a fresh explicit exception. Numbers, attribution and the
+exception text are in the [benchmark guide](../testing/benchmarks.md#m1-planmemory-paired-d17).
 
 The following parity map is the replacement evidence cited by C4's
 `Assertions-Removed` trailer. Old names are from `src/instance/tests.rs`
@@ -1212,6 +1215,55 @@ Risks: restart-stable ids require honest content identities and stable immutable
 snapshots; no old id may silently serve changed bytes. Registry and caches stay
 bounded under map-selection churn. Functional coverage is not a D17 pass.
 
+#### M3 outcome
+
+M3 is functionally integrated on `m3/actions` and merged with `v2/main` (M1
+L3 plugin reader cutover and M2 state bus). The overlay listener serves every
+API v1 route in the [final route inventory](../testing/verification.md#final-api-v1-route-inventory):
+sessions and session events, state reads and field subscriptions on their
+own hub, signed resources and indexed trees with ranges, validators and 307
+convenience routes, and authorized actions and jobs. The osu! plugin declares
+its roots and the `file`, `audio`, `background`, `set` and `skin` kinds, owns
+the lazer skin lookup, and provides `vosu.osu.beatmap.import`. The v2 bridge
+(`/tools/_host/v2/bridge.js`), the dotted `vosux <plugin-id> <action>` form
+and alpha data isolation (D21) are in place. Every 1.x route remains served
+through B1 until M4a.
+
+The contract-to-test mapping is the [M3 parity inventory](m3-parity.md). At
+the exit:
+
+- Linux: the full workspace gate passed (2,517 nextest tests), with workspace
+  and Windows cross-Clippy, every repository check, and the tool-host browser
+  and dashboard smokes against a `test-harness` build.
+- Native Windows (VM): `api_v1_compat` 33/33, `server_compat`, `vosu-core`
+  574/574 and `vosu-osu` 196 passed (1 ignored). `vosu-sys` passed 61/61 at High
+  integrity. Its two file-symlink tests need `SeCreateSymbolicLinkPrivilege`,
+  which `vm-test.py`'s LIMITED task does not hold. `daemon_smoke` is Linux-only,
+  so the live campaign below stands in for native daemon evidence.
+- Live Windows stable and lazer, using the VM's own test installations and
+  an isolated alpha program folder: stable passed 51/51 resource, skin-alias,
+  redirect, retirement and legacy checks. Its import was `queued`: one new
+  byte-identical archive in the selected Songs folder, with all 436 existing
+  files unchanged, and the game imported it on restart. Lazer passed 33 of 38
+  checks. All five misses come from the built-in intro map and the built-in
+  argon skin, which publish no background and no indexed skin files. The
+  legacy routes agree. Its import was `submitted` to the selected executable,
+  and the handoff child was reaped. The game did not import the archive
+  within 30 s; this is still open.
+- Concurrent clients kept fixed ids and independent state. One owner's detach
+  left the other session's resources served. A selected-destination import on
+  a just-identified stable session returned `target_gone` before that session
+  had published its chart facts, so this case is unproven.
+- Linux lazer and stable/Wine live runs are pending. Isolated installations
+  exist only in the Linux VM, which cannot run while the Windows VM does.
+
+**D17 for M3 is pending** the official pinned benchmark run; the provisional
+X1 numbers in the [benchmark guide](../testing/benchmarks.md#m3-d17-contract)
+are not a pass. Boundaries: native subprocess crash/kill proof and process
+cancellation grace remain M5; the 1.x tool host and its launch sessions,
+which still authorize the v2 bridge, are replaced in M7; the D20 notices,
+removed-key migration and day-0 gate are M8.
+
 ### M4a: upstream adapters as projections
 
 Scope:
@@ -1346,6 +1398,155 @@ clean-room page work are not completed by M4a.
 The approved D17 case names, common baseline harness and evidence requirements
 are [frozen in the benchmark guide](../testing/benchmarks.md#m4a-d17-contract).
 No measurement or D17 pass is claimed by the contract freeze.
+
+#### M4a outcome
+
+M4a is integrated on `m4a/projections` and merged with `v2/main` at `49e95cf`
+(M1 L3, M2, the M3 exit and M6a SDK validation). Every 1.x state route is now
+a projection of the state bus:
+
+- **Registration.** `src/plugins.rs` lists the required bundled set
+  explicitly: `vosu.osu`, `vosu.adapter.upstream`, `vosu.adapter.gosumemory`,
+  `vosu.adapter.streamcompanion`. If any of the four fails to load or create,
+  composition fails (`src/runtime/dev_plugins.rs`).
+- **Reads.** The adapters read only through `vosu-surface`: one coherent,
+  manifest-granted capture of the focused session per view. Private path
+  echoes need an explicit `vosu.osu.internal` subtree grant and are data only.
+  The production adapter crates depend on `vosu-surface`,
+  `vosu-adapter-support`, `vosu-osu-model`, `vosu-plugin-api` and (upstream,
+  streamCompanion) `vosu-osu-calc`. Their `vosu-core`/`vosu-osu`/
+  `vosu-osu-state` edges are test ingress only (`scripts/crate-boundaries.txt`).
+- **Serving.** One `BusStateProvider` per schema serves HTTP and WebSocket from
+  shared latest-only encodings. HTTP reads create no demand; each WebSocket
+  connection owns one RAII selector lease. Game files and legacy calculation
+  use the session's declared roots (ADR 0005, A4.4); streamCompanion chart
+  facts come from chart-resource bytes and `vosu-osu-calc`.
+- **B1 is deleted in both directions.** The snapshot/event flow and the root
+  control inputs are gone, as are `src/api/snapshot.rs`, the root adapter
+  models and the interim `vosu-osu -> vosu-surface` edge. The crate checker
+  rejects reviving that edge.
+- **Removals.** ADR 0021 removals hold at every nesting level. The four
+  retired configuration keys are ignored and never saved. Removed-route
+  requests are attributed for the future D20 notice.
+- **Tournaments.** D6's stable tournament-manager aggregate landed, and the
+  `stable-tournament` temporary exemption is closed with distinct
+  manager/spectator fixtures.
+
+The [divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md) has 18
+rows: 6 `security`, 12 `contract`, 0 `licensing` and 0 `temporary`. The four
+`vosu.osu`-scoped contract rows authorize no adapter wire difference.
+
+Exit evidence (2026-11-24, on the merged head):
+
+- **Linux.** Formatting, workspace Clippy, Windows cross-Clippy, all nine
+  `check-*.py` scripts and the 234 `scripts/test_*.py` tests passed. So did
+  the tool-host smoke (curl and Chromium phases) and the dashboard smoke
+  against a `test-harness` build. The full workspace nextest run
+  (`--lib --bins --tests --examples --all-features`) passed 2,514 tests
+  (4 skipped). Listed targets:
+  - `cargo test --locked`: `state_api_compat` 7, `server_compat` 27,
+    `state_bus_compat` 5, `config_compat` 9, `performance_invariants` 20
+    (22 with all features), `runtime_wakeups` 3 (1 ignored).
+  - `--features test-harness`: `state_bus` 6, `osu_plugin` 10,
+    `api_v1_compat` 33, `daemon_smoke` 2.
+  - `cargo test --workspace --lib --all-features --locked prop_`: 39.
+- **Native Windows (`vm-test.py`, which always passes `--all-features`).**
+  `server_compat` 27/27, `state_api_compat` 7/7 (including the stable
+  tournament aggregate, the extension-absence proofs and the byte-for-byte
+  oracle replay), `vosu-core` lib `state_subscribe` 17/17 and
+  `api_v1_compat` 33/33 passed. A per-package sweep (`34691a0` plus the
+  allocation fix; `vosu` rerun on `c1a8596`) passed every package except the
+  symlink cases below: `vosu` 556 across all 28 test binaries
+  (1 ignored; `daemon_smoke` is Linux-only and runs 0), `vosu-osu` 211,
+  `vosu-osu-reader` 188, `vosu-plugin-api` 147, `vosu-osu-state` 104,
+  `vosu-rosu-pp-api` 207, `vosu-rosu-map` 83, `vosu-pp` 72, `vosu-osu-calc` 38,
+  `vosu-net` 28, `vosu-osu-model` 24, the three adapters 12/19/22 and
+  `vosu-adapter-support` 9.
+  - Four tests create file symlinks or reparse points, which need
+    `SeCreateSymbolicLinkPrivilege`; `vm-test.py`'s LIMITED task lacks it
+    (error 1314): `vosu-core`'s `surface_calculation_rejects_canonical_non_osu_alias`,
+    `vosu-sys`'s two file-symlink cases and `vosu-adapter-upstream`'s
+    `windows_reparse_files_and_directories_cannot_escape_declared_routes`.
+    The `prepush.py` native phase runs them at High integrity.
+  - Native runs exposed and the exit fixed four test defects. A
+    tool-context expectation mixed path separators and expected the `\\?\`
+    prefix of `std::fs::canonicalize`. `runtime_wakeups`' positive control
+    expected over 10 cadence wakes in 100 ms, but the 1 ms interval fires at
+    the ~15.6 ms Windows timer resolution (15 wakes in 250 ms natively, 116 on
+    Linux); instrumented idle phases saw 0 wakes. The adapter cost
+    invariants raced the osu! resource worker's first asynchronous
+    references commit through the publisher mailbox (measured: 42
+    allocations per steady commit, 54 when one absorbed it, 14 when the
+    worker held the mailbox). `Publication` now records its applied epoch,
+    and the bench fixture waits for that commit before measuring. The live
+    adapter-mode example test expected one commit to show thread CPU, but
+    Windows `GetThreadTimes` charges whole ~15.6 ms ticks, so it now commits
+    until a tick is attributed (bounded). A 16,384-entry surface directory
+    page opens every child through the retained root (R0 confinement): 73 ms
+    on Linux, 2.3 s on native Windows alone, over the test's 5 s operation
+    bound under the parallel native suite. The test now has a 60 s hang
+    bound. The per-entry Windows open cost (~140 µs, so a 131,072-entry
+    legacy listing takes ~18 s) is an open performance finding, not fixed here.
+  - Stress (`vm-stress.py`): `performance_invariants` adapter cases 0/15
+    failures and `runtime_wakeups` 0/15 after the fixes;
+    `owner_teardown_and_destroy_all_retire_pending_and_identified_sessions`
+    0/12 alone and 0/10 in parallel `plugin::` runs. Its single earlier 5 s
+    timeout did not reproduce, so its bound is unchanged.
+    `destroy_cancels_every_timer_of_an_instance_and_none_fire_again`, which
+    predates M4a, failed once in an earlier 12-iteration `plugin::` run.
+- **Hub freshness fix.** Stressing the X1 filter-isolation invariant on two
+  CPUs (1–3% failures) exposed two latest-only defects in the compatibility
+  hub's publication pass, both sending a client that became writable mid-pass
+  an older image than the latest committed one (an extra encode and ack round
+  trip each):
+  - a pass that captured before the client's acknowledgement still sent that
+    older capture. An acknowledgement now records the generation it observed
+    before the client becomes writable; a pass whose capture is older
+    recaptures instead of encoding or sending it (an integer compare per
+    writable client, no lock or allocation, idle path unchanged);
+  - shared unfiltered bytes were encoded only when a plain client was already
+    writable at the start of the pass, so a plain client acknowledging during
+    the pass received bytes kept from an earlier generation. They are now
+    encoded lazily for the pass's own generation.
+
+  Gated regression tests (`src/server/websocket/tests/stale_capture.rs`) fail
+  on the old loop (`unfiltered:2` instead of `:3`, `unfiltered:1` instead of
+  `:2`). After the fix the X1 test, unchanged and exact, passed 250
+  consecutive two-CPU runs.
+
+Not part of this exit:
+
+- **D17 for M4a is pending.** It needs Main's official pinned Criterion run
+  and native `live_reader_bench --adapter` runs on Windows stable/lazer and
+  Linux lazer. It is not a pass. The M1 rows stay open under their owner
+  exception ([benchmark guide](../testing/benchmarks.md#m4a-d17-status-at-the-exit)).
+- Live parity is an optional diagnostic and did not run. M4b owns the
+  pilot/full owner captures and `adapter_golden`; no capture exists, and
+  none is claimed.
+- The clean-room `/api/ingame` page (licensing), M5 process execution and the
+  M8 day-0 gate and migration remain separate work.
+
+**M8 migration inventory.** Delete exactly `ENABLE_KEY_OVERLAY`,
+`ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS` and
+`V2_SUBSCRIPTION_DEBOUNCE` from `vosu.toml` and the dotenv migration inputs,
+idempotently. Preserve `API_V1_SUBSCRIPTION_DEBOUNCE` and every unrelated
+unknown key or table. Write no replacement flag: subscription selectors own
+collection.
+
+**First-party consumers of removed surfaces.** These still request routes that
+M4a removed, so those requests now fail. Their owners move them to API v1
+namespace subscriptions and skin trees/resources; the routes do not return:
+
+| Consumer | Removed surface it uses | Owner |
+|---|---|---|
+| `assets/server/tool-bridge-v1.js` `subscribe()` | `/websocket/v2/subscribe` (now 404) | M7 tool-host replacement; v2 bridge already uses API v1 |
+| vosu-tools `packages/client-skin` | `GET /files/skin/` index, lazer `/files/skin/{path}`, selected-v2 pointers | vosu-tools, before M8 |
+| vosu-tools `packages/tool-web` bridge typings and the tools calling `vosu.subscribe` (downloader, map-analysis, map-preview, practice, replay-renderer, server-pp, skin-studio) | `/websocket/v2/subscribe` through the v1 bridge | vosu-tools, before M8 |
+| vosu-overlays `ratings-timeline` | `/websocket/v2/subscribe` | vosu-overlays, before M8 |
+| vosu-overlay-quickstart (`app.js`, README, TUTORIAL) | `/websocket/v2/subscribe` | quickstart owner, before M8 |
+
+M8's D20 notice flags user overlays that still request removed routes; they
+stay installed and enabled.
 
 ### M4b: golden fixtures from live captures (owner-authorized)
 
@@ -1513,18 +1714,54 @@ the bounded `[[provides]] schema` profile and the catalog's mirrored schema
 version and lane table (D7); the `comm_hints` matcher field (D18);
 committed JSON Schemas for both documents under `docs/v2/schemas/` so
 ecosystem packaging scripts can validate without vosu. Validation lives in
-`vosu-plugin-api` so plugin authors and core use one implementation. M2's
-K0 parses only the `[[provides]]`/`[[requires]]`/`[[optional]]` subset core
-itself consumes, and K1's lane walker applies D7's bounds only to the
-schemas it walks; this milestone is where both become the full catalog
-rule set, the semver-requirement resolution corpus, and the catalog's own
-schema mirror (R14, R15).
+`vosu-plugin-api` so plugin authors and core use one implementation. The
+integrated implementation extends M2 K0's capability grammar and F2's action
+declarations, extracts K1's pure D7 compiler below core, and replaces T0's
+independent v2 document/requirement rules. Core retains schema registration,
+grants and demand; the tool host retains exact live launch-session authority.
+
+M6a's Q1–Q7 contract completion was approved on 2026-11-24:
+the [shared validation contract](catalog-v2.md#m6a-validation-contract-approved-2026-11-24)
+records strict collection/shape policy, resolution `1..=16384`, game/matcher
+equivalence and authoritative field revisions. [Sampling lanes](state-schema.md#sampling-lanes)
+freezes wildcard/ref-sibling/full-document/provenance/work-bound semantics;
+[process matching](plugin-abi.md#61-process-matching) freezes portable hint
+validation.
+M6b consumes the SDK's pure requirement/candidate-conjunction predicates;
+it must not add a parallel capability/version parser.
 
 Exit: `cargo test --locked -p vosu-plugin-api manifest` and a corpus test
 `tests/catalog_v2_compat.rs` with valid and invalid manifests for every rule
 in catalog-v2.md, including reserved names, id prefix rules,
 `provides`/`[[actions]]` pairing, and D7's size, depth, `$ref`, and
 namespace limits.
+
+#### M6a outcome (2026-11-24)
+
+V0–V6 are integrated at `7ea4958`. The exit corpus contains **266 paired
+rejection controls** and **38 literal semver truth rows**. The SDK `manifest`
+filter passed 62 tests; `catalog_v2_compat` contains 22 tests, or 23 with
+`test-harness`/all features. The integrated Linux workspace run passed
+2,556 tests with 6 skipped. Exact commands, attribution, the migration ledger
+and remaining evidence are in [verification](../testing/verification.md#m6a-outcome-and-evidence).
+
+All plugin, v2 tool and v2 overlay production loaders consume SDK validation
+with explicit running-version and registration context. The former K0 subset
+deferral and T0 minimal v2 parser are no longer implementation boundaries.
+Offline Draft 2020-12 schemas cover document structure, not source trust,
+semver resolution or asset-backed equality; use the SDK with schema bytes for
+complete mirror comparison.
+
+**Not a release claim:** native Windows passed `manifest` (59) and
+`catalog_v2_compat` (23) in the agent VM (see verification). No new
+compiler/load-time performance measurements were taken, and the
+functional results do not establish a performance pass or supersede inherited
+M1/M2/M3 findings. M6b still owns fetching, credentials, trust, source/provider
+selection, graph orchestration and installation; it must reuse the SDK
+predicates and verify package mirrors before install commit. M7 still owns
+final legacy tool-host removal and first-start migration. `metadata.txt`
+remains supported read-only overlay input, and `tool.toml` remains only the
+explicit M3→M7 exception. No release or push is authorized here.
 
 ### M6b: sources, credentials, resolver, private sources
 

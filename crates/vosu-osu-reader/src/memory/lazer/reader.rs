@@ -1,31 +1,6 @@
 use super::*;
 
-fn read_many_key_fields<const WIDTH: usize>(
-    process: &ProcessHandle,
-    addresses: &[usize; KeyOverlayButton::lazer_button_count()],
-    destinations: &mut [[u8; WIDTH]; KeyOverlayButton::lazer_button_count()],
-    len: usize,
-    pressed_addresses: &[usize],
-    pressed_destinations: &mut [[u8; 1]],
-) -> Result<(), MemoryError> {
-    let request_count = len + pressed_destinations.len();
-    let mut fields = addresses[..len]
-        .iter()
-        .zip(&mut destinations[..len])
-        .map(|(&address, dst)| ReadRequest::new(address, dst))
-        .chain(
-            pressed_addresses
-                .iter()
-                .zip(pressed_destinations)
-                .map(|(&address, dst)| ReadRequest::new(address, dst)),
-        );
-    let mut requests: [_; 30] = std::array::from_fn(|_| {
-        fields
-            .next()
-            .unwrap_or_else(|| ReadRequest::new(0, &mut []))
-    });
-    process.read_many(&mut requests[..request_count])
-}
+mod audio;
 
 impl SynchronizedMemoryReader for LazerMemory {
     fn reader_synchronization(&self) -> ReaderSynchronization {
@@ -49,62 +24,24 @@ impl SynchronizedMemoryReader for LazerMemory {
     }
 
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {
-        self.set_resolved_state(
-            state.game_base.unwrap_or_default(),
-            state.current_screen.unwrap_or_default(),
-        );
-        self.set_read_context_mode(mode);
-    }
-}
-
-impl LazerMemory {
-    fn precise_key_player(&mut self) -> Result<usize, MemoryError> {
-        let screen = self.current_screen;
-        if let Some(cache) = self.precise_player.as_mut()
-            && !cache.key_used
-        {
-            cache.key_used = true;
-            if cache.screen == screen {
-                return Ok(cache.player);
-            }
-        }
-        self.player()
-    }
-
-    fn precise_hit_player(&mut self) -> Result<usize, MemoryError> {
-        let screen = self.current_screen;
-        if let Some(cache) = self.precise_player.as_mut()
-            && !cache.hit_used
-        {
-            cache.hit_used = true;
-            if cache.screen == screen {
-                return Ok(cache.player);
-            }
-        }
-        self.player()
+        self.prepare_precise(state, mode);
     }
 }
 
 impl MemoryReader for LazerMemory {
     fn audio_velocity_base(&mut self) -> MemoryRead<AudioVelocityBase> {
         let logo = self.root(GameRoot::OsuLogo)?;
-        let visualizer = self.ptr(add(
-            logo,
-            self.offsets.osu_game_screens_menu_osu_logo.visualizer,
-        )?)?;
-        let array = self.ptr(add(
-            visualizer,
-            self.offsets
+        let array = self.pointer_chain(
+            add(logo, self.offsets.osu_game_screens_menu_osu_logo.visualizer)?,
+            &[self
+                .offsets
                 .osu_game_screens_menu_logo_visualisation
-                .frequency_amplitudes,
-        )?)?;
+                .frequency_amplitudes],
+        )?;
         if array == 0 {
             return self.not_ready();
         }
-        let mut out = Vec::with_capacity(40);
-        for index in 0..40 {
-            out.push(self.process.read_f32(add(array, 0x10 + 4 * index)?)?.into());
-        }
+        let out = audio::read(&self.process, array)?;
         Ok(ReadStatus::Ready(out))
     }
     fn user(&mut self) -> MemoryRead<User> {
@@ -117,14 +54,13 @@ impl MemoryReader for LazerMemory {
             if api == 0 {
                 return self.not_ready();
             }
-            let state = self.ptr(add(
-                api,
-                self.offsets.osu_game_online_api_apiaccess.local_user_state,
-            )?)?;
-            let bindable = self.ptr(add(
-                state,
-                self.offsets.osu_game_online_api_local_user_state.local_user,
-            )?)?;
+            let bindable = self.pointer_chain(
+                add(
+                    api,
+                    self.offsets.osu_game_online_api_apiaccess.local_user_state,
+                )?,
+                &[self.offsets.osu_game_online_api_local_user_state.local_user],
+            )?;
             if bindable == 0 {
                 0
             } else {
@@ -212,20 +148,27 @@ impl MemoryReader for LazerMemory {
                 .osu_game_screens_play_player
                 .hudoverlay_k_backing_field,
         )?;
-        let controller = self.ptr(add(
+        let controller_address = add(
             overlay,
             self.offsets
                 .osu_game_screens_play_hudoverlay
                 .input_count_controller,
-        )?)?;
-        let bindable = self.ptr(add(
-            controller,
-            self.offsets
-                .osu_game_screens_play_hud_input_count_controller
-                .triggers,
-        )?)?;
-        let collection = self.ptr(add(bindable, 0x18)?)?;
-        let (size, items) = self.list_info(collection)?;
+        )?;
+        let triggers_offset = self
+            .offsets
+            .osu_game_screens_play_hud_input_count_controller
+            .triggers;
+        let (collection, size, items) = if let Some(header) =
+            self.chained_list_header(controller_address, &[triggers_offset, 0x18, 8])
+        {
+            header
+        } else {
+            let controller = self.ptr(controller_address)?;
+            let bindable = self.ptr(add(controller, triggers_offset)?)?;
+            let collection = self.ptr(add(bindable, 0x18)?)?;
+            let (size, items) = self.list_info(collection)?;
+            (collection, size, items)
+        };
         const BUTTON_COUNT: usize = KeyOverlayButton::lazer_button_count();
         if size > BUTTON_COUNT {
             return Err(corrupt("managed collection", collection, "invalid size"));
@@ -328,19 +271,24 @@ impl MemoryReader for LazerMemory {
             "hit errors player",
             self.current_screen,
         )?;
-        let processor = self.ptr(add(
+        let processor = self.screen_ptr(
             p,
             self.offsets
                 .osu_game_screens_play_player
                 .score_processor_k_backing_field,
-        )?)?;
-        let list = self.ptr(add(
+        )?;
+        let list_address = add(
             processor,
             self.offsets
                 .osu_game_rulesets_scoring_score_processor
                 .hit_events,
-        )?)?;
-        let (size, items) = self.hybrid_list_info(list)?;
+        )?;
+        let (size, items) =
+            if let Some((_, size, items)) = self.chained_list_header(list_address, &[8]) {
+                (size, items)
+            } else {
+                self.hybrid_list_info(self.ptr(list_address)?)?
+            };
         Ok(ReadStatus::Ready(
             self.read_hit_error_suffix(items, size, last)?,
         ))
@@ -567,9 +515,27 @@ impl MemoryReader for LazerMemory {
             false
         };
         let playing = player != 0 || is_loader;
+        #[cfg(windows)]
+        let prefetched = if playing && self.menu_global.beatmap_time.is_none() {
+            self.prefetch_precise_player(player)
+        } else {
+            None
+        };
+        #[cfg(not(windows))]
+        let prefetched: Option<(bool, bool, f64)> = None;
+        #[cfg(windows)]
+        if !playing && self.menu_global.multi.is_none() {
+            let _ = self.prefetch_precise_menu();
+        }
         if playing {
-            let spectator = self.check_spectator(self.current_screen)?;
-            let replay = self.check_watching_replay(self.current_screen, player)?;
+            let (spectator, replay) = if let Some((spectator, replay, _)) = prefetched {
+                (spectator, replay)
+            } else {
+                (
+                    self.check_spectator(self.current_screen)?,
+                    self.check_watching_replay(self.current_screen, player)?,
+                )
+            };
             self.set_playback_source(replay, spectator);
         } else {
             self.watching_replay = false;
@@ -599,7 +565,11 @@ impl MemoryReader for LazerMemory {
         };
         self.status = status as i64;
         self.player_loading = is_loader;
-        let time = js_round_number(self.current_time_for_player(player)?);
+        let time = js_round_number(if let Some((_, _, time)) = prefetched {
+            time
+        } else {
+            self.current_time_for_player(player)?
+        });
         self.precise_player = (player != 0).then_some(PrecisePlayerCache {
             screen: self.current_screen,
             player,
@@ -644,26 +614,31 @@ impl MemoryReader for LazerMemory {
         }
         // The batched `global` may already have read this capture's track pointer.
         let cached = self.capture_track.load(Ordering::Relaxed);
-        let source = if cached != UNCACHED_POINTER {
-            cached
+        let length = if cached != UNCACHED_POINTER {
+            self.process.read_f64(add(
+                cached,
+                self.offsets.osu_framework_audio_track_track.length,
+            )?)?
         } else {
             let clock = self.beatmap_clock()?;
-            let dec = self.ptr(add(
-                clock,
-                self.offsets
-                    .osu_game_beatmaps_framed_beatmap_clock
-                    .decoupled_track,
-            )?)?;
-            self.ptr(add(
-                dec,
-                self.offsets
-                    .osu_framework_timing_decoupling_framed_clock
-                    .source_k_backing_field,
-            )?)?
+            f64::from_le_bytes(
+                self.chain(
+                    add(
+                        clock,
+                        self.offsets
+                            .osu_game_beatmaps_framed_beatmap_clock
+                            .decoupled_track,
+                    )?,
+                    &[
+                        self.offsets
+                            .osu_framework_timing_decoupling_framed_clock
+                            .source_k_backing_field,
+                        self.offsets.osu_framework_audio_track_track.length,
+                    ],
+                )?,
+            )
         };
-        Ok(ReadStatus::Ready(js_round_number(self.process.read_f64(
-            add(source, self.offsets.osu_framework_audio_track_track.length)?,
-        )?)))
+        Ok(ReadStatus::Ready(js_round_number(length)))
     }
     fn tourney(&mut self) -> MemoryRead<Tourney> {
         Ok(ReadStatus::Unsupported("Lazer: tourney not implemented"))
@@ -866,11 +841,13 @@ impl MemoryReader for LazerMemory {
         let batched_skin = self.batched_skin.take();
         let skin = || -> Result<String, MemoryError> {
             let manager = self.root(GameRoot::SkinManager)?;
-            let current = self.ptr(add(
-                manager,
-                self.offsets.osu_game_skinning_skin_manager.current_skin,
-            )?)?;
-            let value = self.ptr(add(current, 0x20)?)?;
+            let value = self.pointer_chain(
+                add(
+                    manager,
+                    self.offsets.osu_game_skinning_skin_manager.current_skin,
+                )?,
+                &[0x20],
+            )?;
             self.string_at(add(
                 value,
                 self.offsets.osu_game_skinning_skin.name_k_backing_field,

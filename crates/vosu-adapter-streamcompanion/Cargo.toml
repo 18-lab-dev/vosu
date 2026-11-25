@@ -23,6 +23,7 @@ vosu-surface = { path = "../vosu-surface" }
 
 [dev-dependencies]
 ciborium = "=0.2.2"
+semver = "=1.0.28"
 tempfile = "3.26.0"
 vosu-core = { path = "../vosu-core", features = ["bench-harness"] }
 

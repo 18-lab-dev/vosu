@@ -8,3 +8,6 @@
 # Golden fixtures are covered by SHA-256 inventories (GOLDEN_CONTRACT.md §9).
 /tests/fixtures/golden-synthetic/** -text
 /tests/fixtures/upstream/*/** -text
+# The API v1 fixture plugin publishes these files and tests assert their exact
+# sizes and served bytes, so a Windows checkout must not convert line endings.
+/tests/fixtures/api-v1-plugin/** -text

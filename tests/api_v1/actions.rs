@@ -81,6 +81,11 @@ impl vosu::tools::capabilities::InstalledCapabilities for Installed {
     fn version(&self, capability: &str) -> Option<semver::Version> {
         self.0.upgrade()?.installed_capability_version(capability)
     }
+    fn validation_snapshot(&self) -> plugin::ValidationSnapshot {
+        self.0
+            .upgrade()
+            .map_or_else(Default::default, |host| host.validation_snapshot())
+    }
 }
 fn load(h: &Harness, root: &std::path::Path) {
     let mut text = manifest("fixture.jtwo");
@@ -93,17 +98,21 @@ fn load(h: &Harness, root: &std::path::Path) {
             "\n[[actions]]\nname='{name}'\nversion='1.0.0'\ntitle='Echo'\nargs_schema='args.json'\nresult_schema='result.json'\nsession='{mode}'\ncli={cli}\n[[provides]]\nid='action:fixture.jtwo.{name}'\nversion='1.0.0'\n"
         );
     }
-    text += "\n[[provides]]\nid='field:fixture.jtwo.value'\nversion='1.4.0'\n[[provides]]\nid='game:jtwo'\nversion='*'\n";
-    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-        manifest: &text,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[
-            ("args.json", "{\"type\":\"string\"}"),
-            ("result.json", "{\"type\":\"string\"}"),
-        ],
-        vtable: fixture::vosu_plugin_vtable,
-    }])
+    text += "\n[[provides]]\nid='field:fixture.jtwo'\nversion='1.4.0'\nschema='state.json'\n[[provides]]\nid='field:fixture.jtwo.value'\nversion='1.4.0'\n[[provides]]\nid='game:jtwo'\nversion='*'\n[match]\nprocess_names=[]\n";
+    let loaded = plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &h.host.validation_snapshot(),
+        &[plugin::BundledPlugin {
+            manifest: &text,
+            settings_schema: None,
+            namespace_schemas: &[r#"{"title":"fixture.jtwo","version":"1.4.0","type":"object","properties":{"value":{"type":"object","properties":{"child":{"type":"number"}}}}}"#],
+            action_schemas: &[
+                ("args.json", "{\"type\":\"string\"}"),
+                ("result.json", "{\"type\":\"string\"}"),
+            ],
+            vtable: fixture::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     h.host
         .create_instance(PluginInstanceId::new(782301), &loaded[0], root.into(), None)
@@ -418,8 +427,23 @@ fn action_jobs_authority_limits_and_lifecycle() {
         );
         assert!(
             h.host
-                .installed_capability_version("field:fixture.jtwo.valueOther")
+                .installed_capability_version("field:fixture.jtwoOther.value")
                 .is_none()
+        );
+        // Q7 requires this owner's whole-namespace schema declaration, which
+        // covers valueOther too. Preserve the independent leaf-boundary check.
+        let leaf = vosu_plugin_api::manifest::Requirement::parse(
+            "field:fixture.jtwo.valueOther",
+            "^1.0.0",
+        )
+        .unwrap();
+        assert!(
+            !leaf.satisfied_by_version("field:fixture.jtwo.value", &semver::Version::new(1, 4, 0),)
+        );
+        assert!(
+            h.host
+                .installed_capability_version("field:fixture.jtwo.valueOther")
+                .is_some()
         );
         assert!(h.host.installed_capability_version("game:jtwo").is_some());
         // Keep action metadata available: loss below must be caused by the

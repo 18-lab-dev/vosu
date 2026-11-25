@@ -409,12 +409,19 @@ fn plan_memory_stable_capture_backend_call_count() {
     ] {
         counter.store(0, Ordering::Relaxed);
     }
+    let submissions_before = attachment.submissions.load(Ordering::Relaxed);
     assert_eq!(
         format!("{:?}", stable_fixture::capture(&mut native)),
         format!("{:?}", stable_fixture::capture(&mut plan))
     );
     let native_regular_calls = native_calls.load(Ordering::Relaxed);
     let plan_regular_calls = plan_calls.load(Ordering::Relaxed);
+    let submissions = attachment.submissions.load(Ordering::Relaxed) - submissions_before;
+    assert!(submissions > 0);
+    assert!(
+        submissions <= 13,
+        "regular fixture plan budget: {submissions}"
+    );
     eprintln!(
         "stable regular: native calls={native_regular_calls} ops={} health={}; plan calls={plan_regular_calls} ops={} health={}",
         native_ops.load(Ordering::Relaxed),
@@ -657,11 +664,11 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         panic!("lazer amplitudes were not ready");
     };
     assert_eq!((values.len(), values[39]), (40, 39.0));
-    assert_eq!(lazer_memory.batch_calls.load(Ordering::Relaxed), 0);
-    assert_eq!(lazer_memory.batch_requests.load(Ordering::Relaxed), 0);
+    assert_eq!(lazer_memory.batch_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(lazer_memory.batch_requests.load(Ordering::Relaxed), 40);
     assert_eq!(
         lazer_memory.forbidden_exact_calls.load(Ordering::Relaxed),
-        40
+        0
     );
 }
 

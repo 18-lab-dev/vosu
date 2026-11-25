@@ -57,6 +57,13 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
     let attachment = plan::Attachment::new(plan::native_record(pid)?, "vosu.bench.pid-phases")?;
     // Prime the same adapter used by live_reader_bench before profiling flat plans.
     black_box(attachment.process.read_u32(address)?);
+    println!(
+        "setup_plans={}",
+        attachment
+            .submissions
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - 1
+    );
     let (host, handle) = attachment.as_ref();
     let profiling = std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1");
     if profiling && !read_plan_profile::COMPILED_IN {
@@ -77,9 +84,10 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
     println!(
         "Synthetic widths use repeated readable addresses, not live osu decoding. Profiling clocks are reported separately and inflate timings."
     );
-    let shapes: [(&str, &[usize]); 4] = [
+    let shapes: [(&str, &[usize]); 5] = [
         ("one_op", &[1]),
         ("stable_precise_2ops", &[2]),
+        ("stable_precise_4ops", &[4]),
         ("stable_wide_18ops", &[18]),
         // Brokered-read guide's modeled precise width/depth, without chasing
         // arbitrary pointers from a foreign process supplied only by PID.

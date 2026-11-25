@@ -16,13 +16,17 @@ pub fn bench(c: &mut Criterion, group: &str, case: &str) {
     let manifest = include_str!("../../crates/vosu-osu/manifest.toml");
     publisher::register_manifest("vosu.osu", manifest);
     let events = publisher::register("vosu.osu");
-    let loaded = vosu_core::plugin::load_bundled(&[vosu_core::plugin::BundledPlugin {
-        manifest,
-        settings_schema: Some(include_str!("../../crates/vosu-osu/settings.schema.json")),
-        namespace_schemas: &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")],
-        action_schemas: vosu_osu::ACTION_SCHEMAS,
-        vtable: publisher::vosu_plugin_vtable,
-    }])
+    let loaded = vosu_core::plugin::load_bundled(
+        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &[vosu_core::plugin::BundledPlugin {
+            manifest,
+            settings_schema: Some(include_str!("../../crates/vosu-osu/settings.schema.json")),
+            namespace_schemas: &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")],
+            action_schemas: vosu_osu::ACTION_SCHEMAS,
+            vtable: publisher::vosu_plugin_vtable,
+        }],
+    )
     .unwrap();
     let pool = vosu_core::plugin::WorkerPool::new(1, 64);
     h.host

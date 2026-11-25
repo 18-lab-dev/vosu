@@ -24,32 +24,47 @@ fn bundled_assets_use_exact_paths_and_require_every_declared_schema() {
         action_schemas: &assets,
         vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
     };
-    let loaded = load_bundled(&[entry]).unwrap();
+    let loaded = load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[entry],
+    )
+    .unwrap();
     let schemas = loaded[0].action_schemas();
     assert_eq!(schemas.len(), 3);
     assert_eq!(schemas["schemas/one.json"], assets[0].1);
     assert_eq!(schemas["schemas/two.json"], assets[1].1);
     assert_eq!(schemas["schemas/shared.json"], assets[2].1);
     assert!(
-        load_bundled(&[BundledPlugin {
-            action_schemas: &assets[..2],
-            ..entry
-        }])
+        load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            &[BundledPlugin {
+                action_schemas: &assets[..2],
+                ..entry
+            }]
+        )
         .is_err()
     );
     let duplicate = [assets[0], assets[0], assets[1], assets[2]];
     assert!(
-        load_bundled(&[BundledPlugin {
-            action_schemas: &duplicate,
-            ..entry
-        }])
+        load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            &[BundledPlugin {
+                action_schemas: &duplicate,
+                ..entry
+            }]
+        )
         .is_err()
     );
 }
 
 #[test]
 fn shared_schema_is_loaded_once_and_failures_propagate() {
-    let manifest = PluginManifest::parse(&manifest()).unwrap();
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(&manifest())
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .unwrap();
     let mut paths = Vec::new();
     let assets = load_action_schemas(&manifest, |path| {
         paths.push(path.to_owned());
@@ -83,13 +98,23 @@ fn development_assets_are_required_before_loading_native_code() {
     std::fs::write(dir.path().join("schemas/one.json"), "true").unwrap();
     std::fs::write(dir.path().join("schemas/shared.json"), "false").unwrap();
     assert!(matches!(
-        load_development(dir.path(), true),
+        load_development(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            dir.path(),
+            true
+        ),
         Err(HostError::Io(_))
     ));
     std::fs::write(dir.path().join("schemas/two.json"), "{}").unwrap();
     // No target was declared, so reaching MissingTarget proves assets loaded.
     assert!(matches!(
-        load_development(dir.path(), true),
+        load_development(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            dir.path(),
+            true
+        ),
         Err(HostError::MissingTarget)
     ));
 }
@@ -102,7 +127,12 @@ fn development_action_schema_symlink_cannot_escape_package() {
     std::fs::write(dir.path().join("manifest.toml"), manifest()).unwrap();
     std::fs::write(outside.path().join("one.json"), "true").unwrap();
     std::os::unix::fs::symlink(outside.path(), dir.path().join("schemas")).unwrap();
-    match load_development(dir.path(), true) {
+    match load_development(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        dir.path(),
+        true,
+    ) {
         Err(HostError::Io(error)) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
         _ => panic!("escaped schema was not rejected"),
     }
@@ -123,7 +153,12 @@ fn action_schema_assets_compile_at_load_and_reject_invalid_contracts() {
         action_schemas: &assets,
         vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
     };
-    let loaded = load_bundled(&[entry]).unwrap();
+    let loaded = load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[entry],
+    )
+    .unwrap();
     let compiled = loaded[0].compiled_action_schemas();
     assert_eq!(compiled.len(), 3);
     assert!(
@@ -144,10 +179,14 @@ fn action_schema_assets_compile_at_load_and_reject_invalid_contracts() {
     let mut bad = assets;
     bad[1].1 = r#"{"pattern":"silently-ignored-before-F3"}"#;
     assert!(
-        load_bundled(&[BundledPlugin {
-            action_schemas: &bad,
-            ..entry
-        }])
+        load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &crate::plugin::ValidationSnapshot::default(),
+            &[BundledPlugin {
+                action_schemas: &bad,
+                ..entry
+            }]
+        )
         .is_err()
     );
 }

@@ -22,6 +22,9 @@ struct State {
     stopped: bool,
     epoch: u64,
     revision: u64,
+    /// The epoch whose references the worker last applied. `revision` cannot
+    /// show this: `observe` and `gone` replies also advance it.
+    prepared_epoch: u64,
     references: Arc<Encoded>,
     streams: HashSet<u64>,
     closed: Vec<u64>,
@@ -88,6 +91,7 @@ impl Publication {
                         state.references = Arc::new(references);
                         state.streams.clear();
                         state.revision += 1;
+                        state.prepared_epoch = epoch;
                     }
                     prepared = Some(next);
                     applied = epoch;
@@ -173,6 +177,12 @@ impl Publication {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .revision
+    }
+    /// Bench/test quiescence: `(revision, worker applied the current epoch)`.
+    #[cfg(feature = "bench-harness")]
+    pub(crate) fn prepared(&self) -> (u64, bool) {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        (state.revision, state.prepared_epoch == state.epoch)
     }
     pub fn append(&self, writer: &mut PublishBatchWriter, clear: bool) -> u64 {
         let (revision, references) = {

@@ -11,12 +11,12 @@ tags: [testing, ci, parity, benchmarks, release]
 ## Fast selection by change
 
 - API projection/routing: affected tests plus `cargo test --locked --test state_api_compat` and/or `server_compat`; add `daemon_smoke` for startup/serving changes.
-- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; keep `state_api_compat` unchanged to guard the B1-served 1.x APIs.
+- State bus, grants, projection or demand: core/plugin unit tests plus the M2 suites and schema validation below; `state_api_compat` replays the source oracle through the bus-backed adapters, so a projection change must keep its bytes.
 - Configuration/counters: affected unit tests plus `cargo test --locked --test config_compat`; cover flat typed TOML parsing, precedence `vosu.toml > vosu.env > tosu.env > defaults`, canonical replacement before legacy removal, malformed startup/reload preservation of last-good state, watcher handling, and atomic writes.
 - Process/memory: affected tests plus `cargo test --locked --test process_memory -- --nocapture` on every affected native OS.
 - Updater/release: `updater_compat`, native `updater_native`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` for package/startup changes.
 - Calculation/state: `vosu-pp` tests, `performance_invariants`, `state_bus_invariants`, and `state_api_compat`/`server_compat` when observable schemas or timing can change; for v2 stats, cover parsed/missing maps, modes, mods, clock rate, and catch timing-window semantics. The oracle-backed `live_contracts` and `oracle_parity` tests require the crate’s `oracle-debug` feature. Live parity is optional ([ADR 0011](../decisions/0011-live-parity-optional.md)).
-- Compatibility payloads: assert the original `hitErrors`/`hitErrorArray` arrays plus additive sibling `pressHitErrors` and `releaseHitErrors` arrays across v1, stream companion, v2, precise, play, and tournament fixtures; include the lazer mania hold release-correction case.
+- Compatibility payloads: assert the original `hitErrors`/`hitErrorArray` arrays across v1, stream companion, v2, precise, play, and tournament fixtures, and the absence of every ADR 0021 extension member (`pressHitErrors`, `releaseHitErrors`, `keyHitErrors`, `hitOffsets`, `keys.all`, `catcher`) at every nesting level while the bus holds nonempty source facts; include the lazer mania hold release-correction case.
 - Untrusted-input and crash-recovery logic (ZIP preflight, updater recovery, API-state selection, served paths, JSON Pointers): `cargo test --workspace --lib --all-features --locked prop_`. These property tests use a fixed seed; `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores new cases, and the nightly workflow runs 20,000 cases per property. A failure persists its seed to `proptest-regressions/lib-prop-failures.txt`; commit that file with the fix.
 - Lazer offsets: `python scripts/lazer-offset-canary.py [--tag <release>-lazer]` stages the generator on the client's own runtime exactly as the daemon does and fails naming any template field it cannot resolve. The nightly workflow runs it against the newest lazer release.
 - Dashboard and tool host: `tests/tool_host_smoke.py` and `tests/dashboard_smoke.py` against a `--features test-harness` debug build; CI's `dashboard` job runs them when UI paths change, and the nightly workflow also runs the catalog-art and tool-catalog smokes.
@@ -73,10 +73,10 @@ evidence and D17's decision belong there, not in a functional test pass.
 
 A4 resolves the approved choices in the
 [source/removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
-and [P0/R0 surface contract](../v2/adapter-surfaces.md). Until production
-cutover, retain the original B1 wire guard. At cutover, replace its ingress
-with actual producer → ABI/bus → authorized surface → adapter registration
-and compare raw emitted bytes, preserving the source pin and fixture inventory.
+and [P0/R0 surface contract](../v2/adapter-surfaces.md). Since the production
+cutover, `state_api_compat` drives the actual producer → ABI/bus → authorized
+surface → adapter registration and compares raw emitted bytes, preserving the
+source pin and fixture inventory; no B1 ingress remains.
 Do not strip extensions or normalize regular keys away. Nonempty extension
 source facts must exist while the wire keys are absent. Restore schema
 renames on adapter output; schema-only divergences authorize no wire skip.
@@ -118,6 +118,11 @@ confinement cases. No VM lifecycle action is implied by these instructions.
 Use `flock /tmp/vosu-smoke.lock` for smokes. D17 names and measurement policy
 are [frozen separately](benchmarks.md#m4a-d17-contract), not passed by functional
 tests. M4b owns live captures/golden tooling and M8 owns migration execution.
+
+The exit run of these commands, with exact counts, the native Windows results
+and the native-only symlink-privilege and flake observations, is recorded in
+the [M4a outcome](../v2/implementation-plan.md#m4a-outcome). The D17 status is
+in the [benchmark guide](benchmarks.md#m4a-d17-status-at-the-exit).
 
 ## M4b behavioral goldens
 
@@ -352,7 +357,7 @@ shutdown. A test-only forwarding `HostServices` wrapper counts every production
 osu plugin `ACTION_RESULT` before host acceptance, including rejected duplicates.
 J3 also fixes the registration boundary: the plugin's action-target session is
 installed before `SESSION_IDENTIFY` publishes it; rejection rolls that preparation
-back. Capture/B1 still starts only after acceptance, and B2 settings delivery is
+back. Capture still starts only after acceptance, and B2 settings delivery is
 still serialized by the same plugin-state lock. A re-entrant identify/action
 regression tests the formerly missing-target window deterministically.
 
@@ -391,13 +396,39 @@ to select an explicitly installed browser executable. Alpha fixtures compare
 all normal-root file names/bytes before and after import, then poison the old
 config and restart at the imported port without consulting it.
 
-Host evidence (2026-11-24): daemon smoke 2/2, API-v1 compatibility 33/33,
-plugin host 8/8 and alpha bootstrap 1/1 passed. The affected-crate all-feature
-nextest run passed 687 tests (3 pre-existing ignored tests); the retained curl
-and required Chromium browser phases passed. All 232 script tests plus 47
-subtests, formatting, workspace Linux/Windows cross-Clippy, pinned actionlint
-1.7.12 and applicable repository checks passed. Native Windows and all four
-live-client combinations below remain **pending**, not inferred from host tests.
+Exit evidence (2026-11-24, after merging `v2/main`):
+
+- **Linux.** The full workspace nextest run passed 2,517 tests (6 skipped).
+  Formatting, workspace and Windows cross-Clippy, every `check-*.py`, and every
+  `scripts/test_*.py` suite passed. So did the tool-host smoke (retained curl
+  phase plus the required Chromium phase) and the dashboard smoke. Listed
+  targets: `api_v1_compat` 33, `daemon_smoke` 2, `plugin_host` 8,
+  `osu_plugin` 8, `state_bus` 6, `prerelease_bootstrap` 1.
+- **Native Windows (`vm-test.py`).** `api_v1_compat` 33/33, `server_compat`,
+  `vosu-core` lib 574/574 and `vosu-osu` lib 196 passed (1 ignored).
+  `daemon_smoke` ran 0 tests because the target is Linux-only. `vosu-sys` lib
+  passed 59 under `vm-test.py`; its two Windows file-symlink tests fail with
+  error 1314 there, because the LIMITED scheduled task lacks
+  `SeCreateSymbolicLinkPrivilege`. At High integrity (the `prepush.py` native
+  context) `vosu-sys` passed 61/61.
+- **Live Windows.** A release `2.0.0-alpha.1` binary ran from an isolated
+  program folder in the VM, against the VM's own test installations. Stable
+  passed 51/51 resource, range, HEAD, 304/416, 307, tree, skin-alias, 410
+  retirement and legacy checks. Its import returned `queued`, added one
+  byte-identical archive to the selected Songs folder, and left all 436
+  existing files unchanged. Lazer passed 33/38; the five misses come from the
+  built-in intro map and built-in skin, which have no background and no
+  indexed skin files. Its import returned `submitted` to the selected
+  executable, and the handoff child was reaped. The game-side import was not
+  observed within 30 s. Concurrent clients kept fixed ids, and one owner's
+  detach did not retire the other's resources. A selected-destination import
+  on a just-identified stable session returned `target_gone`, so that case
+  is unproven. The raw evidence is under
+  `/home/user/gh/vecosystem/evidence/m3-exit/`.
+- **Pending.** Linux lazer and stable/Wine live runs: their isolated
+  installations exist only in the Linux VM, which cannot run beside the
+  Windows VM. Also pending: live source mutation, gameplay traversal, and
+  the M3 D17 decision.
 
 #### Final API-v1 route inventory
 
@@ -667,3 +698,163 @@ that create real directories can use `&`, rather than Windows-invalid `<`/`>`.
 
 When a change crosses [runtime boundaries](../architecture/overview.md), run the narrowest affected contract first and then the platform/live gate appropriate to the observable behavior. Do not substitute a compile-only check for behavior verification.
 
+
+## M6a rule matrix and cutover inventory
+
+Approved 2026-11-24: Q1–Q7 are frozen in the
+[package contract](../v2/catalog-v2.md#m6a-validation-contract-approved-2026-11-24),
+[lane profile](../v2/state-schema.md#sampling-lanes) and
+[matcher contract](../v2/plugin-abi.md#61-process-matching).
+Each corpus row records a stable rule id, document pointer, valid control
+and one-mutation rejection. Inventory categories:
+
+| Rule family | Required discriminators |
+| --- | --- |
+| `manifest.shape`, `manifest.shared` | Three kinds, required/default fields, forbidden/unknown fields, semver, confined assets, HTTP(S) homepage, positive bounded resolution |
+| `manifest.context` | Official identity, both collision directions, segment boundary, same identity deduplication, longest namespace, source/kind-local replaces |
+| `manifest.capability` | Grammar, duplicates/intersection, per-kind permissions, internal subtree, own/authoritative field revisions, literal game star |
+| `manifest.resource`, `manifest.action` | Reserved/core coverage vs own provides, kind/provide pairing, MIME families/tree shape, action bijection and swapped versions |
+| `manifest.matcher` | 0/1/15/16 UTF-8 bytes, NUL, regex syntax, matcher iff game; unchanged runtime overlap/prefilter |
+| `manifest.requirement` | Exact/caret/tilde/wildcard/intersections/prereleases/build metadata, coverage, single-candidate conjunction |
+| `manifest.schema` | Whole-document byte/depth/ref/visibility/work limits, siblings, wildcard/map/array and independent expected lanes |
+| `catalog.shape`, `catalog.mirror` | Packages/art/targets, null/defaults, source-local uniqueness, unsupported vs malformed, ordered fields and asset-backed equality |
+| `consumer.legacy`, `consumer.cutover` | Manifest precedence/no fallback, unchanged legacy/settings bytes, real production loader parity and rollback |
+
+### Consumer migration ledger
+
+| Baseline / consumer | Integrated validation authority | Retained host ownership |
+| --- | --- | --- |
+| K0 plugin manifest; F2 actions | SDK `manifest::PackageManifest`, typed plugin/tool/overlay views, shared capability/context/requirement predicates and action declarations | Application supplies its own version and exact official/registration context; intrinsic validity alone is not contextual validation |
+| K1 namespace compiler; core `state/schema` and plugin host state | SDK `manifest::schema` full-document compiler and shared lane-demand union; core's independent walker/visibility implementation removed | Embedded bytes, provenance, schema/provide equality at registration, grants, rollback/drop lifetime and actual demand |
+| Core plugin registry and root `runtime/dev_plugins.rs` | Shared package validation using the live `ValidationSnapshot`; bundled and development schemas have explicit provenance | Confined asset opening, native-library/ABI loading and runtime trust |
+| D18 core `plugin/matcher.rs` | Shared SDK matcher document checks | Anchored runtime engine, platform matching, enabled-set overlap/256-entry prefilter and installed-order tie-break; overlapping uninstalled catalog candidates stay valid |
+| T0 root `tools/manifest_v2.rs`, `tools/capabilities.rs` and discovery | SDK package/requirement validation; v2 adapter converts validated fields to host presentation, not a second parser | Loaded-provider availability, exact action/version lookup, live launch/session authority and job isolation; no legacy permission grants |
+| Root `counters/service/{manifest,discovery}.rs` | SDK overlay view and pure `manifest::legacy_metadata` parser | Manifest-first single discovery/no invalid-manifest fallback, confined bounded file reads, settings and download ownership; metadata/settings remain unwritten |
+| SDK `catalog/` and offline packaging schemas | Strict catalog validation and asset-backed mirror comparison; structural schema parity in `tests/packaging_schema.rs` | M6b/M7 must supply package schema bytes and call comparison before installation; no network catalog cutover in M6a |
+
+The plugin-specific API is a typed package view, not an independent validator.
+Legacy `tool.toml` is explicitly separate input through M7, not a v2 fallback.
+M6b owns source/credential/trust/provider selection and dependency/install
+orchestration; it reuses the SDK's coverage, version and candidate-conjunction
+predicates. M7 owns final legacy-host removal and first-start migration.
+
+### Resolved specification approvals
+
+Main adopted Q1–Q7 on 2026-11-24 under delegated owner authority:
+
+| Approval | Adopted contract |
+| --- | --- |
+| Q1 | Metadata-only array/map `*`, no literal `*` property collision; escaped pointers; lexicographically sorted distinct `(pointer,lane,activity)` triples, exact deduplication only |
+| Q2 | Full-document reference/visibility checks, RFC 6901 local refs and fixed trusted common-defs, supported ref siblings, cycle/dangling rejection, 262,144-byte inclusive / depth-32 / 50,000-work bounds; unsupported lane-bearing constructs fail, without importing the action-value keyword profile |
+| Q3 | Explicit trusted bundled/official schema provenance; copied `vosu.osu` identity/title grants no visibility exception |
+| Q4 | Reject duplicates in capability/action/kind/slot/covers lists and unknown or cross-kind fields |
+| Q5 | V2 resolution has exactly two integers in `1..=16384`; legacy behavior unchanged |
+| Q6 | Both Linux hint fields require 1–15 UTF-8 bytes without NUL on every platform; Windows may ignore valid hints at runtime only |
+| Q7 | Matcher iff a game provide; own leaf provides require an own whole-namespace schema declaration; foreign leaves require the supplied authoritative revision, and missing revision fails |
+
+### Offline schema use and limits
+
+Use the committed [manifest](../v2/schemas/manifest.schema.json) and
+[catalog](../v2/schemas/catalog-v2.schema.json) schemas with an offline Draft
+2020-12 engine. Parse TOML to its JSON data model first; raw TOML is not schema
+input. Every ref is local; fixed HTTPS ids are not fetch instructions.
+Defaults are annotations, not injected values. Shape-invalid corpus rows must
+fail both validators, while SDK-only semantic failures may pass the schemas.
+
+Schemas cannot prove semver/prerelease behavior, UTF-8 byte lengths, Rust regex
+syntax, contextual officialness/namespace collisions, action/version
+correspondence, canonical extracted lanes or package/schema equivalence.
+The SDK remains authoritative; mirror verification needs actual loaded schema
+assets. A catalog-only/schema pass grants no trust, permissions, host support,
+download safety or installation approval. `jsonschema` is dev-only; production
+does not evaluate published values with a JSON Schema engine.
+
+## M6a outcome and evidence
+
+Integrated source baseline: **`7ea4958`**, V0–V6. The corpus has **266 paired
+rejection controls** (valid control, one mutation, rule id and pointer) and
+**38 literal semver truth rows**, shared with the SDK's `manifest` filter.
+Counts are rows, not separate test functions: the ungated root target has
+**22 tests**, or **23 with `test-harness`/all features**. Child inventories are
+`tests/catalog_v2/{manifest,plugin,declarations,catalog,context,capability,schema,mirror,matcher,legacy,consumers}.rs`;
+the shared truth fixture is
+`crates/vosu-plugin-api/tests/fixtures/requirement_truth_table.rs`.
+
+### Linux evidence supplied by integration
+
+Main supplied UnitV6's observed results at exactly `7ea4958`; V7 does not
+claim to have rerun these Rust commands. UnitV6 used an isolated target
+directory and CPU set `0-7,16-23`.
+
+| Command / evidence | Result |
+| --- | --- |
+| `cargo test --locked -p vosu-plugin-api manifest` | 62 passed |
+| `flock /tmp/vosu-smoke.lock cargo nextest run --workspace --all-features --locked` | 2,556 passed, 6 skipped; includes the all-feature root corpus |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | Passed (integration report) |
+| Scoped Windows `env -u C_INCLUDE_PATH cargo xwin clippy` | Passed (integration report); cross-check only, not native execution |
+| All nine `scripts/check-*.py`, including `check-deleted-assertions.py --base v2/main` | Passed (integration report) |
+
+No new compiler/load-time cost measurements were taken. Functional green and
+cross-Clippy are not a performance pass; inherited M1/M2/M3 findings remain
+unchanged. The six workspace skips are not evidence for skipped behavior.
+This record is not a complete prepush/smoke/release gate.
+
+### Reproduction commands
+
+From the repository root, using the pinned toolchain:
+
+```sh
+source scripts/dev-env.sh
+export CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m6a-v7
+# Required first for a fresh target's real plugin consumer fixtures:
+taskset -c 0-7,16-23 nice -n 10 cargo build --locked -p vosu-plugin-testkit --all-features
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked -p vosu-plugin-api manifest
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked -p vosu-plugin-api catalog
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked -p vosu-plugin-api manifest_schema
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked -p vosu-plugin-api catalog_schema
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked --test catalog_v2_compat -- --list
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked --test catalog_v2_compat -- --nocapture
+taskset -c 0-7,16-23 nice -n 10 cargo test --locked --features test-harness --test catalog_v2_compat
+taskset -c 0-7,16-23 nice -n 10 flock /tmp/vosu-smoke.lock cargo nextest run --workspace --all-features --locked
+```
+
+These are reproduction instructions, not additional V7 execution claims.
+
+### V7 documentation checks
+
+V7 ran all nine checks successfully on its documentation worktree over
+`7ea4958`, after `source scripts/dev-env.sh` with
+`CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m6a-v7`:
+
+```sh
+for check in scripts/check-*.py; do
+  if [ "$check" = scripts/check-deleted-assertions.py ]; then
+    taskset -c 0-7,16-23 nice -n 10 python "$check" --base v2/main
+  else
+    taskset -c 0-7,16-23 nice -n 10 python "$check"
+  fi
+done
+```
+
+Results: 48 asset digests matched; brand, crate/module boundaries, file length
+and lint-expectation checks reported zero errors. Local links checked 66
+maintained Markdown files with zero missing paths. The deleted-assertion check
+passed with 198 historical removals acknowledged by an existing trailer.
+Standalone checks passed for 18 workspace members on Linux and Windows
+**xwin**, which is not native Windows execution. No VM action was taken.
+
+### Native Windows evidence
+
+Main ran both commands natively in the Windows agent VM on 2026-11-24, over
+`2c349eb`, using the staged HEAD and `--jobs 16`:
+
+```sh
+python scripts/vm-test.py --jobs 16 --package vosu-plugin-api --lib -- manifest
+python scripts/vm-test.py --jobs 16 --test catalog_v2_compat
+```
+
+Results: `manifest` **59 passed**, the same count the Linux lib filter lists.
+`catalog_v2_compat` (all features) **23 passed**. Zero failures and zero
+ignored. These runs cover native Windows filesystem, confined-asset and
+manifest/metadata precedence behavior; cross-Clippy alone did not. The
+main-owned integrated landing gate is still required.

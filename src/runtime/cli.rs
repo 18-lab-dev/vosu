@@ -6,13 +6,18 @@ use std::{
 #[cfg(target_os = "linux")]
 use std::env;
 
-pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n  --tool <dir>   Load a trusted development tool (repeatable)\n  --plugin <dir> Load a trusted development plugin, debug builds only (repeatable)\n";
+pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n       vosu logs [--follow] [-n N]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n  --tool <dir>   Load a trusted development tool (repeatable)\n  --plugin <dir> Load a trusted development plugin, debug builds only (repeatable)\n\nLogs:\n  --follow      Follow live daemon logs (Ctrl-C to stop)\n  -n N          Print the last N lines (default: 50)\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CliCommand {
     Help,
     Setup,
     Version,
+    Logs {
+        lines: usize,
+        follow: bool,
+        window: bool,
+    },
     #[cfg(target_os = "linux")]
     ProbeBackend(BackendProbe),
 }
@@ -39,6 +44,11 @@ enum ArgumentKind {
 }
 
 pub(super) fn classify_command_invocation(raw_args: &[OsString]) -> CommandInvocation {
+    if raw_args.get(1).is_some_and(|arg| arg == "logs") {
+        return parse_logs(&raw_args[2..])
+            .map(CommandInvocation::Command)
+            .unwrap_or(CommandInvocation::InvalidInput);
+    }
     let mut command = None;
     for argument in raw_args.iter().skip(1) {
         match classify_argument(argument) {
@@ -57,6 +67,34 @@ pub(super) fn classify_command_invocation(raw_args: &[OsString]) -> CommandInvoc
         Some(command) if raw_args.len() == 2 => CommandInvocation::Command(command),
         Some(_) => CommandInvocation::InvalidInput,
     }
+}
+
+fn parse_logs(arguments: &[OsString]) -> Option<CliCommand> {
+    let mut lines = 50;
+    let mut follow = false;
+    let mut window = false;
+    let mut count_seen = false;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.to_str()? {
+            "--follow" if !follow => follow = true,
+            "--window" if !window => window = true,
+            "-n" if !count_seen => {
+                let value = arguments.next()?.to_str()?;
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                lines = value.parse().ok()?;
+                count_seen = true;
+            }
+            _ => return None,
+        }
+    }
+    Some(CliCommand::Logs {
+        lines,
+        follow,
+        window,
+    })
 }
 
 fn classify_argument(argument: &OsStr) -> ArgumentKind {
@@ -109,6 +147,32 @@ pub(super) async fn run_command(command: CliCommand) -> io::Result<()> {
             println!("vosu {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        CliCommand::Logs {
+            lines,
+            follow,
+            window,
+        } => {
+            #[cfg(windows)]
+            if window {
+                vosu_sys::platform::open_log_console()?;
+            }
+            #[cfg(not(windows))]
+            let _ = window;
+            let channel = vosu_sys::platform::BuildChannel::from_version(env!("CARGO_PKG_VERSION"))
+                .map_err(io::Error::other)?;
+            let logs_dir = vosu_core::logging::system_logs_dir(channel)?;
+            let cancellation = tokio_util::sync::CancellationToken::new();
+            let signal = cancellation.clone();
+            let interrupt = tokio::spawn(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    signal.cancel();
+                }
+            });
+            let result =
+                vosu_core::logging::print_logs(&logs_dir, lines, follow, cancellation).await;
+            interrupt.abort();
+            result
+        }
         #[cfg(target_os = "linux")]
         CliCommand::ProbeBackend(backend) => run_backend_probe(backend),
     }
@@ -143,8 +207,9 @@ fn run_backend_probe(backend: BackendProbe) -> io::Result<()> {
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub(super) fn backend_probe_hints() -> io::Result<vosu_sys::events::CommHints> {
     use vosu_core::plugin::{MatchPlatform, MatcherEngine, Prefilter};
-    let manifest =
-        vosu_plugin_api::PluginManifest::parse(vosu_osu::MANIFEST).map_err(io::Error::other)?;
+    let manifest = vosu_plugin_api::manifest::PackageManifest::parse(vosu_osu::MANIFEST)
+        .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+        .map_err(io::Error::other)?;
     let matcher = manifest
         .matcher
         .ok_or_else(|| io::Error::other("osu! manifest has no matcher"))?;

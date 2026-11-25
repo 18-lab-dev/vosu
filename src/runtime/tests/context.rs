@@ -43,6 +43,16 @@ fn until(predicate: impl Fn() -> bool) {
         std::thread::yield_now();
     }
 }
+/// The host reports opened-handle canonical paths for display, without the
+/// Windows `\\?\` verbatim prefix that `std::fs::canonicalize` adds.
+fn display_canonical(path: &std::path::Path) -> std::path::PathBuf {
+    let canonical = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    if let Some(plain) = canonical.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        return std::path::PathBuf::from(plain);
+    }
+    canonical
+}
 #[test]
 fn selected_context_confines_files_and_preserves_stable_lazer_display_contract() {
     for source in [ClientType::Stable, ClientType::Lazer] {
@@ -59,6 +69,9 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
         let songs = root.join("songs");
         let publisher = fixture.attach(settings(), false, true);
         publisher.publish(snapshot.clone(), Delivery::All).unwrap();
+        // Roots (including the skins slot behind `skin.files`) are declared by
+        // the osu! resource worker after this publish, asynchronously.
+        until(|| publisher.settled());
         until(|| fixture.files.tool_context().is_ok());
         if source == ClientType::Stable {
             until(|| {
@@ -69,15 +82,15 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
             assert_eq!(context["osu_dir"], serde_json::json!(game));
             assert_eq!(
                 context["skin"]["folder"],
-                serde_json::json!(game.join("Skins/Selected Skin"))
+                serde_json::json!(game.join("Skins").join("Selected Skin"))
             );
             assert_eq!(
                 context["songs_dir"],
-                serde_json::json!(songs.canonicalize().unwrap())
+                serde_json::json!(display_canonical(&songs))
             );
             assert_eq!(
                 context["beatmap"]["file"],
-                serde_json::json!(songs.join("chart/map.osu").canonicalize().unwrap())
+                serde_json::json!(display_canonical(&songs.join("chart").join("map.osu")))
             );
             assert_eq!(context["beatmap"]["mode"], "mania");
             assert!(context["skin"]["files"].as_bool().unwrap());
@@ -85,6 +98,7 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
             let mut unfocused = (*snapshot).clone();
             Arc::make_mut(&mut unfocused.regular).menu.checksum = Some("foreign-6881".into());
             other.publish(Arc::new(unfocused), Delivery::All).unwrap();
+            until(|| other.settled());
             assert_eq!(
                 tool_context(&fixture.files, &fixture.h.host)["beatmap"]["checksum"],
                 "selected-1973"

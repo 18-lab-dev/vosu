@@ -1,7 +1,7 @@
 use crate::state::*;
 use proptest::prelude::*;
 use std::sync::{Arc, RwLock};
-use vosu_plugin_api::{PluginManifest, PublishFieldRef, PublishValueRef};
+use vosu_plugin_api::{PublishFieldRef, PublishValueRef};
 
 pub(super) const KEY: SessionKey = SessionKey(7301);
 pub(super) fn grant(id: &str, covers: &str, kinds: &str) -> PublisherGrant {
@@ -22,7 +22,12 @@ schema = "schema.json"
 {kinds}
 "#
     );
-    PublisherGrant::from_manifest(&PluginManifest::parse(&text).unwrap()).unwrap()
+    PublisherGrant::from_manifest(
+        &vosu_plugin_api::manifest::PackageManifest::parse(&text)
+            .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
+            .unwrap(),
+    )
+    .unwrap()
 }
 pub(super) fn store(grant: &PublisherGrant) -> StateStore {
     let store = StateStore::new(Arc::new(RwLock::new(SchemaRegistry::with_core().unwrap())));

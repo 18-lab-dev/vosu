@@ -313,6 +313,7 @@ impl<'b> FlatReadResults<'b> {
     /// struct, no allocation). Panics if `index >= self.len()`; shared by
     /// [`Self::get`] and [`Self::error_code`] so both read the same
     /// validated bytes the same way.
+    #[inline]
     fn entry(&self, index: usize) -> vosu_read_result_flat {
         assert!(index < self.count, "FlatReadResults index out of bounds");
         let elem_size = core::mem::size_of::<vosu_read_result_flat>();
@@ -340,6 +341,7 @@ impl<'b> FlatReadResults<'b> {
     /// bytes (the read bytes for `VOSU_READ_OK`, the error message for
     /// `VOSU_READ_ERROR`, empty otherwise). Panics if
     /// `index >= self.len()`.
+    #[inline]
     pub fn get(&self, index: usize) -> (vosu_read_result_kind, &'b [u8]) {
         let entry = self.entry(index);
         let kind = vosu_read_result_kind::try_from(entry.kind)

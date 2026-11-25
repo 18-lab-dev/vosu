@@ -110,13 +110,17 @@ fn failed_create_unregisters_the_matcher_so_a_shadowed_plugin_still_gets_the_ses
             ..Default::default()
         },
     );
-    let failing_loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &session_manifest("testkit.session.failing", &["shared-p25.exe"]),
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: session::vosu_plugin_vtable,
-    }])
+    let failing_loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &session_manifest("testkit.session.failing", &["shared-p25.exe"]),
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: session::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the failing testkit plugin");
     let data_dir = tempfile::tempdir().unwrap();
     let result = host.create_instance(
@@ -263,13 +267,17 @@ fn matcher_registers_only_once_live_so_a_process_during_creating_goes_to_the_liv
     let (_log_dir, host) = test_host(runtime.handle().clone());
 
     let manifest_a = session_manifest(plugin_a_id, &["shared-gatedmatcher.exe"]);
-    let loaded_a = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest_a,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: gated_matcher_plugin::vosu_plugin_vtable,
-    }])
+    let loaded_a = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest_a,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: gated_matcher_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the gated-matcher test plugin");
     let data_dir_a = tempfile::tempdir().unwrap();
     let id_a = PluginInstanceId::new(1);

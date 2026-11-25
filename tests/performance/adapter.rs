@@ -196,17 +196,47 @@ fn production_client_retains_one_in_flight_frame_and_coalesces_1000_updates() {
     hub.stop(&rig);
 }
 
+/// Allocations made on this thread by one window of 32 alternating commits,
+/// or `None` when the window is not in steady state. The osu! publisher
+/// mailbox lets whichever thread holds it commit coalesced work, so an
+/// asynchronous refresh after attach (resource publication or a foreground
+/// change) either lands inside a test commit (extra allocations) or, while
+/// another thread holds the mailbox, leaves the test thread only enqueueing
+/// (fewer allocations). Measured natively on Windows under parallel tests:
+/// 42 per commit in steady state, 14 for a publish that commits nothing on
+/// this thread, +40 for an absorbed refresh. A steady window commits every
+/// snapshot synchronously on this
+/// thread (the bus revision advances by exactly one before `publish`
+/// returns) with an identical allocation count per commit. Every window
+/// publishes all 32 snapshots, so consecutive windows keep alternating.
+fn steady_window(rig: &Rig, key: vosu_core::state::SessionKey) -> Option<usize> {
+    let state = rig.fixture.h.host.state();
+    let revision = || state.store.current(key).expect("session").revision;
+    let mut per_commit = None;
+    let mut steady = true;
+    for n in 0..32 {
+        let before = revision();
+        let (_, count) =
+            allocations_during(|| rig.publish(regular(input::SCORES[n % 2]), Delivery::All));
+        steady &= revision() == before + 1 && *per_commit.get_or_insert(count) == count;
+    }
+    steady.then(|| per_commit.map(|count| count * 32)).flatten()
+}
+
 #[test]
 fn production_idle_adapters_add_no_allocations_work_or_demand() {
     let rig = Rig::new();
     let key = rig.session_key(0);
-    let publish = || {
-        for n in 0..32 {
-            rig.publish(regular(input::SCORES[n % 2]), Delivery::All);
-        }
-    };
-    publish();
-    let (_, baseline) = allocations_during(publish);
+    // Warm up until two consecutive windows are steady and identical.
+    let mut previous = None;
+    let baseline = (0..64)
+        .find_map(|_| {
+            let window = steady_window(&rig, key);
+            let settled = window.is_some() && window == previous;
+            previous = window;
+            settled.then_some(window).flatten()
+        })
+        .expect("the commit path reaches a steady state");
     let schemas = [
         Schema::V1,
         Schema::StreamCompanion,
@@ -219,7 +249,7 @@ fn production_idle_adapters_add_no_allocations_work_or_demand() {
         .map(|(schema, (provider, _))| rig.hub(*schema, provider.clone()))
         .collect();
     let api = ApiV1SubscriptionHub::new(rig.fixture.h.host.api_state_source(), Duration::ZERO);
-    let (_, idle) = allocations_during(publish);
+    let idle = steady_window(&rig, key).expect("idle commits stay synchronous and uniform");
     assert!(baseline > 0, "the allocator observes the real commit path");
     assert_eq!(
         idle, baseline,

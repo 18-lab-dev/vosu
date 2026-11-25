@@ -61,6 +61,16 @@ impl Rig {
                 )
                 .unwrap();
         }
+        // The resource worker commits its first references asynchronously,
+        // possibly inside a caller's commit. Measure only after it settled.
+        let deadline = std::time::Instant::now() + host::WAIT;
+        while !rig.publishers.iter().all(|publisher| publisher.settled()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "osu! publication did not settle"
+            );
+            std::thread::yield_now();
+        }
         rig
     }
     pub fn runtime(&self) -> &tokio::runtime::Runtime {

@@ -150,7 +150,12 @@ pub async fn start_test_production_composition(
     if let Some(game) = &options.game {
         bundled[0] = game.plugin;
     }
-    let loaded = vosu_core::plugin::load_bundled(&bundled).map_err(io::Error::other)?;
+    let loaded = vosu_core::plugin::load_bundled(
+        crate::application_version(),
+        &super::dev_plugins::source_snapshot(&plugins, &bundled, &[]),
+        &bundled,
+    )
+    .map_err(io::Error::other)?;
     let pool = vosu_core::plugin::WorkerPool::new(4, vosu_core::plugin::DEFAULT_QUEUE_CAPACITY);
     for (index, plugin) in loaded.iter().enumerate() {
         plugins

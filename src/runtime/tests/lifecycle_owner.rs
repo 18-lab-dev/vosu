@@ -153,7 +153,8 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &owner.paths,
                 &owner.logger,
                 &pool,
-                std::slice::from_ref(&broken)
+                std::slice::from_ref(&broken),
+                &[],
             )
             .is_err()
         );
@@ -161,8 +162,15 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
         let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
         entries.push(broken);
         assert_eq!(
-            dev_plugins::load_bundled(&owner.plugins, &owner.paths, &owner.logger, &pool, &entries)
-                .unwrap(),
+            dev_plugins::load_bundled(
+                &owner.plugins,
+                &owner.paths,
+                &owner.logger,
+                &pool,
+                &entries,
+                &[]
+            )
+            .unwrap(),
             5
         );
         assert!(owner.plugins.has_enabled_matchers());
@@ -271,6 +279,7 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             &owner.logger,
             &pool,
             crate::plugins::BUNDLED,
+            &[],
         )
         .unwrap();
         let (adapters, hubs) = adapters::Adapters::start(&owner.plugins, owner.config.clone())
@@ -360,7 +369,8 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
                     &owner.paths,
                     &owner.logger,
                     &pool,
-                    &entries
+                    &entries,
+                    &[]
                 )
                 .is_err(),
                 "required slot {omitted}"
@@ -371,4 +381,70 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn signal_task_panic_still_joins_config_and_logger_before_returning_error() {
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let (mut owner, _) = owner(root.path()).await;
+        let config = owner.config.clone();
+        config.update(|current| current.poll_rate = 275.0);
+        // Leave the worker idle, not waiting on a timer that might panic
+        // during runtime drop and accidentally conceal a missing shutdown.
+        config.flush().await.unwrap();
+        *owner.signal_task.get_mut() = Some(tokio::spawn(async {
+            panic!("injected signal shutdown panic");
+        }));
+
+        let error = owner.shutdown().await.unwrap_err();
+        assert!(error.to_string().contains("signal task failed"));
+        assert!(error.to_string().contains("injected signal shutdown panic"));
+        // ConfigStore::shutdown closes the command receiver and awaits its
+        // worker handle. Retain this Arc to rule out ordinary owner drop as
+        // the reason the worker stopped.
+        assert_eq!(
+            config.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(
+            owner.logger.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    })
+    .await
+    .expect("shutdown must finish after a signal task panic");
+}
+
+#[tokio::test]
+async fn plugin_destroy_failure_still_joins_config_and_logger_before_returning_error() {
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let (owner, _) = owner(root.path()).await;
+        let config = owner.config.clone();
+        config.flush().await.unwrap();
+
+        let error = owner
+            .shutdown_with_plugin_destroy(async {
+                Err(io::Error::other("injected plugin destroy failure"))
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("injected plugin destroy failure")
+        );
+        assert!(owner.shutdown_token.is_cancelled());
+        assert_eq!(
+            config.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(
+            owner.logger.flush().await.unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    })
+    .await
+    .expect("shutdown must finish after a plugin destroy failure");
 }

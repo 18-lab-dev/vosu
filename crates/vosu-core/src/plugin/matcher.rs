@@ -46,26 +46,8 @@ pub enum MatcherError {
         pattern: String,
         source: regex::Error,
     },
-    /// A `comm_hints` entry is longer than 15 bytes, the kernel/CN_PROC
-    /// `comm` field width (§6.1, D18).
-    HintTooLong { hint: String },
-    /// A `comm_hints` entry is empty (F1 review, older gap): empty is
-    /// contained in every other entry, so it would both freeze the
-    /// Linux pre-filter ([`vosu_sys::events::CommHints::new`] rejects it
-    /// as `Empty`) and make a second plugin's own matcher refuse to
-    /// install as overlapping (an empty entry is a substring of
-    /// anything) — refused here instead, exactly like `HintTooLong`/
-    /// `HintContainsNul`.
-    HintEmpty,
-    /// A `comm_hints` entry contains a NUL byte: `CommHints::new` would
-    /// reject it later at prefilter sync time, silently freezing the
-    /// Linux pre-filter for every plugin (review P3) rather than
-    /// refusing it up front at manifest validation.
-    HintContainsNul { hint: String },
-    /// A `linux_name_contains` entry is empty, longer than 15 bytes, or
-    /// contains a NUL byte (same freeze risk as `HintContainsNul`), the
-    /// kernel/CN_PROC `comm` field width (§6.1 revised, A1b/DB).
-    InvalidLinuxNameContains { entry: String },
+    /// Portable packaging validation is owned exclusively by the SDK.
+    Document(vosu_plugin_api::manifest::ValidationError),
 }
 
 impl fmt::Display for MatcherError {
@@ -76,19 +58,7 @@ impl fmt::Display for MatcherError {
                 pattern,
                 source,
             } => write!(f, "{field} pattern {pattern:?} does not compile: {source}"),
-            Self::HintTooLong { hint } => {
-                write!(f, "comm_hints entry {hint:?} exceeds 15 bytes")
-            }
-            Self::HintEmpty => write!(f, "comm_hints entry must not be empty"),
-            Self::HintContainsNul { hint } => {
-                write!(f, "comm_hints entry {hint:?} contains a NUL byte")
-            }
-            Self::InvalidLinuxNameContains { entry } => {
-                write!(
-                    f,
-                    "linux_name_contains entry {entry:?} must be 1-15 bytes with no NUL byte"
-                )
-            }
+            Self::Document(error) => error.fmt(f),
         }
     }
 }
@@ -205,35 +175,7 @@ impl CompiledMatcher {
     /// static D18 overlap check ([`overlaps`]) reads both fields from
     /// the raw [`MatchTable`]s instead, before compilation.
     pub fn compile(platform: MatchPlatform, table: &MatchTable) -> Result<Self, MatcherError> {
-        for hint in &table.comm_hints {
-            if hint.is_empty() {
-                // Checked on every platform (F2fix review P3): an
-                // empty entry is a substring of everything, so on
-                // Windows (where length/NUL never matter -- this field
-                // is accepted but unused) it would still silently make
-                // `overlaps` refuse every later plugin's own matcher as
-                // overlapping, exactly the freeze this field's
-                // length/NUL checks already guard against on Linux.
-                return Err(MatcherError::HintEmpty);
-            }
-        }
-        if platform == MatchPlatform::Linux {
-            for hint in &table.comm_hints {
-                if hint.len() > 15 {
-                    return Err(MatcherError::HintTooLong { hint: hint.clone() });
-                }
-                if hint.contains('\0') {
-                    return Err(MatcherError::HintContainsNul { hint: hint.clone() });
-                }
-            }
-            for entry in &table.linux_name_contains {
-                if entry.is_empty() || entry.len() > 15 || entry.contains('\0') {
-                    return Err(MatcherError::InvalidLinuxNameContains {
-                        entry: entry.clone(),
-                    });
-                }
-            }
-        }
+        table.validate_document().map_err(MatcherError::Document)?;
         let compile_patterns =
             |field: &'static str, patterns: &[String], case_insensitive: bool| {
                 patterns

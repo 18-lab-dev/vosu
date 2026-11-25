@@ -171,13 +171,17 @@ impl Case {
             .lock()
             .unwrap()
             .insert(name.into(), fixture.clone());
-        let loaded = registry::load_bundled(&[registry::BundledPlugin {
-            manifest: &manifest,
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_plugin_vtable,
-        }])
+        let loaded = registry::load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &host.validation_snapshot(),
+            &[registry::BundledPlugin {
+                manifest: &manifest,
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_vtable,
+            }],
+        )
         .unwrap();
         let instance = PluginInstanceId::new(instance);
         let dir = tempfile::tempdir().unwrap();
@@ -215,8 +219,11 @@ impl Case {
         }
     }
     fn run<F: Future>(&self, future: F) -> F::Output {
+        self.run_within(RECV_TIMEOUT, future)
+    }
+    fn run_within<F: Future>(&self, bound: Duration, future: F) -> F::Output {
         self.rt.block_on(async {
-            tokio::time::timeout(RECV_TIMEOUT, future)
+            tokio::time::timeout(bound, future)
                 .await
                 .expect("bounded R0 operation")
         })
@@ -479,6 +486,11 @@ fn surface_resource_limit_and_cancel_release_the_request_owned_stream() {
     assert!(case.closed.try_recv().is_err());
 }
 
+/// One full page opens each of its 16,384 children through the retained
+/// directory: about 73 ms on Linux but 2.3 s on native Windows alone and
+/// over 5 s under the parallel native suite. This remains a hang guard.
+const PAGE_BOUND: Duration = Duration::from_secs(60);
+
 #[test]
 fn surface_directory_pages_are_bounded_and_do_not_claim_false_absence() {
     let case = Case::new("test.r0.pages", 18907, false, true, true);
@@ -492,10 +504,10 @@ fn surface_directory_pages_are_bounded_and_do_not_claim_false_absence() {
     let mut directory = case
         .run(root.directory(&RelativeChild::parse("").unwrap()))
         .unwrap();
-    let first = case.run(directory.next_page()).unwrap();
+    let first = case.run_within(PAGE_BOUND, directory.next_page()).unwrap();
     assert!(first.truncated);
     assert_eq!(first.entries.len(), 16_384);
-    let second = case.run(directory.next_page()).unwrap();
+    let second = case.run_within(PAGE_BOUND, directory.next_page()).unwrap();
     assert!(!second.truncated);
     assert_eq!(second.entries.len(), 16);
     let names = first

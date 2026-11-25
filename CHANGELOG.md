@@ -20,6 +20,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
   cancels old work, and nothing is parsed while no client reads.
 - Announce a session to `vosu.sessions` watchers only once its bus state is
   open, so their immediate subscription is never refused.
+- Shutdown still destroys plugins and joins every remaining service when the
+  adapter providers fail to stop, and reports that failure with the other
+  cleanup errors.
+- Compatibility WebSocket feeds no longer send a client a frame captured
+  before its last write acknowledgement observed a newer state, so the first
+  frame after an acknowledgement is always the latest.
 - Off Windows, where core has no OS-foreground source, report the foreground
   fact as unknown again instead of `false`: plugins' `FOCUS_CHANGED` omits
   `foreground` and identified-roster sessions carry `foreground: null`, as the
@@ -81,8 +87,30 @@ All notable user-visible changes to vosu are documented here. Older sections are
   Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
   truncation marker. Production mounts all adapters through requester-bound routes.
 
+## Unreleased — 2.0 M6a
+
+- Validate plugin, web-tool and overlay package manifests through the SDK's
+  unified validator, with the executable's version and fresh live-provider
+  namespace context. Namespace registration checks the declared schema version
+  and explicit bundled/development provenance.
+- Discover manifest-only overlays and prefer `manifest.toml` even when it is
+  invalid or unreadable. Legacy `metadata.txt` stays read-only, with its historic
+  defaults and separate settings; invalid manifests never fall back to it.
+- Reject the reserved `vosu.sessions` namespace in every capability class.
+  Malformed namespace-schema references report `D7.ref`, distinct from malformed
+  catalog mirror pointers.
+- Add strict SDK catalog-v2 validation and asset-backed manifest/catalog mirror
+  comparison, sharing namespace-schema extraction with core. Validation performs
+  no fetch or installation; source/trust/resolver work remains M6b-owned.
+- Commit offline Draft 2020-12 manifest and catalog packaging schemas with
+  TOML-to-JSON parity controls. Structural checks complement, not replace, SDK
+  semantic/context validation. Native Windows M6a evidence remains pending.
+
 ## Unreleased — 2.0 M3
 
+- `vosu logs` and the tray **Show logs** fallback now read the log directory
+  of the running build's release channel, so an alpha build follows its own
+  `prerelease/` logs instead of a normal installation's.
 - Register `vosu.osu.beatmap.import` for session-scoped API and CLI calls with
   bounded local `.osz` validation, cancellable selected-client preparation and
   honest queued/submitted results. Stable still needs game-owned refresh;
@@ -113,6 +141,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M2
 
+- Run graphical daemon launches in the background with a tray **Show logs**
+  action. Add `vosu logs [-n N] [--follow]` for crash-independent file-based
+  log inspection. Windows 11 24H2+ starts without a console; older Windows
+  detaches private daemon consoles. Existing terminal and CLI behavior stays intact.
 - Publish identified osu! sessions to `/vosu.osu` on the 2.0 state bus, plus
   common status, chart, play and skin namespaces and core-owned client facts,
   alongside the unchanged legacy bridge, including when no legacy sink exists.
@@ -137,6 +169,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Store versioned lazer offsets and the embedded generator under
   `<data>/plugins/vosu.osu/`, without migrating the old offsets cache; a version
   not satisfied by embedded offsets regenerates locally on first use.
+- Reduce synchronous plugin-read overhead with revocable host lookup and
+  validated-layout caches, retain Linux PID-generation checks at the native
+  read boundary, and batch lazer's forty visualizer amplitudes in one plan.
+- Finish shutdown cleanup after a background task panics, joining the config
+  and log writers before returning the original error instead of hanging on exit.
 
 ## 1.2.5 - 2026-11-22
 

@@ -1,4 +1,4 @@
-//! Unmounted bus-backed provider. The adapter owns selectors, typed decoding and
+//! Production bus-backed provider. The adapter owns selectors, typed decoding and
 //! wire semantics; this module owns latest-only caches and connection demand.
 mod demand;
 mod identity;
@@ -26,7 +26,7 @@ type View = dyn ProjectionView<Filter, Bytes>;
 /// build, Ryzen 9 9950X3D pinned to CPUs 0-7 (non-exclusive), 60 cold
 /// `BeatmapCache::load` + projection runs each: oracle fixture chart p99
 /// 0.23 ms; 33 KB `2785319.osu` p99 4.62 ms; 243 KB / 7,052-line
-/// "The Unforgiving [Marathon]" p99 40.08 ms. Bound = 2 × the marathon p99,
+/// "The Unforgiving \[Marathon\]" p99 40.08 ms. Bound = 2 × the marathon p99,
 /// well under the 500 ms cap (docs/testing/benchmarks.md, M4a section).
 pub const DERIVED_HTTP_WAIT: Duration = Duration::from_millis(80);
 

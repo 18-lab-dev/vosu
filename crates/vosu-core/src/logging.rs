@@ -12,8 +12,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 mod retention;
+mod tail;
 
 pub use retention::{CleanupReport, cleanup_logs, rotate_latest};
+pub use tail::{logs_dir, print_logs, system_logs_dir};
 
 const RESET: &str = "\x1b[0m";
 const GREY: &str = "\x1b[38;2;170;170;170m";

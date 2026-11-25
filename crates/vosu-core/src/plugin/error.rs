@@ -4,14 +4,14 @@
 use std::fmt;
 
 use super::settings::SettingsError;
-use vosu_plugin_api::ManifestError;
+use vosu_plugin_api::manifest::ValidationError;
 
 use super::matcher::RegisterError;
 
 /// Every way loading, starting, or tearing down a plugin instance can fail.
 #[derive(Debug)]
 pub enum HostError {
-    Manifest(ManifestError),
+    Manifest(ValidationError),
     Io(std::io::Error),
     Load(libloading::Error),
     /// `vosu_plugin_entry_v1` returned `NULL`.
@@ -153,8 +153,8 @@ impl std::error::Error for HostError {
     }
 }
 
-impl From<ManifestError> for HostError {
-    fn from(e: ManifestError) -> Self {
+impl From<ValidationError> for HostError {
+    fn from(e: ValidationError) -> Self {
         Self::Manifest(e)
     }
 }

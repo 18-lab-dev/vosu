@@ -91,13 +91,17 @@ mod capturing_plugin {
 fn create_instance_builds_init_settings_from_the_loaded_plugins_own_schema() {
     let plugin_id = "acme.schema-capture";
     let manifest = schema_manifest(plugin_id);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: Some(SCHEMA_TEXT),
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: capturing_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: Some(SCHEMA_TEXT),
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: capturing_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the schema-capturing test plugin");
 
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -135,21 +139,29 @@ fn schema_for_matches_only_the_named_plugin_id_and_none_for_an_unregistered_one(
     let plugin_id_b = "acme.schema-b";
     let manifest_a = schema_manifest(plugin_id_a);
     let manifest_b = plain_manifest(plugin_id_b);
-    let loaded_a = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest_a,
-        settings_schema: Some(SCHEMA_TEXT),
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: capturing_plugin::vosu_plugin_vtable,
-    }])
+    let loaded_a = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest_a,
+            settings_schema: Some(SCHEMA_TEXT),
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: capturing_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading plugin a");
-    let loaded_b = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest_b,
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: capturing_plugin::vosu_plugin_vtable,
-    }])
+    let loaded_b = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest_b,
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: capturing_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading plugin b");
 
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -282,13 +294,17 @@ fn schema_for_resolves_a_schema_while_the_instance_is_still_creating() {
         .insert(plugin_id.to_owned(), Arc::clone(&gate));
 
     let manifest = schema_manifest(plugin_id);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: Some(SCHEMA_TEXT),
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: gated_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: Some(SCHEMA_TEXT),
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: gated_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the gated schema test plugin");
 
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -446,6 +462,8 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
         Arc::new(focus::SyntheticForegroundSource::new(None)),
         crate::plugin::session::IDENTIFICATION_TIMEOUT,
     );
+    let mut shutdown =
+        crate::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
 
     let gate = CreateGate::new();
     create_gate_registry()
@@ -459,13 +477,17 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
         .insert(BRIDGE_B2_PLUGIN_ID.to_owned(), tx);
 
     let manifest = schema_manifest(BRIDGE_B2_PLUGIN_ID);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &manifest,
-        settings_schema: Some(B2_SHAPED_SCHEMA_TEXT),
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: gated_replay_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: Some(B2_SHAPED_SCHEMA_TEXT),
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: gated_replay_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the gated replay test plugin");
 
     let data_dir = tempfile::tempdir().unwrap();
@@ -513,7 +535,7 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
             std::thread::sleep(Duration::from_millis(1));
         }
 
-        host.watch_bridge_b2(&bridge, &runtime.handle().clone());
+        shutdown.set_watcher(host.watch_bridge_b2(&bridge, &runtime.handle().clone()));
 
         // A plain `ConfigStore::update`, exactly the shape a dashboard
         // write or a `vosu.toml` hot reload uses.
@@ -548,6 +570,13 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
             .unwrap()
             .expect("creating the gated replay instance");
     });
+
+    // Settle persistence before teardown. Without explicit shutdown, this
+    // leaves the blocking store worker idle on commands (no debounce timer
+    // to panic during runtime shutdown), deterministically exposing the hang.
+    runtime
+        .block_on(config.flush())
+        .expect("flushing B2 config");
 
     let message = rx
         .recv_timeout(Duration::from_secs(5))

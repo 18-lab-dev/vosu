@@ -26,7 +26,7 @@ fn scan_manifest(plugin_id: &str, process_names: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=[{names}]\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=[{names}]\n[[provides]]\nid='game:fixture'\nversion='*'\n"
     )
 }
 
@@ -42,13 +42,17 @@ fn create_scan_instance(
     process_names: &[&str],
 ) -> (Receiver<ScanEvent>, SyncSender<ScanCommand>) {
     let (events, commands) = scan_plugin::register(plugin_id);
-    let loaded = registry::load_bundled(&[registry::BundledPlugin {
-        manifest: &scan_manifest(plugin_id, process_names),
-        settings_schema: None,
-        namespace_schemas: &[],
-        action_schemas: &[],
-        vtable: scan_plugin::vosu_plugin_vtable,
-    }])
+    let loaded = registry::load_bundled(
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+        &crate::plugin::ValidationSnapshot::default(),
+        &[registry::BundledPlugin {
+            manifest: &scan_manifest(plugin_id, process_names),
+            settings_schema: None,
+            namespace_schemas: &[],
+            action_schemas: &[],
+            vtable: scan_plugin::vosu_plugin_vtable,
+        }],
+    )
     .expect("loading the scan testkit plugin");
     let data_dir = tempfile::tempdir().unwrap();
     host.create_instance(id, &loaded[0], data_dir.path().to_path_buf(), None)

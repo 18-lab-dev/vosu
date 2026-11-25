@@ -79,8 +79,16 @@ impl LazerMemory {
         if address == 0 {
             return Ok(false);
         }
+        self.spectator_from_api(address, self.screen_ptr(address, 0x3f0)?)
+    }
+
+    pub(super) fn spectator_from_api(
+        &self,
+        address: usize,
+        api: usize,
+    ) -> Result<bool, MemoryError> {
         let o = &self.offsets.osu_game_screens_play_spectator_player;
-        Ok(self.screen_ptr(address, 0x3f0)? == self.api()?
+        Ok(api == self.api()?
             && self.screen_ptr(address, o.spectator_client_k_backing_field)?
                 == self.spectator_client()?
             && self.screen_ptr(address, o.score)? != self.root(GameRoot::SessionStatics)?)
@@ -100,12 +108,23 @@ impl LazerMemory {
                 .drawable_ruleset_k_backing_field,
         )?;
         Ok(drawable != 0
-            && self.ptr(add(
-                drawable,
-                self.offsets
-                    .osu_game_rulesets_ui_drawable_ruleset
-                    .replay_score_k_backing_field,
-            )?)? != 0
+            && self.watching_replay_from_score(
+                address,
+                self.ptr(add(
+                    drawable,
+                    self.offsets
+                        .osu_game_rulesets_ui_drawable_ruleset
+                        .replay_score_k_backing_field,
+                )?)?,
+            )?)
+    }
+
+    pub(super) fn watching_replay_from_score(
+        &self,
+        address: usize,
+        score: usize,
+    ) -> Result<bool, MemoryError> {
+        Ok(score != 0
             && self.screen_ptr(
                 address,
                 self.offsets

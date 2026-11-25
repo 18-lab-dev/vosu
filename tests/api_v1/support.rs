@@ -126,13 +126,17 @@ impl Harness {
         actions: &[(&str, &str)],
         vtable: fn() -> vosu_plugin_api::vosu_plugin_vtable,
     ) {
-        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
-            manifest,
-            settings_schema: None,
-            namespace_schemas: schemas,
-            action_schemas: actions,
-            vtable,
-        }])
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &self.host.validation_snapshot(),
+            &[plugin::BundledPlugin {
+                manifest,
+                settings_schema: None,
+                namespace_schemas: schemas,
+                action_schemas: actions,
+                vtable,
+            }],
+        )
         .unwrap();
         self.host
             .create_instance(
@@ -150,7 +154,7 @@ impl Harness {
         pid: u32,
     ) -> (u64, std::sync::mpsc::Receiver<PublisherEvent>) {
         let manifest = format!(
-            "{}\n[[provides]]\nid='field:{id}'\nversion='1.2.0'\nschema='state.json'\n[match]\nprocess_names=['{id}']\n",
+            "{}\n[[provides]]\nid='field:{id}'\nversion='1.3.0'\nschema='state.json'\n[match]\nprocess_names=['{id}']\n[[provides]]\nid='game:fixture'\nversion='*'\n",
             manifest(id)
         );
         publisher::register_manifest(id, &manifest);
@@ -158,7 +162,7 @@ impl Harness {
         let schema = if id == "vosu.osu" {
             include_str!("../../docs/v2/schemas/vosu.osu.schema.json").to_owned()
         } else {
-            format!(r#"{{"title":"{id}","version":"1.2.0","type":"object","properties":{{}}}}"#)
+            format!(r#"{{"title":"{id}","version":"1.3.0","type":"object","properties":{{}}}}"#)
         };
         self.load(&manifest, &[&schema], &[], publisher::vosu_plugin_vtable);
         self.host.process_appeared(record(pid, id));
