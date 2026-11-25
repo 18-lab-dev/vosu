@@ -1,7 +1,6 @@
 use super::readers::{MAX_TOURNEY_CHAT_CHANNELS, MAX_TOURNEY_CHAT_MESSAGES};
 use super::*;
 
-use crate::process::test_scans::scanning_handle;
 use arc_swap::ArcSwap;
 use std::sync::{
     Arc,
@@ -114,7 +113,7 @@ fn put_string(bytes: &mut [u8], address: usize, value: &str) {
     }
 }
 fn handle(base: usize, bytes: Vec<u8>) -> ProcessHandle {
-    scanning_handle(
+    crate::process::test_scans::scanning_handle(
         Arc::new(SparseMemory {
             base,
             bytes,
@@ -1535,7 +1534,7 @@ fn settings_rescan_empty_dictionary_batch_values_recover_errors_and_read_mania_f
         bytes: ArcSwap::from_pointee(bytes),
         batches: AtomicUsize::new(0),
     });
-    let process = scanning_handle(memory.clone(), ProcessBitness::X86);
+    let process = crate::process::test_scans::scanning_handle(memory.clone(), ProcessBitness::X86);
     let mut reader = StableMemory::new(process, fixture_patterns());
     reader.gameplay_mode = 3;
     let ReadStatus::Ready(first) = reader.settings().unwrap() else {
