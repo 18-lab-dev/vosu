@@ -38,24 +38,38 @@ class RehearsalTests(base.CaptureTestCase):
         return cfg
 
     def rehearse(self, cfg: dict, cases=SUBSET) -> tuple[int | Exception, dict, dict]:
-        client = base.FakeClient(self.state)
-        client.gone = True  # No client ever runs: the fakes report no-client throughout.
+        # The fakes report no-client throughout; the phase runs in its PID namespace.
+        base.FakeClient(self.state)  # Writes the fakes' no-client state.
         receipt = self.out.with_name("receipt.json")
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 result: int | Exception = rehearsal.rehearse(
                     cfg, str(receipt), timeout=120.0, build=self.stub_build(),
-                    cases=[rm.CASES[case_id] for case_id in cases], operator=client.operator)
+                    cases=[rm.CASES[case_id] for case_id in cases])
         except gc.CaptureError as exc:
             result = exc
         transcript = json.loads(receipt.with_name("receipt.json.transcript.json").read_text("utf-8"))
+        self.assertEqual([p.name for p in self.out.parent.iterdir() if p.name.endswith(".state.json")],
+                         [], "the isolated phase's state file is removed")
         return result, json.loads(receipt.read_text("utf-8")), transcript
+
+    def test_the_phase_runs_only_isolated_and_refuses_a_visible_game(self) -> None:
+        state = self.tmp / "state.json"
+        with self.assertRaisesRegex(gc.CaptureError, "only as PID 1 of its private PID namespace"):
+            rehearsal.isolated_phase(str(state))
+        game = {4242: {"pid": 4242, "parent_pid": None, "start_identity": None, "executable": None}}
+        with mock.patch.object(rehearsal.os, "getpid", return_value=1), \
+                mock.patch.object(gc.daemon_mod, "_running_osu_processes", return_value=game), \
+                self.assertRaisesRegex(gc.CaptureError, r"osu! client is visible \(PIDs \[4242\]\)"):
+            rehearsal.isolated_phase(str(state))
+        self.assertEqual(list(self.out.parent.iterdir()), [])
 
     def test_passing_rehearsal_writes_the_receipt_golden_capture_accepts(self) -> None:
         cfg = self.rehearsal_config(source_options={"crash_targets": ["/json%"]},
                                     vosu_options={"request_budget": True})
         result, receipt, transcript = self.rehearse(cfg)
         self.assertEqual((result, receipt["result"], receipt["failures"]), (0, "pass", []))
+        self.assertEqual(receipt["isolation"]["pid"], 1)
         self.assertEqual((receipt["vosu_commit"], receipt["tooling_digest"]),
                          (self.commit, rehearsal.tooling_digest()))
         self.assertEqual(receipt["renderings"],
@@ -73,9 +87,12 @@ class RehearsalTests(base.CaptureTestCase):
 
     def test_failing_cases_are_all_reported_and_the_receipt_is_refused(self) -> None:
         # Without the request budget the over-budget route answers like the dump; an
-        # upstream that dies on a case outside the crash ledger is relaunched and reported.
-        cfg = self.rehearsal_config(source_options={"crash_targets": ["/json%", "/json/v2/"]})
-        cases = (*SUBSET[:-1], "state-http.json-v2.near.trailing-slash", CRASHING)
+        # upstream that dies on a case outside the crash ledger is relaunched and reported;
+        # a feed with no state frame is client-dependent at a client barrier only.
+        cfg = self.rehearsal_config(source_options={"crash_targets": ["/json%", "/json/v2/"],
+                                                    "silent_ws": True})
+        cases = (*SUBSET[:-1], "state-http.json-v2.near.trailing-slash", "ws.v2.upgrade.menu",
+                 "ws.v2.upgrade.no-client", CRASHING)
         result, receipt, _transcript = self.rehearse(cfg, cases)
         self.assertIsInstance(result, gc.CaptureError)
         self.assertEqual(receipt["result"], "fail")
@@ -83,6 +100,10 @@ class RehearsalTests(base.CaptureTestCase):
         self.assertRegex(failed[BUDGET[1]], "must answer 404")
         self.assertRegex(failed["state-http.json-v2.near.trailing-slash"],
                          "upstream exited, but the case is not under ledger")
+        self.assertRegex(failed["ws.v2.upgrade.no-client"], "outcome 'upgraded-timeout' is not allowed")
+        self.assertEqual([case for case, _reasons in receipt["client_dependent"]],
+                         ["ws.v2.upgrade.menu"])
+        self.assertNotIn("ws.v2.upgrade.menu", failed)
         self.assertNotIn(CRASHING, failed)
         self.assertEqual(receipt["upstream_restarts"], 2)
         scenario = gc.ScenarioSet("test-refused", ("menu",), ("state-http.json-v2.get.menu",))

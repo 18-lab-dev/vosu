@@ -21,7 +21,14 @@ A case the native linux-lazer plan excludes (Windows spellings, the stable skin
 routes) is rendered for windows-lazer or windows-stable from a lexical layout and
 sent anyway: on the Linux daemons it can only miss, which still exercises its checks.
 Every barrier other than `no-client` needs a client and is not rehearsed: those cases
-run at `no-client`, where their guards require both daemons to report it.
+run at `no-client`, where their guards require both daemons to report it, and one that
+fails only for want of game data (`CLIENT_DATA`) is client-dependent, not a failure.
+
+Both daemons discover osu! processes. The build runs on the host, where the
+protected-tool checks see the real file owners; the daemons and every case then run as
+PID 1 of a private PID namespace with its own /proc (`ISOLATION`), which the tool enters
+itself and which refuses to run if it can see any osu! client, so a game the host runs
+is invisible to both daemons.
 
 The rehearsal reports every failing case instead of stopping at the first. It writes
 a private receipt (`--out`) and `<out>.transcript.json` with the raw records; the
@@ -36,8 +43,11 @@ import datetime
 import hashlib
 import json
 from pathlib import Path
+import os
+import re
+import shutil
+import subprocess
 import sys
-import time
 from typing import Any, Callable, Iterable
 
 from live_parity import PINNED_SOURCE_REVISION
@@ -59,6 +69,14 @@ TOOLING_DOCUMENTS = ("tests/fixtures/upstream/GOLDEN_CONTRACT.md",
                      "tests/fixtures/upstream/DIVERGENCES.md")
 # `golden`'s whole-capture check needs a client attestation; none ran.
 NO_CLIENT = {"version": "no-client", "sha256": "0" * 64}
+# Outcomes that only say the daemon had no game data to answer with: a WebSocket with no
+# state frame, a request with no answer, a conditional request with no validator to send.
+# A case of a client barrier (menu, paused, result) that fails only on these at
+# `no-client` is client-dependent; any other failure, and any `no-client` case, fails.
+CLIENT_DATA = re.compile(r"outcome '(?:upgraded-timeout|timeout|validator-missing)' is not allowed")
+# The private PID namespace with its own /proc that the daemons and cases run in (the
+# user namespace makes it unprivileged; the network namespace stays shared).
+ISOLATION = ("--user", "--map-current-user", "--pid", "--fork", "--mount-proc")
 
 
 def tooling_digest(root: Path = parity_golden.REPO_ROOT) -> str:
@@ -191,16 +209,33 @@ class Rehearsal(gc.Session):
                 entry["local_findings"] = [f for record in records
                                            for f in pr.local_expectation_failures(case, record)]
                 self.transcript["diagnostics"].append({"case": case.id, "records": records})
+            elif rm.upstream_crash_ledger(case):
+                (value,) = crash.run_cases(self, [item], source, vosu, dump)
             else:
-                if rm.upstream_crash_ledger(case):
-                    (value,) = crash.run_cases(self, [item], source, vosu, dump)
-                else:
-                    value = self._run_case(item, source, vosu, dump)
+                value = self._golden_case(item, entry, source, vosu, dump)
+            if value is not None:
                 entry["outcome"] = value["attempts"][-1]["outcome"]
                 entry["failed_attempts"] = [a["reason"] for a in value["attempts"][:-1]]
         except (gc.CaptureError, GoldenError, ValueError, OSError) as exc:
             entry["failure"] = f"{type(exc).__name__}: {exc}"
         return entry, value
+
+    def _golden_case(self, item: rm.RenderedCase, entry: dict[str, Any], source: gc.Daemon,
+                     vosu: gc.Daemon, dump: gc.HarnessDump) -> dict[str, Any] | None:
+        """`_run_case`, except that a client-barrier case whose every attempt lacked only
+        the game's data is recorded as client-dependent instead of failing."""
+        failed: list[dict[str, Any]] = []
+        for number in range(1, gc.MAX_ATTEMPTS + 1):
+            result = self._attempt(item, number, failed, source, vosu, dump)
+            if isinstance(result, dict):
+                return result
+            failed.append({"attempt": number, "outcome": "failed", "reason": result})
+        reasons = [attempt["reason"] for attempt in failed]
+        if item.case.barrier != "no-client" and all(CLIENT_DATA.search(r) for r in reasons):
+            entry["client_dependent"] = reasons
+        else:
+            entry["failure"] = "; ".join(reasons)
+        return None
 
     def _alive_source(self, source: gc.Daemon, entry: dict[str, Any], dump: gc.HarnessDump
                       ) -> gc.Daemon:
@@ -262,8 +297,11 @@ class Rehearsal(gc.Session):
             "cases": len(self.cases), "rehearsed": len(entries),
             "renderings": {name: sum(platform == name for platform, _item in planned)
                            for name in (NATIVE_PLATFORM, *FOREIGN_PLATFORMS)},
-            "outcomes": _count(entry.get("outcome", entry["role"]) for entry in entries
-                               if "failure" not in entry),
+            "outcomes": _count(entry.get("outcome") or ("client-dependent" if "client_dependent"
+                                                        in entry else entry["role"])
+                               for entry in entries if "failure" not in entry),
+            "client_dependent": [[entry["case"], entry["client_dependent"]] for entry in entries
+                                 if "client_dependent" in entry],
             "retried": [[entry["case"], entry["failed_attempts"]] for entry in entries
                         if entry.get("failed_attempts")],
             "local_findings": [[entry["case"], entry["local_findings"]] for entry in entries
@@ -306,17 +344,7 @@ def _count(values: Iterable[str]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
-             build: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
-             cases: Iterable[rm.RouteCase] = rm.MATRIX,
-             operator: Callable[[str, str], None] = gc.stderr_operator) -> int:
-    """Run the rehearsal; write the receipt and transcript; 0 only when it passed."""
-    if not sys.platform.startswith("linux") or cfg["os"].lower() != "linux":
-        raise gc.CaptureError("the rehearsal runs on Linux")
-    if gc._elevated():
-        raise gc.CaptureError("golden-rehearsal refuses an elevated or root process")
-    if not 0 < timeout < float("inf"):
-        raise gc.CaptureError("timeout must be finite and positive")
+def _outputs(out: str) -> tuple[Path, Path]:
     out_path = Path(out).resolve()
     transcript_path = out_path.with_name(out_path.name + ".transcript.json")
     for path in (out_path, transcript_path):
@@ -324,11 +352,79 @@ def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
             raise gc.CaptureError(f"{path.name} exists; golden-rehearsal never replaces evidence")
     if not out_path.parent.is_dir():
         raise gc.CaptureError("the private receipt directory does not exist")
+    return out_path, transcript_path
+
+
+def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
+             build: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
+             cases: Iterable[rm.RouteCase] = rm.MATRIX) -> int:
+    """Build both daemons, then rehearse in a private PID namespace; 0 only on a pass.
+
+    The build runs here, where the protected-tool checks see the real file owners. The
+    daemons and every case run in `unshare ISOLATION`, whose own /proc shows no host
+    process: neither daemon can find a game the host runs, and the phase refuses one it
+    can see. Loopback is shared, so the configured ports work unchanged."""
+    if not sys.platform.startswith("linux") or cfg["os"].lower() != "linux":
+        raise gc.CaptureError("the rehearsal runs on Linux")
+    if gc._elevated():
+        raise gc.CaptureError("golden-rehearsal refuses an elevated or root process")
+    if not 0 < timeout < float("inf"):
+        raise gc.CaptureError("timeout must be finite and positive")
+    out_path, _transcript = _outputs(out)
+    unshare = shutil.which("unshare")
+    if unshare is None:
+        raise gc.CaptureError("the rehearsal needs util-linux `unshare` for its PID namespace")
     if build is None:
         from parity_build import build_harness_artifacts
         build = build_harness_artifacts
-    session = Rehearsal(cfg, out_path, timeout=timeout, build=build, cases=cases,
-                        operator=operator)
+    built = build(cfg, str(out_path))
+    state = out_path.with_name(f".{out_path.name}.state.json")
+    try:
+        gc._write_private(state, json.dumps({
+            "cfg": cfg, "build": built, "out": str(out_path), "timeout": timeout,
+            "cases": [case.id for case in cases]}).encode("utf-8"))
+        with subprocess.Popen([unshare, *ISOLATION, "--", sys.executable,
+                               str(Path(__file__).resolve()), "--isolated", str(state)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as phase:
+            assert phase.stdout is not None and phase.stderr is not None
+            for line in phase.stderr:  # Operator progress, as it happens.
+                print(line, end="", file=sys.stderr, flush=True)
+            print(phase.stdout.read(), end="", flush=True)
+        code = phase.returncode
+    finally:
+        state.unlink(missing_ok=True)
+        _remove_leftovers(built)
+    if code != 0:
+        raise gc.CaptureError(f"the isolated rehearsal failed (exit {code}); receipt and "
+                              f"transcript next to {out_path.name}")
+    return 0
+
+
+def _remove_leftovers(build: dict[str, Any]) -> None:
+    """Build outputs the isolated phase did not reach (it removes them itself)."""
+    for tree in build.get("owned_worktrees", []):
+        if Path(tree["path"]).exists():
+            gc._remove_worktree(tree["repository"], tree["path"])
+    for owned in build.get("owned_paths", []):
+        if Path(owned).exists():
+            shutil.rmtree(owned)
+
+
+def isolated_phase(state_path: str) -> int:
+    """The daemons and every case, as PID 1 of the private PID namespace."""
+    if os.getpid() != 1:
+        raise gc.CaptureError("the rehearsal phase runs only as PID 1 of its private PID "
+                              "namespace; start it with `run.py golden-rehearsal`")
+    running = sorted(gc.daemon_mod._running_osu_processes())
+    if running:  # Both daemons would find it and read that game's memory.
+        raise gc.CaptureError(f"an osu! client is visible (PIDs {running}); the rehearsal "
+                              "runs with no game")
+    state = json.loads(Path(state_path).read_text("utf-8"))
+    out_path, transcript_path = _outputs(state["out"])
+    session = Rehearsal(state["cfg"], out_path, timeout=state["timeout"],
+                        build=lambda _cfg, _out: state["build"],
+                        cases=[rm.CASES[case_id] for case_id in state["cases"]],
+                        operator=gc.stderr_operator)
     receipt: dict[str, Any] | None = None
     failure: BaseException | None = None
     try:
@@ -337,6 +433,7 @@ def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
         failure = exc
     cleanup = session.cleanup()
     if receipt is not None:
+        receipt["isolation"] = {"unshare": list(ISOLATION), "pid": os.getpid()}
         receipt["cleanup"] = cleanup
         receipt["completed_utc"] = datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
@@ -366,3 +463,13 @@ def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
         raise gc.CaptureError(f"the rehearsal failed {len(receipt['failures'])} checks; "
                               f"receipt: {out_path.name}")
     return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] != ["--isolated"] or len(sys.argv) != 3:
+        raise SystemExit("usage: run.py golden-rehearsal (this module's entry is internal)")
+    try:
+        raise SystemExit(isolated_phase(sys.argv[2]))
+    except gc.CaptureError as error:
+        print(f"golden-rehearsal: {error}", file=sys.stderr)
+        raise SystemExit(2) from None

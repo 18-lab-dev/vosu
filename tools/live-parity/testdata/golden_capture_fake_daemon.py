@@ -165,7 +165,8 @@ class Handler(socketserver.BaseRequestHandler):
             sock.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                           f"Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").encode())
             _status, body = state_body(WS_ROUTES[path])
-            sock.sendall(frame(1, body))
+            if not OPTIONS.get("silent_ws"):  # silent_ws: no game data, so no state frame.
+                sock.sendall(frame(1, body))
             try:
                 while sock.recv(65536):
                     sock.sendall(frame(8, (1000).to_bytes(2, "big")))

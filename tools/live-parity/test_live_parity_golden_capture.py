@@ -688,6 +688,11 @@ class RealHarnessDaemonTests(CaptureTestCase):
     """HEAD's `cargo build --locked --features test-harness` vosu daemon, built by the test."""
 
     def test_end_to_end_with_the_real_harness_daemon(self) -> None:
+        running = sorted(gc.daemon_mod._running_osu_processes())
+        if running and os.environ.get(HARNESS_BUILD_ENV) == "1":  # The real daemons would
+            # find that game and read its memory.
+            self.fail(f"an osu! client is visible (PIDs {running}); run this test in a private "
+                      f"PID namespace: unshare {' '.join(rehearsal.ISOLATION)} -- <command>")
         binary, commit, features = head_harness_binary()
         self.assertEqual(commit, self.commit)
         scenario = gc.ScenarioSet("test-real-daemon", ("no-client",), NO_CLIENT_CASES)

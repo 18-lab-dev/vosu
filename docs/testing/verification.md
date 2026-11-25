@@ -143,8 +143,10 @@ future evidence, not a claim that the targets or subcommands exist yet.
 ```sh
 # L1 tooling exit, at the integrated head. VOSU_GOLDEN_HARNESS_BUILD=1 lets the real-daemon
 # golden-capture test build HEAD's harness vosu from the clean tree (never a prebuilt one);
-# without it that test skips and says so.
-VOSU_GOLDEN_HARNESS_BUILD=1 python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
+# without it that test skips and says so. Its daemons discover osu! processes, so it fails
+# while one is visible: run it in a private PID namespace with its own /proc.
+VOSU_GOLDEN_HARNESS_BUILD=1 unshare --user --map-current-user --pid --fork --mount-proc -- \
+    python -m unittest discover -s tools/live-parity -p 'test_live_parity*.py' -v
 cargo test --locked --features test-harness --test adapter_golden
 cargo test --locked --features test-harness --test daemon_smoke adapter_capture
 cargo test --locked --features test-harness --test server_compat adapter_capture
@@ -302,6 +304,22 @@ scenario set, or the run is refused before the build.
    has no `authorization`, `assets` or `client_source`; the Linux harness
    build needs `python scripts/prepare-offset-generator.py --rid linux-x64`.
    Copy the receipt into the VM and pass it as `--rehearsal-receipt`.
+
+   Both daemons discover osu! processes, so the rehearsal never runs where it
+   could see one: after the build (whose protected-tool checks need the real
+   file owners) it starts its daemon-and-case phase itself in a private PID
+   namespace with its own `/proc`
+   (`unshare --user --map-current-user --pid --fork --mount-proc`; the network
+   namespace and loopback ports stay shared), and that phase refuses to run
+   unless it is PID 1 there and sees no osu! client. A game the user runs on
+   the host is invisible to it. The receipt records the isolation.
+
+   A menu, paused or result case runs at `no-client`. When every attempt of
+   one failed only because a daemon had no game data (a feed with no state
+   frame, a request with no answer, a conditional request with no validator to
+   send), the receipt lists it as `client_dependent` instead of failing it. A
+   `no-client` case runs at its own barrier, exactly as in a pilot, and stays
+   strict.
 
 1. **Mandatory dry run first.** Use a config whose
    `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and
