@@ -19,9 +19,9 @@
 //!   Windows.
 //! - **Spawn (L0 Linux, W0 Windows).** The spawn code makes exactly these
 //!   four objects available to exactly one child. On Linux it uses
-//!   [`RingObjects::mapping_fd`] and [`RingObjects::doorbell_fd`] and
+//!   `RingObjects::mapping_fd` and `RingObjects::doorbell_fd` and
 //!   duplicates them into the child after `fork`; on Windows it uses
-//!   [`RingObjects::mapping_handle`] and [`RingObjects::doorbell_handle`] in
+//!   `RingObjects::mapping_handle` and `RingObjects::doorbell_handle` in
 //!   an explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`. It also records their
 //!   child-side values in the launch descriptor. It never names, publishes
 //!   or leaks the objects to any other process.

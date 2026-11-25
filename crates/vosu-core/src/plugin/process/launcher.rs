@@ -13,7 +13,7 @@
 //! process, and a **ring reader**, which handles lifecycle frames and
 //! answers each acknowledged plugin → host frame with core's `STATUS`
 //! (§7.6 A5.2). An exit or channel failure that core did not request is
-//! reported once through [`InstanceLoss`]. Controlled destroy sends
+//! reported once through [`InstanceLoss`](crate::plugin::InstanceLoss). Controlled destroy sends
 //! `DESTROY`, waits up to its grace (5 s) for the OS exit, then kills and
 //! reaps the child.
 //!
