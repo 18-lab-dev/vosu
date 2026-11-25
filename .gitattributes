@@ -8,6 +8,9 @@
 # Golden fixtures are covered by SHA-256 inventories (GOLDEN_CONTRACT.md §9).
 /tests/fixtures/golden-synthetic/** -text
 /tests/fixtures/upstream/*/** -text
+# `adapter_capture_fake_envelopes_are_current` compares this export with the
+# bytes the test generates, so a Windows checkout must keep its LF endings.
+/tools/live-parity/testdata/golden-capture-envelopes.json -text
 # The API v1 fixture plugin publishes these files and tests assert their exact
 # sizes and served bytes, so a Windows checkout must not convert line endings.
 /tests/fixtures/api-v1-plugin/** -text
