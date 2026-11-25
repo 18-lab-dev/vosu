@@ -1,4 +1,5 @@
-//! M5 X0: runtime parity of the real external osu! producer
+//! M5 X0: runtime parity of the real external osu! producer and of the
+//! services-mode testkit ([`testkit`])
 //! (`docs/v2/implementation-plan.md` M5 exit, "Parity").
 //!
 //! Every committed source-oracle case (`tests/fixtures/oracle/`, the pinned
@@ -21,13 +22,16 @@
 //! PIDs, instance ids and revisions are equal by construction and compared
 //! as they are. The legacy encodings carry no volatile value and are
 //! compared byte-for-byte without normalization. API v1 carries exactly one
-//! kind: a resource or tree URL (`/api/v1/resources/<id>`,
-//! `/api/v1/trees/<id>/`) whose id ends in a MAC under the host's own
+//! kind: a resource or tree id, which ends in a MAC under the host's own
 //! per-run secret, so the same reference has a different id in every host.
+//! It reaches a consumer as a resource or tree URL
+//! (`/api/v1/resources/<id>`, `/api/v1/trees/<id>/`) and as a resource's
+//! strong `ETag` (`"<id>"`, `src/server/api_v1/resources.rs`).
 //! [`ResourceIds`] maps each run's distinct URLs, in order of first
-//! appearance, to `<resource-N>`. It is a bijection per run (it fails if one
-//! URL would get two placeholders or two URLs one), so equal normalized
-//! frames mean the same references in the same positions. Nothing else is
+//! appearance, to `<resource-N>`, and an `ETag` to the quoted placeholder
+//! of its own resource URL. It is a bijection per run (it fails if one URL
+//! would get two placeholders or two URLs one), so equal normalized frames
+//! mean the same references in the same positions. Nothing else is
 //! rewritten: data, private fields and errors compare as served. The chart
 //! root's temporary directory, the only other per-run value, never reaches
 //! a consumer ([`assert_no_chart_root`]).
@@ -42,6 +46,8 @@ mod bus;
 mod oracle;
 #[path = "parity/replay.rs"]
 mod replay;
+#[path = "parity/testkit.rs"]
+mod testkit;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -60,8 +66,8 @@ fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// The documented per-run bijection from resource and tree URLs to
-/// `<resource-N>` placeholders.
+/// The documented per-run bijection from resource and tree URLs (and
+/// resource `ETag`s, through their URL) to `<resource-N>` placeholders.
 #[derive(Default)]
 struct ResourceIds {
     forward: BTreeMap<String, String>,
@@ -69,20 +75,36 @@ struct ResourceIds {
 }
 
 impl ResourceIds {
+    /// The placeholder of `url`, assigned on first appearance.
+    fn placeholder(&mut self, url: &str) -> String {
+        let next = format!("<resource-{}>", self.forward.len() + 1);
+        let placeholder = self.forward.entry(url.to_owned()).or_insert(next).clone();
+        let original = self
+            .backward
+            .entry(placeholder.clone())
+            .or_insert_with(|| url.to_owned());
+        assert_eq!(original, url, "two URLs mapped to {placeholder}");
+        placeholder
+    }
+
     fn normalize(&mut self, value: &Value) -> Value {
         match value {
             Value::String(text)
                 if text.starts_with("/api/v1/resources/") || text.starts_with("/api/v1/trees/") =>
             {
-                let next = format!("<resource-{}>", self.forward.len() + 1);
-                let placeholder = self.forward.entry(text.clone()).or_insert(next).clone();
-                let original = self
-                    .backward
-                    .entry(placeholder.clone())
-                    .or_insert_with(|| text.clone());
-                assert_eq!(original, text, "two URLs mapped to {placeholder}");
-                Value::String(placeholder)
+                Value::String(self.placeholder(text))
             }
+            Value::String(text) => match text
+                .strip_prefix('"')
+                .and_then(|text| text.strip_suffix('"'))
+                .filter(|id| id.starts_with("1.r."))
+            {
+                Some(id) => Value::String(format!(
+                    "\"{}\"",
+                    self.placeholder(&format!("/api/v1/resources/{id}"))
+                )),
+                None => value.clone(),
+            },
             Value::Array(items) => Value::Array(items.iter().map(|v| self.normalize(v)).collect()),
             Value::Object(fields) => Value::Object(
                 fields
