@@ -160,13 +160,11 @@ fn bootstrap(kind: CoreKind) {
     // Still bootstrapping: `create` has not returned, so no READY.
     assert!(tree.fixture.receipts("create_released").is_empty());
     if daemon {
+        // The daemon composes its plugins, each `create` included, before
+        // it binds a listener, so nothing lists the plugin yet.
         let id = tree.scenario.plugin_id();
         let view = tree.core.daemon.as_ref().unwrap().plugin(&id);
-        assert_eq!(
-            view.as_ref().map(|view| view["state"].clone()),
-            Some("starting".into()),
-            "{view:?}"
-        );
+        assert!(view.is_none(), "listed before create returned: {view:?}");
     } else {
         assert!(tree.created().is_none(), "create already returned");
     }
@@ -235,19 +233,16 @@ fn parent_death_core_kill_during_a_blocked_write_ends_the_plugin_host() {
 }
 
 #[test]
-#[ignore = "needs M5 U0 integrated: the daemon's approval-gated --plugin launch"]
 fn parent_death_daemon_kill_while_live_ends_the_plugin_host() {
     live(daemon());
 }
 
 #[test]
-#[ignore = "needs M5 U0 integrated: the daemon's approval-gated --plugin launch"]
 fn parent_death_daemon_kill_during_bootstrap_ends_the_plugin_host() {
     bootstrap(daemon());
 }
 
 #[test]
-#[ignore = "needs M5 U0 integrated: the daemon's approval-gated --plugin launch"]
 fn parent_death_daemon_kill_during_a_blocked_write_ends_the_plugin_host() {
     blocked_write(daemon());
 }

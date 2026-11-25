@@ -1528,7 +1528,12 @@ the kill semantics, but it is not the daemon. At `7cdbcc4` the daemon installs
 no process launcher; M5 U0's approval gate adds that. The `_daemon` variants
 run the same assertions against the real `vosu` daemon. They load the package
 through `--plugin`, with a `plugins/approvals.json` record written before
-start. They are `#[ignore = "needs M5 U0 integrated: …"]` until U0 merges.
+start. They read `GET /api/plugins` on the dashboard listener, found through
+the overlay listener's redirect from `/`; plugin management is served there
+only (catalog-v2.md A5.5). The daemon composes its plugins, each `create`
+included, before it binds a listener, so the bootstrap variant asserts that
+nothing lists the plugin yet rather than a `starting` view. Since U0
+integrated they run unignored.
 
 Each tree is: core, the plugin host running the testkit, optionally a
 descendant the plugin started from `create` (control `spawn`), and an outside
@@ -1728,5 +1733,5 @@ The filter matches all three packaged cases, which need U0's approval-gated
 `--plugin` launch in the packaged build. Expect `3 passed`. The testkit
 library comes from `plugin-host-fixtures.py`'s debug example build, which
 the packaged plugin host loads like any user plugin. The daemon variants of
-`parent_death` and `windows_job` run after U0 integrates with
-`-- --ignored _daemon --nocapture`, on Linux and in the Windows VM.
+`parent_death` and `windows_job` are ordinary tests (`-- _daemon
+--nocapture`), on Linux and in the Windows VM.

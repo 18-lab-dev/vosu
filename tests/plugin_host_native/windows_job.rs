@@ -153,7 +153,6 @@ fn windows_core_death_kills_job_tree() {
 }
 
 #[test]
-#[ignore = "needs M5 U0 integrated: the daemon's approval-gated --plugin launch"]
 fn windows_core_death_kills_job_tree_daemon() {
     core_death_kills_job_tree(daemon());
 }
