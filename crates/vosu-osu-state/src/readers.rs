@@ -44,7 +44,7 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         self.reader
             .synchronize_capture_config(plan.show_mp_commands, plan.read_mania_scroll_speed);
         let global = self.reader.global();
-        let global_not_ready = matches!(global, Ok(vosu_sys::process::ReadStatus::NotReady));
+        let global_not_ready = matches!(global, Ok(vosu_plugin_api::memory::ReadStatus::NotReady));
         let snapshot = RawRegularSnapshotBuilder::new(request.context, global);
         if global_not_ready && self.source == ClientType::Lazer {
             *self.synchronization.lock().map_err(|_| {
@@ -54,17 +54,17 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         }
 
         let menu = self.reader.menu(&plan.previous_checksum);
-        let menu_not_ready = matches!(menu, Ok(vosu_sys::process::ReadStatus::NotReady));
+        let menu_not_ready = matches!(menu, Ok(vosu_plugin_api::memory::ReadStatus::NotReady));
         let fresh_folder = match &menu {
-            Ok(vosu_sys::process::ReadStatus::Ready(vosu_osu_model::memory::Menu::Full(value))) => {
-                Some(!value.folder.is_empty())
-            }
+            Ok(vosu_plugin_api::memory::ReadStatus::Ready(vosu_osu_model::memory::Menu::Full(
+                value,
+            ))) => Some(!value.folder.is_empty()),
             _ => None,
         };
         let menu_keeps_first_object_time = match &menu {
-            Ok(vosu_sys::process::ReadStatus::Ready(vosu_osu_model::memory::Menu::Full(value))) => {
-                value.checksum == plan.previous_checksum
-            }
+            Ok(vosu_plugin_api::memory::ReadStatus::Ready(vosu_osu_model::memory::Menu::Full(
+                value,
+            ))) => value.checksum == plan.previous_checksum,
             _ => true,
         };
         let mut snapshot = snapshot.menu(menu);
@@ -81,7 +81,8 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         }
         if status == GameState::ResultScreen.value() as i64 {
             let result = self.reader.result_screen();
-            let result_not_ready = matches!(result, Ok(vosu_sys::process::ReadStatus::NotReady));
+            let result_not_ready =
+                matches!(result, Ok(vosu_plugin_api::memory::ReadStatus::NotReady));
             snapshot = snapshot.result_screen(result);
             if result_not_ready {
                 *self.synchronization.lock().map_err(|_| {
@@ -105,7 +106,7 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
                 };
             let gameplay = self.reader.gameplay(play_time, first_object_time);
             let gameplay_mode = match &gameplay {
-                Ok(vosu_sys::process::ReadStatus::Ready(value)) => Some(value.mode),
+                Ok(vosu_plugin_api::memory::ReadStatus::Ready(value)) => Some(value.mode),
                 _ => None,
             };
             snapshot = snapshot.gameplay(gameplay);
@@ -116,7 +117,8 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
             snapshot = snapshot.audio_velocity_base(self.reader.audio_velocity_base());
         } else if status == GameState::Tourney.value() as i64 && self.source == ClientType::Stable {
             let tourney = self.reader.tourney();
-            let tourney_ready = matches!(tourney, Ok(vosu_sys::process::ReadStatus::Ready(_)));
+            let tourney_ready =
+                matches!(tourney, Ok(vosu_plugin_api::memory::ReadStatus::Ready(_)));
             snapshot = snapshot.tourney(tourney);
             if tourney_ready {
                 snapshot = snapshot.tourney_chat(self.reader.tourney_chat(&plan.tourney_messages));
@@ -237,7 +239,7 @@ impl<R: SynchronizedMemoryReader + 'static> PreciseSnapshotReader for SourcePrec
             .synchronize_precise(synchronization, context.mode);
         let global = self.reader.global_precise();
         let playing_time = match &global {
-            Ok(vosu_sys::process::ReadStatus::Ready(value))
+            Ok(vosu_plugin_api::memory::ReadStatus::Ready(value))
                 if value.status == GameState::Play.value() as i64 =>
             {
                 Some(value.time)
@@ -257,7 +259,7 @@ impl<R: SynchronizedMemoryReader + 'static> PreciseSnapshotReader for SourcePrec
             self.reader.set_hit_offsets(offsets_enabled);
             snapshot = snapshot.enable_hit_offsets(offsets_enabled);
             let mut errors = self.reader.hit_errors(context.committed_hit_error_index);
-            if let Ok(vosu_sys::process::ReadStatus::Ready(errors)) = &mut errors {
+            if let Ok(vosu_plugin_api::memory::ReadStatus::Ready(errors)) = &mut errors {
                 if enabled {
                     errors.errors.key.get_or_insert_default();
                 } else {

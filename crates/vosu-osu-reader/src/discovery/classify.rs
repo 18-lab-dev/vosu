@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
-use vosu_sys::process::ProcessBitness;
+use vosu_plugin_api::memory::ProcessBitness;
 
 use super::StartupArgs;
 

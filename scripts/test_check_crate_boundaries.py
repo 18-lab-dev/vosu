@@ -124,6 +124,23 @@ class CrateBoundariesTests(unittest.TestCase):
             errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
             self.assertTrue(any("M4a:" in error for error in errors))
 
+    def test_m5_rejects_native_sdk_and_state_edges_even_if_recorded(self):
+        sdk_targets = ["vosu-core", "vosu-net", "vosu-surface", "vosu-sys"]
+        cases = [("vosu-plugin-api", target) for target in sdk_targets]
+        cases.append(("vosu-osu-state", "vosu-sys"))
+        for source, target in cases:
+            for kind in [None, "build"]:
+                with self.subTest(source=source, target=target, kind=kind):
+                    crate = package(source, [(target, True)])
+                    crate["dependencies"][0]["kind"] = kind
+                    meta = metadata([crate, package(target, [])])
+                    self.rules.write_text(f"{source} -> {target}\n", encoding="utf-8")
+                    errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
+                    self.assertTrue(any(error.startswith("M5:") for error in errors))
+                    crate["dependencies"][0]["kind"] = "dev"
+                    errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
+                    self.assertEqual(errors, [])
+
     def test_rules_file_comments_and_blank_lines_are_ignored(self):
         meta = metadata([package("alpha", [("beta", True)]), package("beta", [])])
         self.rules.write_text(

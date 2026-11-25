@@ -18,9 +18,9 @@ use vosu_osu_reader::{
     memory::{MemoryReader, StableMemory},
     process::ProcessHandle,
 };
-use vosu_sys::process::ProcessMemory;
+use vosu_plugin_api::memory::ProcessMemory;
 #[cfg(feature = "test-harness")]
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ReadRequest};
+use vosu_plugin_api::memory::{MemoryError, MemoryRegion, ProcessBitness, ReadRequest};
 #[path = "plan_process_bench/pid.rs"]
 mod pid;
 #[path = "live_reader_bench/plan.rs"]

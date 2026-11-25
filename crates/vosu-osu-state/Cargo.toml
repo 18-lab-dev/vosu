@@ -24,7 +24,7 @@ vosu-osu-calc = { path = "../vosu-osu-calc" }
 vosu-pp = { path = "../vosu-pp" }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-osu-reader = { path = "../vosu-osu-reader" }
-vosu-sys = { path = "../vosu-sys" }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Media"] }

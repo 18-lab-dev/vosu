@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn memory_permission_denial_keeps_typed_identity_in_state_worker_errors() {
-    let denied = StateWorkerError::from(vosu_osu_reader::process::MemoryError::PermissionDenied {
+    let denied = StateWorkerError::from(vosu_plugin_api::memory::MemoryError::PermissionDenied {
         address: 0x1234,
         len: 16,
         message: "operation not permitted".into(),
@@ -17,7 +17,7 @@ fn memory_permission_denial_keeps_typed_identity_in_state_worker_errors() {
         }
     ));
 
-    let fault = StateWorkerError::from(vosu_osu_reader::process::MemoryError::Read {
+    let fault = StateWorkerError::from(vosu_plugin_api::memory::MemoryError::Read {
         address: 0x1234,
         len: 16,
         message: "bad address".into(),

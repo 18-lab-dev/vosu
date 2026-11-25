@@ -1,10 +1,10 @@
 use super::{Result, open, plan};
 use std::{hint::black_box, time::Instant};
+use vosu_plugin_api::memory::{ProcessMemory, ReadRequest};
 use vosu_plugin_api::{
     PlanBase, PlanMemory, PlanOp, StageBase, StageRef, SyncReadBuffers,
     read_plan_profile::{self, Phase},
 };
-use vosu_sys::process::{ProcessMemory, ReadRequest};
 
 fn native_capture(memory: &dyn ProcessMemory, address: usize, widths: &[usize]) -> Result<()> {
     for &width in widths {

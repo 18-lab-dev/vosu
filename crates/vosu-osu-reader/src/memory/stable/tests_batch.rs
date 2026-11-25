@@ -11,7 +11,7 @@ use super::batched::StringSlot;
 use super::tests::fixture_patterns;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use vosu_sys::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 struct FaultMemory {
     bytes: Vec<u8>,

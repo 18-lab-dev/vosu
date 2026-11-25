@@ -102,18 +102,14 @@ impl StableMemory {
         offsets: &[usize],
     ) -> Result<[u8; N], MemoryError> {
         let mut bytes = [0; N];
-        self.process.read_chain(
-            address,
-            offsets,
-            crate::process::ProcessBitness::X86,
-            &mut bytes,
-        )?;
+        self.process
+            .read_chain(address, offsets, ProcessBitness::X86, &mut bytes)?;
         Ok(bytes)
     }
     pub(super) fn ptr2(&self, a: usize) -> Result<usize, MemoryError> {
         let mut bytes = [0; 4];
         self.process
-            .read_chain(a, &[0], crate::process::ProcessBitness::X86, &mut bytes)?;
+            .read_chain(a, &[0], ProcessBitness::X86, &mut bytes)?;
         Ok(u32::from_le_bytes(bytes) as usize)
     }
     pub(super) fn string(&self, a: usize) -> Result<String, MemoryError> {

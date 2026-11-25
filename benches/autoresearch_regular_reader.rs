@@ -17,7 +17,7 @@ pub mod fixture {
     use vosu_osu_state::{
         RegularCapturePlan, RegularCaptureRequest, RegularSnapshotReader, SourceRegularReader,
     };
-    use vosu_sys::process::{
+    use vosu_plugin_api::memory::{
         MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
     };
 

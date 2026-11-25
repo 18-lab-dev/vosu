@@ -6,7 +6,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use vosu_sys::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_plugin_api::memory::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 struct SparseMemory {
     base: usize,

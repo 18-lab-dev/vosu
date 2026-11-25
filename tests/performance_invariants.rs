@@ -18,8 +18,11 @@ use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_osu_reader::memory::{
     LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
 };
-use vosu_osu_reader::process::{Pattern, ProcessHandle, SCAN_CHUNK_SIZE};
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_osu_reader::process::ProcessHandle;
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessMemory, ReadRequest,
+};
+use vosu_sys::process::scanner::SCAN_CHUNK_SIZE;
 
 struct TrackingAllocator;
 
@@ -448,7 +451,7 @@ fn plan_memory_stable_capture_backend_call_count() {
     let plan_precise = plan.global_precise().unwrap();
     assert!(matches!(
         native_precise,
-        vosu_sys::process::ReadStatus::Ready(_)
+        vosu_plugin_api::memory::ReadStatus::Ready(_)
     ));
     assert_eq!(format!("{native_precise:?}"), format!("{plan_precise:?}"));
     eprintln!(
@@ -597,7 +600,7 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
     );
     assert!(matches!(
         stable.gameplay(1_000.0, Some(1_000)).unwrap(),
-        vosu_sys::process::ReadStatus::Ready(_)
+        vosu_plugin_api::memory::ReadStatus::Ready(_)
     ));
     let batch_calls = stable_memory.batch_calls.load(Ordering::Relaxed);
     assert!(batch_calls > 0);
@@ -660,7 +663,8 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         LazerPattern::source_default(),
     );
     lazer.set_resolved_state(base, 0);
-    let vosu_sys::process::ReadStatus::Ready(values) = lazer.audio_velocity_base().unwrap() else {
+    let vosu_plugin_api::memory::ReadStatus::Ready(values) = lazer.audio_velocity_base().unwrap()
+    else {
         panic!("lazer amplitudes were not ready");
     };
     assert_eq!((values.len(), values[39]), (40, 39.0));

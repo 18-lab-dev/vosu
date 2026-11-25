@@ -3,10 +3,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use vosu_core::plugin::{self, PluginHost, PluginInstanceId, ProcessRecord};
+use vosu_plugin_api::memory::{
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest,
+};
 use vosu_plugin_api::{
     ConcurrentPlugin, Init, Message, PluginError, VtableHostServices, vosu_status,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 pub const WAIT: Duration = Duration::from_secs(5);
 pub static DISPATCHES: AtomicUsize = AtomicUsize::new(0);
@@ -134,11 +136,9 @@ impl Memory {
                 status_address = 0x20_0000;
                 image[offset..].copy_from_slice(&(status_address as u32).to_le_bytes());
             }
-            let pattern = vosu_osu_reader::process::Pattern::parse(
-                item["signature"].as_str().unwrap(),
-                false,
-            )
-            .unwrap();
+            let pattern =
+                vosu_plugin_api::memory::Pattern::parse(item["signature"].as_str().unwrap(), false)
+                    .unwrap();
             image.extend(
                 pattern
                     .bytes()

@@ -1,6 +1,6 @@
 //! Read-plan executor (`docs/v2/plugin-abi.md` §6.3) and the opt-in
 //! synchronous-delivery mechanism (D5, §4): executes one decoded
-//! `VOSU_OP_READ_PLAN_SUBMIT` against a `vosu_sys::process::ProcessMemory`
+//! `VOSU_OP_READ_PLAN_SUBMIT` against a `vosu_plugin_api::memory::ProcessMemory`
 //! backend, honoring a deadline, and produces the matching
 //! `VOSU_OP_READ_PLAN_RESULT`.
 //!
@@ -39,6 +39,7 @@ use std::mem::size_of;
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
+use vosu_plugin_api::memory::{MemoryError, ProcessBitness, ProcessMemory, ReadRequest};
 use vosu_plugin_api::{
     MessageError, PlanBase, PlanOp, ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult,
     Stage, StageBase, VOSU_READ_PLAN_MAX_BYTES, read_flat_header, validate_flags,
@@ -47,7 +48,6 @@ use vosu_plugin_api::{
     vosu_read_plan_result_header, vosu_read_plan_submit_header, vosu_read_result_flat,
     vosu_read_result_kind, vosu_stage_base_kind, vosu_stage_header, vosu_status,
 };
-use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory, ReadRequest};
 
 /// Per-instance bound on asynchronous (non-`VOSU_READ_PLAN_SYNC`) read
 /// plans outstanding at once (`docs/v2/plugin-abi.md` §5, §6.3): a

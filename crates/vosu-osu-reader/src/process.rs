@@ -1,5 +1,6 @@
-//! Pointer-width managed-heap read layer over `vosu_sys::process`'s
-//! object-safe syscall boundary, plus AOB pattern scanning built on it.
+//! Pointer-width managed-heap read layer over the object-safe
+//! `vosu_plugin_api::memory::ProcessMemory` boundary, plus AOB pattern
+//! scanning built on it.
 //!
 //! This is the generic client-decoding layer shared by the stable and lazer
 //! readers: it knows the .NET/Mono managed-heap layouts (strings, arrays,
@@ -10,14 +11,11 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
-pub use vosu_sys::process::scanner::{
-    BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE,
+use vosu_plugin_api::memory::{
+    BatchScanResult, ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion,
+    Pattern, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
-pub use vosu_sys::process::{
-    ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion, ProcessBitness,
-    ProcessMemory, ReadRequest, ReadStatus,
-};
-pub use vosu_sys::process::{read_chains_default, read_indirect_many_default};
+use vosu_sys::process::scanner;
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
 const MAX_MANAGED_COLLECTION_LENGTH: usize = 1_000_000;
@@ -590,7 +588,7 @@ impl ProcessHandle {
     }
 
     /// Returns the first match in region order, then ascending offset order
-    /// (`vosu_sys::process::scanner`'s generic primitive over this
+    /// (`vosu_sys::process::scanner`'s region walk over this
     /// handle's own `ProcessMemory` backend, or the injected `ScanBackend`
     /// when one was given to [`Self::with_scan_backend`]).
     ///
@@ -601,7 +599,7 @@ impl ProcessHandle {
     pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
         match &self.scans {
             Some(backend) => Ok(backend.scan_all(pattern)?.into_iter().next()),
-            None => self.memory.scan_first(pattern),
+            None => scanner::scan_first(&*self.memory, pattern),
         }
     }
 
@@ -632,7 +630,7 @@ impl ProcessHandle {
                 }
                 Ok(None)
             }
-            None => self.memory.scan_first_valid(pattern, validate),
+            None => scanner::scan_first_valid(&*self.memory, pattern, validate),
         }
     }
 
@@ -640,7 +638,7 @@ impl ProcessHandle {
     pub fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
         match &self.scans {
             Some(backend) => backend.scan_all(pattern),
-            None => self.memory.scan_all(pattern),
+            None => scanner::scan_all(&*self.memory, pattern),
         }
     }
 
@@ -649,7 +647,7 @@ impl ProcessHandle {
     pub fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
         match &self.scans {
             Some(backend) => backend.scan_batch(patterns),
-            None => self.memory.scan_batch(patterns),
+            None => scanner::scan_batch(&*self.memory, patterns),
         }
     }
 }

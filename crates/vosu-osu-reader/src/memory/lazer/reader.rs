@@ -339,8 +339,8 @@ impl MemoryReader for LazerMemory {
         let mut x = [0; 4];
         let mut dashing = [0; 1];
         if let Err(error) = self.process.read_many(&mut [
-            vosu_sys::process::ReadRequest::new(add(catcher, fields.2)?, &mut x),
-            vosu_sys::process::ReadRequest::new(add(catcher, fields.3)?, &mut dashing),
+            ReadRequest::new(add(catcher, fields.2)?, &mut x),
+            ReadRequest::new(add(catcher, fields.3)?, &mut dashing),
         ]) {
             self.catcher_cache = None;
             return Err(error);

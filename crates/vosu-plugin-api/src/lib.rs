@@ -23,6 +23,11 @@ mod limits;
 /// requirement matching. Asset-backed namespace extraction/catalog comparison
 /// are separate from intrinsic validity and application host support.
 pub mod manifest;
+/// Platform-neutral target-memory vocabulary shared by native backends in
+/// `vosu-sys`, core's read-plan executor and plugin readers. Pure values and
+/// algorithms only: no process handles or syscalls.
+#[forbid(unsafe_code)]
+pub mod memory;
 mod message;
 mod opcode;
 mod primitives;

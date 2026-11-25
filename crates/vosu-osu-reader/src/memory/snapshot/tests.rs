@@ -4,7 +4,7 @@ use super::*;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::memory::*;
 use vosu_osu_model::states::{CalculateMods, HitErrorArray};
-use vosu_sys::process::{MemoryError, MemoryRead, ReadStatus};
+use vosu_plugin_api::memory::{MemoryError, MemoryRead, ReadStatus};
 
 fn mods(checksum: &str) -> CalculateMods {
     CalculateMods {

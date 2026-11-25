@@ -11,13 +11,15 @@ use vosu_core::plugin::{ModuleResolver, execute_sync_into};
 use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::{
     memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, lazer_offsets::LazerOffsets},
-    process::{BatchScanResult, Pattern, ProcessHandle, ScanBackend},
+    process::{ProcessHandle, ScanBackend},
+};
+use vosu_plugin_api::memory::{
+    BatchScanResult, MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessMemory, ReadRequest,
 };
 use vosu_plugin_api::{
     HostServices, Init, Message, Plugin, PluginError, VtableHostServices, vosu_bytes,
     vosu_host_services, vosu_message, vosu_opcode, vosu_status,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 #[path = "support/lazer_fixture.rs"]
 mod lazer_fixture;
 #[path = "support/plan_costs.rs"]
@@ -302,9 +304,9 @@ fn populated_precise(
     let errors = reader.hit_errors(0).unwrap();
     match (&global, &keys, &errors) {
         (
-            vosu_sys::process::ReadStatus::Ready(global),
-            vosu_sys::process::ReadStatus::Ready(keys),
-            vosu_sys::process::ReadStatus::Ready(errors),
+            vosu_plugin_api::memory::ReadStatus::Ready(global),
+            vosu_plugin_api::memory::ReadStatus::Ready(keys),
+            vosu_plugin_api::memory::ReadStatus::Ready(errors),
         ) => {
             assert_eq!(global.time, 322.0);
             assert_eq!(keys.len(), 18);
@@ -412,7 +414,7 @@ fn bench(c: &mut Criterion) {
     let precise = stable.global_precise().unwrap();
     let native_precise = native_stable.global_precise().unwrap();
     assert_eq!(format!("{precise:?}"), format!("{native_precise:?}"));
-    let vosu_sys::process::ReadStatus::Ready(value) = precise else {
+    let vosu_plugin_api::memory::ReadStatus::Ready(value) = precise else {
         panic!("populated precise fixture must be ready");
     };
     assert_eq!(value.status, 3);
