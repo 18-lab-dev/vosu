@@ -87,19 +87,23 @@ pub struct TokenIdentity {
     pub elevated: bool,
 }
 
-fn token_information(token: HANDLE, class: i32) -> Vec<u64> {
+/// One `GetTokenInformation` class. Variable-size classes report their
+/// length to a size query; fixed-size ones (`TokenElevation`) answer it
+/// with `ERROR_BAD_LENGTH` and need exactly `fixed` bytes.
+fn token_information(token: HANDLE, class: i32, fixed: usize) -> Vec<u64> {
     let mut needed = 0;
     // SAFETY: a size query with no buffer.
     unsafe { GetTokenInformation(token, class, std::ptr::null_mut(), 0, &mut needed) };
-    let mut buffer = vec![0_u64; (needed as usize).div_ceil(8).max(1)];
+    let length = if needed == 0 { fixed } else { needed as usize };
+    let mut buffer = vec![0_u64; length.div_ceil(8)];
     // SAFETY: a live token with query access and an 8-aligned writable
-    // buffer of at least `needed` bytes.
+    // buffer of at least `length` bytes.
     let ok = unsafe {
         GetTokenInformation(
             token,
             class,
             buffer.as_mut_ptr().cast(),
-            (buffer.len() * 8) as u32,
+            length as u32,
             &mut needed,
         )
     };
@@ -113,9 +117,13 @@ pub fn token_identity(process: HANDLE) -> TokenIdentity {
     // SAFETY: a live process handle and a writable handle slot.
     let ok = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
     assert_ne!(ok, 0, "{}", std::io::Error::last_os_error());
-    let user = token_information(token, TokenUser);
-    let label = token_information(token, TokenIntegrityLevel);
-    let elevation = token_information(token, TokenElevation);
+    let user = token_information(token, TokenUser, size_of::<TOKEN_USER>());
+    let label = token_information(
+        token,
+        TokenIntegrityLevel,
+        size_of::<TOKEN_MANDATORY_LABEL>(),
+    );
+    let elevation = token_information(token, TokenElevation, size_of::<TOKEN_ELEVATION>());
     // SAFETY: each buffer holds the structure its class returns; the SIDs
     // they point to live inside the same buffers.
     let identity = unsafe {

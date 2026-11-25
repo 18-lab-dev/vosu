@@ -1,11 +1,11 @@
 //! M5 N0 additions: a descendant process for the core-death trees, the
 //! security readback after this plugin's own thread exists, and the
-//! [`Fault::WriteBlock`] flood (`docs/testing/verification.md`, "M5 test
+//! [`crate::control::Fault::WriteBlock`] flood (`docs/testing/verification.md`, "M5 test
 //! and fixture conventions" and "N0 packaged Linux drop procedure").
 
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::mpsc;
+use std::time::Instant;
 
 use vosu_plugin_api::{
     CborValue, HostServices, LogLevel, LogRecord, Message, VtableHostServices, vosu_status,
@@ -71,28 +71,28 @@ pub fn security_probe(control: &Control) {
     );
 }
 
-/// Milliseconds since `base` plus one while a flood send is in progress;
-/// 0 while none is.
-static SENDING: AtomicU64 = AtomicU64::new(0);
-/// The sequence number of the send in progress.
-static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+/// What the flood tells its watchdog about one send.
+enum Send {
+    Started { sequence: u64, at: Instant },
+    Finished,
+}
 
 /// [`crate::control::Fault::WriteBlock`]: a flood thread that waits for
 /// the test's release, and a watchdog that reports one send blocked.
 pub fn start_write_block(host: VtableHostServices, control: &'static Control) {
-    let base = Instant::now();
+    let (sends, watched) = mpsc::sync_channel(2);
     let flood = std::thread::Builder::new()
         .name("testkit-flood".to_owned())
-        .spawn(move || flood(host, control, base));
+        .spawn(move || flood(host, control, &sends));
     let watchdog = std::thread::Builder::new()
         .name("testkit-watchdog".to_owned())
-        .spawn(move || watchdog(control, base));
+        .spawn(move || watchdog(control, &watched));
     if flood.is_err() || watchdog.is_err() {
         control.receipt("write_flood_failed", "");
     }
 }
 
-fn flood(host: VtableHostServices, control: &Control, base: Instant) {
+fn flood(host: VtableHostServices, control: &Control, sends: &mpsc::SyncSender<Send>) {
     if !control.wait_release() {
         return;
     }
@@ -103,12 +103,12 @@ fn flood(host: VtableHostServices, control: &Control, base: Instant) {
         fields: CborValue::Map(Vec::new()),
     });
     for sequence in 1_u64.. {
-        let started = Instant::now();
-        SEQUENCE.store(sequence, Ordering::Release);
-        SENDING.store(millis(base) + 1, Ordering::Release);
+        let at = Instant::now();
+        if sends.send(Send::Started { sequence, at }).is_err() {
+            return;
+        }
         let status = host.send(&record, 0);
-        SENDING.store(0, Ordering::Release);
-        let waited = started.elapsed();
+        let waited = at.elapsed();
         if status != vosu_status::VOSU_OK {
             control.receipt(
                 "write_refused",
@@ -123,34 +123,26 @@ fn flood(host: VtableHostServices, control: &Control, base: Instant) {
             );
             return;
         }
-    }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the watchdog samples another thread's send start until one send has been blocked long enough; no wake source exists for a send that never returns"
-)]
-fn watchdog(control: &Control, base: Instant) {
-    loop {
-        std::thread::sleep(Duration::from_millis(5));
-        let sending = SENDING.load(Ordering::Acquire);
-        if sending == 0 {
-            continue;
-        }
-        let waited = millis(base).saturating_sub(sending - 1);
-        if waited >= WRITE_BLOCKED_AFTER.as_millis() as u64 {
-            control.receipt(
-                "write_blocked",
-                &format!(
-                    "seq={} waited_ms={waited}",
-                    SEQUENCE.load(Ordering::Acquire)
-                ),
-            );
+        if sends.send(Send::Finished).is_err() {
             return;
         }
     }
 }
 
-fn millis(base: Instant) -> u64 {
-    base.elapsed().as_millis() as u64
+/// Waits for each send to finish within [`WRITE_BLOCKED_AFTER`], and
+/// writes `write_blocked` for the first one that does not.
+fn watchdog(control: &Control, watched: &mpsc::Receiver<Send>) {
+    while let Ok(Send::Started { sequence, at }) = watched.recv() {
+        match watched.recv_timeout(WRITE_BLOCKED_AFTER) {
+            Ok(Send::Finished) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                control.receipt(
+                    "write_blocked",
+                    &format!("seq={sequence} waited_ms={}", at.elapsed().as_millis()),
+                );
+                return;
+            }
+            Ok(Send::Started { .. }) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
 }

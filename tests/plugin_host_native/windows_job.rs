@@ -9,8 +9,10 @@
 //!
 //! - the plugin host's immediate job at library load (the constructor's
 //!   readback): kill-on-close, no breakaway, holding only the plugin host;
-//! - the descendant's immediate job: the same limits, holding exactly the
-//!   plugin host and the descendant;
+//! - the descendant's immediate job: the same limits, holding the plugin
+//!   host, the descendant and only processes of their own tree (the console
+//!   host Windows creates for a console child), every one of which must
+//!   end with core;
 //! - the token identity (user SID, integrity, elevation) of core, plugin
 //!   host and descendant, which must all match: a process plugin runs with
 //!   core's token (§7.4);
@@ -31,7 +33,8 @@ use super::parent_death::{daemon, kill_core_and_assert};
 use super::support::jobs::{
     BREAKAWAY, KILL_ON_JOB_CLOSE, handle_types, job_type_index, token_identity,
 };
-use super::support::tree::{CoreKind, STARTUP_BOUND, Scenario, Tree};
+use super::support::tracked::{Tracked, parent_of};
+use super::support::tree::{CoreKind, DEATH_BOUND, STARTUP_BOUND, Scenario, Tree};
 
 const JOB_TREE: Scenario = Scenario {
     name: "job_tree",
@@ -75,15 +78,30 @@ fn core_death_kills_job_tree(kind: CoreKind) {
     assert_strict(flags(constructor.get("job_flags")), "plugin host at load");
     assert_eq!(pid_set(constructor.get("job_pids")), BTreeSet::from([host]));
 
-    // The descendant inherited that job, which now holds both.
+    // The descendant inherited that job, which now holds the plugin host,
+    // the descendant and nothing outside their own tree: a console child
+    // also gets its console host (conhost.exe), created for it and listed
+    // in the same job.
     let (descendant, marker) = tree.descendant();
     let descendant_pid = descendant.pid;
     assert_strict(flags(&marker["job_flags"]), "descendant");
-    assert_eq!(
-        pid_set(&marker["job_pids"]),
-        BTreeSet::from([host, descendant_pid]),
-        "the descendant's immediate job is the plugin host's"
+    let listed = pid_set(&marker["job_pids"]);
+    assert!(
+        listed.is_superset(&BTreeSet::from([host, descendant_pid])),
+        "the descendant's immediate job is the plugin host's: {listed:?}"
     );
+    let others: Vec<Tracked> = listed
+        .iter()
+        .filter(|pid| ![host, descendant_pid].contains(pid))
+        .map(|&pid| {
+            let parent = parent_of(pid);
+            assert!(
+                parent == Some(host) || parent == Some(descendant_pid),
+                "job member {pid} (parent {parent:?}) is outside the plugin host's tree"
+            );
+            Tracked::open(pid, None)
+        })
+        .collect();
 
     // Same token identity throughout: process plugins run with core's
     // token; approval is a trust decision, not a sandbox.
@@ -113,6 +131,20 @@ fn core_death_kills_job_tree(kind: CoreKind) {
     }
 
     kill_core_and_assert(&mut tree, true);
+    // Every other process the job held ends with it too.
+    for process in &others {
+        assert!(
+            process.wait_exit(DEATH_BOUND).is_some(),
+            "job member {process:?} outlived core"
+        );
+    }
+    println!(
+        "RECORD n0 windows job_members={listed:?} others_exit={:?}",
+        others
+            .iter()
+            .map(|process| process.exit_code())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
