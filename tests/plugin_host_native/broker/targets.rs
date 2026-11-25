@@ -135,6 +135,28 @@ fn compiler() -> String {
         .expect("a C compiler ($CC, clang, cc or gcc) is required to build the broker targets")
 }
 
+/// `lib` (a `;`-separated `LIB` value) with every `x64` path component
+/// replaced by `x86`: the MSVC (`lib\x64`) and Windows SDK (`ucrt\x64`,
+/// `um\x64`) layouts keep each architecture in a sibling directory.
+fn x86_library_path(lib: &str) -> String {
+    lib.split(';')
+        .map(|entry| {
+            entry
+                .split('\\')
+                .map(|part| {
+                    if part.eq_ignore_ascii_case("x64") {
+                        "x86"
+                    } else {
+                        part
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\\")
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 /// Builds the `width` target with `seed` into `dir`.
 fn build(dir: &Path, width: Width, seed: u8) -> std::path::PathBuf {
     let source = dir.join(format!("target-{seed}.c"));
@@ -149,6 +171,12 @@ fn build(dir: &Path, width: Width, seed: u8) -> std::path::PathBuf {
             Width::X64 => "--target=x86_64-pc-windows-msvc",
             Width::X86 => "--target=i686-pc-windows-msvc",
         });
+        // A developer environment's `LIB` names the x64 CRT and SDK
+        // directories, which the x86 link would silently skip as the wrong
+        // machine: point each at its x86 sibling.
+        if let (Width::X86, Ok(lib)) = (width, std::env::var("LIB")) {
+            command.env("LIB", x86_library_path(&lib));
+        }
     } else {
         command.args([
             "-nostdlib",
