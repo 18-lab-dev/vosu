@@ -57,8 +57,10 @@ TRAVERSAL = ("menu", "play", "paused", "result", "no-client")
 MAX_ATTEMPTS = parity_golden.MAX_ATTEMPTS
 MAX_DUMP_BYTES = 8 << 20
 POLL_S = 0.1
-# A barrier holds once both daemons report it and the non-volatile views of the upstream
-# v2 payload and the vosu v2 dump stayed identical across this many observations.
+# A barrier holds once both daemons report it across this many consecutive observations.
+# A barrier with cases also needs the non-volatile views of the upstream v2 payload and
+# the vosu v2 dump to stay identical across them; a case-less one (play: its clock and
+# the provider generation advance on every read) needs only the reported state.
 STABLE_OBSERVATIONS = 3
 # A record must carry an HTTP response to be a golden record.
 RESPONSE_OUTCOMES = frozenset({"response", "rejected", "upgraded", "server-closed"})
@@ -521,7 +523,7 @@ class Session:
         return exited == (barrier == "no-client") and all(value == barrier for value in seen.values())
 
     def _wait_barrier(self, barrier: str, source: Daemon, dump: HarnessDump,
-                      reached: list[str]) -> None:
+                      reached: list[str], *, identical_views: bool = True) -> None:
         index = TRAVERSAL.index(barrier)
         self.operator(barrier, f"waiting for barrier {barrier}: {OPERATOR_STEPS[barrier]}")
         stable, previous = 0, None
@@ -536,8 +538,10 @@ class Session:
                     continue  # The client is still starting.
                 raise CaptureError(f"barrier out of order: {daemon} reached {value} while "
                                    f"waiting for {barrier} after {reached or ['launch']}")
-            if not self._holds(barrier, seen) or view is None:
+            if not self._holds(barrier, seen) or (identical_views and view is None):
                 stable, previous = 0, None
+            elif not identical_views:
+                stable += 1
             else:
                 stable = stable + 1 if stable and view == previous else 1
                 previous = view
@@ -545,7 +549,8 @@ class Session:
                 time.sleep(POLL_S)
         reached.append(barrier)
         self.transcript["barriers"].append({"barrier": barrier, "monotonic_ns": time.monotonic_ns(),
-                                            "stable_observations": STABLE_OBSERVATIONS})
+                                            "stable_observations": STABLE_OBSERVATIONS,
+                                            "identical_views": identical_views})
 
     # -- cases
 
@@ -660,7 +665,8 @@ class Session:
         cases: list[dict[str, Any]] = []
         reached: list[str] = []
         for barrier in self.scenario.barriers:
-            self._wait_barrier(barrier, source, dump, reached)
+            has_cases = any(item.case.barrier == barrier for item in (*golden, *others))
+            self._wait_barrier(barrier, source, dump, reached, identical_views=has_cases)
             for item in golden:
                 if item.case.barrier == barrier:
                     cases.append(self._run_case(item, source, vosu, dump))
