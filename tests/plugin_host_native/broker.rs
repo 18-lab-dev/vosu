@@ -941,10 +941,18 @@ fn broker_an_old_childs_result_never_completes_a_new_childs_waiter() {
         "the lost instance stayed live"
     );
 
-    // The loss scheduled an automatic restart (§7.6 A5.3); the controlled
-    // teardown cancels it, so the id is created again as a new generation.
-    host.teardown(1).unwrap();
-    host.create(1, &plugin.loaded).unwrap();
+    // Supervision (C0) restarts the lost instance under the same id after
+    // its 1-second backoff: the new generation is a new plugin host.
+    assert!(
+        wait_until(BOUND, || host
+            .host
+            .process_status(vosu_core::plugin::PluginInstanceId::new(1))
+            .is_some_and(|status| {
+                status.restarts == 1
+                    && status.phase == vosu_core::plugin::process::supervisor::ProcessPhase::Running
+            })),
+        "the lost instance never restarted"
+    );
     let new_gate = probe(&host, &new_target, &process);
     let (new, new_handle) = plugin.session(&new_target, &[old]);
     assert_ne!(new, old);

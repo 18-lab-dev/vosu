@@ -184,6 +184,12 @@ impl Host {
         )
     }
 
+    /// Enters this host's runtime, for calls that start core timers (an
+    /// action invocation's deadline).
+    pub fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
+        self.runtime.enter()
+    }
+
     pub fn dispatch(&self, id: u64, message: &Message) -> Result<(), HostError> {
         let _enter = self.runtime.enter();
         self.host
@@ -212,14 +218,6 @@ impl Host {
     pub fn destroy_all(&self) {
         let _enter = self.runtime.enter();
         self.host.destroy_all(DESTROY_GRACE);
-    }
-
-    /// The controlled teardown of instance `id` (§7.6): also cancels a
-    /// lost instance's pending automatic restart, so the id can be created
-    /// again.
-    pub fn teardown(&self, id: u64) -> Result<(), HostError> {
-        let _enter = self.runtime.enter();
-        self.host.teardown_instance(PluginInstanceId::new(id))
     }
 
     /// Offers a synthetic target process `pid` named `name` whose memory is
