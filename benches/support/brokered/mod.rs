@@ -1,10 +1,12 @@
 //! Support for `benches/brokered_reads_bench.rs`; see its module doc.
 
+pub mod abi;
 pub mod candidate;
 pub mod os;
 #[cfg(windows)]
 pub mod pipe_windows;
 pub mod plans;
+pub mod production;
 #[cfg(target_os = "linux")]
 pub mod prototype_linux;
 pub mod ring;

@@ -193,6 +193,13 @@ name = "plan_process_bench"
 [[example]]
 name = "brokered_reads_target"
 
+# M5 P1/X1: the production benches' `runtime = "process"` plugin, loaded by
+# a real `vosu plugin-host` child (benches/support/production). Build it
+# in the benches' profile first: `cargo bench` builds no examples.
+[[example]]
+name = "brokered_reads_plugin"
+crate-type = ["cdylib"]
+
 [[example]]
 name = "process_event_bench"
 required-features = ["linux-process-events"]
