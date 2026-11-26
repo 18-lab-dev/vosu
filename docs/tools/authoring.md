@@ -1,112 +1,84 @@
 ---
 type: Reference
 title: "Tool authoring reference"
-description: "Language, manifest, UI, lifecycle, and testing reference for tool authors."
+description: "Manifest, UI, state, actions, settings and testing reference for 2.0 web tool authors."
 ---
 
 # Tool authoring reference
 
-New to tools? Follow [Create a tool](create-a-tool.md) from an empty directory through a published catalog. This page is the companion reference; the [protocol v1 contract](protocol.md) defines environment variables, APIs, lifecycle, and the [package format](protocol.md#catalog-and-package-format). Tools run with your OS permissions, not inside a sandbox. Install only tools you trust.
+New to tools? Follow [Create a tool](create-a-tool.md) from an empty directory to a published catalog. This page is the companion reference; the [tool protocol](protocol.md) is the contract for routes, launch sessions and the bridge, and [API v1](../v2/api-v1.md) for state, resources and actions.
 
-## Development launch and command resolution
+A 2.0 tool is a static web application. vosu serves its files and gives its browser tab a launch session; it never runs a tool process. Anything that needs native code, the filesystem or the game client is a [plugin](../v2/plugin-abi.md) action that the tool calls.
 
-Use `vosu --tool <directory>` to trust a development checkout for that run. Use [isolated paths and spare ports](create-a-tool.md#3-run-an-isolated-vosu) when another vosu is running.
+## Development launch
 
-The dependency-free [Hello Python example](../../examples/tools/hello-python/) includes a counter, settings, selected-map context, live subscriptions, an optional read dependency, CLI, art, and packaging. It requires Python 3.11+ as `python` on PATH. Reads work in a direct tab; increment requires the dashboard's **Open** action. Effective settings are fetched on each count read; host failures produce 502, not invented settings.
+`vosu --tool <directory>` loads a package directory for that run and trusts it, replacing an installed tool with the same id. Use [isolated paths and spare ports](create-a-tool.md#3-run-an-isolated-vosu) when another vosu is running. Edits to `manifest.toml`, `settings.json` and the UI files apply without restarting vosu: reload the tool tab, then open it from the dashboard again for a fresh session.
 
-The host uses the tool directory as its working directory. `command = ["python", "main.py"]` works on Windows as well as Linux when `python` resolves through PATH. Bare executable names resolve through PATH; relative executable paths containing `/` or `\` resolve against the tool directory. Windows adds `.exe` to extensionless executable paths. There is no shell expansion, so use an argv array, not `"python main.py"`. If Linux only has `python3`, change the first argument accordingly.
-
-## Rust with vosu-tool-sdk
-
-The SDK now lives in [vosu-tools](https://github.com/18-lab-dev/vosu-tools), under `crates/vosu-tool-sdk`; add it as a dependency from that repository, alongside `axum` and Tokio. The SDK reads the launch environment, checks the token on every route, binds loopback port 0, emits readiness, adds `/healthz`, and shuts down on stdin EOF:
-
-```rust
-use axum::{routing::get, Router};
-use vosu_tool_sdk::{serve, ToolEnv};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let env = ToolEnv::from_env()?;
-    let router = Router::new().route("/v1/hello", get(|| async { "hello" }));
-    serve(&env, router).await?;
-    Ok(())
-}
-```
-
-Use `env.client().settings::<YourSettings>().await?` for settings and `.context().await?` for the selected beatmap (requires `permissions.host = ["context"]`). Dependency calls use `.tool_json("difficulty", "v1/beatmap/current")` and require a matching `[[requires]]` declaration. Do not log or expose the service token to the browser.
+The [Hello web example](../../examples/tools/hello-web/) is a complete tool without a build step: live chart and play values, a background resource, a setting, and an optional plugin action with progress and cancel.
 
 ## Manifest walkthrough
 
-`manifest_version = 1`, a unique lowercase `id`, display `name`, and semver `version` are required. IDs match `^[a-z0-9][a-z0-9-]{0,31}$`. `[ui]` points at root-confined static assets and defaults its entry to `index.html`. `[service]` declares argv and `startup` (`always` or `on-demand`). A UI-only tool omits the service; a service-only tool omits the UI. `[[requires]]` pins compatible dependency versions; `[permissions].host` declares access to `context` or advisory `songs:write`. Permission declarations are not a process sandbox.
+`manifest.toml` needs `manifest_version = 1`, `kind = "tool"`, a lowercase `id` matching `^[a-z0-9][a-z0-9-]{0,31}$`, a display `name`, a semver `version`, a `host` requirement on the vosu version, and `[ui]` with its static `root` (and `entry`, default `index.html`). Alpha hosts need the prerelease in the range, for example `host = ">=2.0.0-alpha.1, <3.0.0"`. The [catalog v2 manifest](../v2/catalog-v2.md#package-manifest-v2-manifesttoml) is the field reference.
 
-Use `[service] role = "backend"` with `startup = "on-demand"` when the process exists only to support the tool's UI/CLI. It still starts for UI, CLI and dependency API requests, but has no SERVICE badge or service controls. Omit the service only when no native process is needed. Independently useful services default to `role = "background"`; users can override their startup from **Start with vosu** or `vosux --autostart <id> on|off|default`.
+`[[requires]]` and `[[optional]]` list the capabilities the tool uses, with semver requirements:
 
-Give the tool an identity on the Tools page with `icon` (square SVG, or PNG at least 256×256, shown at 40–64 px) and `banner` (3:1 PNG, JPEG, WebP, or SVG, recommended 1200×400, cropped to the card width, so keep the subject centred). Both are paths inside the tool directory. Catalogs repeat them as HTTPS `icon_url`/`banner_url` so the Available section can show them before installation.
+- `field:<namespace>[.<field>…]` for state it reads, such as `field:vosu.play` or `field:vosu.osu.play.pp.current`;
+- `resource:<kind>` for files it loads through resource references, such as `resource:chart.background`;
+- `action:<plugin-id>.<name>` for each plugin action it invokes.
 
-### Read versus write
+The list is the tool's permission surface: the install plan shows it to the user, an unresolvable `requires` entry blocks the tool, and an action is callable only when its capability is listed **and** resolves to an installed provider. Put a capability in `optional` when the tool works without it. Built-in namespaces (`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`) resolve without installing anything.
 
-List read-only path prefixes in `[api].read`: only GET, HEAD, and WebSocket upgrades are exposed to overlays. Put mutations in `[api].write`; they require the tool's UI session or an authenticated declared dependent tool. GET/HEAD/WebSocket on a path matching a `read` prefix stay public even if a `write` prefix also matches, so a route such as `/v1/jobs` can be listed in both: public status reads, authorized cancellation. Prefixes are segment-aware: `/v1/count` does not expose `/v1/countdown`. Unlisted paths return 404. Do not mutate state from a GET: overlays can call read routes without a UI session.
+Give the tool an identity on the Tools page with `icon` (square SVG, or PNG at least 256×256, shown at 40–64 px) and `banner` (3:1 PNG, JPEG, WebP or SVG, recommended 1200×400, cropped to the card width, so keep the subject centred). Both are paths inside the package. Catalogs repeat them as HTTPS `icon_url`/`banner_url`.
 
-Import `vosu` from `/tools/_host/v1/bridge.js`. Await `vosu.ready` before fetching. Use `vosu.fetch("v1/count")`, which supplies the current UI session header; disable write controls when `vosu.canWrite` is false and point users at the dashboard's **Open**. The launch code is single-use and removed from the URL by the bridge. The session exists only in page memory: a reload is read-only by design. Never copy it into `sessionStorage`, `localStorage`, IndexedDB, or cookies (overlays share that storage), never open same-origin pages without `noopener`, and never frame overlays from a tool UI; any of those hands write access to overlay code. Never send the service token to browser code.
+## The bridge and write authority
 
-### Look and layout
+Import the bridge by its absolute path and wait for it before acting:
 
-Build the UI from the shared 18-LAB system: link `/tools/_host/v1/theme.css` and use its `v-` classes, so every tool matches the dashboard and each other. The bridge sets `data-theme` from the dashboard's mode, and the theme sets `color-scheme`, so native popups and scrollbars stay legible without tool code. Follow the [design system guide](design.md): labels only (descriptions belong in `settings.json`), a slim top bar instead of a header, no page scrolling at common desktop sizes, a help hover only for ambiguous labels, and muted audio by default. The reference page `/tools/_host/v1/design` shows every component in both modes.
+```js
+import { vosu } from '/tools/_host/v2/bridge.js';
+try { await vosu.ready; } catch (error) { showReadOnly(error.message); }
+```
 
-### Settings, jobs, and live data
+`vosu.canWrite` is true only in a tab the dashboard's **Open** launched. That tab exchanged a single-use launch code, removed from the URL before anything else ran, for a session the bridge keeps in module memory. A reload, a bookmark or a direct visit is read-only by design: disable action controls when `vosu.canWrite` is false and point the user at **Open**.
 
-Optional `settings.json` reuses the [overlay settings format](../../README.md#overlay-settings), including defaults and the dashboard editor. Tools do not use overlay profiles. Read effective values through the authenticated host `/settings` API, not by assuming a file format for persisted host state.
+Reads never need the session. Use plain `fetch` for your own static files and API v1 reads; the bridge sends the session only on the action and job requests it builds itself. Never copy anything into `localStorage`, `sessionStorage`, IndexedDB or cookies in a way that could grant authority, never open same-origin pages without `noopener`, and never frame overlays: overlays share the tool's origin and storage.
 
-Version API paths under `/v1/`. Errors use `{"error":"message"}` with a suitable 4xx/5xx status. Work taking more than about one second should return `202 {"job":"id"}` from POST, expose `GET /v1/jobs/<id>` with state/progress/message/result, and support DELETE cancellation. Live read WebSockets send a complete snapshot on connect and each change. Keep queues and request sizes bounded; do not publish incremental deltas that require clients to guess missing state.
+## Look and layout
 
-## Development and distribution
+Link `/tools/_host/v1/theme.css` and build from its `v-` classes, so every tool matches the dashboard and each other. The bridge sets `data-theme` from the dashboard's mode, and the theme sets `color-scheme`, so native popups and scrollbars stay legible without tool code. Follow the [design system guide](design.md): labels only (descriptions belong in `settings.json`), a slim top bar instead of a header, no page scrolling at common desktop sizes, a help hover only for ambiguous labels, and muted audio by default. `/tools/_host/v1/design` shows every component in both modes.
 
-Run `vosu --tool <directory>` against a checkout; this explicitly trusts it for that run and overrides an installed tool of the same id. Manifest and settings edits are watched; rebuilding a development service restarts it. For example, from a separate vosu-tools checkout, build `cargo build --locked -p vosu-mania-ratings` and use `vosu --tool tools/mania-ratings`. See the protocol for the host's Cargo development binary resolution rule.
+## Live state
 
-For any language, implement the same contract: loopback port 0, one flushed `vosu-tool-ready <port>` line, token-authenticated `/healthz` and every other request, exit within five seconds after stdin EOF. Keep stdout available for logs after the handshake and never print secrets. Use the supplied data directory for durable state and cache directory for disposable computations.
+`vosu.subscribe(fields, onFrame, onStatus?, {session}?)` follows API v1 JSON Pointers such as `/vosu.play/combo`; see [State through API v1](protocol.md#state-through-api-v1) for the pointer table and frame shapes. Rules that keep a UI honest:
 
-Distribute a tool as a directory under `<vosu data directory>/tools/<id>/`, or publish a ZIP and catalog following [Create a tool](create-a-tool.md#12-package-and-publish). Include runtime requirements, license texts, static assets, and the manifest. Third-party catalog tools require approval before enabling; installing a package does not sandbox it. vosu embeds no tools: official tools also install from catalogs. The daemon's own release/updater packages remain single-executable deployments; see the [release runbook](../operations/runbook.md#updates-and-releases).
+- Reset everything on an initial frame (`frame[0] === 0`): it follows every reconnect and every change of the focused session.
+- Delete removed indices from update frames instead of keeping the last value.
+- Treat an absent or `null` value as unknown, never as zero.
+- Show `onStatus`: while no game is focused the `active` subscription is refused and keeps retrying.
+- Call the returned stop function on `pagehide`, and when a fixed session you subscribed to has ended.
+
+Resource and tree references (`{"url", "type"}`, `{"url"}`) are ordinary same-origin URLs: put them in `<img src>`, `<audio>` or `fetch` directly. Never build file paths; state carries none.
+
+## Actions
+
+`await vosu.invoke('<plugin-id>.<name>', args, {session, signal, onProgress})` runs an action and resolves with its result; `vosu.start` returns a handle (`id`, `done`, `onProgress`, `cancel`) for background work. The action's declared session mode decides `session`: omit it (the focused session) or pass a session id for `required`, pass `null` for `none`, either for `optional`. Errors carry a `code`: `forbidden` without a session or grant, `unknown_session` when no game is focused, `invalid_arguments`, `cancelled`, `timed_out`, `plugin_crashed`, or the plugin's own code.
+
+Pass an `AbortSignal` to cancel: aborting before the request sends nothing, aborting while the job is being created still cancels it, and aborting later sends `DELETE`. Cancellation is advisory; a result that wins the race stands.
+
+## Settings
+
+Optional `settings.json` reuses the [overlay settings format](../../README.md#overlay-settings-profiles), including defaults and the dashboard editor; tools do not use profiles. `await vosu.settings()` returns the effective values with defaults applied. It is a public read that overlays can make too, so `password` settings are never included: a web tool cannot read a secret. A credential belongs in the settings of the plugin that uses it. Re-read settings when the tab regains focus rather than caching them for its lifetime.
+
+## Distribution
+
+A release is a ZIP with `manifest.toml` at the root, the UI files, `settings.json` when used, and redistributable license texts, listed in a `catalog-v2.json` `tools` entry; see [Catalog sources and installation](protocol.md#catalog-sources-and-installation) and [Create a tool](create-a-tool.md#9-package-and-publish). Check the catalog and extracted packages with the SDK's [`vosu-package-check`](../v2/catalog-v2.md#package-checker-af10). Installing a tool is always a reviewed catalog plan; a tool from a source the user has not trusted stays untrusted until approved. Official tools are maintained in [vosu-tools](https://github.com/18-lab-dev/vosu-tools); vosu embeds none.
 
 ## Test a tool
 
-1. Parse its manifest against the schema and check id, paths, required dependencies, and unknown fields.
-2. Start with a fake host on a temporary loopback port and fresh data/cache directories. Set every launch variable from the protocol; capture stdout and keep stdin piped.
-3. Check the readiness line and authenticated `/healthz`; missing or incorrect tokens must return 401.
-4. Exercise reads, writes, error paths, cancellation and live reconnects. Test host settings with defaults and changed values.
-5. Close stdin and require clean exit within five seconds, including while clients are connected.
-6. Through an isolated vosu, verify read-only UI access, dashboard launch/session writes, dependency permissions, and disable/restart behavior.
+1. Run `vosu-package-check` on the catalog and extracted package; it applies the same manifest validation as vosu.
+2. Start an isolated vosu with `--tool <directory>` on spare ports and confirm `GET /api/tools/<id>` on the dashboard listener reports `status: "running"` with every `requires` entry `satisfied`.
+3. Open the tool directly (read-only) and through **Open** (session), and check both states in the UI.
+4. Exercise live state with and without a focused game, a reconnect after restarting vosu, action success, failure and cancellation, and a missing optional capability.
+5. Check that the tool writes nothing to browser storage that could grant authority and that every action control is disabled while read-only.
 
-Run `cargo test --locked -p vosu tools::` for the host manifest, discovery, catalog, supervision, and protocol tests. Release archive tests remain `python scripts/test_package_release.py`. SDK and official package tests live in [vosu-tools](https://github.com/18-lab-dev/vosu-tools).
-
-## Add a vosux command
-
-Declare a terminal entry point separately from your long-running service:
-
-```toml
-[cli]
-command = ["bin/vosu-my-tool", "cli"]
-summary = "Describe the command in one line"
-```
-
-Use `vosu x my-tool --help` (Linux packages also provide `vosux my-tool --help`).
-Everything after the tool id belongs to your CLI. The launcher resolves argv
-exactly like a service, including the development Cargo fallback, and inherits
-terminal stdin/stdout/stderr. The daemon must already be running and the tool
-must be trusted and enabled. Keep human output on stdout, progress on stderr,
-and offer `--json` for scripts. Return useful exit codes.
-
-`VOSU_TOOL_INTERFACE` distinguishes `cli` from `service`; Rust SDK `ToolEnv`
-exposes `Interface`. CLI tokens can call the permission-filtered host API,
-declared dependencies, and their own service's declared routes. Use SDK
-`Client::own` / `own_json` instead of writing the service's database directly:
-one writer prevents concurrent CLI invocations from corrupting shared state.
-For long jobs use `Client::wait_job`, which reports progress and cancels the
-job on Ctrl+C. The CLI does not emit a readiness line or run the service's
-stdin-EOF lifetime loop. Never print its token or expose it in a browser.
-
-Use `vosu x --list [--json]` to inspect installed command summaries and
-`vosu x --open my-tool` to open the UI with a write session. UI-only tools open
-automatically when invoked without arguments. See the complete
-[launcher and token contract](protocol.md#command-line-tools-vosux) for session
-limits, exit codes, and signal behavior.
-
+The host's own tool tests are `cargo test --locked --test server_compat`, the `vosu-tool-host` crate tests, and `python tests/tool_host_smoke.py`, whose browser phase drives the bridge against a real daemon.

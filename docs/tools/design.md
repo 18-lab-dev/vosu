@@ -12,7 +12,7 @@ The vosu dashboard and every first-party tool use one calm design system: the 18
 <link rel="stylesheet" href="/tools/_host/v1/theme.css">
 ```
 
-`theme.css` is the dashboard's own `tokens.css` followed by the component classes in `system.css`; there is no second copy to drift. The bridge sets `data-theme` on `<html>` from the dashboard's mode (`vosu.colorScheme`), so a tool needs no theme code. With Vite, import it with `/* @vite-ignore */` or link it from `index.html` so the build does not try to bundle it. Do not fork or override the tokens. The live reference with every component in both modes is served at [`/tools/_host/v1/design`](http://127.0.0.1:24050/tools/_host/v1/design).
+`theme.css` is the dashboard's own `tokens.css` followed by the component classes in `system.css`; there is no second copy to drift. The bridge (`/tools/_host/v2/bridge.js`) sets `data-theme` on `<html>` from the dashboard's mode (`vosu.colorScheme`), so a tool needs no theme code. With Vite, import it with `/* @vite-ignore */` or link it from `index.html` so the build does not try to bundle it. Do not fork or override the tokens. The live reference with every component in both modes is served at [`/tools/_host/v1/design`](http://127.0.0.1:24050/tools/_host/v1/design). Both routes, with `theme.css`, are frozen in the [tool protocol](protocol.md#overlay-listener).
 
 ## Rules
 
@@ -28,7 +28,7 @@ The vosu dashboard and every first-party tool use one calm design system: the 18
 
 **Audio.** Previews that play sound start muted and keep a per-tool mute toggle (`.v-toggle` or an icon button with `aria-pressed`), remembered between visits.
 
-**Live data.** Follow the game with `vosu.subscribe()` and show its state with a `.v-dot` in the bar; read options with `vosu.settings()`.
+**Live data.** Follow the game with `vosu.subscribe()` and show its connection with a `.v-dot` and a short label in the bar (for example *Live* and *Waiting for a game*); show a value the game has not filled as `—`, never as `0`. Read options with `vosu.settings()`. Actions that need the dashboard's session stay disabled while `vosu.canWrite` is false.
 
 ## Class reference
 

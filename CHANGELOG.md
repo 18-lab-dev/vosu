@@ -2,6 +2,20 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M7 T1 (one tool bridge)
+
+- `/tools/_host/v2/bridge.js` is the only tool bridge. `vosu.fetch` and
+  `assets/server/tool-bridge-v1.js` (with its `/websocket/v2/subscribe`
+  client) are removed; `/assets/tool-bridge-v1.js` is 404.
+- The bridge removes the launch fragment before any asynchronous work, sends
+  the session only on the API v1 action and job requests it builds, and
+  rejects `.` and `..` as a session target. A reload, bookmark or replayed
+  launch URL stays read-only.
+- The tool protocol, authoring reference, tutorial, design guide and README
+  describe 2.0 web tools only: package, frozen routes, launch sessions, API
+  v1 pointers, resources and actions. `examples/tools/hello-python` is
+  replaced by the build-free web example `examples/tools/hello-web`.
+
 ## Unreleased — 2.0 M7 T0 (web-only tools)
 
 - Tools are web-only 2.0 packages (`manifest.toml`, `kind = "tool"`). The
