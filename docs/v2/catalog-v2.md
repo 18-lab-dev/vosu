@@ -1683,10 +1683,11 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   `catalog-v2.json` entry of the same kind, from the same official source,
   lists the 1.x id in its `replaces`. If so, queue that 2.0 entry for install
   using the existing no-overwrite-rename data/settings/trust/enabled/autostart
-  migration 1.x already performs for `replaces`-based updates
-  (`docs/tools/protocol.md`'s "catalog identity updates"), not a new
-  mechanism. If no 2.0 entry claims it, the 1.x install is left in place,
-  unmanaged by the 2.0 catalog, until its source publishes one.
+  migration 1.x already performed for `replaces`-based updates (the 1.x
+  journal and recovery described in
+  [Tool catalog and identity updates](../tools/catalog.md#1x-migrations-in-progress)),
+  not a new mechanism. If no 2.0 entry claims it, the 1.x install is left in
+  place, unmanaged by the 2.0 catalog, until its source publishes one.
 - **User tools**: 2.0 tools cannot run a service, and a 1.x manifest's
   `[service]`/`[api]`/`[[requires]]` cannot be translated into 2.0
   capability ids, so every 1.x user tool migrates to `enabled: false`,
