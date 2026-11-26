@@ -2341,14 +2341,16 @@ The parity ingress does not compile without `test-harness`, including with
 the harness's explicit PID/path list (`1` means none); a file created at
 `VOSU_TEST_STOP_FILE` triggers the real joined shutdown on either OS.
 
-**Official process fixture.** `VOSU_TEST_OFFICIAL_PLUGIN=<absolute package
-directory>` is for debug `test-harness` daemons only. It reuses
-`load_official_test_fixture` and labels the dashboard roster and smoke
-evidence **fixture-official**. It neither grants bundled capabilities nor
-bypasses native process approval: approve both exact digests before the
-plugin host may start. A bundled ID is refused before startup; ordinary
-`--plugin` cannot grant official namespaces. The switch fails before root
-initialization in debug non-harness and release daemons, and the root build
+**Official process fixture.** For debug `test-harness` daemons only,
+`VOSU_TEST_OFFICIAL_PLUGIN` accepts one absolute package directory or a
+nonempty JSON array of absolute package directories. Each package reuses
+`load_official_test_fixture` and is labelled **fixture-official** in the
+dashboard roster and smoke evidence. This neither grants bundled capabilities
+nor bypasses native process approval: approve both exact digests for each
+package before its plugin host may start. Duplicate identities and bundled
+IDs are refused before startup; ordinary `--plugin` cannot grant official
+namespaces. The switch fails before root initialization in debug non-harness
+and release daemons, and the root build
 script rejects `test-harness` in release.
 
 For the native Windows equivalent, point the VM runner at guest Node,

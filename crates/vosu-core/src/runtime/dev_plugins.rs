@@ -51,45 +51,68 @@ const OFFICIAL_FIXTURE_ENV: &str = "VOSU_TEST_OFFICIAL_PLUGIN";
 #[derive(Default)]
 pub(super) struct StartupPlugins {
     development: Vec<PathBuf>,
-    official_fixture: Option<PathBuf>,
+    official_fixtures: Vec<(PathBuf, plugin::ProviderRegistration)>,
 }
 
 impl StartupPlugins {
     pub(super) fn parse(bundle: &Bundle, args: &[std::ffi::OsString]) -> std::io::Result<Self> {
-        let official_fixture = official_fixture_path(
+        let paths = official_fixture_paths(
             std::env::var_os(OFFICIAL_FIXTURE_ENV),
             cfg!(debug_assertions),
         )?;
-        if let Some(path) = &official_fixture {
-            check_fixture_identity(path, bundle.plugin_ids)?;
+        let mut official_fixtures =
+            Vec::<(_, plugin::ProviderRegistration)>::with_capacity(paths.len());
+        for path in paths {
+            let registration = fixture_registration(&path, bundle.plugin_ids)?;
+            if official_fixtures
+                .iter()
+                .any(|(_, entry)| entry.id == registration.id)
+            {
+                return Err(std::io::Error::other(format!(
+                    "duplicate fixture-official plugin `{}`",
+                    registration.id
+                )));
+            }
+            official_fixtures.push((path, registration));
         }
         Ok(Self {
-            official_fixture,
+            official_fixtures,
             development: plugin::development_roots(args)?,
         })
     }
 }
 
-fn official_fixture_path(
+fn official_fixture_paths(
     value: Option<std::ffi::OsString>,
     debug_build: bool,
-) -> std::io::Result<Option<PathBuf>> {
-    let Some(path) = value else { return Ok(None) };
+) -> std::io::Result<Vec<PathBuf>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
     if !(debug_build && cfg!(feature = "test-harness")) {
         return Err(std::io::Error::other(format!(
             "{OFFICIAL_FIXTURE_ENV} requires a debug build with test-harness"
         )));
     }
-    let path = PathBuf::from(path);
-    if !path.is_absolute() {
+    // Unlike a delimited list, JSON is unambiguous even for paths containing
+    // ':' or ';'. A single native path still works without Unicode conversion.
+    let paths = match value.to_str().filter(|value| value.starts_with('[')) {
+        Some(list) => serde_json::from_str::<Vec<PathBuf>>(list)
+            .map_err(|error| std::io::Error::other(format!("{OFFICIAL_FIXTURE_ENV}: {error}")))?,
+        None => vec![PathBuf::from(value)],
+    };
+    if paths.is_empty() || paths.iter().any(|path| !path.is_absolute()) {
         return Err(std::io::Error::other(format!(
-            "{OFFICIAL_FIXTURE_ENV} requires an absolute package directory"
+            "{OFFICIAL_FIXTURE_ENV} requires an absolute package directory or a nonempty JSON array of them"
         )));
     }
-    Ok(Some(path))
+    Ok(paths)
 }
 
-fn check_fixture_identity(path: &std::path::Path, bundled_ids: &[&str]) -> std::io::Result<()> {
+fn fixture_registration(
+    path: &std::path::Path,
+    bundled_ids: &[&str],
+) -> std::io::Result<plugin::ProviderRegistration> {
     use vosu_plugin_api::manifest::PackageManifest;
     let text = std::fs::read_to_string(path.join("manifest.toml"))?;
     let package = PackageManifest::parse(&text).map_err(std::io::Error::other)?;
@@ -104,7 +127,14 @@ fn check_fixture_identity(path: &std::path::Path, bundled_ids: &[&str]) -> std::
             manifest.id
         )));
     }
-    Ok(())
+    Ok(plugin::ProviderRegistration {
+        id: manifest.id,
+        official: true,
+        builtin: false,
+        replaces: manifest.replaces,
+        // Only loaded/compiled schemas attest authoritative revisions.
+        revision: None,
+    })
 }
 
 /// Checks the complete ordered inventory before creating any instance.
@@ -257,11 +287,18 @@ pub(super) fn load_development(
     for (index, (dir, official)) in dirs
         .iter()
         .map(|dir| (dir, false))
-        .chain(inputs.official_fixture.iter().map(|dir| (dir, true)))
+        .chain(inputs.official_fixtures.iter().map(|(dir, _)| (dir, true)))
         .enumerate()
     {
         let instance = PluginInstanceId::new(id_offset + index as u64);
-        let snapshot = source_snapshot(host, &[], &dirs);
+        let mut snapshot = source_snapshot(host, &[], &dirs);
+        // Pending fixtures reserve namespace identities, not capabilities.
+        snapshot.providers.extend(
+            inputs
+                .official_fixtures
+                .iter()
+                .map(|(_, registration)| registration.clone()),
+        );
         let (label, trust, loaded) = if official {
             #[cfg(feature = "test-harness")]
             {
@@ -399,15 +436,23 @@ mod official_switch_tests {
 
     #[test]
     fn official_fixture_switch_requires_debug_and_harness() {
-        let path = std::env::current_dir().unwrap().join("official-fixture");
-        assert!(official_fixture_path(None, false).unwrap().is_none());
-        assert!(official_fixture_path(Some(path.clone().into()), false).is_err());
-        let debug = official_fixture_path(Some(path.clone().into()), true);
+        let path = std::env::current_dir().unwrap().join("fixture space");
+        let other = path.with_file_name("other");
+        let list = serde_json::to_string(&[&path, &other]).unwrap();
+        assert!(official_fixture_paths(None, false).unwrap().is_empty());
+        assert!(official_fixture_paths(Some(path.clone().into()), false).is_err());
+        assert!(official_fixture_paths(Some(list.clone().into()), false).is_err());
+        let debug = official_fixture_paths(Some(path.clone().into()), true);
+        let plural = official_fixture_paths(Some(list.into()), true);
         if cfg!(feature = "test-harness") {
-            assert_eq!(debug.unwrap(), Some(path));
-            assert!(official_fixture_path(Some("relative".into()), true).is_err());
+            assert_eq!(debug.unwrap().as_slice(), std::slice::from_ref(&path));
+            assert_eq!(plural.unwrap(), [path, other]);
+            for invalid in ["relative", "[]", "[", "[\"relative\"]"] {
+                assert!(official_fixture_paths(Some(invalid.into()), true).is_err());
+            }
         } else {
             assert!(debug.is_err());
+            assert!(plural.is_err());
         }
     }
 }
