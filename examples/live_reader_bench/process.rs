@@ -183,7 +183,7 @@ impl Host {
         if let Some(name) = contender_name {
             let name = serde_json::to_string(name)?;
             let manifest = format!(
-                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Broker contender'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='process'\nconcurrent_dispatch=true\n[match]\nprocess_names=[{name}]\nlinux_name_contains=[{name}]\n[[provides]]\nid='game:benchmark'\nversion='*'\n[targets.{target}]\nlibrary='lib/{library}'\n",
+                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Broker contender'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='process'\nconcurrent_dispatch=true\n[match]\nprocess_names=[{name}]\n[[provides]]\nid='game:benchmark'\nversion='*'\n[targets.{target}]\nlibrary='lib/{library}'\n",
                 target = if cfg!(windows) {
                     "x86_64-pc-windows-msvc"
                 } else {
