@@ -191,8 +191,6 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
         assert_eq!(*store.current(), *original);
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
-    assert_eq!(poll_duration(f64::MAX), Duration::from_secs(60));
-    assert!(std::time::Instant::now().checked_add(poll_duration(f64::MAX)).is_some());
     bounded!(store.shutdown()).unwrap();
 }
 
@@ -259,6 +257,7 @@ async fn updater_rejects_readonly_package_directory_before_network_access() {
         root.path().join("vosu"),
         root.path().to_path_buf(),
         CancellationToken::new(),
+        VERSION_FIXTURE.version(),
     );
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
     let result = bounded!(updater.run_update(false));

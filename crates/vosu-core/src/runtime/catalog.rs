@@ -16,7 +16,6 @@
 //! I0 never overwrites a directory it did not install, and its transaction
 //! names (`.stage-*`, `.vosu-backup-*`) differ from the legacy installers'.
 use super::*;
-use std::sync::{OnceLock, atomic::AtomicU64};
 use crate::{
     catalog::{
         install::{
@@ -30,6 +29,7 @@ use crate::{
     },
     plugin::{DEFAULT_QUEUE_CAPACITY, PluginInstanceId, WorkerPool},
 };
+use std::sync::{OnceLock, atomic::AtomicU64};
 use vosu_plugin_api::manifest::{HostSupport, PackageKind};
 
 /// Catalog-loaded instance ids start far above bundled and `--plugin` ones.
@@ -250,19 +250,18 @@ impl CatalogComposition {
         ))
     }
 
-    /// Web-package hosts exist only after recovery ran; attach them before
-    /// any catalog operation can start. The tool registry also reads its
-    /// `ToolView.update_available` from this catalog (M7 D1).
-    pub fn attach_web_hosts(
-        &self,
-        tools: Arc<crate::tools::ToolRegistry>,
-        overlay: Arc<dyn OverlayComposition>,
-    ) {
+    /// Bind the tool registry after catalog recovery, before routes activate.
+    /// Its update view follows this catalog (M7 D1).
+    pub fn attach_tools(&self, tools: Arc<crate::tools::ToolRegistry>) {
         let runtime = Arc::clone(&self.runtime);
         tools.set_update_source(Arc::new(move |id: &str| {
             update_available(&runtime, PackageKind::Tool, id)
         }));
         let _ = self.handoff.tools.set(tools);
+    }
+
+    /// Bind the overlay host after catalog recovery, before routes activate.
+    pub fn attach_overlay(&self, overlay: Arc<dyn OverlayComposition>) {
         let _ = self.handoff.overlay.set(overlay);
     }
 
@@ -280,17 +279,15 @@ impl CatalogComposition {
         network: Arc<dyn crate::server::catalog_api::CatalogNetwork>,
     ) -> crate::server::catalog_api::CatalogApi {
         let restart = Arc::clone(&self.restart);
-        crate::server::catalog_api::CatalogApi::new(
-            crate::server::catalog_api::CatalogServices {
-                runtime: Arc::clone(&self.runtime),
-                uninstall: self.uninstall.clone(),
-                builtins: Arc::clone(&self.builtins),
-                restart_required: Arc::new(move || restart.list()),
-                package_limit,
-                network,
-                cancel: self.cancel.clone(),
-            },
-        )
+        crate::server::catalog_api::CatalogApi::new(crate::server::catalog_api::CatalogServices {
+            runtime: Arc::clone(&self.runtime),
+            uninstall: self.uninstall.clone(),
+            builtins: Arc::clone(&self.builtins),
+            restart_required: Arc::new(move || restart.list()),
+            package_limit,
+            network,
+            cancel: self.cancel.clone(),
+        })
     }
 
     /// Route work is cancelled, the uninstall worker joined, then the

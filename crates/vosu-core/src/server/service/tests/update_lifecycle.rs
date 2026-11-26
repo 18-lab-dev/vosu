@@ -71,12 +71,6 @@
         };
         use tokio::io::AsyncWriteExt as _;
 
-        let directory = tempfile::tempdir().unwrap();
-        let counters = Arc::new(ReloadableCounterService::production(
-            directory.path().join("static"),
-            directory.path().join("settings"),
-            directory.path().join("cache"),
-        ));
         let (_, events) = tokio::sync::watch::channel(0);
         let state = Arc::new(NoState { events });
         let v1 = WebSocketHub::new(websocket::Schema::V1, state.clone());
@@ -84,16 +78,12 @@
         let v2 = WebSocketHub::new(websocket::Schema::V2, state.clone());
         let precise = WebSocketHub::new(websocket::Schema::V2Precise, state.clone());
         let commands = WebSocketHub::new(websocket::Schema::V1, state.clone());
-        let relays = Arc::new(WebSocketRelaySink::new());
-        let command_providers = Arc::new(CommandProviders);
-        let processor = Arc::new(CommandProcessor::new(command_providers, relays.clone()));
         let unused = Arc::new(UnusedServices);
         let update_started = CancellationToken::new();
         let updater = Arc::new(UpdatedServices(update_started.clone()));
         let delegate = Arc::new(ProductionRouteDelegate::new(
             ProductionServices::with_native_report_probe(
-                counters,
-                Arc::new(Current::default()),
+                Arc::new(TestOverlay::default()),
                 unused.clone(),
                 unused.clone(),
                 updater,
@@ -103,8 +93,6 @@
                     v2,
                     precise,
                     commands: commands.clone(),
-                    processor,
-                    relays: relays.clone(),
                 },
             ),
         ));
@@ -333,7 +321,6 @@ Connection: close\r\n\r\n",
             .await
             .expect("listener must drain after response and WebSocket close");
         assert_eq!(commands.client_count(), 0);
-        bounded!(relays.shutdown());
     }
 
 
@@ -358,21 +345,12 @@ Connection: close\r\n\r\n",
             }
         }
 
-        let root = tempfile::tempdir().unwrap();
-        let counters = Arc::new(ReloadableCounterService::production(
-            root.path().join("static"),
-            root.path().join("settings"),
-            root.path().join("cache"),
-        ));
         let (_, events) = tokio::sync::watch::channel(0);
         let state = Arc::new(NoState { events });
-        let relays = Arc::new(WebSocketRelaySink::new());
-        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
         let unused = Arc::new(UnusedServices);
         let updater = Arc::new(ConsentCapturingUpdater);
         let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-            counters,
-            Arc::new(Current::default()),
+            Arc::new(TestOverlay::default()),
             unused.clone(),
             unused.clone(),
             updater,
@@ -382,8 +360,6 @@ Connection: close\r\n\r\n",
                 v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
                 precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
                 commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                processor,
-                relays,
             },
         ));
 

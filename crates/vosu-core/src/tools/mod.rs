@@ -6,6 +6,7 @@
 //! never parsed, executed or served, and their files stay untouched for M8.
 pub mod action_authority;
 #[cfg(test)]
+#[path = "tests/action_authority.rs"]
 mod action_authority_tests;
 pub mod capabilities;
 mod catalog;

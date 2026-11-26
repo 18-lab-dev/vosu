@@ -166,7 +166,7 @@ impl Scenario {
             std::fs::write(&manifest, text).unwrap();
         }
         let loaded = plugin::load_development(
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             &vosu_core::plugin::ValidationSnapshot::default(),
             &package,
             true,
@@ -194,7 +194,7 @@ impl Scenario {
         if runtime_kind == "process" {
             let launcher = ProcessHostLauncher::with_executable(
                 Path::new(env!("CARGO_BIN_EXE_vosu")),
-                vosu::plugin_host::BUILD_IDENTITY,
+                vosu::BUNDLE.plugin_host_identity,
             )
             .unwrap();
             host.install_process_launcher(Arc::new(launcher)).unwrap();

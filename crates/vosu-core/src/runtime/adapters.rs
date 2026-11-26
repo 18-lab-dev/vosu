@@ -52,19 +52,37 @@ impl Adapters {
         let current = config.current();
         let regular = bundle.hosts.poll_duration(current.poll_rate);
         let precise = bundle.hosts.poll_duration(current.precise_data_poll_rate);
-        let provider = |schema, requester: &Arc<dyn vosu_surface::requester::BundledRequester>, projection, cadence| {
-            Arc::new(BusStateProvider::new(schema, requester.clone(), projection, cadence))
+        let provider = |schema,
+                        requester: &Arc<dyn vosu_surface::requester::BundledRequester>,
+                        projection,
+                        cadence| {
+            Arc::new(BusStateProvider::new(
+                schema,
+                requester.clone(),
+                projection,
+                cadence,
+            ))
         };
         Ok(Self {
             schemas: [
-                provider(WebSocketSchema::V1, &requesters.gosumemory, projections.v1, regular),
+                provider(
+                    WebSocketSchema::V1,
+                    &requesters.gosumemory,
+                    projections.v1,
+                    regular,
+                ),
                 provider(
                     WebSocketSchema::StreamCompanion,
                     &requesters.stream_companion,
                     projections.stream_companion,
                     regular,
                 ),
-                provider(WebSocketSchema::V2, &requesters.upstream, projections.v2, regular),
+                provider(
+                    WebSocketSchema::V2,
+                    &requesters.upstream,
+                    projections.v2,
+                    regular,
+                ),
                 provider(
                     WebSocketSchema::V2Precise,
                     &requesters.upstream,
@@ -141,11 +159,13 @@ fn schema_index(schema: WebSocketSchema) -> usize {
 impl WebSocketStateProvider for Adapters {
     fn poll_rate(&self, schema: WebSocketSchema) -> Duration {
         let config = self.config.current();
-        self.bundle.hosts.poll_duration(if schema == WebSocketSchema::V2Precise {
-            config.precise_data_poll_rate
-        } else {
-            config.poll_rate
-        })
+        self.bundle
+            .hosts
+            .poll_duration(if schema == WebSocketSchema::V2Precise {
+                config.precise_data_poll_rate
+            } else {
+                config.poll_rate
+            })
     }
     fn subscribe(&self, schema: WebSocketSchema) -> watch::Receiver<u64> {
         self.schemas[schema_index(schema)].subscribe(schema)

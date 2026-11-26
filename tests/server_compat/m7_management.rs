@@ -3,7 +3,7 @@
 // source the user never added or that could not be fetched yields no plan.
 // Included by `tests/server_compat.rs` after `catalog_plans.rs`.
 
-async fn tool_view(tools: &Arc<vosu::tools::ToolRegistry>, id: &str) -> Value {
+async fn tool_view(tools: &Arc<vosu_core::tools::ToolRegistry>, id: &str) -> Value {
     let request = Request::builder()
         .method(Method::GET)
         .uri(format!("/api/tools/{id}"))
@@ -19,23 +19,17 @@ async fn tool_view(tools: &Arc<vosu::tools::ToolRegistry>, id: &str) -> Value {
 async fn d1_tool_update_available_comes_from_its_own_catalog_source() {
     let fixture = Fixture::start().await;
     let root = fixture.base.path();
-    let tools = bounded!(vosu::tools::ToolRegistry::new(
+    let tools = bounded!(vosu_core::tools::ToolRegistry::new(
         root.join("tool-config"),
         root.join("tools"),
         root.join("tool-cache"),
-        vosu::tools::ExtraRoots { dev: Vec::new() },
+        vosu_core::tools::ExtraRoots { dev: Vec::new() },
         "http://127.0.0.1:24050".into(),
         Some("http://127.0.0.1:24051".into()),
+        vosu::BUNDLE.version(),
     ))
     .unwrap();
-    let counters = Arc::new(vosu_overlay_host::ReloadableCounterService::production(
-        root.join("static"),
-        root.join("counter-settings"),
-        root.join("counter-downloads"),
-    ));
-    fixture
-        .composition
-        .attach_web_hosts(Arc::clone(&tools), counters);
+    fixture.composition.attach_tools(Arc::clone(&tools));
     fixture.sources(&[(OFFICIAL, true), (USER, true)]).await;
     let listed = fixture.packages.tool("skill-tracker");
     let publish = |entry: &Value| {

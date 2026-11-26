@@ -69,7 +69,7 @@ fn catalog_support_retains_unsupported_entries_and_web_kinds_are_independent() {
     let support = parsed.plugins[0]
         .support(
             PackageKind::Plugin,
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             "x86_64-pc-windows-msvc",
         )
         .unwrap();

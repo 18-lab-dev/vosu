@@ -22,8 +22,6 @@ use std::fs;
 
 use arc_swap::ArcSwap;
 #[cfg(test)]
-use bytes::Bytes;
-#[cfg(test)]
 use std::path::Path;
 use tokio::{
     runtime::Handle,
@@ -94,6 +92,8 @@ mod projection;
 mod service;
 mod signals;
 mod startup;
+#[cfg(any(test, feature = "test-harness"))]
+mod test_paths;
 #[cfg(feature = "test-harness")]
 mod test_support;
 mod tracing_log;
@@ -107,6 +107,8 @@ pub use catalog::{CatalogComposition, CatalogRoots, catalog_target};
 #[cfg(feature = "test-harness")]
 pub use config::test_updater_handoff;
 pub use lifecycle::{ProductionRuntime, run_cli};
+#[cfg(feature = "test-harness")]
+pub use lifecycle::{TestAdapters, TestDaemon};
 pub use overlay_root::RuntimeSettingsStorage;
 pub use projection::ReloadableAuthorizer;
 pub use startup::is_startup_owner_conflict;
@@ -130,10 +132,12 @@ mod tests {
 
     use tokio::sync::mpsc;
 
+    use super::test_paths::{RuntimeTestPathResolver, runtime_test_paths};
     use super::*;
+    use vosu_proptest::bounded;
 
     include!("runtime/tests/cli.rs");
-    include!("runtime/tests/projection.rs");
+    include!("runtime/tests/cli_broker.rs");
     include!("runtime/tests/worker.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/package_limit.rs");

@@ -169,7 +169,7 @@ impl Fixture {
                 candidates: &candidates,
                 installed: &installed,
                 builtins: &builtins,
-                application: vosu::application_version(),
+                application: &vosu::BUNDLE.version(),
                 target: TARGET,
                 max_package_bytes: 512 * 1024 * 1024,
             },

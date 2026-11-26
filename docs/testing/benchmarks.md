@@ -681,7 +681,7 @@ Linux lazer: `cargo build --release --locked --example live_reader_bench`, then
 HTTP-only `/json/sc` readers keep chart facts: releasing the last consumer no
 longer cancels the selected key's chart job or drops its completed result,
 and an HTTP read whose exact-input job is in flight waits at most
-`DERIVED_HTTP_WAIT` = **80 ms** (`src/server/bus_provider.rs`) before
+`DERIVED_HTTP_WAIT` = **80 ms** (`crates/vosu-core/src/server/bus_provider.rs`) before
 falling back to the pinned chart-less bytes. The bound is 2 × the largest
 measured p99 and stays under the 500 ms cap. Measured 2026-11-24 with a
 throwaway release-build test (not a committed benchmark), Ryzen 9 9950X3D

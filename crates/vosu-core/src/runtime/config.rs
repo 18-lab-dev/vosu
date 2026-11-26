@@ -301,10 +301,7 @@ impl ConfigUpdateService for RuntimeConfig {
     }
 
     fn view(&self) -> serde_json::Value {
-        settings_view(
-            &self.config.current(),
-            crate::desktop::externally_managed(),
-        )
+        settings_view(&self.config.current(), crate::desktop::externally_managed())
     }
 }
 

@@ -1,8 +1,8 @@
 //! Register the concrete adapter providers behind core's admitted routes.
 use std::{path::Path, sync::Arc};
 
-use axum::http::{Method, header};
 use bytes::Bytes;
+use http::{HeaderMap, HeaderName, Method, header};
 use serde_json::json;
 use vosu_core::{
     runtime::HostRoutes,
@@ -33,23 +33,27 @@ pub(crate) fn adapter_routes(
         routes::{RouteDescriptor, RoutePath},
     };
     let mut groups: [HostRoutes; 3] = Default::default();
-    let mut add =
-        |owner: usize, path: RoutePath, method: &str, websocket: bool, provider| {
-            groups[owner].push((
-                RouteDescriptor {
-                    listener: ListenerRole::Overlay,
-                    method: method.into(),
-                    path,
-                    websocket,
-                },
-                Arc::new(provider) as Arc<dyn RouteProvider>,
-            ));
-        };
+    let mut add = |owner: usize, path: RoutePath, method: &str, websocket: bool, provider| {
+        groups[owner].push((
+            RouteDescriptor {
+                listener: ListenerRole::Overlay,
+                method: method.into(),
+                path,
+                websocket,
+            },
+            Arc::new(provider) as Arc<dyn RouteProvider>,
+        ));
+    };
     let schemas = [
         (1, StateRoute::V1, "/json", "/ws"),
         (2, StateRoute::StreamCompanion, "/json/sc", "/tokens"),
         (0, StateRoute::V2, "/json/v2", "/websocket/v2"),
-        (0, StateRoute::V2Precise, "/json/v2/precise", "/websocket/v2/precise"),
+        (
+            0,
+            StateRoute::V2Precise,
+            "/json/v2/precise",
+            "/websocket/v2/precise",
+        ),
     ];
     for (((owner, route, path, ws), provider), hub) in schemas.into_iter().zip(state).zip(feeds) {
         add(
@@ -215,11 +219,10 @@ async fn surface_game_response(
             surface_bytes(200, "text/html; charset=utf-8", Bytes::from(html))
         }
         Outcome::File { file, name, lazer } => {
-            let mut headers = axum::http::HeaderMap::new();
+            let mut headers = HeaderMap::new();
             for (name, value) in &request.headers {
                 headers.append(
-                    axum::http::HeaderName::from_bytes(name.as_bytes())
-                        .expect("allow-listed header"),
+                    HeaderName::from_bytes(name.as_bytes()).expect("allow-listed header"),
                     value.parse().expect("validated header"),
                 );
             }
@@ -281,7 +284,7 @@ async fn surface_game_response(
                 }
             };
             if let Some(validators) = validators {
-                let mut headers = axum::http::HeaderMap::new();
+                let mut headers = HeaderMap::new();
                 validators.apply(&mut headers);
                 result.headers.extend(headers.iter().map(|(k, v)| {
                     (

@@ -111,19 +111,21 @@ mod dashboard_tests {
     #[test]
     fn attributes_profiles_and_paths_but_not_origin_alone() {
         let request = |uri: &str| Request::builder().uri(uri).header(header::HOST, "127.0.0.1:24050").body(Body::empty()).unwrap();
-        assert_eq!(socket_overlay(&request("/websocket/commands?l=%2F%40vosu-profile%2Fstream%2Fcounter")), Some("counter".into()));
+        let fixture = super::tests::TestOverlay::default();
+        let overlay = |request: &Request<Body>| socket_overlay(request, &fixture);
+        assert_eq!(overlay(&request("/websocket/commands?l=%2F%40vosu-profile%2Fstream%2Fcounter")), Some("counter".into()));
         let mut origin = request("/websocket/v2");
         origin.headers_mut().insert(header::ORIGIN, "http://127.0.0.1:24050".parse().unwrap());
-        assert_eq!(socket_overlay(&origin), None);
+        assert_eq!(overlay(&origin), None);
         origin.headers_mut().insert(header::REFERER, "http://127.0.0.1:24050/counter/index.html".parse().unwrap());
-        assert_eq!(socket_overlay(&origin), Some("counter".into()));
+        assert_eq!(overlay(&origin), Some("counter".into()));
         origin.headers_mut().insert(header::REFERER, "http://untrusted.test/counter/".parse().unwrap());
-        assert_eq!(socket_overlay(&origin), None);
+        assert_eq!(overlay(&origin), None);
         let mut preview = request("/websocket/v2?vosu-preview=1");
         preview.headers_mut().insert(header::REFERER, "http://127.0.0.1:24050/counter/index.html".parse().unwrap());
-        assert_eq!(socket_overlay(&preview), None, "dashboard previews are not browser sources");
-        assert_eq!(socket_overlay(&request("/websocket/commands?l=counter&vosu-preview=1")), None);
-        assert_eq!(socket_overlay(&request("/websocket/commands?l=counter&vosu-preview=0")), Some("counter".into()));
+        assert_eq!(overlay(&preview), None, "dashboard previews are not browser sources");
+        assert_eq!(overlay(&request("/websocket/commands?l=counter&vosu-preview=1")), None);
+        assert_eq!(overlay(&request("/websocket/commands?l=counter&vosu-preview=0")), Some("counter".into()));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! Public API composition owns only a Weak-backed source and an event-driven hub.
-use std::{sync::Arc, time::Duration};
 use crate::server::api_v1::{
     resources::ResourceHttp, router::ApiV1Router, subscriptions::ApiV1SubscriptionHub,
 };
+use std::{sync::Arc, time::Duration};
 
 /// Applies independently to resolve/list/lookup and every stream-read reply,
 /// never to the lifetime of a download.
@@ -87,9 +87,17 @@ impl ApiV1Service {
             .set_debounce(config.api_v1_subscription_debounce_duration());
     }
 
-    // Called after listeners stop accepting and before plugin destruction.
+    // Seal new subscription workers and send 1001 to the ones already admitted.
     pub(super) fn shutdown(&self) {
         self.hub.shutdown();
+    }
+    pub(super) async fn join(&self) {
+        self.hub.join().await;
+    }
+
+    #[cfg(feature = "test-harness")]
+    pub(super) fn subscription_hub(&self) -> ApiV1SubscriptionHub {
+        self.hub.clone()
     }
 }
 
@@ -110,5 +118,5 @@ impl crate::tools::capabilities::InstalledCapabilities for InstalledProviders {
     }
 }
 #[cfg(test)]
-#[path = "api_v1_tests.rs"]
+#[path = "tests/api_v1.rs"]
 mod tests;

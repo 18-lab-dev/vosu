@@ -757,12 +757,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenvy"
-version = "0.15.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3482,37 +3476,29 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vosu"
 version = "2.0.0-alpha.1"
 dependencies = [
- "arc-swap",
  "axum",
  "base64 0.22.1",
  "bytes",
- "chrono",
  "ciborium",
  "criterion",
- "dotenvy",
  "futures-util",
  "getrandom 0.4.3",
+ "http",
  "httpdate",
  "indexmap",
  "jsonschema",
  "libc",
- "md-5",
  "memchr",
- "notify",
- "open",
  "parking_lot",
  "proptest",
  "reqwest",
- "rust-embed",
- "rustc-hash",
  "semver",
  "serde",
  "serde-value",
  "serde_json",
  "sha2",
- "subtle",
+ "syn 2.0.119",
  "tempfile",
- "thiserror",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -3536,7 +3522,6 @@ dependencies = [
  "vosu-plugin-api",
  "vosu-plugin-internal",
  "vosu-plugin-testkit",
- "vosu-pp",
  "vosu-proptest",
  "vosu-surface",
  "vosu-sys",
@@ -3544,7 +3529,6 @@ dependencies = [
  "windows-sys 0.61.2",
  "winresource",
  "zip",
- "zmij",
 ]
 
 [[package]]

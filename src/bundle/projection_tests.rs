@@ -1,6 +1,9 @@
+use bytes::Bytes;
 use serde::Serialize;
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 use vosu_adapter_support::filtered::*;
+use vosu_overlay_host::commands::{CommandProcessor, SettingsProvider};
+use vosu_surface::filter::Filter;
 
 #[test]
 fn command_filters_preserve_last_write_precedence_at_each_depth() {
@@ -23,11 +26,15 @@ fn command_filters_preserve_last_write_precedence_at_each_depth() {
 
     let providers = Arc::new(UnusedProviders);
     let processor = CommandProcessor::new(providers.clone(), providers);
-    let client = CommandClient { id: 1, overlay: String::new() };
+    let client = CommandClient {
+        id: 1,
+        overlay: String::new(),
+    };
     let source = serialize_projection_value(&serde_json::json!({
         "play": {"accuracy": 0.9, "score": 10},
         "menu": {"beatmap": {"title": "x", "artist": "y"}}
-    })).unwrap();
+    }))
+    .unwrap();
     for (filters, expected) in [
         (
             r#"["play",{"field":"play","keys":["accuracy"]},"play"]"#,
@@ -45,7 +52,10 @@ fn command_filters_preserve_last_write_precedence_at_each_depth() {
         };
         let filters = parse_filters(std::str::from_utf8(&filters).unwrap()).unwrap();
         let bytes = encode_projection(&source, &filters).unwrap();
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            expected
+        );
     }
 }
 
@@ -235,7 +245,10 @@ fn projected_strings_escape_exactly_like_serde_json() {
         "line\nbreak\ttab\r",
     ] {
         let projected = encode_projection(
-            &ProjectionValue::Object(vec![(text.to_owned().into(), ProjectionValue::String(text.into()))]),
+            &ProjectionValue::Object(vec![(
+                text.to_owned().into(),
+                ProjectionValue::String(text.into()),
+            )]),
             &[Filter::Field(text.into())],
         )
         .unwrap();
@@ -267,7 +280,11 @@ fn projected_numbers_print_like_javascript() {
         1e-7,
     ] {
         let number = serde_json::Number::from_f64(value).unwrap();
-        assert_eq!(write(number), vosu_osu_model::js_json_number(value), "{value:?}");
+        assert_eq!(
+            write(number),
+            vosu_osu_model::js_json_number(value),
+            "{value:?}"
+        );
     }
     for value in [i64::MIN, -1, 0, 1, i64::MAX] {
         assert_eq!(write(value.into()), value.to_string(), "{value}");
@@ -285,10 +302,11 @@ fn whole_objects_write_index_keys_ascending_before_other_keys_at_any_count() {
             object.insert(index.to_string(), serde_json::json!(index));
             object.insert(format!("k{index}"), serde_json::json!(index));
         }
-        let source =
-            serialize_projection_value(&serde_json::json!({ "object": object })).unwrap();
+        let source = serialize_projection_value(&serde_json::json!({ "object": object })).unwrap();
         let indices = (0..count).map(|index| format!("\"{index}\":{index}"));
-        let names = (0..count).rev().map(|index| format!("\"k{index}\":{index}"));
+        let names = (0..count)
+            .rev()
+            .map(|index| format!("\"k{index}\":{index}"));
         let expected = format!(
             "{{\"object\":{{{}}}}}",
             indices.chain(names).collect::<Vec<_>>().join(",")
@@ -418,7 +436,9 @@ fn projection_nonfinite_state_cannot_collide_with_source_values() {
 /// `Field`/`Nested` precedence in both orders, and empty nested selections.
 fn probing_filter_lists(value: &ProjectionValue, depth: usize) -> Vec<Vec<Filter>> {
     let mut keys: Vec<String> = match value {
-        ProjectionValue::Object(entries) => entries.iter().map(|(key, _)| key.to_string()).collect(),
+        ProjectionValue::Object(entries) => {
+            entries.iter().map(|(key, _)| key.to_string()).collect()
+        }
         ProjectionValue::Array(values) => {
             let mut keys: Vec<_> = (0..values.len().min(3)).map(|i| i.to_string()).collect();
             if values.len() > 3 {
@@ -754,10 +774,8 @@ pub(crate) fn serialize_projection_value<T>(value: &T) -> Result<ProjectionValue
 where
     T: Serialize,
 {
-    let json =
-        serde_json::to_value(value).map_err(|error| error.to_string())?;
-    let typed =
-        serde_value::to_value(value).map_err(|error| error.to_string())?;
+    let json = serde_json::to_value(value).map_err(|error| error.to_string())?;
+    let typed = serde_value::to_value(value).map_err(|error| error.to_string())?;
     Ok(projection_value_from_serializations(json, &typed))
 }
 
@@ -837,7 +855,6 @@ pub(crate) fn unwrap_serde_value(mut value: &serde_value::Value) -> &serde_value
         };
     }
 }
-
 
 #[cfg(test)]
 pub(crate) fn project_filters(value: &ProjectionValue, filters: &[Filter]) -> ProjectionValue {

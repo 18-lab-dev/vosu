@@ -212,7 +212,7 @@ impl Attachment {
             manifest
         };
         let loaded = plugin::load_bundled(
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             &host.validation_snapshot(),
             &[plugin::BundledPlugin {
                 manifest: &manifest,
@@ -250,7 +250,7 @@ impl Attachment {
         let requester = match adapter {
             Some(_) => {
                 let upstream = plugin::load_bundled(
-                    vosu::application_version(),
+                    &vosu::BUNDLE.version(),
                     &host.validation_snapshot(),
                     &[plugin::BundledPlugin {
                         manifest: vosu_adapter_upstream::MANIFEST,

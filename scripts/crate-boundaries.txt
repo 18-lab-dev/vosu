@@ -103,7 +103,6 @@ vosu -> vosu-osu-model
 vosu -> vosu-osu-calc
 vosu -> vosu-osu-reader
 vosu -> vosu-osu-state
-vosu -> vosu-pp
 vosu -> vosu-proptest
 vosu -> vosu-surface
 vosu -> vosu-osu

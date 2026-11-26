@@ -10,7 +10,13 @@ use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 use vosu_surface::{listener::ListenerRole, requester::BundledRequester, tool_view::ToolHostViews};
 
 mod adapters;
+#[cfg(test)]
+mod lifecycle_owner_tests;
 mod overlay;
+#[cfg(test)]
+mod projection_tests;
+#[cfg(test)]
+mod tests;
 
 pub(crate) struct Hosts;
 

@@ -46,7 +46,6 @@ pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 /// it across instances is the whole point of `concurrent_dispatch`.
 const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
-
 /// Loads required production plugins first, followed by optional bundled
 /// fixtures. Required-plugin failure aborts composition; optional fixtures keep
 /// warn-and-continue behavior. Array positions remain reserved even on failure.
@@ -259,7 +258,14 @@ pub(super) fn load_all(
     )?;
     let store = Arc::new(ApprovalStore::open(paths.config()));
     load_development(
-        bundle, host, dev_dirs, offset, logger, &pool, &store, &mut roster,
+        bundle,
+        host,
+        dev_dirs,
+        offset,
+        logger,
+        &pool,
+        &store,
+        &mut roster,
     );
     Ok(PluginManagement::new(Arc::clone(host), store, roster))
 }

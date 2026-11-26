@@ -1,3 +1,31 @@
+struct FixtureHosts;
+impl BundledHosts for FixtureHosts {
+    fn startup_flags(&self, _: &[OsString]) -> crate::app::StartupFlags { unreachable!() }
+    fn poll_duration(&self, _: f64) -> Duration { unreachable!() }
+    fn projections(&self, _: &AdapterRequesters) -> Projections { unreachable!() }
+    fn adapter_routes(
+        &self, _: [Arc<dyn crate::server::routes::StateJsonProvider>; 4],
+        _: [WebSocketHub; 4], _: Arc<dyn vosu_surface::requester::BundledRequester>,
+    ) -> [HostRoutes; 3] { unreachable!() }
+    fn dashboard_routes(&self, _: &str) -> HostRoutes { unreachable!() }
+    fn mount_tool_host(
+        &self, _: Arc<dyn vosu_surface::requester::BundledRequester>, _: vosu_surface::tool_view::ToolHostViews,
+        _: &[vosu_surface::listener::ListenerRole],
+    ) -> Result<Box<dyn Send + Sync>, String> { unreachable!() }
+    fn overlay(&self, _: OverlayInputs) -> Arc<dyn OverlayComposition> { unreachable!() }
+}
+
+static VERSION_FIXTURE: Bundle = Bundle {
+    version: "23.0.0-beta.5",
+    plugin_host_identity: "fixture-host",
+    plugins: &[],
+    required: &[],
+    dashboard: "fixture.dashboard",
+    tool_host: "fixture.toolhost",
+    overlay_root: OverlayRootSetting { plugin: "fixture.overlayhost", key: "fixture.root" },
+    hosts: &FixtureHosts,
+};
+
 #[derive(Default)]
 struct VersionProbeConsole(std::sync::Mutex<Vec<String>>);
 
@@ -22,14 +50,14 @@ impl crate::logging::ConsoleSink for VersionProbeConsole {
 /// prefixed every log line with 0.1.0.
 #[tokio::test]
 async fn executable_version_is_the_only_reported_version() {
-    let executable = env!("CARGO_PKG_VERSION");
-    assert_eq!(current_version().to_string(), executable);
+    let executable = VERSION_FIXTURE.version;
+    assert_eq!(VERSION_FIXTURE.version().to_string(), executable);
     assert_eq!(
-        crate::updater::user_agent(&current_version()),
+        crate::updater::user_agent(&VERSION_FIXTURE.version()),
         format!("vosu/{executable}")
     );
 
-    let options = daemon_logger_options(false);
+    let options = daemon_logger_options(&VERSION_FIXTURE, false);
     assert_eq!(options.version, executable);
     let root = tempfile::tempdir().unwrap();
     let console = Arc::new(VersionProbeConsole::default());

@@ -12,6 +12,8 @@ use std::{
     task::{Context, Poll},
 };
 
+#[cfg(test)]
+use crate::server::files;
 use axum::{
     body::{Body, Bytes},
     extract::{
@@ -27,10 +29,6 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
-#[cfg(test)]
-use std::path::Path;
-#[cfg(test)]
-use crate::server::files;
 
 #[cfg(test)]
 use crate::server::files::{MissingKind, ResourceOutcome};
@@ -65,13 +63,64 @@ mod tests {
     use vosu_proptest::bounded;
 
     #[derive(Default)]
-    struct Current {
-        files: Option<BeatmapFiles>,
+    pub(super) struct TestOverlay(pub(super) PathBuf);
+
+    impl OverlayComposition for TestOverlay {
+        fn current_root(&self) -> PathBuf {
+            self.0.clone()
+        }
+        fn reload_root(&self, _: PathBuf) {
+            unreachable!("fixture has no root reload")
+        }
+        fn mount(&self, _: WebSocketHub) -> std::io::Result<()> {
+            unreachable!("fixture has no routes to mount")
+        }
+        fn serve_static(&self, _: SurfaceRequest) -> ResponseFuture<'_, SurfaceResponse> {
+            unreachable!("fixture has no static provider")
+        }
+        fn has_settings(&self, id: &str) -> bool {
+            self.0.join(id).join("index.html").is_file()
+        }
+        fn installed_names(&self) -> HashMap<String, String> {
+            if self.has_settings("counter") {
+                HashMap::from([("counter".into(), "counter".into())])
+            } else {
+                HashMap::new()
+            }
+        }
+        fn report_counters(&self) -> Result<Vec<crate::report::ReportCounter>, String> {
+            Ok(vec![])
+        }
+        fn values_path(&self, _: &str) -> PathBuf {
+            unreachable!("fixture has no saved values")
+        }
+        fn valid_folder(&self, name: &str) -> bool {
+            valid_overlay_component(name)
+        }
+        fn query_overlay(&self, query: &str) -> Option<String> {
+            let id = query
+                .strip_prefix("/@vosu-profile/stream/")
+                .unwrap_or(query);
+            Some(id.to_owned())
+        }
+        fn command_session(
+            &self,
+            _: u64,
+            _: u64,
+            _: Option<&str>,
+            _: Arc<dyn RelayControl>,
+        ) -> Option<Box<dyn CommandSession>> {
+            Some(Box::new(TestSession))
+        }
+        fn shutdown(&self) -> ProviderFuture<'_, ()> {
+            Box::pin(async {})
+        }
     }
 
-    impl CurrentBeatmapProvider for Current {
-        fn files(&self) -> BeatmapFiles {
-            self.files.clone().unwrap_or_default()
+    struct TestSession;
+    impl CommandSession for TestSession {
+        fn process(&self, _: &str) -> CommandReply {
+            CommandReply::NoAck
         }
     }
 
@@ -88,22 +137,6 @@ mod tests {
         }
         fn capture(&self, _: websocket::Schema) -> Option<Arc<dyn websocket::StateSnapshot>> {
             None
-        }
-    }
-
-    impl StateJsonProvider for NoState {
-        fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
-            Box::pin(async { CachedJson::NotReady })
-        }
-    }
-    struct CommandProviders;
-
-    impl vosu_overlay_host::commands::SettingsProvider for CommandProviders {
-        fn get(&self, _: &str) -> Result<Value, String> {
-            Ok(json!({}))
-        }
-        fn save(&self, _: &str, _: Value) -> Result<(), String> {
-            Ok(())
         }
     }
 
@@ -162,5 +195,4 @@ mod tests {
     include!("service/tests/update_lifecycle.rs");
     include!("service/tests/listener_and_files.rs");
     include!("service/tests/skin_file_index.rs");
-    include!("service/tests/command_filters.rs");
 }

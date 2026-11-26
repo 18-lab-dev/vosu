@@ -1,4 +1,11 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
+#![cfg_attr(
+    test,
+    expect(
+        clippy::disallowed_methods,
+        reason = "the vosux unit tests write isolated broker fixtures"
+    )
+)]
 
 mod plugin_host;
 mod vosux;

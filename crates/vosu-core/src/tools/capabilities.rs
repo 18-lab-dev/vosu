@@ -1,8 +1,8 @@
 //! Live installed-provider metadata, never catalog or installer resolution.
 use std::sync::Arc;
 
-use semver::Version;
 use crate::actions::{ActionDescriptor, ActionRegistry};
+use semver::Version;
 
 /// Non-action capability resolution against loaded providers (including core).
 /// Implementations apply field ancestor coverage, never catalog resolution.

@@ -1,13 +1,11 @@
-use super::*;
-use crate::runtime::ListenerOwner;
 use crate::plugin::{BundledPlugin, PluginInstanceId, load_bundled};
-use vosu_proptest::bounded;
 
 #[tokio::test]
 async fn vosux_broker_tracks_live_actions_and_stops_on_listener_shutdown() {
     let root = tempfile::tempdir().unwrap();
-    let (runtime, _) = bounded!(owner(root.path()));
-    let host = runtime.plugins.clone();
+    let logger = Logger::new(root.path(), LoggerOptions::default(), Arc::new(StdoutConsole)).unwrap();
+    let settings = PluginSettingsService::new(Arc::new(crate::plugin::settings::PluginSettingsStore::open(root.path())));
+    let host = PluginHost::new(logger.clone(), Arc::new(settings), Handle::current());
     let path = root.path().join("private/broker.json");
     let broker = Arc::new(crate::server::broker::BrokerToken::new(path.clone()).unwrap());
     broker.publish("127.0.0.1:24050".parse().unwrap()).unwrap();
@@ -103,4 +101,5 @@ version = "1.0.0"
     );
     assert!(!published.has_changed().unwrap());
     host.destroy_all(Duration::from_secs(1));
+    bounded!(logger.shutdown()).unwrap();
 }

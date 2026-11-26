@@ -75,7 +75,7 @@ lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb7
 [features]
 default = ["linux-process-events"]
 linux-process-events = ["vosu-sys/linux-process-events", "vosu-core/linux-process-events"]
-test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/test-harness", "vosu-osu-state/test-harness", "vosu-overlay-host/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness", "dep:base64"]
+test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/test-harness", "vosu-osu-state/test-harness", "vosu-overlay-host/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness"]
 # Diagnostic-only; never included in packaged release feature sets.
 read-plan-profile = ["vosu-plugin-internal/read-plan-profile"]
 [dependencies]
@@ -83,69 +83,59 @@ vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
 vosu-adapter-gosumemory = { path = "crates/vosu-adapter-gosumemory" }
 vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion" }
 vosu-dashboard = { path = "crates/vosu-dashboard" }
-arc-swap = "1.8.2"
-base64 = { version = "=0.22.1", optional = true }
-axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
 bytes = "=1.12.1"
-chrono = { version = "0.4.44", features = ["serde"] }
-dotenvy = "0.15.7"
 futures-util = "0.3.32"
-indexmap = { version = "2.13.0", features = ["serde"] }
-md-5 = "0.11.0"
-memchr = "=2.8.3"
-notify = "=8.2.0"
-open = "=5.4.0"
+http = "=1.5.0"
 reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "stream", "json"] }
-rust-embed = { version = "=8.12.0", features = ["debug-embed", "include-exclude"] }
-rustc-hash = "=2.1.3"
 semver = "=1.0.28"
 serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
-sha2 = "=0.11.0"
-httpdate = "=1.0.3"
-tempfile = "3.26.0"
-thiserror = "2.0.18"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util", "process"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
-tokio-tungstenite = "=0.29.0"
-toml = "=1.1.2"
 vosu-adapter-support = { path = "crates/vosu-adapter-support" }
-vosu-pp = { path = "crates/vosu-pp" }
 vosu-core = { path = "crates/vosu-core" }
 vosu-plugin-api = { path = "crates/vosu-plugin-api" }
 vosu-plugin-internal = { path = "crates/vosu-plugin-internal" }
 vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", optional = true }
 vosu-osu = { path = "crates/vosu-osu" }
-vosu-osu-calc = { path = "crates/vosu-osu-calc" }
-vosu-osu-model = { path = "crates/vosu-osu-model" }
 vosu-osu-reader = { path = "crates/vosu-osu-reader" }
-vosu-osu-state = { path = "crates/vosu-osu-state" }
 vosu-overlay-host = { path = "crates/vosu-overlay-host" }
-vosu-net = { path = "crates/vosu-net" }
 vosu-surface = { path = "crates/vosu-surface" }
 vosu-tool-host = { path = "crates/vosu-tool-host" }
 vosu-sys = { path = "crates/vosu-sys" }
 tracing = "=0.1.44"
-tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
 url = "2.5.8"
-zmij = "=1.0.23"
-getrandom = "=0.4.3"
-parking_lot = "0.12.5"
-subtle = "=2.6.1"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "=0.2.186"
 
 [dev-dependencies]
+base64 = "=0.22.1"
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
+indexmap = { version = "2.13.0", features = ["serde"] }
+memchr = "=2.8.3"
+sha2 = "=0.11.0"
+httpdate = "=1.0.3"
+tempfile = "3.26.0"
+tokio-tungstenite = "=0.29.0"
+toml = "=1.1.2"
+vosu-osu-calc = { path = "crates/vosu-osu-calc" }
+vosu-osu-model = { path = "crates/vosu-osu-model" }
+vosu-osu-state = { path = "crates/vosu-osu-state" }
+vosu-net = { path = "crates/vosu-net" }
+tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
+getrandom = "=0.4.3"
+parking_lot = "0.12.5"
 vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion", features = ["test-harness"] }
 ciborium = "=0.2.2"
 criterion = "0.7.0"
 jsonschema = { version = "=0.61.2", default-features = false }
 proptest = "1.12"
 serde-value = "=0.7.0"
+syn = { version = "=2.0.119", features = ["full"] }
 vosu-proptest = { path = "crates/vosu-proptest" }
 vosu-core = { path = "crates/vosu-core", features = ["bench-harness"] }
 vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", features = ["bench-harness"] }

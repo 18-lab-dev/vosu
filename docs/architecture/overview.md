@@ -20,7 +20,7 @@ Important constraints visible in the code are:
 - Linux and Windows have different process, memory, path, focus, and update implementations; platform selection is compile-time (`src/process/{linux,windows}.rs`, `src/platform/{linux,windows}.rs`, `crates/vosu-core/src/updater/platform.rs`).
 - Remote reads are fallible and may race the target process. Decoding distinguishes ready, pending/unchanged, unsupported, corrupt, and failed data instead of treating every failure as an empty value (`src/process.rs::ReadStatus`, `src/memory.rs::MemoryReader`).
 - Regular and precise sampling have independent configured cadences, but all state transitions are serialized before publication (`src/state/worker.rs::spawn_state_worker_with_clock`).
-- Public wire views decode one coherent selected bus image with a resolved session/roster; adapters never load independent root snapshots (`crates/vosu-surface/src/state.rs`, `src/server/bus_provider.rs`).
+- Public wire views decode one coherent selected bus image with a resolved session/roster; adapters never load independent root snapshots (`crates/vosu-surface/src/state.rs`, `crates/vosu-core/src/server/bus_provider.rs`).
 - Calculation compatibility has two contracts: state-driven live calculation uses the dedicated calculator crate, while the calculation endpoint follows the legacy rosu-pp-js-compatible builder (`src/calculation/engine.rs`).
 
 ## System context
@@ -43,7 +43,7 @@ The daemon boundary is the `vosu` process; hosted tools are supervised out-of-pr
 
 ```mermaid
 flowchart TB
-    Entry[src/main.rs] --> Runtime[src/runtime/lifecycle.rs<br/>ProductionRuntime]
+    Entry[src/main.rs] --> Runtime[crates/vosu-core/src/runtime/lifecycle.rs<br/>ProductionRuntime]
     Runtime --> Config[crates/vosu-core/src/config<br/>ConfigStore]
     Runtime --> Discovery[crates/vosu-core/src/plugin/discovery.rs<br/>DiscoveryService]
     Discovery --> Plugin[crates/vosu-osu<br/>classification and session lifecycle]
@@ -56,14 +56,14 @@ flowchart TB
     Publisher --> Bus[vosu-core state bus]
     Bus --> Surface[vosu-surface coherent capture]
     Surface --> Adapters
-    Adapters --> Server[src/server HTTP and WebSocket transport]
-    Reducer --> Calc[src/calculation/* and<br/>crates/vosu-pp]
+    Adapters --> Server[crates/vosu-core/src/server HTTP and WebSocket transport]
+    Reducer --> Calc[crates/vosu-osu-calc and<br/>crates/vosu-pp]
     Config --> Runtime
     Runtime --> Update[crates/vosu-core/src/updater/*]
     Runtime --> Desktop[crates/vosu-core/src/desktop/*<br/>tray and login service]
 ```
 
-`src/main.rs` delegates to `ProductionRuntime`, which composes required game/adapter plugins, configuration, listeners and operational services. Missing required registration or discovery fails startup. Shutdown stops discovery/foreground delivery and network consumers, joins adapter chart workers, destroys game sessions, then closes configuration and logging. No typed root snapshot or control fallback remains.
+`src/main.rs` injects `BUNDLE` into core's `run_cli`. The bundle specifies executable identity and concrete provider registration, while core composes required game/adapter plugins, configuration, listeners and operational services. Missing required registration or discovery fails startup. Shutdown stops discovery and foreground delivery, seals subscriptions and closes sockets, joins listeners, subscription workers and adapter chart workers, destroys plugin instances, then joins the overlay, configuration and logging. No root snapshot or control fallback remains.
 
 `crates/vosu-core/src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
@@ -103,7 +103,7 @@ checksum-verified payload and game installation remain untouched.
 
 | Concern | Primary ownership | Main entry points |
 |---|---|---|
-| Startup and process-wide lifecycle | `crates/vosu-core/src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
+| Startup and process-wide lifecycle | `crates/vosu-core/src/app.rs`, `crates/vosu-core/src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
 | Client discovery, generations, focus | `crates/vosu-core/src/plugin/{discovery,session,focus}.rs`, `crates/vosu-osu/src/plugin.rs` | host-owned lifecycle and Focus rule |
 | Native process access | `crates/vosu-plugin-api/src/memory.rs`, `crates/vosu-sys/src/process{,/linux,/windows}.rs`, `crates/vosu-osu-reader/src/process.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
 | Signature/offset scanning | `crates/vosu-plugin-api/src/memory/pattern.rs`, `crates/vosu-sys/src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
@@ -111,15 +111,15 @@ checksum-verified payload and game installation remain untouched.
 | Capture scheduling and state transitions | `src/state/worker.rs`, `src/state/readers.rs`, `src/state/bundle/*` | `spawn_state_worker`, `StateBundle`, `SnapshotTransition` |
 | Coherent state publication and selection | `crates/vosu-osu/src/publish.rs`, `crates/vosu-core/src/state/`, `crates/vosu-surface/src/state.rs` | ABI commits and captured selected images |
 | Legacy wire construction | `crates/vosu-adapter-{upstream,gosumemory,streamcompanion}/` | adapter-owned typed views, DTO/direct/filter encoders |
-| HTTP routing and authorization | `src/server/routes.rs`, `src/server/auth.rs`, `src/server/service/*` | `Endpoint`, `RouteProviders`, `ProductionRouteDelegate` |
-| WebSocket publication, subscriptions, and commands | `src/server/{websocket,bus_provider,commands}.rs`, `src/server/api_v1/subscriptions.rs`, `src/runtime/worker.rs` | latest-only hubs, granted connection plans, API-v1 subscriptions and commands |
-| Listener bind/reload/drain | `src/server/runtime.rs` | `ListenerRuntime`, `AxumListenerFactory`, `ListenerOwner` |
+| HTTP routing and authorization | `crates/vosu-core/src/server/routes.rs`, `crates/vosu-core/src/server/auth.rs`, `crates/vosu-core/src/server/service/*` | `Endpoint`, `RouteProviders`, `ProductionRouteDelegate` |
+| WebSocket publication, subscriptions, and commands | `crates/vosu-core/src/server/{websocket,bus_provider}.rs`, `crates/vosu-core/src/server/api_v1/subscriptions.rs`, `crates/vosu-core/src/runtime/worker.rs`, `src/bundle/overlay/` | latest-only hubs, granted connection plans, API-v1 subscriptions and the bundled overlay command bridge |
+| Listener bind/reload/drain | `crates/vosu-core/src/server/runtime.rs` | `ListenerRuntime`, `AxumListenerFactory`, `ListenerOwner` |
 | Live and endpoint calculation | `src/calculation/*`, `crates/vosu-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
-| Filesystem and platform paths | `src/platform.rs`, `src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
+| Filesystem and platform paths | `crates/vosu-sys/src/platform.rs`, `crates/vosu-core/src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
 | Configuration | `crates/vosu-core/src/config/*` | `ConfigStore`, `ConfigDocument`, `ConfigSchema` |
 | Desktop integration | `crates/vosu-core/src/desktop/*` | session tray, executable ownership policy, Linux `login::reconcile` |
 | Self-update | `crates/vosu-core/src/updater/*` | startup recovery, release validation, prepare/transaction/platform stages |
-| Hosted tools | `src/tools/{mod,manifest,process,http,catalog,catalog_sources}.rs` | `ToolHost`, manifest validation, configurable tool/overlay catalog sources, hardened atomic package installation, supervised children and proxy/session authorization |
+| Hosted tools | `crates/vosu-core/src/tools/`, `crates/vosu-tool-host/` | validated v2 web packages, tool settings, live launch authority and static UI serving through read-only leases |
 | Live compatibility validation | `tools/live-parity/*` | `run.py`, `parity_capture.py`, `parity_compare.py`, `parity_diff.py` |
 
 ## Runtime data flow
@@ -231,15 +231,15 @@ with the bus projections described below.
 
 ### API and server publication
 
-The bundled adapter crates own wire construction: `vosu-adapter-gosumemory` (`/json`, `/ws`), `vosu-adapter-streamcompanion` (`/json/sc`, `/tokens`) and `vosu-adapter-upstream` (`/json/v2`, `/json/v2/precise`, their feeds, legacy game files and calculation). Each builds a typed immutable view from one coherent, grant-checked surface capture of the focused session. `src/server/bus_provider.rs::BusStateProvider`, one per schema (`src/runtime/adapters.rs`), serves HTTP and WebSocket from the same latest-only encoding cache. HTTP reads are demand-free captures; each WebSocket connection owns one RAII selector lease, and the leases of a schema share one surface subscription. No route reads game memory or a typed game snapshot.
+The bundled adapter crates own wire construction: `vosu-adapter-gosumemory` (`/json`, `/ws`), `vosu-adapter-streamcompanion` (`/json/sc`, `/tokens`) and `vosu-adapter-upstream` (`/json/v2`, `/json/v2/precise`, their feeds, legacy game files and calculation). Each builds a typed immutable view from one coherent, grant-checked surface capture of the focused session. `crates/vosu-core/src/server/bus_provider.rs::BusStateProvider`, one per schema (`crates/vosu-core/src/runtime/adapters.rs`), serves HTTP and WebSocket from the same latest-only encoding cache. HTTP reads are demand-free captures; each WebSocket connection owns one RAII selector lease, and the leases of a schema share one surface subscription. No route reads game memory or a typed game snapshot.
 
-`src/server/routes.rs` classifies exact methods and paths into typed `Endpoint` values, enforces authorization and request-body limits, and delegates state, calculation, files/pages, counters, settings, reports, updates, and WebSocket upgrades through narrow provider traits. `src/server/runtime.rs::ListenerRuntime` resolves and binds desired targets, retains the old effective listener if replacement resolution/bind fails, and drains superseded listeners. `ListenerOwner::start` does not report readiness until the initial address is actually bound.
+`crates/vosu-core/src/server/routes.rs` classifies exact methods and paths into typed `Endpoint` values, enforces authorization and request-body limits, and delegates state, calculation, files/pages, counters, settings, reports, updates, and WebSocket upgrades through narrow provider traits. `crates/vosu-core/src/server/runtime.rs::ListenerRuntime` resolves and binds desired targets, retains the old effective listener if replacement resolution/bind fails, and drains superseded listeners. `ListenerOwner::start` does not report readiness until the initial address is actually bound.
 
 `auth::MutationAuthorization` separates exact same-origin mutation intent from the overlay-compatible read policy. Dispatch enforces it before every management POST and captures it in request extensions for WebSocket upgrades. The production socket transport permits read/settings/filter commands on untrusted-origin sockets, but closes them before any state-changing command reaches `CommandProcessor`. This preserves stock hosted counter writes and non-hosted reads without adding a handshake token.
 
-`src/server/origins.rs` separates trusted dashboard pages/management from the unchanged overlay origin ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)). Each listener has an explicit origin role and shares effective address metadata. Dashboard mutations require exact dashboard provenance plus a per-start CSRF token; dashboard HTML is not CORS-readable, and overlay static files never run on that listener. Overlay command-socket settings and scoped key grants retain their compatibility contracts. This browser-origin boundary does not authenticate against malicious native same-account clients.
+`crates/vosu-core/src/server/origins.rs` separates trusted dashboard pages/management from the unchanged overlay origin ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)). Each listener has an explicit origin role and shares effective address metadata. Dashboard mutations require exact dashboard provenance plus a per-start CSRF token; dashboard HTML is not CORS-readable, and overlay static files never run on that listener. Overlay command-socket settings and scoped key grants retain their compatibility contracts. This browser-origin boundary does not authenticate against malicious native same-account clients.
 
-`src/tools` reserves `/tools` before counter static routing. `ToolHost` discovers development, official-catalog, and user tools, persists trust/enabled state and settings in a separate config namespace, and owns bounded service logs and supervised child lifetimes. Ordered configurable catalog sources merge tools and overlays with first-source-wins shadowing; packages undergo shared network/archive hardening, size/digest and manifest checks before atomic installation. Only the default official tool source grants automatic trust. Services receive per-launch secrets, bind ephemeral loopback ports, and pass readiness/health checks before requests are forwarded. Public read prefixes remain overlay-readable; mutations require a dashboard-minted tab session or a declared dependent tool token. Dashboard-only `/api/tools` management retains provenance and CSRF checks. Shutdown closes child stdin and enforces a five-second exit bound; Linux parent-death signals and Windows kill-on-close jobs additionally contain daemon death. See the [tool protocol](../tools/protocol.md).
+Core's `ToolRegistry` discovers SDK-validated web packages, manages their trust and settings, and issues bounded launch codes and sessions. API v1 checks the action grant against the live launch session. The bundled tool host serves only the static UI and redacted settings of servable tools, through a view supplied by core. Legacy `tool.toml`-only packages remain disabled and are never parsed or run. There is no service process or proxy.
 
 Package document validation lives in `vosu-plugin-api`: core plugin loading,
 v2 tool discovery and manifest-first overlay discovery all consume its unified
@@ -252,7 +252,7 @@ only; their limits and the exact [consumer inventory](../testing/verification.md
 are recorded separately from native-platform evidence.
 
 
-Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; publication tasks live in `WebSocketHubs`. The hub bounds each client to one pending state frame, and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. The selected-field `/websocket/v2/subscribe` feed is removed. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`.
+Compatibility WebSocket connections belong to `crates/vosu-core/src/server/websocket.rs::WebSocketHub`; publication tasks belong to `WebSocketHubs`. Each client has one pending state frame. Shutdown seals registration and sends protocol close 1001 before cancelling publication loops. The API v1 subscription service seals new worker admission and joins existing workers before plugin destruction. The selected-field `/websocket/v2/subscribe` feed is removed. The bundled overlay host's `CommandProcessor` parses commands; `src/bundle/overlay/relay.rs` delivers browser relays and joins its worker.
 
 State delivery retains its one-frame latest-state bound. Compatibility control queues and the shared relay mailbox each have capacity 16; relay producers use nonblocking admission, and shared delivery never waits for a recipient mutex/control queue. Saturated recipients are cleaned up without stalling healthy recipients. Legacy filter parsing caps input nodes/depth and deduplicates the resulting projection.
 
@@ -261,7 +261,7 @@ State delivery retains its one-frame latest-state bound. Compatibility control q
 There are two intentional paths:
 
 1. **Live state calculation.** Regular state transitions build requests in `src/state/bundle/calculation.rs`. `src/state/state_backend.rs::LiveStateCalculationBackend` resolves beatmap readiness, parsing/cache state, gameplay/result progression, and runs blocking work outside the async reducer. `LiveBeatmapEngine` delegates difficulty, strains, and performance to the `crates/vosu-pp` Rust facade, whose `rosu-map-api` and `rosu-pp-api` workspace members preserve pinned upstream evidence and licensing boundaries. Results return to the reducer only when their state key and calculation generation are still current.
-2. **Calculation endpoint.** `src/server/service/declared_calculate.rs::DeclaredCalculateProvider` delegates to `vosu_adapter_upstream::calculate`, which selects either the captured session's current beatmap or a canonical regular `.osu` file inside that session's declared roots, maps the request, and invokes `vosu_osu_calc::engine::LegacyRosuEngine`. This preserves the legacy rosu-pp-js-compatible setter order and must not be silently routed through the live calculator contract.
+2. **Calculation endpoint.** The registered `/api/calculate/pp` route in `src/bundle/adapters/routes.rs` calls `vosu_adapter_upstream::calculate`. It selects the captured session's current beatmap or a canonical regular `.osu` file inside declared roots and invokes `vosu_osu_calc::engine::LegacyRosuEngine`. This preserves the legacy rosu-pp-js-compatible setter order rather than using the live calculator contract.
 
 Beatmap parsing, timing/events, object graphs, and cache ownership are under `src/calculation/beatmap/*`; progressive gameplay/result state is under `src/calculation/progressive/*`.
 
@@ -271,7 +271,7 @@ Beatmap parsing, timing/events, object graphs, and cache ownership are under `sr
 
 Windows shared file persistence (`src/platform/windows.rs::atomic_replace`) keeps the existing public name intact while `ReplaceFileW` merges metadata through a private hard link, then publishes with same-volume `FileRenameInfoEx` (`REPLACE_IF_EXISTS | POSIX_SEMANTICS`) and flushes the merged file before and after publication. Existing readers keep valid old handles; new opens see the replacement. This retains the target's DACL, creation time, streams, encryption/compression and other `ReplaceFileW` metadata without copying its old contents or exposing that API's multi-step public-name gap. A delete-access guard and a shared two-second retry budget cover both access-denied and sharing violations from readers without share-delete. A missing target uses the existing creation path. FAT/exFAT and remote filesystems reporting unsupported hard links retain the previous `ReplaceFileW` fallback and its weaker concurrent-reader visibility; no hard-link atomicity claim applies there. Filesystems supporting hard links but rejecting extended POSIX rename use a bounded `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` fallback, which can be delayed by open readers. Private `.vosu-atomic-*` staging directories are cleaned on success/error, and startup sweeps at most 2,048 entries to depth four under the Windows program/config/data/cache root. Only the known staging layout is removable; an exclusive lease protects live writers. The updater's JSON install record uses this shared helper, while executable swap/backup/recovery remains the separate updater platform implementation.
 
-`src/platform.rs::Paths` resolves program, launch, config, data, and cache roots and creates the latter three. On Linux, startup performs an idempotent one-time move from former `tosu` XDG roots to `vosu` roots without replacing already-current state. Default static content is under the data root; custom relative static paths are relative to the launch directory. `src/server/files.rs` owns percent decoding, containment checks, platform-secure opens, directory indexes, media ranges, and content types. Invalid, malformed, and escaping public paths collapse to not-found rather than exposing host filesystem details.
+`crates/vosu-sys/src/platform.rs::Paths` resolves program, launch, config, data, and cache roots and creates the latter three. On Linux, startup performs an idempotent one-time move from former `tosu` XDG roots to `vosu` roots without replacing already-current state. Default static content is under the data root; custom relative static paths are relative to the launch directory. `crates/vosu-core/src/server/files.rs` owns percent decoding, containment checks, platform-secure opens, directory indexes, media ranges, and content types. Invalid, malformed, and escaping public paths collapse to not-found rather than exposing host filesystem details.
 
 `ReloadableCounterService` replaces only root-specific filesystem selection on reload. Install admission (four jobs), the install gate, cancellation and active-job join accounting remain shared across all generations; detached jobs remain shutdown-owned after HTTP cancellation. No retired-generation registry is needed.
 
@@ -295,7 +295,7 @@ Candidate/rollback readiness uses a one-use secret delivered only through the ex
 - Live full-map and progressive calculations share prepared immutable map storage and full difficulty/maximum-score results. Stable mania replay snapshots share retained frame backing across unchanged polls; append/acknowledgement/rewind/score replacement preserve reset semantics.
 - Latest-only precise capture, per-PID worker-to-supervisor publication slots, and atomic snapshots bound queue growth and prevent mixed publications. A late publication from an older process generation cannot replace a newer pending generation.
 - Read errors are retained/reported according to method-specific policies in `crates/vosu-osu-reader/src/memory.rs::ErrorReportCounters`; transient target races need not erase last-good state. Corrupt lengths and address arithmetic fail explicitly at the process boundary.
-- A failed listener reload leaves the previous listener effective. Listener shutdown stops accepts, waits up to `src/server/runtime.rs::DRAIN_TIMEOUT`, then cancels survivors.
+- A failed listener reload leaves the previous listener effective. Listener shutdown stops accepts, waits up to `crates/vosu-core/src/server/runtime.rs::DRAIN_TIMEOUT`, then cancels survivors.
 - Configuration, logging, startup recovery, initial binding, required embedded offsets, required `vosu.osu` load/create, and missing production discovery can fail startup. A quarantined update recovery is logged and startup continues; active-owner conflicts receive the dedicated exit status.
 - Shutdown is dependency ordered in `ProductionRuntime::shutdown`, and WebSockets close before their backing snapshot provider can be dropped.
 

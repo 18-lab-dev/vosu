@@ -1,16 +1,16 @@
 use super::*;
+use crate::actions::{ActionDescriptor, ActionRegistry, JobError, JobRegistry};
 use axum::{
     body::{Body, Bytes, to_bytes},
     extract::Request,
     http::{Method, StatusCode},
 };
 use serde_json::{Value, json};
-use crate::actions::{ActionDescriptor, ActionRegistry, JobError, JobRegistry};
 use vosu_proptest::bounded;
 
 const ACTION: &str = "fixture.game.beatmap.import";
 const OPTIONAL: &str = "fixture.game.utility.inspect";
-const FIXTURE: &str = include_str!("../../../../tests/fixtures/tools/action-web/manifest.toml");
+const FIXTURE: &str = include_str!("../../../../../tests/fixtures/tools/action-web/manifest.toml");
 #[derive(Default)]
 struct Registry(Mutex<HashMap<String, Arc<ActionDescriptor>>>);
 impl Registry {
@@ -66,10 +66,7 @@ impl capabilities::InstalledCapabilities for Registry {
     }
 }
 fn fixture() -> String {
-    FIXTURE.replace(
-        ">=2.0.0-alpha.1, <3.0.0",
-        &format!("={FIXTURE_VERSION}"),
-    )
+    FIXTURE.replace(">=2.0.0-alpha.1, <3.0.0", &format!("={FIXTURE_VERSION}"))
 }
 fn request(method: Method, path: &str) -> Request {
     Request::builder()
@@ -149,7 +146,10 @@ fn v2_manifest_rejects_wrong_kind_legacy_fields_internal_and_duplicates() {
         text.replace(&format!("={FIXTURE_VERSION}"), "=0.0.0"),
         format!("{text}\n[[provides]]\nid='field:fixture.game'\nversion='1.0.0'"),
     ] {
-        assert!(manifest::ToolPackage::parse(&invalid, &version).is_err(), "{invalid}");
+        assert!(
+            manifest::ToolPackage::parse(&invalid, &version).is_err(),
+            "{invalid}"
+        );
     }
 }
 

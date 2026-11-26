@@ -122,7 +122,7 @@ fn support_artifacts_stage_the_prepared_cargo_libraries_per_test() {
     // valid for an official source, refused as an ordinary development one.
     let package = vosu_plugin_api::manifest::PackageManifest::parse(&fixture).unwrap();
     let snapshot = vosu_core::plugin::ValidationSnapshot::default();
-    let version = vosu::application_version();
+    let version = &vosu::BUNDLE.version();
     assert_eq!(
         snapshot
             .validate(&package, version, "development", true)

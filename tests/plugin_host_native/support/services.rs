@@ -344,7 +344,7 @@ impl Services {
         let fixture = Fixture::new(&root.join(format!("receipts-{}", spec.name)));
         control(&fixture, &staged, spec);
         let loaded = vosu_core::plugin::load_development(
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             &self.host().validation_snapshot(),
             &staged.dir,
             true,

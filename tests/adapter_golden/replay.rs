@@ -29,18 +29,18 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
-use vosu::{
-    runtime::{
-        TestGame, TestProductionComposition, TestProductionCompositionOptions,
-        start_test_production_composition,
-    },
-    server::service::{UpdateRouteResult, UpdaterHandoff},
-};
 use vosu_core::server::adapter_capture::DerivedStatus;
 use vosu_core::server::{routes::ProviderFuture, runtime::ListenTarget, websocket::Schema};
 use vosu_core::{
     config::ConfigStore,
     plugin::{BundledPlugin, ProcessRecord, SyntheticForegroundSource},
+};
+use vosu_core::{
+    runtime::{
+        TestGame, TestProductionComposition, TestProductionCompositionOptions,
+        start_test_production_composition,
+    },
+    server::service::{UpdateRouteResult, UpdaterHandoff},
 };
 use vosu_plugin_api::{CborValue, vosu_status};
 
@@ -272,26 +272,29 @@ async fn compose(
             .await
             .map_err(|e| format!("replay configuration: {e}"))?,
     );
-    let started = start_test_production_composition(TestProductionCompositionOptions {
-        target: ListenTarget::new("127.0.0.1", 0),
-        config: config.clone(),
-        static_root: root.join("static"),
-        settings_root: root.join("settings"),
-        cache_root: root.join("cache"),
-        logs_root: root.join("logs"),
-        updater: Arc::new(NoUpdates),
-        network: network()?,
-        game: Some(TestGame {
-            plugin: BundledPlugin {
-                manifest: vosu_osu::MANIFEST,
-                settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
-                namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
-                action_schemas: vosu_osu::ACTION_SCHEMAS,
-                vtable: game::vosu_plugin_vtable,
-            },
-            foreground,
-        }),
-    })
+    let started = start_test_production_composition(
+        &vosu::BUNDLE,
+        TestProductionCompositionOptions {
+            target: ListenTarget::new("127.0.0.1", 0),
+            config: config.clone(),
+            static_root: root.join("static"),
+            settings_root: root.join("settings"),
+            cache_root: root.join("cache"),
+            logs_root: root.join("logs"),
+            updater: Arc::new(NoUpdates),
+            network: network()?,
+            game: Some(TestGame {
+                plugin: BundledPlugin {
+                    manifest: vosu_osu::MANIFEST,
+                    settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
+                    namespace_schemas: &[vosu_osu::OSU_NAMESPACE_SCHEMA],
+                    action_schemas: vosu_osu::ACTION_SCHEMAS,
+                    vtable: game::vosu_plugin_vtable,
+                },
+                foreground,
+            }),
+        },
+    )
     .await;
     match started {
         Ok(composition) => Ok((config, composition)),

@@ -50,8 +50,11 @@ async fn tool_corpus_uses_real_discovery_and_dashboard() {
                 std::fs::write(dir.join("manifest.toml"),text(value)).unwrap();
                 // A valid legacy manifest must never rescue rejected v2 input.
                 std::fs::write(dir.join("tool.toml"),"manifest_version=1\nid='corpus'\nname='Legacy'\nversion='1.0.0'\n[ui]\nroot='web'\n").unwrap();
-                let host = vosu::tools::ToolRegistry::new(root.path().join("config"),root.path().join("data"),root.path().join("cache"),
-                    vosu::tools::ExtraRoots{dev:vec![]},"http://127.0.0.1:1".into(),Some("http://127.0.0.1:2".into())).await.unwrap();
+                let host = vosu_core::tools::ToolRegistry::new(
+                    root.path().join("config"), root.path().join("data"), root.path().join("cache"),
+                    vosu_core::tools::ExtraRoots { dev: vec![] }, "http://127.0.0.1:1".into(),
+                    Some("http://127.0.0.1:2".into()), vosu::BUNDLE.version(),
+                ).await.unwrap();
                 let response = host.dashboard(axum::http::Request::builder().uri("/api/tools").body(axum::body::Body::empty()).unwrap(),bytes::Bytes::new()).await;
                 let body = axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap();
                 let body: Value = serde_json::from_slice(&body).unwrap();
@@ -75,7 +78,7 @@ fn plugin_corpus_uses_real_core_bundled_loader() {
         for (value, valid) in [(&row.valid, true), (&row.invalid, false)] {
             let text = text(value);
             let result = vosu_core::plugin::load_bundled(
-                vosu::application_version(),
+                &vosu::BUNDLE.version(),
                 &vosu_core::plugin::ValidationSnapshot::default(),
                 &[vosu_core::plugin::BundledPlugin {
                     manifest: &text,

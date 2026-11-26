@@ -8,9 +8,7 @@
 mod catalog_fixture {
     use super::*;
     use std::{collections::HashMap, sync::Mutex};
-    use vosu::{
-        runtime::{CatalogComposition, CatalogRoots, catalog_target},
-    };
+    use vosu_core::runtime::{CatalogComposition, CatalogRoots, catalog_target};
     use vosu_core::server::catalog_api::{CatalogApi, CatalogNetwork};
     use vosu_core::{
         catalog::{
@@ -171,7 +169,7 @@ mod catalog_fixture {
     }
 
     fn host_range() -> String {
-        format!("={}", vosu::application_version())
+        format!("={}", vosu::BUNDLE.version)
     }
 
     impl Packages {
@@ -271,6 +269,7 @@ mod catalog_fixture {
                     plugin_data: root.join("plugin-data"),
                 },
                 packages.clone(),
+                &vosu::BUNDLE,
             ))
             .unwrap();
             let network = Arc::new(Network::default());

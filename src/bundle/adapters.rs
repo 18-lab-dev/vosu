@@ -36,6 +36,12 @@ impl AdapterServices for Services {
     }
 
     fn shutdown(&self) -> ProviderFuture<'_, io::Result<()>> {
-        Box::pin(async { self.chart.shutdown().await.map(|_| ()).map_err(io::Error::other) })
+        Box::pin(async {
+            self.chart
+                .shutdown()
+                .await
+                .map(|_| ())
+                .map_err(io::Error::other)
+        })
     }
 }

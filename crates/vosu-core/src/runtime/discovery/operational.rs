@@ -1,11 +1,11 @@
 //! Daemon-specific discovery progress over the generic process source.
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
 use crate::{
     logging::Logger,
     plugin::{Prefilter, ProcessEventBatch, ProcessRecord, ProcessSource},
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 pub(in crate::runtime) struct LoggedSource {

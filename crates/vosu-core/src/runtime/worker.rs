@@ -49,6 +49,10 @@ impl WebSocketHubs {
             let _ = task.await;
         }
     }
+    #[cfg(feature = "test-harness")]
+    pub(super) fn join_probes(&self) -> impl Iterator<Item = tokio::task::AbortHandle> + '_ {
+        self.tasks.iter().map(JoinHandle::abort_handle)
+    }
 }
 
 /// Owns the reloadable production Axum listener and its complete join path.

@@ -1,11 +1,11 @@
 use super::*;
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
 use crate::{
     api::{ApiPlan, SessionTarget},
     plugin::{self, PluginInstanceId},
+};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

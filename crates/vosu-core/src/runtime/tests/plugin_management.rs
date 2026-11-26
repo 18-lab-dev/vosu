@@ -7,16 +7,14 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use axum::body::{Body, Bytes, to_bytes};
-use axum::http::{Method, Request, StatusCode, header};
-use serde_json::{Value, json};
 use crate::plugin::approval::{ApprovalGate, ApprovalStore, ApprovedLaunch};
-use crate::plugin::test_support::{
-    LaunchBehavior, RecordingLauncher, write_development_package,
-};
+use crate::plugin::test_support::{LaunchBehavior, RecordingLauncher, write_development_package};
 use crate::plugin::{
     self, HostError, PluginHost, PluginInstanceId, ProcessEndpoint, ProcessLaunch, ProcessLauncher,
 };
+use axum::body::{Body, Bytes, to_bytes};
+use axum::http::{Method, Request, StatusCode, header};
+use serde_json::{Value, json};
 
 use super::*;
 

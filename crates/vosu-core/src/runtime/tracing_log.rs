@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod rate_limit;
+use crate::logging::Logger;
 use rate_limit::{RateLimiter, WINDOW};
 use tracing::{
     Event, Level, Subscriber,
     field::{Field, Visit},
 };
 use tracing_subscriber::{Layer, Registry, layer::Context, prelude::*};
-use crate::logging::Logger;
 
 thread_local! { static FORWARDING: Cell<bool> = const { Cell::new(false) }; }
 
@@ -90,8 +90,8 @@ pub(super) fn install(logger: Logger) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{sync::Arc, time::Duration};
     use crate::logging::{LoggerOptions, StdoutConsole};
+    use std::{sync::Arc, time::Duration};
 
     #[tokio::test]
     async fn core_warnings_and_fields_reach_daemon_log_with_level_filtering() {

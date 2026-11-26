@@ -8,7 +8,7 @@ pub fn document(array: &str, entry: Value) -> Value {
     v
 }
 pub fn entry(kind: &str) -> Value {
-    let mut v = json!({"id":"corpus","name":"Corpus","version":"9.0.0","host":format!("={}",vosu::application_version()),
+    let mut v = json!({"id":"corpus","name":"Corpus","version":"9.0.0","host":format!("={}",vosu::BUNDLE.version),
         "homepage":null,"icon_url":null,"banner_url":null,
         "packages":{"any":{"url":"https://example.org/p.zip","sha256":"a".repeat(64),"size":u64::MAX}}});
     if kind == "plugins" {

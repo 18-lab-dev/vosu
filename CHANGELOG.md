@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M7
 
+- Shutdown closes the overlay command and API v1 subscription WebSockets and
+  waits for their workers before destroying plugin instances. Slow plugin
+  cleanup no longer leaves these connections open.
+
 - Plugin settings: the Tools page has a **Settings** dialog for every
   non-bundled plugin, catalog-installed ones included, served by the new
   dashboard-only `GET`/`POST /api/plugins/<id>/settings`. Values come from

@@ -6,7 +6,18 @@ from pathlib import Path
 import subprocess
 
 
-UI_PREFIXES = ("assets/server/", "src/server/", "src/tools/")
+UI_PREFIXES = (
+    "assets/server/",
+    "src/bundle",
+    "crates/vosu-core/src/server",
+    "crates/vosu-core/src/tools/",
+    "crates/vosu-core/src/runtime/dashboard.rs",
+    "crates/vosu-core/src/runtime/overlay_root.rs",
+    "crates/vosu-core/src/runtime/plugin_management.rs",
+    "crates/vosu-dashboard/",
+    "crates/vosu-overlay-host/",
+    "crates/vosu-tool-host/",
+)
 # Everything `scripts/sdk-package.py verify` depends on: the published SDK
 # crate itself, the workspace manifest/lock/toolchain it inherits and packages
 # from, Cargo configuration, and the verifier and its CI/gate wiring. The
@@ -25,8 +36,6 @@ SDK_PREFIXES = (
 
 def is_ui_path(path):
     if path.startswith(UI_PREFIXES):
-        return True
-    if path.startswith("src/runtime/") and Path(path).name.startswith("render"):
         return True
     if path.startswith("tests/"):
         name = Path(path).name

@@ -9,15 +9,15 @@
 //! rescans the web hosts and republishes G0 offers. A plugin that is still
 //! loaded never receives a new load: its package directory is gone.
 use super::*;
-use std::{
-    collections::BTreeSet,
-    fs,
-    sync::{OnceLock, Weak},
-};
 use crate::catalog::{
     install::{HandoffFuture, InstalledKind},
     installed::{RemovalPlan, RemovalRuntime},
     runtime::CatalogRuntime,
+};
+use std::{
+    collections::BTreeSet,
+    fs,
+    sync::{OnceLock, Weak},
 };
 
 /// Daemon-lifetime list of removed (or optional-grant-losing) plugins whose

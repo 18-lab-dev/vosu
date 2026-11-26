@@ -10,6 +10,7 @@ use bytes::Bytes;
 use tokio::sync::{Notify, oneshot, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use super::selection::{MAX_FRAME, frame};
 use crate::server::subscription_wire::{self as wire, Mailbox, Outbound, Receiver};
@@ -20,6 +21,7 @@ struct Hub {
     source: ApiStateSource,
     debounce: watch::Sender<Duration>,
     shutdown: CancellationToken,
+    tasks: Mutex<TaskTracker>,
 }
 impl Drop for Hub {
     fn drop(&mut self) {
@@ -71,6 +73,7 @@ impl ApiV1SubscriptionHub {
             source,
             debounce: watch::Sender::new(debounce),
             shutdown: CancellationToken::new(),
+            tasks: Mutex::new(TaskTracker::new()),
         }))
     }
 
@@ -87,7 +90,19 @@ impl ApiV1SubscriptionHub {
         self.0.debounce.send_replace(debounce);
     }
     pub fn shutdown(&self) {
+        lock(&self.0.tasks).close();
         self.0.shutdown.cancel();
+    }
+    /// Waits for every admitted subscription worker to drop its state lease.
+    /// Call after `shutdown` closes admission.
+    pub(crate) async fn join(&self) {
+        let tasks = lock(&self.0.tasks).clone();
+        tasks.wait().await;
+    }
+
+    #[cfg(feature = "test-harness")]
+    pub fn active_tasks(&self) -> usize {
+        lock(&self.0.tasks).len()
     }
 
     pub(super) fn open(
@@ -104,13 +119,20 @@ impl ApiV1SubscriptionHub {
             wake: Notify::new(),
             closed: CancellationToken::new(),
         });
-        tokio::spawn(establish(
-            Arc::downgrade(&self.0),
-            Arc::downgrade(&client),
-            target,
-            request,
-            Instant::now() + REQUEST_TIMEOUT,
-        ));
+        // Admission and shutdown serialize so no worker can enter after the join.
+        let tasks = lock(&self.0.tasks);
+        if tasks.is_closed() {
+            drop(tasks);
+            client.close(1001);
+        } else {
+            tasks.spawn(establish(
+                Arc::downgrade(&self.0),
+                Arc::downgrade(&client),
+                target,
+                request,
+                Instant::now() + REQUEST_TIMEOUT,
+            ));
+        }
         (
             ApiV1SubscriptionConnection { client },
             Receiver::new(mailbox),

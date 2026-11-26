@@ -99,7 +99,7 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`, `vosu-net` (the moved offset-generator's hardened ZIP extraction, `vosu_net::extract_zip_atomic`, DD, and since M5 R1 the atomic offset-cache publish/read convention, `vosu_net::publish`). The interim `vosu-sys` edge (DC) was removed by M5 R1: reads use `PlanMemory`, every scan goes through an injected `ScanBackend` (the host's `SCAN_REQUEST`; no region-walk fallback), the lazer executable root comes from the `SESSION_ATTACHED` `path` fact, and the offset generator's composer injects the gated `vosu_sys::process_spawn` spawn. `vosu-sys` remains a dev-dependency only |
 | `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`, `vosu-plugin-api` (the reducer's `MemoryRead`/`ReadStatus`/`MemoryError` from `vosu_plugin_api::memory`; the interim `vosu-sys` edge was removed by M5 R0) |
 | `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-plugin-internal` (S0: `PlanMemory`, bundled and process registration), `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; no `vosu-surface` dependency after M4a |
-| `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
+| `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model`, `vosu-surface` (M7 C0: shared filter value type and bounds only) |
 | `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp` (api-v1.md "Route ownership"). `/api/ingame` is a removed route, not an adapter route (section 6). | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
 | `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model` |
 | `crates/vosu-adapter-streamcompanion` | streamCompanion-compatible `/json/sc`, `/tokens`; computes strains, breaks, kiai points, and timing points itself from the chart resource (D2). | gosumemory's list plus `vosu-osu-calc` |
@@ -1010,10 +1010,10 @@ historical, not an allowed fallback.
 | `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_bus`; `tests/osu_plugin.rs`: `stable_session_settings_and_exit` |
 | `duplicate_discovery_and_removal_are_idempotent_and_close_once` | `tests/discovery_parity.rs`: `duplicate_discovery_and_removal_close_memory_once` |
 | `tournament_precedence_matching_and_fallback_selection` | `tests/osu_plugin/tournament.rs`: `stable_manager_priority_aggregate_all_sessions_and_generation_replacement` |
-| `foreground_exact_match_and_unavailable_focus_fallback` | `src/server/bus_provider/tests.rs`: `production_focus_generation_prevents_numeric_revision_collision`; permanent core Focus tests |
-| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `tests/discovery_parity.rs`: duplicate attach/removal and fresh bus-generation assertions; `src/runtime/tests/context.rs`: host lifecycle/dashboard shape |
+| `foreground_exact_match_and_unavailable_focus_fallback` | `crates/vosu-core/src/server/bus_provider/tests.rs`: `production_focus_generation_prevents_numeric_revision_collision`; permanent core Focus tests |
+| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `tests/discovery_parity.rs`: duplicate attach/removal and fresh bus-generation assertions; `crates/vosu-core/src/runtime/tests/context.rs`: host lifecycle/dashboard shape |
 | `lazer_discovery_starts_one_resolver_and_shutdown_joins_it` | `crates/vosu-osu/src/plugin/tests.rs`: `lazer_identify_starts_one_resolver_and_detach_joins_it`, `destroy_joins_every_live_sessions_resolver_within_the_grace_period` |
-| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | Host lifecycle/bus tests above; `src/runtime/tests/lifecycle_owner.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
+| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | Host lifecycle/bus tests above; `src/bundle/lifecycle_owner_tests.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
 | `failed_full_scan_retries_early_and_counts_only_success` | Core discovery `tests/cadence.rs`: `failed_full_scan_retries_early_and_counts_only_success` |
 | `failed_targeted_inspection_is_not_counted` | Core discovery `tests/cadence.rs`: `failed_targeted_inspection_is_not_counted` |
 | `full_reconcile_replaces_a_dead_same_pid_in_one_pass` | Core discovery `tests/cadence.rs`: `full_reconcile_replaces_a_dead_same_pid_in_one_pass` |
@@ -2229,9 +2229,10 @@ Scope:
   D20 notice for the removed `/api/ingame` route with its vosulay install
   action (A7.5), `VOSU_DASHBOARD=off` and its configuration key (ADR 0019).
 - `/api/ingame` is not served in 2.0 (section 6); it is a D20 removed route.
-- Core lifecycle absorbs the rest of `src/runtime/`; the root package is
-  `main.rs` plus the explicit `BUNDLED` array, and startup asserts that the
-  registry contains exactly that list (D13).
+- Core lifecycle absorbs the rest of `src/runtime/` under `vosu-core`. The
+  root exports one `Bundle` descriptor and the explicit D13 `BUNDLED`
+  array. Its private composition implements the concrete adapter and host
+  seams; executable dispatch for `plugin-host` and `vosux` stays in `main.rs`.
 
 Exit: rewritten `python tests/tool_host_smoke.py --binary target/debug/vosu`
 (launch, bridge, invoke, progress, cancel, 401/403 rules) and
@@ -2390,7 +2391,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | `GET /api/settings` | — | — | New core D route, `SettingsView`. |
 | `POST /api/settingsSave` | D (management) | `ConfigUpdateService` | Core, unchanged, except that a body naming `ENABLE_DASHBOARD` is 400 and publishes nothing. |
 | `POST /api/runUpdates` | D (management) | `UpdaterHandoff` | Core, unchanged. |
-| `POST /api/generateReport` | D (management) | `generate_report_document` | Core, unchanged; ~~the report lists `vosu.dashboard` as `inactive` when off~~. **Main note (2026-11-25):** the report is generated only through the dashboard, so it cannot show the dashboard off. The intent is met by the core plugin status surface that already exists: the roster behind `GET /api/plugins` lists `vosu.dashboard` as `inactive` with reason `dashboard_disabled` (`src/runtime/plugin_management.rs`; asserted by the `dashboard_off` lifecycle test), and startup logs the same line (`Dashboard is off: vosu.dashboard is inactive (dashboard_disabled)`; asserted by `daemon_smoke`). Neither `vosux` nor API v1 has a plugin list, so neither gains one here. |
+| `POST /api/generateReport` | D (management) | `generate_report_document` | Core, unchanged; ~~the report lists `vosu.dashboard` as `inactive` when off~~. **Main note (2026-11-25):** the report is generated only through the dashboard, so it cannot show the dashboard off. The intent is met by the core plugin status surface that already exists: the roster behind `GET /api/plugins` lists `vosu.dashboard` as `inactive` with reason `dashboard_disabled` (`crates/vosu-core/src/runtime/plugin_management.rs`; asserted by the `dashboard_off` lifecycle test), and startup logs the same line (`Dashboard is off: vosu.dashboard is inactive (dashboard_disabled)`; asserted by `daemon_smoke`). Neither `vosux` nor API v1 has a plugin list, so neither gains one here. |
 | `GET`, `POST /api/keys` | D (management) | `ApiKeys` | Core, unchanged. |
 | `GET /api/counters/search/<query>?source=installed\|available` | O, D | `PageDataProvider::search_counters` (HTML fragment) | Overlay host, D only; the HTML contract is unchanged, except that card URLs are origin-relative and the dashboard prefixes `overlayOrigin` from page context. |
 | `GET /api/counters/details/<folder>`, `GET /api/counters/updates`, `POST /api/counters/names/<folder>`, `POST /api/counters/download/<url>?name=&update=`, `POST /api/counters/delete/<folder>` | D (POSTs management) | `ProductionRouteDelegate` counter handlers | Overlay host, D only; mutations require the core witness. |
@@ -2562,7 +2563,7 @@ notice's vosulay action uses the install-plan affordance that D1 delivers.
 | T1 | `assets/server/{tool-bridge.js,tool-bridge-v1.js,tokens.css,system.css,design.html}`, `docs/tools/{protocol,design}.md`, bridge browser tests |
 | D1 | Dashboard management views, `/api/plugins/<id>/settings` and `/api/settings` handlers |
 | N1 | The D20 notice view and its `DashboardStatus` field, including the `/api/ingame` tombstone, warning and vosulay install action (A7.5) |
-| C0 | Remaining `src/runtime/` and generic `src/server/` moves into core |
+| C0 | Core lifecycle, HTTP/WebSocket and tool registry composition; injected `Bundle`, with a root library exporting only `BUNDLE` and `BUNDLED` |
 | I0 | Workspace and crate manifests, lockfile, `BUNDLED`, route table, digests, boundary inventories, test roots |
 | X0, X1 | Rewritten smokes and fixtures; evidence and documentation closure |
 

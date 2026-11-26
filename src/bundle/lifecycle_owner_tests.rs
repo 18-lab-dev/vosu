@@ -1,117 +1,60 @@
-use super::*;
-use crate::logging::ConsoleSink;
-use crate::plugin::{DiscoveryService, ProcessRecord, ProcessSource, WorkerPool};
+#![cfg(feature = "test-harness")]
+
+use crate::{BUNDLE, BUNDLED};
+use std::{
+    io,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+use tokio::sync::watch;
+use vosu_core::{
+    plugin::{ProcessRecord, ProcessSource},
+    runtime::{TestDaemon, WebSocketHubs},
+    server::websocket::{
+        Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
+        StateSnapshot as WebSocketStateSnapshot,
+    },
+};
 
 const WAIT: Duration = Duration::from_secs(10);
+const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 
-#[path = "shutdown_close.rs"]
+#[path = "lifecycle_owner_tests/dashboard_off.rs"]
+mod dashboard_off;
+#[path = "lifecycle_owner_tests/shutdown_close.rs"]
 mod shutdown_close;
 
-#[cfg(feature = "test-harness")]
-#[path = "lifecycle_owner/cli_broker.rs"]
-mod cli_broker;
-
-#[path = "lifecycle_owner/dashboard_off.rs"]
-mod dashboard_off;
-
-#[derive(Default)]
-struct Console(Mutex<String>);
-impl ConsoleSink for Console {
-    fn is_tty(&self) -> bool {
+struct NoProcesses;
+impl ProcessSource for NoProcesses {
+    fn enumerate(&self) -> io::Result<Vec<ProcessRecord>> {
+        Ok(Vec::new())
+    }
+    fn is_alive(&self, _: u32) -> bool {
         false
-    }
-    fn write_log(&self, text: &str) -> io::Result<()> {
-        self.0.lock().unwrap().push_str(text);
-        Ok(())
-    }
-    fn clear_progress(&self, _: usize) -> io::Result<()> {
-        Ok(())
-    }
-    fn write_progress(&self, _: &str) -> io::Result<()> {
-        Ok(())
     }
 }
 
-async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
-    let config = Arc::new(
-        ConfigStore::initialize(root.join("vosu.toml"))
-            .await
-            .unwrap(),
-    );
-    let current = config.current();
-    let console = Arc::new(Console::default());
-    let logger = Logger::new(root, LoggerOptions::default(), console.clone()).unwrap();
-    let settings_storage = Arc::new(crate::runtime::overlay_root::RuntimeSettingsStorage::new(
-        Arc::new(ConfigSettingsBridgeB2::new(config.clone())),
-        Arc::new(crate::plugin::settings::PluginSettingsStore::open(root)),
-    ));
-    let plugin_settings = Arc::new(PluginSettingsService::new(
-        settings_storage.clone() as Arc<dyn crate::plugin::settings::SettingsStorage>
-    ));
-    let plugins = PluginHost::new(logger.clone(), plugin_settings.clone(), Handle::current());
-    (
-        ProductionRuntime {
-            changes: config.subscribe(),
-            config,
-            logger,
-            paths: crate::runtime::tests::runtime_test_paths(root),
-            shutdown_token: CancellationToken::new(),
-            signal_task: AsyncMutex::new(None),
-            startup_readiness: None,
-            authorizer: Arc::new(ReloadableAuthorizer::new(
-                &current.allowed_ips,
-                &current.server_ip,
-            )),
-            update_handed_off: AtomicBool::new(false),
-            update_notice: None,
-            removed_routes: Arc::default(),
-            counters: AsyncMutex::new(None),
-            overlay_root: AsyncMutex::new(None),
-            settings_storage,
-            plugin_settings,
-            tools: AsyncMutex::new(None),
-            tool_host: AsyncMutex::new(None),
-            catalog: AsyncMutex::new(None),
-            dev_tools: vec![],
-            dev_plugins: vec![],
-            api_v1: api_v1::ApiV1Service::new(&plugins, &current),
-            plugins,
-            state_host: AsyncMutex::new(None),
-            plugin_settings_watch: AsyncMutex::new(None),
-            listener: AsyncMutex::new(None),
-            dashboard_listener: AsyncMutex::new(None),
-            origins: Arc::new(
-                crate::server::origins::Origins::new(
-                    "http://127.0.0.1:24050".into(),
-                    "http://127.0.0.1:24051".into(),
-                )
-                .unwrap(),
-            ),
-            hubs: AsyncMutex::new(None),
-            adapters: AsyncMutex::new(None),
-            processor: AsyncMutex::new(None),
-            relays: AsyncMutex::new(None),
-            ordinary_role: false,
-            dashboard: true,
-            tray: AsyncMutex::new(None),
-            discovery: AsyncMutex::new(None),
-            #[cfg(windows)]
-            foreground: AsyncMutex::new(None),
-            #[cfg(target_os = "linux")]
-            login_state: Arc::new(AsyncMutex::new(false)),
-        },
-        console,
-    )
+struct UnreachableRoute;
+impl vosu_surface::routes::RouteProvider for UnreachableRoute {
+    fn respond(
+        &self,
+        _: vosu_surface::routes::SurfaceRequest,
+    ) -> vosu_surface::routes::ResponseFuture<'_, vosu_surface::routes::ProviderResponse> {
+        unreachable!("the conflicting route was refused")
+    }
 }
 
 #[tokio::test]
 async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_services() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
-        let (mut owner, console) = owner(root.path()).await;
+        let mut owner = TestDaemon::new(root.path(), &BUNDLE).await;
         // Deterministically make create_instance fail, without a process-global
         // fault switch or a different production plugin loading path.
-        owner.plugins.destroy_all(Duration::ZERO);
+        owner.plugins().destroy_all(Duration::ZERO);
         struct NoState;
         impl WebSocketStateProvider for NoState {
             fn poll_rate(&self, _: WebSocketSchema) -> Duration {
@@ -124,21 +67,21 @@ async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_service
                 None
             }
         }
-        *owner.hubs.get_mut() = Some(WebSocketHubs::start(Arc::new(NoState)));
-        let error = owner.compose().await.unwrap_err();
+        owner.set_hubs(WebSocketHubs::start(Arc::new(NoState)));
+        let error = owner.compose(Arc::new(NoProcesses)).await.unwrap_err();
         assert!(
             error
                 .to_string()
                 .contains("required bundled plugin vosu.osu failed")
         );
-        let outcome = finish_runtime_run(Err(error), owner.shutdown()).await;
+        let outcome = owner.finish_run(Err(error)).await;
         assert!(
             outcome.is_err(),
             "startup failure must propagate to the CLI's non-zero exit path"
         );
-        assert!(owner.shutdown_token.is_cancelled());
-        assert!(owner.hubs.lock().await.is_none());
-        let output = console.0.lock().unwrap();
+        assert!(owner.shutdown_token().is_cancelled());
+        assert!(owner.commands_hub().await.is_none());
+        let output = owner.output();
         assert!(output.contains("Plugin startup failed"));
         assert!(!output.contains("Searching for"));
     })
@@ -150,50 +93,27 @@ async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_service
 async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
-        let (owner, console) = owner(root.path()).await;
-        let pool = WorkerPool::new(2, 65536);
-        let broken = crate::plugin::BundledPlugin {
+        let owner = TestDaemon::new(root.path(), &BUNDLE).await;
+        let broken = vosu_core::plugin::BundledPlugin {
             manifest: "not a manifest",
             settings_schema: None,
             namespace_schemas: &[],
             action_schemas: &[],
             vtable: vosu_osu::vosu_plugin_vtable,
         };
-        assert!(
-            dev_plugins::load_bundled(
-                &owner.plugins,
-                &owner.paths,
-                &owner.logger,
-                &pool,
-                std::slice::from_ref(&broken),
-                &[],
-                &mut plugin_management::Roster::default(),
-                true,
-            )
-            .is_err()
-        );
-        assert!(!owner.plugins.has_enabled_matchers());
-        let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
+        assert!(owner.load_bundled(std::slice::from_ref(&broken)).is_err());
+        assert!(!owner.plugins().has_enabled_matchers());
+        let mut entries = BUNDLED[..BUNDLE.required.len()].to_vec();
         entries.push(broken);
         assert_eq!(
-            dev_plugins::load_bundled(
-                &owner.plugins,
-                &owner.paths,
-                &owner.logger,
-                &pool,
-                &entries,
-                &[],
-                &mut plugin_management::Roster::default(),
-                true,
-            )
-            .unwrap(),
-            dev_plugins::REQUIRED.len() as u64 + 1
+            owner.load_bundled(&entries).unwrap(),
+            BUNDLE.required.len() as u64 + 1
         );
-        assert!(owner.plugins.has_enabled_matchers());
+        assert!(owner.plugins().has_enabled_matchers());
         owner.shutdown().await.unwrap();
-        assert!(console.0.lock().unwrap().contains(&format!(
+        assert!(owner.output().contains(&format!(
             "optional bundled plugin at index {} failed",
-            dev_plugins::REQUIRED.len()
+            BUNDLE.required.len()
         )));
     })
     .await
@@ -227,50 +147,40 @@ impl ProcessSource for Source {
 async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
-        let (mut owner, console) = owner(root.path()).await;
+        let mut owner = TestDaemon::new(root.path(), &BUNDLE).await;
         let stopped = Arc::new(AtomicBool::new(false));
-        dev_plugins::load_all(&owner.plugins, vec![], &owner.paths, &owner.logger, true).unwrap();
-        let source = Arc::new(super::super::discovery::operational::LoggedSource::new(
-            Arc::new(Source(stopped.clone())),
-            owner.logger.clone(),
-        ));
-        *owner.discovery.get_mut() = Some(DiscoveryService::start(
-            &owner.plugins,
-            source,
-            Handle::current(),
-        ));
+        owner.load_all(true).unwrap();
+        owner.install_discovery(Arc::new(Source(stopped.clone())));
         loop {
-            if !owner.plugins.diagnostic_sessions().is_empty() {
+            if !owner.plugins().diagnostic_sessions().is_empty() {
                 break;
             }
             tokio::task::yield_now().await;
         }
-        let sessions = owner.plugins.diagnostic_sessions();
+        let sessions = owner.plugins().diagnostic_sessions();
         assert_eq!(sessions.len(), 1);
         let session = &sessions[0];
         assert_eq!(session.pid, 0x7c30_0001);
         assert_eq!(session.bitness, vosu_plugin_api::Bitness::X86);
         assert_eq!(session.state, "starting reader");
         assert!(!session.session.is_empty());
-        let plugins = owner.plugins.clone();
+        let plugins = owner.plugins().clone();
         owner
             .shutdown_with_plugin_destroy(async move {
                 assert!(
                     stopped.load(Ordering::Acquire),
                     "discovery stops before plugin destruction"
                 );
-                tokio::task::spawn_blocking(move || {
-                    plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
-                })
-                .await
-                .map_err(io::Error::other)
+                tokio::task::spawn_blocking(move || plugins.destroy_all(PLUGIN_DESTROY_GRACE))
+                    .await
+                    .map_err(io::Error::other)
             })
             .await
             .unwrap();
-        assert!(owner.plugins.diagnostic_sessions().is_empty());
-        assert!(owner.discovery.lock().await.is_none());
+        assert!(owner.plugins().diagnostic_sessions().is_empty());
+        assert!(!owner.discovery_running().await);
         {
-            let output = console.0.lock().unwrap();
+            let output = owner.output();
             assert!(
                 output.contains("Initial process discovery completed: 1 osu! process candidate(s)")
             );
@@ -284,24 +194,10 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
 async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
-        let (owner, _) = owner(root.path()).await;
-        let pool = WorkerPool::new(2, 65536);
-        dev_plugins::load_bundled(
-            &owner.plugins,
-            &owner.paths,
-            &owner.logger,
-            &pool,
-            crate::plugins::BUNDLED,
-            &[],
-            &mut plugin_management::Roster::default(),
-            true,
-        )
-        .unwrap();
-        let (adapters, hubs) =
-            adapters::Adapters::start(&owner.plugins, owner.config.clone(), true)
-                .await
-                .unwrap();
-        let router = adapters.router(owner.plugins.clone());
+        let owner = TestDaemon::new(root.path(), &BUNDLE).await;
+        owner.load_bundled(BUNDLED).unwrap();
+        let mut adapters = owner.start_adapters(true).await.unwrap();
+        let router = adapters.router(owner.plugins().clone());
         for path in [
             "/json",
             "/json/sc",
@@ -326,8 +222,8 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             routes::{ProviderResponse, RegistrationError, RouteDescriptor, RoutePath},
         };
         let requester = owner
-            .plugins
-            .surface_requester(crate::plugin::PluginInstanceId::new(1))
+            .plugins()
+            .surface_requester(vosu_core::plugin::PluginInstanceId::new(1))
             .unwrap();
         let conflict = requester.register_routes(vec![(
             RouteDescriptor {
@@ -336,9 +232,7 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
                 path: RoutePath::Exact("/api/v1/sessions".into()),
                 websocket: false,
             },
-            Arc::new(crate::server::service::RegisteredProvider::Calculate(
-                Default::default(),
-            )),
+            Arc::new(UnreachableRoute),
         )]);
         assert!(matches!(conflict, Err(RegistrationError::Collision)));
         let mut feeds = Vec::new();
@@ -352,7 +246,7 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             };
             feeds.push(feed);
         }
-        adapters.shutdown().await.unwrap();
+        adapters.stop_adapters().await.unwrap();
         assert!(feeds.iter().all(|feed| feed.state.is_closed()));
         let request = axum::http::Request::builder()
             .uri("/json/v2")
@@ -363,7 +257,7 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             axum::http::StatusCode::NOT_FOUND
         );
         drop(feeds);
-        hubs.shutdown().await;
+        adapters.stop_hubs().await;
         owner.shutdown().await.unwrap();
     })
     .await
@@ -373,27 +267,16 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
 #[tokio::test]
 async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
     tokio::time::timeout(WAIT, async {
-        for omitted in 0..dev_plugins::REQUIRED.len() {
+        for omitted in 0..BUNDLE.required.len() {
             let root = tempfile::tempdir().unwrap();
-            let (owner, _) = owner(root.path()).await;
-            let pool = WorkerPool::new(2, 65536);
-            let mut entries = crate::plugins::BUNDLED[..dev_plugins::REQUIRED.len()].to_vec();
+            let owner = TestDaemon::new(root.path(), &BUNDLE).await;
+            let mut entries = BUNDLED[..BUNDLE.required.len()].to_vec();
             entries.remove(omitted);
             assert!(
-                dev_plugins::load_bundled(
-                    &owner.plugins,
-                    &owner.paths,
-                    &owner.logger,
-                    &pool,
-                    &entries,
-                    &[],
-                    &mut plugin_management::Roster::default(),
-                    true,
-                )
-                .is_err(),
+                owner.load_bundled(&entries).is_err(),
                 "required slot {omitted}"
             );
-            assert!(!owner.plugins.has_enabled_matchers());
+            assert!(!owner.plugins().has_enabled_matchers());
             owner.shutdown().await.unwrap();
         }
     })
@@ -405,13 +288,13 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
 async fn signal_task_panic_still_joins_config_and_logger_before_returning_error() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
-        let (mut owner, _) = owner(root.path()).await;
-        let config = owner.config.clone();
+        let mut owner = TestDaemon::new(root.path(), &BUNDLE).await;
+        let config = owner.config().clone();
         config.update(|current| current.poll_rate = 275.0);
         // Leave the worker idle, not waiting on a timer that might panic
         // during runtime drop and accidentally conceal a missing shutdown.
         config.flush().await.unwrap();
-        *owner.signal_task.get_mut() = Some(tokio::spawn(async {
+        owner.set_signal_task(tokio::spawn(async {
             panic!("injected signal shutdown panic");
         }));
 
@@ -426,7 +309,7 @@ async fn signal_task_panic_still_joins_config_and_logger_before_returning_error(
             io::ErrorKind::BrokenPipe
         );
         assert_eq!(
-            owner.logger.flush().await.unwrap_err().kind(),
+            owner.logger().flush().await.unwrap_err().kind(),
             io::ErrorKind::BrokenPipe
         );
     })
@@ -438,8 +321,8 @@ async fn signal_task_panic_still_joins_config_and_logger_before_returning_error(
 async fn plugin_destroy_failure_still_joins_config_and_logger_before_returning_error() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
-        let (owner, _) = owner(root.path()).await;
-        let config = owner.config.clone();
+        let owner = TestDaemon::new(root.path(), &BUNDLE).await;
+        let config = owner.config().clone();
         config.flush().await.unwrap();
 
         let error = owner
@@ -453,13 +336,13 @@ async fn plugin_destroy_failure_still_joins_config_and_logger_before_returning_e
                 .to_string()
                 .contains("injected plugin destroy failure")
         );
-        assert!(owner.shutdown_token.is_cancelled());
+        assert!(owner.shutdown_token().is_cancelled());
         assert_eq!(
             config.flush().await.unwrap_err().kind(),
             io::ErrorKind::BrokenPipe
         );
         assert_eq!(
-            owner.logger.flush().await.unwrap_err().kind(),
+            owner.logger().flush().await.unwrap_err().kind(),
             io::ErrorKind::BrokenPipe
         );
     })

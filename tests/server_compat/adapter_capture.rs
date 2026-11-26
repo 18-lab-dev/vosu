@@ -5,7 +5,7 @@
 use super::mounted::*;
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use vosu::runtime::ListenerOwner;
+use vosu_core::runtime::ListenerOwner;
 use vosu_core::server::adapter_capture::{
     AdapterCaptureSample, DerivedStatus, FORMAT,
     endpoint::{

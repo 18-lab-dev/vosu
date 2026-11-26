@@ -58,7 +58,7 @@ async fn body(response: axum::response::Response) -> Value {
 fn real_osu_import_action_http_registry_schema_and_terminal() {
     let h = Harness::new();
     let results = super::import_fixture::register(h.root.path().into());
-    let production = &vosu::plugins::BUNDLED[0];
+    let production = &vosu::BUNDLED[0];
     let loaded = plugin::load_bundled(
         &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
         &vosu_core::plugin::ValidationSnapshot::default(),

@@ -1,8 +1,13 @@
-use std::{collections::HashMap, sync::{Arc, Mutex, PoisonError, Weak}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, PoisonError, Weak},
+};
 
 use tokio_util::sync::CancellationToken;
 use vosu_core::server::service::{COMMANDS_NAMESPACE, RelayControl};
-use vosu_overlay_host::commands::{CommandAction, CommandClient, CommandProcessor, Relay, RelaySink};
+use vosu_overlay_host::commands::{
+    CommandAction, CommandClient, CommandProcessor, Relay, RelaySink,
+};
 
 /// A rejected legacy filter source keeps the connection's prior plan.
 pub(super) fn parse_command_filters(source: &[u8]) -> Option<Vec<vosu_surface::filter::Filter>> {
@@ -209,5 +214,11 @@ async fn run_relay_worker(
 
 fn client_channel(client_id: u64) -> Option<u64> {
     let channel = client_id % 8;
-    (1..=COMMANDS_NAMESPACE).contains(&channel).then_some(channel)
+    (1..=COMMANDS_NAMESPACE)
+        .contains(&channel)
+        .then_some(channel)
 }
+
+#[cfg(test)]
+#[path = "relay_tests.rs"]
+mod tests;

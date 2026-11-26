@@ -170,8 +170,7 @@ pub(super) async fn run_command(command: CliCommand, bundle: &Bundle) -> io::Res
                     signal.cancel();
                 }
             });
-            let result =
-                crate::logging::print_logs(&logs_dir, lines, follow, cancellation).await;
+            let result = crate::logging::print_logs(&logs_dir, lines, follow, cancellation).await;
             interrupt.abort();
             result
         }

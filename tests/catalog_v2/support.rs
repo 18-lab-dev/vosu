@@ -53,7 +53,7 @@ impl Case {
 }
 pub fn manifest(kind: &str) -> Value {
     let mut value = json!({"manifest_version":1,"kind":kind,"id":"corpus",
-        "name":"Corpus","version":"9.0.0","host":format!("={}",vosu::application_version())});
+        "name":"Corpus","version":"9.0.0","host":format!("={}",vosu::BUNDLE.version)});
     match kind {
         "plugin" => {
             value["id"] = json!("acme.corpus");

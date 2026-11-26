@@ -1,11 +1,11 @@
 //! Fixed-window budgets over the process's static tracing callsites.
+use crate::logging::Logger;
 use std::{
     collections::HashMap,
     sync::Mutex,
     time::{Duration, Instant},
 };
 use tracing::{Level, Metadata, callsite::Identifier};
-use crate::logging::Logger;
 
 pub(super) const WINDOW: Duration = Duration::from_secs(1);
 pub(super) const LINES_PER_WINDOW: u32 = 20;

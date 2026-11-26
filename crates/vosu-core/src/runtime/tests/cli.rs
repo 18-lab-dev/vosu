@@ -1,4 +1,3 @@
-use vosu_proptest::bounded;
 use super::cli::{CliCommand, CommandInvocation, classify_command_invocation};
 #[cfg(target_os = "linux")]
 use super::cli::BackendProbe;
@@ -158,7 +157,7 @@ fn backend_probe_arguments_are_not_commands_off_linux() {
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 #[tokio::test]
 async fn backend_probe_is_unsupported_without_process_event_feature() {
-    let error = bounded!(super::cli::run_command(CliCommand::ProbeBackend(BackendProbe::Ebpf)))
+    let error = bounded!(super::cli::run_command(CliCommand::ProbeBackend(BackendProbe::Ebpf), &VERSION_FIXTURE))
         .expect_err("featureless probe unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }
@@ -166,15 +165,21 @@ async fn backend_probe_is_unsupported_without_process_event_feature() {
 #[cfg(not(target_os = "linux"))]
 #[tokio::test]
 async fn setup_is_unsupported_off_linux() {
-    let error = bounded!(super::cli::run_command(CliCommand::Setup))
+    let error = bounded!(super::cli::run_command(CliCommand::Setup, &VERSION_FIXTURE))
         .expect_err("non-Linux setup unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 #[test]
-fn backend_probe_uses_nonempty_osu_matcher_prefilter() {
-    let hints = super::cli::backend_probe_hints().unwrap();
+fn backend_probe_uses_the_injected_matcher_prefilter() {
+    static PLUGINS: [crate::plugin::BundledPlugin<'static>; 1] = [crate::plugin::BundledPlugin {
+        manifest: "manifest_version=1\nkind='plugin'\nid='fixture.game'\nname='Probe fixture'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='game:fixture'\nversion='*'\n[match]\nprocess_names=['osu!','osulazer.exe']\ncomm_hints=['osu!','osulazer.exe']\n",
+        settings_schema: None, namespace_schemas: &[], action_schemas: &[],
+        vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
+    }];
+    let bundle = Bundle { plugins: &PLUGINS, ..VERSION_FIXTURE };
+    let hints = super::cli::backend_probe_hints(&bundle).unwrap();
     assert!(!hints.is_empty());
     assert!(hints.iter().any(|hint| hint == b"osu!"));
     assert!(hints.iter().any(|hint| hint == b"osulazer.exe"));

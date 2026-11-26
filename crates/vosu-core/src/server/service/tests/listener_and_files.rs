@@ -6,12 +6,6 @@
         };
         use tokio::io::AsyncWriteExt as _;
 
-        let directory = tempfile::tempdir().unwrap();
-        let counters = Arc::new(ReloadableCounterService::production(
-            directory.path().join("static"),
-            directory.path().join("settings"),
-            directory.path().join("cache"),
-        ));
         let (_, events) = tokio::sync::watch::channel(0);
         let state = Arc::new(NoState { events });
         let v1 = WebSocketHub::new(websocket::Schema::V1, state.clone());
@@ -19,14 +13,10 @@
         let v2 = WebSocketHub::new(websocket::Schema::V2, state.clone());
         let precise = WebSocketHub::new(websocket::Schema::V2Precise, state.clone());
         let commands = WebSocketHub::new(websocket::Schema::V1, state.clone());
-        let relays = Arc::new(WebSocketRelaySink::new());
-        let command_providers = Arc::new(CommandProviders);
-        let processor = Arc::new(CommandProcessor::new(command_providers, relays.clone()));
         let unused = Arc::new(UnusedServices);
         let delegate = Arc::new(ProductionRouteDelegate::new(
             ProductionServices::with_native_report_probe(
-                counters,
-                Arc::new(Current::default()),
+                Arc::new(TestOverlay::default()),
                 unused.clone(),
                 unused.clone(),
                 unused,
@@ -36,8 +26,6 @@
                     v2,
                     precise,
                     commands: commands.clone(),
-                    processor,
-                    relays: relays.clone(),
                 },
             ),
         ));
@@ -104,7 +92,6 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             0,
         );
         assert_eq!(commands.client_count(), 0);
-        bounded!(relays.shutdown());
     }
 
 

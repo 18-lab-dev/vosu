@@ -459,12 +459,10 @@ fn execute() -> Result<()> {
             let cache = Paths::resolve(&DaemonPathResolver, channel)?
                 .bundled_plugin_data_dir("vosu.osu")
                 .join("offsets");
-            let asset = vosu::assets::DaemonAssets::get("offsets.json")
-                .ok_or_else(|| fail("embedded offsets missing"))?;
             let loader = LazerOffsetLoader::new(
                 CacheOnly,
                 cache,
-                bytes::Bytes::copy_from_slice(&asset.data),
+                bytes::Bytes::from_static(include_bytes!("../assets/offsets.json")),
             );
             let path = loader.cache_path(&version)?;
             let rt = tokio::runtime::Builder::new_current_thread()

@@ -48,9 +48,9 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use vosu::server::overlay_folders::{FolderOpener, open_folder};
 use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_core::report::escape_html;
+use vosu_core::server::overlay_folders::{FolderOpener, open_folder};
 use vosu_core::server::{
     auth::{AuthorizationPolicy, RequestHeaders},
     files::{
@@ -740,7 +740,12 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
         changed_legacy_schema
     );
     assert_eq!(std::fs::read(&legacy_values_path).unwrap(), legacy_values);
-    assert!(open_folder(&NoopOpener, &static_root, "../outside").is_err());
+    assert!(
+        open_folder(&NoopOpener, &static_root, "../outside", |name| {
+            vosu_overlay_host::validate_component(name).is_ok()
+        })
+        .is_err()
+    );
     assert!(restarted.delete("counter/child").is_err());
 }
 

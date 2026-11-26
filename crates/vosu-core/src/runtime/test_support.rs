@@ -65,7 +65,11 @@ impl TestProductionComposition {
         &self,
         schema: WebSocketSchema,
     ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
-        self.adapters.as_ref().expect("adapters started").provider(schema).capture_for_harness()
+        self.adapters
+            .as_ref()
+            .expect("adapters started")
+            .provider(schema)
+            .capture_for_harness()
     }
 
     pub async fn shutdown(mut self) {
@@ -124,7 +128,12 @@ pub async fn start_test_production_composition(
     let endpoint = options
         .network
         .endpoints()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "test network endpoints missing"))?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "test network endpoints missing",
+            )
+        })?
         .catalog
         .clone();
     let catalog = OverlayCatalog::Test {
@@ -135,7 +144,10 @@ pub async fn start_test_production_composition(
         ),
         endpoint,
     };
-    let origins = Arc::new(crate::server::origins::Origins::new(String::new(), String::new())?);
+    let origins = Arc::new(crate::server::origins::Origins::new(
+        String::new(),
+        String::new(),
+    )?);
     fs::create_dir_all(&plugin_data)?;
     let logger = Logger::new(
         &options.logs_root,
@@ -249,14 +261,12 @@ pub async fn start_test_production_composition(
                 &config.server_ip,
             )),
             delegate: Arc::new(
-                ProductionRouteDelegate::new(services).with_surface(adapters.router(plugins.clone())),
+                ProductionRouteDelegate::new(services)
+                    .with_surface(adapters.router(plugins.clone())),
             ),
         };
         let listener = ListenerOwner::start(providers, options.target).await?;
-        origins.observe_listeners(
-            listener.state.clone(),
-            watch::channel(Default::default()).1,
-        );
+        origins.observe_listeners(listener.state.clone(), watch::channel(Default::default()).1);
         owner.listener = Some(listener);
         Ok(())
     }

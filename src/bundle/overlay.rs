@@ -1,5 +1,10 @@
 //! Wiring between the bundled overlay host and core's listener lifecycle.
-use std::{collections::HashMap, io, path::PathBuf, sync::{Arc, Mutex, Weak}};
+use std::{
+    collections::HashMap,
+    io,
+    path::PathBuf,
+    sync::{Arc, Mutex, Weak},
+};
 
 use serde_json::Value;
 use vosu_core::{
@@ -21,6 +26,8 @@ use vosu_overlay_host::{
 use vosu_plugin_api::manifest::{HostSupport, PackageManifest, ValidationError};
 use vosu_surface::routes::{ResponseFuture, SurfaceRequest, SurfaceResponse};
 
+#[cfg(test)]
+mod command_filters_tests;
 mod relay;
 mod root;
 
@@ -52,7 +59,9 @@ impl Overlay {
         }));
         let catalog = match inputs.catalog {
             OverlayCatalog::Production => CatalogService::production(&version),
-            OverlayCatalog::Test { client, endpoint } => CatalogService::new(client, endpoint, &version),
+            OverlayCatalog::Test { client, endpoint } => {
+                CatalogService::new(client, endpoint, &version)
+            }
         };
         let root = OverlayRootComposition::new(
             inputs.host,
@@ -88,7 +97,12 @@ impl OverlayComposition for Overlay {
     }
 
     fn reload_root(&self, root: PathBuf) {
-        let processor = self.workers.lock().unwrap().as_ref().map(|parts| parts.processor.clone());
+        let processor = self
+            .workers
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|parts| parts.processor.clone());
         if let Some(processor) = processor {
             self.root.counters.reload_static_root(root);
             self.root.apply(&self.current_root());
@@ -99,8 +113,13 @@ impl OverlayComposition for Overlay {
     fn mount(&self, commands: WebSocketHub) -> io::Result<()> {
         let (presenter, processor) = {
             let mut workers = self.workers.lock().unwrap();
-            let workers = workers.as_mut().ok_or_else(|| io::Error::other("overlay shut down"))?;
-            let presenter = workers.presenter.take().ok_or_else(|| io::Error::other("overlay already mounted"))?;
+            let workers = workers
+                .as_mut()
+                .ok_or_else(|| io::Error::other("overlay shut down"))?;
+            let presenter = workers
+                .presenter
+                .take()
+                .ok_or_else(|| io::Error::other("overlay already mounted"))?;
             (presenter, workers.processor.clone())
         };
         self.root.mount_routes(presenter, processor, commands)
@@ -111,28 +130,44 @@ impl OverlayComposition for Overlay {
     }
 
     fn has_settings(&self, overlay: &str) -> bool {
-        self.root.counters.settings_store().counter_values(overlay).is_ok()
+        self.root
+            .counters
+            .settings_store()
+            .counter_values(overlay)
+            .is_ok()
     }
 
     fn installed_names(&self) -> HashMap<String, String> {
-        let Ok(installed) = self.root.counters.installed() else { return HashMap::new() };
+        let Ok(installed) = self.root.counters.installed() else {
+            return HashMap::new();
+        };
         let nicknames = self.root.counters.names().snapshot();
-        installed.into_iter().map(|counter| {
-            let name = nicknames.get(&counter.folder_name)
-                .and_then(|name| name.nickname.clone())
-                .unwrap_or(counter.name);
-            (counter.folder_name, name)
-        }).collect()
+        installed
+            .into_iter()
+            .map(|counter| {
+                let name = nicknames
+                    .get(&counter.folder_name)
+                    .and_then(|name| name.nickname.clone())
+                    .unwrap_or(counter.name);
+                (counter.folder_name, name)
+            })
+            .collect()
     }
 
     fn report_counters(&self) -> Result<Vec<ReportCounter>, String> {
-        Ok(self.root.counters.discover().map_err(|error| error.to_string())?
-            .into_iter().map(|counter| ReportCounter {
+        Ok(self
+            .root
+            .counters
+            .discover()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|counter| ReportCounter {
                 author: counter.author,
                 name: counter.name,
                 version: counter.version,
                 folder_name: counter.folder_name,
-            }).collect())
+            })
+            .collect())
     }
 
     fn values_path(&self, id: &str) -> PathBuf {
@@ -163,7 +198,11 @@ impl OverlayComposition for Overlay {
             (workers.processor.clone(), workers.relays.clone())
         };
         let registration = relays.register(namespace, client.clone(), control);
-        Some(Box::new(Session { client, processor, _registration: registration }))
+        Some(Box::new(Session {
+            client,
+            processor,
+            _registration: registration,
+        }))
     }
 
     fn shutdown(&self) -> ProviderFuture<'_, ()> {
@@ -194,8 +233,9 @@ impl CommandSession for Session {
 fn command_reply(action: CommandAction) -> CommandReply {
     match action {
         CommandAction::Reply(bytes) => CommandReply::Reply(bytes),
-        CommandAction::ApplyFilters(source) => parse_command_filters(&source)
-            .map_or(CommandReply::NoAck, CommandReply::ApplyFilters),
+        CommandAction::ApplyFilters(source) => {
+            parse_command_filters(&source).map_or(CommandReply::NoAck, CommandReply::ApplyFilters)
+        }
         CommandAction::NoAck => CommandReply::NoAck,
     }
 }
@@ -204,12 +244,19 @@ struct RuntimeCounterFacade(Arc<ReloadableCounterService>);
 
 impl SettingsProvider for RuntimeCounterFacade {
     fn get(&self, overlay: &str) -> Result<Value, String> {
-        self.0.get_counter_values(overlay).map(Value::Object).map_err(|error| error.to_string())
+        self.0
+            .get_counter_values(overlay)
+            .map(Value::Object)
+            .map_err(|error| error.to_string())
     }
 
     fn save(&self, overlay: &str, body: Value) -> Result<(), String> {
-        let payload: Vec<SettingInput> = serde_json::from_value(body).map_err(|error| error.to_string())?;
-        self.0.save_user_values(overlay, &payload).map(|_| ()).map_err(|error| error.to_string())
+        let payload: Vec<SettingInput> =
+            serde_json::from_value(body).map_err(|error| error.to_string())?;
+        self.0
+            .save_user_values(overlay, &payload)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -221,9 +268,22 @@ struct InstalledOverlayValidation {
 }
 
 impl vosu_overlay_host::InstalledPackages for InstalledOverlayValidation {
-    fn validate_all(&self, discovered: &[&PackageManifest]) -> Vec<Result<HostSupport, ValidationError>> {
-        let mut snapshot = self.host.upgrade().map_or_else(Default::default, |host| host.validation_snapshot());
-        snapshot.packages.extend(discovered.iter().map(|package| PackageRegistration::new(package, "overlays")));
-        discovered.iter().map(|package| snapshot.validate(package, &self.version, "overlays", false)).collect()
+    fn validate_all(
+        &self,
+        discovered: &[&PackageManifest],
+    ) -> Vec<Result<HostSupport, ValidationError>> {
+        let mut snapshot = self
+            .host
+            .upgrade()
+            .map_or_else(Default::default, |host| host.validation_snapshot());
+        snapshot.packages.extend(
+            discovered
+                .iter()
+                .map(|package| PackageRegistration::new(package, "overlays")),
+        );
+        discovered
+            .iter()
+            .map(|package| snapshot.validate(package, &self.version, "overlays", false))
+            .collect()
     }
 }

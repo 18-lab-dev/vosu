@@ -85,7 +85,9 @@ impl ProductionRuntime {
             if let Err(error) = watch.await
                 && !error.is_cancelled()
             {
-                result = Err(io::Error::other(format!("plugin settings watch failed: {error}")));
+                result = Err(io::Error::other(format!(
+                    "plugin settings watch failed: {error}"
+                )));
             }
         }
         if let Some(catalog) = self.catalog.lock().await.take() {
@@ -139,6 +141,7 @@ impl ProductionRuntime {
         if let Some(listener) = dashboard_listener {
             listener.join().await;
         }
+        self.api_v1.join().await;
         // Adapter consumers stop before plugin destroy; neither failure may
         // skip the remaining joins.
         if let Some(adapters) = self.adapters.lock().await.take() {
@@ -163,6 +166,21 @@ impl ProductionRuntime {
     }
 
     async fn compose(&mut self) -> io::Result<()> {
+        let broker_path = self.paths.broker_path().map(Some);
+        self.compose_with_discovery(broker_path, |host, logger| {
+            discovery::start_discovery(host, Handle::current(), logger)
+        })
+        .await
+    }
+
+    async fn compose_with_discovery(
+        &mut self,
+        broker_path: io::Result<Option<PathBuf>>,
+        start_discovery: impl FnOnce(
+            &Arc<PluginHost>,
+            &Logger,
+        ) -> Option<crate::plugin::DiscoveryService>,
+    ) -> io::Result<()> {
         if self.listener.get_mut().is_some() {
             return Ok(());
         }
@@ -299,7 +317,8 @@ impl ProductionRuntime {
             }
         }
         if let Some(catalog) = self.catalog.get_mut() {
-            catalog.attach_web_hosts(tools.clone(), Arc::clone(&overlay));
+            catalog.attach_tools(tools.clone());
+            catalog.attach_overlay(Arc::clone(&overlay));
         }
         *self.tools.get_mut() = Some(tools.clone());
         if let Err(error) = overlay.mount(hubs.v1.clone()) {
@@ -373,16 +392,15 @@ impl ProductionRuntime {
             delegate: Arc::new(delegate),
         };
         let mut dashboard_providers = providers.clone();
-        dashboard_providers.authorization =
-            Arc::new(crate::server::origins::OriginAuthorizer {
-                inner: self.authorizer.clone(),
-                origins: Arc::clone(&self.origins),
-                dashboard: true,
-            });
+        dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {
+            inner: self.authorizer.clone(),
+            origins: Arc::clone(&self.origins),
+            dashboard: true,
+        });
         let mut listener = match ListenerOwner::start_with_broker(
             providers,
             target,
-            self.paths.broker_path().map(Some),
+            broker_path,
             Some(self.logger.clone()),
         )
         .await
@@ -445,15 +463,13 @@ impl ProductionRuntime {
         *self.dashboard_listener.get_mut() = dashboard_listener;
         *self.listener.get_mut() = Some(listener);
         *self.hubs.get_mut() = Some(hubs);
-        let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger)
-            .ok_or_else(|| {
-                let message = "required osu! discovery did not start";
-                self.logger.error(message);
-                io::Error::other(message)
-            })?;
+        let discovery = start_discovery(&self.plugins, &self.logger).ok_or_else(|| {
+            let message = "required osu! discovery did not start";
+            self.logger.error(message);
+            io::Error::other(message)
+        })?;
         #[cfg(windows)]
-        let foreground =
-            crate::plugin::ForegroundPoller::start(&self.plugins, Handle::current());
+        let foreground = crate::plugin::ForegroundPoller::start(&self.plugins, Handle::current());
         *self.discovery.get_mut() = Some(discovery);
         #[cfg(windows)]
         {
@@ -577,9 +593,7 @@ impl RuntimeHooks for ProductionRuntime {
                 UpdateCheck::MajorAvailable(release) => {
                     self.logger.warn(format!(
                         "Major update available: v{} => v{} (requires dashboard confirmation): {}",
-                        self.bundle.version,
-                        release.version,
-                        release.release_url
+                        self.bundle.version, release.version, release.release_url
                     ));
                     self.update_notice = Some(UpdateNotice::Major(release));
                 }
@@ -750,8 +764,8 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
         launch: env::current_dir()?,
         environment: &environment,
     };
-    let channel = vosu_sys::platform::BuildChannel::from_version(bundle.version)
-        .map_err(io::Error::other)?;
+    let channel =
+        vosu_sys::platform::BuildChannel::from_version(bundle.version).map_err(io::Error::other)?;
     let paths = Paths::resolve(&resolver, channel)?;
     paths.initialize()?;
     let role = dispatch_startup_role(raw_args, &NativePlatform)
@@ -843,9 +857,7 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     if ordinary_role {
         let enabled = config.current().start_at_login;
-        match tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled))
-            .await
-        {
+        match tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled)).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 logger.warn(format!("Start at login could not be reconciled: {error}"))
@@ -951,6 +963,8 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
     finish_runtime_run(run_result, app.hooks().shutdown()).await
 }
 
-#[cfg(test)]
-#[path = "tests/lifecycle_owner.rs"]
-mod owner_tests;
+#[cfg(feature = "test-harness")]
+#[path = "test_daemon.rs"]
+mod test_daemon;
+#[cfg(feature = "test-harness")]
+pub use test_daemon::{TestAdapters, TestDaemon};

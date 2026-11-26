@@ -39,7 +39,10 @@ pub(super) fn mount(
     host: &Arc<PluginHost>,
 ) -> io::Result<vosu_surface::routes::RegistrationLease> {
     let instance = bundle.instance(bundle.dashboard).ok_or_else(|| {
-        io::Error::other(format!("{} is missing from the bundled set", bundle.dashboard))
+        io::Error::other(format!(
+            "{} is missing from the bundled set",
+            bundle.dashboard
+        ))
     })?;
     let requester = host.surface_requester(instance).map_err(io::Error::other)?;
     requester

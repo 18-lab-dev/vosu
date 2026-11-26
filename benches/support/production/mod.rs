@@ -131,7 +131,7 @@ impl ProductionHost {
             let logger = vosu_core::logging::Logger::new(
                 root.path().join("logs"),
                 vosu_core::logging::LoggerOptions {
-                    version: vosu::application_version().to_string(),
+                    version: vosu::BUNDLE.version.to_owned(),
                     debug_log: false,
                     queue_capacity: 64,
                 },
@@ -145,7 +145,7 @@ impl ProductionHost {
         };
         let launcher = ProcessHostLauncher::with_executable(
             Path::new(env!("CARGO_BIN_EXE_vosu")),
-            vosu::plugin_host::BUILD_IDENTITY,
+            vosu::BUNDLE.plugin_host_identity,
         )
         .expect("the production process launcher");
         host.install_process_launcher(Arc::new(launcher))
@@ -191,7 +191,7 @@ impl ProductionHost {
         );
         write(&dir.join("lib").join(library_name()), &self.library);
         vosu_core::plugin::load_development(
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             &vosu_core::plugin::ValidationSnapshot::default(),
             &dir,
             cfg!(debug_assertions),

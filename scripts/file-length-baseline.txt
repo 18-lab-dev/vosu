@@ -1,6 +1,7 @@
 1465 assets/server/homepage-controls.css
 1559 assets/server/homepage.css
 2146 assets/server/homepage.js
+1114 crates/vosu-core/src/server/websocket/tests.rs
 1018 crates/vosu-osu-reader/src/memory/lazer/reader.rs
 1027 crates/vosu-osu-reader/src/memory/lazer/tests_behavior.rs
 1230 crates/vosu-osu-reader/src/memory/lazer/tests_core.rs
@@ -12,4 +13,3 @@
 1045 crates/vosu-sys/src/platform/linux/capabilities.rs
 1161 crates/vosu-sys/src/process/linux.rs
 1201 crates/vosu-sys/src/process/linux/tests/mod.rs
-1114 crates/vosu-core/src/server/websocket/tests.rs

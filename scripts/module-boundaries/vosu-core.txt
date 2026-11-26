@@ -30,6 +30,27 @@ server -> removed_routes
 server -> resource_io
 server -> resources
 server -> state
+server -> report
+
+# M7 C0: core composes process-wide services behind the injected bundle.
+runtime -> actions
+runtime -> app
+runtime -> catalog
+runtime -> config
+runtime -> desktop
+runtime -> logging
+runtime -> plugin
+runtime -> removed_routes
+runtime -> report
+runtime -> resources
+runtime -> server
+runtime -> state
+runtime -> tools
+runtime -> updater
+# The registry supplies API v1 action authority without a server -> tools edge.
+tools -> actions
+tools -> plugin
+tools -> server
 report -> config
 updater -> desktop
 # catalog persistence uses the existing vosu-core -> vosu-sys crate edge

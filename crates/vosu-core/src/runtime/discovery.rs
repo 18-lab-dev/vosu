@@ -18,13 +18,13 @@
 use std::io;
 use std::sync::Arc;
 
-use tokio::runtime::Handle;
 use crate::logging::Logger;
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use crate::plugin::Prefilter;
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use crate::plugin::ProcessRecord;
 use crate::plugin::{DiscoveryService, PluginHost, ProcessSource};
+use tokio::runtime::Handle;
 
 pub(super) mod operational;
 
@@ -199,11 +199,11 @@ mod tests {
     use super::start_discovery;
     use std::sync::Arc;
 
-    use serde_json::{Map, Value};
-    use tokio::runtime::Handle;
     use crate::logging::{ConsoleSink, Logger, LoggerOptions};
     use crate::plugin::PluginHost;
     use crate::plugin::settings::{PluginSettingsService, SettingsError, SettingsStorage};
+    use serde_json::{Map, Value};
+    use tokio::runtime::Handle;
 
     struct DummyStorage;
     impl SettingsStorage for DummyStorage {

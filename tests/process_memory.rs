@@ -11,7 +11,6 @@ use bytes::Bytes;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use vosu::assets::DaemonAssets;
 use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_osu_reader::memory::{
@@ -564,7 +563,7 @@ impl OffsetGenerator for FakeGenerator {
 }
 
 fn embedded_offsets() -> Bytes {
-    Bytes::copy_from_slice(&DaemonAssets::get("offsets.json").unwrap().data)
+    Bytes::from_static(include_bytes!("../assets/offsets.json"))
 }
 
 fn offsets_for(version: &str) -> Bytes {

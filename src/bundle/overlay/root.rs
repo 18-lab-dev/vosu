@@ -56,7 +56,9 @@ impl OverlayRootComposition {
             instance,
             storage,
             settings,
-            query: Mutex::new(Some(vosu_overlay_host::bind_overlay_query(data_dir, &counters, origin))),
+            query: Mutex::new(Some(vosu_overlay_host::bind_overlay_query(
+                data_dir, &counters, origin,
+            ))),
             counters,
             serving,
             generation: Mutex::new(Some((0, None))),
@@ -88,7 +90,11 @@ impl OverlayRootComposition {
                     std::io::Error::other(format!("overlay host registration failed: {error:?}"))
                 })
             })?;
-        let previous = self.routes.lock().unwrap_or_else(|p| p.into_inner()).replace(lease);
+        let previous = self
+            .routes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .replace(lease);
         drop(previous);
         Ok(())
     }
@@ -101,15 +107,12 @@ impl OverlayRootComposition {
         self.storage.seed_overlay_root(root);
         let id = self.storage.overlay_setting().plugin;
         let schema = self.host.schema_for(id);
-        if let Ok(values) = self.settings.effective_settings(id, schema.as_ref())
-        {
+        if let Ok(values) = self.settings.effective_settings(id, schema.as_ref()) {
             if let Err(error) = self.counters.apply_settings(&values) {
                 tracing::warn!(%error, "overlay root setting was not applied");
             }
-            self.host.settings_changed(
-                id,
-                Message::SettingsChanged(SettingsChanged { values }),
-            );
+            self.host
+                .settings_changed(id, Message::SettingsChanged(SettingsChanged { values }));
         }
         let lease = self.host.overlay_root_lease(self.instance, root);
         let mut generation = self.generation.lock().unwrap_or_else(|p| p.into_inner());

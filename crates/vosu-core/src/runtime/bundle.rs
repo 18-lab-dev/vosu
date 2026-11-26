@@ -3,13 +3,7 @@
 //! identities, and [`BundledHosts`], the one object through which core's
 //! runtime reaches the bundled hosts' in-process pieces. Core names no
 //! bundled crate; `src/main.rs` passes `&vosu::BUNDLE` to [`super::run_cli`].
-use std::{
-    ffi::OsString,
-    io,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{ffi::OsString, io, path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use tokio_util::sync::CancellationToken;
