@@ -216,6 +216,7 @@ LINUX_STEPS = [
     ("crate-boundaries", [sys.executable, "scripts/check-crate-boundaries.py"], None, ()),
     ("license-notices", [sys.executable, "scripts/assemble-release-license.py"], None, ()),
     ("asset-hashes", [sys.executable, "scripts/check-asset-hashes.py"], None, ()),
+    ("sdk-published", [sys.executable, "scripts/check-sdk-published.py"], None, ()),
     ("script-tests", [sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"], None, ()),
 ]
 XWIN_CLIPPY_CMD = ["cargo", "xwin", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--target", "x86_64-pc-windows-msvc", "--", "-D", "warnings"]

@@ -354,6 +354,16 @@ operations; unit agents only prepare them.
 | Winget, Scoop, AUR or other package-manager changes | vosulay and vosu package owners | outside F | not part of F |
 | Live verification sessions | X0 | named VM install, temporary roots and owned process identities (AF.11) | approved in principle; each run scheduled by Main |
 
+After publishing the SDK, add the version and its registry SHA-256 to
+[`crates/vosu-plugin-api/published.toml`](../../crates/vosu-plugin-api/published.toml).
+Run `python scripts/check-sdk-published.py --ledger-entry <published.crate>`
+on the exact released archive, confirm the printed SHA-256 against the
+registry checksum, and append the entry. It also records the archive's
+file hashes for offline CI: Cargo embeds the source commit in
+`.cargo_vcs_info.json`, so the raw archive hash can change even when the
+shipped contents are identical. Any change to those contents under a
+recorded version requires an SDK version bump.
+
 ## 9. Lock files and receipts
 
 ### `tests/vosu-alpha.lock.json` (every ecosystem repository)
