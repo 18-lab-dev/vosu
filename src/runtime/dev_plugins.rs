@@ -52,6 +52,7 @@ pub(super) const REQUIRED: &[&str] = &[
     "vosu.adapter.gosumemory",
     "vosu.adapter.streamcompanion",
     "vosu.overlayhost",
+    "vosu.toolhost",
 ];
 
 /// `vosu.overlayhost`'s fixed `BUNDLED` position and instance id.
@@ -71,7 +72,7 @@ pub(super) fn load_bundled(
 ) -> std::io::Result<u64> {
     if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
-            "required bundled plugin set is incomplete: osu, all three adapters and the overlay host are required",
+            "required bundled plugin set is incomplete: osu, all three adapters, the overlay host and the tool host are required",
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {

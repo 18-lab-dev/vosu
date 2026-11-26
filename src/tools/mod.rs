@@ -1,37 +1,45 @@
-//! Discovery, trust, credentials and lifetime ownership for out-of-process tools.
+//! Core's tool registry (A7.1/A7.2): discovery of web-only `kind = "tool"`
+//! packages, per-tool enabled/trust/settings state, legacy detection, launch
+//! codes, launch sessions and action authority, and the `ToolHostView` pushed
+//! to the bundled `vosu.toolhost`. Nothing here starts, proxies or reaches a
+//! tool process: 1.x `tool.toml` packages are listed as `needs-2.0-update`,
+//! never parsed, executed or served, and their files stay untouched for M8.
 pub mod action_authority;
 #[cfg(test)]
 mod action_authority_tests;
 pub mod capabilities;
 mod catalog;
-mod cli;
-mod http;
-pub mod manifest;
-mod manifest_v2;
-mod process;
+mod lease;
+mod manage;
+mod manifest;
 mod replaces;
+mod settings;
 #[cfg(test)]
 mod tests;
+mod view;
 
-use manifest::Manifest;
+use manifest::ToolPackage;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap},
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 use subtle::ConstantTimeEq as _;
-use tokio::sync::{Notify, Semaphore};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
-use vosu_overlay_host::{CounterSetting, SettingInput};
+
+pub use view::ToolHostViews;
+
+/// Legacy-package diagnosis (`ToolView.status_detail`, A7.2).
+const NEEDS_UPDATE: &str = "needs-2.0-update";
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct Saved {
@@ -41,98 +49,41 @@ struct Saved {
     official: bool,
     #[serde(default)]
     catalog_source: Option<String>,
+    /// A 1.x service preference; never read, preserved for M8's migration.
     #[serde(default)]
     autostart: Option<bool>,
-    /// Catalog-authorized dependency identities, retained even while offline.
+    /// Catalog-authorized prior identities, retained for 1.x replacement recovery.
     #[serde(default)]
     replaces: Vec<String>,
 }
-#[derive(Clone, Serialize)]
-struct LogLine {
-    seq: u64,
-    ts: String,
-    stream: String,
-    text: String,
-}
-struct State {
-    status: String,
-    detail: Option<String>,
-    port: Option<u16>,
-    token: Option<String>,
-    pid: Option<u32>,
-    started_at: Option<String>,
-    restarts: u64,
-    stop: Option<CancellationToken>,
-    task: Option<tokio::task::JoinHandle<()>>,
-    last_used: Instant,
-    desired: bool,
-}
+
 struct Entry {
     id: String,
-    manifest: Option<Manifest>,
-    manifest_v2: Option<manifest_v2::ManifestV2>,
     root: PathBuf,
     source: &'static str,
-    data_dir: PathBuf,
-    cache_dir: PathBuf,
+    /// The validated v2 package; `None` for legacy and unreadable packages.
+    manifest: Option<ToolPackage>,
+    /// A 1.x `tool.toml`-only package (`needs-2.0-update`).
+    legacy: bool,
+    /// Why discovery refused the package (`status: "invalid"`).
+    error: Option<String>,
+    settings: Option<settings::Schema>,
     fingerprint: Vec<u8>,
-    state: Mutex<State>,
-    ready: Notify,
-    logs: Mutex<VecDeque<LogLine>>,
-    sequence: Mutex<u64>,
-    schema: Vec<CounterSetting>,
-    active: AtomicUsize,
-}
-impl Entry {
-    fn log(&self, stream: &str, text: &str) {
-        let text = self.state.lock().token.as_ref().map_or_else(
-            || text.to_owned(),
-            |token| text.replace(token, "[redacted]"),
-        );
-        let mut seq = self.sequence.lock();
-        *seq += 1;
-        let mut logs = self.logs.lock();
-        logs.push_back(LogLine {
-            seq: *seq,
-            ts: chrono::Utc::now().to_rfc3339(),
-            stream: stream.into(),
-            text: text.chars().take(16 * 1024).collect(),
-        });
-        if logs.len() > 1000 {
-            logs.pop_front();
-        }
-    }
+    package: lease::PackageRoot,
 }
 
-struct Activity(Arc<Entry>);
-impl Activity {
-    fn new(entry: Arc<Entry>) -> Self {
-        entry.active.fetch_add(1, Ordering::AcqRel);
-        Self(entry)
-    }
-}
-impl Drop for Activity {
-    fn drop(&mut self) {
-        self.0.state.lock().last_used = Instant::now();
-        self.0.active.fetch_sub(1, Ordering::AcqRel);
-    }
-}
 struct Code {
     tool: String,
     expires: Instant,
 }
-struct CliSession {
-    tool: String,
-    token: String,
-    expires: Instant,
-}
-pub struct ToolHost {
+
+pub struct ToolRegistry {
     entries: Mutex<BTreeMap<String, Arc<Entry>>>,
     saved: Mutex<BTreeMap<String, Saved>>,
     codes: Mutex<HashMap<String, Code>>,
     sessions: Mutex<HashMap<String, action_authority::LaunchSession>>,
     action_providers: Mutex<action_authority::Providers>,
-    cli_sessions: Mutex<HashMap<String, CliSession>>,
+    jobs: Mutex<Option<vosu_core::actions::JobRegistry>>,
     config: PathBuf,
     data: PathBuf,
     cache: PathBuf,
@@ -140,16 +91,14 @@ pub struct ToolHost {
     overlay_url: String,
     dashboard_url: String,
     origins: Mutex<Option<Arc<crate::server::origins::Origins>>>,
-    http: reqwest::Client,
+    view: view::Publisher,
+    /// Serializes discovery and every `state.json`/settings write.
     gate: tokio::sync::Mutex<()>,
-    pending: Semaphore,
     stopping: AtomicBool,
     cancel: CancellationToken,
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    context: Arc<dyn Fn() -> Value + Send + Sync>,
-    /// Installed overlays: the catalog install root and `GET /tools/_host/v1/overlays`.
-    counters: Mutex<Option<Arc<vosu_overlay_host::ReloadableCounterService>>>,
 }
+
 pub fn secret() -> io::Result<String> {
     use std::fmt::Write as _;
     let mut bytes = [0_u8; 32];
@@ -180,6 +129,7 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
     fs::File::open(path.parent().unwrap())?.sync_all()?;
     Ok(())
 }
+/// `--tool <dir>`: development packages, each loading only its `manifest.toml`.
 pub fn development_roots(args: &[std::ffi::OsString]) -> io::Result<Vec<PathBuf>> {
     let mut result = Vec::new();
     let mut iter = args.iter();
@@ -202,7 +152,90 @@ pub fn development_roots(args: &[std::ffi::OsString]) -> io::Result<Vec<PathBuf>
 pub struct ExtraRoots {
     pub dev: Vec<PathBuf>,
 }
-impl ToolHost {
+
+/// What discovery found in one candidate directory.
+struct Found {
+    id: String,
+    manifest: Option<ToolPackage>,
+    legacy: bool,
+    error: Option<String>,
+    settings: Option<settings::Schema>,
+    fingerprint: Vec<u8>,
+}
+
+fn inspect(path: &Path) -> Found {
+    let fallback_id = || {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    };
+    let text = match fs::read_to_string(path.join("manifest.toml")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // Legacy detection never parses `tool.toml`.
+            let legacy = path.join("tool.toml").is_file();
+            return Found {
+                id: fallback_id(),
+                manifest: None,
+                legacy,
+                error: (!legacy).then(|| "manifest.toml: not found".into()),
+                settings: None,
+                fingerprint: if legacy {
+                    b"legacy".to_vec()
+                } else {
+                    Vec::new()
+                },
+            };
+        }
+        Err(error) => {
+            return Found {
+                id: fallback_id(),
+                manifest: None,
+                legacy: false,
+                error: Some(format!("manifest.toml: {error}")),
+                settings: None,
+                fingerprint: Vec::new(),
+            };
+        }
+    };
+    let parsed = ToolPackage::parse(&text);
+    let mut error = parsed.as_ref().err().cloned();
+    let schema_bytes = match fs::read(path.join("settings.json")) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => {
+            error = Some(format!("settings.json: {e}"));
+            None
+        }
+    };
+    let settings = schema_bytes
+        .as_deref()
+        .and_then(|bytes| match settings::Schema::parse(bytes) {
+            Ok(schema) => Some(schema),
+            Err(e) => {
+                error = Some(format!("settings.json: {e}"));
+                None
+            }
+        });
+    let mut fingerprint = text.into_bytes();
+    fingerprint.extend_from_slice(schema_bytes.as_deref().unwrap_or_default());
+    if let Some(error) = &error {
+        fingerprint.extend_from_slice(error.as_bytes());
+    }
+    Found {
+        id: parsed
+            .as_ref()
+            .map_or_else(|_| fallback_id(), |m| m.tool.shared.id.clone()),
+        manifest: parsed.ok(),
+        legacy: false,
+        error,
+        settings,
+        fingerprint,
+    }
+}
+
+impl ToolRegistry {
     pub async fn new(
         config: PathBuf,
         data: PathBuf,
@@ -210,7 +243,6 @@ impl ToolHost {
         extra: ExtraRoots,
         overlay_url: String,
         dashboard_url: String,
-        context: Arc<dyn Fn() -> Value + Send + Sync>,
     ) -> io::Result<Arc<Self>> {
         let ExtraRoots { dev } = extra;
         let user = data.clone();
@@ -239,38 +271,33 @@ impl ToolHost {
         if migrated {
             atomic_json(&config.join("state.json"), &saved)?;
         }
-        let host = Arc::new(Self {
+        let registry = Arc::new(Self {
             entries: Mutex::new(BTreeMap::new()),
             saved: Mutex::new(saved),
             codes: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             action_providers: Mutex::new(action_authority::Providers::default()),
-            cli_sessions: Mutex::new(HashMap::new()),
+            jobs: Mutex::new(None),
             config,
             data,
             cache,
             roots,
+            view: view::Publisher::new(Some(dashboard_url.clone())),
             overlay_url,
             dashboard_url,
             origins: Mutex::new(None),
-            http: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(io::Error::other)?,
             gate: tokio::sync::Mutex::new(()),
-            pending: Semaphore::new(64),
             stopping: AtomicBool::new(false),
             cancel: CancellationToken::new(),
             watcher: Mutex::new(None),
-            context,
-            counters: Mutex::new(None),
         });
-        host.recover_replacement().map_err(io::Error::other)?;
-        host.rescan().await;
-        Ok(host)
+        registry.recover_replacement().map_err(io::Error::other)?;
+        registry.rescan().await;
+        Ok(registry)
     }
     pub fn activate(self: &Arc<Self>, origins: Option<Arc<crate::server::origins::Origins>>) {
         *self.origins.lock() = origins;
+        self.publish();
         let mut watcher = self.watcher.lock();
         if watcher.is_none() {
             let owner = self.clone();
@@ -292,11 +319,13 @@ impl ToolHost {
             .map_or_else(|| self.dashboard_url.clone(), |origins| origins.dashboard())
     }
     fn enabled(&self, entry: &Entry) -> bool {
-        self.saved
-            .lock()
-            .get(&entry.id)
-            .and_then(|s| s.enabled)
-            .unwrap_or(true)
+        !entry.legacy
+            && self
+                .saved
+                .lock()
+                .get(&entry.id)
+                .and_then(|s| s.enabled)
+                .unwrap_or(true)
     }
     fn trusted(&self, entry: &Entry) -> bool {
         entry.source != "user" || self.saved.lock().get(&entry.id).is_some_and(|s| s.trusted)
@@ -308,372 +337,107 @@ impl ToolHost {
             .cloned()
             .ok_or_else(|| "unknown tool".into())
     }
-    fn provides(&self, entry: &Entry, id: &str) -> bool {
-        entry.id == id
-            || (entry.source != "dev"
-                && self.saved.lock().get(&entry.id).is_some_and(|state| {
-                    state.catalog_source.is_some() && state.replaces.iter().any(|old| old == id)
-                }))
+    fn tool_settings(&self, id: &str) -> PathBuf {
+        self.config.join("settings").join(format!("{id}.json"))
     }
-    fn dependency(&self, id: &str) -> Result<Arc<Entry>, String> {
-        if let Ok(entry) = self.entry(id) {
-            return Ok(entry);
-        }
-        let entries = self.entries.lock();
-        let mut matches = entries.values().filter(|entry| self.provides(entry, id));
-        let entry = matches.next().cloned().ok_or("unknown tool")?;
-        if matches.next().is_some() {
-            return Err(format!("ambiguous replacement for {id}"));
-        }
-        Ok(entry)
-    }
-    fn settings(&self, entry: &Entry) -> Result<serde_json::Map<String, Value>, String> {
-        let mut values = serde_json::Map::new();
-        for setting in &entry.schema {
-            if setting.kind != vosu_overlay_host::SettingType::Header {
-                values.insert(setting.unique_id.clone(), setting.value.clone());
-            }
-        }
-        let path = self
-            .config
-            .join("settings")
-            .join(format!("{}.json", entry.id));
-        match fs::read(path) {
-            Ok(bytes) => {
-                let stored: serde_json::Map<String, Value> =
-                    serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-                for (id, value) in stored {
-                    if values.contains_key(&id) {
-                        values.insert(id, value);
-                    }
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+    /// Effective values (defaults plus stored); empty without a schema.
+    fn settings(
+        &self,
+        entry: &Entry,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        let stored = match fs::read(self.tool_settings(&entry.id)) {
+            Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|e| e.to_string())?),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(e.to_string()),
-        }
-        Ok(values)
+        };
+        Ok(entry
+            .settings
+            .as_ref()
+            .map(|schema| schema.effective(stored))
+            .unwrap_or_default())
     }
-    fn blocked(&self, entry: &Entry) -> Option<String> {
-        if let Some(reason) = self.blocked_capabilities(entry) {
-            return Some(reason);
+    /// `(status, status_detail)` of the 2.0 `ToolView`.
+    fn status(&self, entry: &Entry) -> (&'static str, Option<String>) {
+        if entry.legacy {
+            return ("disabled", Some(NEEDS_UPDATE.into()));
         }
-        let manifest = entry.manifest.as_ref()?;
-        for dep in &manifest.requires {
-            let Ok(other) = self.dependency(&dep.id) else {
-                return Some(format!("missing dependency {}", dep.id));
-            };
-            let Some(m) = &other.manifest else {
-                return Some(format!("invalid dependency {}", dep.id));
-            };
-            if !self.enabled(&other)
-                || !self.trusted(&other)
-                || other.state.lock().status == "invalid"
-            {
-                return Some(format!("unavailable dependency {}", dep.id));
-            }
-            if !semver::VersionReq::parse(&dep.version)
-                .unwrap()
-                .matches(&semver::Version::parse(&m.version).unwrap())
-            {
-                return Some(format!(
-                    "dependency {} version {} does not match {}",
-                    dep.id, m.version, dep.version
-                ));
-            }
+        if let Some(error) = &entry.error {
+            return ("invalid", Some(error.clone()));
         }
-        None
-    }
-    fn status(&self, entry: &Entry) -> (String, Option<String>) {
-        let state = entry.state.lock();
-        if state.status == "invalid" {
-            return (state.status.clone(), state.detail.clone());
-        }
-        drop(state);
         if !self.trusted(entry) {
-            return ("untrusted".into(), None);
+            return ("untrusted", None);
         }
         if !self.enabled(entry) {
-            return ("disabled".into(), None);
+            return ("disabled", None);
         }
-        if let Some(reason) = self.blocked(entry) {
-            return ("blocked".into(), Some(reason));
+        if let Some(reason) = self.blocked_capabilities(entry) {
+            return ("blocked", Some(reason));
         }
-        let state = entry.state.lock();
-        (state.status.clone(), state.detail.clone())
+        ("running", None)
     }
-    fn starts_with_vosu(&self, id: &str, manifest: &Manifest) -> bool {
-        manifest.service.as_ref().is_some_and(|service| {
-            service.role == "background"
-                && self
-                    .saved
-                    .lock()
-                    .get(id)
-                    .and_then(|s| s.autostart)
-                    .unwrap_or(service.startup == "always")
-        })
+    /// Launchable and servable: enabled, trusted, non-legacy, resolvable.
+    fn servable(&self, entry: &Entry) -> bool {
+        entry.manifest.is_some() && self.status(entry).0 == "running"
     }
-    async fn set_autostart(&self, entry: &Entry, body: &[u8]) -> Result<Value, String> {
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Input {
-            autostart: Value,
-        }
-        let input: Input = serde_json::from_slice(body).map_err(|e| e.to_string())?;
-        let autostart = match input.autostart {
-            Value::Null => None,
-            Value::Bool(value) => Some(value),
-            _ => return Err("autostart must be true, false or null".into()),
+
+    /// Ends every launch session and pending code matching `revoked`, and
+    /// requests advisory cancellation of the jobs those sessions created.
+    fn invalidate(&self, revoked: impl Fn(&str, &action_authority::LaunchSession) -> bool) {
+        let owners: Vec<_> = {
+            let mut sessions = self.sessions.lock();
+            let mut owners = Vec::new();
+            sessions.retain(|_, session| {
+                let keep = !revoked(&session.tool, session);
+                if !keep {
+                    owners.push(session.owner());
+                }
+                keep
+            });
+            owners
         };
-        if entry
-            .manifest
-            .as_ref()
-            .and_then(|m| m.service.as_ref())
-            .is_none_or(|s| s.role != "background")
-        {
-            return Err("autostart requires a background service".into());
-        }
-        let _gate = self.gate.lock().await;
-        let mut saved = self.saved.lock();
-        let mut next = saved.clone();
-        next.entry(entry.id.clone()).or_default().autostart = autostart;
-        atomic_json(&self.config.join("state.json"), &next).map_err(|e| e.to_string())?;
-        *saved = next;
-        drop(saved);
-        Ok(self.view(entry))
-    }
-    fn view(&self, entry: &Entry) -> Value {
-        let (status, detail) = self.status(entry);
-        let m = entry.manifest.as_ref();
-        let requires = m
-            .map(|m| {
-                m.requires
-                    .iter()
-                    .map(|dep| {
-                        let satisfied = self
-                            .dependency(&dep.id)
-                            .ok()
-                            .and_then(|e| {
-                                e.manifest.as_ref().map(|m| {
-                                    semver::VersionReq::parse(&dep.version)
-                                        .unwrap()
-                                        .matches(&semver::Version::parse(&m.version).unwrap())
-                                })
-                            })
-                            .unwrap_or(false);
-                        json!({"id": dep.id, "version": dep.version, "satisfied": satisfied})
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let required_by = self
-            .entries
-            .lock()
-            .values()
-            .filter(|e| {
-                e.manifest
-                    .as_ref()
-                    .is_some_and(|m| m.requires.iter().any(|d| self.provides(entry, &d.id)))
-            })
-            .map(|e| e.id.clone())
-            .collect::<Vec<_>>();
-        let service = m.and_then(|m| m.service.as_ref());
-        let interfaces = [
-            m.is_some_and(|m| m.ui.is_some()).then_some("ui"),
-            service
-                .filter(|s| s.role == "background")
-                .map(|_| "service"),
-            m.is_some_and(|m| m.cli.is_some()).then_some("cli"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-        let autostart = self.saved.lock().get(&entry.id).and_then(|s| s.autostart);
-        let starts_with_vosu = m.is_some_and(|m| self.starts_with_vosu(&entry.id, m));
-        let capabilities = self.capability_view(entry);
-        let state = entry.state.lock();
-        let cli = m
-            .and_then(|m| m.cli.as_ref())
-            .map(|cli| json!({"usage":format!("vosux {}",entry.id),"summary":cli.summary}));
-        let mut view = json!({"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"banner_url":m.and_then(|m| m.banner.as_ref()).map(|_| format!("{}/tools/{}/_banner",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":service.map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}});
-        view["service_role"] = json!(service.map(|s| &s.role));
-        view["interfaces"] = json!(interfaces);
-        view["autostart"] = json!(autostart);
-        view["starts_with_vosu"] = json!(starts_with_vosu);
-        if let Some((requires, optional)) = capabilities {
-            view["requires"] = requires;
-            view["optional"] = optional;
-        }
-        view
-    }
-    async fn start(self: &Arc<Self>, id: &str, manual: bool) -> Result<(), String> {
-        let _gate = self.gate.lock().await;
-        if self.stopping.load(Ordering::Acquire) {
-            return Err("vosu is shutting down".into());
-        }
-        let mut order = Vec::new();
-        self.visit(id, &mut HashSet::new(), &mut HashSet::new(), &mut order)?;
-        for id in order {
-            let entry = self.entry(&id)?;
-            let (status, detail) = self.status(&entry);
-            if matches!(
-                status.as_str(),
-                "invalid" | "blocked" | "disabled" | "untrusted"
-            ) {
-                return Err(detail.unwrap_or(status));
+        let jobs = self.jobs.lock().clone();
+        if let Some(jobs) = jobs {
+            for owner in &owners {
+                jobs.cancel_owner(owner);
             }
-            if entry.manifest.as_ref().unwrap().service.is_none() {
-                continue;
-            }
-            if status == "failed" && !manual {
-                return Err("tool failed; start it from the dashboard".into());
-            }
-            if !manual && entry.state.lock().detail.as_deref() == Some("exited") {
-                return Err("tool exited; start it from the dashboard or vosux".into());
-            }
-            let stale = {
-                let mut state = entry.state.lock();
-                if state.task.as_ref().is_some_and(|t| t.is_finished()) {
-                    state.task.take()
-                } else {
-                    None
-                }
-            };
-            if let Some(task) = stale {
-                let _ = task.await;
-            }
-            {
-                let mut state = entry.state.lock();
-                state.last_used = Instant::now();
-                state.desired = true;
-                if state.task.is_none() {
-                    let stop = CancellationToken::new();
-                    state.stop = Some(stop.clone());
-                    state.status = "starting".into();
-                    state.detail = None;
-                    state.task = Some(tokio::spawn(process::supervise(
-                        self.clone(),
-                        entry.clone(),
-                        stop,
-                    )));
-                }
-            }
-            tokio::time::timeout(Duration::from_secs(24), async {
-                loop {
-                    let notified = entry.ready.notified();
-                    {
-                        let state = entry.state.lock();
-                        if state.port.is_some() {
-                            return Ok(());
-                        }
-                        if state.status == "failed" || state.status == "stopped" {
-                            return Err(state
-                                .detail
-                                .clone()
-                                .unwrap_or_else(|| "service stopped".into()));
-                        }
-                    }
-                    notified.await;
-                }
-            })
-            .await
-            .map_err(|_| "service readiness timed out".to_owned())??;
-        }
-        Ok(())
-    }
-    fn visit(
-        &self,
-        id: &str,
-        active: &mut HashSet<String>,
-        done: &mut HashSet<String>,
-        order: &mut Vec<String>,
-    ) -> Result<(), String> {
-        if done.contains(id) {
-            return Ok(());
-        }
-        if !active.insert(id.into()) {
-            return Err(format!("dependency cycle containing {id}"));
-        }
-        let entry = self.entry(id)?;
-        let m = entry.manifest.as_ref().ok_or("invalid manifest")?;
-        for dep in &m.requires {
-            let dependency = self.dependency(&dep.id)?;
-            self.visit(&dependency.id, active, done, order)?;
-        }
-        active.remove(id);
-        done.insert(id.into());
-        order.push(id.into());
-        Ok(())
-    }
-    async fn stop_serialized(&self, entry: &Entry, manual: bool) {
-        let _gate = self.gate.lock().await;
-        if manual {
-            entry.state.lock().desired = false;
-        }
-        self.stop(entry).await;
-    }
-    async fn stop(&self, entry: &Entry) {
-        let task = {
-            let mut state = entry.state.lock();
-            if let Some(stop) = state.stop.take() {
-                stop.cancel();
-            }
-            state.task.take()
-        };
-        if let Some(task) = task {
-            let _ = task.await;
-        }
-        if entry.manifest.as_ref().is_some_and(|m| m.service.is_some()) {
-            entry.state.lock().status = "stopped".into();
         }
     }
+    fn invalidate_tool(&self, id: &str) {
+        self.codes.lock().retain(|_, code| code.tool != id);
+        self.invalidate(|tool, _| tool == id);
+    }
+
     pub async fn shutdown(&self) {
         self.stopping.store(true, Ordering::Release);
         self.cancel.cancel();
-        self.cli_sessions.lock().clear();
-        self.sessions.lock().clear();
-        let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
-        for entry in &entries {
-            if let Some(stop) = &entry.state.lock().stop {
-                stop.cancel();
-            }
-        }
         let watcher = self.watcher.lock().take();
         if let Some(task) = watcher {
             let _ = task.await;
         }
-        let _gate = self.gate.lock().await;
-        for entry in entries {
-            self.stop(&entry).await;
-        }
+        self.codes.lock().clear();
+        self.invalidate(|_, _| true);
     }
     /// Catalog v2 installation's web-package handoff (M6b I0/K0): v2 tools
-    /// commit into this host's user root and are served after this rescan
-    /// until M7 replaces the legacy host.
+    /// commit into this registry's user root and are presented after this
+    /// rescan.
     pub async fn rescan_installed(self: &Arc<Self>) {
         self.rescan().await;
     }
-    /// The overlay host whose installed overlays `GET /tools/_host/v1/overlays`
-    /// lists.
-    pub fn set_counters(&self, counters: Arc<vosu_overlay_host::ReloadableCounterService>) {
-        *self.counters.lock() = Some(counters);
-    }
-    /// U0 removal (M6b H0): stop a catalog-installed tool's process and end
-    /// its sessions before its package directory moves.
-    pub async fn stop_installed(&self, id: &str) {
-        self.cli_sessions.lock().retain(|_, s| s.tool != id);
-        self.sessions.lock().retain(|_, session| session.tool != id);
-        self.codes.lock().retain(|_, code| code.tool != id);
-        if let Ok(entry) = self.entry(id) {
-            self.stop_serialized(&entry, true).await;
+    /// U0 removal (M6b H0): end the tool's launch sessions and codes before
+    /// its package directory moves.
+    pub async fn revoke_installed(&self, id: &str) {
+        self.invalidate_tool(id);
+        if let Some(entry) = self.entries.lock().get(id) {
+            entry.package.revoke();
         }
+        self.publish();
     }
     /// U0 removal of the explicit target's durable data (user choice only).
     pub async fn remove_installed_data(&self, id: &str) -> io::Result<()> {
-        if !manifest::valid_id(id) {
+        if !crate::server::ids::valid_id(id) {
             return Err(io::ErrorKind::InvalidInput.into());
         }
-        let data = self.data.parent().unwrap_or(&self.data).join("tool-data");
-        let paths = [data.join(id), self.cache.join(id)];
+        let paths = [self.tool_data(id), self.cache.join(id)];
         tokio::task::spawn_blocking(move || {
             for path in paths {
                 match fs::remove_dir_all(&path) {
@@ -710,33 +474,16 @@ impl ToolHost {
                     .collect()
             };
             for path in paths {
-                let v2 = !matches!(fs::symlink_metadata(path.join("manifest.toml")),
-                    Err(e) if e.kind() == io::ErrorKind::NotFound);
-                let filename = if v2 { "manifest.toml" } else { "tool.toml" };
-                if *source != "dev" && !v2 && !path.join(filename).is_file() {
+                let mut candidate = inspect(&path);
+                // A user-root directory with neither manifest is not a tool.
+                if *source != "dev"
+                    && candidate.manifest.is_none()
+                    && !candidate.legacy
+                    && candidate.error.as_deref() == Some("manifest.toml: not found")
+                {
                     continue;
                 }
-                let text = fs::read_to_string(path.join(filename));
-                let mut parsed_v2 = None;
-                let parsed = text
-                    .as_ref()
-                    .map_err(|e| format!("{filename}: {e}"))
-                    .and_then(|text| {
-                        if v2 {
-                            manifest_v2::ManifestV2::parse(text).map(|(normalized, manifest)| {
-                                parsed_v2 = Some(manifest);
-                                normalized
-                            })
-                        } else {
-                            Manifest::parse(text)
-                        }
-                    });
-                let id = parsed.as_ref().map(|m| m.id.clone()).unwrap_or_else(|_| {
-                    path.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned()
-                });
+                let id = candidate.id.clone();
                 let source = if *source == "user"
                     && self
                         .saved
@@ -748,9 +495,8 @@ impl ToolHost {
                 } else {
                     source
                 };
-                let mut error = parsed.as_ref().err().cloned();
                 if *source != "dev" && path.file_name().and_then(|v| v.to_str()) != Some(&id) {
-                    error = Some("directory name must equal manifest id".into());
+                    candidate.error = Some("directory name must equal manifest id".into());
                 }
                 let mut key = id.clone();
                 if let Some(prior) = found.get(&id) {
@@ -758,148 +504,60 @@ impl ToolHost {
                         continue;
                     }
                     if prior.source == "official" && *source == "user" {
-                        error = Some(format!("user tool duplicates official id {id}"));
+                        candidate.error = Some(format!("user tool duplicates official id {id}"));
                         key = format!("{id}:duplicate-user");
                     } else {
-                        error = Some(format!("duplicate tool id {id}"));
+                        candidate.error = Some(format!("duplicate tool id {id}"));
                         key = format!("{id}:duplicate-{}", found.len());
                     }
                 }
-                let schema_bytes = match fs::read(path.join("settings.json")) {
-                    Ok(bytes) => Some(bytes),
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-                    Err(e) => {
-                        error = Some(format!("settings.json: {e}"));
-                        None
-                    }
-                };
-                let mut schema: Vec<CounterSetting> = if let Some(bytes) = &schema_bytes {
-                    match serde_json::from_slice(bytes) {
-                        Ok(schema) => schema,
-                        Err(e) => {
-                            error = Some(format!("settings.json: {e}"));
-                            Vec::new()
-                        }
-                    }
-                } else {
-                    Vec::new()
-                };
-                vosu_overlay_host::normalize_settings(&mut schema);
-                let mut fingerprint = text.unwrap_or_default().into_bytes();
-                fingerprint.extend_from_slice(schema_bytes.as_deref().unwrap_or_default());
-                if let Some(error) = &error {
-                    fingerprint.extend_from_slice(error.as_bytes());
-                }
-                if *source == "dev"
-                    && let Ok(m) = &parsed
-                    && let Some(service) = &m.service
-                {
-                    for command in &service.command {
-                        let executable = if command == &service.command[0] {
-                            process::executable(&path, command, true)
-                        } else {
-                            path.join(command)
-                        };
-                        if let Ok(metadata) = fs::metadata(executable) {
-                            fingerprint.extend_from_slice(
-                                format!("{:?}:{}", metadata.modified(), metadata.len()).as_bytes(),
-                            );
-                        }
-                    }
+                if let Some(error) = &candidate.error {
+                    candidate.fingerprint.extend_from_slice(error.as_bytes());
                 }
                 let old = self.entries.lock().get(&key).cloned();
-                if let Some(old) = &old
+                if let Some(old) = old
                     && old.root == path
                     && old.source == *source
-                    && old.fingerprint == fingerprint
+                    && old.fingerprint == candidate.fingerprint
+                    // A revoked (uninstalling) package is rediscovered fresh.
+                    && old.package.is_live()
                 {
-                    found.insert(key, old.clone());
+                    found.insert(key, old);
                     continue;
                 }
-                let desired = old.as_ref().map_or_else(
-                    || parsed.as_ref().is_ok_and(|m| self.starts_with_vosu(&id, m)),
-                    |entry| entry.state.lock().desired,
-                );
-                if let Some(old) = &old {
-                    self.stop(old).await;
-                }
-                let entry = Arc::new(Entry {
-                    id: id.clone(),
-                    manifest: parsed.ok(),
-                    manifest_v2: parsed_v2,
-                    root: path,
-                    source,
-                    data_dir: self
-                        .data
-                        .parent()
-                        .unwrap_or(&self.data)
-                        .join("tool-data")
-                        .join(&id),
-                    cache_dir: self.cache.join(&id),
-                    fingerprint,
-                    state: Mutex::new(State {
-                        status: if error.is_some() {
-                            "invalid"
-                        } else {
-                            "stopped"
-                        }
-                        .into(),
-                        detail: error,
-                        port: None,
-                        token: None,
-                        pid: None,
-                        started_at: None,
-                        restarts: old.as_ref().map_or(0, |entry| entry.state.lock().restarts),
-                        stop: None,
-                        task: None,
-                        last_used: Instant::now(),
-                        desired,
+                found.insert(
+                    key,
+                    Arc::new(Entry {
+                        id,
+                        package: lease::PackageRoot::new(path.clone()),
+                        root: path,
+                        source,
+                        manifest: candidate.manifest,
+                        legacy: candidate.legacy,
+                        error: candidate.error,
+                        settings: candidate.settings,
+                        fingerprint: candidate.fingerprint,
                     }),
-                    ready: Notify::new(),
-                    logs: Mutex::new(
-                        old.as_ref()
-                            .map_or_else(VecDeque::new, |entry| entry.logs.lock().clone()),
-                    ),
-                    sequence: Mutex::new(old.as_ref().map_or(0, |entry| *entry.sequence.lock())),
-                    schema,
-                    active: AtomicUsize::new(0),
-                });
-                if entry.manifest.as_ref().is_some_and(|m| m.service.is_none())
-                    && entry.state.lock().status != "invalid"
-                {
-                    entry.state.lock().status = "running".into();
-                }
-                found.insert(key, entry);
+                );
             }
         }
-        let old = self.entries.lock().values().cloned().collect::<Vec<_>>();
-        for entry in old {
-            if !found.values().any(|e| Arc::ptr_eq(e, &entry)) {
-                self.cli_sessions
-                    .lock()
-                    .retain(|_, session| session.tool != entry.id);
-                self.sessions
-                    .lock()
-                    .retain(|_, session| session.tool != entry.id);
-                self.stop(&entry).await;
-            }
-        }
+        let replaced: Vec<Arc<Entry>> = self
+            .entries
+            .lock()
+            .values()
+            .filter(|entry| !found.values().any(|e| Arc::ptr_eq(e, entry)))
+            .cloned()
+            .collect();
         *self.entries.lock() = found;
-        let ids = self.entries.lock().keys().cloned().collect::<Vec<_>>();
-        for id in ids {
-            if let Err(error) = self.visit(
-                &id,
-                &mut HashSet::new(),
-                &mut HashSet::new(),
-                &mut Vec::new(),
-            ) && error == format!("dependency cycle containing {id}")
-                && let Ok(entry) = self.entry(&id)
-            {
-                let mut state = entry.state.lock();
-                state.status = "invalid".into();
-                state.detail = Some(error);
-            }
+        for entry in &replaced {
+            // A replaced or removed package's sessions, codes and lease die
+            // with it; a later launch never inherits them.
+            entry.package.revoke();
+            self.codes.lock().retain(|_, code| code.tool != entry.id);
+            self.invalidate(|_, session| session.is(entry));
         }
+        drop(_gate);
+        self.publish();
     }
     async fn watch(self: Arc<Self>) {
         use notify::Watcher as _;
@@ -926,58 +584,16 @@ impl ToolHost {
                     }
                 },
             }
-            // The timer also tracks development binaries outside watched roots.
+            // The timer also follows provider, trust and settings changes
+            // that no file event reports; unchanged views are not republished.
             self.rescan().await;
-            let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
-            for entry in entries {
-                let desired = entry.state.lock().desired;
-                if desired && self.status(&entry).0 == "stopped" {
-                    let _ = self.start(&entry.id, false).await;
-                }
-                let idle =
-                    entry.manifest.as_ref().is_some_and(|m| {
-                        m.service.is_some() && !self.starts_with_vosu(&entry.id, m)
-                    }) && entry.active.load(Ordering::Acquire) == 0
-                        && entry.state.lock().last_used.elapsed() >= Duration::from_secs(600);
-                if idle {
-                    self.stop_serialized(&entry, true).await;
-                }
-                let unavailable = matches!(
-                    self.status(&entry).0.as_str(),
-                    "blocked" | "disabled" | "untrusted" | "invalid"
-                );
-                let has_task = entry.state.lock().task.is_some();
-                if unavailable && has_task {
-                    self.stop_serialized(&entry, false).await;
-                }
-            }
         }
     }
-}
-fn directory_bytes(root: &Path) -> u64 {
-    fn count(root: &Path, left: &mut usize) -> u64 {
-        if *left == 0 {
-            return 0;
-        }
-        let mut total = 0;
-        for item in fs::read_dir(root)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-        {
-            if *left == 0 {
-                break;
-            }
-            *left -= 1;
-            if let Ok(meta) = item.path().symlink_metadata() {
-                if meta.is_file() {
-                    total += meta.len();
-                } else if meta.is_dir() {
-                    total += count(&item.path(), left);
-                }
-            }
-        }
-        total
+    fn tool_data(&self, id: &str) -> PathBuf {
+        self.data
+            .parent()
+            .unwrap_or(&self.data)
+            .join("tool-data")
+            .join(id)
     }
-    count(root, &mut 10000)
 }

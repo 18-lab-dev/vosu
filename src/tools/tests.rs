@@ -2,31 +2,50 @@ use super::*;
 use axum::{
     body::{Body, Bytes, to_bytes},
     extract::Request,
-    http::{HeaderMap, Method, StatusCode},
+    http::{Method, StatusCode, header},
 };
+use serde_json::{Value, json};
 use vosu_proptest::bounded;
+use vosu_surface::files::{FileError, RelativeChild};
 
-fn manifest(id: &str, requires: &str) -> String {
+fn manifest(id: &str, extra: &str) -> String {
     format!(
-        "manifest_version=1\nid='{id}'\nname='Test'\nversion='1.0.0'\n[ui]\nroot='web'\n{requires}"
+        "manifest_version=1\nkind='tool'\nid='{id}'\nname='Test {id}'\nversion='1.0.0'\nhost='={}'\nicon='art/icon.svg'\n[ui]\nroot='web'\n{extra}",
+        env!("CARGO_PKG_VERSION")
     )
 }
-fn put(root: &Path, id: &str, requires: &str) -> PathBuf {
+fn put(root: &Path, id: &str, extra: &str) -> PathBuf {
     let dir = root.join(id);
     fs::create_dir_all(dir.join("web")).unwrap();
-    fs::write(dir.join("tool.toml"), manifest(id, requires)).unwrap();
+    fs::create_dir_all(dir.join("art")).unwrap();
+    fs::write(dir.join("manifest.toml"), manifest(id, extra)).unwrap();
     fs::write(dir.join("web/index.html"), "tool-ui").unwrap();
+    fs::write(dir.join("art/icon.svg"), "<svg/>").unwrap();
     dir
 }
-async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolHost> {
-    let host = bounded!(ToolHost::new(
+/// A 1.x package whose service would leave a marker if anything ran it.
+fn put_legacy(root: &Path, id: &str, text: &str) -> PathBuf {
+    let dir = root.join(id);
+    fs::create_dir_all(dir.join("web")).unwrap();
+    fs::write(dir.join("tool.toml"), text).unwrap();
+    fs::write(dir.join("web/index.html"), "legacy-ui").unwrap();
+    dir
+}
+fn legacy_toml(id: &str, marker: &Path) -> String {
+    format!(
+        "manifest_version=1\nid='{id}'\nname='Legacy'\nversion='1.0.0'\n[ui]\nroot='web'\n[service]\ncommand=['sh','-c','touch {}']\nstartup='always'\n[cli]\ncommand=['sh','-c','touch {}']\n[permissions]\nhost=['context']\n",
+        marker.display(),
+        marker.display()
+    )
+}
+async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolRegistry> {
+    let host = bounded!(ToolRegistry::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
         ExtraRoots { dev },
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
-        Arc::new(|| json!({"client":null,"songs_dir":null,"beatmap":null})),
     ))
     .unwrap();
     host.activate(None);
@@ -42,342 +61,207 @@ fn request(method: Method, path: &str) -> Request {
         .body(Body::empty())
         .unwrap()
 }
-
-#[test]
-fn service_roles_validate_defaults_and_backend_startup() {
-    let base = manifest("roles", "[service]\ncommand=['test']");
-    assert_eq!(
-        Manifest::parse(&base).unwrap().service.unwrap().role,
-        "background"
-    );
-    for (suffix, valid) in [
-        ("\nrole='backend'", true),
-        ("\nrole='backend'\nstartup='always'", false),
-        ("\nrole='background'\nstartup='always'", true),
-        ("\nrole='unknown'", false),
-    ] {
-        assert_eq!(
-            Manifest::parse(&format!("{base}{suffix}")).is_ok(),
-            valid,
-            "{suffix}"
-        );
-    }
+async fn post(
+    host: &Arc<ToolRegistry>,
+    path: &str,
+    body: &'static [u8],
+) -> axum::response::Response {
+    bounded!(host.dashboard(request(Method::POST, path), Bytes::from_static(body)))
 }
-
-#[tokio::test]
-async fn autostart_precedence_persistence_backend_rejection_and_dependency_order() {
-    let root = tempfile::tempdir().unwrap();
-    let dev = root.path().join("dev");
-    let always = put(
-        &dev,
-        "always",
-        "[service]\ncommand=['test']\nstartup='always'",
-    );
-    let demand = put(
-        &dev,
-        "demand",
-        "[service]\ncommand=['test']\n[[requires]]\nid='always'\nversion='^1'",
-    );
-    let backend = put(
-        &dev,
-        "backend",
-        "[service]\ncommand=['test']\nrole='backend'",
-    );
-    let roots = vec![always, demand, backend];
-    // No activation: assert launch intent without spawning fixture processes.
-    let make = || {
-        ToolHost::new(
-            root.path().join("config"),
-            root.path().join("data"),
-            root.path().join("cache"),
-            ExtraRoots { dev: roots.clone() },
-            "http://127.0.0.1:25150".into(),
-            "http://127.0.0.1:25151".into(),
-            Arc::new(|| json!({})),
-        )
-    };
-    let host = bounded!(make()).unwrap();
-    for (id, default) in [("always", true), ("demand", false)] {
-        let entry = host.entry(id).unwrap();
-        assert_eq!(host.view(&entry)["starts_with_vosu"], default);
-        for (autostart, expected) in [
-            (json!(true), true),
-            (json!(false), false),
-            (Value::Null, default),
-        ] {
-            let response = bounded!(host.dashboard(
-                request(Method::PUT, &format!("/api/tools/{id}/autostart")),
-                Bytes::from(json!({"autostart":autostart}).to_string()),
-            ));
-            assert_eq!(response.status(), StatusCode::OK);
-            let view = bounded!(value(response));
-            assert_eq!(view["autostart"], autostart);
-            assert_eq!(view["starts_with_vosu"], expected);
-            let reloaded = bounded!(make()).unwrap();
-            assert_eq!(
-                reloaded.view(&reloaded.entry(id).unwrap())["autostart"],
-                autostart
-            );
-            assert_eq!(reloaded.entry(id).unwrap().state.lock().desired, expected);
-            bounded!(reloaded.shutdown());
-        }
-    }
-    for body in [
-        r#"{"autostart":true}"#,
-        r#"{"autostart":false}"#,
-        r#"{"autostart":null}"#,
-    ] {
-        assert_eq!(
-            bounded!(host.dashboard(
-                request(Method::PUT, "/api/tools/backend/autostart"),
-                Bytes::from_static(body.as_bytes())
-            ))
-            .status(),
-            StatusCode::BAD_REQUEST
-        );
-    }
-    for action in ["start", "stop", "restart"] {
-        assert_eq!(
-            bounded!(host.dashboard(
-                request(Method::POST, &format!("/api/tools/backend/{action}")),
-                Bytes::new()
-            ))
-            .status(),
-            StatusCode::BAD_REQUEST
-        );
-    }
-    let view = host.view(&host.entry("backend").unwrap());
-    assert_eq!(view["interfaces"], json!(["ui"]));
-    assert_eq!(view["service_role"], "backend");
-    let mut order = Vec::new();
-    host.visit(
-        "demand",
-        &mut HashSet::new(),
-        &mut HashSet::new(),
-        &mut order,
-    )
-    .unwrap();
-    assert_eq!(order, ["always", "demand"]);
-    bounded!(host.shutdown());
-}
-
-#[tokio::test]
-async fn overlays_route_needs_a_token_and_the_context_permission() {
-    let root = tempfile::tempdir().unwrap();
-    let reader = put(
-        &root.path().join("dev"),
-        "reader",
-        "[permissions]\nhost=['context']",
-    );
-    let plain = put(&root.path().join("dev"), "plain", "");
-    let host = bounded!(host(root.path(), vec![reader, plain]));
-    for (tool, token) in [("reader", "reader-cli-token"), ("plain", "plain-cli-token")] {
-        host.cli_sessions.lock().insert(
-            format!("{tool}-cli"),
-            CliSession {
-                tool: tool.into(),
-                token: token.into(),
-                expires: Instant::now() + Duration::from_secs(60),
-            },
-        );
-    }
-    let get = |token: Option<&'static str>| {
-        let mut req = request(Method::GET, "/tools/_host/v1/overlays");
-        if let Some(token) = token {
-            req.headers_mut()
-                .insert("x-vosu-tool-token", token.parse().unwrap());
-        }
-        host.overlay(req, Bytes::new())
-    };
-    assert_eq!(bounded!(get(None)).status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        bounded!(get(Some("plain-cli-token"))).status(),
-        StatusCode::FORBIDDEN
-    );
-    // Before the daemon wires its overlay catalog in.
-    assert_eq!(
-        bounded!(get(Some("reader-cli-token"))).status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-
-    let static_root = root.path().join("static");
-    fs::create_dir_all(static_root.join("hud")).unwrap();
-    fs::write(
-        static_root.join("hud/metadata.txt"),
-        "Name: HUD\nAuthor: 18-LAB\nVersion: 1.0.2\nResolution: 640x120\n",
-    )
-    .unwrap();
-    fs::write(static_root.join("hud/index.html"), "hud").unwrap();
-    fs::write(
-        static_root.join("hud/settings.json"),
-        r#"[{"uniqueID":"color","type":"color","value":"secret-ish"}]"#,
-    )
-    .unwrap();
-    host.set_counters(Arc::new(
-        vosu_overlay_host::ReloadableCounterService::production(
-            static_root.clone(),
-            root.path().join("settings"),
-            root.path().join("counter-cache"),
-        ),
-    ));
-    let response = bounded!(get(Some("reader-cli-token")));
+async fn code(host: &Arc<ToolRegistry>, id: &str) -> String {
+    let response = post(host, &format!("/api/tools/{id}/launch"), b"").await;
     assert_eq!(response.status(), StatusCode::OK);
-    let mut listing = bounded!(value(response));
-    let folder = listing["overlays"][0]["folder"].take();
-    let folder = PathBuf::from(folder.as_str().unwrap());
-    assert!(folder.is_absolute() && folder.join("index.html").is_file());
-    assert!(!folder.to_string_lossy().starts_with(r"\\?\"));
-    assert_eq!(
-        listing,
-        json!({"overlays":[{
-            "id":"hud","name":"HUD","nickname":null,"alias":null,"author":"18-LAB",
-            "version":"1.0.2","folder":null,"width":640,"height":120,
-        }]})
-    );
-    assert_eq!(
-        bounded!(get(Some("plain-cli-token"))).status(),
-        StatusCode::FORBIDDEN
-    );
-    // Read-only.
-    let mut post = request(Method::POST, "/tools/_host/v1/overlays");
-    post.headers_mut()
-        .insert("x-vosu-tool-token", "reader-cli-token".parse().unwrap());
-    assert_eq!(
-        bounded!(host.overlay(post, Bytes::new())).status(),
-        StatusCode::NOT_FOUND
-    );
-    bounded!(host.shutdown());
+    let url = bounded!(value(response))["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    url.split("vosu-launch=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+fn exchange(host: &ToolRegistry, tool: &str, code: &str) -> axum::response::Response {
+    host.exchange_session(json!({"tool": tool, "code": code}).to_string().as_bytes())
 }
 
 #[tokio::test]
-async fn theme_serves_shared_tokens_and_components_and_the_reference_page() {
+async fn legacy_tool_toml_is_listed_disabled_and_never_parsed_run_or_served() {
     let root = tempfile::tempdir().unwrap();
-    let host = bounded!(host(root.path(), Vec::new()));
-    let get = |path: &'static str| host.overlay(request(Method::GET, path), Bytes::new());
-    let theme = bounded!(get("/tools/_host/v1/theme.css"));
-    assert_eq!(theme.status(), StatusCode::OK);
-    assert_eq!(theme.headers()["content-type"], "text/css; charset=utf-8");
-    let css = String::from_utf8(
-        bounded!(to_bytes(theme.into_body(), 1 << 20))
-            .unwrap()
-            .to_vec(),
+    let marker = root.path().join("ran");
+    let data = root.path().join("data");
+    let legacy = put_legacy(&data, "legacy", &legacy_toml("legacy", &marker));
+    // Malformed `tool.toml` is not parsed either; it is the same diagnosis.
+    put_legacy(&data, "garbled", "not = [valid toml");
+    let config = root.path().join("config");
+    let state = json!({"legacy": {"enabled": true, "trusted": true, "autostart": true,
+        "catalog_source": "owner/tools", "replaces": []}});
+    atomic_json(&config.join("state.json"), &state).unwrap();
+    atomic_json(
+        &config.join("settings/legacy.json"),
+        &json!({"key": "kept"}),
     )
     .unwrap();
-    // One source: the dashboard's token file comes first, unchanged.
-    assert!(css.starts_with(include_str!("../../assets/server/tokens.css")));
-    for class in [
-        ".v-app",
-        ".v-bar",
-        ".v-panel",
-        ".v-btn--primary",
-        ".v-select",
-        ".v-file",
-        ".v-help",
-        ".v-drawer",
+    let tool_data = root.path().join("tool-data/legacy");
+    fs::create_dir_all(&tool_data).unwrap();
+    fs::write(tool_data.join("save"), "untouched").unwrap();
+    let host = bounded!(host(root.path(), Vec::new()));
+    for id in ["legacy", "garbled"] {
+        let view = host.tool_view(&host.entry(id).unwrap());
+        assert_eq!(view["status"], "disabled", "{id}");
+        assert_eq!(view["status_detail"], NEEDS_UPDATE, "{id}");
+        assert_eq!(view["enabled"], false);
+        assert_eq!(view["ui_url"], Value::Null);
+        assert_eq!(view["icon_url"], Value::Null);
+    }
+    assert_eq!(
+        host.tool_view(&host.entry("legacy").unwrap())["trusted"],
+        true
+    );
+    for action in ["enable", "trust", "launch"] {
+        let response = post(&host, &format!("/api/tools/legacy/{action}"), b"{}").await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{action}");
+        assert_eq!(bounded!(value(response))["error"], NEEDS_UPDATE);
+    }
+    // Never presented to the tool host: no UI, art or `_settings` is served.
+    assert!(host.tool_host_views().borrow().tools.is_empty());
+    bounded!(host.rescan());
+    bounded!(host.rescan());
+    bounded!(host.shutdown());
+    // Counterexample: no `tool.toml` service or CLI ever runs.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!marker.exists());
+    // Files, settings, trust/autostart record and data stay for M8.
+    let saved: Value =
+        serde_json::from_slice(&fs::read(config.join("state.json")).unwrap()).unwrap();
+    assert_eq!(saved, state);
+    assert_eq!(
+        fs::read_to_string(config.join("settings/legacy.json")).unwrap(),
+        "{\n  \"key\": \"kept\"\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(tool_data.join("save")).unwrap(),
+        "untouched"
+    );
+    assert!(legacy.join("tool.toml").is_file());
+}
+
+#[tokio::test]
+async fn invalid_manifest_never_falls_back_to_tool_toml() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("ran");
+    let dir = put(&root.path().join("dev"), "both", "");
+    fs::write(dir.join("tool.toml"), legacy_toml("both", &marker)).unwrap();
+    let host = bounded!(host(root.path(), vec![dir.clone()]));
+    assert_eq!(host.status(&host.entry("both").unwrap()).0, "running");
+    fs::write(dir.join("manifest.toml"), "invalid v2").unwrap();
+    bounded!(host.rescan());
+    let entry = host.entry("both").unwrap();
+    assert_eq!(host.status(&entry).0, "invalid");
+    assert!(!entry.legacy && entry.manifest.is_none());
+    assert!(host.tool_host_views().borrow().tools.is_empty());
+    bounded!(host.shutdown());
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn tool_view_has_exactly_the_2_0_fields() {
+    let root = tempfile::tempdir().unwrap();
+    let dev = put(&root.path().join("dev"), "demo", "");
+    let host = bounded!(host(root.path(), vec![dev]));
+    let listed = bounded!(value(
+        host.dashboard(request(Method::GET, "/api/tools"), Bytes::new())
+            .await
+    ));
+    let view = &listed["tools"][0];
+    let mut keys: Vec<_> = view.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "author",
+            "banner_url",
+            "description",
+            "enabled",
+            "has_settings",
+            "homepage",
+            "icon_url",
+            "id",
+            "name",
+            "optional",
+            "requires",
+            "source",
+            "status",
+            "status_detail",
+            "trusted",
+            "ui_url",
+            "update_available",
+            "version",
+        ]
+    );
+    assert_eq!(view["status"], "running");
+    assert_eq!(view["ui_url"], "http://127.0.0.1:25150/tools/demo/");
+    assert_eq!(view["icon_url"], "http://127.0.0.1:25150/tools/demo/_icon");
+    assert_eq!(view["banner_url"], Value::Null);
+    // No path, process, data, service, CLI or permission field remains.
+    assert!(
+        !view
+            .to_string()
+            .contains(&root.path().display().to_string())
+    );
+    for (method, path) in [
+        (Method::GET, "/api/tools/demo/logs"),
+        (Method::POST, "/api/tools/demo/start"),
+        (Method::POST, "/api/tools/demo/open-data"),
     ] {
-        assert!(css.contains(class), "{class}");
-    }
-    let design = bounded!(get("/tools/_host/v1/design"));
-    assert_eq!(design.status(), StatusCode::OK);
-    assert_eq!(design.headers()["content-type"], "text/html; charset=utf-8");
-    let html = String::from_utf8(
-        bounded!(to_bytes(design.into_body(), 1 << 20))
-            .unwrap()
-            .to_vec(),
-    )
-    .unwrap();
-    assert!(html.contains(r#"href="/tools/_host/v1/theme.css""#));
-    bounded!(host.shutdown());
-}
-
-#[tokio::test]
-async fn art_is_served_in_every_status_and_sandboxed() {
-    let root = tempfile::tempdir().unwrap();
-    let dir = put(&root.path().join("data"), "artful", "");
-    fs::create_dir_all(dir.join("art")).unwrap();
-    fs::write(
-        dir.join("tool.toml"),
-        "manifest_version=1\nid='artful'\nname='Art'\nversion='1.0.0'\nicon='art/icon.svg'\nbanner='art/banner.png'\n[ui]\nroot='web'\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("art/icon.svg"),
-        "<svg xmlns='http://www.w3.org/2000/svg'/>",
-    )
-    .unwrap();
-    fs::write(dir.join("art/banner.png"), b"\x89PNG").unwrap();
-    fs::write(dir.join("art/other.svg"), "<svg/>").unwrap();
-    let host = bounded!(host(root.path(), Vec::new()));
-    let entry = host.entry("artful").unwrap();
-    // A user tool starts untrusted: its UI is unavailable, its art is not.
-    assert_eq!(host.status(&entry).0, "untrusted");
-    for status in ["untrusted", "failed"] {
-        entry.state.lock().status = status.into();
-        for path in ["/tools/artful/_icon", "/tools/artful/_banner"] {
-            let response = bounded!(host.overlay(request(Method::GET, path), Bytes::new()));
-            assert_eq!(response.status(), StatusCode::OK, "{status} {path}");
-            assert!(
-                response.headers()["content-security-policy"]
-                    .to_str()
-                    .unwrap()
-                    .ends_with("sandbox")
-            );
-        }
-        for path in ["/tools/artful/", "/tools/artful/art/other.svg"] {
-            assert_eq!(
-                bounded!(host.overlay(request(Method::GET, path), Bytes::new())).status(),
-                StatusCode::SERVICE_UNAVAILABLE,
-                "{status} {path}"
-            );
-        }
+        assert_eq!(
+            bounded!(host.dashboard(request(method, path), Bytes::new())).status(),
+            StatusCode::BAD_REQUEST,
+            "{path}"
+        );
     }
     bounded!(host.shutdown());
 }
 
 #[tokio::test]
-async fn discovery_precedence_invalid_settings_and_cycles() {
+async fn discovery_precedence_and_invalid_settings() {
     let root = tempfile::tempdir().unwrap();
     let dev = put(&root.path().join("dev"), "demo", "");
     put(&root.path().join("data"), "demo", "");
-    let a = put(
-        &root.path().join("data"),
-        "a",
-        "[[requires]]\nid='b'\nversion='>=1.0.0'",
-    );
-    put(
-        &root.path().join("data"),
-        "b",
-        "[[requires]]\nid='a'\nversion='>=1.0.0'",
-    );
     let bad = put(&root.path().join("data"), "bad", "");
     fs::write(bad.join("settings.json"), "not json").unwrap();
+    let wrong = put(&root.path().join("data"), "wrong", "");
+    fs::rename(&wrong, root.path().join("data/renamed")).unwrap();
+    fs::create_dir_all(root.path().join("data/.stage-x")).unwrap();
+    fs::create_dir_all(root.path().join("data/empty")).unwrap();
     let host = bounded!(host(root.path(), vec![dev.clone()]));
     assert_eq!(host.entry("demo").unwrap().root, dev);
     assert_eq!(host.entry("demo").unwrap().source, "dev");
-    assert_eq!(host.status(&host.entry("a").unwrap()).0, "invalid");
-    assert_eq!(host.status(&host.entry("b").unwrap()).0, "invalid");
     assert!(
         host.status(&host.entry("bad").unwrap())
             .1
             .unwrap()
             .contains("settings.json")
     );
-    assert!(a.exists());
+    assert_eq!(host.status(&host.entry("wrong").unwrap()).0, "invalid");
+    assert!(host.entry("empty").is_err());
+    assert!(host.entry(".stage-x").is_err());
     bounded!(host.shutdown());
 }
+
 #[tokio::test]
-async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
+async fn launch_codes_are_bound_single_use_and_expiring() {
     let root = tempfile::tempdir().unwrap();
     let dev = put(root.path(), "demo", "");
-    let host = bounded!(host(root.path(), vec![dev]));
+    let other = put(root.path(), "other", "");
+    let host = bounded!(host(root.path(), vec![dev, other]));
     let launch = bounded!(value(
-        host.dashboard(
-            request(Method::POST, "/api/tools/demo/launch"),
-            Bytes::from_static(b"{\"theme\":\"light\"}"),
-        )
-        .await,
+        post(&host, "/api/tools/demo/launch", b"{\"theme\":\"light\"}").await
     ));
     let url = launch["url"].as_str().unwrap();
+    assert!(url.starts_with("http://127.0.0.1:25150/tools/demo/#vosu-launch="));
     assert!(url.ends_with("&theme=light"));
     let code = url
         .split("vosu-launch=")
@@ -386,19 +270,29 @@ async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
         .split('&')
         .next()
         .unwrap();
-    let payload = Bytes::from(json!({"tool":"demo","code":code}).to_string());
-    let response = bounded!(host.overlay(
-        request(Method::POST, "/tools/_host/v1/session"),
-        payload.clone(),
-    ));
+    assert_eq!(code.len(), 64);
+    // Another tool's code is consumed and refused.
+    let theirs = bounded!(super::tests::code(&host, "other"));
+    assert_eq!(
+        exchange(&host, "demo", &theirs).status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        exchange(&host, "other", &theirs).status(),
+        StatusCode::FORBIDDEN
+    );
+    let response = exchange(&host, "demo", code);
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert!(response.headers().get(header::SET_COOKIE).is_none());
     let session = bounded!(value(response))["session"]
         .as_str()
         .unwrap()
         .to_owned();
     assert!(host.sessions.lock().contains_key(&session));
+    // Counterexample: the same launch code replayed.
     assert_eq!(
-        bounded!(host.overlay(request(Method::POST, "/tools/_host/v1/session"), payload)).status(),
+        exchange(&host, "demo", code).status(),
         StatusCode::FORBIDDEN
     );
     host.codes.lock().insert(
@@ -409,283 +303,213 @@ async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
         },
     );
     assert_eq!(
-        bounded!(host.overlay(
-            request(Method::POST, "/tools/_host/v1/session"),
-            Bytes::from_static(b"{\"tool\":\"demo\",\"code\":\"expired\"}")
-        ))
-        .status(),
+        exchange(&host, "demo", "expired").status(),
         StatusCode::FORBIDDEN
     );
-    for path in [
-        "/tools/demo/../tool.toml",
-        "/tools/demo/%2e%2e/tool.toml",
-        "/tools/demo/%2fetc/passwd",
+    for body in [
+        &b"not json"[..],
+        b"{\"tool\":\"demo\"}",
+        b"{\"code\":\"x\"}",
     ] {
         assert_eq!(
-            bounded!(host.overlay(request(Method::GET, path), Bytes::new())).status(),
-            StatusCode::NOT_FOUND
+            host.exchange_session(body).status(),
+            StatusCode::BAD_REQUEST
         );
     }
+    // A disabled tool cannot launch, and its pending codes die with it.
+    let pending = bounded!(super::tests::code(&host, "demo"));
     assert_eq!(
-        bounded!(host.overlay(request(Method::GET, "/tools/demo/"), Bytes::new())).status(),
+        post(&host, "/api/tools/demo/disable", b"").await.status(),
         StatusCode::OK
     );
-    bounded!(host.shutdown());
-}
-#[test]
-fn reservation_covers_validation_and_encoded_static_paths() {
-    for name in ["tools", "Tools", "TOOLS"] {
-        assert!(vosu_overlay_host::validate_component(name).is_err());
-    }
-    let root = tempfile::tempdir().unwrap();
-    fs::create_dir(root.path().join("tools")).unwrap();
-    fs::write(root.path().join("tools/index.html"), "secret").unwrap();
-    for path in ["tools/index.html", "%74ools/index.html", "TOOLS/index.html"] {
-        assert!(matches!(
-            crate::server::files::resolve_encoded_counter_resource(
-                Some(root.path()),
-                path,
-                path,
-                crate::server::files::MissingKind::NotFound
-            )
-            .unwrap(),
-            crate::server::files::ResourceOutcome::Missing(_)
-        ));
-    }
-}
-#[tokio::test]
-async fn access_matrix_includes_sessions_dependencies_and_method_overlap() {
-    let root = tempfile::tempdir().unwrap();
-    let target = put(root.path(), "target", "");
-    let dependent = put(
-        root.path(),
-        "dependent",
-        "[[requires]]\nid='target'\nversion='>=1.0.0'",
-    );
-    let stranger = put(root.path(), "stranger", "");
-    let host = bounded!(host(root.path(), vec![target, dependent, stranger]));
-    let target = host.entry("target").unwrap();
-    let dep = host.entry("dependent").unwrap();
-    let stranger = host.entry("stranger").unwrap();
-    for (entry, token) in [(&dep, "dependency-secret"), (&stranger, "stranger-secret")] {
-        let mut state = entry.state.lock();
-        state.status = "running".into();
-        state.token = Some(token.into());
-    }
-    let mut headers = HeaderMap::new();
     assert_eq!(
-        host.caller(&target, &headers, false).as_deref(),
-        Some("overlay")
-    );
-    assert!(host.caller(&target, &headers, true).is_none());
-    headers.insert("x-vosu-tool-token", "stranger-secret".parse().unwrap());
-    assert!(host.caller(&target, &headers, true).is_none());
-    // Optional dependencies: a valid non-dependent token reads like an overlay.
-    assert_eq!(
-        host.caller(&target, &headers, false).as_deref(),
-        Some("tool:stranger")
-    );
-    headers.insert("x-vosu-tool-token", "forged-secret".parse().unwrap());
-    assert!(host.caller(&target, &headers, false).is_none());
-    headers.insert("x-vosu-tool-token", "dependency-secret".parse().unwrap());
-    assert_eq!(
-        host.caller(&target, &headers, true).as_deref(),
-        Some("tool:dependent")
-    );
-    headers.clear();
-    host.sessions
-        .lock()
-        .insert("session-secret".into(), host.test_session("target"));
-    headers.insert("x-vosu-tool-session", "session-secret".parse().unwrap());
-    assert_eq!(host.caller(&target, &headers, true).as_deref(), Some("ui"));
-    assert!(host.caller(&stranger, &headers, true).is_none());
-    let mut manifest = target.manifest.clone().unwrap();
-    manifest.api.read = vec!["/v1/jobs".into()];
-    manifest.api.write = vec!["/v1/jobs".into(), "/v1/private".into()];
-    for method in ["GET", "HEAD"] {
-        assert_eq!(manifest.access(method, "/v1/jobs/1"), Some(false));
-        assert_eq!(manifest.access(method, "/v1/private"), Some(true));
-    }
-    for method in ["POST", "PUT", "DELETE", "PATCH"] {
-        assert_eq!(manifest.access(method, "/v1/jobs/1"), Some(true));
-        assert_eq!(manifest.access(method, "/v1/no"), None);
-    }
-    bounded!(host.shutdown());
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tool-host");
-    let host = bounded!(host(root.path(), vec![fixture]));
-    let response = bounded!(host.overlay(
-        request(Method::GET, "/tools/fixture/api/v1/read?hello=world"),
-        Bytes::new(),
-    ));
-    assert_eq!(response.status(), StatusCode::OK);
-    let first = bounded!(value(response));
-    assert_eq!(first["path"], "/v1/read?hello=world");
-    assert_eq!(first["caller"], "overlay");
-    assert_eq!(
-        bounded!(host.overlay(
-            request(Method::POST, "/tools/fixture/api/v1/write"),
-            Bytes::new()
-        ))
-        .status(),
+        exchange(&host, "demo", &pending).status(),
         StatusCode::FORBIDDEN
     );
-    host.sessions
-        .lock()
-        .insert("fixture-session".into(), host.test_session("fixture"));
-    let mut write = request(Method::POST, "/tools/fixture/api/v1/write");
-    write
-        .headers_mut()
-        .insert("x-vosu-tool-session", "fixture-session".parse().unwrap());
     assert_eq!(
-        bounded!(host.overlay(write, Bytes::new())).status(),
-        StatusCode::OK
+        post(&host, "/api/tools/demo/launch", b"").await.status(),
+        StatusCode::BAD_REQUEST
     );
-    let entry = host.entry("fixture").unwrap();
-    let mut crash = request(Method::POST, "/tools/fixture/api/v1/crash");
-    crash
-        .headers_mut()
-        .insert("x-vosu-tool-session", "fixture-session".parse().unwrap());
-    let before = Instant::now();
-    assert_eq!(
-        bounded!(host.overlay(crash, Bytes::new())).status(),
-        StatusCode::BAD_GATEWAY
-    );
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if entry.state.lock().restarts > 0 && entry.state.lock().status == "running" {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .unwrap();
-    assert!(before.elapsed() >= Duration::from_secs(1));
-    assert_ne!(
-        entry.state.lock().pid.unwrap(),
-        first["pid"].as_u64().unwrap() as u32
-    );
-    assert!(
-        entry
-            .logs
-            .lock()
-            .iter()
-            .any(|line| line.text.contains("fixture started"))
-    );
-    let pid = entry.state.lock().pid.unwrap();
-    bounded!(host.shutdown());
-    assert_eq!(
-        fs::read_to_string(entry.data_dir.join("stdin-closed")).unwrap(),
-        "yes"
-    );
-    #[cfg(target_os = "linux")]
-    assert!(!Path::new(&format!("/proc/{pid}")).exists());
-}
-#[cfg(unix)]
-#[tokio::test]
-async fn voluntary_exit_stays_stopped_and_can_be_started_again() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = copied_fixture(root.path());
-    let manifest = fs::read_to_string(fixture.join("tool.toml")).unwrap();
-    fs::write(
-        fixture.join("tool.toml"),
-        manifest.replace("on-demand", "always"),
-    )
-    .unwrap();
-    let host = bounded!(host(root.path(), vec![fixture]));
-    bounded!(host.start("fixture", true)).unwrap();
-    let entry = host.entry("fixture").unwrap();
-    let first_pid = entry.state.lock().pid.unwrap();
-    let (port, token) = {
-        let state = entry.state.lock();
-        (state.port.unwrap(), state.token.clone().unwrap())
-    };
-    let _ = bounded!(
-        host.http
-            .post(format!("http://127.0.0.1:{port}/v1/exit"))
-            .header("x-vosu-tool-token", token)
-            .send()
-    );
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if entry.state.lock().status == "stopped" {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    // Cross multiple watcher ticks: an always service must not be resurrected.
-    tokio::time::sleep(Duration::from_millis(2200)).await;
-    {
-        let state = entry.state.lock();
-        assert_eq!(state.status, "stopped");
-        assert_eq!(state.detail.as_deref(), Some("exited"));
-        assert!(!state.desired);
-        assert_eq!(state.restarts, 0);
-        assert!(state.port.is_none() && state.token.is_none() && state.pid.is_none());
-    }
-    assert_eq!(
-        bounded!(host.overlay(
-            request(Method::GET, "/tools/fixture/api/v1/read"),
-            Bytes::new(),
-        ))
-        .status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-    assert_eq!(entry.state.lock().status, "stopped");
-    bounded!(host.start("fixture", true)).unwrap();
-    assert_eq!(entry.state.lock().status, "running");
-    assert_ne!(entry.state.lock().pid, Some(first_pid));
-    bounded!(host.stop_serialized(&entry, true));
-    assert!(!entry.state.lock().desired);
-    assert_eq!(entry.state.lock().detail, None);
-    assert_eq!(entry.state.lock().restarts, 0);
-    // A vosux invocation's own CLI token is an explicit start request, unlike
-    // overlay polling or another tool's dependency request.
-    entry.state.lock().detail = Some("exited".into());
-    host.cli_sessions.lock().insert(
-        "fixture-cli".into(),
-        CliSession {
-            tool: "fixture".into(),
-            token: "fixture-cli-token".into(),
-            expires: Instant::now() + Duration::from_secs(60),
-        },
-    );
-    let mut cli = request(Method::GET, "/tools/fixture/api/v1/read");
-    cli.headers_mut()
-        .insert("x-vosu-tool-token", "fixture-cli-token".parse().unwrap());
-    assert_eq!(
-        bounded!(host.overlay(cli, Bytes::new())).status(),
-        StatusCode::OK
-    );
-    assert_eq!(entry.state.lock().status, "running");
     bounded!(host.shutdown());
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn voluntary_exit_before_readiness_is_not_a_crash() {
+async fn pending_code_registry_is_bounded() {
     let root = tempfile::tempdir().unwrap();
-    let fixture = copied_fixture(root.path());
-    let manifest = fs::read_to_string(fixture.join("tool.toml")).unwrap();
-    fs::write(
-        fixture.join("tool.toml"),
-        manifest.replace("\"service.py\"", "\"service.py\", \"--exit-before-ready\""),
+    let dev = put(root.path(), "demo", "");
+    let host = bounded!(host(root.path(), vec![dev]));
+    for index in 0..1024 {
+        host.codes.lock().insert(
+            index.to_string(),
+            Code {
+                tool: "demo".into(),
+                expires: Instant::now() + Duration::from_secs(60),
+            },
+        );
+    }
+    assert_eq!(
+        post(&host, "/api/tools/demo/launch", b"").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(host.codes.lock().len(), 1024);
+    bounded!(host.shutdown());
+}
+
+#[tokio::test]
+async fn disable_uninstall_and_replacement_invalidate_sessions_and_cancel_their_jobs() {
+    let root = tempfile::tempdir().unwrap();
+    let dev = put(root.path(), "demo", "");
+    let host = bounded!(host(root.path(), vec![dev.clone()]));
+    let jobs = vosu_core::actions::JobRegistry::new();
+    host.set_jobs(jobs.clone());
+    let open = |host: &Arc<ToolRegistry>| {
+        let host = host.clone();
+        async move {
+            let code = code(&host, "demo").await;
+            bounded!(value(exchange(&host, "demo", &code)))["session"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let owner = |token: &str| {
+        let vosu_core::actions::Principal::Tool(owner) =
+            host.authenticate_action_session(token).unwrap()
+        else {
+            panic!("launch sessions authenticate tool principals");
+        };
+        owner
+    };
+    for invalidate in ["disable", "uninstall", "replace"] {
+        let token = bounded!(open(&host));
+        let kept = bounded!(open(&host));
+        let revoked_owner = owner(&token);
+        let job = jobs
+            .create(
+                vosu_core::actions::Principal::Tool(revoked_owner.clone()),
+                "fixture.work".into(),
+                None,
+            )
+            .unwrap();
+        let other = owner(&kept);
+        let pending = bounded!(code(&host, "demo"));
+        match invalidate {
+            "disable" => {
+                post(&host, "/api/tools/demo/disable", b"").await;
+            }
+            "uninstall" => bounded!(host.revoke_installed("demo")),
+            _ => {
+                fs::write(
+                    dev.join("manifest.toml"),
+                    manifest("demo", "").replace("Test demo", "Replaced"),
+                )
+                .unwrap();
+                bounded!(host.rescan());
+            }
+        }
+        assert!(
+            host.authenticate_action_session(&token).is_err(),
+            "{invalidate}"
+        );
+        assert!(
+            host.authenticate_action_session(&kept).is_err(),
+            "{invalidate}"
+        );
+        assert_eq!(
+            exchange(&host, "demo", &pending).status(),
+            StatusCode::FORBIDDEN,
+            "{invalidate}"
+        );
+        // Advisory cancellation was already requested for the revoked owner.
+        assert!(jobs.cancel_owner(&revoked_owner).is_empty(), "{invalidate}");
+        assert!(jobs.cancel_owner(&other).is_empty());
+        assert!(
+            jobs.get(&vosu_core::actions::Principal::Tool(other), &job.id)
+                .is_err()
+        );
+        post(&host, "/api/tools/demo/enable", b"").await;
+        bounded!(host.rescan());
+    }
+    bounded!(host.shutdown());
+}
+
+#[tokio::test]
+async fn tool_host_view_presents_servable_packages_and_revokes_replaced_leases() {
+    let root = tempfile::tempdir().unwrap();
+    let dev = put(root.path(), "demo", "");
+    let legacy = put_legacy(root.path(), "old", "manifest_version=1");
+    let host = bounded!(host(root.path(), vec![dev.clone(), legacy]));
+    let views = host.tool_host_views();
+    let first = views.borrow().clone();
+    assert_eq!(
+        first.dashboard_origin.as_deref(),
+        Some("http://127.0.0.1:25151")
+    );
+    assert_eq!(first.tools.len(), 1);
+    let tool = first.tools[0].clone();
+    assert_eq!((tool.id.as_str(), tool.servable), ("demo", true));
+    assert_eq!(
+        (tool.ui_root.as_str(), tool.ui_entry.as_str()),
+        ("web", "index.html")
+    );
+    assert_eq!(tool.icon.as_deref(), Some("art/icon.svg"));
+    assert_eq!(tool.settings.as_deref(), Some(&b"{}"[..]));
+    let file = bounded!(
+        tool.root
+            .open(&RelativeChild::parse("web/index.html").unwrap())
     )
     .unwrap();
-    let host = bounded!(host(root.path(), vec![fixture]));
-    assert_eq!(bounded!(host.start("fixture", true)).unwrap_err(), "exited");
-    let entry = host.entry("fixture").unwrap();
-    assert_eq!(entry.state.lock().status, "stopped");
-    assert_eq!(entry.state.lock().restarts, 0);
-    assert!(!entry.state.lock().desired);
+    assert_eq!(bounded!(file.read(0, 64)).unwrap(), b"tool-ui");
+    // An unchanged registry is not republished.
+    bounded!(host.rescan());
+    assert_eq!(views.borrow().generation, first.generation);
+    post(&host, "/api/tools/demo/disable", b"").await;
+    let disabled = views.borrow().clone();
+    assert!(disabled.generation > first.generation);
+    assert!(!disabled.tools[0].servable);
+    post(&host, "/api/tools/demo/enable", b"").await;
+    assert!(views.borrow().tools[0].servable);
+    fs::write(
+        dev.join("manifest.toml"),
+        manifest("demo", "").replace("1.0.0", "1.1.0"),
+    )
+    .unwrap();
+    bounded!(host.rescan());
+    assert_eq!(views.borrow().tools[0].version, "1.1.0");
+    // The replaced package's lease stops opening files.
+    assert_eq!(
+        bounded!(
+            tool.root
+                .open(&RelativeChild::parse("web/index.html").unwrap())
+        )
+        .err(),
+        Some(FileError::TargetGone)
+    );
+    bounded!(host.shutdown());
+}
+
+#[tokio::test]
+async fn package_lease_is_confined_to_the_package() {
+    let root = tempfile::tempdir().unwrap();
+    let dev = put(root.path(), "demo", "");
+    fs::write(root.path().join("secret.txt"), "outside").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.path().join("secret.txt"), dev.join("web/link.txt")).unwrap();
+    let host = bounded!(host(root.path(), vec![dev]));
+    let tool = host.tool_host_views().borrow().tools[0].clone();
+    assert!(RelativeChild::parse("../secret.txt").is_err());
+    assert!(
+        bounded!(tool.root.open(&RelativeChild::parse("web").unwrap())).is_err(),
+        "directories are not files"
+    );
+    #[cfg(unix)]
+    assert!(
+        bounded!(
+            tool.root
+                .open(&RelativeChild::parse("web/link.txt").unwrap())
+        )
+        .is_err()
+    );
     bounded!(host.shutdown());
 }
 
@@ -761,7 +585,7 @@ async fn organization_defaults_migrate_at_startup_without_expanding_identity_tru
         );
     }
     // Catalog v2 owns sources; the 1.x list and overlay state are M8
-    // migration inputs and are never rewritten by the legacy tool host.
+    // migration inputs and are never rewritten by the tool registry.
     let legacy: Value =
         serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap()).unwrap();
     assert_eq!(legacy, sources);
@@ -785,160 +609,6 @@ async fn organization_defaults_migrate_at_startup_without_expanding_identity_tru
 }
 
 #[tokio::test]
-async fn cycles_do_not_poison_dependents() {
-    let root = tempfile::tempdir().unwrap();
-    let host = bounded!(host(root.path(), Vec::new()));
-    put(&host.data, "cycle", "[[requires]]\nid='cycle'\nversion='*'");
-    put(
-        &host.data,
-        "consumer",
-        "[[requires]]\nid='cycle'\nversion='*'",
-    );
-    bounded!(host.rescan());
-    host.saved
-        .lock()
-        .entry("consumer".into())
-        .or_default()
-        .trusted = true;
-    assert_eq!(host.status(&host.entry("cycle").unwrap()).0, "invalid");
-    assert_eq!(host.status(&host.entry("consumer").unwrap()).0, "blocked");
-    bounded!(host.shutdown());
-}
-
-#[cfg(unix)]
-fn copied_fixture(root: &Path) -> PathBuf {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tool-host");
-    let target = root.join("fixture");
-    fs::create_dir_all(target.join("web")).unwrap();
-    for name in ["tool.toml", "service.py", "web/index.html"] {
-        fs::copy(source.join(name), target.join(name)).unwrap();
-    }
-    target
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn development_script_change_restarts_with_continuous_logs() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = copied_fixture(root.path());
-    let host = bounded!(host(root.path(), vec![fixture.clone()]));
-    bounded!(host.start("fixture", true)).unwrap();
-    let first = host.entry("fixture").unwrap();
-    let pid = first.state.lock().pid.unwrap();
-    let script = fs::read_to_string(fixture.join("service.py")).unwrap();
-    fs::write(
-        fixture.join("service.py"),
-        format!("{script}\n# Development rebuild.\n"),
-    )
-    .unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let entry = host.entry("fixture").unwrap();
-            let ready = entry.state.lock().pid.is_some_and(|next| next != pid)
-                && entry.state.lock().status == "running";
-            if ready {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .unwrap();
-    let entry = host.entry("fixture").unwrap();
-    let lines = entry.logs.lock().clone();
-    assert!(
-        lines
-            .iter()
-            .filter(|line| line.text == "fixture started")
-            .count()
-            >= 2
-    );
-    assert!(
-        lines
-            .iter()
-            .zip(lines.iter().skip(1))
-            .all(|(a, b)| a.seq < b.seq)
-    );
-    bounded!(host.shutdown());
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn five_pre_readiness_crashes_fail_until_manual_start() {
-    let root = tempfile::tempdir().unwrap();
-    let fixture = copied_fixture(root.path());
-    let manifest = fs::read_to_string(fixture.join("tool.toml")).unwrap();
-    fs::write(
-        fixture.join("tool.toml"),
-        manifest.replace("\"service.py\"", "\"service.py\", \"--crash-before-ready\""),
-    )
-    .unwrap();
-    let host = bounded!(host(root.path(), vec![fixture]));
-    let before = Instant::now();
-    assert!(bounded!(host.start("fixture", false)).is_err());
-    let entry = host.entry("fixture").unwrap();
-    assert_eq!(entry.state.lock().status, "failed");
-    assert_eq!(entry.state.lock().restarts, 5);
-    assert!(before.elapsed() >= Duration::from_secs(15));
-    assert!(
-        bounded!(host.start("fixture", false))
-            .unwrap_err()
-            .contains("failed")
-    );
-    bounded!(host.shutdown());
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn websocket_proxy_preserves_frames_subprotocol_and_drains() {
-    use axum::{Extension, Router, extract::State};
-    use futures_util::StreamExt as _;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
-    let root = tempfile::tempdir().unwrap();
-    let fixture = copied_fixture(root.path());
-    let host = bounded!(host(root.path(), vec![fixture]));
-    let tracker = Arc::new(crate::server::websocket::UpgradeCallbackTracker::new());
-    let router = Router::new()
-        .fallback(
-            |State(host): State<Arc<ToolHost>>, request: Request| async move {
-                bounded!(host.overlay(request, Bytes::new()))
-            },
-        )
-        .layer(Extension(tracker.clone()))
-        .with_state(host.clone());
-    let listener = bounded!(tokio::net::TcpListener::bind(("127.0.0.1", 0))).unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        bounded!(axum::serve(listener, router)).unwrap();
-    });
-    let mut request = format!("ws://{address}/tools/fixture/api/v1/stream")
-        .into_client_request()
-        .unwrap();
-    request
-        .headers_mut()
-        .insert("sec-websocket-protocol", "fixture".parse().unwrap());
-    let (mut socket, handshake) = bounded!(tokio_tungstenite::connect_async(request)).unwrap();
-    assert_eq!(handshake.headers()["sec-websocket-protocol"], "fixture");
-    let frame = bounded!(socket.next())
-        .unwrap()
-        .unwrap()
-        .into_text()
-        .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&frame).unwrap()["caller"],
-        "overlay"
-    );
-    let _ = bounded!(socket.close(None));
-    tracker.cancel();
-    tokio::time::timeout(Duration::from_secs(3), tracker.wait_drained())
-        .await
-        .unwrap();
-    bounded!(host.shutdown());
-    server.abort();
-    let _ = bounded!(server);
-}
-
-#[tokio::test]
 async fn tool_settings_and_approval_persist_outside_overlay_settings() {
     let root = tempfile::tempdir().unwrap();
     let tool = put(&root.path().join("data"), "user-tool", "");
@@ -948,13 +618,13 @@ async fn tool_settings_and_approval_persist_outside_overlay_settings() {
         first.status(&first.entry("user-tool").unwrap()).0,
         "untrusted"
     );
+    // Untrusted: listed, never presented as servable or launchable.
+    assert!(!first.tool_host_views().borrow().tools[0].servable);
     for action in ["trust", "disable"] {
         assert_eq!(
-            bounded!(first.dashboard(
-                request(Method::POST, &format!("/api/tools/user-tool/{action}")),
-                Bytes::new()
-            ))
-            .status(),
+            post(&first, &format!("/api/tools/user-tool/{action}"), b"")
+                .await
+                .status(),
             StatusCode::OK
         );
     }
@@ -968,10 +638,12 @@ async fn tool_settings_and_approval_persist_outside_overlay_settings() {
     ));
     assert_eq!(settings["values"]["count"], 12.0);
     assert_eq!(settings["values"]["enabled"], true);
-    let saved = bounded!(first.dashboard(
-        request(Method::POST, "/api/tools/user-tool/settings"),
-        Bytes::from_static(br#"[{"uniqueID":"count","value":"25"}]"#),
-    ));
+    let saved = post(
+        &first,
+        "/api/tools/user-tool/settings",
+        br#"[{"uniqueID":"count","value":"25"}]"#,
+    )
+    .await;
     assert_eq!(saved.status(), StatusCode::OK);
     assert!(root.path().join("config/settings/user-tool.json").is_file());
     assert!(!tool.join("settings.schema.toml").exists());
@@ -986,7 +658,7 @@ async fn tool_settings_and_approval_persist_outside_overlay_settings() {
 }
 
 #[tokio::test]
-async fn password_settings_never_reach_the_dashboard() {
+async fn password_settings_never_reach_the_dashboard_or_the_tool_host() {
     let root = tempfile::tempdir().unwrap();
     let tool = put(&root.path().join("dev"), "secretive", "");
     fs::write(
@@ -1004,12 +676,7 @@ async fn password_settings_never_reach_the_dashboard() {
             .await,
         ))
     };
-    let save = |body: &'static [u8]| {
-        host.dashboard(
-            request(Method::POST, "/api/tools/secretive/settings"),
-            Bytes::from_static(body),
-        )
-    };
+    let save = |body: &'static [u8]| post(&host, "/api/tools/secretive/settings", body);
     let effective = || host.settings(&host.entry("secretive").unwrap()).unwrap()["secret"].clone();
     let settings = bounded!(read());
     assert_eq!(settings["values"]["secret"], "");
@@ -1028,213 +695,17 @@ async fn password_settings_never_reach_the_dashboard() {
     bounded!(save(br#"[{"uniqueID":"name","value":"z"}]"#));
     assert_eq!(effective(), "hunter2");
     assert!(!bounded!(read()).to_string().contains("hunter2"));
-    // The overlay-origin read route omits password values entirely.
-    let readable = bounded!(value(
-        host.overlay(
-            request(Method::GET, "/tools/secretive/_settings"),
-            Bytes::new(),
-        )
-        .await,
-    ));
-    assert_eq!(readable, json!({"values": {"name": "z"}}));
+    // The tool host's `_settings` values omit password settings entirely.
+    let presented = host.tool_host_views().borrow().tools[0]
+        .settings
+        .clone()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&presented).unwrap(),
+        json!({"name": "z"})
+    );
     bounded!(save(br#"[{"uniqueID":"secret","value":null}]"#));
     assert_eq!(effective(), "");
     assert_eq!(bounded!(read())["secrets"]["secret"], false);
     bounded!(host.shutdown());
 }
-
-#[tokio::test]
-async fn cli_broker_auth_sessions_and_authority() {
-    use crate::server::{broker::BrokerToken, routes::PeerAddress};
-    use axum::extract::ConnectInfo;
-    let root = tempfile::tempdir().unwrap();
-    let a = put(
-        root.path(),
-        "a",
-        "[cli]\ncommand=['bin/a']\nsummary='A CLI'\n[[requires]]\nid='b'\nversion='*'\n",
-    );
-    let b = put(root.path(), "b", "[cli]\ncommand=['bin/b']\n");
-    let c = put(
-        root.path(),
-        "c",
-        "[service]\ncommand=['bin/c']\n[api]\nread=['/v1/read']\nwrite=['/v1/write']\n",
-    );
-    let host = bounded!(host(root.path(), vec![a, b, c]));
-    let stranger = put(
-        &root.path().join("data"),
-        "untrusted",
-        "[cli]\ncommand=['bin/untrusted']\n",
-    );
-    bounded!(host.rescan());
-    assert!(stranger.exists());
-    let broker_path = root.path().join("broker.json");
-    let broker = Arc::new(BrokerToken::new(broker_path.clone()).unwrap());
-    broker.publish("127.0.0.1:25150".parse().unwrap()).unwrap();
-    let published: Value = serde_json::from_slice(&fs::read(broker_path).unwrap()).unwrap();
-    let credential = published["token"].as_str().unwrap();
-    let authenticated = |method, path: &str, token: &str, peer: &str| {
-        let mut req = request(method, path);
-        req.extensions_mut().insert(Some(broker.clone()));
-        req.extensions_mut()
-            .insert(ConnectInfo(PeerAddress(peer.parse().unwrap())));
-        req.headers_mut()
-            .insert("authorization", format!("Bearer {token}").parse().unwrap());
-        req
-    };
-    assert_eq!(
-        bounded!(host.overlay(request(Method::GET, "/tools/_host/v1/cli"), Bytes::new())).status(),
-        StatusCode::UNAUTHORIZED
-    );
-    for (token, peer) in [("wrong", "127.0.0.1:1000"), (credential, "192.0.2.1:1000")] {
-        assert_eq!(
-            bounded!(host.overlay(
-                authenticated(Method::GET, "/tools/_host/v1/cli", token, peer),
-                Bytes::new()
-            ))
-            .status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
-    let auth = |method, path: &str| authenticated(method, path, credential, "127.0.0.1:1000");
-    for (id, expected) in [
-        ("absent", StatusCode::NOT_FOUND),
-        ("untrusted", StatusCode::FORBIDDEN),
-        ("c", StatusCode::CONFLICT),
-    ] {
-        assert_eq!(
-            bounded!(host.overlay(
-                auth(Method::POST, &format!("/tools/_host/v1/cli/{id}")),
-                Bytes::new()
-            ))
-            .status(),
-            expected
-        );
-    }
-    for (disabled, expected) in [("a", "disabled"), ("b", "blocked")] {
-        host.saved.lock().insert(
-            disabled.into(),
-            Saved {
-                enabled: Some(false),
-                trusted: true,
-                official: false,
-                catalog_source: None,
-                autostart: None,
-                replaces: Vec::new(),
-            },
-        );
-        let denied =
-            bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new()));
-        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-        assert_eq!(bounded!(value(denied))["status"], expected);
-        host.saved.lock().remove(disabled);
-    }
-    host.entry("a").unwrap().state.lock().status = "invalid".into();
-    assert_eq!(
-        bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())).status(),
-        StatusCode::FORBIDDEN
-    );
-    host.entry("a").unwrap().state.lock().status = "running".into();
-    let listing = bounded!(value(
-        host.overlay(auth(Method::GET, "/tools/_host/v1/cli"), Bytes::new())
-            .await,
-    ));
-    assert_eq!(listing["tools"][0]["cli"]["usage"], "vosux a");
-    let launch = bounded!(value(
-        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
-            .await,
-    ));
-    assert_eq!(launch["env"]["VOSU_TOOL_INTERFACE"], "cli");
-    assert!(Path::new(launch["argv"][0].as_str().unwrap()).is_absolute());
-    let token = launch["env"]["VOSU_TOOL_TOKEN"].as_str().unwrap();
-    let mut headers = HeaderMap::new();
-    headers.insert("x-vosu-tool-token", token.parse().unwrap());
-    // Undeclared tools: reads as an optional dependency, never writes.
-    for (id, read, write) in [("a", true, true), ("b", true, true), ("c", true, false)] {
-        let entry = host.entry(id).unwrap();
-        assert_eq!(host.caller(&entry, &headers, false).is_some(), read);
-        assert_eq!(host.caller(&entry, &headers, true).is_some(), write);
-    }
-    let mut req = request(Method::POST, "/tools/c/api/v1/write");
-    *req.headers_mut() = headers.clone();
-    assert_eq!(
-        bounded!(host.overlay(req, Bytes::new())).status(),
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        host.caller(&host.entry("a").unwrap(), &headers, true)
-            .as_deref(),
-        Some("cli:a")
-    );
-    let other = bounded!(value(
-        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/b"), Bytes::new())
-            .await,
-    ));
-    headers.insert(
-        "x-vosu-tool-token",
-        other["env"]["VOSU_TOOL_TOKEN"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap(),
-    );
-    assert!(
-        host.caller(&host.entry("a").unwrap(), &headers, true)
-            .is_none()
-    );
-    assert_eq!(
-        bounded!(host.overlay(
-            auth(
-                Method::DELETE,
-                &format!(
-                    "/tools/_host/v1/cli/session/{}",
-                    launch["session"].as_str().unwrap()
-                )
-            ),
-            Bytes::new()
-        ))
-        .status(),
-        StatusCode::OK
-    );
-    headers.insert("x-vosu-tool-token", token.parse().unwrap());
-    assert!(
-        host.caller(&host.entry("a").unwrap(), &headers, true)
-            .is_none()
-    );
-    assert_eq!(
-        bounded!(host.overlay(
-            {
-                let mut req = request(Method::GET, "/tools/_host/v1/self");
-                req.headers_mut()
-                    .insert("x-vosu-tool-token", token.parse().unwrap());
-                req
-            },
-            Bytes::new()
-        ))
-        .status(),
-        StatusCode::UNAUTHORIZED
-    );
-    host.cli_sessions
-        .lock()
-        .values_mut()
-        .for_each(|s| s.expires = Instant::now() - Duration::from_secs(1));
-    assert!(
-        host.cli_owner(other["env"]["VOSU_TOOL_TOKEN"].as_str().unwrap())
-            .is_none()
-    );
-    for _ in 0..64 {
-        assert_eq!(
-            bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new()))
-                .status(),
-            StatusCode::OK
-        );
-    }
-    assert_eq!(
-        bounded!(host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())).status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-    bounded!(host.shutdown());
-    assert!(host.cli_sessions.lock().is_empty());
-}
-
-#[path = "tests/context_permissions.rs"]
-mod context_permissions;

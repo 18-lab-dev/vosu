@@ -2,6 +2,37 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M7 T0 (web-only tools)
+
+- Tools are web-only 2.0 packages (`manifest.toml`, `kind = "tool"`). The
+  bundled `vosu.toolhost` plugin serves each tool's static UI, icon, banner
+  and password-filtered `_settings`, the v2 bridge and the theme and design
+  assets; core keeps tool state, settings, launch codes, launch sessions and
+  action authority.
+- A 1.x package with only `tool.toml` is listed as `disabled` with
+  `status_detail: "needs-2.0-update"`. It is never parsed, started, proxied or
+  served; enabling, trusting or launching it returns 400. Its files, settings,
+  trust record and data are kept unchanged for the 2.0 migration.
+- Removed tool services and everything around them: process supervision,
+  readiness, ports, service tokens, autostart and logs, the
+  `/tools/<id>/api/*` proxy (every method is now 404 and never falls through
+  to a static file), `GET /tools/_host/v1/{self,settings,context,overlays}`,
+  `GET /tools/_host/v1/bridge.js`, the `/tools/_host/v1/cli*` routes,
+  `POST /api/tools/<id>/{start,stop,restart,open-data,clear-cache}`,
+  `GET /api/tools/<id>/logs` and `PUT /api/tools/<id>/autostart` (all 404).
+  Disabling, removing or replacing a tool now ends its open tabs' sessions
+  and requests cancellation of the jobs they started.
+- `GET /api/tools[/<id>]` returns the 2.0 `ToolView`. The service-era
+  fields (`kind`, `startup`, `autostart`, `cli`, `api`, `permissions`,
+  `process`, `required_by`, `path` and others) are gone, and
+  `update_available` is `false` until the dashboard's catalog work feeds it.
+- A request for a directory inside a tool's UI, such as `/tools/<id>/docs/`,
+  serves that directory's `index.html`; `/tools/<id>/docs` redirects to it.
+- `vosux` keeps only the plugin action form
+  (`vosux <plugin-id> <action> …`). The tool form and its `--list`, `--json`,
+  `--open` and `--autostart` options exit with usage status 2.
+- Removed `docs/tools/tool.schema.json`, the 1.x `tool.toml` editor schema.
+
 ## Unreleased — 2.0 F (SDK packaging)
 
 - Make the `vosu-plugin-api` SDK crate packageable on its own (AF.9): it

@@ -73,7 +73,11 @@ pub enum Endpoint {
     Settings,
     Available,
     Tools,
-    ToolOverlay,
+    /// `POST /tools/_host/v1/session`: core's launch-session exchange (A7.2).
+    ToolSession,
+    /// `GET`/`HEAD /tools/...`: the bundled tool host's exact registrations.
+    ToolHost,
+    /// Core's exact `/api/tools` management routes (A7.2).
     ToolManagement,
     /// Dashboard-only process-plugin approval and management
     /// (catalog-v2.md A5.5 "Management routes").
@@ -466,7 +470,6 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::WsTokens
                     | Endpoint::WsV2
                     | Endpoint::WsV2Precise
-                    | Endpoint::ToolOverlay
                     | Endpoint::WsCommands
             )
         )
@@ -532,7 +535,8 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             && matches!(
                 endpoint,
                 Endpoint::CounterStatic
-                    | Endpoint::ToolOverlay
+                    | Endpoint::ToolSession
+                    | Endpoint::ToolHost
                     | Endpoint::WsCommands
                     | Endpoint::BackgroundImage
                     | Endpoint::BeatmapBackground
@@ -550,7 +554,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         return cors(not_found_for(&request));
     }
     let keys = providers.delegate.api_keys();
-    let credential = if (method == Method::POST && endpoint != Endpoint::ToolOverlay)
+    let credential = if (method == Method::POST && endpoint != Endpoint::ToolSession)
         || (websocket_upgrade && endpoint == Endpoint::WsCommands)
     {
         super::api_keys::presented(request.headers(), websocket_upgrade).map(|key| {
@@ -634,19 +638,14 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
         Ok(None) => {}
     }
-    // PUT (tool autostart) and every DELETE (catalog and plugin
-    // management) are mutations like POST.
-    let put_or_delete =
-        (method == Method::PUT && endpoint == Endpoint::ToolManagement) || method == Method::DELETE;
-    let mutation = if method == Method::POST
-        || put_or_delete
-        || websocket_upgrade
-        || endpoint == Endpoint::ApiKeys
-    {
-        MutationAuthorization::from_headers(request.headers())
-    } else {
-        MutationAuthorization::default()
-    };
+    // Every DELETE (catalog and plugin management) is a mutation like POST.
+    let delete = method == Method::DELETE;
+    let mutation =
+        if method == Method::POST || delete || websocket_upgrade || endpoint == Endpoint::ApiKeys {
+            MutationAuthorization::from_headers(request.headers())
+        } else {
+            MutationAuthorization::default()
+        };
     let trusted_management = providers
         .authorization
         .origins()
@@ -654,10 +653,10 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             dashboard && origins.authorized(request.headers(), local_ip)
         });
     if ((method == Method::POST
-        && endpoint != Endpoint::ToolOverlay
+        && endpoint != Endpoint::ToolSession
         && grant.is_none()
         && broker_grant.is_none())
-        || put_or_delete
+        || delete
         || endpoint == Endpoint::ApiKeys)
         && !trusted_management
     {
@@ -715,20 +714,19 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         },
         endpoint => {
             let (parts, body) = request.into_parts();
-            let body =
-                if method == Method::POST || put_or_delete || endpoint == Endpoint::ToolOverlay {
-                    match to_bytes(body, MAX_POST_BODY).await {
-                        Ok(body) => body,
-                        Err(_) => {
-                            return cors(json(
-                                StatusCode::PAYLOAD_TOO_LARGE,
-                                error_json("payload too large"),
-                            ));
-                        }
+            let body = if method == Method::POST || delete {
+                match to_bytes(body, MAX_POST_BODY).await {
+                    Ok(body) => body,
+                    Err(_) => {
+                        return cors(json(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            error_json("payload too large"),
+                        ));
                     }
-                } else {
-                    Bytes::new()
-                };
+                }
+            } else {
+                Bytes::new()
+            };
             if broker_grant
                 .as_ref()
                 .is_some_and(|(broker, peer)| broker.authorize(&parts.headers, *peer) != Ok(true))
@@ -842,18 +840,10 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/available" if get => Some(Available),
         "/tools" if get => Some(Tools),
         "/tools" => None,
-        _ if path.starts_with("/tools/") => Some(ToolOverlay),
-        _ if method == Method::PUT
-            && path
-                .strip_prefix("/api/tools/")
-                .and_then(|p| p.strip_suffix("/autostart"))
-                .is_some_and(super::ids::valid_id) =>
-        {
-            Some(ToolManagement)
-        }
-        _ if (get || post) && (path == "/api/tools" || path.starts_with("/api/tools/")) => {
-            Some(ToolManagement)
-        }
+        "/tools/_host/v1/session" if post => Some(ToolSession),
+        // Every other `/tools/` method, upgrade and path is 404 (A7.2).
+        _ if path.starts_with("/tools/") => file_read.then_some(ToolHost),
+        _ if tool_management(method, path) => Some(ToolManagement),
         "/api/plugins" if get => Some(PluginManagement),
         _ if plugin_management_action(method, path) => Some(PluginManagement),
         _ if (get || post || method == Method::DELETE) && path.starts_with("/api/catalog/") => {
@@ -925,6 +915,29 @@ fn plugin_management_action(method: &Method, path: &str) -> bool {
             "approval" => method == Method::POST || method == Method::DELETE,
             "restart" | "stop" => method == Method::POST,
             _ => false,
+        }
+}
+
+/// `GET /api/tools`, `GET /api/tools/<id>[/settings]` and
+/// `POST /api/tools/<id>/{enable,disable,trust,launch,settings}` (A7.2);
+/// the deleted service, log, data and autostart routes are 404.
+fn tool_management(method: &Method, path: &str) -> bool {
+    if path == "/api/tools" {
+        return method == Method::GET;
+    }
+    let Some(rest) = path.strip_prefix("/api/tools/") else {
+        return false;
+    };
+    let (id, action) = match rest.split_once('/') {
+        Some((id, action)) => (id, Some(action)),
+        None => (rest, None),
+    };
+    super::ids::valid_id(id)
+        && match action {
+            None => method == Method::GET,
+            Some("settings") => method == Method::GET || method == Method::POST,
+            Some("enable" | "disable" | "trust" | "launch") => method == Method::POST,
+            Some(_) => false,
         }
 }
 

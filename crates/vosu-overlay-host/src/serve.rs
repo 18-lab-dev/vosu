@@ -194,7 +194,7 @@ async fn respond_file(
     html_page: &page::Page<'_>,
 ) -> SurfaceResponse {
     let length = file.metadata.size;
-    let content_type = http::content_type(decoded);
+    let content_type = vosu_surface::files::content_type(std::path::Path::new(decoded));
     let ranged = http::media_range_eligible(decoded);
     let Ok(range) = http::parse_range(range, length) else {
         return SurfaceResponse {

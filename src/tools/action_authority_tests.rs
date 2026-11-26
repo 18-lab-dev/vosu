@@ -4,18 +4,13 @@ use axum::{
     extract::Request,
     http::{Method, StatusCode},
 };
+use serde_json::{Value, json};
 use vosu_core::actions::{ActionDescriptor, ActionRegistry, JobError, JobRegistry};
 use vosu_proptest::bounded;
 
 const ACTION: &str = "fixture.game.beatmap.import";
 const OPTIONAL: &str = "fixture.game.utility.inspect";
 const FIXTURE: &str = include_str!("../../tests/fixtures/tools/action-web/manifest.toml");
-impl ToolHost {
-    pub(super) fn test_session(&self, id: &str) -> action_authority::LaunchSession {
-        action_authority::LaunchSession::new(&self.entry(id).unwrap())
-    }
-}
-
 #[derive(Default)]
 struct Registry(Mutex<HashMap<String, Arc<ActionDescriptor>>>);
 impl Registry {
@@ -86,15 +81,14 @@ fn request(method: Method, path: &str) -> Request {
 async fn value(response: axum::response::Response) -> Value {
     serde_json::from_slice(&bounded!(to_bytes(response.into_body(), 1024 * 1024)).unwrap()).unwrap()
 }
-async fn host(root: &Path, paths: Vec<PathBuf>) -> Arc<ToolHost> {
-    bounded!(ToolHost::new(
+async fn host(root: &Path, paths: Vec<PathBuf>) -> Arc<ToolRegistry> {
+    bounded!(ToolRegistry::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
         ExtraRoots { dev: paths },
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
-        Arc::new(|| json!({}))
     ))
     .unwrap()
 }
@@ -105,7 +99,7 @@ fn put(root: &Path, text: &str) -> PathBuf {
     fs::write(path.join("web/index.html"), "v2 tool UI").unwrap();
     path
 }
-async fn launch(host: &Arc<ToolHost>, id: &str) -> String {
+async fn launch(host: &Arc<ToolRegistry>, id: &str) -> String {
     let response = bounded!(host.dashboard(
         request(Method::POST, &format!("/api/tools/{id}/launch")),
         Bytes::new()
@@ -121,10 +115,7 @@ async fn launch(host: &Arc<ToolHost>, id: &str) -> String {
         .split('&')
         .next()
         .unwrap();
-    let response = bounded!(host.overlay(
-        request(Method::POST, "/tools/_host/v1/session"),
-        Bytes::from(json!({"tool":id,"code":code}).to_string())
-    ));
+    let response = host.exchange_session(json!({"tool":id,"code":code}).to_string().as_bytes());
     assert_eq!(response.status(), StatusCode::OK);
     bounded!(value(response))["session"]
         .as_str()
@@ -135,7 +126,7 @@ async fn launch(host: &Arc<ToolHost>, id: &str) -> String {
 #[test]
 fn v2_manifest_rejects_wrong_kind_legacy_fields_internal_and_duplicates() {
     let text = fixture();
-    assert!(manifest_v2::ManifestV2::parse(&text).is_ok());
+    assert!(manifest::ToolPackage::parse(&text).is_ok());
     for invalid in [
         text.replace("kind = \"tool\"", "kind = \"overlay\""),
         text.replace("[ui]", "[service]\ncommand=['run']\n[ui]"),
@@ -156,10 +147,7 @@ fn v2_manifest_rejects_wrong_kind_legacy_fields_internal_and_duplicates() {
         text.replace(&format!("={}", env!("CARGO_PKG_VERSION")), "=0.0.0"),
         format!("{text}\n[[provides]]\nid='field:fixture.game'\nversion='1.0.0'"),
     ] {
-        assert!(
-            manifest_v2::ManifestV2::parse(&invalid).is_err(),
-            "{invalid}"
-        );
+        assert!(manifest::ToolPackage::parse(&invalid).is_err(), "{invalid}");
     }
 }
 
@@ -179,6 +167,8 @@ async fn v2_preference_never_falls_back_and_required_providers_block_launch() {
             .manifest
             .as_ref()
             .unwrap()
+            .tool
+            .shared
             .name,
         "Action web fixture"
     );
@@ -206,7 +196,7 @@ async fn live_versions_exact_ids_optional_grants_and_exact_launch_job_ownership(
     let registry = Arc::new(Registry::default());
     registry.insert(ACTION, "1.4.2");
     host.set_action_providers(registry.clone(), registry.clone());
-    let view = host.view(&host.entry("action-web").unwrap());
+    let view = host.tool_view(&host.entry("action-web").unwrap());
     assert_eq!(view["requires"][0]["id"], format!("action:{ACTION}"));
     assert_eq!(view["requires"][0]["satisfied"], true);
     assert_eq!(view["optional"][0]["satisfied"], false);
@@ -239,7 +229,7 @@ async fn live_versions_exact_ids_optional_grants_and_exact_launch_job_ownership(
     assert!(host.authorize_action_session(&first, OPTIONAL).is_err());
     registry.insert(OPTIONAL, "2.1.0");
     assert_eq!(
-        host.view(&host.entry("action-web").unwrap())["optional"][0]["satisfied"],
+        host.tool_view(&host.entry("action-web").unwrap())["optional"][0]["satisfied"],
         true
     );
     assert!(host.authorize_action_session(&first, OPTIONAL).is_ok());
@@ -289,12 +279,16 @@ async fn legacy_permissions_never_grant_and_disabled_replaced_sessions_fail() {
     let registry = Arc::new(Registry::default());
     registry.insert(ACTION, "1.0.0");
     host.set_action_providers(registry.clone(), registry);
-    let legacy_token = bounded!(launch(&host, "legacy"));
-    assert!(host.authenticate_action_session(&legacy_token).is_err());
-    assert!(
-        host.authorize_action_session(&legacy_token, ACTION)
-            .is_err()
-    );
+    // Counterexample: a legacy package's 1.x permissions never grant an
+    // action; it cannot even mint a launch code.
+    let legacy_launch = bounded!(host.dashboard(
+        request(Method::POST, "/api/tools/legacy/launch"),
+        Bytes::new()
+    ));
+    assert_eq!(legacy_launch.status(), StatusCode::BAD_REQUEST);
+    assert!(host.codes.lock().is_empty());
+    assert!(host.authenticate_action_session("legacy").is_err());
+    assert!(host.authorize_action_session("legacy", ACTION).is_err());
     let token = bounded!(launch(&host, "action-web"));
     assert!(host.authorize_action_session(&token, ACTION).is_ok());
     bounded!(host.dashboard(
@@ -384,10 +378,7 @@ async fn launch_sessions_are_bounded_and_revocation_releases_capacity() {
             expires: Instant::now() + Duration::from_secs(60),
         },
     );
-    let response = bounded!(host.overlay(
-        request(Method::POST, "/tools/_host/v1/session"),
-        Bytes::from_static(b"{\"tool\":\"action-web\",\"code\":\"capacity-code\"}")
-    ));
+    let response = host.exchange_session(b"{\"tool\":\"action-web\",\"code\":\"capacity-code\"}");
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(host.sessions.lock().len(), 1024);
     host.revoke_action_session("0");

@@ -12,6 +12,11 @@ pub trait InstalledCapabilities: Send + Sync {
     fn validation_snapshot(&self) -> vosu_core::plugin::ValidationSnapshot {
         vosu_core::plugin::ValidationSnapshot::default()
     }
+    /// The plugin id of the loaded provider that resolves `capability`, or
+    /// `None` for core namespaces and unresolved capabilities.
+    fn provider(&self, _capability: &str) -> Option<String> {
+        None
+    }
 }
 
 pub(super) struct EmptyRegistry;
@@ -64,6 +69,24 @@ impl Requirement {
                     self.satisfied_by_version(&self.id, &version)
                 }
             })
+        }
+    }
+
+    /// The resolved provider's plugin id for the `ToolView` (`null` when
+    /// unresolved or core-provided).
+    pub(super) fn provider(
+        &self,
+        registry: &dyn ActionRegistry,
+        installed: &dyn InstalledCapabilities,
+    ) -> Option<String> {
+        if !self.resolved(registry, installed) {
+            return None;
+        }
+        match self.id.strip_prefix("action:") {
+            Some(action) => registry
+                .get(action)
+                .map(|descriptor| descriptor.provider_id.clone()),
+            None => installed.provider(&self.id),
         }
     }
 }

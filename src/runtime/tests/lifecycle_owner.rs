@@ -65,6 +65,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             settings_storage,
             plugin_settings,
             tools: AsyncMutex::new(None),
+            tool_host: AsyncMutex::new(None),
             catalog: AsyncMutex::new(None),
             dev_tools: vec![],
             dev_plugins: vec![],
@@ -178,7 +179,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &mut plugin_management::Roster::default(),
             )
             .unwrap(),
-            6
+            7
         );
         assert!(owner.plugins.has_enabled_matchers());
         owner.shutdown().await.unwrap();
@@ -187,7 +188,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 .0
                 .lock()
                 .unwrap()
-                .contains("optional bundled plugin at index 5 failed")
+                .contains("optional bundled plugin at index 6 failed")
         );
     })
     .await

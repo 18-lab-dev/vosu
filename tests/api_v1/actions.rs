@@ -122,19 +122,18 @@ fn load(h: &Harness, root: &std::path::Path) {
     clippy::disallowed_methods,
     reason = "isolated temporary tool fixtures, not user state"
 )]
-async fn tools(h: &Harness, root: &std::path::Path) -> Arc<vosu::tools::ToolHost> {
+async fn tools(h: &Harness, root: &std::path::Path) -> Arc<vosu::tools::ToolRegistry> {
     let path = root.join("tool");
     std::fs::create_dir_all(path.join("web")).unwrap();
     std::fs::write(path.join("web/index.html"), "fixture").unwrap();
     std::fs::write(path.join("manifest.toml"), format!("manifest_version=1\nkind='tool'\nid='j-two'\nname='J two'\nversion='1.0.0'\nhost='={}'\n[ui]\nroot='web'\n[[requires]]\nid='action:fixture.jtwo.echo'\nversion='*'\n[[requires]]\nid='field:fixture.jtwo.value.child'\nversion='^1.0.0'\n[[requires]]\nid='game:jtwo'\nversion='*'\n", env!("CARGO_PKG_VERSION"))).unwrap();
-    let tools = vosu::tools::ToolHost::new(
+    let tools = vosu::tools::ToolRegistry::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
         vosu::tools::ExtraRoots { dev: vec![path] },
         "http://127.0.0.1:25050".into(),
         "http://127.0.0.1:25051".into(),
-        Arc::new(|| json!({})),
     )
     .await
     .unwrap();
@@ -159,7 +158,7 @@ async fn value(response: axum::response::Response) -> Value {
     )
     .unwrap()
 }
-async fn launch(tools: &Arc<vosu::tools::ToolHost>) -> String {
+async fn launch(tools: &Arc<vosu::tools::ToolRegistry>) -> String {
     let response = tools
         .dashboard(
             request(Method::POST, "/api/tools/j-two/launch", None, Value::Null),
@@ -175,12 +174,8 @@ async fn launch(tools: &Arc<vosu::tools::ToolHost>) -> String {
         .unwrap()
         .1
         .into_owned();
-    let response = tools
-        .overlay(
-            request(Method::POST, "/tools/_host/v1/session", None, Value::Null),
-            Bytes::from(json!({"tool":"j-two","code":code}).to_string()),
-        )
-        .await;
+    let response =
+        tools.exchange_session(json!({"tool":"j-two","code":code}).to_string().as_bytes());
     assert_eq!(response.status(), StatusCode::OK);
     value(response).await["session"].as_str().unwrap().into()
 }
@@ -419,6 +414,35 @@ fn action_jobs_authority_limits_and_lifecycle() {
                 .await
                 .status(),
             StatusCode::UNAUTHORIZED
+        );
+        // Counterexample: the revoked tab can neither poll nor cancel another
+        // session's job, and that job is untouched by the attempt.
+        for method in [Method::GET, Method::DELETE] {
+            assert_eq!(
+                api.handle(request(
+                    method.clone(),
+                    &foreign_location,
+                    Some(&first),
+                    Value::Null
+                ))
+                .await
+                .status(),
+                StatusCode::UNAUTHORIZED,
+                "{method}"
+            );
+        }
+        assert_eq!(
+            value(
+                api.handle(request(
+                    Method::GET,
+                    &foreign_location,
+                    Some(&foreign),
+                    Value::Null
+                ))
+                .await
+            )
+            .await["state"],
+            "running"
         );
         assert!(
             h.host

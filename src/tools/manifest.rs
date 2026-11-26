@@ -1,349 +1,61 @@
-//! Legacy `tool.toml` protocol input and host presentation model.
-//! The M3-to-M7 exception does not validate v2 package documents or grant
-//! capability/action authority; those belong to the SDK and live host registry.
+//! A tool package's `manifest.toml` (`kind = "tool"`), accepted only through
+//! the SDK validator. There is no `tool.toml` parser and no fallback: a
+//! package with only `tool.toml` is legacy (`needs-2.0-update`, A7.2).
+use super::capabilities::Requirement;
+use vosu_plugin_api::manifest::{PackageManifest, ToolManifest};
 
-use std::path::{Component, Path};
-
-use semver::{Version, VersionReq};
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Manifest {
-    pub manifest_version: u32,
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub author: String,
-    pub homepage: Option<String>,
-    pub icon: Option<String>,
-    pub banner: Option<String>,
-    pub ui: Option<Ui>,
-    pub service: Option<Service>,
-    pub cli: Option<Cli>,
-    #[serde(default)]
-    pub api: Api,
-    #[serde(default)]
+#[derive(Clone, Debug)]
+pub(super) struct ToolPackage {
+    pub tool: ToolManifest,
     pub requires: Vec<Requirement>,
-    #[serde(default)]
-    pub permissions: Permissions,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Ui {
-    pub root: String,
-    #[serde(default = "entry")]
-    pub entry: String,
-}
-fn entry() -> String {
-    "index.html".into()
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Cli {
-    pub command: Vec<String>,
-    pub summary: Option<String>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Service {
-    pub command: Vec<String>,
-    #[serde(default = "startup")]
-    pub startup: String,
-    #[serde(default = "service_role")]
-    pub role: String,
-}
-fn startup() -> String {
-    "on-demand".into()
-}
-fn service_role() -> String {
-    "background".into()
-}
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Api {
-    #[serde(default)]
-    pub read: Vec<String>,
-    #[serde(default)]
-    pub write: Vec<String>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Requirement {
-    pub id: String,
-    pub version: String,
-}
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Permissions {
-    #[serde(default)]
-    pub host: Vec<String>,
+    pub optional: Vec<Requirement>,
+    package: PackageManifest,
 }
 
-/// `^[a-z0-9][a-z0-9-]{0,31}$`
-pub use crate::server::ids::valid_id;
-
-pub fn relative(path: &str) -> bool {
-    !path.is_empty()
-        && !path.contains(['\\', '\0', ':'])
-        && Path::new(path)
-            .components()
-            .all(|c| matches!(c, Component::Normal(_)))
-}
-pub fn prefix_matches(prefix: &str, path: &str) -> bool {
-    prefix == "/"
-        || path == prefix
-        || path
-            .strip_prefix(prefix)
-            .is_some_and(|rest| rest.starts_with('/'))
-}
-impl Manifest {
+impl ToolPackage {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let manifest: Self = toml::from_str(text).map_err(|e| format!("tool.toml: {e}"))?;
-        manifest.validate()?;
-        Ok(manifest)
-    }
-    pub fn validate(&self) -> Result<(), String> {
-        if self.manifest_version != 1 {
-            return Err("manifest_version must be 1".into());
-        }
-        if !valid_id(&self.id) {
-            return Err("id must match ^[a-z0-9][a-z0-9-]{0,31}$".into());
-        }
-        if self.name.trim().is_empty() {
-            return Err("name must not be empty".into());
-        }
-        Version::parse(&self.version).map_err(|e| format!("version: {e}"))?;
-        if self.ui.is_none() && self.service.is_none() && self.cli.is_none() {
-            return Err("at least one of [ui], [service] or [cli] is required".into());
-        }
-        if let Some(homepage) = &self.homepage {
-            let url = url::Url::parse(homepage).map_err(|e| format!("homepage: {e}"))?;
-            if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-                return Err("homepage must be an http(s) URL".into());
-            }
-        }
-        if let Some(icon) = &self.icon
-            && (!relative(icon)
-                || !matches!(
-                    Path::new(icon).extension().and_then(|v| v.to_str()),
-                    Some("svg" | "png")
-                ))
+        let package = PackageManifest::parse(text).map_err(|error| error.to_string())?;
+        if package
+            .host_support(crate::application_version())
+            .map_err(|error| error.to_string())?
+            != vosu_plugin_api::manifest::HostSupport::Supported
         {
-            return Err("icon must be a relative svg/png path".into());
+            return Err("manifest.toml host range does not match this daemon".into());
         }
-        if let Some(banner) = &self.banner
-            && (!relative(banner)
-                || !matches!(
-                    Path::new(banner).extension().and_then(|v| v.to_str()),
-                    Some("png" | "jpg" | "jpeg" | "webp" | "svg")
-                ))
-        {
-            return Err("banner must be a relative png/jpg/jpeg/webp/svg path".into());
-        }
-        if let Some(ui) = &self.ui
-            && (!relative(&ui.root) || !relative(&ui.entry))
-        {
-            return Err("ui.root and ui.entry must be confined relative paths".into());
-        }
-        if let Some(service) = &self.service {
-            if service.command.is_empty()
-                || service.command.iter().any(|v| v.contains('\0'))
-                || service.command[0].is_empty()
-            {
-                return Err("service.command must be non-empty argv without NUL".into());
-            }
-            if !matches!(service.startup.as_str(), "always" | "on-demand") {
-                return Err("service.startup must be always or on-demand".into());
-            }
-            if !matches!(service.role.as_str(), "background" | "backend") {
-                return Err("service.role must be background or backend".into());
-            }
-            if service.role == "backend" && service.startup != "on-demand" {
-                return Err("backend services require service.startup = on-demand".into());
-            }
-            if !relative(&service.command[0]) {
-                return Err(
-                    "service.command[0] must be a confined relative path or bare executable name"
-                        .into(),
-                );
-            }
-        }
-        if let Some(cli) = &self.cli {
-            if cli.command.is_empty()
-                || cli.command.iter().any(|v| v.contains('\0'))
-                || !relative(&cli.command[0])
-            {
-                return Err(
-                    "cli.command must be non-empty argv with a confined executable and no NUL"
-                        .into(),
-                );
-            }
-            if cli
-                .summary
-                .as_ref()
-                .is_some_and(|s| s.contains(['\r', '\n', '\0']))
-            {
-                return Err("cli.summary must be one line without NUL".into());
-            }
-        }
-        for (kind, prefixes) in [("read", &self.api.read), ("write", &self.api.write)] {
-            for prefix in prefixes {
-                if !prefix.starts_with('/')
-                    || prefix.contains(['?', '#', '%', '\\', '\0'])
-                    || (prefix != "/" && (prefix.ends_with('/') || !relative(&prefix[1..])))
-                {
-                    return Err(format!("api.{kind}: invalid segment prefix {prefix:?}"));
-                }
-            }
-        }
-        if self.service.is_none() && (!self.api.read.is_empty() || !self.api.write.is_empty()) {
-            return Err("[api] requires [service]".into());
-        }
-        let mut seen = std::collections::HashSet::new();
-        for dependency in &self.requires {
-            if !valid_id(&dependency.id) || !seen.insert(&dependency.id) {
-                return Err(format!(
-                    "requires: invalid or duplicate id {:?}",
-                    dependency.id
-                ));
-            }
-            VersionReq::parse(&dependency.version)
-                .map_err(|e| format!("requires.{} version: {e}", dependency.id))?;
-        }
-        for permission in &self.permissions.host {
-            if !matches!(permission.as_str(), "context" | "songs:write") {
-                return Err(format!(
-                    "permissions.host: unknown permission {permission:?}"
-                ));
-            }
-        }
-        Ok(())
-    }
-    pub fn access(&self, method: &str, path: &str) -> Option<bool> {
-        if matches!(method, "GET" | "HEAD") && self.api.read.iter().any(|p| prefix_matches(p, path))
-        {
-            Some(false)
-        } else if self.api.write.iter().any(|p| prefix_matches(p, path)) {
-            Some(true)
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn ids_and_prefixes() {
-        for id in ["a", "0", "skill-tracker"] {
-            assert!(valid_id(id));
-        }
-        for id in ["", "_host", "A", "a/b", "abcdefghijklmnopqrstuvwxyz1234567"] {
-            assert!(!valid_id(id));
-        }
-        assert!(prefix_matches("/v1/map", "/v1/map/abc"));
-        assert!(!prefix_matches("/v1/map", "/v1/maps"));
-    }
-    #[test]
-    fn validation() {
-        let base =
-            "manifest_version=1\nid='demo'\nname='Demo'\nversion='1.0.0'\n[ui]\nroot='web'\n";
-        assert!(Manifest::parse(base).is_ok());
-        for (from, to) in [
-            ("manifest_version=1", "manifest_version=2"),
-            ("version='1.0.0'", "version='latest'"),
-            ("root='web'", "root='../web'"),
-        ] {
-            assert!(Manifest::parse(&base.replace(from, to)).is_err());
-        }
-    }
-    #[test]
-    fn rejects_unsafe_prefixes_permissions_dependencies_and_commands() {
-        let base = "manifest_version=1\nid='demo'\nname='Demo'\nversion='1.0.0'\n[service]\ncommand=['bin/demo']\n";
-        assert_eq!(
-            Manifest::parse(base).unwrap().service.unwrap().startup,
-            "on-demand"
-        );
-        for (suffix, expected) in [
-            ("[api]\nread=['/v1/maps/']", "segment prefix"),
-            ("[api]\nread=['/v1/../write']", "segment prefix"),
-            ("[api]\nwrite=['/v1/%2e%2e']", "segment prefix"),
-            ("[permissions]\nhost=['arbitrary']", "unknown permission"),
-            ("[[requires]]\nid='valid'\nversion='not-semver'", "version"),
-            (
-                "[[requires]]\nid='_host'\nversion='*'",
-                "invalid or duplicate",
-            ),
-        ] {
-            assert!(
-                Manifest::parse(&format!("{base}{suffix}"))
-                    .unwrap_err()
-                    .contains(expected)
-            );
-        }
-        assert!(
-            Manifest::parse(&base.replace("['bin/demo']", "[]"))
-                .unwrap_err()
-                .contains("command")
-        );
-        assert!(
-            Manifest::parse(&base.replace("bin/demo", "../demo"))
-                .unwrap_err()
-                .contains("confined")
-        );
-        assert!(
-            Manifest::parse(&base.replace("name='Demo'", "name=''"))
-                .unwrap_err()
-                .contains("name")
-        );
-    }
-}
-
-#[cfg(test)]
-mod cli_tests {
-    use super::*;
-    #[test]
-    fn cli_manifest_validation() {
-        let base = "manifest_version=1\nid='demo'\nname='Demo'\nversion='1.0.0'\n[cli]\ncommand=['bin/demo','cli']\nsummary='One line'\n";
-        assert!(Manifest::parse(base).is_ok());
-        for (from, to) in [
-            ("['bin/demo','cli']", "[]"),
-            ("bin/demo", "../demo"),
-            ("bin/demo", "/bin/demo"),
-            ("summary='One line'", "summary=\"two\\nlines\""),
-            ("summary='One line'", "unknown=true"),
-        ] {
-            assert!(Manifest::parse(&base.replace(from, to)).is_err(), "{to}");
-        }
+        let PackageManifest::Tool(tool) = &package else {
+            return Err("manifest.toml requires kind='tool'".into());
+        };
+        let requirements = |capabilities: &[vosu_plugin_api::manifest::Capability]| {
+            capabilities
+                .iter()
+                .map(Requirement::from_capability)
+                .collect::<Result<Vec<_>, _>>()
+        };
+        Ok(Self {
+            requires: requirements(&tool.shared.requires)?,
+            optional: requirements(&tool.shared.optional)?,
+            tool: tool.clone(),
+            package,
+        })
     }
 
-    #[test]
-    fn art_paths_are_confined_images() {
-        let base = "manifest_version=1\nid='demo'\nname='Demo'\nversion='1.0.0'\n[cli]\ncommand=['bin/demo']\n";
-        let with = |art: &str| Manifest::parse(&format!("{art}\n{base}"));
-        let manifest = with("icon='art/icon.svg'\nbanner='art/banner.webp'").unwrap();
-        assert_eq!(manifest.banner.as_deref(), Some("art/banner.webp"));
-        for banner in [
-            "art/banner.png",
-            "banner.jpg",
-            "banner.jpeg",
-            "art/banner.svg",
-        ] {
-            assert!(with(&format!("banner='{banner}'")).is_ok(), "{banner}");
+    pub(super) fn registration(&self, source: &str) -> vosu_core::plugin::PackageRegistration {
+        vosu_core::plugin::PackageRegistration::new(&self.package, source)
+    }
+
+    pub(super) fn validate_context(
+        &self,
+        snapshot: &vosu_core::plugin::ValidationSnapshot,
+        source: &str,
+    ) -> Result<(), String> {
+        match snapshot
+            .validate(&self.package, crate::application_version(), source, false)
+            .map_err(|error| error.to_string())?
+        {
+            vosu_plugin_api::manifest::HostSupport::Supported => Ok(()),
+            vosu_plugin_api::manifest::HostSupport::Unsupported => {
+                Err("manifest.toml host range does not match this daemon".into())
+            }
         }
-        for banner in ["../banner.png", "/banner.png", "banner.gif", "banner"] {
-            assert!(
-                with(&format!("banner='{banner}'"))
-                    .unwrap_err()
-                    .contains("banner"),
-                "{banner}"
-            );
-        }
-        assert!(with("icon='icon.webp'").unwrap_err().contains("icon"));
     }
 }

@@ -7,7 +7,7 @@
 //! entry here is a visible, reviewed omission, not a silent one.
 //!
 //! Production ships the game provider, three required projections and the
-//! overlay host (M7 O0).
+//! overlay host (M7 O0) and the bundled web tool host.
 
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
@@ -49,6 +49,13 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         namespace_schemas: &[],
         action_schemas: &[],
         vtable: vosu_overlay_host::vosu_plugin_vtable,
+    },
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_tool_host::MANIFEST,
+        settings_schema: None,
+        namespace_schemas: &[],
+        action_schemas: &[],
+        vtable: vosu_tool_host::vosu_plugin_vtable,
     },
     #[cfg(feature = "test-harness")]
     vosu_core::plugin::BundledPlugin {

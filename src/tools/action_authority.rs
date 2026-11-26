@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 use vosu_core::actions::{ActionDescriptor, ActionRegistry, JobOwner, Principal, ToolAuthority};
 
 use super::{
-    Entry, ToolHost,
+    Entry, ToolRegistry,
     capabilities::{EmptyRegistry, InstalledCapabilities},
 };
 
@@ -26,6 +26,13 @@ impl LaunchSession {
     pub(super) fn is_live(&self) -> bool {
         self.entry.strong_count() != 0
     }
+    /// Whether this session was exchanged for exactly this package discovery.
+    pub(super) fn is(&self, entry: &Arc<Entry>) -> bool {
+        std::ptr::eq(self.entry.as_ptr(), Arc::as_ptr(entry))
+    }
+    pub(super) fn owner(&self) -> JobOwner {
+        self.owner.clone()
+    }
 }
 
 pub(super) struct Providers {
@@ -44,7 +51,7 @@ impl Default for Providers {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Forbidden;
 
-impl ToolHost {
+impl ToolRegistry {
     /// Composition injects live loaded-provider metadata. Empty by default.
     pub fn set_action_providers(
         &self,
@@ -55,11 +62,18 @@ impl ToolHost {
             actions,
             capabilities,
         };
+        self.publish();
+    }
+
+    /// The API v1 job registry whose jobs an invalidated session's owner
+    /// asks to cancel (API v1 "Tool launch sessions" item 6).
+    pub fn set_jobs(&self, jobs: vosu_core::actions::JobRegistry) {
+        *self.jobs.lock() = Some(jobs);
     }
 
     /// Recheck this on every action/job request, using the job's fixed action.
     /// Lock order: sessions -> release -> entries -> release -> saved/state.
-    /// Metadata callbacks always run without any host lock held.
+    /// Metadata callbacks always run without any registry lock held.
     pub fn authorize_action_session(
         &self,
         token: &str,
@@ -99,8 +113,8 @@ impl ToolHost {
         if !Arc::ptr_eq(entry, &current)
             || !self.enabled(entry)
             || !self.trusted(entry)
-            || entry.manifest_v2.is_none()
-            || entry.state.lock().status == "invalid"
+            || entry.manifest.is_none()
+            || entry.error.is_some()
         {
             return Err(Forbidden);
         }
@@ -118,7 +132,7 @@ impl ToolHost {
             .packages
             .extend(self.entries.lock().values().filter_map(|entry| {
                 entry
-                    .manifest_v2
+                    .manifest
                     .as_ref()
                     .map(|manifest| manifest.registration(entry.source))
             }));
@@ -132,7 +146,7 @@ impl ToolHost {
         expected: Option<&ActionDescriptor>,
     ) -> Result<(), Forbidden> {
         self.check_live_entry(entry)?;
-        let manifest = entry.manifest_v2.as_ref().ok_or(Forbidden)?;
+        let manifest = entry.manifest.as_ref().ok_or(Forbidden)?;
         let (registry, installed) = {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
@@ -170,7 +184,7 @@ impl ToolHost {
     }
 
     pub(super) fn blocked_capabilities(&self, entry: &Entry) -> Option<String> {
-        let manifest = entry.manifest_v2.as_ref()?;
+        let manifest = entry.manifest.as_ref()?;
         let (actions, installed) = {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
@@ -191,7 +205,7 @@ impl ToolHost {
         &self,
         entry: &Entry,
     ) -> Option<(serde_json::Value, serde_json::Value)> {
-        let manifest = entry.manifest_v2.as_ref()?;
+        let manifest = entry.manifest.as_ref()?;
         let (actions, installed) = {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
@@ -204,6 +218,7 @@ impl ToolHost {
                         serde_json::json!({
                             "id": r.id, "version": r.raw_version,
                             "satisfied": r.resolved(actions.as_ref(), installed.as_ref()),
+                            "provider": r.provider(actions.as_ref(), installed.as_ref()),
                         })
                     })
                     .collect(),
@@ -213,7 +228,7 @@ impl ToolHost {
     }
 }
 
-impl ToolAuthority for ToolHost {
+impl ToolAuthority for ToolRegistry {
     fn authorizes(&self, owner: &JobOwner, action: &ActionDescriptor) -> bool {
         let entry = {
             let sessions = self.sessions.lock();
@@ -231,12 +246,12 @@ impl ToolAuthority for ToolHost {
     }
 }
 
-impl crate::server::api_v1::actions::ActionAuthority for ToolHost {
+impl crate::server::api_v1::actions::ActionAuthority for ToolRegistry {
     fn authenticate_action_session(&self, token: &str) -> Option<Principal> {
-        ToolHost::authenticate_action_session(self, token).ok()
+        ToolRegistry::authenticate_action_session(self, token).ok()
     }
 
     fn authorize_action_session(&self, token: &str, action: &str) -> Option<Principal> {
-        ToolHost::authorize_action_session(self, token, action).ok()
+        ToolRegistry::authorize_action_session(self, token, action).ok()
     }
 }

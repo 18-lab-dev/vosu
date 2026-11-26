@@ -43,8 +43,6 @@ Use `[service] role = "backend"` with `startup = "on-demand"` when the process e
 
 Give the tool an identity on the Tools page with `icon` (square SVG, or PNG at least 256×256, shown at 40–64 px) and `banner` (3:1 PNG, JPEG, WebP, or SVG, recommended 1200×400, cropped to the card width, so keep the subject centred). Both are paths inside the tool directory. Catalogs repeat them as HTTPS `icon_url`/`banner_url` so the Available section can show them before installation.
 
-Put `#:schema https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json` at the top of `tool.toml` for Taplo / Even Better TOML validation. Offline checkouts can use a relative path to [tool.schema.json](tool.schema.json). vosu also validates semantic versions, path confinement, and dependency cycles at runtime.
-
 ### Read versus write
 
 List read-only path prefixes in `[api].read`: only GET, HEAD, and WebSocket upgrades are exposed to overlays. Put mutations in `[api].write`; they require the tool's UI session or an authenticated declared dependent tool. GET/HEAD/WebSocket on a path matching a `read` prefix stay public even if a `write` prefix also matches, so a route such as `/v1/jobs` can be listed in both: public status reads, authorized cancellation. Prefixes are segment-aware: `/v1/count` does not expose `/v1/countdown`. Unlisted paths return 404. Do not mutate state from a GET: overlays can call read routes without a UI session.

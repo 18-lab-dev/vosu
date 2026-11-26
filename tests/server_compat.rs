@@ -32,6 +32,7 @@ use std::{
 };
 use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
+use vosu_surface::files::content_type;
 
 use axum::{
     body::{Body, Bytes, to_bytes},
@@ -46,8 +47,8 @@ use tokio_util::sync::CancellationToken;
 use vosu::server::{
     auth::{AuthorizationPolicy, RequestHeaders},
     files::{
-        ByteRange, MissingKind, RangeError, ResourceOutcome, content_type, parse_range,
-        resolve_encoded_resource, trailing_slash_location,
+        ByteRange, MissingKind, RangeError, ResourceOutcome, parse_range, resolve_encoded_resource,
+        trailing_slash_location,
     },
     overlay_folders::{FolderOpener, open_folder},
     pages::{PageLookup, PageService},

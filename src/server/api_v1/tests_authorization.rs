@@ -1,24 +1,22 @@
 use super::*;
-use crate::tools::ToolHost;
+use crate::tools::ToolRegistry;
 use axum::{
     body::Body,
     http::{HeaderValue, Method},
 };
-use serde_json::json;
 use vosu_proptest::bounded;
 
 #[tokio::test]
 async fn broker_credentials_never_bypass_peer_or_origin_and_keys_are_not_actions() {
     bounded!(async {
         let root = tempfile::tempdir().unwrap();
-        let tools = ToolHost::new(
+        let tools = ToolRegistry::new(
             root.path().join("config"),
             root.path().join("data"),
             root.path().join("cache"),
             crate::tools::ExtraRoots { dev: vec![] },
             "http://127.0.0.1:25050".into(),
             "http://127.0.0.1:25051".into(),
-            Arc::new(|| json!({})),
         )
         .await
         .unwrap();

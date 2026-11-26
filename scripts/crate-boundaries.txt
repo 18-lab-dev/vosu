@@ -114,6 +114,13 @@ vosu -> vosu-adapter-support
 vosu -> vosu-adapter-upstream
 vosu -> vosu-adapter-gosumemory
 vosu -> vosu-adapter-streamcompanion
+# M7 T0: the bundled web-only tool host (A7.1/A7.2). Core composes it and
+# pushes the read-only `ToolHostView`; the host never depends on core.
+vosu -> vosu-tool-host
+vosu-tool-host -> vosu-surface
+vosu-tool-host -> vosu-plugin-api
+# Bundled registration only (`export_plugin!(bundled ...)`, AF.9).
+vosu-tool-host -> vosu-plugin-internal
 
 vosu-adapter-gosumemory -> vosu-adapter-support
 vosu-adapter-gosumemory -> vosu-osu-model

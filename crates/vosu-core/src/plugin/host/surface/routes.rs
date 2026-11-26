@@ -164,6 +164,7 @@ pub(super) fn register(
             | "vosu.adapter.gosumemory"
             | "vosu.adapter.streamcompanion"
             | "vosu.overlayhost"
+            | "vosu.toolhost"
     ) {
         return Err(RegistrationError::UnknownRequester);
     }

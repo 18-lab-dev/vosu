@@ -6,11 +6,9 @@ use std::time::SystemTime;
 const MAX_DISCOVERY_FILES: usize = 4096;
 
 impl CounterService {
-    /// The overlay catalog scan behind [`Self::discover`], recording which
-    /// file each entry came from: metadata-only folders are listed (and
-    /// served) like any overlay, but only folders with an `index.html` can
-    /// be loaded as a page.
-    pub(super) fn scan(&self) -> Result<(Vec<Discovered>, Vec<BrokenOverlay>), CounterError> {
+    /// The overlay catalog scan behind [`Self::discover`]: readable entries
+    /// and, separately, the folders whose files could not be read.
+    pub(super) fn scan(&self) -> Result<(Vec<Counter>, Vec<BrokenOverlay>), CounterError> {
         let manifests = recursive_named_files(&self.static_root, "manifest.toml", true)?;
         let metadata = recursive_named_files(&self.static_root, "metadata.txt", true)?;
         let indexes = recursive_named_files(&self.static_root, "index.html", true)?;
@@ -42,11 +40,6 @@ impl CounterService {
             .filter_map(|path| path.parent())
             .map(Path::to_path_buf)
             .collect();
-        let index_dirs: std::collections::HashSet<_> = indexes
-            .iter()
-            .filter_map(|path| path.parent())
-            .map(Path::to_path_buf)
-            .collect();
         let mut found = Vec::new();
         let mut broken = Vec::new();
         // Settings errors already name their file; other errors are reported
@@ -73,11 +66,7 @@ impl CounterService {
                 let support = supports.next().expect("one result per parsed manifest");
                 manifest::counter(&self.static_root, &path, &self.settings, support, package)
             }) {
-                Ok(counter) => found.push(Discovered {
-                    counter,
-                    metadata: true,
-                    index: index_dirs.contains(directory),
-                }),
+                Ok(counter) => found.push(counter),
                 Err(error) => record(directory, "manifest.toml", error)?,
             }
         }
@@ -89,11 +78,7 @@ impl CounterService {
                 continue;
             }
             match parse_metadata(&self.static_root, &path, &self.settings) {
-                Ok(counter) if !counter.name.is_empty() => found.push(Discovered {
-                    counter,
-                    metadata: true,
-                    index: index_dirs.contains(directory),
-                }),
+                Ok(counter) if !counter.name.is_empty() => found.push(counter),
                 Ok(_) => {}
                 Err(error) => record(directory, "metadata.txt", error)?,
             }
@@ -114,28 +99,24 @@ impl CounterService {
                     continue;
                 }
             };
-            found.push(Discovered {
-                counter: Counter {
-                    downloaded: false,
-                    updatable: false,
-                    folder_name,
-                    name: directory
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or_default()
-                        .to_owned(),
-                    version: "1.0".into(),
-                    author: "local".into(),
-                    resolution: vec![Value::from(-2), Value::from("400")],
-                    authorlinks: Vec::new(),
-                    settings,
-                    usecase: None,
-                    compatiblewith: None,
-                    assets: None,
-                    download_link: None,
-                },
-                metadata: false,
-                index: true,
+            found.push(Counter {
+                downloaded: false,
+                updatable: false,
+                folder_name,
+                name: directory
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                version: "1.0".into(),
+                author: "local".into(),
+                resolution: vec![Value::from(-2), Value::from("400")],
+                authorlinks: Vec::new(),
+                settings,
+                usecase: None,
+                compatiblewith: None,
+                assets: None,
+                download_link: None,
             });
         }
         Ok((found, broken))

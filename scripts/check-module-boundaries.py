@@ -38,6 +38,7 @@ CRATE_ROOTS = {
     "vosu-proptest": ROOT / "crates/vosu-proptest",
     "vosu-sys": ROOT / "crates/vosu-sys",
     "vosu-surface": ROOT / "crates/vosu-surface",
+    "vosu-tool-host": ROOT / "crates/vosu-tool-host",
 }
 
 MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*;", re.MULTILINE)

@@ -23,7 +23,9 @@ pub struct ProductionRuntime {
     overlay_root: AsyncMutex<Option<Arc<super::overlay_root::OverlayRootComposition>>>,
     settings_storage: Arc<super::overlay_root::RuntimeSettingsStorage>,
     plugin_settings: Arc<PluginSettingsService>,
-    tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
+    tools: AsyncMutex<Option<Arc<crate::tools::ToolRegistry>>>,
+    /// The bundled `vosu.toolhost` routes; dropped before the registry stops.
+    tool_host: AsyncMutex<Option<vosu_tool_host::ToolHost>>,
     /// K0 catalog owner: started before tools/discovery/routes, stopped first.
     catalog: AsyncMutex<Option<super::CatalogComposition>>,
     dev_tools: Vec<PathBuf>,
@@ -79,6 +81,7 @@ impl ProductionRuntime {
         if let Some(catalog) = self.catalog.lock().await.take() {
             catalog.shutdown().await;
         }
+        self.tool_host.lock().await.take();
         if let Some(tools) = self.tools.lock().await.take() {
             tools.shutdown().await;
         }
@@ -241,9 +244,7 @@ impl ProductionRuntime {
         let (adapters, hubs) =
             adapters::Adapters::start(&self.plugins, Arc::clone(&self.config)).await?;
         *self.adapters.get_mut() = Some(adapters.clone());
-        let context_files = adapters.files.clone();
-        let context_host = self.plugins.clone();
-        let tools = crate::tools::ToolHost::new(
+        let tools = crate::tools::ToolRegistry::new(
             self.paths.config().join("tools"),
             self.paths.data().join("tools"),
             self.paths.cache().join("tools"),
@@ -252,7 +253,6 @@ impl ProductionRuntime {
             },
             self.origins.overlay(),
             self.origins.dashboard(),
-            Arc::new(move || tool_context::tool_context(&context_files, &context_host)),
         )
         .await;
         let tools = match tools {
@@ -262,7 +262,28 @@ impl ProductionRuntime {
                 return Err(error);
             }
         };
-        tools.set_counters(Arc::clone(&counters));
+        let tool_host = dev_plugins::REQUIRED
+            .iter()
+            .position(|id| *id == "vosu.toolhost")
+            .ok_or_else(|| io::Error::other("vosu.toolhost is not a required bundled plugin"))
+            .and_then(|index| {
+                self.plugins
+                    .surface_requester(vosu_core::plugin::PluginInstanceId::new(index as u64))
+                    .map_err(io::Error::other)
+            })
+            .and_then(|requester| {
+                vosu_tool_host::ToolHost::mount(requester, tools.tool_host_views()).map_err(
+                    |error| io::Error::other(format!("tool host registration failed: {error:?}")),
+                )
+            });
+        match tool_host {
+            Ok(tool_host) => *self.tool_host.get_mut() = Some(tool_host),
+            Err(error) => {
+                tools.shutdown().await;
+                hubs.shutdown().await;
+                return Err(error);
+            }
+        }
         if let Some(catalog) = self.catalog.get_mut() {
             catalog.attach_web_hosts(tools.clone(), Arc::clone(&counters));
         }
@@ -906,6 +927,7 @@ pub async fn run_cli() -> io::Result<()> {
         settings_storage,
         plugin_settings,
         tools: AsyncMutex::new(None),
+        tool_host: AsyncMutex::new(None),
         catalog: AsyncMutex::new(None),
         dev_tools,
         dev_plugins: dev_plugin_dirs,

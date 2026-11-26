@@ -35,7 +35,7 @@ mod tests;
 
 pub use model::{
     BrokenOverlay, CompactValues, Counter, CounterSetting, DownloadRequest, LifecycleReply,
-    LocalOverlay, SettingInput, SettingType,
+    SettingInput, SettingType,
 };
 pub use names::{OverlayName, OverlayNames};
 pub use plugin::vosu_plugin_vtable;

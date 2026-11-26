@@ -62,7 +62,7 @@ impl RemovalRuntime for RootRemoval {
                 if removal.kind == InstalledKind::Tool
                     && let Some(tools) = self.handoff.tools.get()
                 {
-                    tools.stop_installed(&removal.id).await;
+                    tools.revoke_installed(&removal.id).await;
                 }
             }
             Ok(())

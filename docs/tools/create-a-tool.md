@@ -33,7 +33,6 @@ mkdir -p "$TOOL/web"
 Create `$TOOL/tool.toml`:
 
 ```toml
-#:schema https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json
 manifest_version = 1
 id = "hello-python"
 name = "Hello Python"

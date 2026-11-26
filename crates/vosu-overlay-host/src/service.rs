@@ -171,15 +171,6 @@ impl Drop for ActiveInstall {
     }
 }
 
-/// One catalog scan entry and the files behind it.
-struct Discovered {
-    counter: Counter,
-    /// Described by a `metadata.txt` (otherwise its fields are defaults).
-    metadata: bool,
-    /// Has an `index.html` to load.
-    index: bool,
-}
-
 /// Lock-free facade for the counter tree selected by the current configuration.
 ///
 /// Each operation captures one complete `CounterService` generation. A reload
@@ -300,69 +291,6 @@ impl ReloadableCounterService {
             tracing::warn!(%error, "Could not prune overlay names");
         }
         Ok((counters, broken))
-    }
-
-    /// Installed overlays that can be loaded from disk: the catalog scan's
-    /// entries with an `index.html`, with their dashboard names, sorted by
-    /// display name (nickname, else name). Read-only: unlike
-    /// [`Self::discover`] it never prunes stored names.
-    pub fn local_overlays(&self) -> Result<Vec<super::LocalOverlay>, CounterError> {
-        let service = self.current.load_full();
-        let names = self.names.snapshot();
-        let mut overlays = service
-            .scan()?
-            .0
-            .into_iter()
-            .filter(|found| found.index)
-            .filter_map(
-                |Discovered {
-                     counter, metadata, ..
-                 }| {
-                    // A folder removed since the scan, or one whose path is not
-                    // UTF-8, cannot be handed to a tool as a path string. The
-                    // Windows verbatim prefix is dropped as on the dashboard.
-                    let folder = display_path(
-                        &fs::canonicalize(service.static_root.join(&counter.folder_name)).ok()?,
-                    )
-                    .into_os_string()
-                    .into_string()
-                    .ok()?;
-                    let name = names.get(&counter.folder_name);
-                    let dimension = |index: usize| {
-                        counter
-                            .resolution
-                            .get(index)
-                            .and_then(Value::as_i64)
-                            .and_then(|value| u32::try_from(value).ok())
-                            .filter(|value| *value > 0)
-                    };
-                    let present =
-                        |value: String| (metadata && !value.trim().is_empty()).then_some(value);
-                    Some(super::LocalOverlay {
-                        width: metadata.then(|| dimension(0)).flatten(),
-                        height: metadata.then(|| dimension(1)).flatten(),
-                        nickname: name.and_then(|name| name.nickname.clone()),
-                        alias: name.and_then(|name| name.alias.clone()),
-                        author: present(counter.author),
-                        version: present(counter.version),
-                        id: counter.folder_name,
-                        name: counter.name,
-                        folder,
-                    })
-                },
-            )
-            .collect::<Vec<_>>();
-        overlays.sort_by_cached_key(|overlay| {
-            (
-                overlay
-                    .nickname
-                    .as_deref()
-                    .unwrap_or(&overlay.name)
-                    .to_lowercase(),
-                overlay.id.clone(),
-            )
-        });
-        Ok(overlays)
     }
 
     pub async fn download(&self, request: &DownloadRequest) -> Result<(), CounterError> {
@@ -503,23 +431,14 @@ impl CounterService {
     /// Readable overlays only; [`Self::discover_all`] also reports the
     /// folders whose files could not be read.
     pub fn discover(&self) -> Result<Vec<Counter>, CounterError> {
-        Ok(self
-            .scan()?
-            .0
-            .into_iter()
-            .map(|found| found.counter)
-            .collect())
+        Ok(self.scan()?.0)
     }
 
     /// Readable overlays and, separately, overlay folders whose metadata or
     /// settings failed to parse. One broken folder never hides the others;
     /// only a failure to walk the overlays folder itself is an error.
     pub fn discover_all(&self) -> Result<(Vec<Counter>, Vec<BrokenOverlay>), CounterError> {
-        let (found, broken) = self.scan()?;
-        Ok((
-            found.into_iter().map(|found| found.counter).collect(),
-            broken,
-        ))
+        self.scan()
     }
 
     pub fn parse_download_request(

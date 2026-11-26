@@ -13,4 +13,3 @@
 1161 crates/vosu-sys/src/process/linux.rs
 1201 crates/vosu-sys/src/process/linux/tests/mod.rs
 1114 src/server/websocket/tests.rs
-1378 src/tools/tests.rs
