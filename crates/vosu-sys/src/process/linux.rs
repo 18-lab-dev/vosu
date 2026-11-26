@@ -4,7 +4,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::fd::OwnedFd;
-#[cfg(feature = "linux-process-events")]
+#[cfg(any(feature = "linux-process-events", feature = "test-harness"))]
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
@@ -652,8 +652,8 @@ struct Chunk {
     len: usize,
 }
 
-#[cfg(feature = "linux-process-events")]
-fn open_pidfd(pid: u32) -> Option<OwnedFd> {
+#[cfg(any(feature = "linux-process-events", feature = "test-harness"))]
+pub(super) fn open_pidfd(pid: u32) -> Option<OwnedFd> {
     // SAFETY: pidfd_open takes an integer PID and zero flags, and returns a new fd.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
     if fd < 0 {
@@ -663,13 +663,13 @@ fn open_pidfd(pid: u32) -> Option<OwnedFd> {
     Some(unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
 }
 
-#[cfg(feature = "linux-process-events")]
+#[cfg(any(feature = "linux-process-events", feature = "test-harness"))]
 fn pidfd_poll_reports_exit(result: libc::c_int, revents: libc::c_short) -> bool {
     result > 0 && revents & libc::POLLIN != 0
 }
 
-#[cfg(feature = "linux-process-events")]
-fn pidfd_is_alive(pidfd: &OwnedFd) -> bool {
+#[cfg(any(feature = "linux-process-events", feature = "test-harness"))]
+pub(super) fn pidfd_is_alive(pidfd: &OwnedFd) -> bool {
     let mut descriptor = libc::pollfd {
         fd: pidfd.as_raw_fd(),
         events: libc::POLLIN,

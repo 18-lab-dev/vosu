@@ -42,6 +42,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   waits for their workers before destroying plugin instances. Slow plugin
   cleanup no longer leaves these connections open.
 
+- Isolated test-harness discovery detaches fixture sessions when their processes
+  exit and does not attach to a recycled PID.
+
 - Plugin settings: the Tools page has a **Settings** dialog for every
   non-bundled plugin, catalog-installed ones included, served by the new
   dashboard-only `GET`/`POST /api/plugins/<id>/settings`. Values come from

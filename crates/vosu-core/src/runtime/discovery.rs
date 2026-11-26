@@ -40,8 +40,14 @@ const ISOLATED_DISCOVERY_ENV: &str = "VOSU_TEST_ISOLATED_DISCOVERY";
 
 /// Poll only the targets explicitly supplied by the harness. `1` (or no
 /// valid target list) means no candidates, never the host's process list.
+/// Retain the process object at startup so PID reuse cannot retarget a fixture.
 #[cfg(feature = "test-harness")]
-struct IsolatedSource(Vec<crate::plugin::ProcessRecord>);
+struct IsolatedSource(
+    Vec<(
+        crate::plugin::ProcessRecord,
+        vosu_sys::process::ProcessLiveness,
+    )>,
+);
 
 #[cfg(feature = "test-harness")]
 impl IsolatedSource {
@@ -58,17 +64,21 @@ impl IsolatedSource {
                     if pid == 0 || !executable.is_absolute() {
                         return None;
                     }
+                    let liveness = vosu_sys::process::ProcessLiveness::open(pid)?;
                     let name = executable.file_name()?.to_str()?.to_owned();
                     let command_line = format!("\"{path}\"");
-                    Some(crate::plugin::ProcessRecord {
-                        pid,
-                        name,
-                        command_line,
-                        bitness: vosu_plugin_api::Bitness::X64,
-                        start_time: 1,
-                        argv: Some(vec![path.clone()]),
-                        path,
-                    })
+                    Some((
+                        crate::plugin::ProcessRecord {
+                            pid,
+                            name,
+                            command_line,
+                            bitness: vosu_plugin_api::Bitness::X64,
+                            start_time: 1,
+                            argv: Some(vec![path.clone()]),
+                            path,
+                        },
+                        liveness,
+                    ))
                 })
                 .collect(),
         )
@@ -78,11 +88,20 @@ impl IsolatedSource {
 #[cfg(feature = "test-harness")]
 impl ProcessSource for IsolatedSource {
     fn enumerate(&self) -> std::io::Result<Vec<crate::plugin::ProcessRecord>> {
-        Ok(self.0.clone())
+        Ok(self
+            .0
+            .iter()
+            .filter(|(_, liveness)| liveness.is_alive())
+            .map(|(record, _)| record.clone())
+            .collect())
     }
 
     fn inspect(&self, pid: u32) -> std::io::Result<Option<crate::plugin::ProcessRecord>> {
-        Ok(self.0.iter().find(|record| record.pid == pid).cloned())
+        Ok(self
+            .0
+            .iter()
+            .find(|(record, liveness)| record.pid == pid && liveness.is_alive())
+            .map(|(record, _)| record.clone()))
     }
 
     fn backend_name(&self) -> &'static str {
@@ -295,6 +314,55 @@ mod tests {
             start_discovery(&host, runtime.handle().clone(), &logger).is_none(),
             "no plugin registered a [match] table, so discovery must not start"
         );
+    }
+
+    #[cfg(feature = "test-harness")]
+    #[test]
+    fn isolated_target_is_reported_only_until_its_process_exits() {
+        use super::{IsolatedSource, ProcessSource};
+        use std::ffi::OsStr;
+        use std::process::{Child, Command, Stdio};
+
+        struct ChildGuard(Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = vosu_proptest::wait::child(&mut self.0);
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        let (program, args) = ("/bin/sh", ["-c", "read _"]);
+        #[cfg(windows)]
+        let (program, args) = ("cmd.exe", ["/D", "/K"]);
+        let mut child = ChildGuard(
+            Command::new(program)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let pid = child.0.id();
+        let path = std::env::current_exe()
+            .unwrap()
+            .with_file_name("supplied-fixture.exe");
+        let source =
+            IsolatedSource::from_value(OsStr::new(&serde_json::json!([[pid, path]]).to_string()));
+        let records = source.enumerate().unwrap();
+        assert_eq!(records.len(), 1);
+        let record = source.inspect(pid).unwrap().unwrap();
+        assert_eq!(record.pid, pid);
+        assert_eq!(record.name, "supplied-fixture.exe");
+        assert_eq!(record.path, path.to_str().unwrap());
+        assert_eq!(record.argv, Some(vec![record.path.clone()]));
+        assert_eq!(record.start_time, 1);
+
+        child.0.kill().unwrap();
+        vosu_proptest::wait::child(&mut child.0).unwrap();
+        assert!(source.enumerate().unwrap().is_empty());
+        assert!(source.inspect(pid).unwrap().is_none());
     }
 
     /// Linux integration test (test-harness): a real testkit session
