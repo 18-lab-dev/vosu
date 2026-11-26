@@ -117,12 +117,21 @@ class CrateBoundariesTests(unittest.TestCase):
                     errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
                     self.assertEqual(errors, [])
 
-    def test_m4a_rejects_osu_surface_and_impure_support_even_if_recorded(self):
-        for source, target in [("vosu-osu", "vosu-surface"), ("vosu-adapter-support", "vosu-surface")]:
-            meta = metadata([package(source, [(target, True)]), package(target, [])])
-            self.rules.write_text(f"{source} -> {target}\n", encoding="utf-8")
-            errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
-            self.assertTrue(any("M4a:" in error for error in errors))
+    def test_m4a_osu_surface_and_adapter_support_edges(self):
+        cases = [
+            ("vosu-osu", "vosu-surface", False),
+            ("vosu-adapter-support", "vosu-surface", True),
+            ("vosu-adapter-support", "vosu-core", False),
+        ]
+        for source, target, accepted in cases:
+            with self.subTest(source=source, target=target):
+                meta = metadata([package(source, [(target, True)]), package(target, [])])
+                self.rules.write_text(f"{source} -> {target}\n", encoding="utf-8")
+                errors, _, _ = crate_boundaries.check(meta, rules_path=self.rules)
+                if accepted:
+                    self.assertEqual(errors, [])
+                else:
+                    self.assertTrue(any("M4a:" in error for error in errors), errors)
 
     def test_m5_rejects_native_sdk_reader_and_state_edges_even_if_recorded(self):
         sdk_targets = ["vosu-core", "vosu-net", "vosu-surface", "vosu-sys"]
