@@ -415,6 +415,35 @@ fn action_jobs_authority_limits_and_lifecycle() {
                 .status(),
             StatusCode::UNAUTHORIZED
         );
+        // Counterexample: the revoked tab can neither poll nor cancel another
+        // session's job, and that job is untouched by the attempt.
+        for method in [Method::GET, Method::DELETE] {
+            assert_eq!(
+                api.handle(request(
+                    method.clone(),
+                    &foreign_location,
+                    Some(&first),
+                    Value::Null
+                ))
+                .await
+                .status(),
+                StatusCode::UNAUTHORIZED,
+                "{method}"
+            );
+        }
+        assert_eq!(
+            value(
+                api.handle(request(
+                    Method::GET,
+                    &foreign_location,
+                    Some(&foreign),
+                    Value::Null
+                ))
+                .await
+            )
+            .await["state"],
+            "running"
+        );
         assert!(
             h.host
                 .installed_capability_version("field:fixture.jtwo.value.child")
