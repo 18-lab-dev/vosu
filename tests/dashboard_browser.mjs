@@ -546,6 +546,12 @@ async function openRouted(path, routes) {
     report.settings.filled = shown;
     check(Object.keys(view.values ?? {}).length === 17, `settings: SettingsView must carry 17 keys ${JSON.stringify(view)}`);
     for (const [key, value] of Object.entries(view.values ?? {})) {
+      // SettingsView has a platform-independent shape, but the control
+      // starts a systemd user service and must not appear on Windows.
+      if (key === 'START_AT_LOGIN' && process.platform === 'win32') {
+        check(value === false && !(key in shown), 'settings: Windows must not offer the Linux start-at-login control');
+        continue;
+      }
       const expected = typeof value === 'boolean' ? value
         : key === 'ALLOWED_IPS' ? String(value).split(',').map((entry) => entry.trim()).filter(Boolean).join('\n')
           : String(value);
