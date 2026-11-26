@@ -122,6 +122,28 @@ fn links_below_the_top_level_never_escape_the_root() {
     }
 }
 
+/// The overlay host redirects `/<folder>` to `/<folder>/` only when opening
+/// it as a file reports `InvalidPath` and it lists as a directory, so the
+/// lease must answer that way on every platform (a space in the name too).
+#[test]
+fn opening_a_directory_is_invalid_path_and_it_lists() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("nested counter")).unwrap();
+    let minted = lease(&rt, root.path());
+    assert_eq!(
+        open(&rt, &minted.lease, "nested counter").err(),
+        Some(FileError::InvalidPath)
+    );
+    let child = RelativeChild::parse("nested counter").unwrap();
+    assert!(rt.block_on(minted.lease.directory(&child)).is_ok());
+    assert_eq!(
+        open(&rt, &minted.lease, "missing").err(),
+        Some(FileError::NotFound)
+    );
+}
+
 #[test]
 fn a_publish_racing_a_read_never_mixes_an_open_file() {
     let rt = tokio::runtime::Runtime::new().unwrap();

@@ -48,11 +48,14 @@ impl RootOperations for TestRoot {
     fn open(&self, path: &RelativeChild) -> Operation<'_, OpenedFile> {
         let path = self.0.join(path.as_str());
         Box::pin(async move {
-            let file = std::fs::File::open(&path).map_err(|_| FileError::NotFound)?;
-            let metadata = file.metadata().map_err(|_| FileError::Io)?;
+            // Mirror core's lease on every platform: a directory is
+            // InvalidPath. `File::open` cannot open a directory on Windows,
+            // so classify by metadata before opening.
+            let metadata = std::fs::metadata(&path).map_err(|_| FileError::NotFound)?;
             if !metadata.is_file() {
                 return Err(FileError::InvalidPath);
             }
+            let file = std::fs::File::open(&path).map_err(|_| FileError::NotFound)?;
             Ok(OpenedFile::new(
                 FileMetadata {
                     size: metadata.len(),
