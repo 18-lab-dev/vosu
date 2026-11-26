@@ -43,7 +43,7 @@ fn missing_ca_rejects_the_real_forge_before_any_request_or_credential() {
             SourceFailure::UndetectedForge
         );
 
-        let handshakes = forge.recorder.handshakes();
+        let handshakes = forge.recorder.handshakes().await;
         assert!(
             handshakes.len() >= 3
                 && handshakes

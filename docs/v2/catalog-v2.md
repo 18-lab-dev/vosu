@@ -899,15 +899,16 @@ defines the core-owned handlers; M7 moves presentation, not this authority.
 dashboard-listener routes M7 adds or keeps: `GET`/`POST /api/plugins/<id>/settings`,
 `GET /api/settings`, and the `/api/tools/*` management routes
 ([A7 inventory](implementation-plan.md#route-method-listener-and-provider-inventory)).
-The dashboard host only presents them. The `/api/ingame` banner's install
-button calls `POST /api/catalog/install` with
+The dashboard host only presents them. The D20 notice for the removed
+`/api/ingame` route (A7.5) has an install button that calls
+`POST /api/catalog/install` with
 `{"kind":"tool","id":"vosulay-editor","source":"18-lab-dev/vosulay"}`
 (AF.2; [ecosystem release matrix](ecosystem-release-matrix.md#vosulay)) and
 then follows the ordinary plan review, the D8 disclosure, the approvals the
 plan lists and `confirm`. It has no shortcut route and no implicit approval.
-When that entry is already installed, the banner offers launch and manage
+When that entry is already installed, the notice offers launch and manage
 instead. When the source is disabled or offline, or the entry is missing,
-the banner states that and offers a retry, without inventing a plan.
+the notice states that and offers a retry, without inventing a plan.
 
 **H0 route inventory (`src/server/catalog_api`).** Exact paths and methods;
 a near miss (trailing slash, extra or empty segment, wrong case, malformed

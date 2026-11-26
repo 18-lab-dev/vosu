@@ -2,6 +2,17 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M7
+
+- vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
+  that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
+  request gets the ordinary 404 that other removed routes return, as in 1.x
+  since the in-game overlay was removed. Use vosulay, installed as the
+  official `vosulay-editor` tool, for in-game overlays. M7's removed-route
+  notice will report `/api/ingame` requests on the dashboard and offer to
+  install vosulay through the normal install plan, and the daemon will log
+  one warning per run.
+
 ## Unreleased — 2.0 F (SDK packaging)
 
 - Make the `vosu-plugin-api` SDK crate packageable on its own (AF.9): it

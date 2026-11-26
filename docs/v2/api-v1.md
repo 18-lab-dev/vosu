@@ -794,13 +794,17 @@ routes with them:
 
 | Adapter | Routes |
 | --- | --- |
-| Upstream v2 (precise variant included) | `GET /json/v2`, `GET /json/v2/precise`, `WS /websocket/v2`, `WS /websocket/v2/precise`, `GET /files/...`, `GET /Songs/{path}`, `GET /backgroundImage`, `GET /api/calculate/pp`, `GET /api/ingame` |
+| Upstream v2 (precise variant included) | `GET /json/v2`, `GET /json/v2/precise`, `WS /websocket/v2`, `WS /websocket/v2/precise`, `GET /files/...`, `GET /Songs/{path}`, `GET /backgroundImage`, `GET /api/calculate/pp` |
 | gosuMemory-compatible | `GET /json`, `WS /ws` |
 | streamCompanion-compatible | `GET /json/sc`, `WS /tokens` |
 
 `/websocket/v2/subscribe` is removed; API v1's field-subscription protocol
 above replaces it for every first-party consumer
 ([ADR 0022](../decisions/0022-install-resolver-and-2-0-transition.md)).
+`/api/ingame` is removed too, and no adapter serves it. vosulay is the
+in-game overlay path ([ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md)'s
+2026-11-25 amendment). Both are D20 removed routes that answer the ordinary
+404 ([adapter surfaces](adapter-surfaces.md#a45-removed-route-attribution)).
 
 The normative [adapter inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
 enumerates removals separately for each endpoint, including nested tournament
