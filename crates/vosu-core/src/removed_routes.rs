@@ -74,12 +74,18 @@ impl RemovedRoutes {
         notices.retain(|notice| now.saturating_duration_since(notice.last_seen) < TTL);
     }
 
-    /// Records one admitted request. `overlay` must already be validated as a
-    /// currently installed overlay; anything else is `None` (unknown).
-    pub fn record(&self, overlay: Option<String>, feature: RemovedFeature, now: Instant) {
+    /// Every admitted request to a removed route, recorded or not (a
+    /// dashboard preview is not): the first `/api/ingame` one logs the A7.5
+    /// warning, once per recorder, and nothing else is logged.
+    pub fn admitted(&self, feature: RemovedFeature) {
         if feature == RemovedFeature::IngamePage && self.first_ingame_request() {
             tracing::warn!("{INGAME_WARNING}");
         }
+    }
+
+    /// Records one admitted request. `overlay` must already be validated as a
+    /// currently installed overlay; anything else is `None` (unknown).
+    pub fn record(&self, overlay: Option<String>, feature: RemovedFeature, now: Instant) {
         let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
         Self::expire(&mut notices, now);
         if let Some(notice) = notices

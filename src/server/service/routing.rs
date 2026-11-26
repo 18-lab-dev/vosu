@@ -121,6 +121,7 @@ impl ProductionRouteDelegate {
     async fn dispatch(&self, endpoint: Endpoint, request: Request<Body>, body: Bytes) -> Response {
         match endpoint {
             Endpoint::Removed(feature) => {
+                self.removed.admitted(feature);
                 // A7.4: the dashboard's own previews are never recorded.
                 if !is_preview_source(&request) {
                     let overlay = socket_overlay(&request).filter(|overlay| {
