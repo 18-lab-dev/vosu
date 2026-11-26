@@ -18,18 +18,6 @@ impl RouteDelegate for Reached {
         })
     }
 }
-struct NoState;
-impl StateJsonProvider for NoState {
-    fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        Box::pin(async { CachedJson::NotReady })
-    }
-}
-struct NoCalculation;
-impl CalculatePpProvider for NoCalculation {
-    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async { CalculateResult::NotReady })
-    }
-}
 
 const OVERLAY: &str = "http://127.0.0.1:24870";
 const DASHBOARD: &str = "http://127.0.0.1:24871";
@@ -43,8 +31,6 @@ fn providers(
         Arc::new(AuthorizationPolicy::new("127.0.0.1,localhost", "127.0.0.1"));
     let mut providers = RouteProviders {
         authorization: Arc::clone(&policy),
-        state: Arc::new(NoState),
-        calculation: Arc::new(NoCalculation),
         delegate: Arc::new(Reached),
     };
     let Some(dashboard) = listener else {

@@ -110,8 +110,6 @@
         ));
         let providers = vosu_core::server::routes::RouteProviders {
             authorization: Arc::new(AllowAll),
-            state: Arc::new(NoState { events: tokio::sync::watch::channel(0).1 }),
-            calculation: Arc::new(DeclaredCalculateProvider::default()),
             delegate,
         };
         let binder = TokioBinder(AxumListenerFactory::new(providers));

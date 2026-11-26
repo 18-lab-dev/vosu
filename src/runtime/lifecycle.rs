@@ -391,8 +391,6 @@ impl ProductionRuntime {
                 origins: Arc::clone(&self.origins),
                 dashboard: false,
             }),
-            state: adapters.clone(),
-            calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
             delegate: Arc::new(delegate),
         };
         let mut dashboard_providers = providers.clone();

@@ -43,9 +43,9 @@ use vosu_overlay_host::{
 };
 
 use crate::server::service::{
-    BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-    ProductionRouteDelegate, ProductionServices, ReportInputProvider, UpdateRouteResult,
-    UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
+    BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, ProductionRouteDelegate,
+    ProductionServices, ReportInputProvider, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
+    WebSocketRelaySink,
 };
 use vosu_core::server::{
     auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},

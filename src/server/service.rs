@@ -37,8 +37,8 @@ use vosu_core::server::{
     files,
     pages::EmbeddedResponse,
     routes::{
-        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
-        ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate, StateJsonProvider, StateRoute,
+        CachedJson, Endpoint, PeerAddress, ProviderFuture, ResponseFlushBarrier,
+        ResponseFlushRegistry, RouteDelegate, StateJsonProvider, StateRoute,
     },
     websocket::{self, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
 };
@@ -53,7 +53,6 @@ include!("service/websocket_transport.rs");
 include!("service/dashboard.rs");
 include!("service/responses.rs");
 include!("service/surface.rs");
-include!("service/declared_calculate.rs");
 
 #[cfg(test)]
 mod tests {

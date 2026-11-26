@@ -3,10 +3,7 @@ use crate::server::adapter_capture::DerivedStatus;
 use crate::server::{
     auth::AuthorizationPolicy,
     origins::{OriginAuthorizer, Origins},
-    routes::{
-        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, RouteDelegate, RouteProviders,
-        StateJsonProvider, StateRoute, dispatch,
-    },
+    routes::{CachedJson, Endpoint, RouteDelegate, RouteProviders, dispatch},
 };
 use axum::{
     body::to_bytes,
@@ -77,18 +74,6 @@ impl RouteDelegate for Delegate {
         })
     }
 }
-struct Unused;
-impl StateJsonProvider for Unused {
-    fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        Box::pin(async { CachedJson::NotReady })
-    }
-}
-impl CalculatePpProvider for Unused {
-    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async { CalculateResult::NotReady })
-    }
-}
-
 struct Harness {
     source: Arc<Source>,
     delegate: Arc<Delegate>,
@@ -122,8 +107,6 @@ impl Harness {
                 "198.51.100.7,localhost,absolute",
                 "127.0.0.1",
             )),
-            state: Arc::new(Unused),
-            calculation: Arc::new(Unused),
             delegate: delegate.clone(),
         };
         Self {

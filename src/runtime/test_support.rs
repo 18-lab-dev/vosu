@@ -248,8 +248,6 @@ pub async fn start_test_production_composition(
             &config.allowed_ips,
             &config.server_ip,
         )),
-        state: adapters.clone(),
-        calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
         delegate: Arc::new(
             ProductionRouteDelegate::new(services)
                 .with_surface(adapters.router(plugins.clone()))

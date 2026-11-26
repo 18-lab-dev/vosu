@@ -15,7 +15,8 @@ linux-process-events = ["vosu-sys/linux-process-events"]
 # Bench-only deterministic foreground injection. Unlike test-harness it permits
 # optimized release benches; production must never enable it.
 bench-harness = []
-test-harness = ["bench-harness"]
+# The catalog harness transport needs vosu-net's test network.
+test-harness = ["bench-harness", "vosu-net/test-harness"]
 
 [lib]
 path = "src/lib.rs"

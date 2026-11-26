@@ -1,9 +1,6 @@
 use super::super::{
     auth::AuthorizationPolicy,
-    routes::{
-        CachedJson, CalculatePpProvider, CalculateResult, Endpoint, ProviderFuture, RouteDelegate,
-        StateJsonProvider, StateRoute,
-    },
+    routes::{CachedJson, Endpoint, ProviderFuture, RouteDelegate, StateJsonProvider, StateRoute},
 };
 use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -25,14 +22,22 @@ impl StateJsonProvider for HangingState {
         Box::pin(std::future::pending())
     }
 }
-struct ProductionCalculation;
-impl CalculatePpProvider for ProductionCalculation {
-    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async { CalculateResult::NotReady })
-    }
-}
-struct ProductionDelegate;
+/// The state route as a bundled adapter registers it.
+struct ProductionDelegate(Arc<dyn StateJsonProvider>);
 impl RouteDelegate for ProductionDelegate {
+    fn registered_http<'a>(
+        &'a self,
+        _: &'a axum::extract::Request,
+    ) -> Option<ProviderFuture<'a, axum::response::Response>> {
+        Some(Box::pin(async move {
+            let (status, body) = self.0.cached_json(StateRoute::V1).await.status_body();
+            axum::response::Response::builder()
+                .status(status)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap()
+        }))
+    }
     fn handle(
         &self,
         _: Endpoint,
@@ -45,9 +50,7 @@ impl RouteDelegate for ProductionDelegate {
 fn production_providers(state: Arc<dyn StateJsonProvider>) -> RouteProviders {
     RouteProviders {
         authorization: Arc::new(AuthorizationPolicy::new("127.0.0.1,localhost", "localhost")),
-        state,
-        calculation: Arc::new(ProductionCalculation),
-        delegate: Arc::new(ProductionDelegate),
+        delegate: Arc::new(ProductionDelegate(state)),
     }
 }
 async fn http_get(address: SocketAddr, path: &str) -> io::Result<Vec<u8>> {

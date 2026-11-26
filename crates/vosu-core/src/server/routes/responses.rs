@@ -22,10 +22,6 @@ pub(super) fn not_found_for(request: &Request<Body>) -> Response {
         )))
         .unwrap()
 }
-pub(super) fn not_ready() -> Response {
-    let (status, body) = CachedJson::NotReady.status_body();
-    json(status, body)
-}
 pub(super) fn error_json(message: &str) -> Bytes {
     Bytes::from(serde_json::to_vec(&serde_json::json!({"error": message})).unwrap())
 }

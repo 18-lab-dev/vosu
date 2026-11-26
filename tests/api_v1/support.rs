@@ -10,10 +10,7 @@ use vosu_core::server::{
     api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
     auth::AuthorizationPolicy,
     origins::{OriginAuthorizer, Origins},
-    routes::{
-        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, ProviderFuture,
-        RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
-    },
+    routes::{self, Endpoint, ProviderFuture, RouteDelegate, RouteProviders},
     websocket::UpgradeCallbackTracker,
 };
 use vosu_core::{
@@ -233,19 +230,8 @@ pub fn publish(id: &str, handle: u64, fields: &[(&str, PublishValueRef<'_>)]) {
     );
 }
 
-// Only legacy providers are inert. API requests pass through the production
-// authorization/route dispatcher, API router, upgrade tracker and WS bridge.
-struct Legacy;
-impl StateJsonProvider for Legacy {
-    fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        Box::pin(async { panic!("legacy state route reached") })
-    }
-}
-impl CalculatePpProvider for Legacy {
-    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async { panic!("legacy calculation reached") })
-    }
-}
+// API requests pass through the production authorization/route dispatcher,
+// API router, upgrade tracker and WS bridge; no state route is registered.
 struct Delegate(ApiV1Router);
 impl RouteDelegate for Delegate {
     fn handle(
@@ -279,8 +265,6 @@ impl Server {
                 origins,
                 dashboard,
             }),
-            state: Arc::new(Legacy),
-            calculation: Arc::new(Legacy),
             delegate: Arc::new(Delegate(
                 ApiV1Router::new(h.host.api_state_source(), hub.clone()).with_resources(Arc::new(
                     vosu_core::server::api_v1::resources::ResourceHttp::new(

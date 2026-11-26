@@ -58,8 +58,8 @@ use vosu_core::server::{
         trailing_slash_location,
     },
     routes::{
-        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
-        ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
+        self, CachedJson, Endpoint, PeerAddress, ProviderFuture, RouteDelegate, RouteProviders,
+        StateJsonProvider, StateRoute,
     },
     runtime::{
         BoundListener, HostResolver, ListenTarget, ListenerBinder, ListenerRuntime, RuntimeFuture,
@@ -137,8 +137,6 @@ async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
             .insert(ConnectInfo(PeerAddress("127.0.0.1:12345".parse().unwrap())));
         let providers = RouteProviders {
             authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
-            state: Arc::new(StateFixture),
-            calculation: Arc::new(CalculateFixture),
             delegate: Arc::new(KeysDelegate(keys)),
         };
         let response = bounded!(routes::dispatch(State(providers), request));
@@ -178,8 +176,6 @@ async fn api_key_peer_scope_and_management_boundaries() {
     let key = created["key"].as_str().unwrap();
     let providers = RouteProviders {
         authorization: Arc::new(AuthorizationPolicy::new("192.0.2.7", "127.0.0.1")),
-        state: Arc::new(StateFixture),
-        calculation: Arc::new(CalculateFixture),
         delegate: Arc::new(KeysDelegate(keys)),
     };
     for (method, path, peer, origin, credential, expected) in [
@@ -282,34 +278,47 @@ async fn api_key_peer_scope_and_management_boundaries() {
     }
 }
 
-struct StateFixture;
-impl StateJsonProvider for StateFixture {
-    fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        Box::pin(async move {
-            if route == StateRoute::V1 {
-                CachedJson::Ready(Bytes::from_static(br#"{"ok":true}"#))
-            } else {
-                CachedJson::NotReady
+/// The bundled adapters' registered state and calculation routes: `/json`
+/// is ready, every other state route is not, and `/api/calculate/pp`
+/// parses its query exactly as the upstream adapter's registration does.
+fn registered_route(request: &Request<Body>) -> ProviderFuture<'static, Response> {
+    let path = request.uri().path().to_owned();
+    let query = request.uri().query().map(str::to_owned);
+    Box::pin(async move {
+        let (status, body) = if path == "/api/calculate/pp" {
+            match PpQuery::parse(query.as_deref()) {
+                Ok(query) => {
+                    let body = json!({"lazer": query.lazer, "mode": query.mode, "passed": query.passed_objects});
+                    (
+                        StatusCode::OK,
+                        Bytes::from(serde_json::to_vec(&body).unwrap()),
+                    )
+                }
+                Err(message) => (
+                    StatusCode::BAD_REQUEST,
+                    Bytes::from(serde_json::to_vec(&json!({"error": message})).unwrap()),
+                ),
             }
-        })
-    }
-}
-struct CalculateFixture;
-impl CalculatePpProvider for CalculateFixture {
-    fn calculate_pp(&self, query: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        let query = match PpQuery::parse(query) {
-            Ok(query) => query,
-            Err(message) => return Box::pin(async move { CalculateResult::Invalid(message) }),
+        } else if path == "/json" {
+            CachedJson::Ready(Bytes::from_static(br#"{"ok":true}"#)).status_body()
+        } else {
+            CachedJson::NotReady.status_body()
         };
-        Box::pin(async move {
-            let body =
-                json!({"lazer": query.lazer, "mode": query.mode, "passed": query.passed_objects});
-            CalculateResult::Ready(Bytes::from(serde_json::to_vec(&body).unwrap()))
-        })
-    }
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    })
 }
 struct DelegateFixture;
 impl RouteDelegate for DelegateFixture {
+    fn registered_http<'a>(
+        &'a self,
+        request: &'a Request<Body>,
+    ) -> Option<ProviderFuture<'a, Response>> {
+        Some(registered_route(request))
+    }
     fn handle(
         &self,
         endpoint: Endpoint,
@@ -332,8 +341,6 @@ fn providers() -> RouteProviders {
             "127.0.0.1,localhost,absolute",
             "127.0.0.1",
         )),
-        state: Arc::new(StateFixture),
-        calculation: Arc::new(CalculateFixture),
         delegate: Arc::new(DelegateFixture),
     }
 }

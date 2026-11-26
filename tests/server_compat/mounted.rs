@@ -25,10 +25,9 @@ pub(super) use oracle::adapter_fixture::host::WAIT;
 use vosu::{
     runtime::{ListenerOwner, WebSocketHubs},
     server::service::{
-        BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-        ProductionRouteDelegate, ProductionServices, ReportInputProvider, SurfaceRouter,
-        UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink, adapter_routes,
-        reserve_core_routes,
+        BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, ProductionRouteDelegate,
+        ProductionServices, ReportInputProvider, SurfaceRouter, UpdateRouteResult, UpdaterHandoff,
+        WebSocketEndpoints, WebSocketRelaySink, adapter_routes, reserve_core_routes,
     },
 };
 use vosu_core::plugin::{PluginHost, PluginInstanceId};
@@ -274,8 +273,6 @@ impl Mounted {
                             ),
                             dashboard: false,
                         }),
-                        state: schemas.clone(),
-                        calculation: Arc::new(DeclaredCalculateProvider(files.clone())),
                         delegate: delegate.clone(),
                     };
                     let target = vosu_core::server::runtime::ListenTarget {

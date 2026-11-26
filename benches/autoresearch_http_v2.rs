@@ -19,8 +19,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use vosu_core::server::{
     auth::AuthorizationPolicy,
     routes::{
-        CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture, RouteDelegate,
-        RouteProviders, dispatch,
+        Endpoint, PeerAddress, ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider,
+        StateRoute, dispatch,
     },
     runtime::{AxumListenerFactory, ListenTarget, TcpListenerFactory},
 };
@@ -79,15 +79,21 @@ fn source_snapshot() -> Arc<StateBundleSnapshot> {
     })
 }
 
-// These routes are not exercised: fail loudly instead of substituting implementations
-// for any measured production boundary.
-struct UnusedRoutes;
-impl CalculatePpProvider for UnusedRoutes {
-    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        panic!("GET /json/v2 must not call the calculation provider")
+/// `/json/v2` as the upstream adapter registers it: the provider's cached
+/// production bytes. Every other route fails loudly instead of substituting
+/// an implementation for a measured production boundary.
+struct V2Route(Arc<dyn StateJsonProvider>);
+impl RouteDelegate for V2Route {
+    fn registered_http<'a>(&'a self, _: &'a Request<Body>) -> Option<ProviderFuture<'a, Response>> {
+        Some(Box::pin(async move {
+            let (status, body) = self.0.cached_json(StateRoute::V2).await.status_body();
+            Response::builder()
+                .status(status)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap()
+        }))
     }
-}
-impl RouteDelegate for UnusedRoutes {
     fn handle(&self, _: Endpoint, _: Request<Body>, _: Bytes) -> ProviderFuture<'_, Response> {
         panic!("GET /json/v2 must not call the route delegate")
     }
@@ -194,9 +200,7 @@ fn bench(c: &mut Criterion) {
     let expected = fixture.encode("v2");
     let providers = RouteProviders {
         authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
-        state: fixture.providers[2].clone(),
-        calculation: Arc::new(UnusedRoutes),
-        delegate: Arc::new(UnusedRoutes),
+        delegate: Arc::new(V2Route(fixture.providers[2].clone())),
     };
     let listener = runtime.block_on(async {
         let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

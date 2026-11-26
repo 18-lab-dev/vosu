@@ -134,22 +134,6 @@ pub trait StateJsonProvider: Send + Sync {
     fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson>;
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum CalculateResult {
-    Ready(Bytes),
-    NotReady,
-    /// A malformed query, answered as a 400 `{"error": ...}` envelope.
-    Invalid(String),
-    Failed {
-        status: StatusCode,
-        body: Bytes,
-    },
-}
-
-/// `/api/calculate/pp` without a surface route; the provider parses the raw query.
-pub trait CalculatePpProvider: Send + Sync {
-    fn calculate_pp(&self, query: Option<&str>) -> ProviderFuture<'_, CalculateResult>;
-}
 /// Test-harness loopback endpoint routed before classification (adapter capture).
 #[cfg(feature = "test-harness")]
 pub trait HarnessRoute: Send + Sync {
@@ -303,11 +287,12 @@ pub struct ConnectionAddresses {
     pub local: Option<SocketAddr>,
 }
 
+/// The listener's providers. State and calculation routes have no fallback:
+/// they are bundled adapters' surface registrations, reached through
+/// [`RouteDelegate::registered_http`].
 #[derive(Clone)]
 pub struct RouteProviders {
     pub authorization: Arc<dyn RequestAuthorizer>,
-    pub state: Arc<dyn StateJsonProvider>,
-    pub calculation: Arc<dyn CalculatePpProvider>,
     pub delegate: Arc<dyn RouteDelegate>,
 }
 
@@ -739,68 +724,51 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 ))
             .then(|| origins.page_context(request.headers(), local_ip))
         });
-    if matches!(endpoint, Endpoint::State(_) | Endpoint::CalculatePp)
-        && let Some(response) = providers.delegate.registered_http(&request)
-    {
-        return cors(response.await);
+    // An unregistered state or calculation path has no owner at all.
+    if matches!(endpoint, Endpoint::State(_) | Endpoint::CalculatePp) {
+        return cors(match providers.delegate.registered_http(&request) {
+            Some(response) => response.await,
+            None => not_found_for(&request),
+        });
     }
-    let response = match endpoint {
-        Endpoint::State(route) => match providers.state.cached_json(route).await {
-            CachedJson::Ready(body) => json(StatusCode::OK, body),
-            CachedJson::NotReady => not_ready(),
-            CachedJson::Failed { status, body } => json(status, body),
-        },
-        Endpoint::CalculatePp => match providers
-            .calculation
-            .calculate_pp(request.uri().query())
-            .await
-        {
-            CalculateResult::Ready(body) => json(StatusCode::OK, body),
-            CalculateResult::NotReady => not_ready(),
-            CalculateResult::Invalid(message) => {
-                json(StatusCode::BAD_REQUEST, error_json(&message))
-            }
-            CalculateResult::Failed { status, body } => json(status, body),
-        },
-        endpoint => {
-            let (parts, body) = request.into_parts();
-            let body = if method == Method::POST || delete {
-                match to_bytes(body, MAX_POST_BODY).await {
-                    Ok(body) => body,
-                    Err(_) => {
-                        return cors(json(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            error_json("payload too large"),
-                        ));
-                    }
+    let response = {
+        let (parts, body) = request.into_parts();
+        let body = if method == Method::POST || delete {
+            match to_bytes(body, MAX_POST_BODY).await {
+                Ok(body) => body,
+                Err(_) => {
+                    return cors(json(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        error_json("payload too large"),
+                    ));
                 }
-            } else {
-                Bytes::new()
-            };
-            if broker_grant
-                .as_ref()
-                .is_some_and(|(broker, peer)| broker.authorize(&parts.headers, *peer) != Ok(true))
-            {
-                return cors(json(
-                    StatusCode::UNAUTHORIZED,
-                    error_json("Broker credential revoked"),
-                ));
             }
-            if parts
-                .extensions
-                .get::<super::api_keys::KeyGrant>()
-                .is_some_and(|grant| !grant.allowed())
-            {
-                return cors(json(
-                    StatusCode::UNAUTHORIZED,
-                    error_json("API key revoked"),
-                ));
-            }
-            providers
-                .delegate
-                .handle(endpoint, Request::from_parts(parts, Body::empty()), body)
-                .await
+        } else {
+            Bytes::new()
+        };
+        if broker_grant
+            .as_ref()
+            .is_some_and(|(broker, peer)| broker.authorize(&parts.headers, *peer) != Ok(true))
+        {
+            return cors(json(
+                StatusCode::UNAUTHORIZED,
+                error_json("Broker credential revoked"),
+            ));
         }
+        if parts
+            .extensions
+            .get::<super::api_keys::KeyGrant>()
+            .is_some_and(|grant| !grant.allowed())
+        {
+            return cors(json(
+                StatusCode::UNAUTHORIZED,
+                error_json("API key revoked"),
+            ));
+        }
+        providers
+            .delegate
+            .handle(endpoint, Request::from_parts(parts, Body::empty()), body)
+            .await
     };
     let response = if let Some(script) = page_script
         && response

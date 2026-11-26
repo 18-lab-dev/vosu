@@ -177,34 +177,43 @@ fn cors_is_applied_to_error_envelopes() {
     }
 }
 
-struct StateProvider(CachedJson);
-impl StateJsonProvider for StateProvider {
-    fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        let result = self.0.clone();
-        Box::pin(async move { result })
-    }
+fn not_ready() -> Response {
+    let (status, body) = CachedJson::NotReady.status_body();
+    json(status, body)
 }
-struct CalculationProvider;
-impl CalculatePpProvider for CalculationProvider {
-    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async { CalculateResult::NotReady })
-    }
-}
-struct Delegate;
+/// The registered state and calculation routes (bundled adapters' surface
+/// registrations) answering every read with one result.
+struct Delegate(Option<CachedJson>);
 impl RouteDelegate for Delegate {
+    fn registered_http<'a>(&'a self, _: &'a Request) -> Option<ProviderFuture<'a, Response>> {
+        let (status, body) = self.0.clone()?.status_body();
+        Some(Box::pin(async move { json(status, body) }))
+    }
     fn handle(&self, _: Endpoint, _: Request, _: Bytes) -> ProviderFuture<'_, Response> {
         Box::pin(async { Response::new(Body::empty()) })
     }
 }
 fn providers(state: CachedJson) -> RouteProviders {
+    providers_with(Some(state))
+}
+fn providers_with(state: Option<CachedJson>) -> RouteProviders {
     RouteProviders {
         authorization: Arc::new(AuthorizationPolicy::new(
             "198.51.100.7,localhost,absolute",
             "dashboard.local",
         )),
-        state: Arc::new(StateProvider(state)),
-        calculation: Arc::new(CalculationProvider),
-        delegate: Arc::new(Delegate),
+        delegate: Arc::new(Delegate(state)),
+    }
+}
+
+#[tokio::test]
+async fn unregistered_state_and_calculation_routes_have_no_owner() {
+    for path in ["/json", "/json/v2/precise", "/api/calculate/pp?mode=0"] {
+        let request = make_request(Method::GET, path, Body::empty());
+        let response = bounded!(dispatch(State(providers_with(None)), request));
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(bounded!(body(response)), "Not Found", "{path}");
     }
 }
 fn make_request(method: Method, uri: &str, body: Body) -> Request {

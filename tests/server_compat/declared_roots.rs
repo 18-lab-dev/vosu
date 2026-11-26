@@ -2,7 +2,7 @@ use super::*;
 #[path = "../../crates/vosu-adapter-upstream/tests/support/mod.rs"]
 mod support;
 use support::Case;
-use vosu::server::service::{DeclaredCalculateProvider, RegisteredProvider, SurfaceRouter};
+use vosu::server::service::{RegisteredProvider, SurfaceRouter};
 use vosu_surface::listener::ListenerRole;
 use vosu_surface::routes::{RegistrationLease, RouteDescriptor, RoutePath, RouteProvider};
 
@@ -49,8 +49,6 @@ fn providers(
     (
         RouteProviders {
             authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
-            state: Arc::new(StateFixture),
-            calculation: Arc::new(DeclaredCalculateProvider(provider)),
             delegate: Arc::new(SurfaceRouter::new(
                 case.host.clone(),
                 case.requester.clone(),
