@@ -15,6 +15,12 @@
 //! submitted digests equal the package's current ones, then starts the
 //! plugin through the same gate every load and restart uses. There is no
 //! CLI, environment or automatic approval.
+//!
+//! `GET`/`POST /api/plugins/<id>/settings` (A7.1 `PluginSettings`) edit
+//! core's per-plugin settings of any loaded plugin, a catalog-installed one
+//! included: the schema is the package's validated `settings_schema`, the
+//! values core's storage, and a valid write reaches every live instance as
+//! one complete `SETTINGS_CHANGED` (plugin-abi.md §6.9).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,9 +36,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use vosu_core::plugin::approval::{ApprovalStore, Digests, Provenance, Sha256Digest};
 use vosu_core::plugin::process::supervisor::{FailureReason, ProcessPhase, ProcessStatus};
+use vosu_core::plugin::settings::{SettingsChangeDelivery, SettingsError, SettingsSchemaSource};
 use vosu_core::plugin::{
     Execution, HostError, LoadedPlugin, PluginHost, PluginInstanceId, ProcessPackage,
 };
+use vosu_plugin_api::manifest::settings::SettingsSchema;
 use vosu_plugin_api::{Capability, Runtime};
 
 use crate::server::routes::ProviderFuture;
@@ -77,6 +85,7 @@ struct Package {
     requires: Vec<Capability>,
     optional: Vec<Capability>,
     process: Option<ProcessPackage>,
+    settings_schema: Option<SettingsSchema>,
 }
 
 /// One plugin composition tried to load.
@@ -108,6 +117,7 @@ impl Package {
                 Execution::Process(package) => Some(package.clone()),
                 Execution::Local(_) => None,
             },
+            settings_schema: plugin.settings_schema().cloned(),
         }
     }
 }
@@ -205,6 +215,9 @@ pub(super) struct PluginManagement {
     /// Library digests for listing, keyed by path and invalidated by size
     /// or modification time. An approval and every start hash afresh.
     digests: Mutex<HashMap<PathBuf, CachedDigest>>,
+    /// Where a saved plugin setting goes: every live instance of the id
+    /// (the host in production).
+    delivery: Arc<dyn SettingsChangeDelivery>,
 }
 
 /// A library's size and modification time when it was hashed, and its
@@ -271,6 +284,40 @@ struct GenerationInput {
     generation: u64,
 }
 
+/// One submitted value (`POST /api/plugins/<id>/settings`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingInput {
+    #[serde(rename = "uniqueID")]
+    unique_id: String,
+    value: Value,
+}
+
+/// A refused settings read or write: fixed text naming at most a setting's
+/// key, never a submitted value or a storage path.
+fn settings_refusal(plugin: &str, error: &SettingsError) -> Response {
+    match error {
+        SettingsError::Schema(error) => refusal(
+            StatusCode::BAD_REQUEST,
+            "invalid_settings",
+            error.to_string(),
+        ),
+        SettingsError::ManagedElsewhere(_) | SettingsError::NotBridged(_) => refusal(
+            StatusCode::CONFLICT,
+            "settings_managed_elsewhere",
+            "these settings are changed on the Settings page",
+        ),
+        SettingsError::Storage(detail) => {
+            tracing::warn!(%plugin, %detail, "plugin settings storage failed");
+            refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "settings_not_saved",
+                "vosu could not read or save this plugin's settings",
+            )
+        }
+    }
+}
+
 fn capabilities(list: &[Capability]) -> Value {
     list.iter()
         .map(|capability| json!({"id": capability.id, "version": capability.version}))
@@ -298,12 +345,20 @@ fn failure_reason(failure: &FailureReason) -> &'static str {
 impl PluginManagement {
     pub(super) fn new(host: Arc<PluginHost>, store: Arc<ApprovalStore>, roster: Roster) -> Self {
         Self {
+            delivery: Arc::clone(&host) as Arc<dyn SettingsChangeDelivery>,
             host,
             store,
             roster,
             actions: Arc::new(tokio::sync::Mutex::new(())),
             digests: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Tests observe settings deliveries instead of a live instance.
+    #[cfg(all(test, feature = "test-harness"))]
+    fn with_settings_delivery(mut self, delivery: Arc<dyn SettingsChangeDelivery>) -> Self {
+        self.delivery = delivery;
+        self
     }
 
     /// The library digest for listing; `None` when it cannot be read.
@@ -678,6 +733,12 @@ impl PluginManagement {
         else {
             return refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin");
         };
+        if action == "settings" {
+            return match self.settings_schema(&id) {
+                Some(schema) => self.settings(&id, schema, method, body),
+                None => refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin"),
+            };
+        }
         let Some(index) = self.find(&id) else {
             return refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin");
         };
@@ -687,6 +748,74 @@ impl PluginManagement {
             (&Method::POST, "restart") => self.lifecycle(index, body, true),
             (&Method::POST, "stop") => self.lifecycle(index, body, false),
             _ => refusal(StatusCode::NOT_FOUND, "unknown_route", "no such route"),
+        }
+    }
+
+    /// `id`'s validated `settings_schema`: `Some(None)` for a known plugin
+    /// that declares none, `None` for an id no listed or loaded plugin has.
+    /// A catalog-installed plugin is not in the roster; the host resolves
+    /// it while an instance of it is registered.
+    fn settings_schema(&self, id: &str) -> Option<Option<SettingsSchema>> {
+        if let Some(index) = self.find(id) {
+            return self.roster.0[index]
+                .package
+                .as_ref()
+                .map(|package| package.settings_schema.clone());
+        }
+        if let Some(schema) = self.host.schema_for(id) {
+            return Some(Some(schema));
+        }
+        self.host
+            .validation_snapshot()
+            .providers
+            .iter()
+            .any(|provider| provider.id == id)
+            .then_some(None)
+    }
+
+    /// `GET`/`POST /api/plugins/<id>/settings` (A7.1 `PluginSettings`). A
+    /// valid write is stored, then delivered once; an invalid one changes
+    /// and delivers nothing.
+    fn settings(
+        &self,
+        id: &str,
+        schema: Option<SettingsSchema>,
+        method: &Method,
+        body: &[u8],
+    ) -> Response {
+        let service = self.host.settings();
+        if method == Method::GET {
+            return match service.dashboard_view(id, schema.as_ref()) {
+                Ok(view) => respond(StatusCode::OK, view),
+                Err(error) => settings_refusal(id, &error),
+            };
+        }
+        let Some(schema) = schema else {
+            return refusal(
+                StatusCode::BAD_REQUEST,
+                "no_settings",
+                "this plugin declares no settings",
+            );
+        };
+        let Ok(inputs) = serde_json::from_slice::<Vec<SettingInput>>(body) else {
+            return refusal(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "expected [{\"uniqueID\", \"value\"}]",
+            );
+        };
+        let inputs = inputs
+            .into_iter()
+            .map(|input| (input.unique_id, input.value))
+            .collect();
+        let message = match service.submit(id, &schema, inputs) {
+            Ok(message) => message,
+            Err(error) => return settings_refusal(id, &error),
+        };
+        self.delivery.settings_changed(id, message);
+        match service.dashboard_view(id, Some(&schema)) {
+            Ok(view) => respond(StatusCode::OK, view),
+            Err(error) => settings_refusal(id, &error),
         }
     }
 }

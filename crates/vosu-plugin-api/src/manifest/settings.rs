@@ -92,6 +92,9 @@ pub enum SettingsSchemaError {
 #[derive(Debug, Clone)]
 pub struct SettingsSchema {
     entries: Vec<SettingEntry>,
+    /// Each entry object exactly as written, display fields included, for a
+    /// settings editor (`document`).
+    document: Vec<Value>,
 }
 
 impl SettingsSchema {
@@ -105,15 +108,39 @@ impl SettingsSchema {
         };
         let mut entries = Vec::with_capacity(raw.len());
         let mut seen = HashSet::new();
-        for item in raw {
-            let entry: SettingEntry = serde_json::from_value(item)
+        for item in &raw {
+            let entry: SettingEntry = serde_json::from_value(item.clone())
                 .map_err(|e| SettingsSchemaError::Json(e.to_string()))?;
             if !seen.insert(entry.unique_id.clone()) {
                 return Err(SettingsSchemaError::DuplicateId(entry.unique_id));
             }
             entries.push(entry);
         }
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            document: raw,
+        })
+    }
+
+    /// The validated entries exactly as the document wrote them, including
+    /// the display-only fields (`title`, `description`, `options`, …) a
+    /// settings editor renders. A `password` entry's own `value` is its
+    /// default secret: an editor must not show it.
+    pub fn document(&self) -> &[Value] {
+        &self.document
+    }
+
+    /// The `uniqueID` of every `password` entry (§6.9: write-only values).
+    pub fn password_keys(&self) -> impl Iterator<Item = &str> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.kind == SettingKind::Password)
+            .map(|entry| entry.unique_id.as_str())
+    }
+
+    /// Whether `key` names a `password` entry.
+    pub fn is_password(&self, key: &str) -> bool {
+        self.password_keys().any(|password| password == key)
     }
 
     /// Every value-bearing entry's own declared default.
@@ -224,5 +251,18 @@ mod tests {
             SettingsSchema::parse(r#"[{"uniqueID":"A","type":"slider","value":1}]"#),
             Err(SettingsSchemaError::Json(_))
         ));
+    }
+
+    #[test]
+    fn document_keeps_display_fields_and_password_keys_are_listed() {
+        let schema = SettingsSchema::parse(
+            r#"[{"uniqueID":"TOKEN","type":"password","title":"Token","value":"default"},
+                {"uniqueID":"LABEL","type":"text","title":"Label","description":"Shown","value":"x"}]"#,
+        )
+        .unwrap();
+        assert_eq!(schema.document().len(), 2);
+        assert_eq!(schema.document()[1]["description"], "Shown");
+        assert_eq!(schema.password_keys().collect::<Vec<_>>(), ["TOKEN"]);
+        assert!(schema.is_password("TOKEN") && !schema.is_password("LABEL"));
     }
 }

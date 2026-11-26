@@ -17,15 +17,19 @@
 //! the `SETTINGS_CHANGED` message to broadcast) — not a decoded ABI
 //! opcode; recorded as a spec gap in this phase's handoff notes.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use vosu_plugin_api::manifest::settings::{SettingsSchema, SettingsSchemaError};
 use vosu_plugin_api::{CborValue, Message, SettingsChanged};
 
 use crate::config::{Config, ConfigChanged, ConfigStore};
+
+mod store;
+
+pub use store::PluginSettingsStore;
 
 /// Every way settings storage, a `settings.schema.json` document or a
 /// submitted value fails.
@@ -35,6 +39,13 @@ pub enum SettingsError {
     Schema(#[from] SettingsSchemaError),
     #[error("plugin {0:?} has no settings storage bridge")]
     NotBridged(String),
+    /// Served from `vosu.toml` until M8 (bridge B2, the overlay-root
+    /// seed): the Settings page edits these, not the plugin settings
+    /// route.
+    #[error("plugin {0:?}'s settings are changed on the Settings page")]
+    ManagedElsewhere(String),
+    #[error("{0}")]
+    Storage(String),
 }
 
 /// Core-owned settings storage for one plugin id (§6.9: "core owns
@@ -50,6 +61,12 @@ pub trait SettingsStorage: Send + Sync {
     /// Persists `values` (already validated against the schema) as
     /// `plugin_id`'s stored overrides.
     fn store(&self, plugin_id: &str, values: &Map<String, Value>) -> Result<(), SettingsError>;
+
+    /// Whether the dashboard's plugin settings route may write
+    /// `plugin_id`'s values through this storage.
+    fn editable(&self, _plugin_id: &str) -> bool {
+        true
+    }
 }
 
 /// The one plugin id bridge B2 serves (D19): `CALCULATE_PP`, `POLL_RATE`,
@@ -254,16 +271,37 @@ fn json_map_to_cbor(map: Map<String, Value>) -> CborValue {
     )
 }
 
+/// The stored overrides `schema` still accepts, each key checked on its
+/// own: a value an earlier package version stored for a key this schema
+/// no longer declares, or now declares with another type, falls back to
+/// the default instead of invalidating every other value.
+fn valid_overrides(schema: &SettingsSchema, stored: Map<String, Value>) -> Map<String, Value> {
+    stored
+        .into_iter()
+        .filter(|(key, value)| {
+            schema
+                .merge(&Map::from_iter([(key.clone(), value.clone())]))
+                .is_ok()
+        })
+        .collect()
+}
+
 /// Builds a plugin instance's effective settings object (§6.9's
 /// `init.settings`) and, later, validated `SETTINGS_CHANGED` broadcasts,
 /// over one shared [`SettingsStorage`].
 pub struct PluginSettingsService {
     storage: Arc<dyn SettingsStorage>,
+    /// One dashboard write at a time: load, validate and store never
+    /// interleave with another submission.
+    writes: Mutex<()>,
 }
 
 impl PluginSettingsService {
     pub fn new(storage: Arc<dyn SettingsStorage>) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            writes: Mutex::new(()),
+        }
     }
 
     /// The CBOR value for `create`'s `init.settings` (§6.9: "no round trip
@@ -277,9 +315,88 @@ impl PluginSettingsService {
         let Some(schema) = schema else {
             return Ok(CborValue::Map(Vec::new()));
         };
-        let stored = self.storage.load(plugin_id)?;
+        let stored = valid_overrides(schema, self.storage.load(plugin_id)?);
         let effective = schema.merge(&stored)?;
         Ok(json_map_to_cbor(effective))
+    }
+
+    /// `GET /api/plugins/<id>/settings` (A7.1 `PluginSettings`): the
+    /// validated schema's entries, the effective values with defaults
+    /// applied, and a `secrets` presence map. Every `password` value, and
+    /// every `password` entry's own default, is `""`: a secret never
+    /// leaves core.
+    pub fn dashboard_view(
+        &self,
+        plugin_id: &str,
+        schema: Option<&SettingsSchema>,
+    ) -> Result<Value, SettingsError> {
+        let Some(schema) = schema else {
+            return Ok(json!({"schema": [], "values": {}, "secrets": {}}));
+        };
+        let stored = valid_overrides(schema, self.storage.load(plugin_id)?);
+        let mut values = schema.merge(&stored)?;
+        let mut secrets = Map::new();
+        for key in schema.password_keys() {
+            let configured = values
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty());
+            secrets.insert(key.to_owned(), Value::Bool(configured));
+            values.insert(key.to_owned(), Value::String(String::new()));
+        }
+        let document: Vec<Value> = schema
+            .document()
+            .iter()
+            .map(|entry| {
+                let mut entry = entry.clone();
+                let password = entry
+                    .get("uniqueID")
+                    .and_then(Value::as_str)
+                    .is_some_and(|key| schema.is_password(key));
+                if password && let Some(object) = entry.as_object_mut() {
+                    object.insert("value".into(), Value::String(String::new()));
+                }
+                entry
+            })
+            .collect();
+        Ok(json!({"schema": document, "values": values, "secrets": secrets}))
+    }
+
+    /// `POST /api/plugins/<id>/settings` `[{"uniqueID","value"}]`: a
+    /// `password` value of `""` keeps the stored secret and `null` clears
+    /// it. The whole resulting document is validated before anything is
+    /// stored, so an unknown key or a wrong type changes nothing. Returns
+    /// the one `SETTINGS_CHANGED` carrying the complete effective object
+    /// read back from storage (§6.9).
+    pub fn submit(
+        &self,
+        plugin_id: &str,
+        schema: &SettingsSchema,
+        inputs: Vec<(String, Value)>,
+    ) -> Result<Message, SettingsError> {
+        if !self.storage.editable(plugin_id) {
+            return Err(SettingsError::ManagedElsewhere(plugin_id.to_owned()));
+        }
+        let _write = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut overrides = valid_overrides(schema, self.storage.load(plugin_id)?);
+        for (key, value) in inputs {
+            let value = if schema.is_password(&key) {
+                match value {
+                    Value::Null => Value::String(String::new()),
+                    Value::String(text) if text.is_empty() => continue,
+                    value => value,
+                }
+            } else {
+                value
+            };
+            overrides.insert(key, value);
+        }
+        schema.merge(&overrides)?;
+        self.storage.store(plugin_id, &overrides)?;
+        let stored = valid_overrides(schema, self.storage.load(plugin_id)?);
+        Ok(Message::SettingsChanged(SettingsChanged {
+            values: json_map_to_cbor(schema.merge(&stored)?),
+        }))
     }
 
     /// Validates `patch` against `schema`, stores the merged effective

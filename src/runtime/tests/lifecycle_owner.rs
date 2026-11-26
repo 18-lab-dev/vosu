@@ -43,6 +43,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
     let logger = Logger::new(root, LoggerOptions::default(), console.clone()).unwrap();
     let settings_storage = Arc::new(crate::runtime::overlay_root::RuntimeSettingsStorage::new(
         Arc::new(ConfigSettingsBridgeB2::new(config.clone())),
+        Arc::new(vosu_core::plugin::settings::PluginSettingsStore::open(root)),
     ));
     let plugin_settings = Arc::new(PluginSettingsService::new(
         settings_storage.clone() as Arc<dyn vosu_core::plugin::settings::SettingsStorage>

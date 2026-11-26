@@ -94,6 +94,12 @@ fn plugin_routes_have_exact_methods_and_shapes() {
         (Method::DELETE, "/api/plugins/test.u0/approval", pm),
         (Method::POST, "/api/plugins/test%2Eu0/restart", pm),
         (Method::POST, "/api/plugins/test.u0/stop", pm),
+        (Method::GET, "/api/plugins/test.u0/settings", pm),
+        (Method::POST, "/api/plugins/test.u0/settings", pm),
+        (Method::PUT, "/api/plugins/test.u0/settings", None),
+        (Method::DELETE, "/api/plugins/test.u0/settings", None),
+        (Method::GET, "/api/plugins/test.u0/settings/", None),
+        (Method::GET, "/api/plugins//settings", None),
         (Method::GET, "/api/plugins/test.u0/approval", None),
         (Method::PUT, "/api/plugins/test.u0/approval", None),
         (Method::DELETE, "/api/plugins/test.u0/restart", None),
@@ -116,6 +122,7 @@ async fn plugin_mutations_need_the_dashboard_origin_and_csrf_token() {
         (Method::DELETE, "/api/plugins/test.u0/approval"),
         (Method::POST, "/api/plugins/test.u0/restart"),
         (Method::POST, "/api/plugins/test.u0/stop"),
+        (Method::POST, "/api/plugins/test.u0/settings"),
     ] {
         // (Origin, whether the launch's token is sent, else a wrong one).
         for (origin, valid_token, expected) in [
@@ -165,6 +172,8 @@ async fn plugin_routes_exist_only_on_the_dashboard_listener() {
         (Method::POST, "/api/plugins/test.u0/approval"),
         (Method::DELETE, "/api/plugins/test.u0/approval"),
         (Method::POST, "/api/plugins/test.u0/restart"),
+        (Method::GET, "/api/plugins/test.u0/settings"),
+        (Method::POST, "/api/plugins/test.u0/settings"),
     ] {
         let (overlay, origins) = providers(Some(false));
         let csrf = origins.unwrap().csrf.clone();

@@ -400,6 +400,12 @@ impl PluginHost {
         &self.state
     }
 
+    /// The settings service every instance's `init.settings` comes from,
+    /// for the dashboard's plugin settings route (A7.1).
+    pub fn settings(&self) -> &Arc<PluginSettingsService> {
+        &self.settings
+    }
+
     /// Latest foreground sample, shared with the interim B1 focus reduction.
     pub fn subscribe_foreground(&self) -> tokio::sync::watch::Receiver<Option<u32>> {
         self.foreground_updates.subscribe()

@@ -908,6 +908,9 @@ pub async fn run_cli() -> io::Result<()> {
     let settings_bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
     let settings_storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(
         settings_bridge.clone(),
+        Arc::new(vosu_core::plugin::settings::PluginSettingsStore::open(
+            paths.config(),
+        )),
     ));
     // `vosu.overlayhost` is created with the effective root already seeded.
     if let Ok(root) = resolved_static_root(&paths, &current) {

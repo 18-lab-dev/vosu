@@ -118,6 +118,7 @@ pub async fn start_test_production_composition(
     fs::create_dir_all(&options.static_root)?;
     let static_root = std::path::absolute(&options.static_root)?;
     let plugin_data = options.settings_root.join("plugins");
+    let plugin_settings_root = options.settings_root.join("core");
     let counters = Arc::new(ReloadableCounterService::production(
         static_root.clone(),
         options.settings_root,
@@ -136,9 +137,12 @@ pub async fn start_test_production_composition(
         LoggerOptions::default(),
         Arc::new(StdoutConsole),
     )?;
-    let storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(Arc::new(
-        ConfigSettingsBridgeB2::new(options.config.clone()),
-    )));
+    let storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(
+        Arc::new(ConfigSettingsBridgeB2::new(options.config.clone())),
+        Arc::new(vosu_core::plugin::settings::PluginSettingsStore::open(
+            &plugin_settings_root,
+        )),
+    ));
     storage.seed_overlay_root(&static_root);
     let settings = Arc::new(PluginSettingsService::new(
         storage.clone() as Arc<dyn SettingsStorage>

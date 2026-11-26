@@ -428,3 +428,224 @@ async fn approval_lifecycle_through_the_management_routes() {
         fixture.shutdown().await;
     });
 }
+
+/// D1 counterexample: an approved id never authorizes a changed library.
+/// The approval binds both digests; a running, approved plugin whose
+/// library changes is not started again by a restart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_approved_id_never_authorizes_a_changed_library() {
+    vosu_proptest::bounded!(async {
+        let fixture = fixture().await;
+        let path = |action: &str| format!("/api/plugins/{PROCESS_ID}/{action}");
+        let approval = fixture.plugin(PROCESS_ID).await["approval"].clone();
+        let (status, body) = fixture
+            .call(Method::POST, &path("approval"), approval.clone())
+            .await;
+        assert_eq!(
+            (status, &body["state"]),
+            (StatusCode::OK, &json!("running"))
+        );
+        assert_eq!(fixture.launches(), 1);
+
+        std::fs::write(
+            fixture.package.path().join("lib/plugin.bin"),
+            b"replaced after approval",
+        )
+        .unwrap();
+        let generation = fixture.plugin(PROCESS_ID).await["generation"].clone();
+        fixture
+            .call(
+                Method::POST,
+                &path("restart"),
+                json!({"generation": generation}),
+            )
+            .await;
+        assert_eq!(fixture.launches(), 1, "the changed library executed");
+        let listed = fixture.plugin(PROCESS_ID).await;
+        assert_eq!(listed["state"], "approval_required", "{listed}");
+        assert_eq!(listed["approved"], false);
+        assert_ne!(
+            listed["approval"]["library_sha256"],
+            approval["library_sha256"]
+        );
+        // The earlier approval body is now stale, never silently reused.
+        let (status, body) = fixture
+            .call(Method::POST, &path("approval"), approval)
+            .await;
+        assert_eq!(
+            (status, &body["code"]),
+            (StatusCode::CONFLICT, &json!("approval_stale"))
+        );
+        assert_eq!(fixture.launches(), 1);
+        fixture.shutdown().await;
+    });
+}
+
+const SETTINGS_ID: &str = "test.d1.settings";
+const SETTINGS_SECRET: &str = "sentinel-d1-plugin-password-93f2";
+
+#[derive(Default)]
+struct RecordedSettings(Mutex<Vec<(String, vosu_plugin_api::Message)>>);
+
+impl vosu_core::plugin::settings::SettingsChangeDelivery for RecordedSettings {
+    fn settings_changed(&self, plugin_id: &str, message: vosu_plugin_api::Message) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((plugin_id.to_owned(), message));
+    }
+}
+
+impl RecordedSettings {
+    fn taken(&self) -> Vec<(String, vosu_plugin_api::Message)> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+async fn send(
+    management: &Arc<PluginManagement>,
+    method: Method,
+    path: &str,
+    body: Value,
+) -> (StatusCode, String) {
+    let request = Request::builder()
+        .method(method)
+        .uri(path)
+        .body(Body::empty())
+        .unwrap();
+    let body = if body.is_null() {
+        Bytes::new()
+    } else {
+        Bytes::from(body.to_string())
+    };
+    let response = Arc::clone(management).handle(request, body).await;
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// M7-P05: `/api/plugins/<id>/settings` never echoes a password, even after
+/// a failed save; an invalid POST changes nothing and sends no
+/// `SETTINGS_CHANGED`; a valid POST sends one complete object.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plugin_settings_are_write_only_validated_and_delivered_once() {
+    vosu_proptest::bounded!(async {
+        let root = tempfile::tempdir().unwrap();
+        let logger = vosu_core::logging::Logger::new(
+            root.path(),
+            vosu_core::logging::LoggerOptions::default(),
+            Arc::new(vosu_core::logging::StdoutConsole),
+        )
+        .unwrap();
+        let store = Arc::new(plugin::settings::PluginSettingsStore::open(root.path()));
+        let host = PluginHost::new(
+            logger.clone(),
+            Arc::new(plugin::settings::PluginSettingsService::new(store.clone())),
+            tokio::runtime::Handle::current(),
+        );
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
+            &plugin::ValidationSnapshot::default(),
+            &[plugin::BundledPlugin {
+                manifest: "kind='plugin'\nmanifest_version=1\nid='test.d1.settings'\nname='Settings'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nsettings_schema='settings.schema.json'\n",
+                settings_schema: Some(
+                    r#"[{"uniqueID":"LABEL","type":"text","title":"Label","value":"hello"},
+                        {"uniqueID":"RATE","type":"number","title":"Rate","value":150},
+                        {"uniqueID":"TOKEN","type":"password","title":"Token","value":""}]"#,
+                ),
+                namespace_schemas: &[],
+                action_schemas: &[],
+                vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
+            }],
+        )
+        .unwrap();
+        let mut roster = Roster::default();
+        let instance = PluginInstanceId::new(0);
+        let created = host.create_instance(instance, &loaded[0], root.path().into(), None);
+        roster.loaded(
+            instance,
+            Trust::Bundled,
+            None,
+            &loaded[0],
+            created.map_err(|error| error.to_string()),
+        );
+        let recorded = Arc::new(RecordedSettings::default());
+        let management = Arc::new(
+            PluginManagement::new(
+                Arc::clone(&host),
+                Arc::new(ApprovalStore::open(&root.path().join("config"))),
+                roster,
+            )
+            .with_settings_delivery(recorded.clone()),
+        );
+        let path = format!("/api/plugins/{SETTINGS_ID}/settings");
+
+        let (status, body) = send(&management, Method::GET, &path, Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let view: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            view["values"],
+            json!({"LABEL":"hello","RATE":150,"TOKEN":""})
+        );
+        assert_eq!(view["secrets"], json!({"TOKEN": false}));
+        assert_eq!(view["schema"].as_array().unwrap().len(), 3);
+
+        // Valid: stored, one complete object delivered, the secret withheld.
+        let (status, body) = send(
+            &management,
+            Method::POST,
+            &path,
+            json!([{"uniqueID":"LABEL","value":"set"},{"uniqueID":"TOKEN","value":SETTINGS_SECRET}]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!body.contains(SETTINGS_SECRET), "{body}");
+        let delivered = recorded.taken();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].0, SETTINGS_ID);
+        let vosu_plugin_api::Message::SettingsChanged(changed) = &delivered[0].1 else {
+            panic!("expected SETTINGS_CHANGED");
+        };
+        let vosu_plugin_api::CborValue::Map(entries) = &changed.values else {
+            panic!("expected a CBOR map");
+        };
+        assert_eq!(entries.len(), 3, "complete effective object: {entries:?}");
+        let stored = std::fs::read(store.path()).unwrap();
+
+        // Invalid: nothing stored, nothing delivered, the secret not echoed.
+        for bad in [
+            json!([{"uniqueID":"TOKEN","value":SETTINGS_SECRET},{"uniqueID":"RATE","value":"fast"}]),
+            json!([{"uniqueID":"TOKEN","value":SETTINGS_SECRET},{"uniqueID":"NOPE","value":1}]),
+            json!([{"uniqueID":"TOKEN","value":SETTINGS_SECRET,"extra":true}]),
+            json!({"TOKEN": SETTINGS_SECRET}),
+        ] {
+            let (status, body) = send(&management, Method::POST, &path, bad.clone()).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+            assert!(!body.contains(SETTINGS_SECRET), "{body}");
+        }
+        assert!(recorded.taken().is_empty(), "an invalid POST delivered");
+        assert_eq!(std::fs::read(store.path()).unwrap(), stored);
+        let (_, body) = send(&management, Method::GET, &path, Value::Null).await;
+        assert!(!body.contains(SETTINGS_SECRET), "{body}");
+        let view: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(view["values"], json!({"LABEL":"set","RATE":150,"TOKEN":""}));
+        assert_eq!(view["secrets"], json!({"TOKEN": true}));
+
+        // An unknown id has no settings route; bridged ids are read-only here.
+        let (status, _) = send(
+            &management,
+            Method::GET,
+            "/api/plugins/test.d1.unknown/settings",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let destroy = Arc::clone(&host);
+        tokio::task::spawn_blocking(move || destroy.destroy_all(Duration::from_secs(2)))
+            .await
+            .unwrap();
+        logger.shutdown().await.unwrap();
+    });
+}

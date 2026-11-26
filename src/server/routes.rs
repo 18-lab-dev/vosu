@@ -929,8 +929,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
     }
 }
 
-/// `POST /api/plugins/<id>/{approval,restart,stop}` and
-/// `DELETE /api/plugins/<id>/approval`, with one non-empty `<id>` segment.
+/// `POST /api/plugins/<id>/{approval,restart,stop}`,
+/// `DELETE /api/plugins/<id>/approval` and `GET`/`POST
+/// /api/plugins/<id>/settings` (A7.1), with one non-empty `<id>` segment.
 fn plugin_management_action(method: &Method, path: &str) -> bool {
     let Some((id, action)) = path
         .strip_prefix("/api/plugins/")
@@ -942,6 +943,7 @@ fn plugin_management_action(method: &Method, path: &str) -> bool {
         && match action {
             "approval" => method == Method::POST || method == Method::DELETE,
             "restart" | "stop" => method == Method::POST,
+            "settings" => method == Method::GET || method == Method::POST,
             _ => false,
         }
 }
