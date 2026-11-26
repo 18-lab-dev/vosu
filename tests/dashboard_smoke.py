@@ -188,7 +188,10 @@ def main():
                 status, body = curl('/definitely-missing/', dashboard=dashboard, headers={'Accept': 'text/html'})
                 assert status == 404 and 'Page not found' in body and '/assets/system.css' in body, body
                 assert curl('/definitely-missing/', dashboard=dashboard) == (404, 'Not Found')
-            daemon.browser('dashboard_browser.mjs', args.playwright_module, args.evidence)
+            # The full visual corpus includes four real settings fade/expiry
+            # cycles and screenshots at several widths. Keep per-operation
+            # Playwright bounds; give the aggregate enough time on the VM.
+            daemon.browser('dashboard_browser.mjs', args.playwright_module, args.evidence, timeout=240)
             removed_routes(static, args, daemon)
         # One WARN per daemon process in each sink, never its query.
         logs = [args.evidence / 'daemon.log', *root.rglob('*.log')]
