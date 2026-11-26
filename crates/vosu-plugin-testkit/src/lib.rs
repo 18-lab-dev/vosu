@@ -32,6 +32,8 @@ pub mod fixture;
 #[cfg(feature = "test-harness")]
 pub mod host_services;
 #[cfg(feature = "bench-harness")]
+mod outbox;
+#[cfg(feature = "bench-harness")]
 pub mod publisher;
 #[cfg(feature = "test-harness")]
 pub mod read_plan;

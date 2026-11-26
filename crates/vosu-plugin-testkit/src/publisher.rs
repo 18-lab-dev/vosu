@@ -24,6 +24,8 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
+use crate::outbox::{Coalesce, Merge, Outbox};
+
 use vosu_plugin_api::{
     ConcurrentPlugin, DemandChanged, HostServices, Init, Message, PluginError, PublishBatchWriter,
     SessionIdentify, VtableHostServices, vosu_opcode, vosu_status,
@@ -236,7 +238,7 @@ pub fn spawn_writers(
 pub struct PublisherPlugin {
     plugin_id: String,
     host: LiveHost,
-    events: SyncSender<PublisherEvent>,
+    events: Outbox<PublisherEvent>,
 }
 
 impl ConcurrentPlugin for PublisherPlugin {
@@ -257,7 +259,7 @@ impl ConcurrentPlugin for PublisherPlugin {
         Ok(Self {
             plugin_id: init.plugin_id,
             host,
-            events,
+            events: Outbox::new(events),
         })
     }
 
@@ -273,21 +275,35 @@ impl ConcurrentPlugin for PublisherPlugin {
                     focus_priority: false,
                 };
                 let _ = self.host.send(&Message::SessionIdentify(identify), 0);
-                let _ = self.events.try_send(PublisherEvent::Attached {
+                self.events.send(PublisherEvent::Attached {
                     handle: attached.handle,
                 });
             }
             Message::SessionDetached(detached) => {
-                let _ = self.events.try_send(PublisherEvent::Detached {
+                self.events.send(PublisherEvent::Detached {
                     handle: detached.handle,
                 });
             }
             Message::DemandChanged(demand) => {
-                let _ = self.events.try_send(PublisherEvent::Demand(demand));
+                self.events.send(PublisherEvent::Demand(demand));
             }
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// Demand is latest-only per session; a full event channel keeps the newest.
+impl Coalesce for PublisherEvent {
+    fn merge(&mut self, next: Self) -> Merge<Self> {
+        match (self, next) {
+            (Self::Demand(queued), Self::Demand(demand)) if queued.handle == demand.handle => {
+                *queued = demand;
+                Merge::Merged
+            }
+            (Self::Demand(_), next @ Self::Demand(_)) => Merge::Skip(next),
+            (_, next) => Merge::Stop(next),
+        }
     }
 }
 
