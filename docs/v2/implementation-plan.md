@@ -1010,8 +1010,8 @@ historical, not an allowed fallback.
 | `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_bus`; `tests/osu_plugin.rs`: `stable_session_settings_and_exit` |
 | `duplicate_discovery_and_removal_are_idempotent_and_close_once` | `tests/discovery_parity.rs`: `duplicate_discovery_and_removal_close_memory_once` |
 | `tournament_precedence_matching_and_fallback_selection` | `tests/osu_plugin/tournament.rs`: `stable_manager_priority_aggregate_all_sessions_and_generation_replacement` |
-| `foreground_exact_match_and_unavailable_focus_fallback` | `crates/vosu-core/src/server/bus_provider/tests.rs`: `production_focus_generation_prevents_numeric_revision_collision`; permanent core Focus tests |
-| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `tests/discovery_parity.rs`: duplicate attach/removal and fresh bus-generation assertions; `crates/vosu-core/src/runtime/tests/context.rs`: host lifecycle/dashboard shape |
+| `foreground_exact_match_and_unavailable_focus_fallback` | `tests/bus_provider.rs`: `production_focus_generation_prevents_numeric_revision_collision`; permanent core Focus tests |
+| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `tests/discovery_parity.rs`: duplicate attach/removal and fresh bus-generation assertions; runtime diagnostics in `src/bundle/lifecycle_owner_tests.rs` |
 | `lazer_discovery_starts_one_resolver_and_shutdown_joins_it` | `crates/vosu-osu/src/plugin/tests.rs`: `lazer_identify_starts_one_resolver_and_detach_joins_it`, `destroy_joins_every_live_sessions_resolver_within_the_grace_period` |
 | `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | Host lifecycle/bus tests above; `src/bundle/lifecycle_owner_tests.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
 | `failed_full_scan_retries_early_and_counts_only_success` | Core discovery `tests/cadence.rs`: `failed_full_scan_retries_early_and_counts_only_success` |
