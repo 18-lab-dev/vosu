@@ -19,7 +19,7 @@ PINNED_SOURCE_REVISION = "2359305a63f2aaebb201bc8d2eee58177f52590e"
 PINNED_SOURCE_VERSION = "4.26.2"
 # The bus-backed 2.0 adapters. Their wire must equal the pinned upstream
 # reference: ADR 0021 removed every 1.x extension, so none is exempted below.
-PINNED_VOSU_VERSION = "2.0.0-alpha.1"
+PINNED_VOSU_VERSION = "2.0.0-alpha.2"
 SOURCE_BUILD_LABEL = (
     f"upstream-tosu-source-v{PINNED_SOURCE_VERSION}@{PINNED_SOURCE_REVISION[:12]}"
 )

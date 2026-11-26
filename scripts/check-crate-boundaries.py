@@ -8,11 +8,13 @@ docs/v2/implementation-plan.md section 2 and docs/architecture/source-map.md.
 
 Vendored, provenance-pinned trees (crates/vosu-pp/rosu-*-api) are out of
 scope, matching scripts/check-file-length.py.
+Also check that live-parity tooling pins the app version reported by Cargo.
 """
 
 import argparse
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 
@@ -192,6 +194,12 @@ def main():
         print(f"Recorded {len(names)} crates and {len(edges)} crate edges")
         return 0
     errors, edges, names = check(metadata)
+    app_version = workspace_packages(metadata)["vosu"]["version"]
+    parity_path = ROOT / "tools/live-parity/live_parity.py"
+    parity_version = runpy.run_path(str(parity_path))["PINNED_VOSU_VERSION"]
+    if parity_version != app_version:
+        errors.append(f"{parity_path.relative_to(ROOT)}: PINNED_VOSU_VERSION is {parity_version}, "
+                      f"but Cargo.toml defines the vosu app version as {app_version}; update the pin")
     for error in errors:
         print(error, file=sys.stderr)
     print(f"Checked {len(names)} crates and {len(edges)} crate edges; {len(errors)} errors")
