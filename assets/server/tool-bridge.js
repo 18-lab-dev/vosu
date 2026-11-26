@@ -1,11 +1,25 @@
+// The vosu 2.0 tool bridge: the ES module served as GET /tools/_host/v2/bridge.js,
+// and the only bridge. Its exported surface and behavior are frozen in
+// docs/tools/protocol.md ("Browser bridge"); change both together. The tool
+// host prepends `const metadata = [{id, name, version}, ...]` and
+// `const dashboardUrl = "<origin>" | null` to these bytes.
+//
+// Authority: the dashboard opens a tool at
+// `/tools/<id>/#vosu-launch=<code>&theme=<dark|light>`. The bridge removes that
+// fragment synchronously, before any asynchronous work, then exchanges the
+// single-use code for a launch session. The session lives only in this
+// module's memory: never in cookies, localStorage, sessionStorage, IndexedDB,
+// a URL or a query string, since every overlay later loaded in this tab shares
+// that storage. A reload or bookmark therefore has read access only. The
+// session is sent as `X-Vosu-Tool-Session` solely on the API v1 action and job
+// routes this module builds itself; reads, settings, subscriptions, artwork
+// and any URL a caller supplies never carry it.
 const id = decodeURIComponent(location.pathname.split('/')[2] || '');
 const tool = metadata.find(tool => tool.id === id) || {id, name: id, version: ''};
-// The session lives only in this document's memory. Any same-origin storage
-// (sessionStorage, localStorage, IndexedDB, cookies) is readable by an overlay
-// that later loads in this tab, so a reload deliberately drops write access
-// until the tool is opened from the dashboard again.
 let session = null;
 const fragment = new URLSearchParams(location.hash.slice(1));
+const code = fragment.get('vosu-launch');
+if (code !== null) history.replaceState(null, '', location.pathname + location.search);
 // The dashboard's colour mode when it opened this tab, else the system
 // preference. The bridge applies it as data-theme so the shared theme.css
 // renders in that mode; a tool may still switch it afterwards.
@@ -15,25 +29,28 @@ const colorScheme = hint === 'dark' || hint === 'light'
 document.documentElement.dataset.theme = colorScheme;
 
 const ready = (async () => {
-  const code = fragment.get('vosu-launch');
-  if (code) {
-    history.replaceState(null, '', location.pathname + location.search);
-    const response = await fetch('/tools/_host/v1/session', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({tool: id, code}), credentials: 'omit',
-    });
-    if (!response.ok) throw new Error('Tool launch code expired or was already used. Open the tool from the dashboard again.');
-    session = (await response.json()).session;
-  }
+  if (!code) return;
+  const response = await fetch('/tools/_host/v1/session', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tool: id, code}),
+    credentials: 'omit', cache: 'no-store', redirect: 'error',
+  });
+  if (!response.ok) throw new Error('Tool launch code expired or was already used. Open the tool from the dashboard again.');
+  const value = await response.json();
+  if (typeof value?.session !== 'string' || !value.session) throw new Error('Tool launch returned no session');
+  session = value.session;
 })();
-
 
 function actionError(code, message) {
   return Object.assign(new Error(message), {code});
 }
 const cancelled = () => actionError('cancelled', 'Action cancelled');
-function sessionPath(value = 'active') {
-  if (typeof value !== 'string' || !value) throw new TypeError('session must be a nonempty string or null for an action');
+// One route segment: a session id or "active". Dot segments would be
+// normalized away and silently retarget the request.
+function sessionSegment(value, what) {
+  if (typeof value !== 'string' || !value || value === '.' || value === '..') {
+    throw new TypeError(`${what} must be a nonempty string session id or "active"`);
+  }
   return encodeURIComponent(value);
 }
 async function jobRequest(path, method = 'GET', body) {
@@ -49,7 +66,8 @@ async function jobRequest(path, method = 'GET', body) {
 }
 async function start(actionId, args, {session: target = 'active', signal, onProgress} = {}) {
   if (typeof actionId !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(actionId)) throw new TypeError('Invalid action id');
-  const prefix = target === null ? '/api/v1' : '/api/v1/sessions/' + sessionPath(target);
+  const prefix = target === null ? '/api/v1' : '/api/v1/sessions/' + sessionSegment(target, 'Action session');
+  if (onProgress !== undefined && typeof onProgress !== 'function') throw new TypeError('Progress listener must be a function');
   if (signal?.aborted) throw cancelled();
   await ready;
   if (signal?.aborted) throw cancelled();
@@ -62,10 +80,7 @@ async function start(actionId, args, {session: target = 'active', signal, onProg
   let abortRequested = false;
   let cancellation = null;
   const listeners = new Set();
-  if (onProgress !== undefined) {
-    if (typeof onProgress !== 'function') throw new TypeError('Progress listener must be a function');
-    listeners.add(onProgress);
-  }
+  if (onProgress !== undefined) listeners.add(onProgress);
   const cancel = () => {
     if (terminal) return Promise.resolve(job);
     abortRequested = true;
@@ -133,25 +148,14 @@ export const vosu = Object.freeze({
     return handle.done;
   },
   get canWrite() { return Boolean(session); },
-  async fetch(path, options = {}) {
-    await ready;
-    const base = new URL(`/tools/${encodeURIComponent(id)}/api/`, location.origin);
-    const url = new URL(path, base);
-    if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
-      throw new TypeError('vosu.fetch path must stay inside this tool API');
-    }
-    const headers = new Headers(options.headers);
-    if (session) headers.set('X-Vosu-Tool-Session', session);
-    return fetch(url, {...options, headers, credentials: 'omit'});
-  },
   // Effective settings.json values (defaults applied), password-type fields
-  // excluded. Re-read whenever fresh values are needed.
+  // excluded. A public read: no session is sent. Re-read for fresh values.
   async settings() {
     const response = await fetch(`/tools/${encodeURIComponent(id)}/_settings`, {credentials: 'omit', cache: 'no-store'});
     if (!response.ok) throw new Error(`Tool settings unavailable (HTTP ${response.status})`);
     return (await response.json()).values;
   },
-  // Live API v1 session subscription frames that survive vosu restarts and
+  // Live API v1 field subscription frames that survive vosu restarts and
   // network drops: one socket at a time, the subscription re-sent on every
   // reconnect, capped exponential backoff with jitter between attempts.
   // `onStatus` (optional) receives "connecting" | "open" | "closed".
@@ -164,10 +168,7 @@ export const vosu = Object.freeze({
       throw new TypeError('Unknown subscription option; only session is supported');
     }
     const target = Object.hasOwn(options, 'session') ? options.session : 'active';
-    if (typeof target !== 'string' || !target) {
-      throw new TypeError('Subscription session must be a nonempty string');
-    }
-    const url = new URL('/api/v1/sessions/' + sessionPath(target) + '/subscribe', location.origin);
+    const url = new URL('/api/v1/sessions/' + sessionSegment(target, 'Subscription session') + '/subscribe', location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const request = JSON.stringify(fields);
     let socket = null;

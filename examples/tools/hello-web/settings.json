@@ -1,0 +1,3 @@
+[
+  {"uniqueID":"decimals","type":"number","title":"Accuracy decimals","description":"Digits shown after the decimal point.","value":2}
+]

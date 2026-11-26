@@ -287,46 +287,38 @@ plugin state, not API-visible fields.
 
 The dashboard's **Tools** page manages installed applications and lists tools and plugins from your catalog sources in **Available**. Official [18-LAB tools and their SDK](https://github.com/18-lab-dev/vosu-tools) live separately; vosu embeds none. Every installation is a catalog v2 **install plan**: vosu resolves the package and its dependencies once, shows each package with its source and, for plugins, native code, runtime, trust, approval and whether it can read the osu! client's install paths, and installs only after you confirm the whole plan once. Packages are downloaded over HTTPS without credentials, checked against catalog SHA-256 and size, and committed together, dependencies first; nothing is installed unless all of them are. The outcome shows each package's load result. **Uninstall…** previews what goes with it (dependencies nothing else needs; their data stays) and refuses while another package still requires it; you choose to keep or remove its data. A running in-process plugin cannot be unloaded safely: after removing it, or untrusting its source, vosu shows **Restart vosu to finish** until you restart.
 
-[vosulay](https://github.com/18-lab-dev/vosulay) is available as an optional official tool for in-game overlays, supervised as a separate process and managed from Tools. Rendering and game integration stay outside the vosu daemon, and standalone vosulay remains supported. Exiting its tray normally stops the service without automatic restart (including `always` tools); start it again from the dashboard or vosux, or on the next vosu launch.
+[vosulay](https://github.com/18-lab-dev/vosulay) is available from its official catalog source for in-game overlays: one install plan adds the `vosulay-editor` web tool and the `vosu.vosulay` plugin it requires. Rendering and game integration stay outside the vosu daemon, and standalone vosulay remains supported.
 
-Open a tool from the dashboard to grant its UI a write session; opening the same URL directly is read-only. Review a third-party tool's author and requested permissions before trusting it: tools run with your OS permissions and are not sandboxed. User tools go under `<vosu data directory>/tools/<id>/` and require dashboard approval. Developers can use `vosu --tool <directory>` for a trusted development override.
-
-Cards show each public interface: UI, SERVICE and CLI. UI/CLI-only native backends start on demand and stop after ten idle minutes; they have no separate service controls. Background services expose Start/Stop/Restart and **Start with vosu** in Details and Settings. The toggle overrides the author's default for your installation; **Use default** restores it. From a terminal use `vosux --autostart <id> on|off|default`. Only enabled, trusted background services start at launch, dependencies first, without delaying overlay serving.
+A 2.0 tool is a static web application served on the overlay origin; it runs no process of its own. It reads game state through [API v1](docs/v2/api-v1.md) like an overlay, and anything native is a plugin action it may invoke only when its manifest's `requires`/`optional` lists that action and the action resolves to an installed plugin. Open a tool from the dashboard to give that one tab the session actions need; opening the same URL directly, reloading or bookmarking it is read-only. Tools from a source you have not trusted stay untrusted until you trust them on the Tools page. Installed tools go under `<vosu data directory>/tools/<id>/`; developers can use `vosu --tool <directory>` for a trusted development override. A 1.x tool that ships only `tool.toml` is listed as needing a 2.0 update and is never run.
 
 Catalog installation, update and uninstall are dashboard-only plans; the former `vosux --sources`, `--install`, `--update` and `--uninstall` options are removed. **Settings / Catalog sources** lets you add, remove, disable, and reorder sources: GitHub `owner/repo[@tag]`, a repository URL on GitHub, GitLab (nested groups too), Codeberg or a self-hosted GitLab/Gitea/Forgejo, or an HTTPS URL ending in `/catalog-v2.json`. Defaults are exactly `18-lab-dev/vosu-tools`, `18-lab-dev/vosulay` and `18-lab-dev/vosu-overlays`, always trusted. Other sources start untrusted: **Trusted** shows the trust warning before every grant and lets that source's plugins run in-process. **Credential…** saves a write-only read-only token (or Basic pair for a static URL); it is never shown again. **Private network** lets that one host resolve to a private address for catalog requests only.
 
 Catalogs may provide tools, overlays and plugins. The overlay **Available** page lists catalog overlays beside the existing community catalog and installs them through the same plan review. When a running game matches an uninstalled catalog game plugin, Tools offers **Add support for …**, which opens the same plan. See [catalog v2](docs/v2/catalog-v2.md#api-placement) for the routes and the [catalog source contract](docs/tools/protocol.md#catalog-sources-and-installation).
+
 Start with [Create a tool](docs/tools/create-a-tool.md) for a guided path from an
 empty directory to a published catalog. Keep the [authoring reference](docs/tools/authoring.md)
-and [protocol contract](docs/tools/protocol.md) nearby, or inspect the dependency-free
-[Python example](examples/tools/hello-python/).
+and [protocol contract](docs/tools/protocol.md) nearby, or inspect the build-free
+[Hello web example](examples/tools/hello-web/).
 
-Run installed tools from a terminal with `vosu x --list` (or `--list --json`),
-`vosu x <tool> [ARGS...]`, or `vosu x --open <tool>`. Linux distro packages also
-install `vosux -> vosu` beside the executable; Windows ZIPs retain one executable:
-use `vosu x` or create your own link. Options apply only before the tool id;
-`vosux practice --help` is the practice tool's help. A UI-only tool opens its UI when
-invoked without arguments. The daemon must already be running. Tools inherit
-terminal stdin/stdout/stderr and return their exit status, without shell expansion.
-CLI launch does not start a second daemon. The private native broker credential
-authorizes enabled, trusted tool launches, tool catalog operations and CLI-exposed
-plugin actions. Catalog installation never approves a user-source tool automatically.
-
-Invoke a plugin action with `vosux <dotted-plugin-id> <action> [json-args]`
+From a terminal, invoke a plugin action with `vosux <dotted-plugin-id> <action> [json-args]`
 (or `vosu x`); omitted arguments mean `{}`. Required and optional session actions
 target `active` unless `--session <id>` selects another session. Session-less
 actions reject `--session`. Private broker metadata selects the route without
 trial requests. Foreground calls print progress to stderr and the successful
 JSON result to stdout; failure exits 1, cancellation exits 130, unknown actions
 exit 127 and denied requests exit 77. Ctrl-C requests advisory cancellation.
-`--detach` prints the job id and exits without polling. Alpha CLI and daemon use
+`--detach` prints the job id and exits without polling. Only actions their plugin
+declares `cli = true` are available; tools have no command-line entry. Linux distro
+packages install `vosux -> vosu` beside the executable; Windows ZIPs retain one
+executable, so use `vosu x` there. The daemon must already be running, and the
+private native broker credential authorizes the call. Alpha CLI and daemon use
 the same isolated, channel-aware broker path.
 
 ### Hosted tool routes and security
 
-The dashboard's `/tools` page manages tools; `/api/tools` lists status and metadata, and `/api/tools/<id>/…` manages lifecycle, settings, logs and data. Management POSTs require dashboard provenance and CSRF. The overlay listener redirects `GET /tools` to that page and serves tool UIs at `/tools/<id>/` and declared service APIs at `/tools/<id>/api/…`. The `tools` counter name is reserved.
+The dashboard's `/tools` page manages tools; `/api/tools` lists status and metadata, and `/api/tools/<id>/{enable,disable,trust,launch,settings}` change them. Management POSTs require dashboard provenance and CSRF. The overlay listener redirects `GET /tools` to that page and serves each tool's static UI at `/tools/<id>/`, its art at `/tools/<id>/_icon` and `/_banner`, its non-password settings at `/tools/<id>/_settings`, and the bridge at `/tools/_host/v2/bridge.js`; `/tools/<id>/api/…` is always 404. The `tools` counter name is reserved. The [tool protocol](docs/tools/protocol.md#20-transition-inventory-a72) lists every route.
 
-Declared GET/HEAD/WebSocket read routes are available to allowed overlay peers. Writes require a tool-bound tab session minted by the dashboard's Open action, or the token of a running tool that declares the target as a dependency. Tool settings and trust state live under the config root's `tools/`; durable data and evictable caches use separate per-tool directories. User-installed tools in the data root's `tools/<id>/` need explicit trust approval. Tools run as your OS account, not in a sandbox: permissions disclose intent and gate host context access, but do not restrict filesystem rights. Only approve code you trust. See [security](docs/security.md#hosted-tools).
+Tool UIs, like overlays, read API v1 without credentials under the overlay listener's peer policy. Actions need the launched tab's session, held only in that page's memory and sent only on API v1 action and job requests; a tab can read and cancel only the jobs it started. A tool page itself gains no OS access, but the plugins behind its actions run native code under their own trust and approval. Only trust sources and approve plugins you trust. See [security](docs/security.md#hosted-tools).
 
 ## Build from source
 
@@ -740,11 +732,10 @@ A successful listener rebind updates it. The token still authenticates only loop
 Send `Authorization: Bearer <token>` to the file's loopback origin (`localhost`
 and `127.0.0.1` may be treated as equivalent), for `/websocket/commands`
 upgrades, `POST /api/counters/settings/<name>[?profile=<name>]` value saves,
-`POST /api/counters/profiles` actions, and the
-[`/tools/_host/v1/cli` launcher endpoints](docs/tools/protocol.md#command-line-tools-vosux).
+`POST /api/counters/profiles` actions, and the API v1 action and job routes for
+plugin actions their plugin declares `cli = true` ([Authorization](docs/v2/api-v1.md#authorization)).
 Counter HTTP permissions are `settings:write` and `profiles:manage`: schema
 writes (`?update=yes`) and other management routes remain forbidden (401).
-Tool launcher routes require broker authentication even for listing.
 vosu accepts the token only from loopback peers and compares it in constant time,
 then revalidates after reading each POST body. Invalid, stale, wrong-scope or
 non-loopback credentials return 401 even when browser provenance permits a write.
