@@ -34,6 +34,9 @@
 //! one answer per request: whichever of the timer, the refusal and the
 //! result closes the request in the [`Ledger`] first writes; a late result
 //! is discarded, and a plan the timer already answered is never started.
+//! The reader wakes the timer only when a new deadline precedes the one it
+//! is parked until (or it is parked with nothing pending): with one budget
+//! per channel, that is about once per budget, not once per request.
 //!
 //! **Reply order.** Every request is closed in the channel's [`Ledger`]
 //! *before* its reply is written, so the child can never meet a full
@@ -44,7 +47,7 @@
 //! always precedes the results it causes (§7.6).
 
 use std::cell::Cell;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::{JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
@@ -52,7 +55,7 @@ use std::time::{Duration, Instant};
 use vosu_plugin_api::vosu_status;
 
 use super::super::channel::Sender;
-use super::super::frame::{FrameHeader, Ledger, RequestKind, control};
+use super::super::frame::{FrameHeader, Ledger, MAX_REQUESTS, RequestKind, control};
 use super::super::ring::PayloadBuffer;
 use crate::plugin::execution::{MessageRef, PluginIngress};
 
@@ -165,12 +168,43 @@ struct Lane {
 }
 
 /// The `SYNC` requests still owed an answer, by budget expiry.
-#[derive(Default)]
 struct Deadlines {
-    pending: BTreeSet<(Instant, u64)>,
+    /// Sorted. At most [`MAX_REQUESTS`] (the receiving policy's cap on
+    /// unanswered requests), reserved up front: no request allocates.
+    pending: Vec<(Instant, u64)>,
+    /// Where the timer thread is: it needs a wake only while parked past
+    /// a new request's deadline.
+    timer: TimerPark,
     closed: bool,
     /// Requests the timer answered `VOSU_ERR_TIMED_OUT`.
     expired: u64,
+}
+
+impl Deadlines {
+    fn new() -> Self {
+        Self {
+            pending: Vec::with_capacity(MAX_REQUESTS),
+            timer: TimerPark::Running,
+            closed: false,
+            expired: 0,
+        }
+    }
+
+    fn remove(&mut self, entry: (Instant, u64)) {
+        if let Ok(index) = self.pending.binary_search(&entry) {
+            self.pending.remove(index);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TimerPark {
+    /// Not parked: it rereads `pending` before parking again.
+    Running,
+    /// Parked with nothing pending.
+    Idle,
+    /// Parked until this instant.
+    Until(Instant),
 }
 
 struct Shared {
@@ -214,7 +248,7 @@ impl Ingress {
             sync_budget,
             ordinary: Mutex::new(Lane::default()),
             ordinary_ready: Condvar::new(),
-            deadlines: Mutex::new(Deadlines::default()),
+            deadlines: Mutex::new(Deadlines::new()),
             deadline_ready: Condvar::new(),
             spare: Mutex::new(Vec::new()),
         });
@@ -285,14 +319,28 @@ impl Ingress {
     fn submit_sync(&self, request: u64, header: FrameHeader, buffer: &mut PayloadBuffer) {
         let shared = &*self.shared;
         let deadline = Instant::now() + shared.sync_budget;
-        {
+        let wake_timer = {
             let mut deadlines = lock(&shared.deadlines);
             if deadlines.closed {
                 return;
             }
-            deadlines.pending.insert((deadline, request));
+            let entry = (deadline, request);
+            let index = deadlines
+                .pending
+                .partition_point(|pending| *pending < entry);
+            deadlines.pending.insert(index, entry);
+            // Budgets are equal, so a parked timer normally already wakes
+            // no later than this deadline: one wake per budget, not per
+            // request.
+            match deadlines.timer {
+                TimerPark::Running => false,
+                TimerPark::Idle => true,
+                TimerPark::Until(at) => deadline < at,
+            }
+        };
+        if wake_timer {
+            shared.deadline_ready.notify_one();
         }
-        shared.deadline_ready.notify_one();
         let item = shared.item(Some(request), header, buffer);
         // Weak: a queued job must not keep a lost channel's ingress alive.
         let weak = Arc::downgrade(&self.shared);
@@ -469,7 +517,7 @@ fn run_sync(shared: &Weak<Shared>, item: Item, deadline: Instant) {
             shared.answer(request, status);
         }
     }
-    lock(&shared.deadlines).pending.remove(&(deadline, request));
+    lock(&shared.deadlines).remove((deadline, request));
     shared.recycle(item.payload);
 }
 
@@ -481,22 +529,26 @@ fn sync_timer(shared: &Shared) {
             return;
         }
         let Some(&(at, request)) = deadlines.pending.first() else {
+            deadlines.timer = TimerPark::Idle;
             deadlines = shared
                 .deadline_ready
                 .wait(deadlines)
                 .unwrap_or_else(PoisonError::into_inner);
+            deadlines.timer = TimerPark::Running;
             continue;
         };
         let now = Instant::now();
         if at > now {
+            deadlines.timer = TimerPark::Until(at);
             deadlines = shared
                 .deadline_ready
                 .wait_timeout(deadlines, at - now)
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
+            deadlines.timer = TimerPark::Running;
             continue;
         }
-        deadlines.pending.remove(&(at, request));
+        deadlines.pending.remove(0);
         if shared.ledger.close(request).is_none() {
             continue;
         }

@@ -2237,9 +2237,11 @@ with their module path so each filter matches a nonzero set. Main lists
 - `tests/api_v1_compat` cases named `tool_session_*`;
 - the host crates' own `cargo nextest run -p vosu-{dashboard,overlay-host,tool-host}` suites;
 - the rewritten `tests/{dashboard_smoke,tool_host_smoke,tool_catalog_smoke,catalog_art_smoke}.py`
-  with `tests/{dashboard_browser,tool_host_v2_browser}.mjs` (X0);
-- for landing G only, `tests/ingame_compat.rs`, derived from
-  `docs/v2/ingame-behavior.md` and nothing else.
+  with `tests/{dashboard_browser,tool_host_v2_browser}.mjs` (X0).
+
+No `tests/ingame_compat.rs` exists: `/api/ingame` is a D20 removed route
+(ADR 0021's 2026-11-25 amendment). The M7-G scenarios live in
+`tests/server_compat/m7_routes.rs` and the dashboard smoke.
 
 **Fixtures.**
 
@@ -2291,16 +2293,15 @@ with their module path so each filter matches a nonzero set. Main lists
 | M7-OR03 | O0 | The root changing during an in-flight download publishes into the original root or fails, never into the new root. |
 | M7-OR04 | O0 | A write racing a served read: the reader sees the complete old or the complete new file. |
 | M7-A01 | D0, T0, I0 | Each asset is served only at its owner's exact paths, and `python scripts/check-asset-hashes.py` passes with unchanged digests unless the reviewed workflow changed a byte. |
-| M7-G01 | G0 | `Deprecation` and `Link` on every `/api/ingame` response; exactly one WARN under concurrent first requests. |
-| M7-G02 | G0 | No banner before any request; the banner appears after one, and disappears 24 hours later by the injected clock. |
-| M7-G03 | G0, D1 | The banner button creates the ordinary `vosulay-editor` plan and confirms only with its listed approvals; already installed shows launch and manage; an offline source shows retry. |
+| M7-G01 | N1, I0 | `/api/ingame` on the overlay listener, with `GET`, `HEAD`, `POST` and an upgrade request, gets the ordinary exact `Not Found` 404, byte-identical to an unknown route's. There is no upgrade, redirect, static or overlay fallthrough, and no `Deprecation` or `Link` header; the dashboard listener answers an unknown-route 404. Near misses (`/api/ingame/`, `/API/ingame`, `//api//ingame`, `/api/ingame%2F`) are also 404 but are not recorded. Positive control: each exact-path request increments the `ingame-page` attempts in the status read. |
+| M7-G02 | N1 | Concurrent first requests to `/api/ingame` log exactly one WARN, and later requests log none. No `ingame-page` notice exists before any request. After one request the status read reports the unknown-bucket notice, and 24 hours without a request expires it by the injected clock. A validated `l` identity is attributed to its installed overlay, and a spoofed Origin alone stays unknown. A sentinel query string is absent from the status read and the logs. |
+| M7-G03 | N1, D1 | The `ingame-page` notice's button, on the unknown bucket too, creates the ordinary `vosulay-editor` plan and confirms only with its listed approvals. Already installed shows launch and manage, and an offline source shows retry. `DashboardStatus` has no `ingame` field. |
 
 Native Linux and Windows run the host suites, `server_compat`,
 `config_compat` and `daemon_smoke`, including dashboard off and an occupied
 dashboard port, natively; cross-compilation is not native evidence.
 Windows evidence never relies on `/proc`, `/bin/sh`, POSIX signals or `.so`
-files. Landing G additionally needs its own browser and client exit, per
-its behavioral document.
+files.
 
 ### A7 documentation acceptance
 
@@ -2320,6 +2321,30 @@ with `CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m7-a7`, every script exit 
 | `check-crate-boundaries.py` | 21 crates, 84 edges, 0 errors |
 | `check-module-boundaries.py` | 100 module edges across 14 crates, 0 errors |
 | `check-file-length.py` | 1,331 code files, 16 baselined, 0 errors |
+| `check-lint-expectations.py` | 18 sites, 0 errors |
+| `check-deleted-assertions.py` | pass |
+| `check-standalone-crates.py` | 23 members, Linux and Windows (xwin) |
+
+### `/api/ingame` removal documentation acceptance
+
+These checks cover the documentation change for the owner decision of
+2026-11-25 (ADR 0021 amendment). They ran in the `m7-noingame` checkout after
+`source scripts/dev-env.sh`. The change adds the `adr0021-removed-ingame-page`
+ledger row but no runtime tests, none were run, nothing ran in a VM or
+browser, and it claims no native, browser or performance evidence.
+
+Observed on 2026-11-25 at the working tree based on `68818039`, on the Linux
+host, with `CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m7-noingame`.
+Every script exited 0:
+
+| Check | Result |
+| --- | --- |
+| `check-doc-links.py` | 70 maintained Markdown files, 0 missing paths |
+| `check-brand.py` | 117 tracked files with old-brand occurrences, 0 errors |
+| `check-asset-hashes.py` | 54 digests match (no asset byte changed) |
+| `check-crate-boundaries.py` | 21 crates, 84 edges, 0 errors |
+| `check-module-boundaries.py` | 100 module edges across 14 crates, 0 errors |
+| `check-file-length.py` | 1,334 code files, 16 baselined, 0 errors |
 | `check-lint-expectations.py` | 18 sites, 0 errors |
 | `check-deleted-assertions.py` | pass |
 | `check-standalone-crates.py` | 23 members, Linux and Windows (xwin) |

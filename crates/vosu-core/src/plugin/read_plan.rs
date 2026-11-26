@@ -24,10 +24,12 @@
 //!   `ReadPlanSubmit`/`Stage`/`PlanOp`/`String` intermediate form at all
 //!   (`docs/v2/plugin-abi.md` §3 picked the flat layout precisely so a read
 //!   plan costs "writing a small struct"; this is the path that actually
-//!   delivers that). Both entry points batch a stage's sibling reads into
-//!   one `ProcessMemory::read_many` call, falling back to per-op
-//!   `read_exact` only if that batch call itself fails, and check
-//!   `deadline` once per stage rather than before every individual read.
+//!   delivers that). [`execute`] batches a stage's sibling reads into one
+//!   `ProcessMemory::read_many` call and checks `deadline` once per stage;
+//!   the raw path batches every op of one dependency level (all stages
+//!   whose bases are already resolved) into one call and checks `deadline`
+//!   once per level. Both fall back to per-op `read_exact` only if a batch
+//!   call itself fails, and report the same per-op results.
 //!
 //! `vosu_plugin_api::validate_read_plan_ref_op_width` needs the plan's raw
 //! encoded buffer: [`execute_into`] (which has it) calls that function

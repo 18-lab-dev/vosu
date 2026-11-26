@@ -163,7 +163,7 @@ not null, empty, gated behind a retired flag, or stripped by a test helper.
 | `/files/skin/{path}` on lazer | Legacy successful lookup/delegation | 404; API-v1 lazer skin tree/resource stays functional |
 | `/files/skin/{path}` on stable; `/files/beatmap/*`; `/Songs/{path}`; `/backgroundImage` | No additional removal | Pinned selection/error/method/range policy over declared roots; no naked path opens |
 | `/api/calculate/pp` | Arbitrary external absolute-path authority only | Current selected session: relative child, or absolute spelling canonicalizing within one of its declared roots; otherwise existing invalid-path rejection envelope; `legacy-calculate-declared-roots` security divergence |
-| `/api/ingame` | No route removal and no upstream page assets | Existing endpoint remains functional; clean-room replacement and D20 page UX are separate scheduled work |
+| `/api/ingame` | Entire route (owner decision, 2026-11-25); no upstream page assets | Exact ordinary removed-route 404 on every method, no upgrade, redirect or page; D20 attribution as `ingame-page` with its vosulay install notice (A7.5); `adr0021-removed-ingame-page` licensing divergence |
 | Every adapter configuration reader/reload/settings UI | `ENABLE_KEY_OVERLAY`, `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`, `V2_SUBSCRIPTION_DEBOUNCE` | Actual WS selectors drive demand; retain `API_V1_SUBSCRIPTION_DEBOUNCE` and unrelated unknown keys; M8 one-time migration deletes exactly the four retired inputs |
 
 Filters selecting a removed key observe normal pinned absent-key behavior;

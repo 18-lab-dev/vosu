@@ -343,6 +343,60 @@ fn relay_refuses_a_sync_submission_from_a_dispatch_thread() {
     child.stop();
 }
 
+/// The SDK check of a SYNC plan is the in-process host's structural one,
+/// without decoding the stages: a truncated plan and a module root whose
+/// name is not UTF-8 are both refused locally with nothing written.
+#[test]
+fn relay_refuses_a_malformed_sync_plan_locally() {
+    let (mut core, child) = pair();
+    let child = Child::start(child, 1);
+    let message = Message::ReadPlanSubmit(ReadPlanSubmit {
+        plan: 1,
+        handle: 1,
+        root: PlanBase::Module {
+            name: "game.exe".to_owned(),
+            offset: 0,
+        },
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: vec![PlanOp {
+                offset: 0,
+                length: 8,
+            }],
+        }],
+        sync: true,
+    });
+    let payload = message.encode_payload().unwrap();
+    let name_at = payload
+        .windows(8)
+        .position(|window| window == b"game.exe")
+        .unwrap();
+    let mut not_utf8 = payload.clone();
+    not_utf8[name_at] = 0xFF;
+    let opcode = message.opcode() as u32;
+    let flags = message.flags();
+    for bytes in [&payload[..payload.len() - 1], &not_utf8[..]] {
+        assert!(Message::decode(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags, bytes).is_err());
+        assert_eq!(
+            child.relay.send(opcode, flags, 0, bytes),
+            vosu_status::VOSU_ERR_INVALID_ARGUMENT
+        );
+    }
+    let mut buffer = PayloadBuffer::new();
+    assert_eq!(
+        core.receiver
+            .recv_until(
+                &mut buffer,
+                Some(Instant::now() + Duration::from_millis(100))
+            )
+            .unwrap(),
+        None,
+        "nothing reached the ring"
+    );
+    child.stop();
+}
+
 /// T1 counterexample: the 65th asynchronous plan never reaches the ring;
 /// a result frees its slot before the plugin sees it.
 #[test]

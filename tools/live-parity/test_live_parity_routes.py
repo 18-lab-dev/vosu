@@ -827,10 +827,14 @@ class SecurityTests(unittest.TestCase):
             rs.prepare_security_layout(str(self.root), {"/Songs/": str(self.songs)},
                                        {"/Songs/": "Probe Set/map.osu"})
         unrelated = self.songs / "Probe Set" / "map.osu"
+        self.assertEqual(self.layout.upstream_static, str(self.root / rs.UPSTREAM_STATIC_DIR))
+        self.assertTrue(Path(self.layout.upstream_static).is_dir())
+        Path(self.layout.upstream_static, "written-by-upstream").write_text("x")
         rs.remove_security_layout(self.layout)
         self.assertFalse(Path(self.layout.sentinel).exists())
         self.assertFalse((self.root / rs.MARKER_NAME).exists())
         self.assertFalse((self.songs / rs.LINK_NAME).is_symlink())
+        self.assertFalse(Path(self.layout.upstream_static).exists())
         self.assertTrue(unrelated.is_file())
 
     def test_sentinel_exposure_detection(self) -> None:

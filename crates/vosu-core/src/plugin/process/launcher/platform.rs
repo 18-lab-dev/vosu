@@ -54,8 +54,11 @@ mod imp {
         }
 
         #[cfg_attr(
-            not(feature = "test-harness"),
-            expect(dead_code, reason = "only test harnesses start another executable")
+            not(feature = "bench-harness"),
+            expect(
+                dead_code,
+                reason = "only test and bench harnesses start another executable"
+            )
         )]
         pub(in super::super) fn executable(path: &Path, build_identity: &str) -> io::Result<Self> {
             Ok(Self {

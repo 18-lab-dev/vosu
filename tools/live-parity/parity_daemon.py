@@ -76,10 +76,14 @@ def _private_runtime_dir(prefix: str) -> Path:
 
 
 def launch(cfg: dict[str, Any], names: tuple[str, ...] = ("source", "vosu"), *,
-           after_exit: bool = False,
+           after_exit: bool = False, source_static: str | None = None,
            ) -> tuple[dict[str, subprocess.Popen[bytes]], dict[str, dict[str, Any]]]:
     """Launch and attest the named daemons. golden-capture relaunches only `source`, on the
-    port of the upstream an `upstream_crashed` case ended (`after_exit`)."""
+    port of the upstream an `upstream_crashed` case ended (`after_exit`), and gives it a
+    static folder inside its capture root (`source_static`, route_security.UPSTREAM_STATIC_DIR)."""
+    if source_static is not None and (not os.path.isabs(source_static) or any(
+            char in source_static for char in "\r\n#\"'`") or source_static != source_static.strip()):
+        raise ValueError("source_static must be an absolute path tosu.env can carry unquoted")
     processes: dict[str, subprocess.Popen[bytes]] = {}
     evidence: dict[str, dict[str, Any]] = {}
     runtime_dirs: list[Path] = []
@@ -123,7 +127,7 @@ def launch(cfg: dict[str, Any], names: tuple[str, ...] = ("source", "vosu"), *,
                 f"SERVER_PORT={port}",
                 "ALLOWED_IPS=127.0.0.1,localhost,absolute",
                 "",
-                "STATIC_FOLDER_PATH=./static",
+                f"STATIC_FOLDER_PATH={source_static or './static'}",
                 "",
             ])
             vosu_toml = "\n".join([

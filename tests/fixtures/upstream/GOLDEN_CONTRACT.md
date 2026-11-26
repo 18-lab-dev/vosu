@@ -74,8 +74,8 @@ Isolation requirements:
   login, private-account, chat, telemetry, UAC, security or unexpected data
   prompt.
 
-The clean-room `/api/ingame` observation is human-only and outside agent
-authority (A4b.12, §8). The owner remains approver of scope and publication.
+`/api/ingame` is never captured (A4b.12, §8). The owner remains approver of
+scope and publication.
 
 ## 3. Capture build (A4b.2)
 
@@ -277,7 +277,14 @@ and vosu's status in its summary.
 `path-security` and outside-root `calculation` targets are only run-owned
 sentinel files inside a temporary capture root. The probe aborts before
 sending if a target canonicalizes outside that root. Real profile, home,
-system, credential or owner files are never probed.
+system, credential or owner files are never probed. The upstream daemon's
+static folder (`STATIC_FOLDER_PATH`) is run-owned too, at
+`<capture root>/vosu-upstream-static`: upstream answers a target its static
+fallback cannot find (a trailing-slash state path, a dot-segment or raw
+backslash spelling the URL parser resolves out of its route) with the absolute
+path it tried, so that path lies under the declared root that `root-prefix`
+rewrites. In a private runtime directory it would fail the privacy scan
+(rehearsal 2026-11-25).
 
 Not upstream goldens: `/api/v1`, dashboard, tool, counter and other vosu-only
 routes, which appear only as negative near-miss cases, and `/api/ingame` (§8).
@@ -357,12 +364,11 @@ M4b captures no `/api/ingame` request, status, header or body, and no upstream
 page HTML, JavaScript or CSS; no fixture may contain such a record, and
 `adapter_golden` fails if one appears. Agents never read, capture, record or
 summarize those page assets or this repository's history before `1ccd4cc` for
-them. The clean-room observation runs in the same scheduled session as the
-full-set capture but as separate human work by the named eligible author,
-whose output is `docs/v2/ingame-behavior.md`
-([implementation plan §6](../../../docs/v2/implementation-plan.md#6-clean-room-apiingame)).
-An agent operates the machine during it only if the owner explicitly asks,
-and then never inspects, records or summarizes page source.
+them. The clean-room observation this section once scheduled was withdrawn on
+2026-11-25, when the owner dropped `/api/ingame` from 2.0
+([implementation plan §6](../../../docs/v2/implementation-plan.md#6-apiingame-withdrawn)).
+vosu answers the route with the ordinary removed-route 404, recorded as the
+`adr0021-removed-ingame-page` ledger row.
 
 ## 9. Fixture layout, format and budget (A4b.8, A4b.13)
 

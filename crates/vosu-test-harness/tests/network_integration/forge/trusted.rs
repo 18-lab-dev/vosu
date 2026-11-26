@@ -52,7 +52,7 @@ fn production_client_trusts_the_installed_ca_for_the_exact_forge_name_only() {
             matches!(denied, Err(NetworkError::Destination(_))),
             "private fixture address needs the exact source flag: {denied:?}"
         );
-        assert!(forge.recorder.handshakes().is_empty());
+        assert!(forge.recorder.handshakes().await.is_empty());
 
         let response = client
             .request_scoped(
@@ -68,7 +68,7 @@ fn production_client_trusts_the_installed_ca_for_the_exact_forge_name_only() {
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body["version"], fixture.forge().version.as_str());
         assert_eq!(
-            forge.recorder.handshakes(),
+            forge.recorder.handshakes().await,
             [Handshake {
                 port: 443,
                 sni: Some(fixture.forge_host.clone()),
@@ -94,7 +94,7 @@ fn production_client_trusts_the_installed_ca_for_the_exact_forge_name_only() {
                 .await,
             WRONG_NAME,
         );
-        let handshakes = forge.recorder.handshakes();
+        let handshakes = forge.recorder.handshakes().await;
         assert!(
             !handshakes.is_empty()
                 && handshakes
@@ -126,7 +126,7 @@ fn private_source_is_refused_by_default_then_fetched_with_its_exact_flag() {
             SourceFailure::UndetectedForge
         );
         assert!(
-            forge.recorder.handshakes().is_empty() && forge.recorder.received().is_empty(),
+            forge.recorder.handshakes().await.is_empty() && forge.recorder.received().is_empty(),
             "without the exact flag nothing may connect to the private forge"
         );
         forge.assert_private_answers(forge.host(), 0);
@@ -309,6 +309,7 @@ fn foreign_hosts_are_denied_at_redirect_and_initial_asset() {
             forge
                 .recorder
                 .handshakes()
+                .await
                 .iter()
                 .all(|handshake| handshake.sni.as_deref() != Some(mirror))
         );
@@ -398,7 +399,9 @@ fn package_and_art_on_the_private_source_host_stay_public_and_credential_free() 
                 "{purpose:?} cannot borrow source authority"
             );
         }
-        assert!(forge.recorder.handshakes().is_empty() && forge.recorder.received().is_empty());
+        assert!(
+            forge.recorder.handshakes().await.is_empty() && forge.recorder.received().is_empty()
+        );
         forge.assert_private_answers(forge.host(), lookups);
 
         // Minimal-difference control: the identical URL is reachable under
