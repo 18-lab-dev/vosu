@@ -4,6 +4,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M7
 
+- Installed tools and plugins that require a core resource kind
+  (`resource:chart.file`, `.audio`, `.background`, `.set` or
+  `resource:skin`) now see it as always available at the `vosu.chart` /
+  `vosu.skin` schema version, as the install resolver already did. Before,
+  the tool host reported them as missing and blocked such tools.
+
 - vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
   that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
   request gets the ordinary 404 that other removed routes return, as in 1.x

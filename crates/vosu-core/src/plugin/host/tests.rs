@@ -30,6 +30,9 @@ mod races;
 /// endpoints, readiness failure, loss retirement, bundled isolation.
 mod process_backend;
 
+/// Core namespaces and core resource kinds resolve as always-installed
+/// capabilities at their core namespace's schema version.
+mod core_capabilities;
 /// Non-owner own-namespace publication (§6.6/§6.7, 2026-11-26): handle
 /// authority, namespace scope, demand, detach and provider unload.
 mod guest_publish;
