@@ -12,9 +12,18 @@ tags: [vosu, rust, documentation, onboarding]
 
 To set up a checkout, build, run, and run the checks, follow [CONTRIBUTING.md](../CONTRIBUTING.md). This page maps the maintainer documentation.
 
-To build an out-of-process extension, follow [Create a tool](tools/create-a-tool.md):
-an isolated development daemon, UI and service, live data, CLI, and publishing.
-Keep the [authoring reference](tools/authoring.md) and [protocol](tools/protocol.md) nearby.
+For extension authors:
+
+- [Create a web tool](tools/create-a-tool.md): use an isolated daemon, read
+  live state and call a plugin action from a dashboard-launched tab. Keep
+  the [authoring reference](tools/authoring.md) and [protocol](tools/protocol.md) nearby.
+- [Author a native plugin](plugins/authoring.md): pin the published SDK,
+  declare capabilities and schemas, and test runtime and approval.
+- [Author an overlay](overlays/authoring.md): read API v1 fields and resource
+  references without a launch session or access to actions.
+
+Coming from 1.x? Start with [Migrating to 2.0](migration/2.0.md), including
+alpha data isolation, stable migration, and replacements for removed routes.
 
 ## Dashboard connection and attachment indicators
 
@@ -66,7 +75,13 @@ The repository’s detailed source documentation remains authoritative: [README.
 
 ## Compatibility hotspots
 
-API payloads are the most compatibility-sensitive area: upstream `hitErrorArray`/`hitErrors` arrays sit beside the additive `pressHitErrors` and `releaseHitErrors` siblings, v2 parsed beatmap stats expose `hitWindow` judgement fields, and v2 selected-field subscriptions, WebSocket close handshakes, and precise keypress state are covered by fixtures. Use the targeted verification in [Testing and verification](testing/verification.md) when touching them.
+API payloads are the most compatibility-sensitive area. The upstream
+adapters retain their own pinned wire shapes, including the upstream
+all-hit histories and v2 `beatmap.stats.hitWindow`. The removed vosu
+extensions and selected-field v2 feed are not adapter contracts: use API
+v1's `vosu.osu` fields, selected-field subscriptions and resource references.
+Use the targeted checks in [Testing and verification](testing/verification.md)
+when touching either surface.
 
 ## Documentation conventions
 
