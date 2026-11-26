@@ -23,6 +23,8 @@
 //! - `pids`: the target PID of each source instance, in attach order;
 //! - `receipts`: where `published-<pid>` and `updated` are written once
 //!   core acknowledged the publication.
+//! - `stable_import_songs`: optional absolute, existing Songs directory
+//!   strictly inside this fixture's data root. No default or game discovery.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -34,7 +36,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::{Publisher, Roster};
+use crate::actions::ImportActions;
 use crate::project::SessionFacts;
+use tokio_util::sync::CancellationToken;
 use vosu_osu_model::enums::ClientType;
 use vosu_plugin_api::{
     HostServices, Message, PluginError, SessionIdentify, VtableHostServices, vosu_status,
@@ -58,16 +62,32 @@ struct Source {
     instance: oracle_input::SourceInstance,
 }
 
+struct FixtureSession {
+    publisher: Arc<Publisher>,
+    import_life: CancellationToken,
+}
+
+fn isolated_songs(data_dir: &Path, songs: &Path) -> Option<PathBuf> {
+    if !songs.is_absolute() {
+        return None;
+    }
+    let data_dir = data_dir.canonicalize().ok()?;
+    let songs = songs.canonicalize().ok()?;
+    (songs != data_dir && songs.starts_with(&data_dir) && songs.is_dir()).then_some(songs)
+}
+
 pub struct Parity {
-    host: VtableHostServices,
+    host: Arc<VtableHostServices>,
     client: ClientType,
     chart: Option<chart::Chart>,
     roster: Roster,
     sources: Vec<Source>,
     update: Option<oracle_input::Input>,
     receipts: PathBuf,
-    /// Session handle → its publisher, as the fixture game's map.
-    publishers: Arc<Mutex<BTreeMap<u64, Arc<Publisher>>>>,
+    // Session handle → the fixture's resource and import lifetime.
+    sessions: Mutex<BTreeMap<u64, FixtureSession>>,
+    stable_import_songs: Option<PathBuf>,
+    imports: ImportActions,
     stopping: Arc<AtomicBool>,
     updates: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -98,7 +118,7 @@ impl Parity {
             chart::Chart::new(&path("chart_root"), &content, client == ClientType::Lazer)
         });
         Some(Self {
-            host,
+            host: Arc::new(host),
             client,
             roster: if chart.is_some() {
                 Roster::without_resources()
@@ -115,7 +135,12 @@ impl Parity {
                 .as_str()
                 .map(|path| read_input(Path::new(path))),
             receipts: path("receipts"),
-            publishers: Arc::default(),
+            sessions: Mutex::default(),
+            stable_import_songs: control["stable_import_songs"]
+                .as_str()
+                .filter(|_| client == ClientType::Stable)
+                .and_then(|songs| isolated_songs(data_dir, Path::new(songs))),
+            imports: ImportActions::default(),
             stopping: Arc::default(),
             updates: Mutex::default(),
         })
@@ -124,6 +149,27 @@ impl Parity {
     pub fn on_message(&self, message: Message, correlation: u64) -> Result<(), PluginError> {
         match message {
             Message::SessionAttached(attached) => self.attach(attached.handle, attached.pid),
+            Message::SessionDetached(detached) => {
+                let session = self.sessions.lock().unwrap().remove(&detached.handle);
+                if let Some(session) = session {
+                    session.import_life.cancel();
+                }
+            }
+            Message::ActionInvoke(action) => {
+                let lifecycle = action.session.and_then(|handle| {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .get(&handle)
+                        .map(|session| session.import_life.clone())
+                });
+                return self.imports.invoke_fixture(
+                    &self.host,
+                    action,
+                    lifecycle.as_ref().zip(self.stable_import_songs.as_deref()),
+                );
+            }
+            Message::ActionCancel(cancel) => return self.imports.cancel(cancel.invocation),
             message @ (Message::ResourceResolve(_)
             | Message::TreeList(_)
             | Message::TreeLookup(_)) => {
@@ -140,7 +186,12 @@ impl Parity {
                 {
                     return Ok(());
                 }
-                let publisher = self.publishers.lock().unwrap().get(&handle).cloned();
+                let publisher = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&handle)
+                    .map(|session| session.publisher.clone());
                 publisher
                     .ok_or(PluginError(vosu_status::VOSU_ERR_TARGET_GONE))?
                     .request(message, correlation)
@@ -155,10 +206,11 @@ impl Parity {
                 // Production stream routing: only the owning session's
                 // resource worker serves a stream.
                 let owner = self
-                    .publishers
+                    .sessions
                     .lock()
                     .unwrap()
                     .values()
+                    .map(|session| &session.publisher)
                     .find(|publisher| publisher.owns_stream(stream))
                     .cloned();
                 owner
@@ -198,7 +250,7 @@ impl Parity {
         // The replay's selected instance is its logical PID 10.
         let selected = source.instance.pid == 10;
         let publisher = self.roster.attach(
-            Arc::new(self.host),
+            self.host.clone(),
             handle,
             SessionFacts {
                 client: self.client,
@@ -208,10 +260,13 @@ impl Parity {
             source.instance.manager,
             selected,
         );
-        self.publishers
-            .lock()
-            .unwrap()
-            .insert(handle, publisher.clone());
+        self.sessions.lock().unwrap().insert(
+            handle,
+            FixtureSession {
+                publisher: publisher.clone(),
+                import_life: CancellationToken::new(),
+            },
+        );
         publisher
             .publish(source.instance.state.clone(), vosu_osu_state::Delivery::All)
             .expect("the oracle snapshot publishes");
@@ -243,9 +298,31 @@ impl Parity {
 impl Drop for Parity {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Relaxed);
+        self.imports.shutdown();
         for update in self.updates.get_mut().unwrap().drain(..) {
             update.join().expect("parity update worker");
         }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn import_root_must_be_an_explicit_subdirectory_of_the_fixture() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let songs = root.path().join("Songs");
+    std::fs::create_dir(&songs).unwrap();
+    assert_eq!(
+        isolated_songs(root.path(), &songs),
+        songs.canonicalize().ok()
+    );
+    for invalid in [
+        Path::new("Songs"),
+        root.path(),
+        outside.path(),
+        &songs.join("missing"),
+    ] {
+        assert_eq!(isolated_songs(root.path(), invalid), None);
     }
 }
 

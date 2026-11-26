@@ -64,7 +64,7 @@ impl ImportResult {
         }
     }
 }
-fn check_cancel(cancel: &CancellationToken) -> Result<(), ImportError> {
+pub(super) fn check_cancel(cancel: &CancellationToken) -> Result<(), ImportError> {
     if cancel.is_cancelled() {
         Err(ImportError::Cancelled)
     } else {

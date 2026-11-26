@@ -32,6 +32,24 @@ pub(crate) struct ImportActions {
     // cancellation before invocation; retain at most one ABI caller's window.
     early_cancels: Mutex<HashSet<u64>>,
 }
+
+type Progress<'a> = dyn Fn(f64, &str) + 'a;
+
+fn stage_stable(
+    archive: &mut ValidatedArchive,
+    songs: Option<&std::path::Path>,
+    token: &CancellationToken,
+    progress: &Progress<'_>,
+    live: impl FnOnce() -> Result<(), ImportError>,
+) -> Result<ImportResult, ImportError> {
+    let stage = StableStage::prepare(archive, songs.ok_or(ImportError::InvalidTarget)?, token)?;
+    live()?;
+    progress(
+        0.9,
+        "Queuing archive for osu! stable; refresh remains game-owned",
+    );
+    stage.commit(token)
+}
 impl ImportActions {
     pub fn invoke<H: HostServices + Send + Sync + 'static>(
         &self,
@@ -40,35 +58,104 @@ impl ImportActions {
         action: ActionInvoke,
         session: Option<&Arc<OsuSession>>,
     ) -> Result<(), PluginError> {
-        let args = action.args.deserialized::<ImportArgs>();
-        let failure = if action.action != IMPORT_ACTION {
-            Some(("unknown_action", "unknown osu action"))
-        } else if args.is_err() {
-            Some(("invalid_arguments", "invalid beatmap import arguments"))
-        } else if session.is_none() {
-            Some(("target_gone", "selected client unavailable"))
-        } else {
-            None
+        let prepare = || {
+            session.map(|session| {
+                let selected = Arc::downgrade(session);
+                let songs = session
+                    .publication
+                    .get()
+                    .and_then(|p| p.bus.resources.get())
+                    .and_then(|p| p.import_songs_root());
+                let lazer = session.import_context.get().cloned();
+                let client = session.client;
+                let handoff = move |mut archive: ValidatedArchive,
+                                    token: &CancellationToken,
+                                    progress: &Progress<'_>| {
+                    let live = || {
+                        selected
+                            .upgrade()
+                            .filter(|s| !s.lifecycle_token().is_cancelled())
+                            .map(|_| ())
+                            .ok_or(ImportError::Cancelled)
+                    };
+                    match client {
+                        ClientType::Stable => {
+                            stage_stable(&mut archive, songs.as_deref(), token, progress, live)
+                        }
+                        ClientType::Lazer => {
+                            let (attached, context) = lazer.ok_or(ImportError::InvalidTarget)?;
+                            let target = super::import::LazerTarget::from_attached(
+                                &attached,
+                                context.cwd,
+                                context.environment,
+                            )?;
+                            live()?;
+                            progress(0.9, "Submitting archive to selected osu! lazer client");
+                            runtime.block_on(target.submit(archive, token))
+                        }
+                    }
+                };
+                (session.lifecycle_token(), handoff)
+            })
         };
-        if let Some((code, message)) = failure {
-            host.send(
-                &Message::ActionResult(error(action.invocation, code, message)),
-                0,
-            );
-            return Ok(());
-        }
-        let session = session.expect("validated session");
-        let cancel = session.lifecycle_token();
-        let selected = Arc::downgrade(session);
-        let songs = session
-            .publication
-            .get()
-            .and_then(|p| p.bus.resources.get())
-            .and_then(|p| p.import_songs_root());
-        let lazer = session.import_context.get().cloned();
-        let client = session.client;
+        self.invoke_with(host, action, prepare)
+    }
+
+    /// The SDK fixture's disposable Songs root is never derived from a game.
+    #[cfg(all(feature = "test-harness", debug_assertions))]
+    pub(crate) fn invoke_fixture<H: HostServices + Send + Sync + 'static>(
+        &self,
+        host: &Arc<H>,
+        action: ActionInvoke,
+        target: Option<(&CancellationToken, &std::path::Path)>,
+    ) -> Result<(), PluginError> {
+        let prepare = || {
+            target.map(|(lifecycle, songs)| {
+                let songs = songs.to_owned();
+                let handoff = move |mut archive: ValidatedArchive,
+                                    token: &CancellationToken,
+                                    progress: &Progress<'_>| {
+                    stage_stable(&mut archive, Some(&songs), token, progress, || {
+                        super::import::check_cancel(token)
+                    })
+                };
+                (lifecycle.child_token(), handoff)
+            })
+        };
+        self.invoke_with(host, action, prepare)
+    }
+
+    fn invoke_with<H, F>(
+        &self,
+        host: &Arc<H>,
+        action: ActionInvoke,
+        prepare: impl FnOnce() -> Option<(CancellationToken, F)>,
+    ) -> Result<(), PluginError>
+    where
+        H: HostServices + Send + Sync + 'static,
+        F: FnOnce(
+                ValidatedArchive,
+                &CancellationToken,
+                &Progress<'_>,
+            ) -> Result<ImportResult, ImportError>
+            + Send
+            + 'static,
+    {
         let invocation = action.invocation;
-        let source = args.expect("validated args").source_path;
+        let reject = |code, message| {
+            host.send(&Message::ActionResult(error(invocation, code, message)), 0);
+            Ok(())
+        };
+        if action.action != IMPORT_ACTION {
+            return reject("unknown_action", "unknown osu action");
+        }
+        let Ok(args) = action.args.deserialized::<ImportArgs>() else {
+            return reject("invalid_arguments", "invalid beatmap import arguments");
+        };
+        let Some((cancel, handoff)) = prepare() else {
+            return reject("target_gone", "selected client unavailable");
+        };
+        let source = args.source_path;
         let host = Arc::downgrade(host);
         let mut workers = self.workers.lock().unwrap_or_else(|e| e.into_inner());
         // Finished joins cannot call back; join outside the registry lock anyway.
@@ -124,41 +211,10 @@ impl ImportActions {
                 };
                 let result = (|| {
                     progress(0.0, "Validating beatmap archive");
-                    let mut archive =
+                    let archive =
                         ValidatedArchive::open(&source, ArchiveLimits::default(), &token)?;
                     progress(0.5, "Preparing selected client handoff");
-                    let live = || {
-                        selected
-                            .upgrade()
-                            .filter(|s| !s.lifecycle_token().is_cancelled())
-                            .ok_or(ImportError::Cancelled)
-                    };
-                    match client {
-                        ClientType::Stable => {
-                            let stage = StableStage::prepare(
-                                &mut archive,
-                                songs.as_deref().ok_or(ImportError::InvalidTarget)?,
-                                &token,
-                            )?;
-                            live()?;
-                            progress(
-                                0.9,
-                                "Queuing archive for osu! stable; refresh remains game-owned",
-                            );
-                            stage.commit(&token)
-                        }
-                        ClientType::Lazer => {
-                            let (attached, context) = lazer.ok_or(ImportError::InvalidTarget)?;
-                            let target = super::import::LazerTarget::from_attached(
-                                &attached,
-                                context.cwd,
-                                context.environment,
-                            )?;
-                            live()?;
-                            progress(0.9, "Submitting archive to selected osu! lazer client");
-                            runtime.block_on(target.submit(archive, &token))
-                        }
-                    }
+                    handoff(archive, &token, &progress)
                 })();
                 if let Some(host) = host.upgrade() {
                     host.send(&Message::ActionResult(terminal(invocation, result)), 0);

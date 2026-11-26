@@ -22,3 +22,4 @@ fixtures -> project
 fixtures -> publish
 fixtures -> resources
 fixtures -> plugin
+fixtures -> actions
