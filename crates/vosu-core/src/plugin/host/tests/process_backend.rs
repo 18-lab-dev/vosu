@@ -16,6 +16,8 @@ use crate::plugin::host::*;
 use crate::plugin::registry::{self, LoadedPlugin};
 use crate::plugin::test_support::{LaunchBehavior, RecordingLauncher, write_development_package};
 
+mod startup_watch;
+
 fn process_package(plugin_id: &str, process_name: &str) -> (tempfile::TempDir, LoadedPlugin) {
     let dir = tempfile::tempdir().unwrap();
     write_development_package(
