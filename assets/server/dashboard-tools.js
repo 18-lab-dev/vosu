@@ -75,6 +75,7 @@ export function mountTools({
   rovingGrid = () => null,
   setCount,
   openToolSettings,
+  openPluginSettings,
 }) {
   if (!root) return null;
   // Cards are re-rendered by polling; a live region would re-announce them.
@@ -93,13 +94,16 @@ export function mountTools({
   const banner = el('p', { className: 'tools-loading', text: 'Reading the tool registry…', attrs: { role: 'status' } });
   root.setAttribute('aria-busy', 'true');
   root.replaceChildren(banner);
-  // Installed and Available share one plain heading style.
+  // Web tools are pages vosu serves to the browser, never native code; the
+  // Plugins section above lists what vosu loads. Each has its own heading
+  // so the two are never mistaken for each other.
   const installedHeader = el('header', { className: 'tools-catalog__header tools-installed__header' },
-    el('h2', { text: 'Installed', attrs: { id: 'tools-installed-title' } }));
+    el('h2', { text: 'Web tools', attrs: { id: 'tools-installed-title' } }),
+    el('p', { className: 'plugins__intro', text: 'Pages vosu serves to your browser. They run in the browser tab you open, not inside vosu.' }));
   root.before(installedHeader);
   root.setAttribute('aria-labelledby', 'tools-installed-title');
   // Plugins come first: one needing approval is the page's first decision.
-  mountPlugins({ before: installedHeader, requestJson, notify, setBusy, errorText, confirmAction, createActionDialog });
+  mountPlugins({ before: installedHeader, requestJson, notify, setBusy, errorText, confirmAction, createActionDialog, openPluginSettings });
 
   const api = (id, suffix = '') => `/api/tools/${encodeURIComponent(id)}${suffix}`;
   // Catalog v2: tools and plugins to install through a reviewed plan, game
@@ -176,6 +180,11 @@ export function mountTools({
       el('span', { text: displayStatus.label }));
     if (view.source && view.source !== 'official') {
       line.append(el('span', { className: 'badge', text: SOURCE_LABELS[view.source] ?? view.source, attrs: { 'data-source': view.source } }));
+    }
+    // Core's catalog update source (ToolView `update_available`); the
+    // update itself goes through the Available card's reviewed plan.
+    if (view.update_available === true) {
+      line.append(el('span', { className: 'badge badge-warning', text: 'Update available', attrs: { 'data-update': 'available' } }));
     }
     const banner = cardBanner(view.banner_url);
     if (banner) card.append(banner);

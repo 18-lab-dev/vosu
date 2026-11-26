@@ -110,7 +110,8 @@ export function mountCatalogBrowser({ anchor, requestJson, notify, errorText, se
   available.setAttribute('aria-labelledby', 'tools-available-title');
   available.append(header, status, cards);
 
-  const installedTitle = node('h2', 'Installed from catalogs'); installedTitle.id = 'catalog-installed-title';
+  // Plugins are managed in the Plugins section (dashboard-plugins.js).
+  const installedTitle = node('h2', 'Web tools and overlays from catalogs'); installedTitle.id = 'catalog-installed-title';
   const installedList = node('ul', undefined, 'catalog-installed__list');
   const installed = node('section', undefined, 'catalog-installed');
   installed.setAttribute('aria-labelledby', 'catalog-installed-title');
@@ -128,14 +129,14 @@ export function mountCatalogBrowser({ anchor, requestJson, notify, errorText, se
     grid?.refresh();
   }
   function renderInstalled() {
-    installed.hidden = !records.length;
-    installedList.replaceChildren(...records.map((record) => {
+    const web = records.filter((record) => record.kind !== 'plugin');
+    installed.hidden = !web.length;
+    installedList.replaceChildren(...web.map((record) => {
       const item = node('li', undefined, 'catalog-installed__item');
       item.dataset.installed = record.id;
       const label = node('p');
       label.append(node('strong', record.id), ` ${KIND_LABELS[record.kind] ?? record.kind} v${record.version} `,
         node('span', record.installed_for === 'dependency' ? 'Dependency' : 'Requested', 'badge'));
-      if (record.runtime) label.append(' ', node('span', record.approved ? 'Approved' : 'Not approved', 'badge'));
       const source = node('p', undefined, 'field-help'); source.append('From ', node('code', record.source));
       const actions = node('div', undefined, 'tool-card__actions');
       if (record.installed_for === 'dependency') {

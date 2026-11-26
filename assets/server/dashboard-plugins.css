@@ -34,12 +34,30 @@
 }
 
 .plugin-row[data-state="approval_required"],
-.plugin-row[data-state="backoff"] {
+.plugin-row[data-state="backoff"],
+.plugin-row[data-state="pending_restart"],
+.plugin-row[data-state="refused"] {
   border-left-color: var(--caution);
 }
 
 .plugin-row[data-state="failed"] {
   border-left-color: var(--danger);
+}
+
+.plugins__intro {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--step--1);
+}
+
+/* The Web tools heading's own one-line intro sits under the heading. */
+.tools-installed__header .plugins__intro {
+  flex-basis: 100%;
+}
+
+.plugin-row__pending {
+  max-width: 60ch;
+  color: var(--fg);
 }
 
 .plugin-row__main {
@@ -68,7 +86,8 @@
 }
 
 .tool-status[data-status="approval_required"],
-.tool-status[data-status="backoff"] {
+.tool-status[data-status="backoff"],
+.tool-status[data-status="pending_restart"] {
   color: var(--caution);
 }
 

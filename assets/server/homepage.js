@@ -1867,7 +1867,7 @@ import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashb
     if (event.target === previewDialog) previewDialog.close();
   });
 
-  const { closeDialog, loadCounterSettings, loadToolSettings } = createSettingsEditor({
+  const { closeDialog, loadCounterSettings, loadToolSettings, loadPluginSettings } = createSettingsEditor({
     results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
   });
 
@@ -2077,6 +2077,7 @@ import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashb
         setCount: (value) => setCount('tools', value),
         // Same dialog as an overlay card's Settings button.
         openToolSettings: (id, name) => loadToolSettings(id, { name }),
+        openPluginSettings: (id, name) => loadPluginSettings(id, { name }),
       });
       if (searchInput?.value) state.filterTools?.(searchInput.value);
     }).catch((error) => notify(`Could not load the Tools page: ${errorText(error)}`, 'error', 0));

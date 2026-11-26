@@ -3,9 +3,9 @@
 // Chromium through the dashboard itself and saves screenshots of each state.
 import { mkdir } from 'node:fs/promises';
 
-const [modulePath, evidence, first, second, username, password] = process.argv.slice(2);
-if (!modulePath || !evidence || !first || !second || !username || !password) {
-  throw new Error('Usage: node tool_catalog_browser.mjs <playwright index.mjs> <evidence> <first source> <second source> <username> <password>');
+const [modulePath, evidence, first, second, username, password, pluginSecret] = process.argv.slice(2);
+if (!modulePath || !evidence || !first || !second || !username || !password || !pluginSecret) {
+  throw new Error('Usage: node tool_catalog_browser.mjs <playwright index.mjs> <evidence> <first source> <second source> <username> <password> <plugin secret>');
 }
 const DASHBOARD = 'http://127.0.0.1:25151';
 const WARNING = 'Plugins from this source can run in-process, with the same memory access as vosu itself. Only trust sources you control or know well.';
@@ -132,6 +132,45 @@ try {
   check((await dialog.textContent()).includes('Trusted source'), 'trusted plan not labelled');
   await confirmPlan(page, dialog, 'Loaded', 'plan-outcome-loaded');
 
+  // 5b. D1: plugins and web tools are separate sections; plugin settings
+  // come from the validated schema and a password is never shown again,
+  // not even after a failed save.
+  const plugins = page.locator('section.plugins');
+  const echoRow = plugins.locator('[data-catalog-plugin="acme.echo"]');
+  await echoRow.waitFor({ timeout: 15000 });
+  const echoText = await echoRow.textContent();
+  for (const fact of ['Inside vosu', 'Trusted source', 'Running']) check(echoText.includes(fact), `acme.echo row lacks "${fact}": ${echoText}`);
+  check(await plugins.locator('[data-catalog-plugin="acme.paths"]').count() === 1, 'the catalog process plugin is not listed under Plugins');
+  check(await plugins.locator('[data-tool-id]').count() === 0, 'a web tool is listed under Plugins');
+  check(await page.getByRole('heading', { name: 'Web tools', exact: true }).count() === 1, 'no separate Web tools section');
+  await echoRow.getByRole('button', { name: 'Settings for acme.echo', exact: true }).click();
+  const settings = page.locator('#dashboard-dialog');
+  const token = settings.getByLabel('API token', { exact: true });
+  await token.waitFor({ timeout: 15000 });
+  check(await settings.getByLabel('Label', { exact: true }).inputValue() === 'hello', 'schema default not applied');
+  await settings.getByLabel('Label', { exact: true }).fill('from the dashboard');
+  await token.fill(pluginSecret);
+  // One failed save (the network refuses it): the typed secret is cleared.
+  await page.route('**/api/plugins/acme.echo/settings', (route) => (route.request().method() === 'POST'
+    ? route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'invalid_settings', error: 'refused by the test' }) })
+    : route.fallback()), { times: 1 });
+  await settings.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#dashboard-dialog input[type="password"]')?.value === '');
+  check(await page.evaluate(() => document.querySelector('#dashboard-dialog').open), 'dialog closed after a failed save');
+  check(!(await page.content()).includes(pluginSecret), 'plugin password echoed after a failed save');
+  await token.fill(pluginSecret);
+  await settings.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('#dashboard-dialog')?.open);
+  await echoRow.getByRole('button', { name: 'Settings for acme.echo', exact: true }).click();
+  await token.waitFor();
+  check(await token.inputValue() === '' && await token.getAttribute('placeholder') === 'Saved — leave blank to keep', 'saved plugin password not shown as write-only');
+  check(await settings.getByLabel('Label', { exact: true }).inputValue() === 'from the dashboard', 'plugin setting not saved');
+  await settings.screenshot({ path: `${evidence}/plugin-settings.png` });
+  check(!(await page.content()).includes(pluginSecret), 'plugin password readable in the page');
+  await page.keyboard.press('Escape');
+  await plugins.screenshot({ path: `${evidence}/plugins-section.png` });
+  console.log('plugins vs web tools separated; plugin settings defaults, write-only password, blank after a failed save');
+
   // 6. A tool: install, then uninstall through the preview.
   const tool = page.locator('.tools-catalog [data-catalog-entry="catalog-tool"]');
   dialog = await planDialog(page, tool.getByRole('button', { name: `Install Catalog tool fixture from ${first}` }), null);
@@ -169,14 +208,28 @@ try {
   await overlay.screenshot({ path: `${evidence}/overlay-installed.png` });
 
   // 9. Untrust while acme.echo runs in-process: revocation pending restart.
+  // The UI must say it is still running, never that it stopped.
   ({ row, toggle } = await trustToggle(page, first));
   await toggle.click();
+  const toast = page.locator('#toast .toast__message');
+  await page.waitForFunction(() => document.querySelector('#toast .toast__message')?.textContent.includes('restart vosu'));
+  const untrusted = await toast.textContent();
+  check(untrusted.includes('acme.echo is still running inside vosu'), `untrust notice hides the running plugin: ${untrusted}`);
+  check(!/stopped|unloaded\./i.test(untrusted), `untrust notice claims the code stopped: ${untrusted}`);
   const banner = page.locator('#catalog-restart');
   await page.reload();
   await banner.waitFor({ state: 'visible', timeout: 15000 });
   check((await banner.textContent()).includes('acme.echo'), 'pending-restart banner does not name acme.echo');
   await page.screenshot({ path: `${evidence}/pending-restart.png` });
-  console.log('offers, overlay install and the pending-restart banner shown');
+  await page.goto(`${DASHBOARD}/tools`);
+  const pendingRow = page.locator('section.plugins [data-catalog-plugin="acme.echo"][data-state="pending_restart"]');
+  await pendingRow.waitFor({ timeout: 15000 });
+  const pendingText = await pendingRow.textContent();
+  for (const fact of ['Revocation pending restart', 'still loaded and running inside vosu', 'vosu does not restart for you', 'Untrusted source']) {
+    check(pendingText.includes(fact), `pending row lacks "${fact}": ${pendingText}`);
+  }
+  await pendingRow.screenshot({ path: `${evidence}/plugin-pending-restart.png` });
+  console.log('offers, overlay install, truthful untrust notice and the pending-restart banner and row shown');
   if (errors.length) throw new Error(errors.join('\n'));
   await context.close();
 

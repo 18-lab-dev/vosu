@@ -20,6 +20,20 @@ function stateLine(source) {
   return 'Not fetched yet';
 }
 
+// A6b.7: lowering trust never claims that loaded code stopped. Revoked
+// in-process plugins keep running inside vosu until the user restarts it,
+// and process plugins lose their approval; both are named.
+export function revocationNotice(base, revocation) {
+  const pending = revocation?.pending_restart ?? [];
+  const cleared = revocation?.approvals_cleared ?? [];
+  const parts = [base];
+  if (pending.length) {
+    parts.push(`${pending.join(', ')} ${pending.length === 1 ? 'is' : 'are'} still running inside vosu: restart vosu to unload ${pending.length === 1 ? 'it' : 'them'}.`);
+  }
+  if (cleared.length) parts.push(`${cleared.join(', ')} ${cleared.length === 1 ? 'needs' : 'need'} your approval again.`);
+  return parts.join(' ');
+}
+
 function credentialDialog(source, { requestJson, notify, errorText, reload }) {
   const basic = source.credential_kind === 'basic';
   const { dialog, body } = createActionDialog(`Credential for ${source.source}`, { dismiss: 'explicit' });
@@ -105,8 +119,10 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
 
   async function setFlag(source, route, body, label) {
     try {
-      await requestJson(sourcePath(source.source, route), { method: 'POST', body: JSON.stringify(body) });
-      notify(label, 'success');
+      const result = await requestJson(sourcePath(source.source, route), { method: 'POST', body: JSON.stringify(body) });
+      // A pending restart stays on screen until dismissed.
+      const pending = Boolean(result?.revocation?.pending_restart?.length);
+      notify(revocationNotice(label, result?.revocation), pending ? 'info' : 'success', pending ? 0 : 3200);
       window.dispatchEvent(new CustomEvent('vosu:catalog-changed'));
     } catch (error) { notify(errorText(error), 'error'); }
     await load();
@@ -224,8 +240,7 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
     try {
       const result = await requestJson('/api/catalog/sources', { method: 'POST', body: JSON.stringify({ sources: sources.map(({ source, enabled }) => ({ source, enabled })) }) });
       await load();
-      const revoked = result.revocation?.pending_restart ?? [];
-      notify(revoked.length ? `Catalog sources saved. Restart vosu to finish revoking ${revoked.join(', ')}.` : 'Catalog sources saved.', 'success');
+      notify(revocationNotice('Catalog sources saved.', result.revocation), 'success');
       window.dispatchEvent(new CustomEvent('vosu:catalog-changed'));
     } catch (error) { notify(errorText(error), 'error'); }
     finally { setBusy(save, false); }

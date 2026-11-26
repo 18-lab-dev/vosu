@@ -184,7 +184,15 @@ export function reviewPlan({ plan, title, requestJson, notify, errorText }) {
   });
 }
 
-// `POST /api/catalog/install` then the review above.
+// `POST /api/catalog/install` then the review above. This is the one
+// install affordance other dashboard views call, the D20 `ingame-page`
+// notice included: `installFlow({ entry: { kind, id, source, name },
+// requestJson, notify, errorText })` resolves with the finished job, or
+// null when the review was closed unconfirmed, and rejects with the
+// request's error when no plan was created (a source that is missing,
+// disabled or never fetched). An entry the source does not list gets the
+// backend's error plan, shown but never confirmable. It never confirms,
+// approves or downloads by itself; every plan goes through `reviewPlan`.
 export async function installFlow({ entry, requestJson, notify, errorText }) {
   const plan = await requestJson('/api/catalog/install', {
     method: 'POST', body: JSON.stringify({ kind: entry.kind, id: entry.id, source: entry.source }),

@@ -88,15 +88,19 @@ class Catalog:
                 'description': description, 'author': '18-LAB', 'resolution': [640, 120],
                 'packages': {'any': package}, **extra}
 
-    def plugin(self, plugin_id, runtime, library_bytes, requires=(), provides=(), matcher=None):
+    def plugin(self, plugin_id, runtime, library_bytes, requires=(), provides=(), matcher=None, settings=None):
         library = f'lib/{plugin_id}.so'
         fields = {'manifest_version': 1, 'kind': 'plugin', 'id': plugin_id, 'name': plugin_id, 'version': '1.0.0',
                   'host': self.host_range, 'abi_version': 1, 'runtime': runtime}
+        files = {library: library_bytes}
+        if settings is not None:
+            fields['settings_schema'] = 'settings.schema.json'
+            files['settings.schema.json'] = json.dumps(settings)
         text = manifest(fields, tables=[(f'targets.{self.target}', {'library': library})],
                         arrays=[('requires', list(requires)), ('provides', [
                             {key: value for key, value in provide.items() if key in ('id', 'version')}
                             for provide in provides])])
-        package = self.package(f'{plugin_id}-1.0.0', {'manifest.toml': text, library: library_bytes})
+        package = self.package(f'{plugin_id}-1.0.0', {'manifest.toml': text, **files})
         entry = {'id': plugin_id, 'name': plugin_id, 'version': '1.0.0', 'host': self.host_range, 'runtime': runtime,
                  'requires': list(requires), 'provides': list(provides), 'packages': {self.target: package}}
         if matcher is not None:

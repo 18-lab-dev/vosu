@@ -590,8 +590,10 @@ export function createSettingsEditor({
     { inline = false, dialogRequestId = null, profile, registry, secrets } = {},
   ) {
     const folder = target.id;
-    const isTool = target.kind === 'tool';
-    const noun = isTool ? 'tool' : 'overlay';
+    // Plugins, like tools, have no profiles and withhold password values.
+    const isPlugin = target.kind === 'plugin';
+    const isTool = target.kind === 'tool' || isPlugin;
+    const noun = isPlugin ? 'plugin' : isTool ? 'tool' : 'overlay';
     const title = target.name || folder;
     container.replaceChildren();
     state.navigationObserver?.disconnect();
@@ -710,10 +712,15 @@ export function createSettingsEditor({
       setBusy(save, true, 'Saving…');
       try {
         // Collect inside the try: invalid command rows throw a user-facing error.
-        const payload = collectCounterSettings(form, schema);
-        const url = isTool
-          ? `/api/tools/${encodeURIComponent(folder)}/settings`
-          : `/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(profile)}`;
+        const collected = collectCounterSettings(form, schema);
+        // Core validates a plugin's whole document against its schema, in
+        // which layout-only `button` entries carry no value.
+        const payload = isPlugin ? collected.filter((item) => schema.find((setting) => setting.uniqueID === item.uniqueID)?.type !== 'button') : collected;
+        const url = isPlugin
+          ? `/api/plugins/${encodeURIComponent(folder)}/settings`
+          : isTool
+            ? `/api/tools/${encodeURIComponent(folder)}/settings`
+            : `/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(profile)}`;
         await requestJson(url, {
           method: 'POST',
           body: JSON.stringify(payload),
@@ -724,6 +731,9 @@ export function createSettingsEditor({
         if (!inline) forceCloseDialog();
       } catch (error) {
         if (!isCurrentDialogRequest(dialogRequestId)) return;
+        // A password typed into a failed save is not kept on the page: the
+        // stored secret is unchanged, so the field returns to blank.
+        if (secrets) form.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
         notify(`Could not save ${noun} settings: ${errorText(error)}`, 'error');
       } finally {
         setBusy(save, false);
@@ -835,5 +845,22 @@ export function createSettingsEditor({
     }
   }
 
-  return { closeDialog: requestDialogClose, loadCounterSettings, loadToolSettings };
+  // `GET /api/plugins/<id>/settings` (A7.1): the validated schema, values
+  // with defaults applied and a `secrets` presence map; passwords are
+  // always blank and only ever written.
+  async function loadPluginSettings(id, { name = '' } = {}) {
+    const target = loadingTarget(false, `${name || id} settings`, 'Loading settings…');
+    if (!target) return;
+    const { container, requestId } = target;
+    try {
+      const payload = await requestJson(`/api/plugins/${encodeURIComponent(id)}/settings`);
+      if (!isCurrentDialogRequest(requestId)) return;
+      const { schema, values, secrets } = settingsPayload({ ...payload, settings: payload.schema });
+      renderCounterSettings(container, { kind: 'plugin', id, name: name || id }, schema, values, { dialogRequestId: requestId, secrets: secrets ?? {} });
+    } catch (error) {
+      showLoadError(container, requestId, error, false);
+    }
+  }
+
+  return { closeDialog: requestDialogClose, loadCounterSettings, loadToolSettings, loadPluginSettings };
 }

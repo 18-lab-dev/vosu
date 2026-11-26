@@ -30,11 +30,24 @@ from catalog_v2_fixture import Catalog, api, dashboard_headers, facts, set_sourc
 GAME_PROCESS = 'vosufixgame'
 USERNAME = 'sentinel-user-4f81'
 PASSWORD = 'sentinel-pass-c2d9'
+# D1: a plugin `password` setting, written through the dashboard only.
+PLUGIN_SECRET = 'sentinel-plugin-secret-6b0e'
+ECHO_SETTINGS = [
+    {'uniqueID': 'LABEL', 'type': 'text', 'title': 'Label', 'value': 'hello'},
+    {'uniqueID': 'TOKEN', 'type': 'password', 'title': 'API token', 'value': ''},
+]
+# Package paths the fixture server answered, to prove an offer review
+# downloads nothing before its plan is confirmed.
+REQUESTED = []
 
 
 class Quiet(SimpleHTTPRequestHandler):
     def log_message(self, *_args):
         pass
+
+    def do_GET(self):
+        REQUESTED.append(self.path)
+        super().do_GET()
 
 
 def wait_job(job, timeout=45):
@@ -99,7 +112,7 @@ ALLOWED_IPS = "127.0.0.1,localhost"
                         plugins=[
                             catalog.plugin('acme.paths', 'process', b'process fixture',
                                            requires=[{'id': 'field:vosu.osu.internal.paths', 'version': '^1'}]),
-                            catalog.plugin('acme.echo', 'in-process', library.read_bytes()),
+                            catalog.plugin('acme.echo', 'in-process', library.read_bytes(), settings=ECHO_SETTINGS),
                             catalog.plugin('acme.game', 'process', b'game fixture',
                                            provides=[{'id': f'game:{GAME_PROCESS}', 'version': '*'}],
                                            matcher={'process_names': [GAME_PROCESS]}),
@@ -125,7 +138,7 @@ ALLOWED_IPS = "127.0.0.1,localhost"
                 assert curl('/api/catalog/refresh', dashboard=True, method='POST', data={})[0] == 403
                 assert curl('/api/catalog/sources')[0] == 404
                 # The removed 1.x immediate install route installs nothing.
-                assert curl('/api/tools/catalog-tool/install', dashboard=True, method='POST', headers=headers, data={})[0] == 400
+                assert curl('/api/tools/catalog-tool/install', dashboard=True, method='POST', headers=headers, data={})[0] in (400, 404)
                 view = api('refresh', headers, 'POST')
                 assert [s['status'] for s in view['sources']] == ['ok', 'ok'], view
                 entries = api('entries', headers)['entries']
@@ -147,21 +160,31 @@ ALLOWED_IPS = "127.0.0.1,localhost"
                 evidence.append('Credential POST/DELETE 204 with presence-only GET')
                 processes.append(subprocess.Popen([str(game), '600'], cwd=root))
                 subprocess.run(['node', str(ROOT / 'tests/tool_catalog_browser.mjs'), str(args.playwright_module.resolve()),
-                                str(args.evidence.resolve()), first, second, USERNAME, PASSWORD],
+                                str(args.evidence.resolve()), first, second, USERNAME, PASSWORD, PLUGIN_SECRET],
                                check=True, env=environment)
                 evidence.append('Browser: trust warning before every grant (cancel keeps untrusted; no remembered bypass), '
                                 'write-only credential, private toggle, plan review with approval + D8, one confirmation, '
-                                'load reports, uninstall preview, game offer, pending-restart banner')
+                                'load reports, uninstall preview, game offer, pending-restart banner; plugins and web tools '
+                                'in separate sections; plugin settings write-only (blank after a failed save); untrust names '
+                                'the still-running in-process plugin and never says it stopped')
                 installed = api('installed', headers)['packages']
                 assert {(p['id'], p['installed_for']) for p in installed} == {('acme.paths', 'requested'), ('acme.echo', 'requested'), ('catalog-overlay', 'requested')}, installed
                 assert (root / 'data').exists()
                 status = api('status', headers)
                 assert 'acme.echo' in status['pending_restart'], status
+                # D1: reviewing the game offer downloaded nothing (its review was cancelled).
+                assert not any('acme.game' in path for path in REQUESTED), REQUESTED
+                status, body = curl('/api/plugins/acme.echo/settings', dashboard=True)
+                assert status == 200 and PLUGIN_SECRET not in body, (status, body)
+                settings = json.loads(body)
+                assert settings['secrets'] == {'TOKEN': True} and settings['values']['TOKEN'] == '', settings
+                assert settings['values']['LABEL'] == 'from the dashboard', settings
                 log_text = (args.evidence / 'daemon.log').read_text(errors='replace')
-                for secret in [USERNAME, PASSWORD]:
+                for secret in [USERNAME, PASSWORD, PLUGIN_SECRET]:
                     assert secret not in log_text
                 evidence.append('Installed graph after the browser flow: process plugin, in-process plugin and overlay; '
-                                'the untrusted running in-process plugin is pending restart; sentinels absent from the log')
+                                'the untrusted running in-process plugin is pending restart; the offer review fetched no '
+                                'package; the plugin password is stored but never read back; sentinels absent from the log')
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=20) == 0
             finally:
