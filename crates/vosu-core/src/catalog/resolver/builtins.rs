@@ -1,4 +1,4 @@
-use crate::state::schema::{CORE_NAMESPACES, SchemaRegistry};
+use crate::state::schema::{CORE_NAMESPACES, CORE_RESOURCE_KINDS, SchemaRegistry};
 use vosu_plugin_api::manifest::{Capability, PackageManifest, Requirement};
 
 /// Construct from the actual core schema registry and compiled bundled manifests,
@@ -14,12 +14,10 @@ impl BuiltinProviders {
             if let Some(schema) = registry.get(namespace) {
                 let version = schema.version.to_string();
                 capabilities.push((format!("field:{namespace}"), version.clone()));
-                let resources: &[&str] = match namespace {
-                    "vosu.chart" => &["chart.file", "chart.audio", "chart.background", "chart.set"],
-                    "vosu.skin" => &["skin"],
-                    _ => &[],
-                };
-                for resource in resources {
+                for (resource, _) in CORE_RESOURCE_KINDS
+                    .iter()
+                    .filter(|(_, owner)| *owner == namespace)
+                {
                     capabilities.push((format!("resource:{resource}"), version.clone()));
                 }
             }

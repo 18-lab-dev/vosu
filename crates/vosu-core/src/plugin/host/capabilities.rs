@@ -17,23 +17,31 @@ impl PluginHost {
         if matches!(kind, CapabilityId::Action(_)) {
             return None;
         }
-        if let CapabilityId::Field(field) = kind {
-            if covers("vosu.osu.internal", field) {
-                return None;
-            }
-            // Core namespaces are always installed. Their schema version, not
-            // the application's version, is the public capability version.
-            for ns in crate::state::schema::CORE_NAMESPACES {
-                if covers(ns, field) {
-                    return self
-                        .state
-                        .registry
-                        .read()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .get(ns)
-                        .map(|schema| schema.version.clone());
+        // Core namespaces and core resource kinds are always installed. Their
+        // schema version, not the application's version, is the public
+        // capability version.
+        let core_namespace = match kind {
+            CapabilityId::Field(field) => {
+                if covers("vosu.osu.internal", field) {
+                    return None;
                 }
+                crate::state::schema::CORE_NAMESPACES
+                    .into_iter()
+                    .find(|ns| covers(ns, field))
             }
+            CapabilityId::Resource(resource) => {
+                crate::state::schema::core_resource_namespace(resource)
+            }
+            CapabilityId::Action(_) | CapabilityId::Game(_) => None,
+        };
+        if let Some(ns) = core_namespace {
+            return self
+                .state
+                .registry
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(ns)
+                .map(|schema| schema.version.clone());
         }
         // Only the instances lock is held; no plugin callback or schema lock.
         self.instances
@@ -62,12 +70,19 @@ impl PluginHost {
         if matches!(kind, CapabilityId::Action(_)) {
             return None;
         }
-        if let CapabilityId::Field(field) = kind
-            && (covers("vosu.osu.internal", field)
-                || crate::state::schema::CORE_NAMESPACES
-                    .iter()
-                    .any(|ns| covers(ns, field)))
-        {
+        let core = match kind {
+            CapabilityId::Field(field) => {
+                covers("vosu.osu.internal", field)
+                    || crate::state::schema::CORE_NAMESPACES
+                        .iter()
+                        .any(|ns| covers(ns, field))
+            }
+            CapabilityId::Resource(resource) => {
+                crate::state::schema::core_resource_namespace(resource).is_some()
+            }
+            CapabilityId::Action(_) | CapabilityId::Game(_) => false,
+        };
+        if core {
             return None;
         }
         self.instances

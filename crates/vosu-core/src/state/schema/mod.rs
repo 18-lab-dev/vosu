@@ -29,6 +29,26 @@ pub const CORE_NAMESPACES: [&str; 5] = [
     "vosu.skin",
 ];
 
+/// The core resource kinds (`resource:<kind>`) and the core namespace whose
+/// schema version is their capability version (`docs/v2/catalog-v2.md`
+/// "Built-in providers"). The install resolver and the installed-capability
+/// lookup both read this one table.
+pub const CORE_RESOURCE_KINDS: [(&str, &str); 5] = [
+    ("chart.file", "vosu.chart"),
+    ("chart.audio", "vosu.chart"),
+    ("chart.background", "vosu.chart"),
+    ("chart.set", "vosu.chart"),
+    ("skin", "vosu.skin"),
+];
+
+/// The core namespace owning core resource kind `kind`, if it is one.
+pub fn core_resource_namespace(kind: &str) -> Option<&'static str> {
+    CORE_RESOURCE_KINDS
+        .iter()
+        .find(|(core, _)| *core == kind)
+        .map(|(_, namespace)| *namespace)
+}
+
 /// The fan-out event namespace non-owning plugins subscribe to
 /// (abi:158-160); never a namespace a schema document itself describes, so
 /// it is reserved and cannot be `register`ed.
