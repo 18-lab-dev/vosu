@@ -182,6 +182,11 @@ harness = false
 name = "live_reader_bench"
 
 [[example]]
+name = "live_reader_process_plugin"
+path = "examples/live_reader_bench/plugin.rs"
+crate-type = ["cdylib"]
+
+[[example]]
 name = "plan_process_bench"
 
 [[example]]

@@ -77,7 +77,7 @@ impl Drop for ReaderPlugin {
         self.scans.shutdown();
     }
 }
-struct Silent;
+pub(super) struct Silent;
 impl ConsoleSink for Silent {
     fn is_tty(&self) -> bool {
         false

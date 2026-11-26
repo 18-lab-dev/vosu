@@ -120,7 +120,10 @@ impl Rings {
 
     /// Every frame written since `before`.
     pub fn since(&self, before: Cursors) -> Result<Census, String> {
-        let after = self.cursors();
+        self.between(before, self.cursors())
+    }
+
+    pub fn between(&self, before: Cursors, after: Cursors) -> Result<Census, String> {
         let mut census = Census::default();
         census.plugin_to_host = count(
             &self.plugin_to_host,

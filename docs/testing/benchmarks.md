@@ -158,14 +158,20 @@ the bundled runtime:
   `plan_memory/stable_regular_fields_process` and
   `plan_memory/lazer_regular_fields_process`. They use the same fixtures as the
   existing `_plan` cases, through a real plugin-host child.
-- `examples/live_reader_bench.rs` gains `--memory process`.
-- For each actual regular and precise capture on stable and lazer, report the
-  counts of `submissions`, `stages`, `reads`, `read_bytes`, `wire_frames` and
-  `control_frames`. Never extrapolate them from the prototype's 5-stage
-  estimate.
-- Report these profiles: no client, subscribed precise, two process plugins
-  in contention, delayed dispatch, a full or nearly full stream, and an idle
-  host.
+- `live_reader_bench --memory process` emits `live_reader/process/stable/regular`,
+  `live_reader/process/stable/precise`, `live_reader/process/lazer/regular`
+  and `live_reader/process/lazer/precise`. These are capture-thread CPU and
+  wall time per tick from the actual osu! producer in a process `cdylib`,
+  not bundled CPU or process-wide CPU divided by an estimated poll rate.
+- For each regular and precise capture report `submissions`, `stages`,
+  `reads`, `read_bytes`, `wire_frames` and `control_frames`. Never
+  extrapolate the read shapes from the prototype's 5-stage estimate.
+- The exact profile options and output suffixes under `live_reader/process/`
+  are `no_client` (attached, no downstream subscriber), `subscribed_precise`,
+  `contention` (two process plugins using the same core broker),
+  `delayed_dispatch`, `full_stream` and `idle_host` (started, no target
+  offered). The idle case reports process CPU over an idle window, not
+  CPU per nonexistent tick.
 
 The generic broker bars above still apply to production transport code.
 
@@ -338,9 +344,15 @@ exploratory Criterion pass (1 s warm-up, 2 s measurement) gave 10.5 µs,
 through core's region walk as the plan handles do; since M5 R1 its native
 lazer assertion had failed before any case ran.
 
-**Not implemented here:** `live_reader_bench --memory process` (no live
-client was authorized) and the X1 profiles (no client, subscribed precise,
-two plugins in contention, delayed dispatch, full stream, idle host).
+The live runner (commands below) reports the actual osu! `cdylib`'s regular
+and precise capture-thread CPU and wall time per completed tick. Raw workload
+totals include ready and error counts and the plans' requested stages, reads
+and bytes; the four `plan_memory` cases above census actual wire/control
+frames in isolated per-capture windows. The live profile reports its actual
+aggregate ring frames (including control traffic); live dispatch and
+publication share those rings, so these totals are not attributed to
+individual capture threads. On Windows, also report executed CPU cycles per
+tick because `GetThreadTimes` can round small charges down to zero.
 
 #### Broker performance work (exploratory, same-session A/B)
 
@@ -497,6 +509,90 @@ cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\plan_memory_bench-HA
 ```
 
 Rerun any round whose `load_other_busy_cpus` reached 2 or more.
+
+#### Official live process-runtime commands (Main)
+
+Use the same release checkout and quiet window as above. Keep the selected
+client in repeatable gameplay (the same version, chart, and replay section
+for every profile); record any version, state or input changes. Do not use
+`--process-fixture`: that uses a native child with a synthetic stable graph
+and resolved signature anchors, solely to check the harness without a game.
+The live path uses the actual game's discovery facts, brokered scan and memory
+reads, capture workers and state publication. Core verifies the local package
+through the normal approval gate using a fresh, private approval store; the
+benchmark process never loads the `cdylib` itself. Keep the real target readable
+to the benchmark core under the OS's normal process permissions.
+
+For a short path check only, replace `--pid PID --client CLIENT --warmup 5
+--cycles 20` with `--process-fixture --warmup 1 --cycles 2` in each attached
+profile. Use `--cycles 1` for a 100 ms `idle_host` smoke. A smoke must show
+ready regular and precise work and broker traffic for every attached
+profile, plus proof of live demand, contention, dispatch hold and delivery
+pressure in the corresponding profiles. Idle must retain the same child,
+with two control receipts and zero capture ticks.
+
+`subscribed_precise` keeps a real surface subscription to `vosu.osu/beatmap/time/live`.
+The same subscription is active in `contention`, `delayed_dispatch` and
+`full_stream`. Contention attaches a second child plugin to its own native
+memory target on the same core broker. Delayed dispatch holds one scoped
+callback while capture workers continue. The full-stream case queues legal
+near-1 MiB messages on that scope, proves at least 90% of the child delivery
+budget was occupied during the sample, then verifies the bytes drained.
+These are transport pressure controls, not game-generated actions. Idle host
+measures five seconds between two control receipts, with no attached session
+or capture ticks. Report idle CPU even if the native CPU clock rounds it to
+zero. The live data are not a pass/fail performance bar.
+
+Linux (lazer; also run stable under Wine when available). Set `LAZER_PID` and,
+if running stable, `STABLE_PID` to the exact native process IDs. Use the CPU
+approved and reserved for this window (7 below); the runner checks that the
+plugin host inherits the chosen mask.
+
+```sh
+export CARGO_TARGET_DIR="$ROOT/targets/m5"
+cargo build --locked --release --features linux-process-events \
+  --bin vosu --example live_reader_bench --example live_reader_process_plugin
+mkdir -p "$ROOT/evidence/live-reader"
+reader="$CARGO_TARGET_DIR/release/examples/live_reader_bench"
+"$reader" --list-process-cases > "$ROOT/evidence/live-reader/linux-cases.txt"
+for client in lazer stable; do
+  case "$client" in lazer) pid="$LAZER_PID";; stable) pid="$STABLE_PID";; esac
+  if [ "$client" = stable ] && [ -z "$pid" ]; then continue; fi
+  for profile in no_client subscribed_precise contention delayed_dispatch full_stream; do
+    taskset -c 7 "$reader" --memory process --pid "$pid" --client "$client" \
+      --profile "$profile" --warmup 5 --cycles 20 \
+      > "$ROOT/evidence/live-reader/linux-$client-$profile.json" || exit 1
+  done
+done
+taskset -c 7 "$reader" --memory process --profile idle_host \
+  > "$ROOT/evidence/live-reader/linux-idle_host.json"
+```
+
+Native Windows guest (not cross-built); set `$stablePid`, `$lazerPid` and `$root`
+before running. Use the guest's approved affinity mask (`FFFF` below).
+
+```powershell
+$env:CARGO_TARGET_DIR = Join-Path $root 'targets\m5'
+cargo build --locked --release --no-default-features --bin vosu --example live_reader_bench --example live_reader_process_plugin
+if ($LASTEXITCODE -ne 0) { throw 'Live reader build failed' }
+$release = Join-Path $env:CARGO_TARGET_DIR 'release'
+& "$release\vosu.exe" plugin-host           # prime this image; expected exit 70
+if ($LASTEXITCODE -ne 70) { throw 'Unexpected plugin-host preflight result' }
+$reader = Join-Path $release 'examples\live_reader_bench.exe'
+$evidence = New-Item -ItemType Directory -Force (Join-Path $root 'evidence\live-reader')
+& $reader --list-process-cases | Set-Content "$evidence\windows-cases.txt"
+foreach ($client in 'stable','lazer') {
+  $targetPid = if ($client -eq 'stable') { $stablePid } else { $lazerPid }
+  foreach ($profile in 'no_client','subscribed_precise','contention','delayed_dispatch','full_stream') {
+    cmd /c start "" /B /WAIT /AFFINITY FFFF "$reader" --memory process --pid $targetPid --client $client --profile $profile --warmup 5 --cycles 20 |
+      Set-Content "$evidence\windows-$client-$profile.json"
+    if ($LASTEXITCODE -ne 0) { throw "$client $profile failed" }
+  }
+}
+cmd /c start "" /B /WAIT /AFFINITY FFFF "$reader" --memory process --profile idle_host |
+  Set-Content "$evidence\windows-idle_host.json"
+if ($LASTEXITCODE -ne 0) { throw 'idle_host failed' }
+```
 
 ## M4a D17 contract
 

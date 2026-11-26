@@ -166,6 +166,8 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
         count: usize,
         mut apply: impl FnMut(usize, &FlatReadResults<'_>) -> Result<(), MemoryError>,
     ) -> Result<(), MemoryError> {
+        #[cfg(feature = "bench-harness")]
+        crate::bench_capture::record_plan(stages);
         let plan = self.next_plan_id();
         SYNC_READ_BUFFERS.with(|cell| {
             let mut buffers = cell.borrow_mut();

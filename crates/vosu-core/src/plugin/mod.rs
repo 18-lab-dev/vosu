@@ -126,6 +126,8 @@ pub use read_plan::{
     deliver_sync, execute, execute_bytes, execute_into, execute_sync_into, on_dispatch_thread,
 };
 pub(crate) use registry::load_installed_process;
+#[cfg(feature = "bench-harness")]
+pub use registry::load_official_osu_benchmark;
 #[cfg(feature = "test-harness")]
 pub use registry::load_official_test_fixture;
 pub use registry::{

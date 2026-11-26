@@ -278,6 +278,28 @@ pub fn load_official_test_fixture(
     )
 }
 
+/// Load the explicitly staged M5 osu! benchmark package with the official
+/// schema grants. Only the benchmark build sees this entry point. It never
+/// maps the library in core, and still requires normal launch approval.
+#[cfg(feature = "bench-harness")]
+pub fn load_official_osu_benchmark(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+) -> Result<LoadedPlugin, HostError> {
+    let loaded = load_package_dir(
+        application_version,
+        snapshot,
+        dir,
+        PackageOrigin::OfficialTestFixture,
+        false,
+    )?;
+    if loaded.manifest.id != "vosu.osu" {
+        return Err(HostError::State("the M5 benchmark expects vosu.osu".into()));
+    }
+    Ok(loaded)
+}
+
 /// Validates the package in `dir` for `origin` and grants its runtime,
 /// under `load_development`'s build policy for `debug_build`. Only a
 /// [`PackageOrigin::Development`] package in a debug build reaches the
@@ -300,10 +322,10 @@ fn load_package_dir(
         "development",
         origin.is_official(),
     )?;
-    #[cfg(feature = "test-harness")]
+    #[cfg(any(feature = "test-harness", feature = "bench-harness"))]
     if origin == PackageOrigin::OfficialTestFixture && manifest.runtime != Runtime::Process {
         return Err(HostError::InProcessRefused {
-            reason: "the test harness's official fixture loading accepts only `runtime = \"process\"` packages",
+            reason: "official fixtures accept only `runtime = \"process\"` packages",
         });
     }
     if !debug_build && manifest.runtime == Runtime::InProcess {

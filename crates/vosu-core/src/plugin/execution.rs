@@ -51,13 +51,11 @@ pub enum PackageOrigin {
     /// identity; a trusted user source is `false`.
     Installed { official: bool },
     /// A separately staged external library under an official `vosu.*`
-    /// identity, loaded only by the test harness
-    /// ([`super::registry::load_official_test_fixture`]) so a native test
-    /// can run the official producer in a plugin host. Official, never
-    /// bundled: it gets the official namespace and schema trust, never
-    /// the bundled-only surface grants. Absent from every build without
-    /// `test-harness`, which release builds reject.
-    #[cfg(feature = "test-harness")]
+    /// identity, loaded only by a test or benchmark harness so native
+    /// evidence can use the official producer in a plugin host. Official,
+    /// never bundled: it gets official namespace and schema trust, never
+    /// bundled-only surface grants.
+    #[cfg(any(feature = "test-harness", feature = "bench-harness"))]
     OfficialTestFixture,
 }
 
@@ -68,7 +66,7 @@ impl PackageOrigin {
         match self {
             Self::Bundled | Self::Installed { official: true } => true,
             Self::Development | Self::Installed { official: false } => false,
-            #[cfg(feature = "test-harness")]
+            #[cfg(any(feature = "test-harness", feature = "bench-harness"))]
             Self::OfficialTestFixture => true,
         }
     }

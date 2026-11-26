@@ -23,3 +23,5 @@ fixtures -> publish
 fixtures -> resources
 fixtures -> plugin
 fixtures -> actions
+capture -> bench_capture
+memory -> bench_capture
