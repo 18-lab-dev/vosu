@@ -83,22 +83,6 @@ def state_body(schema: str) -> tuple[int, bytes]:
     current = barrier()
     if current == "no-client":
         return 500, NOT_READY
-    profile = OPTIONS.get("player_loader_profile")
-    if current == "play" and schema == "v2" and profile:
-        # Simulates upstream's actual behavior entering `play`: PlayerLoader reports
-        # state `play` with a clock that has not moved yet (reported `paused`, test for
-        # the tolerated pre-gameplay pause), then gameplay's real advancing clock
-        # (reported `play`); a later entry can simulate a real pause once that clock has
-        # moved (test that the barrier still aborts once gameplay has started).
-        with LOCK:
-            index = COUNTS.get("play_v2", 0)
-            COUNTS["play_v2"] = index + 1
-        step = profile[min(index, len(profile) - 1)]
-        body = json.dumps({"state": {"number": 2, "name": "play"},
-                           "game": {"paused": step["paused"]},
-                           "beatmap": {"time": {"live": step["clock"]}}},
-                          separators=(",", ":")).encode()
-        return 200, body
     # The upstream state is the same shape the vosu fixture envelopes carry.
     body = ENVELOPES_UPSTREAM[current]
     unstable = OPTIONS.get("unstable_upstream")

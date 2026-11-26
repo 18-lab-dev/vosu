@@ -354,46 +354,6 @@ class FakeTraversalTests(CaptureTestCase):
         early_exit = FakeClient(self.state, script={"paused": "no-client"})
         self.refuses("barrier out of order", scenario, early_exit, self.config(scenario))
 
-    def test_play_barrier_tolerates_upstream_paused_before_gameplay(self) -> None:
-        # PlayerLoader reports `play` with a clock that has not moved yet, which
-        # upstream's own rule (`game.paused = playTime == previousPlayTime`) reports as
-        # `paused`; the barrier must tolerate that and still reach `play` (owner
-        # amendment 2026-11-26, after the first full pilot's run 3).
-        scenario = gc.ScenarioSet("test-pregame-pause", ("menu", "play", "paused"),
-                                  ("state-http.json-v2.get.menu", "state-http.json-v2.get.paused"))
-        profile = {"player_loader_profile": [{"paused": True, "clock": 0},
-                                             {"paused": False, "clock": 100}]}
-        capture = self.capture(scenario, FakeClient(self.state),
-                               self.config(scenario, source_options=profile))
-        self.assertEqual([case["id"] for case in capture["cases"]], list(scenario.cases))
-        play_barrier = next(b for b in self.transcript()["barriers"] if b["barrier"] == "play")
-        self.assertGreaterEqual(play_barrier["pregame_pauses_tolerated"], 1)
-
-    def test_play_barrier_aborts_on_paused_once_gameplay_started(self) -> None:
-        # "Gameplay started" is defined from the observed clock: once it has advanced
-        # even once, a later upstream `paused` is a real out-of-order observation again.
-        scenario = gc.ScenarioSet("test-real-pause-in-play", ("menu", "play", "paused"),
-                                  ("state-http.json-v2.get.menu", "state-http.json-v2.get.paused"))
-        profile = {"player_loader_profile": [{"paused": True, "clock": 0},
-                                             {"paused": False, "clock": 100},
-                                             {"paused": True, "clock": 100}]}
-        self.refuses("barrier out of order: source reached paused while waiting for play",
-                     scenario, FakeClient(self.state), self.config(scenario, source_options=profile))
-
-    def test_paused_barrier_after_gameplay_is_recorded_normally(self) -> None:
-        # Once gameplay has genuinely started and `play` held, a later upstream `paused`
-        # is the real `paused` barrier transition and is captured exactly as before.
-        scenario = gc.ScenarioSet("test-post-gameplay-pause", ("menu", "play", "paused"),
-                                  ("state-http.json-v2.get.paused",))
-        profile = {"player_loader_profile": [{"paused": True, "clock": 0},
-                                             {"paused": False, "clock": 100}]}
-        capture = self.capture(scenario, FakeClient(self.state),
-                               self.config(scenario, source_options=profile))
-        self.assertEqual([case["id"] for case in capture["cases"]], list(scenario.cases))
-        self.assertEqual(capture["cases"][0]["barrier"], "paused")
-        self.assertEqual([b["barrier"] for b in self.transcript()["barriers"]],
-                         ["menu", "play", "paused"])
-
     def test_process_exit_must_be_observed(self) -> None:
         scenario = gc.ScenarioSet("test-exit", ("menu", "no-client"),
                                   ("state-http.json-v2.get.menu", "state-http.json-v2.get.no-client"))

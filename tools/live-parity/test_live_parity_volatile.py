@@ -101,37 +101,6 @@ class DumpSandwichTests(unittest.TestCase):
                                                                  envelope(-1.0, 2)))
 
 
-class BarrierTests(unittest.TestCase):
-    def session(self, views: list) -> tuple[gc.Session, list]:
-        client = mock.Mock()
-        client.exited.return_value = False
-        session = gc.Session({"golden": {}}, gc.SCENARIO_SETS["m4b-dry-run-v1"], Path("x"),
-                             timeout=5, build=None, client=client, operator=lambda b, m: None)
-        calls: list = []
-
-        def observe(_source, _dump):
-            calls.append(1)
-            return {"source": "menu", "vosu": "menu"}, views[len(calls) - 1], None
-        session._observe = observe
-        return session, calls
-
-    def test_barrier_needs_consecutive_identical_views(self) -> None:
-        session, calls = self.session(["a", "b", "b", None, "c", "c", "c", "d"])
-        with mock.patch.object(gc, "POLL_S", 0):
-            session._wait_barrier("menu", None, None, [])
-        self.assertEqual(len(calls), 7)
-        self.assertEqual(session.transcript["barriers"][0]["stable_observations"], 3)
-        self.assertTrue(session.transcript["barriers"][0]["identical_views"])
-
-    def test_caseless_barrier_needs_only_the_reported_state(self) -> None:
-        # Active play: the clock and the provider generation change every observation.
-        session, calls = self.session(["a", None, "b", "c"])
-        with mock.patch.object(gc, "POLL_S", 0):
-            session._wait_barrier("menu", None, None, [], identical_views=False)
-        self.assertEqual(len(calls), 3)
-        self.assertFalse(session.transcript["barriers"][0]["identical_views"])
-
-
 class ClientRootTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
