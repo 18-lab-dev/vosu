@@ -222,6 +222,8 @@ watcher (§7.6 "Lifecycle terminals are reserved").
 
 **Non-owning plugins and session events.** `SESSION_ATTACHED`, `SESSION_DETACHED`, and `FOCUS_CHANGED` for a given session go to that session's owning game plugin always, and additionally to any other plugin that subscribed to session events: `VOSU_OP_STATE_SUBSCRIBE` (§6.12) with a selector naming the reserved pseudo-namespace `vosu.sessions` and an empty pointer, exactly as `docs/v2/api-v1.md`'s session-events WebSocket reuses its field-subscription protocol for the same purpose. A non-owning subscriber's `SESSION_ATTACHED` omits `name`/`path`/`command_line`/`argv` entirely, never with a placeholder: `path` would otherwise hand every `vosu.sessions` subscriber the install directory D2 reserves for the owning plugin. Non-owning plugins learn of a session only once it is identified: their `SESSION_ATTACHED` is sent when the owning plugin's `SESSION_IDENTIFY` arrives, not at attach. A subscribing plugin receives the three messages above instead of (not in addition to) a `STATE_UPDATE` for that pseudo-namespace, since they are already typed events; this is the one selector for which `STATE_SUBSCRIBE` changes a plugin's delivered opcode set rather than only its demand.
 
+**Startup session watch (2026-11-26).** In either runtime, a valid `vosu.sessions` subscription sent during `create` returns `VOSU_OK`; the watch activates once core publishes the instance, and failed startup discards it.
+
 **Lifecycle backpressure (K6, A2b).** Subscribing or resubscribing to
 `vosu.sessions` replays the current identified-session list. An attach and
 detach that both remain unseen by the watcher cancel each other. If the

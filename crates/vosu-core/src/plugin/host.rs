@@ -105,6 +105,8 @@ enum InstanceSlot {
         plugin_id: String,
         settings_schema: Option<SettingsSchema>,
         pending: Vec<PendingDelivery>,
+        /// A validated `vosu.sessions` request, activated only after publication.
+        watch_sessions: bool,
     },
     /// A running instance, answering dispatch immediately.
     Live(InstanceEntry),

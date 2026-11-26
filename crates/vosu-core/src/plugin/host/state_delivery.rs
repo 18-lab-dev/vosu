@@ -130,13 +130,6 @@ impl PluginHost {
         request: StateSubscribe,
     ) -> vosu_status {
         let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
-        let plugin = {
-            let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
-            match instances.get(&who) {
-                Some(InstanceSlot::Live(entry)) => entry.plugin_id.clone(),
-                _ => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
-            }
-        };
         let Some(raw) = request.session else {
             if request.selectors.len() != 1
                 || request.selectors[0].ns != "vosu.sessions"
@@ -144,44 +137,16 @@ impl PluginHost {
             {
                 return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
             }
-            let attachments = {
-                let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
-                let mut delivery = self
-                    .state_delivery
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                if delivery.ending.contains(&who) {
-                    delivery.restart.insert(who);
-                    return vosu_status::VOSU_OK;
-                }
-                delivery.watchers.insert(who);
-                // Identification is recorded before `open_bus_session`. A
-                // session not yet open would refuse the watcher's immediate
-                // subscription; `state_session_identified` announces it to
-                // this (now registered) watcher once its bus state exists.
-                sessions
-                    .identified_sessions()
-                    .filter(|(_, owner, _)| owner.as_str() != plugin)
-                    .filter(|(handle, _, _)| {
-                        self.state.store.current(SessionKey(handle.0)).is_some()
-                    })
-                    .filter_map(|(handle, _, _)| sessions.public_attachment(handle))
-                    .collect::<Vec<_>>()
-            };
-            for attached in attachments {
-                let key = SessionKey(attached.handle);
-                self.queue_attachment(who, attached);
-                // A providing watcher learns its namespace's current demand.
-                self.refresh_state_demand(key);
-            }
-            return vosu_status::VOSU_OK;
+            return self.subscribe_sessions_watch(who);
         };
         let key = SessionKey(raw);
         let handle = SessionHandle(raw);
-        let grant = {
+        let (plugin, grant) = {
             let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
             match instances.get(&who) {
-                Some(InstanceSlot::Live(entry)) => entry.publisher.read_grant.clone(),
+                Some(InstanceSlot::Live(entry)) => {
+                    (entry.plugin_id.clone(), entry.publisher.read_grant.clone())
+                }
                 _ => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
             }
         };
@@ -994,6 +959,7 @@ impl PluginHost {
 }
 
 mod actions;
+mod watch;
 
 #[cfg(test)]
 mod tests;

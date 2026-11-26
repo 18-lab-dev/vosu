@@ -135,6 +135,7 @@ impl PluginHost {
                     plugin_id: plugin_id.clone(),
                     settings_schema: schema.clone(),
                     pending: Vec::new(),
+                    watch_sessions: false,
                 },
             );
         self.resource_state
@@ -187,6 +188,8 @@ impl PluginHost {
                 return Err(error);
             }
         };
+        // Publish and activate a startup watch as one state transition.
+        let state_serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
         let mut guard = self
             .instances
             .lock()
@@ -198,6 +201,7 @@ impl PluginHost {
             // call just built instead of publishing it `Live`, and remove
             // the placeholder so `destroy_all`'s own wait for it resolves.
             self.discard_unpublished(guard, id);
+            drop(state_serial);
             // F3: same reason as the `created` error path above — this
             // instance is being destroyed, never published `Live`, so
             // its matcher table (not yet registered) needs no unregister.
@@ -218,6 +222,7 @@ impl PluginHost {
             // session cleanup is owed; the namespace registration drops
             // with `registration` on return.
             self.discard_unpublished(guard, id);
+            drop(state_serial);
             instance.abandon(SHUTDOWN_RACE_DESTROY_GRACE);
             self.timers.cancel_all(id);
             return Err(HostError::InstanceLost);
@@ -237,6 +242,7 @@ impl PluginHost {
                 .register(plugin_id.clone(), table)
             {
                 self.discard_unpublished(guard, id);
+                drop(state_serial);
                 if let Err(destroy_error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
                     tracing::warn!(
                         ?id, %destroy_error,
@@ -300,11 +306,19 @@ impl PluginHost {
                 }),
             }),
         );
-        let pending = match previous {
-            Some(InstanceSlot::Creating { pending, .. }) => pending,
-            _ => Vec::new(),
+        let (pending, watch_sessions) = match previous {
+            Some(InstanceSlot::Creating {
+                pending,
+                watch_sessions,
+                ..
+            }) => (pending, watch_sessions),
+            _ => (Vec::new(), false),
         };
         drop(guard);
+        if watch_sessions {
+            self.subscribe_sessions_watch(id);
+        }
+        drop(state_serial);
         self.instances_changed.notify_all();
         self.replay_pending(id, pending);
         Ok(())

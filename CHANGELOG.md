@@ -21,6 +21,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   after approval, including after vosu restarts. Manage their approval and
   lifecycle from the Plugins section. Updates and uninstalls stop the old
   host before moving its files; changed bytes require new approval.
+- Plugins can subscribe to session events from `create`; vosu replays existing
+  sessions once the plugin is ready. Demand-driven providers such as Map
+  analysis can now see sessions without waiting for a direct action.
 
 - Process plugins can request Linux user namespaces, with explicit
   per-artifact approval. This lets plugins such as the replay renderer use
