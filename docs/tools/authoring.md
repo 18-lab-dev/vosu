@@ -8,7 +8,7 @@ description: "Manifest, UI, state, actions, settings and testing reference for 2
 
 New to tools? Follow [Create a tool](create-a-tool.md) from an empty directory to a published catalog. This page is the companion reference; the [tool protocol](protocol.md) is the contract for routes, launch sessions and the bridge, and [API v1](../v2/api-v1.md) for state, resources and actions.
 
-A 2.0 tool is a static web application. vosu serves its files and gives its browser tab a launch session; it never runs a tool process. Anything that needs native code, the filesystem or the game client is a [plugin](../v2/plugin-abi.md) action that the tool calls.
+A 2.0 tool is a static web application. vosu serves its files; only the dashboard's **Open** gives a browser tab a launch session. No tool process is started. Native work belongs to a [plugin](../plugins/authoring.md) action.
 
 ## Development launch
 
@@ -26,7 +26,7 @@ The [Hello web example](../../examples/tools/hello-web/) is a complete tool with
 - `resource:<kind>` for files it loads through resource references, such as `resource:chart.background`;
 - `action:<plugin-id>.<name>` for each plugin action it invokes.
 
-The list is the tool's permission surface: the install plan shows it to the user, an unresolvable `requires` entry blocks the tool, and an action is callable only when its capability is listed **and** resolves to an installed provider. Put a capability in `optional` when the tool works without it. Built-in namespaces (`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`) resolve without installing anything.
+The install plan shows the list and an unresolved `requires` entry blocks the tool. An action is callable only when listed **and** resolved to an installed provider, and only from a tab with a live launch session. Field and resource requirements describe dependencies; they are not a read firewall. Put a capability in `optional` when the tool works without it. Built-in namespaces (`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`) resolve without installing anything; fields the current session does not fill remain absent or unknown.
 
 Give the tool an identity on the Tools page with `icon` (square SVG, or PNG at least 256×256, shown at 40–64 px) and `banner` (3:1 PNG, JPEG, WebP or SVG, recommended 1200×400, cropped to the card width, so keep the subject centred). Both are paths inside the package. Catalogs repeat them as HTTPS `icon_url`/`banner_url`.
 
@@ -39,9 +39,9 @@ import { vosu } from '/tools/_host/v2/bridge.js';
 try { await vosu.ready; } catch (error) { showReadOnly(error.message); }
 ```
 
-`vosu.canWrite` is true only in a tab the dashboard's **Open** launched. That tab exchanged a single-use launch code, removed from the URL before anything else ran, for a session the bridge keeps in module memory. A reload, a bookmark or a direct visit is read-only by design: disable action controls when `vosu.canWrite` is false and point the user at **Open**.
+`vosu.canWrite` means this page holds a session, not that it can call every action. The dashboard's **Open** supplies a single-use launch code; the bridge strips it from the URL before asynchronous work, exchanges it, and keeps the session in module memory. A reload, a bookmark or a direct visit is read-only by design: disable action controls and point the user at **Open**. Handle revoked sessions and unavailable optional providers even when a tab still holds a token.
 
-Reads never need the session. Use plain `fetch` for your own static files and API v1 reads; the bridge sends the session only on the action and job requests it builds itself. Never copy anything into `localStorage`, `sessionStorage`, IndexedDB or cookies in a way that could grant authority, never open same-origin pages without `noopener`, and never frame overlays: overlays share the tool's origin and storage.
+Reads never need the session. Use plain `fetch` for your own static files and API v1 reads; the bridge sends the session only on action, job and job-artifact requests it builds itself. Never copy anything into `localStorage`, `sessionStorage`, IndexedDB or cookies in a way that could grant authority, never open same-origin pages without `noopener`, and never frame overlays: overlays share the tool's origin and storage.
 
 ## Look and layout
 
@@ -59,11 +59,22 @@ Link `/tools/_host/v1/theme.css` and build from its `v-` classes, so every tool 
 
 Resource and tree references (`{"url", "type"}`, `{"url"}`) are ordinary same-origin URLs: put them in `<img src>`, `<audio>` or `fetch` directly. Never build file paths; state carries none.
 
+Prefer common fields such as `/vosu.play/combo`; fall back to osu!-specific
+fields only when needed. Select precise fields only while displaying them:
+their demand follows the subscription, not an HTTP read or a separate feed.
+
 ## Actions
 
-`await vosu.invoke('<plugin-id>.<name>', args, {session, signal, onProgress})` runs an action and resolves with its result; `vosu.start` returns a handle (`id`, `done`, `onProgress`, `cancel`) for background work. The action's declared session mode decides `session`: omit it (the focused session) or pass a session id for `required`, pass `null` for `none`, either for `optional`. Errors carry a `code`: `forbidden` without a session or grant, `unknown_session` when no game is focused, `invalid_arguments`, `cancelled`, `timed_out`, `plugin_crashed`, or the plugin's own code.
+`await vosu.invoke('<plugin-id>.<name>', args, {session, signal, onProgress})` resolves with the action result. `await vosu.start` returns a job handle (`id`, `done`, `onProgress`, `cancel`, `artifacts`). Omit `session` to target the focused session, pass a specific id to pin it, or pass `null` to call an action that permits a sessionless invocation. Errors carry a `code`: a missing launch session or grant can give `forbidden`, no focused game gives `unknown_session`, and other codes include `invalid_arguments`, `cancelled`, `timed_out`, `plugin_crashed`, or the plugin's own code.
 
 Pass an `AbortSignal` to cancel: aborting before the request sends nothing, aborting while the job is being created still cancels it, and aborting later sends `DELETE`. Cancellation is advisory; a result that wins the race stands.
+
+The job deadline is 30 seconds even with `start`. For longer work, poll
+short status actions with the plugin's [operation id](../v2/api-v1.md#plugin-owned-operations-af3),
+not the start action's job id. Once ready, a short output action can
+attach a [protected artifact](../v2/api-v1.md#job-artifacts-af12) to its job:
+use `vosu.start` and `await handle.artifacts()` for authenticated `fetch`
+and `download`. Do not put the file at a public resource URL.
 
 ## Settings
 
@@ -71,7 +82,7 @@ Optional `settings.json` reuses the [overlay settings format](../../README.md#ov
 
 ## Distribution
 
-A release is a ZIP with `manifest.toml` at the root, the UI files, `settings.json` when used, and redistributable license texts, listed in a `catalog-v2.json` `tools` entry; see [Catalog sources and installation](protocol.md#catalog-sources-and-installation) and [Create a tool](create-a-tool.md#9-package-and-publish). Check the catalog and extracted packages with the SDK's [`vosu-package-check`](../v2/catalog-v2.md#package-checker-af10). Installing a tool is always a reviewed catalog plan; a tool from a source the user has not trusted stays untrusted until approved. Official tools are maintained in [vosu-tools](https://github.com/18-lab-dev/vosu-tools); vosu embeds none.
+A release is a ZIP with `manifest.toml` at the root, the UI files, `settings.json` when used, and redistributable license texts. List it under `tools` in `catalog-v2.json` and validate the catalog and extracted packages with the SDK's [`vosu-package-check`](../v2/catalog-v2.md#package-checker-af10). See [publishing](create-a-tool.md#9-package-and-publish) and [catalog identity updates](catalog.md). Any native dependency is a separately reviewed plugin package: an untrusted-source process plugin needs explicit native approval and is not sandboxed. Official tools are maintained in [vosu-tools](https://github.com/18-lab-dev/vosu-tools); vosu embeds none.
 
 ## Test a tool
 

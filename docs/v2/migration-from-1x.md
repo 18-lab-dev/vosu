@@ -1,8 +1,8 @@
 # Migrating from vosu 1.x
 
-This guide collects what changes for people and overlay authors moving from
-vosu 1.x to 2.0. The normative contracts are the linked specifications; this
-page only points to them.
+This page is the removed-route reference linked from dashboard notices.
+For alpha paths, packages and settings, see
+[Migrating from 1.x to 2.0](../migration/2.0.md).
 
 ## Overlays that used removed APIs
 
@@ -21,14 +21,13 @@ release. If you wrote it, replace the removed request as below.
 
 | Notice | Removed request | Use instead |
 | --- | --- | --- |
-| Selected-field live feed | `WS /websocket/v2/subscribe` | API v1 field subscriptions, `WS /api/v1/sessions/{id\|active}/subscribe` ([API v1](api-v1.md#field-subscriptions-ws-apiv1sessionsidactivesubscribe)). Select the fields the overlay shows; high-frequency fields are sampled only while selected, which replaces the separate precise feed. |
-| Skin folder listing | `GET /files/skin/` (the index, not individual files) | Skin trees and resource references in API v1 ([resources and trees](api-v1.md#resources-and-trees)). Individual `/files/skin/<name>` files are still served by the upstream-compatible adapter. |
-| In-game overlay page | `/api/ingame` (every method) | vosulay, the in-game overlay. The notice offers to install the `vosulay-editor` tool from the `18-lab-dev/vosulay` catalog, through the ordinary install plan and its approvals ([catalog v2 "API placement"](catalog-v2.md#api-placement)). |
+| Selected-field live feed | `WS /websocket/v2/subscribe` | API v1 field subscriptions, `WS /api/v1/sessions/{id\|active}/subscribe` ([API v1](api-v1.md#field-subscriptions-ws-apiv1sessionsidactivesubscribe)). Select the fields the overlay shows; high-frequency fields are sampled at their own cadence while selected. API v1 needs no separate precise feed. |
+| Skin folder listing | `GET /files/skin/` (the index, not individual files) | Skin trees and resource references in API v1 ([resources and trees](api-v1.md#resources-and-trees)). Individual stable skin files at `/files/skin/<name>` remain in the upstream-compatible adapter; use API v1 for lazer skin files. |
+| In-game overlay page | `/api/ingame` (every method) | vosulay, the in-game overlay. The notice offers the official `vosulay-editor` install plan, including the `vosu.vosulay` plugin and normal approvals. [Install the matching native runtime separately](../migration/2.0.md#overlays-and-vosulay), or use vosulay standalone. |
 
 The upstream-compatible state routes (`/json/v2`, `/websocket/v2`,
 `/websocket/v2/precise`, gosuMemory and streamCompanion) are not removed and
-need no change ([API v1 route ownership](api-v1.md#route-ownership-upstream-compatible-adapters)).
-New overlays should still prefer API v1: it addresses any game's session, not
-only osu!, and its [worked examples](api-v1.md#worked-examples) show a
-cross-game counter and a background image read through a resource
-reference.
+need no change for upstream fields. vosu-only fields removed from those
+adapter payloads have [API v1 replacements](state-schema.md#1x-to-20-field-mapping).
+For new overlays, see [Overlay authoring](../overlays/authoring.md) and the
+[API v1 examples](api-v1.md#worked-examples).
