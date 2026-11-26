@@ -4,9 +4,11 @@
 A 2.0 tool is a static web package served by the bundled `vosu.toolhost`
 (A7.2). The legacy `tests/fixtures/tool-host` `tool.toml` package is listed
 `disabled` with `needs-2.0-update`, never parsed, run, proxied or served, and
-its files are byte-identical afterwards. The required browser phase drives the
-`fixture-v2` web tool through the dashboard launch, the single-use session
-exchange and the API v1 bridge.
+its files are byte-identical afterwards. `tests/tool_bridge.mjs` first checks
+the one bridge module in isolation. The required browser phase
+(`tests/tool_host_v2_browser.mjs`) drives the `fixture-v2` web tool through the
+dashboard launch, the single-use session exchange and the API v1 bridge, plus
+the bridge's authority, reconnect and removed-route counterexamples.
 """
 import argparse
 import hashlib
@@ -79,6 +81,8 @@ def main():
     binary = args.binary.resolve(strict=True)
     if args.playwright_module is None or not args.playwright_module.is_file():
         parser.error('required browser phase needs --playwright-module or VOSU_PLAYWRIGHT_MODULE')
+    subprocess.run(['node', '--experimental-vm-modules', '--test', str(ROOT / 'tests/tool_bridge.mjs')],
+                   cwd=ROOT, check=True, timeout=120)
     playwright = args.playwright_module.resolve(strict=True)
     subprocess.run(['taskset', '-c', '0-7,16-23', 'nice', '-n', '10', 'cargo', 'build',
                     '--locked', '-p', 'vosu-plugin-testkit', '--features', 'test-harness',
@@ -158,10 +162,12 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                 print('curl legacy UI, settings and /api/* proxy paths -> 404 (no service, no proxy)')
                 for path in ['/tools/_host/v1/self', '/tools/_host/v1/settings',
                              '/tools/_host/v1/context', '/tools/_host/v1/overlays',
-                             '/tools/_host/v1/bridge.js', '/tools/_host/v1/cli']:
+                             '/tools/_host/v1/bridge.js', '/tools/_host/v1/cli',
+                             '/assets/tool-bridge-v1.js']:
                     status, _ = curl(path)
                     assert status == 404, (path, status)
-                print('curl deleted /tools/_host/v1/{self,settings,context,overlays,bridge.js,cli} -> 404')
+                print('curl deleted /tools/_host/v1/{self,settings,context,overlays,bridge.js,cli} '
+                      'and /assets/tool-bridge-v1.js -> 404')
 
                 # The v2 web tool: static UI, explicit api/* 404, 503 when not servable.
                 wait_for(lambda: tool_view('fixture-v2')['status'] == 'running')

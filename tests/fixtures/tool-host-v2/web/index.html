@@ -1,18 +1,22 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>M3 browser fixture</title>
+<img id="icon" src="/tools/fixture-v2/_icon" alt="">
 <button id="invoke">Invoke</button><output id="result"></output>
 <button id="start">Start</button><output id="progress"></output>
 <button id="abort">Abort</button><output id="terminal"></output>
+<output id="launch"></output>
 <output id="subscription"></output>
 <script type="module">
 import {vosu} from '/tools/_host/v2/bridge.js';
 const output = (id, value) => document.getElementById(id).textContent = JSON.stringify(value);
-await vosu.ready;
+// A bookmark, reload or replayed launch URL still loads read-only.
+try { await vosu.ready; } catch (error) { output('launch', error.message); }
 document.documentElement.dataset.ready = String(vosu.canWrite);
 const sessions = await (await fetch('/api/v1/sessions')).json();
 const fixture = sessions.sessions.find(value => value.plugin.id === 'test.api.fixture');
 if (!fixture) throw new Error('Real fixture session missing');
+document.documentElement.dataset.session = fixture.session;
 const unsubscribe = vosu.subscribe([''], frame => output('subscription', frame), undefined, {session: fixture.session});
 addEventListener('pagehide', unsubscribe, {once: true});
 let controller;
@@ -33,4 +37,5 @@ document.getElementById('start').onclick = async () => {
   } catch (error) { output('terminal', error.code || error.message); }
 };
 document.getElementById('abort').onclick = () => controller.abort();
+document.documentElement.dataset.loaded = 'true';
 </script>
