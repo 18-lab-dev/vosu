@@ -82,6 +82,17 @@ All notable user-visible changes to vosu are documented here. Older sections are
   describe 2.0 web tools only: package, frozen routes, launch sessions, API
   v1 pointers, resources and actions. `examples/tools/hello-python` is
   replaced by the build-free web example `examples/tools/hello-web`.
+- A plugin can publish its own namespace into a game session another plugin
+  owns (plugin ABI §6.6 amendment, 2026-11-26), so tool plugins such as
+  `vosu.tools.map-analysis` and `vosu.tools.server-pp` can serve their fields
+  for every client. The plugin must have received `SESSION_ATTACHED` for the
+  session as a `vosu.sessions` subscriber, and may publish only plain values
+  in the namespace its `provides` names; common and core namespaces, the
+  owner's namespace, other plugins' namespaces and resource references stay
+  refused with `VOSU_ERR_PERMISSION_DENIED`. These fields are read through
+  API v1 like any plugin namespace, count against the usual commit budgets,
+  produce `DEMAND_CHANGED` for that plugin limited to its own namespace, and
+  are removed when the plugin unloads, crashes or is disabled.
 
 ## Unreleased — 2.0 F (SDK packaging)
 

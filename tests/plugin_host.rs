@@ -24,6 +24,9 @@ use vosu_plugin_api::{CborValue, FocusChanged, Init, Message, encode, vosu_statu
 #[path = "plugin_host/process_package.rs"]
 mod process_package;
 
+#[path = "plugin_host/guest_publish.rs"]
+mod guest_publish;
+
 const DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 /// Records every message the plugin sends back to the host (the echo

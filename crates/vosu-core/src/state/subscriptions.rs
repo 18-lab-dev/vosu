@@ -43,6 +43,9 @@ struct Subscription {
     wire_selectors: Vec<(Arc<str>, Arc<str>)>,
     grant: InternalGrant,
     lanes: LaneBits,
+    /// Per-selector lanes, parallel to `selectors`, so a namespace-limited
+    /// demand needs no schema lookups on the commit path.
+    selector_lanes: Vec<LaneBits>,
 }
 
 #[derive(Default)]
@@ -115,7 +118,13 @@ impl SubscriptionRegistry {
         if demand_keys.len() > MAX_DEMAND_SELECTORS {
             return Err(SubscribeError::TooManySelectors);
         }
-        let lanes = super::demand::compile(reg, &selectors);
+        let selector_lanes: Vec<_> = selectors
+            .iter()
+            .map(|selector| super::demand::compile(reg, std::slice::from_ref(selector)))
+            .collect();
+        let lanes = selector_lanes
+            .iter()
+            .fold(LaneBits::default(), |bits, lanes| bits.union(*lanes));
         let subscription = Subscription {
             who,
             session,
@@ -126,6 +135,7 @@ impl SubscriptionRegistry {
             selectors,
             grant,
             lanes,
+            selector_lanes,
         };
         if let Some(i) = existing {
             self.subscriptions[i] = subscription;
@@ -165,6 +175,36 @@ impl SubscriptionRegistry {
         for s in self.subscriptions.iter().filter(|s| s.session == session) {
             lanes = lanes.union(s.lanes);
             selectors.extend(s.wire_selectors.iter().cloned());
+        }
+        selectors.sort_unstable();
+        selectors.dedup();
+        let (regular, precise) = lanes.effective(matches!(status, Some("play" | "pause")));
+        DemandSnapshot {
+            regular,
+            precise,
+            selectors,
+        }
+    }
+
+    /// Demand restricted to `ns` for a non-owning provider of `ns`
+    /// (`docs/v2/plugin-abi.md` §6.7): only its own namespace's selectors,
+    /// and the lanes those selectors compile to.
+    pub fn namespace_demand(
+        &self,
+        session: SessionKey,
+        status: Option<&str>,
+        ns: &str,
+    ) -> DemandSnapshot {
+        let mut lanes = LaneBits::default();
+        let mut selectors = Vec::new();
+        for s in self.subscriptions.iter().filter(|s| s.session == session) {
+            for ((name, pointer), selector_lanes) in s.wire_selectors.iter().zip(&s.selector_lanes)
+            {
+                if name.as_ref() == ns {
+                    lanes = lanes.union(*selector_lanes);
+                    selectors.push((name.clone(), pointer.clone()));
+                }
+            }
         }
         selectors.sort_unstable();
         selectors.dedup();

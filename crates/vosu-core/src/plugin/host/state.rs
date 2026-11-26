@@ -54,21 +54,46 @@ impl PluginHost {
                 vosu_status::VOSU_ERR_INVALID_ARGUMENT
             };
         };
-        if owner != publisher.grant.plugin_id() {
-            return vosu_status::VOSU_ERR_PERMISSION_DENIED;
-        }
-        if sessions.identify_of(handle).is_none() {
+        let guest = owner != publisher.grant.plugin_id();
+        if guest {
+            // §6.6 (2026-11-26): a non-owner publishes only its own provided
+            // namespace, and only for an identified session whose handle
+            // this instance was sent through `SESSION_ATTACHED`.
+            if !publisher.grant.provides_own_namespace()
+                || sessions.identify_of(handle).is_none()
+                || !self.state_handle_named(instance, SessionKey(raw), false)
+            {
+                return vosu_status::VOSU_ERR_PERMISSION_DENIED;
+            }
+        } else if sessions.identify_of(handle).is_none() {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
         drop(sessions);
+        let _gate = guest.then(|| {
+            self.guest_publications
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+        });
+        if guest
+            && !matches!(
+                self.instances
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&instance),
+                Some(InstanceSlot::Live(_))
+            )
+        {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        }
         // StateStore serializes close against commit using the session slot's
         // closed marker. A detached slot cannot be resurrected by this call.
-        match self.state.store.commit_from_instance(
-            &publisher.grant,
-            SessionKey(raw),
-            instance.0,
-            entries,
-        ) {
+        let store = &self.state.store;
+        let committed = if guest {
+            store.commit_as_guest(&publisher.grant, SessionKey(raw), instance.0, entries)
+        } else {
+            store.commit_from_instance(&publisher.grant, SessionKey(raw), instance.0, entries)
+        };
+        match committed {
             Ok(outcome) => {
                 let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
                 self.state_committed(&outcome);
@@ -78,6 +103,52 @@ impl PluginHost {
             }
             Err(crate::state::CommitError::UnknownSession) => vosu_status::VOSU_ERR_TARGET_GONE,
             Err(error) => error.into(),
+        }
+    }
+
+    /// Removes `plugin_id`'s own namespace from every session it published
+    /// into without owning, once its instance is out of service (unload,
+    /// crash or disable). The exclusive gate waits out any non-owner
+    /// commit that saw the instance live; later ones fail its re-check.
+    pub(super) fn clear_guest_publications(&self, plugin_id: &str) {
+        drop(
+            self.guest_publications
+                .write()
+                .unwrap_or_else(|p| p.into_inner()),
+        );
+        for outcome in self.state.store.clear_guest_namespace(plugin_id) {
+            let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
+            self.state_committed(&outcome);
+            self.surface_committed(&outcome);
+            self.api_committed(&outcome);
+        }
+    }
+
+    /// §6.7 (2026-11-26): each non-owning provider in `guests`, already
+    /// known to hold `key`'s handle, gets the demand on its own namespace
+    /// only, never other selectors.
+    pub(super) fn refresh_guest_demand(
+        &self,
+        key: SessionKey,
+        status: Option<&str>,
+        guests: Vec<(PluginInstanceId, String)>,
+    ) {
+        if guests.is_empty() {
+            return;
+        }
+        let demands: Vec<_> = {
+            let subscriptions = self
+                .state
+                .subscriptions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            guests
+                .into_iter()
+                .map(|(who, ns)| (who, subscriptions.namespace_demand(key, status, &ns)))
+                .collect()
+        };
+        for (who, demand) in demands {
+            self.offer_guest_demand(who, key, demand);
         }
     }
 

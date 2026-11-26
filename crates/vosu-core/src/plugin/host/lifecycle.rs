@@ -165,8 +165,9 @@ impl PluginHost {
 
     /// Removes one instance already taken out of active duty (its slot is
     /// `Destroying`) from every host service — resources, actions,
-    /// subscriptions, surface readers, bus sessions, timers — then tears
-    /// the instance itself down and drops its slot. Shared by shutdown,
+    /// subscriptions, surface readers, bus sessions, its own namespace in
+    /// sessions it does not own, timers — then tears the instance itself
+    /// down and drops its slot. Shared by shutdown,
     /// per-instance teardown and process loss so all release exactly the
     /// same state. Pending resource and stream operations end before
     /// running jobs and relay calls fail (§7.6 "Loss identity" order).
@@ -192,6 +193,7 @@ impl PluginHost {
         if let Some(plugin_id) = self.plugin_id_of(id) {
             self.surface_reader_removed(&plugin_id);
             self.close_bus_sessions_for(&plugin_id);
+            self.clear_guest_publications(&plugin_id);
         }
         self.timers.cancel_all(id);
         let mut result = Ok(());

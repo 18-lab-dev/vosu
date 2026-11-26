@@ -38,6 +38,11 @@ impl PublisherGrant {
         &self.plugin_id
     }
 
+    /// Whether `provides` licenses a namespace named by this plugin's id.
+    pub(crate) fn provides_own_namespace(&self) -> bool {
+        self.own
+    }
+
     pub(crate) fn resource_kind(&self, kind: &str) -> Option<&vosu_plugin_api::ResourceKind> {
         self.resource_kinds.iter().find(|entry| entry.kind == kind)
     }
