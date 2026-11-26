@@ -12,21 +12,18 @@ dashboard origin is sandboxed and runs nothing. Only test ports
 25150/25151 are used.
 """
 import argparse
-import functools
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import ExitStack
+from http.server import SimpleHTTPRequestHandler
 import json
 import os
 from pathlib import Path
-import signal
 import struct
-import subprocess
 import tempfile
-import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from tool_host_smoke import ROOT, DASHBOARD, channel_root, curl, wait_for
+from smoke_process import BINARY, DASHBOARD, Daemon, curl, package_server, wait_for
 from catalog_v2_fixture import Catalog, api, dashboard_headers, facts, set_sources
 
 ART_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
@@ -95,8 +92,8 @@ def fetch(url):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/vosu')
-    parser.add_argument('--evidence', type=Path, default=Path('/tmp/vosu-tools-evidence/catalog-art'))
+    parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--evidence', type=Path, default=Path(tempfile.gettempdir()) / 'vosu-tools-evidence/catalog-art')
     parser.add_argument('--playwright-module', type=Path,
                         default=Path(os.environ['VOSU_PLAYWRIGHT_MODULE']) if os.environ.get('VOSU_PLAYWRIGHT_MODULE') else None)
     args = parser.parse_args()
@@ -105,40 +102,17 @@ def main():
     binary = args.binary.resolve(strict=True)
     args.evidence.mkdir(parents=True, exist_ok=True)
     evidence = []
-    with tempfile.TemporaryDirectory(prefix='vosu-catalog-art-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='vosu-catalog-art-') as temporary, ExitStack() as contexts:
         root = Path(temporary)
-        environment = dict(os.environ)
-        for variable in ['DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS']:
-            environment.pop(variable, None)
-        environment['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get(
-            'PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
-        for variable, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
-                                    ('XDG_DATA_HOME', 'data'), ('XDG_CACHE_HOME', 'cache'),
-                                    ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
-            path = root / directory
-            path.mkdir(mode=0o700)
-            environment[variable] = str(path)
-        config = channel_root(binary, root / 'config/vosu')
-        config.mkdir(parents=True)
-        (config / 'vosu.toml').write_text('''ENABLE_AUTOUPDATE = false
-OPEN_DASHBOARD_ON_STARTUP = false
-DEBUG_LOG = false
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 25150
-DASHBOARD_IP = "127.0.0.1"
-DASHBOARD_PORT = 25151
-ALLOWED_IPS = "127.0.0.1,localhost"
-''')
+        daemon = Daemon(binary, root)
         packages = root / 'packages'
         (packages / 'art').mkdir(parents=True)
         (packages / 'art/artful-icon.svg').write_text(HOSTILE_ICON)
         (packages / 'art/artful-banner.svg').write_text(BANNER)
         (packages / 'art/artlay-preview.png').write_bytes(png(320, 180, (226, 112, 43)))
         (packages / 'art/not-an-image.svg').write_text('<html><body>not art</body></html>')
-        server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(ReleaseHost, directory=str(packages)))
-        port = server.server_address[1]
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        environment['VOSU_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
+        port = contexts.enter_context(package_server(ReleaseHost, packages))
+        daemon.environment['VOSU_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
         host_range, target = facts(binary)
         catalog = Catalog(packages, port, host_range, target)
         base = catalog.base
@@ -156,76 +130,59 @@ ALLOWED_IPS = "127.0.0.1,localhost"
         def art(url):
             return f'{DASHBOARD}/api/catalog/art?' + urllib.parse.urlencode({'url': url})
 
-        with (args.evidence / 'daemon.log').open('w') as log:
-            daemon = subprocess.Popen([str(binary), '--update=false'], cwd=root, env=environment,
-                                      stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-            try:
-                wait_for(lambda: curl('/api/tools', dashboard=True)[0] == 200)
-                headers = dashboard_headers()
-                set_sources(headers, [source])
-                # Before the catalog is fetched nothing is listed.
-                assert fetch(art(icon))[0] == 404
-                view = api('refresh', headers, 'POST')
-                assert view['sources'][0]['status'] == 'ok', view
-                entries = {entry['id']: entry for entry in api('entries', headers)['entries']}
-                assert entries['artful']['icon_url'] == icon, entries
+        with daemon.run(args.evidence / 'daemon.log'):
+            headers = dashboard_headers()
+            set_sources(headers, [source])
+            # Before the catalog is fetched nothing is listed.
+            assert fetch(art(icon))[0] == 404
+            view = api('refresh', headers, 'POST')
+            assert view['sources'][0]['status'] == 'ok', view
+            entries = {entry['id']: entry for entry in api('entries', headers)['entries']}
+            assert entries['artful']['icon_url'] == icon, entries
 
-                for url, kind in [(icon, 'image/svg+xml'), (banner, 'image/svg+xml'), (preview, 'image/png')]:
-                    status, response_headers, body = fetch(art(url))
-                    assert status == 200 and response_headers['Content-Type'] == kind, (url, status, body[:200])
-                    assert body == (packages / 'art' / url.rsplit('/', 1)[1]).read_bytes()
-                for url, expected in [(f'{base}/download/not-an-image.svg', 502), (f'{base}/storage/artful-icon.svg', 404),
-                                      ('https://example.com/icon.svg', 404)]:
-                    status, response_headers, body = fetch(art(url))
-                    assert status == expected, (url, status, body)
-                status, response_headers, _ = fetch(art(icon))
-                for name, value in [('Content-Security-Policy', ART_CSP), ('X-Content-Type-Options', 'nosniff'),
-                                    ('Cross-Origin-Resource-Policy', 'same-origin'), ('Content-Disposition', 'inline')]:
-                    assert response_headers[name] == value, (name, response_headers[name])
-                assert 'Set-Cookie' not in response_headers
-                fetched = [hit for hit in ReleaseHost.hits if hit.startswith('/storage/artful-icon')]
-                assert len(fetched) == 1, ReleaseHost.hits
-                evidence.append('Listed octet-stream art behind a redirect served typed (SVG, PNG); '
-                                'cached per catalog snapshot; unlisted 404; non-image 502; inert-document headers')
+            for url, kind in [(icon, 'image/svg+xml'), (banner, 'image/svg+xml'), (preview, 'image/png')]:
+                status, response_headers, body = fetch(art(url))
+                assert status == 200 and response_headers['Content-Type'] == kind, (url, status, body[:200])
+                assert body == (packages / 'art' / url.rsplit('/', 1)[1]).read_bytes()
+            for url, expected in [(f'{base}/download/not-an-image.svg', 502), (f'{base}/storage/artful-icon.svg', 404),
+                                  ('https://example.com/icon.svg', 404)]:
+                status, response_headers, body = fetch(art(url))
+                assert status == expected, (url, status, body)
+            status, response_headers, _ = fetch(art(icon))
+            for name, value in [('Content-Security-Policy', ART_CSP), ('X-Content-Type-Options', 'nosniff'),
+                                ('Cross-Origin-Resource-Policy', 'same-origin'), ('Content-Disposition', 'inline')]:
+                assert response_headers[name] == value, (name, response_headers[name])
+            assert 'Set-Cookie' not in response_headers
+            fetched = [hit for hit in ReleaseHost.hits if hit.startswith('/storage/artful-icon')]
+            assert len(fetched) == 1, ReleaseHost.hits
+            evidence.append('Listed octet-stream art behind a redirect served typed (SVG, PNG); '
+                            'cached per catalog snapshot; unlisted 404; non-image 502; inert-document headers')
 
-                def browser(phase):
-                    subprocess.run(['node', str(ROOT / 'tests/catalog_art_browser.mjs'),
-                                    str(args.playwright_module.resolve()), str(args.evidence.resolve()), phase, icon],
-                                   check=True, env=environment)
+            def browser(phase):
+                daemon.browser('catalog_art_browser.mjs', args.playwright_module, args.evidence.resolve(), phase, icon)
 
-                browser('before')
-                evidence.append('Browser: Available tool icon and banner and catalog overlay preview render; '
-                                'the hostile SVG opened directly is sandboxed (opaque origin), no script or request ran')
+            browser('before')
+            evidence.append('Browser: Available tool icon and banner and catalog overlay preview render; '
+                            'the hostile SVG opened directly is sandboxed (opaque origin), no script or request ran')
 
-                def install(kind, item):
-                    plan = api('install', headers, 'POST', {'kind': kind, 'id': item, 'source': source})
-                    assert plan['errors'] == [] and len(plan['adds']) == 1, plan
-                    job = api(f'plans/{plan["plan_id"]}/confirm', headers, 'POST', {'approve': []})['job_id']
+            def install(kind, item):
+                plan = api('install', headers, 'POST', {'kind': kind, 'id': item, 'source': source})
+                assert plan['errors'] == [] and len(plan['adds']) == 1, plan
+                job = api(f'plans/{plan["plan_id"]}/confirm', headers, 'POST', {'approve': []})['job_id']
 
-                    def completed():
-                        status, response = curl(f'/api/catalog/jobs/{job}', dashboard=True)
-                        assert status == 200
-                        result = json.loads(response)
-                        assert result['status'] != 'failed', result
-                        return result if result['status'] == 'completed' else None
-                    return wait_for(completed, timeout=45)
+                def completed():
+                    status, response = curl(f'/api/catalog/jobs/{job}', dashboard=True)
+                    assert status == 200
+                    result = json.loads(response)
+                    assert result['status'] != 'failed', result
+                    return result if result['status'] == 'completed' else None
+                return wait_for(completed, timeout=45)
 
-                install('tool', 'artful')
-                install('overlay', 'artlay')
-                browser('after')
-                evidence.append('Browser after plan-confirmed installs: installed tool card shows its own icon and banner; '
-                                'the installed catalog overlay keeps its proxied preview')
-                daemon.send_signal(signal.SIGTERM)
-                assert daemon.wait(timeout=15) == 0
-            finally:
-                if daemon.poll() is None:
-                    daemon.terminate()
-                    try:
-                        daemon.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        daemon.kill()
-                        daemon.wait(timeout=15)
-                server.shutdown()
+            install('tool', 'artful')
+            install('overlay', 'artlay')
+            browser('after')
+            evidence.append('Browser after plan-confirmed installs: installed tool card shows its own icon and banner; '
+                            'the installed catalog overlay keeps its proxied preview')
     (args.evidence / 'smoke.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print('\n'.join(evidence))
 

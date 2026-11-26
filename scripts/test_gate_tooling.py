@@ -216,13 +216,19 @@ class CiDriftTest(unittest.TestCase):
             root = Path(temporary)
             module = root / "index.mjs"
             module.write_text("// fixture")
-            with unittest.mock.patch.object(prepush, "run", return_value=(0, "", "", 0.0)) as run:
+            with unittest.mock.patch.object(prepush, "run", return_value=(0, "", "", 0.0)) as run, \
+                    unittest.mock.patch.object(prepush, "prepare_plugin_host_fixtures",
+                                               return_value=(0, "fixtures", {"VOSU_M7_TARGET": "fixture"})):
                 result = prepush.run_dashboard(root, True, str(module))
             self.assertEqual(result.status, "passed")
             tool_commands = [call.args[0] for call in run.call_args_list
                              if "tests/tool_host_smoke.py" in call.args[0]]
             self.assertEqual(len(tool_commands), 1)
             self.assertEqual(tool_commands[0][-2:], ["--playwright-module", str(module)])
+            self.assertEqual([call.args[0][1] for call in run.call_args_list[1:]],
+                             [f"tests/{name}_smoke.py" for name in ("tool_host", "dashboard", "tool_catalog", "catalog_art")])
+            self.assertTrue(all(call.kwargs["env_overrides"] == {"VOSU_M7_TARGET": "fixture"}
+                                for call in run.call_args_list[1:]))
             with unittest.mock.patch.object(prepush, "run") as run:
                 result = prepush.run_dashboard(root, True, str(root / "missing.mjs"))
             self.assertEqual(result.status, "failed")

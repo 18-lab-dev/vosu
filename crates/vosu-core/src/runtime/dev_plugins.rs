@@ -46,6 +46,67 @@ pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 /// it across instances is the whole point of `concurrent_dispatch`.
 const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
+const OFFICIAL_FIXTURE_ENV: &str = "VOSU_TEST_OFFICIAL_PLUGIN";
+
+#[derive(Default)]
+pub(super) struct StartupPlugins {
+    development: Vec<PathBuf>,
+    official_fixture: Option<PathBuf>,
+}
+
+impl StartupPlugins {
+    pub(super) fn parse(bundle: &Bundle, args: &[std::ffi::OsString]) -> std::io::Result<Self> {
+        let official_fixture = official_fixture_path(
+            std::env::var_os(OFFICIAL_FIXTURE_ENV),
+            cfg!(debug_assertions),
+        )?;
+        if let Some(path) = &official_fixture {
+            check_fixture_identity(path, bundle.plugin_ids)?;
+        }
+        Ok(Self {
+            official_fixture,
+            development: plugin::development_roots(args)?,
+        })
+    }
+}
+
+fn official_fixture_path(
+    value: Option<std::ffi::OsString>,
+    debug_build: bool,
+) -> std::io::Result<Option<PathBuf>> {
+    let Some(path) = value else { return Ok(None) };
+    if !(debug_build && cfg!(feature = "test-harness")) {
+        return Err(std::io::Error::other(format!(
+            "{OFFICIAL_FIXTURE_ENV} requires a debug build with test-harness"
+        )));
+    }
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err(std::io::Error::other(format!(
+            "{OFFICIAL_FIXTURE_ENV} requires an absolute package directory"
+        )));
+    }
+    Ok(Some(path))
+}
+
+fn check_fixture_identity(path: &std::path::Path, bundled_ids: &[&str]) -> std::io::Result<()> {
+    use vosu_plugin_api::manifest::PackageManifest;
+    let text = std::fs::read_to_string(path.join("manifest.toml"))?;
+    let package = PackageManifest::parse(&text).map_err(std::io::Error::other)?;
+    let PackageManifest::Plugin(manifest) = package else {
+        return Err(std::io::Error::other(
+            "fixture-official requires a plugin manifest",
+        ));
+    };
+    if bundled_ids.contains(&manifest.id.as_str()) {
+        return Err(std::io::Error::other(format!(
+            "fixture-official cannot shadow bundled plugin `{}`",
+            manifest.id
+        )));
+    }
+    Ok(())
+}
+
 /// Checks the complete ordered inventory before creating any instance.
 /// Array positions are stable even for the inactive dashboard.
 fn validate_bundled_ids(
@@ -182,7 +243,7 @@ fn install_gate(
 pub(super) fn load_development(
     bundle: &Bundle,
     host: &Arc<PluginHost>,
-    dirs: Vec<PathBuf>,
+    inputs: StartupPlugins,
     id_offset: u64,
     logger: &crate::logging::Logger,
     pool: &Arc<WorkerPool>,
@@ -192,25 +253,44 @@ pub(super) fn load_development(
     let debug_build = cfg!(debug_assertions);
     let version = bundle.version();
     let mut gate = None;
-    for (index, dir) in dirs.iter().enumerate() {
+    let dirs = inputs.development;
+    for (index, (dir, official)) in dirs
+        .iter()
+        .map(|dir| (dir, false))
+        .chain(inputs.official_fixture.iter().map(|dir| (dir, true)))
+        .enumerate()
+    {
         let instance = PluginInstanceId::new(id_offset + index as u64);
-        let loaded = plugin::load_development(
-            &version,
-            &source_snapshot(host, &[], &dirs),
-            dir,
-            debug_build,
-        );
+        let snapshot = source_snapshot(host, &[], &dirs);
+        let (label, trust, loaded) = if official {
+            #[cfg(feature = "test-harness")]
+            {
+                (
+                    "fixture-official",
+                    Trust::FixtureOfficial,
+                    plugin::load_official_test_fixture(&version, &snapshot, dir, debug_build),
+                )
+            }
+            #[cfg(not(feature = "test-harness"))]
+            unreachable!("the official fixture input is refused before startup")
+        } else {
+            (
+                "--plugin",
+                Trust::User,
+                plugin::load_development(&version, &snapshot, dir, debug_build),
+            )
+        };
         let loaded = match loaded {
             Ok(loaded) if roster.contains(&loaded.manifest().id) => {
                 let error = format!("plugin id {} is already loaded", loaded.manifest().id);
-                logger.warn(format!("--plugin {}: {error}", dir.display()));
-                roster.refused(instance, Trust::User, Some(dir.clone()), error);
+                logger.warn(format!("{label} {}: {error}", dir.display()));
+                roster.refused(instance, trust, Some(dir.clone()), error);
                 continue;
             }
             Ok(loaded) => loaded,
             Err(error) => {
-                logger.warn(format!("--plugin {}: {error}", dir.display()));
-                roster.refused(instance, Trust::User, Some(dir.clone()), error.to_string());
+                logger.warn(format!("{label} {}: {error}", dir.display()));
+                roster.refused(instance, trust, Some(dir.clone()), error.to_string());
                 continue;
             }
         };
@@ -224,15 +304,16 @@ pub(super) fn load_development(
             // The gate already logged that approval needs the dashboard.
             Err(HostError::ProcessStartupFailed(failure))
                 if failure.stage == StartupStage::Approval => {}
-            Err(error) => logger.warn(format!(
-                "--plugin {}: create failed: {error}",
-                dir.display()
-            )),
+            Err(error) => logger.warn(format!("{label} {}: create failed: {error}", dir.display())),
             Ok(()) => {}
         }
         roster.loaded(
             instance,
-            Trust::development(loaded.manifest().runtime),
+            if official {
+                trust
+            } else {
+                Trust::development(loaded.manifest().runtime)
+            },
             Some(dir.clone()),
             &loaded,
             created.map_err(|error| error.to_string()),
@@ -248,7 +329,7 @@ pub(super) fn load_development(
 pub(super) fn load_all(
     bundle: &Bundle,
     host: &Arc<PluginHost>,
-    dev_dirs: Vec<PathBuf>,
+    inputs: StartupPlugins,
     paths: &Paths,
     logger: &crate::logging::Logger,
     dashboard: bool,
@@ -262,7 +343,7 @@ pub(super) fn load_all(
         logger,
         &pool,
         bundle.plugins,
-        &dev_dirs,
+        &inputs.development,
         &mut roster,
         dashboard,
     )?;
@@ -270,7 +351,7 @@ pub(super) fn load_all(
     load_development(
         bundle,
         host,
-        dev_dirs,
+        inputs,
         offset,
         logger,
         &pool,
@@ -310,4 +391,23 @@ pub(super) fn source_snapshot(
         }
     }
     snapshot
+}
+
+#[cfg(test)]
+mod official_switch_tests {
+    use super::*;
+
+    #[test]
+    fn official_fixture_switch_requires_debug_and_harness() {
+        let path = std::env::current_dir().unwrap().join("official-fixture");
+        assert!(official_fixture_path(None, false).unwrap().is_none());
+        assert!(official_fixture_path(Some(path.clone().into()), false).is_err());
+        let debug = official_fixture_path(Some(path.clone().into()), true);
+        if cfg!(feature = "test-harness") {
+            assert_eq!(debug.unwrap(), Some(path));
+            assert!(official_fixture_path(Some("relative".into()), true).is_err());
+        } else {
+            assert!(debug.is_err());
+        }
+    }
 }

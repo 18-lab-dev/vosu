@@ -21,3 +21,4 @@ fixtures -> demand
 fixtures -> project
 fixtures -> publish
 fixtures -> resources
+fixtures -> plugin

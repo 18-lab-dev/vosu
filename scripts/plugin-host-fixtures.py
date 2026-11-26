@@ -5,7 +5,7 @@ test (`docs/testing/verification.md`, "M5 test and fixture conventions").
 Usage:
     python scripts/plugin-host-fixtures.py [--target TRIPLE] [--release-daemon] [--env-file PATH] [-- COMMAND...]
 
-Builds both `cdylib` examples with `--message-format=json-render-diagnostics`
+Builds the fixture examples with `--message-format=json-render-diagnostics`
 and takes each library path from its `compiler-artifact` record, never from a
 guessed file name or hash suffix. Each library is then copied to
 `<artifact dir>/plugin-host-fixtures/<file name>`, so a later Cargo build of
@@ -13,8 +13,8 @@ the same example with other features (the workspace `--all-features
 --examples` test build) cannot replace the bytes a test runs. The copy's
 SHA-256 is printed as an `ARTIFACT` receipt.
 
-The two staged paths are exported as VOSU_PLUGIN_HOST_TESTKIT_LIBRARY and
-VOSU_PLUGIN_HOST_OSU_LIBRARY.
+The staged paths are exported as VOSU_PLUGIN_HOST_TESTKIT_LIBRARY,
+VOSU_PLUGIN_HOST_OSU_LIBRARY, VOSU_M7_API_LIBRARY and VOSU_M7_TARGET.
 
 `--release-daemon` also builds the real prerelease release daemon the
 `approval` module runs (catalog-v2.md A5.5): the packaged feature set
@@ -53,7 +53,9 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = (
     ("VOSU_PLUGIN_HOST_TESTKIT_LIBRARY", "vosu-plugin-testkit", "testkit_process_plugin", ()),
     ("VOSU_PLUGIN_HOST_OSU_LIBRARY", "vosu-osu", "osu_process_plugin", ("--features", "test-harness")),
+    ("VOSU_M7_API_LIBRARY", "vosu-plugin-testkit", "api_v1_plugin", ("--features", "test-harness")),
 )
+TARGET = ("VOSU_M7_TARGET", "vosu-plugin-testkit", "api_v1_target", ())
 LIBRARY_SUFFIXES = (".so", ".dll", ".dylib")
 STAGE_DIR = "plugin-host-fixtures"
 
@@ -152,16 +154,19 @@ def prime_image(path):
 def prepare(target=None, cargo="cargo"):
     """Builds and stages every fixture; returns {variable: staged path}."""
     paths = {}
-    for variable, package, example, extra in FIXTURES:
+    for variable, package, example, extra in (*FIXTURES, TARGET):
         command = build_command(package, example, extra, target)
         command[0] = cargo
         print(f"$ {shlex.join(command)}", file=sys.stderr, flush=True)
         completed = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, text=True, check=False)
         if completed.returncode != 0:
             raise FixtureError(f"building {example} failed with exit {completed.returncode}")
-        staged = stage(select_library(completed.stdout, example))
+        is_target = variable == TARGET[0]
+        artifact = (select_executable(completed.stdout, example, kind="example")
+                    if is_target else select_library(completed.stdout, example))
+        staged = stage(artifact)
         print(f"ARTIFACT name={example} sha256={sha256(staged)} path={staged}", file=sys.stderr, flush=True)
-        primed = prime_image(staged)
+        primed = None if is_target else prime_image(staged)
         if primed is not None:
             print(f"PRIMED name={example} first_load_ms={primed:.0f}", file=sys.stderr, flush=True)
         paths[variable] = staged
@@ -187,7 +192,7 @@ def daemon_build_command(target=None):
     return command
 
 
-def select_executable(stdout, name):
+def select_executable(stdout, name, kind="bin"):
     """The one executable Cargo reported for binary target `name`."""
     found = []
     for line in stdout.splitlines():
@@ -198,7 +203,7 @@ def select_executable(stdout, name):
         if record.get("reason") != "compiler-artifact":
             continue
         target = record.get("target", {})
-        if target.get("name") != name or "bin" not in target.get("kind", []):
+        if target.get("name") != name or kind not in target.get("kind", []):
             continue
         if record.get("executable"):
             found.append(record["executable"])

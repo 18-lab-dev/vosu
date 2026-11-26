@@ -80,11 +80,11 @@ def needs_plugin_host_fixtures(package, test, lib):
     """Whether the selected cargo test can include the root plugin_host_native
     target, which reads fixture libraries prepared in the guest beforehand
     (scripts/plugin-host-fixtures.py) and never builds them itself."""
-    return not lib and package in (None, "vosu") and test in (None, "plugin_host_native")
+    return not lib and package in (None, "vosu") and test in (None, "plugin_host_native", "daemon_smoke")
 
 
 def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, timeout_seconds,
-                            env=None, plugin_host_fixtures=False, release_daemon=False):
+                            env=None, plugin_host_fixtures=False, release_daemon=False, browser_smokes=False):
     """The JSON config vm-test.ps1 reads via -ConfigPath.
 
     schtasks' own /TR value is capped at 261 characters, far too short for
@@ -109,8 +109,9 @@ def build_invocation_config(remote_dir, commit, cargo_args, has_patch, jobs, tim
         "Jobs": jobs,
         "TimeoutSeconds": timeout_seconds,
         "Env": dict(env or {}),
-        "PluginHostFixtures": plugin_host_fixtures or release_daemon,
+        "PluginHostFixtures": plugin_host_fixtures or release_daemon or browser_smokes,
         "ReleaseDaemon": release_daemon,
+        "BrowserSmokes": browser_smokes,
     }
 
 
@@ -357,6 +358,8 @@ def run(args):
 
     sha = head_sha()
     short_sha = sha[:12]
+    if args.browser_smokes and (args.test != "daemon_smoke" or args.lib):
+        raise VmTestError("--browser-smokes requires --test daemon_smoke")
     token = secrets.token_hex(4)
     remote_dir = remote_work_root(short_sha, token)
     task = task_name(short_sha, token)
@@ -393,6 +396,7 @@ def run(args):
                 remote_dir, sha, cargo_args, has_patch, args.jobs, args.timeout, parse_env(args.env),
                 plugin_host_fixtures=needs_plugin_host_fixtures(args.package, args.test, args.lib),
                 release_daemon=args.release_daemon,
+                browser_smokes=args.browser_smokes,
             )
             config_path = local_tmp / "invocation.json"
             config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -488,6 +492,10 @@ def parse_args(argv):
         "--release-daemon",
         action="store_true",
         help="also build the release daemon (no test-harness) for the plugin_host_native approval module",
+    )
+    parser.add_argument(
+        "--browser-smokes", action="store_true",
+        help="after --test daemon_smoke, run the four M7 smokes serially with guest VOSU_PLAYWRIGHT_MODULE",
     )
     parser.add_argument(
         "--env",

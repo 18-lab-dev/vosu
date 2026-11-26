@@ -1,5 +1,5 @@
-//! M5 X0 parity ingress: M4a's committed source-oracle replay, run by the
-//! external osu! library in its own plugin host.
+//! M5 X0 parity ingress: committed source-oracle replay through the
+//! production publication path, in the plugin host or bundled daemon.
 //!
 //! The in-process oracle replay (`tests/state_api_compat/oracle.rs`) feeds
 //! each committed `input.json` through the production publication path:
@@ -26,11 +26,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use vosu_osu::fixtures::{Publisher, Roster};
-use vosu_osu::project::SessionFacts;
+use super::{Publisher, Roster};
+use crate::project::SessionFacts;
 use vosu_osu_model::enums::ClientType;
 use vosu_plugin_api::{
     HostServices, Message, PluginError, SessionIdentify, VtableHostServices, vosu_status,
@@ -64,6 +68,8 @@ pub struct Parity {
     receipts: PathBuf,
     /// Session handle → its publisher, as the fixture game's map.
     publishers: Arc<Mutex<BTreeMap<u64, Arc<Publisher>>>>,
+    stopping: Arc<AtomicBool>,
+    updates: Mutex<Vec<JoinHandle<()>>>,
 }
 
 fn read_input(path: &Path) -> oracle_input::Input {
@@ -110,6 +116,8 @@ impl Parity {
                 .map(|path| read_input(Path::new(path))),
             receipts: path("receipts"),
             publishers: Arc::default(),
+            stopping: Arc::default(),
+            updates: Mutex::default(),
         })
     }
 
@@ -212,8 +220,9 @@ impl Parity {
         if selected && let Some(update) = &self.update {
             let state = oracle_input::state(update);
             let receipts = self.receipts.clone();
-            std::thread::spawn(move || {
-                if !wait_file(&receipts.join("update")) {
+            let stopping = Arc::clone(&self.stopping);
+            let update = std::thread::spawn(move || {
+                if !wait_file(&receipts.join("update"), &stopping) {
                     return;
                 }
                 publisher
@@ -222,11 +231,21 @@ impl Parity {
                 settle(&publisher);
                 write_receipt(&receipts, "updated");
             });
+            self.updates.lock().unwrap().push(update);
         }
     }
 
     fn receipt(&self, name: &str) {
         write_receipt(&self.receipts, name);
+    }
+}
+
+impl Drop for Parity {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Relaxed);
+        for update in self.updates.get_mut().unwrap().drain(..) {
+            update.join().expect("parity update worker");
+        }
     }
 }
 
@@ -244,15 +263,15 @@ fn settle(publisher: &Publisher) {
     }
 }
 
-/// Waits up to a minute for the test to create `path`.
+/// Waits up to a minute for the test's update barrier, or until teardown.
 #[expect(
     clippy::disallowed_methods,
     reason = "a file barrier another process creates; the fixture polls it until a bounded deadline"
 )]
-fn wait_file(path: &Path) -> bool {
+fn wait_file(path: &Path, stopping: &AtomicBool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(60);
     while !path.exists() {
-        if Instant::now() >= deadline {
+        if stopping.load(Ordering::Relaxed) || Instant::now() >= deadline {
             return false;
         }
         std::thread::sleep(Duration::from_millis(5));

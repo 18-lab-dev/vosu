@@ -1,8 +1,8 @@
 //! The source-oracle input conversion: a committed `input.json` to the
 //! `StateBundleSnapshot`s its replay publishes. Kept free of the root crate
 //! and of any host composition, so the same conversion runs in this test
-//! process (`oracle::replay`) and in the external osu! process fixture
-//! (`crates/vosu-osu/examples/osu_process_plugin/parity.rs`, M5 X0 parity).
+//! process (`oracle::replay`) and in both runtimes of the osu! parity fixture
+//! (`crates/vosu-osu/src/fixtures/parity.rs`, M5 X0 and M7 X0).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

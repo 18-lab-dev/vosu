@@ -1,9 +1,12 @@
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", windows))]
 #![expect(
     clippy::disallowed_methods,
     reason = "test fixtures write scratch files and sleep"
 )]
 
+#[cfg(all(windows, not(feature = "test-harness")))]
+use std::process::{Child, Command, Stdio};
+#[cfg(any(target_os = "linux", feature = "test-harness"))]
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddrV4, TcpListener},
@@ -11,19 +14,24 @@ use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+#[cfg(any(target_os = "linux", feature = "test-harness"))]
 use vosu_proptest::bounded;
 
 use tempfile::TempDir;
+#[cfg(any(target_os = "linux", feature = "test-harness"))]
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+#[cfg(target_os = "linux")]
 use vosu_overlay_host::SettingsStore;
 
 include!("daemon_smoke/roots.rs");
+#[cfg(target_os = "linux")]
 #[path = "daemon_smoke/adapter_capture.rs"]
 mod adapter_capture;
 #[cfg(feature = "test-harness")]
 #[path = "daemon_smoke/api_fixture.rs"]
 mod api_fixture;
+#[cfg(target_os = "linux")]
 #[path = "daemon_smoke/broker.rs"]
 mod broker;
 // Discovery isolation exists only in harness builds; never read a real game.
@@ -31,6 +39,7 @@ mod broker;
 #[path = "daemon_smoke/dashboard_off.rs"]
 mod dashboard_off;
 
+#[cfg(any(target_os = "linux", feature = "test-harness"))]
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -45,31 +54,12 @@ async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     }
 }
 
+#[cfg(any(target_os = "linux", feature = "test-harness"))]
 include!("daemon_smoke/websocket.rs");
+#[cfg(target_os = "linux")]
 include!("daemon_smoke/design_system.rs");
 
-fn assert_no_update_artifacts(root: &Path) {
-    if !root.exists() {
-        return;
-    }
-    let suspicious: Vec<PathBuf> = fs::read_dir(root)
-        .unwrap()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            name.contains("update-helper-")
-                || name.contains("install-record")
-                || name.ends_with(".part")
-                || name.starts_with("vosu_old-")
-        })
-        .collect();
-    assert!(
-        suspicious.is_empty(),
-        "updater artifacts remained: {suspicious:?}"
-    );
-}
-
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let roots = TempDir::new().expect("temporary daemon roots");
@@ -167,6 +157,10 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .env("XDG_CACHE_HOME", &cache_home)
         .env("XDG_RUNTIME_DIR", roots.path().join("runtime"))
         .env("VOSU_PROCESS_EVENTS", "poll")
+        .env("VOSU_TEST_ISOLATED_DISCOVERY", "1")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DBUS_SESSION_BUS_ADDRESS")
         .env("HOME", roots.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -977,10 +971,12 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .lines()
         .filter_map(|line| line.split_once(" [info]   ").map(|(_, message)| message))
         .collect();
-    assert!(
-        info_messages.contains(&"Process events backend: polling"),
-        "production log missing polling backend message:\n{latest_log}"
-    );
+    let discovery = if cfg!(feature = "test-harness") {
+        "Process events backend: isolated (test harness)"
+    } else {
+        "Process events backend: polling"
+    };
+    assert!(info_messages.contains(&discovery), "{latest_log}");
     let server_message = format!("Overlays and API: http://127.0.0.1:{port}/");
     assert!(
         info_messages.contains(&server_message.as_str()),

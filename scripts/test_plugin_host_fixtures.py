@@ -38,6 +38,8 @@ class BuildCommandTests(unittest.TestCase):
              "--message-format=json-render-diagnostics"],
             ["cargo", "build", "--locked", "-p", "vosu-osu", "--example", "osu_process_plugin",
              "--features", "test-harness", "--message-format=json-render-diagnostics"],
+            ["cargo", "build", "--locked", "-p", "vosu-plugin-testkit", "--example", "api_v1_plugin",
+             "--features", "test-harness", "--message-format=json-render-diagnostics"],
         ])
 
     def test_target_is_forwarded(self):

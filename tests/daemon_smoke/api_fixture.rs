@@ -4,60 +4,8 @@ use super::*;
 #[tokio::test]
 async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // The daemon's compile-time path names the real profile directory, which a
-    // nextest archive run mounts at the same path (the test binary itself runs
-    // from an extracted copy).
-    let profile = Path::new(env!("CARGO_BIN_EXE_vosu"))
-        .parent()
-        .unwrap()
-        .to_owned();
-    // The fixture is built into its own target directory. Building it into
-    // the shared one would rewrite `deps/libvosu_plugin_testkit.so` (a cdylib
-    // keeps one unhashed name across feature sets) with this build's feature
-    // set while other test binaries read it.
-    let fixture_target = profile.parent().unwrap().join("daemon-smoke-fixture");
-    let built = fixture_target.join("debug/examples/libapi_v1_plugin.so");
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let build = tokio::time::timeout(
-        Duration::from_secs(600),
-        tokio::process::Command::new(cargo)
-            .current_dir(checkout)
-            .args([
-                "build",
-                "--locked",
-                "-p",
-                "vosu-plugin-testkit",
-                "--features",
-                "test-harness",
-                "--example",
-                "api_v1_plugin",
-            ])
-            .arg("--target-dir")
-            .arg(&fixture_target)
-            .kill_on_drop(true)
-            .status(),
-    )
-    .await
-    .expect("fixture build deadline");
-    let fixture = match build {
-        Ok(status) => {
-            assert!(status.success());
-            built
-        }
-        // A nextest archive run (the prepush container) has no toolchain and a
-        // read-only target dir; its workspace `--examples` build produced the
-        // fixture in that profile directory.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let prebuilt = profile.join("examples/libapi_v1_plugin.so");
-            assert!(
-                prebuilt.is_file(),
-                "no cargo to build the fixture plugin and no prebuilt {}",
-                prebuilt.display()
-            );
-            prebuilt
-        }
-        Err(error) => panic!("fixture build failed to start: {error}"),
-    };
+    let fixture = prepared("VOSU_M7_API_LIBRARY");
+    let target_path = prepared("VOSU_M7_TARGET");
     let root = tempfile::tempdir().unwrap();
     let plugin = root.path().join("plugin");
     fs::create_dir_all(plugin.join("lib")).unwrap();
@@ -74,17 +22,18 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         )
         .unwrap();
     }
-    fs::copy(&fixture, plugin.join("lib/libapi_v1_plugin.so")).unwrap();
-    let target_path = root.path().join("api_v1_target");
-    fs::copy("/bin/sh", &target_path).unwrap();
+    fs::copy(
+        &fixture,
+        plugin.join("lib").join(fixture.file_name().unwrap()),
+    )
+    .unwrap();
     let target = Command::new(&target_path)
-        .args(["-c", "read line"])
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .spawn()
         .unwrap();
     let target_pid = target.id();
     let _target = ChildGuard(Some(target));
-    let config = smoke_channel().root(root.path().join("config/vosu"));
+    let (mut daemon, config) = isolated_daemon(root.path());
     fs::create_dir_all(&config).unwrap();
     let port = available_port();
     fs::write(
@@ -93,20 +42,18 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
     )
     .unwrap();
     let log = fs::File::create_new(root.path().join("daemon.log")).unwrap();
-    let daemon = Command::new(env!("CARGO_BIN_EXE_vosu"))
-        .args(["--update=false", "--plugin"])
+    let daemon = daemon
+        .arg("--plugin")
         .arg(&plugin)
-        .env("HOME", root.path())
-        .env("XDG_CONFIG_HOME", root.path().join("config"))
-        .env("XDG_DATA_HOME", root.path().join("data"))
-        .env("XDG_CACHE_HOME", root.path().join("cache"))
-        .env("XDG_RUNTIME_DIR", root.path().join("runtime"))
-        .env("VOSU_PROCESS_EVENTS", "poll")
+        .env(
+            "VOSU_TEST_ISOLATED_DISCOVERY",
+            serde_json::json!([[target_pid, target_path]]).to_string(),
+        )
         .stdout(log.try_clone().unwrap())
         .stderr(log)
         .spawn()
         .unwrap();
-    let _daemon = ChildGuard(Some(daemon));
+    let mut daemon = ChildGuard(Some(daemon));
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(5))
@@ -233,4 +180,41 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         read_server_frame(&mut api, &mut api_buffer).await,
         (10, b"api-v1-alive".to_vec())
     );
+    drop(api);
+    fs::write(root.path().join("stop"), "").unwrap();
+    let status = vosu_proptest::wait::child(daemon.0.as_mut().unwrap()).unwrap();
+    assert!(status.success(), "{status}");
+}
+
+fn prepared(variable: &str) -> PathBuf {
+    let path =
+        PathBuf::from(std::env::var_os(variable).unwrap_or_else(|| {
+            panic!("{variable} must come from scripts/plugin-host-fixtures.py")
+        }));
+    assert!(path.is_absolute() && path.is_file(), "{variable}: {path:?}");
+    path
+}
+
+#[test]
+fn official_fixture_cannot_shadow_a_bundled_plugin() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut command, config) = isolated_daemon(root.path());
+    let package = root.path().join("fixture");
+    fs::create_dir(&package).unwrap();
+    fs::write(
+        package.join("manifest.toml"),
+        include_str!("../fixtures/plugin_host/osu/manifest.toml"),
+    )
+    .unwrap();
+    let rejected = command
+        .env("VOSU_TEST_OFFICIAL_PLUGIN", package)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let diagnostic = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        diagnostic.contains("fixture-official cannot shadow bundled plugin `vosu.osu`"),
+        "{diagnostic}"
+    );
+    assert!(!config.exists(), "fixture must be refused before startup");
 }

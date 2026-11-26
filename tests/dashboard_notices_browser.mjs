@@ -17,12 +17,14 @@
 //    refresh; the unknown bucket stays.
 import fs from 'node:fs';
 import path from 'node:path';
+import {browserReceipt, watchBrowser} from './browser_diagnostics.mjs';
 
 const [modulePath, evidence, overlayRoot] = process.argv.slice(2);
 if (!modulePath || !evidence || !overlayRoot) {
   throw new Error('Usage: node dashboard_notices_browser.mjs <playwright index.mjs> <evidence directory> <overlay root>');
 }
-const { chromium } = await import(modulePath);
+const {pathToFileURL} = await import('node:url');
+const { chromium } = await import(pathToFileURL(modulePath).href);
 fs.mkdirSync(evidence, { recursive: true });
 const OVERLAY = 'http://127.0.0.1:25150';
 const DASHBOARD = 'http://127.0.0.1:25151';
@@ -32,12 +34,14 @@ const HOSTILE_NAME = '<img src=x onerror="window.__d20=1">Hostile & "quoted"';
 const VOSULAY = { kind: 'tool', id: 'vosulay-editor', source: '18-lab-dev/vosulay' };
 const report = {};
 const failures = [];
+const diagnostics = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VOSU_CHROMIUM || undefined });
 
 async function openRouted(route, routes = []) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  watchBrowser(context, diagnostics);
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(`${route}: page error ${error.message}`));
   for (const [url, handler] of routes) await page.route(url, handler);
@@ -82,17 +86,24 @@ function notice(page) {
 // 1. A 1.x overlay opened directly, as a browser source would.
 {
   const context = await browser.newContext();
+  watchBrowser(context, diagnostics);
   const page = await context.newPage();
   const sockets = [];
+  const handshakes = [];
+  page.on('console', (message) => {
+    if (message.text().includes('/websocket/v2/subscribe')) handshakes.push(message.text());
+  });
   page.on('websocket', (socket) => sockets.push(socket.url()));
   await page.goto(`${OVERLAY}/${HOSTILE_ID}/index.html`, { waitUntil: 'domcontentloaded' });
   const done = await page.waitForFunction(() => document.body.dataset.socket === 'closed' && document.body.dataset.ingame,
     null, { timeout: 10000 }).then(() => true, () => false);
   const result = await page.evaluate(() => ({ ...document.body.dataset }));
-  report.overlay = { result, sockets };
+  report.overlay = { result, sockets, handshakes };
   check(done && result.socket === 'closed' && result.opened !== 'true', `overlay: the removed WebSocket must fail without opening ${JSON.stringify(result)}`);
   check(result.ingame === '404', `overlay: /api/ingame must be 404 ${JSON.stringify(result)}`);
   check(sockets.some((url) => url.includes('/websocket/v2/subscribe')), `overlay: the page really attempted the removed WebSocket ${JSON.stringify(sockets)}`);
+  check(handshakes.some((message) => message.includes('Unexpected response code: 404')),
+    `M7-N01: the real upgrade attempt received HTTP 404 ${JSON.stringify(handshakes)}`);
   await context.close();
 }
 
@@ -177,6 +188,7 @@ function notice(page) {
   check(await ready(page, '#removed-routes [data-action="launch-vosulay"]'), 'installed: Launch is offered');
   const manage = await page.evaluate(() => [...document.querySelectorAll('#removed-routes [data-role="ingame-action"] a')].map((link) => [link.textContent, link.getAttribute('href')]));
   check(JSON.stringify(manage) === JSON.stringify([['Manage', '/tools']]), `installed: Manage opens the Tools page ${JSON.stringify(manage)}`);
+  report.installed = manage;
   check(!(await page.$('#removed-routes [data-action="install-vosulay"]')), 'installed: no Install');
   await context.close();
 }
@@ -201,3 +213,4 @@ if (failures.length) {
   console.error(failures.join('\n'));
   process.exit(1);
 }
+browserReceipt('dashboard_notices_browser.mjs', Object.keys(report).length - 1, diagnostics);

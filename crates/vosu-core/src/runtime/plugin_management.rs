@@ -55,6 +55,9 @@ pub(super) enum Trust {
     Development,
     /// Every other `--plugin` package: `process` only, after approval.
     User,
+    /// A debug-only official namespace fixture; still needs process approval.
+    #[cfg(feature = "test-harness")]
+    FixtureOfficial,
 }
 
 impl Trust {
@@ -63,6 +66,8 @@ impl Trust {
             Self::Bundled => "bundled",
             Self::Development => "development",
             Self::User => "user",
+            #[cfg(feature = "test-harness")]
+            Self::FixtureOfficial => "fixture-official",
         }
     }
 
@@ -401,6 +406,8 @@ impl PluginManagement {
     fn view(&self, plugin: &ManagedPlugin, fresh: Option<Digests>) -> Value {
         let provenance = match (plugin.trust, &plugin.directory) {
             (Trust::Bundled, _) => json!({"kind": "bundled"}),
+            #[cfg(feature = "test-harness")]
+            (Trust::FixtureOfficial, _) => json!({"kind": "fixture-official"}),
             (_, directory) => json!({
                 "kind": "development",
                 "path": plugin
@@ -523,13 +530,19 @@ impl PluginManagement {
         })
     }
 
-    /// The user-trust process package at `index`.
+    /// The process package at `index` which can receive explicit approval.
     fn user_process(&self, index: usize) -> Option<(&str, &ProcessPackage)> {
         let plugin = &self.roster.0[index];
         let package = plugin.package.as_ref()?;
-        (plugin.trust == Trust::User)
-            .then_some(())
-            .and(package.process.as_ref())
+        match plugin.trust {
+            Trust::User => (),
+            #[cfg(feature = "test-harness")]
+            Trust::FixtureOfficial => (),
+            _ => return None,
+        }
+        package
+            .process
+            .as_ref()
             .map(|process| (package.id.as_str(), process))
     }
 

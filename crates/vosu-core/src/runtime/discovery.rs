@@ -38,19 +38,51 @@ pub(super) mod operational;
 #[cfg(feature = "test-harness")]
 const ISOLATED_DISCOVERY_ENV: &str = "VOSU_TEST_ISOLATED_DISCOVERY";
 
-/// The `test-harness` [`ISOLATED_DISCOVERY_ENV`] source: a pure-poll source
-/// that sees no process at all.
+/// Poll only the targets explicitly supplied by the harness. `1` (or no
+/// valid target list) means no candidates, never the host's process list.
 #[cfg(feature = "test-harness")]
-struct IsolatedSource;
+struct IsolatedSource(Vec<crate::plugin::ProcessRecord>);
+
+#[cfg(feature = "test-harness")]
+impl IsolatedSource {
+    fn from_value(value: &std::ffi::OsStr) -> Self {
+        let targets: Vec<(u32, String)> = value
+            .to_str()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default();
+        Self(
+            targets
+                .into_iter()
+                .filter_map(|(pid, path)| {
+                    let executable = std::path::Path::new(&path);
+                    if pid == 0 || !executable.is_absolute() {
+                        return None;
+                    }
+                    let name = executable.file_name()?.to_str()?.to_owned();
+                    let command_line = format!("\"{path}\"");
+                    Some(crate::plugin::ProcessRecord {
+                        pid,
+                        name,
+                        command_line,
+                        bitness: vosu_plugin_api::Bitness::X64,
+                        start_time: 1,
+                        argv: Some(vec![path.clone()]),
+                        path,
+                    })
+                })
+                .collect(),
+        )
+    }
+}
 
 #[cfg(feature = "test-harness")]
 impl ProcessSource for IsolatedSource {
     fn enumerate(&self) -> std::io::Result<Vec<crate::plugin::ProcessRecord>> {
-        Ok(Vec::new())
+        Ok(self.0.clone())
     }
 
-    fn inspect(&self, _pid: u32) -> std::io::Result<Option<crate::plugin::ProcessRecord>> {
-        Ok(None)
+    fn inspect(&self, pid: u32) -> std::io::Result<Option<crate::plugin::ProcessRecord>> {
+        Ok(self.0.iter().find(|record| record.pid == pid).cloned())
     }
 
     fn backend_name(&self) -> &'static str {
@@ -61,8 +93,8 @@ impl ProcessSource for IsolatedSource {
 /// The platform source, or the isolated one a `test-harness` launch asked for.
 fn process_source() -> Arc<dyn ProcessSource> {
     #[cfg(feature = "test-harness")]
-    if std::env::var_os(ISOLATED_DISCOVERY_ENV).is_some() {
-        return Arc::new(IsolatedSource);
+    if let Some(value) = std::env::var_os(ISOLATED_DISCOVERY_ENV) {
+        return Arc::new(IsolatedSource::from_value(&value));
     }
     platform_process_source()
 }

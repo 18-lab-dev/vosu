@@ -92,6 +92,18 @@ class ClassifyTests(unittest.TestCase):
         code, _native, ui = ci_changes.classify(["tests/dashboard_smoke.rs"])
         self.assertTrue(ui)
 
+    def test_m7_browser_fixture_paths_trigger_the_dashboard_job(self):
+        for path in (
+            "tests/smoke_process.py",
+            "tests/catalog_v2_fixture.py",
+            "tests/fixtures/tool-host-v2/web/index.html",
+            "tests/fixtures/api-v1-plugin/manifest.toml",
+            "crates/vosu-plugin-testkit/examples/api_v1_target.rs",
+            "scripts/plugin-host-fixtures.py",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(ci_changes.classify([path])[2])
+
     def test_mixed_change_unions_every_flag(self):
         code, native, ui = ci_changes.classify(
             ["crates/vosu-osu-model/src/enums.rs", "crates/vosu-core/src/server/routes.rs"]

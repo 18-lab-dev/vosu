@@ -26,6 +26,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
   a source names such plugins instead of claiming they stopped. Web tool
   cards show **Update available** when the tool's own catalog source lists
   a newer installable version (`ToolView.update_available`).
+- Uninstalling the last web tool closes its Details drawer instead of
+  blocking the rest of the Tools page.
 - Installed tools and plugins that require a core resource kind
   (`resource:chart.file`, `.audio`, `.background`, `.set` or
   `resource:skin`) now see it as always available at the `vosu.chart` /

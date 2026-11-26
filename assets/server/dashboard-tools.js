@@ -319,6 +319,7 @@ export function mountTools({
     if (state.tools.length === 0) {
       state.cards.clear();
       state.signatures.clear();
+      state.details?.dialog.close();
       if (!root.querySelector(':scope > .empty-state')) root.replaceChildren(emptyState());
       return;
     }

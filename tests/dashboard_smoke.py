@@ -17,17 +17,13 @@ refresh, with one daemon WARN for `/api/ingame`. Only test ports
 25150/25151 are used.
 """
 import argparse
-import functools
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
+import contextlib
 import json
-import os
 from pathlib import Path
 import shutil
-import signal
-import subprocess
 import tempfile
-import threading
-from tool_host_smoke import ROOT, channel_root, curl, wait_for
+from smoke_process import BINARY, ROOT, Daemon, api_plugin, curl, package_server, target, wait_for
 from catalog_v2_fixture import Catalog, api, dashboard_headers, facts, set_sources
 
 # A classic inline script in <body> that opens a socket immediately, like
@@ -55,7 +51,7 @@ fetch('/api/ingame').then((response) => { document.body.dataset.ingame = String(
 INGAME_WARNING = '/api/ingame was removed in vosu 2.0'
 
 
-def removed_routes(static, args, environment):
+def removed_routes(static, args, daemon):
     """D20: real removed requests, then the notice in the browser."""
     folder = static / 'hostile-overlay'
     folder.mkdir()
@@ -69,57 +65,85 @@ def removed_routes(static, args, environment):
         assert expected[0] == 404, expected
     assert curl('/api/ingame/')[0] == 404
     assert curl('/files/skin/?l=overlay-1')[0] == 404
-    subprocess.run(['node', str(ROOT / 'tests/dashboard_notices_browser.mjs'), str(args.playwright_module.resolve()),
-                    str(args.evidence.resolve()), str(static)], check=True, env=environment)
+    daemon.browser('dashboard_notices_browser.mjs', args.playwright_module, args.evidence, static)
     status, body = curl('/api/dashboard/status', dashboard=True)
     assert status == 200 and 'ingame' not in json.loads(body), body
     assert 'never-retain' not in body, body
 
 
+def stage_osu(daemon, pid):
+    # The bundled producer reads the same input and uses the same ABI
+    # publication ingress as M5's staged osu! process fixture.
+    data = daemon.data / 'plugins/vosu.osu'
+    data.mkdir(parents=True)
+    (data / 'parity.json').write_text(json.dumps({
+        'input': str(ROOT / 'tests/fixtures/oracle/stable-play-osu-fl/input.json'),
+        'chart_root': str(data), 'receipts': str(data), 'pids': [pid],
+    }), encoding='utf-8')
+    return data / f'published-{pid}'
+
+
+def verify_live_sessions(synthetic_pid, osu_pid, osu_receipt):
+    def sessions():
+        status, body = curl('/api/v1/sessions')
+        assert status == 200, body
+        found = {s['pid']: s for s in json.loads(body)['sessions']}
+        if set(found) == {synthetic_pid, osu_pid} and osu_receipt.is_file():
+            return found
+        return None
+
+    live = wait_for(sessions)
+    synthetic, osu = live[synthetic_pid], live[osu_pid]
+    assert synthetic['plugin']['id'] == 'test.api.fixture' and synthetic['variant'] == 'synthetic', synthetic
+    assert osu['plugin']['id'] == 'vosu.osu' and osu['variant'] == 'stable', osu
+    assert synthetic['session'] != osu['session']
+    state = {}
+    for session in (synthetic, osu):
+        status, body = curl(f'/api/v1/sessions/{session["session"]}/state')
+        assert status == 200, body
+        state[session['plugin']['id']] = json.loads(body)
+    file_url = state['test.api.fixture']['test.api.fixture']['resources']['file']['url']
+    assert curl(file_url) == (200, (ROOT / 'tests/fixtures/api-v1-plugin/fixture.osu').read_bytes().decode())
+    assert 'vosu.osu' not in state['test.api.fixture']
+    assert state['vosu.osu']['vosu.play']['accuracy'] == 1
+    assert 'test.api.fixture' not in state['vosu.osu']
+    assert 'internal' not in state['vosu.osu']['vosu.osu']
+    print('M7-X0 identifiable testkit and harness-driven osu! state from distinct ABI providers')
+
+
+def verify_live_daemon(binary, root):
+    # Keep the existing visual baseline a comparison of the idle one-row
+    # status strip. The mixed-provider positive control has its own daemon.
+    root.mkdir()
+    daemon = Daemon(binary, root)
+    with target(root) as synthetic, target(root, 'osu!') as osu:
+        receipt = stage_osu(daemon, osu[0])
+        daemon.discover(synthetic, osu)
+        with daemon.run(root / 'daemon.log', '--plugin', str(api_plugin(root))):
+            verify_live_sessions(synthetic[0], osu[0], receipt)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/vosu')
-    parser.add_argument('--evidence', type=Path, default=Path('/tmp/vosu-dashboard-evidence'))
+    parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument('--evidence', type=Path, default=Path(tempfile.gettempdir()) / 'vosu-dashboard-evidence')
     parser.add_argument('--playwright-module', type=Path, required=True)
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     args.evidence.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='vosu-dashboard-smoke-') as temporary:
+    args.evidence = args.evidence.resolve()
+    with tempfile.TemporaryDirectory(prefix='vosu-dashboard-smoke-') as temporary, contextlib.ExitStack() as contexts:
         root = Path(temporary)
-        environment = dict(os.environ)
-        for variable in ['DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS']:
-            environment.pop(variable, None)
-        # Browsers installed for the real user, found before HOME is isolated.
-        environment['PLAYWRIGHT_BROWSERS_PATH'] = os.environ.get(
-            'PLAYWRIGHT_BROWSERS_PATH', str(Path.home() / '.cache/ms-playwright'))
-        for variable, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
-                                    ('XDG_DATA_HOME', 'data'), ('XDG_CACHE_HOME', 'cache'),
-                                    ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
-            path = root / directory
-            path.mkdir(mode=0o700)
-            environment[variable] = str(path)
+        verify_live_daemon(binary, root / 'live-state')
         static = root / 'static'
         for index in range(6):
             folder = static / f'overlay-{index}'
             folder.mkdir(parents=True)
             (folder / 'index.html').write_text(OVERLAY.format(name=f'overlay-{index}'))
             (folder / 'metadata.txt').write_text(f'Name: Overlay {index}\nAuthor: 18-LAB\nVersion: 1.0.0\nResolution: 400x100\n')
-        config = channel_root(binary, root / 'config/vosu')
-        config.mkdir(parents=True)
-        (config / 'vosu.toml').write_text(f'''ENABLE_AUTOUPDATE = false
-OPEN_DASHBOARD_ON_STARTUP = false
-DEBUG_LOG = false
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 25150
-DASHBOARD_IP = "127.0.0.1"
-DASHBOARD_PORT = 25151
-ALLOWED_IPS = "127.0.0.1,localhost,absolute"
-STATIC_FOLDER_PATH = {json.dumps(str(static))}
-''')
-        # 2.0 web tools from the fixture-v2 package. Without its test plugin
-        # the declared `requires` cannot resolve: the two Ready copies drop
-        # them, `fixture-v2-blocked` keeps them. `fixture` is a 1.x
-        # `tool.toml` package, listed Disabled with needs-2.0-update.
+        daemon = Daemon(binary, root, allowed='127.0.0.1,localhost,absolute', static=static)
+        # The ready tool requires the live fixture action and state. A second
+        # ready tool needs no capabilities; the blocked tool names a missing action.
         tools = []
         v2_manifest = (ROOT / 'tests/fixtures/tool-host-v2/manifest.toml').read_text()
         for tool_id in ['fixture-v2', 'fixture-v2-two', 'fixture-v2-blocked']:
@@ -128,8 +152,10 @@ STATIC_FOLDER_PATH = {json.dumps(str(static))}
             text = v2_manifest.replace("id = 'fixture-v2'", f"id = '{tool_id}'")
             if tool_id != 'fixture-v2':
                 text = text.replace("name = 'M3 browser fixture'", f"name = '{tool_id}'")
-            if tool_id != 'fixture-v2-blocked':
+            if tool_id == 'fixture-v2-two':
                 text = text.split('[[requires]]')[0]
+            if tool_id == 'fixture-v2-blocked':
+                text = text.replace('action:test.api.fixture.run', 'action:test.api.fixture.missing')
             (tool / 'manifest.toml').write_text(text)
             tools += ['--tool', str(tool)]
         legacy = root / 'tools' / 'fixture'
@@ -141,53 +167,37 @@ STATIC_FOLDER_PATH = {json.dumps(str(static))}
         # build; packages are listed but never downloaded here.
         packages = root / 'packages'
         packages.mkdir()
-        server = ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(SimpleHTTPRequestHandler, directory=str(packages)))
-        port = server.server_address[1]
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        host_range, target = facts(binary)
-        catalog = Catalog(packages, port, host_range, target)
+        port = contexts.enter_context(package_server(SimpleHTTPRequestHandler, packages))
+        host_range, triple = facts(binary)
+        catalog = Catalog(packages, port, host_range, triple)
         catalog.publish('keyboard',
                         tools=[catalog.tool(f'catalog-tool-{index}', f'Catalog tool {index}',
                                             description='A catalog tool for keyboard checks.') for index in range(2)],
                         overlays=[catalog.overlay(f'source-overlay-{index}', f'Source overlay {index}',
                                                   description='A catalog-source overlay for keyboard checks.')
                                   for index in range(2)])
-        environment['VOSU_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
-        with (args.evidence / 'daemon.log').open('w') as log:
-            daemon = subprocess.Popen([str(binary), '--update=false', *tools], cwd=root, env=environment,
-                                      stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-            try:
-                wait_for(lambda: curl('/api/tools', dashboard=True)[0] == 200)
-                headers = dashboard_headers()
-                set_sources(headers, [catalog.source('keyboard')])
-                assert api('refresh', headers, 'POST')['sources'][0]['status'] == 'ok'
-                # Unknown routes: the styled page for a person, the plain
-                # body for scripts, on both listeners.
-                for dashboard in [False, True]:
-                    status, body = curl('/definitely-missing/', dashboard=dashboard, headers={'Accept': 'text/html'})
-                    assert status == 404 and 'Page not found' in body and '/assets/system.css' in body, body
-                    assert curl('/definitely-missing/', dashboard=dashboard) == (404, 'Not Found')
-                subprocess.run(['node', str(ROOT / 'tests/dashboard_browser.mjs'),
-                                str(args.playwright_module.resolve()), str(args.evidence.resolve())],
-                               check=True, env=environment)
-                removed_routes(static, args, environment)
-                daemon.send_signal(signal.SIGTERM)
-                assert daemon.wait(timeout=15) == 0
-                # One WARN per daemon process for /api/ingame, in each log
-                # sink that records it, and never the request's query.
-                logs = [args.evidence / 'daemon.log', *root.rglob('*.log')]
-                counts = [path.read_text(errors='replace').count(INGAME_WARNING) for path in logs]
-                assert max(counts) == 1 and all(count in (0, 1) for count in counts), list(zip(logs, counts))
-                assert not any('never-retain' in path.read_text(errors='replace') for path in logs)
-            finally:
-                if daemon.poll() is None:
-                    daemon.terminate()
-                    try:
-                        daemon.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        daemon.kill()
-                        daemon.wait(timeout=15)
-                server.shutdown()
+        daemon.environment['VOSU_CATALOG_TEST_SOCKET'] = f'127.0.0.1:{port}'
+        daemon.discover(contexts.enter_context(target(root)))
+        tools += ['--plugin', str(api_plugin(root))]
+        with daemon.run(args.evidence / 'daemon.log', *tools):
+            headers = dashboard_headers()
+            set_sources(headers, [catalog.source('keyboard')])
+            assert api('refresh', headers, 'POST')['sources'][0]['status'] == 'ok'
+            # Unknown routes: styled for a person, plain for scripts.
+            for dashboard in [False, True]:
+                status, body = curl('/definitely-missing/', dashboard=dashboard, headers={'Accept': 'text/html'})
+                assert status == 404 and 'Page not found' in body and '/assets/system.css' in body, body
+                assert curl('/definitely-missing/', dashboard=dashboard) == (404, 'Not Found')
+            # The full visual corpus includes four real settings fade/expiry
+            # cycles and screenshots at several widths. Keep per-operation
+            # Playwright bounds; give the aggregate enough time on the VM.
+            daemon.browser('dashboard_browser.mjs', args.playwright_module, args.evidence, timeout=240)
+            removed_routes(static, args, daemon)
+        # One WARN per daemon process in each sink, never its query.
+        logs = [args.evidence / 'daemon.log', *root.rglob('*.log')]
+        counts = [path.read_text(errors='replace').count(INGAME_WARNING) for path in logs]
+        assert max(counts) == 1 and all(count in (0, 1) for count in counts), list(zip(logs, counts))
+        assert not any('never-retain' in path.read_text(errors='replace') for path in logs)
     print((args.evidence / 'dashboard.json').read_text())
 
 
