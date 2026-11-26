@@ -55,9 +55,10 @@ the [surface resource seam](../v2/adapter-surfaces.md#r0-resource-bytes-and-life
 
 ## M4b legacy HTTP amendment (2026-11-26)
 
-`GET /api/calculate/pp` serves `application/json` and writes successful
-result numbers with ECMAScript `JSON.stringify` spelling without rounding
-the result. It preserves the legacy engine and numeric bitmasks.
+`GET /api/calculate/pp` uses the shared adapter JSON media type
+(`application/json; charset=utf-8`). It writes successful result numbers with
+ECMAScript `JSON.stringify` spelling without rounding the result and preserves
+the legacy engine and numeric bitmasks.
 
 The adapter deliberately accepts well-formed acronym pairs (e.g. `HDDT`)
 and valid structured JSON mod inputs including settings. The pinned

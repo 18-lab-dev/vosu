@@ -600,10 +600,10 @@ All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu,
 `mods` (legacy numeric bitmask, concatenated two-letter acronyms such as
 `HDDT`, or a JSON mod object/array with optional settings), `acc`,
 `sliderEndHits`, `smallTickHits`, `largeTickHits`, and `hitresultPriority`.
-With a ready chart, successes use `application/json` and ECMAScript number
-spelling. Malformed accuracy, out-of-range clock rate (outside `0.01..=100`),
-malformed mod acronyms, invalid unsigned counts, and invalid rulesets return
-HTTP 400 with a JSON `{"error": string}` body.
+With a ready chart, successes return JSON (`application/json; charset=utf-8`)
+with ECMAScript number spelling. Malformed accuracy, out-of-range clock rate
+(outside `0.01..=100`), malformed mod acronyms, invalid unsigned counts, and
+invalid rulesets return HTTP 400 with a JSON `{"error": string}` body.
 
 ### Public session state (API v1, 2.0 prerelease)
 

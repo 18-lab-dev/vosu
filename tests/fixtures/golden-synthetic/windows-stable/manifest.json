@@ -14,7 +14,7 @@
     "sha256": "6ba575b5dd369e931e2c76ebff449a4a3f12b829da6959e931f0d267e5588e45"
   },
   "vosu": {
-    "commit": "dabb3eaa5795f7bc04362132d47e412e064b9412",
+    "commit": "7a4ee24b91ec15815063df2dae5a24d34b7f56be",
     "version": "2.0.0-alpha.2",
     "profile": "debug",
     "features": [
