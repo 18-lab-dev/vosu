@@ -86,6 +86,17 @@ pub enum vosu_opcode {
     VOSU_OP_STATE_SUBSCRIBE = 70,
     /// host -> plugin, CBOR
     VOSU_OP_STATE_UPDATE = 71,
+
+    /// plugin -> host, CBOR, nonzero `correlation_id`: declare an artifact
+    /// owned by a live `tool`/`cli` invocation (AF.12, §6.13)
+    VOSU_OP_ARTIFACT_DECLARE = 80,
+    /// host -> plugin, CBOR, correlated: the artifact id or a refusal
+    VOSU_OP_ARTIFACT_DECLARED = 81,
+    /// host -> plugin, CBOR, correlated: one download; answered with
+    /// `RESOURCE_RESOLVED`
+    VOSU_OP_ARTIFACT_OPEN = 82,
+    /// host -> plugin, CBOR, no reply: the artifact left core's registry
+    VOSU_OP_ARTIFACT_RELEASE = 83,
 }
 
 /// The reserved private-opcode bit (`include/vosu_plugin.h`
@@ -136,6 +147,10 @@ impl TryFrom<u32> for vosu_opcode {
             62 => Self::VOSU_OP_TIMER_FIRED,
             70 => Self::VOSU_OP_STATE_SUBSCRIBE,
             71 => Self::VOSU_OP_STATE_UPDATE,
+            80 => Self::VOSU_OP_ARTIFACT_DECLARE,
+            81 => Self::VOSU_OP_ARTIFACT_DECLARED,
+            82 => Self::VOSU_OP_ARTIFACT_OPEN,
+            83 => Self::VOSU_OP_ARTIFACT_RELEASE,
             _ => return Err(()),
         })
     }

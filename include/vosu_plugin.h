@@ -100,6 +100,10 @@ extern "C" {
  * universal cap. */
 #define VOSU_STREAM_CHUNK_MAX_BYTES (VOSU_FRAME_MAX_BYTES - 64u)
 
+/* Upper bound on an artifact `name`'s UTF-8 length in a
+ * VOSU_OP_ARTIFACT_DECLARE (AF.12, docs/v2/plugin-abi.md §6.13). */
+#define VOSU_ARTIFACT_NAME_MAX_BYTES 255u
+
 /* ---------------------------------------------------------------------
  * Primitives
  * --------------------------------------------------------------------- */
@@ -203,6 +207,16 @@ typedef enum vosu_opcode {
     /* Cross-plugin state reads. */
     VOSU_OP_STATE_SUBSCRIBE = 70,   /* plugin -> host, CBOR: replaces this plugin's previous selection for the named session */
     VOSU_OP_STATE_UPDATE = 71,      /* host -> plugin, CBOR */
+
+    /* Invocation-owned artifacts (AF.12, docs/v2/plugin-abi.md §6.13): a
+     * protected or sessionless output owned by one live `tool`/`cli`
+     * invocation and served only to its job's credential. Never a resource
+     * reference, never a host path, never a session handle. A peer that
+     * predates these answers VOSU_ERR_UNSUPPORTED. */
+    VOSU_OP_ARTIFACT_DECLARE = 80,  /* plugin -> host, CBOR, nonzero correlation_id: {"invocation", "key", "name", "content_id", "size"}; `name` is one file-name component of at most 255 UTF-8 bytes */
+    VOSU_OP_ARTIFACT_DECLARED = 81, /* host -> plugin, CBOR, correlated: {"artifact"} or {"error": {"code", "message"}} (invocation_finished, caller_not_supported, too_many_artifacts, invalid_name) */
+    VOSU_OP_ARTIFACT_OPEN = 82,     /* host -> plugin, CBOR, correlated: {"artifact", "key"}; answered with VOSU_OP_RESOURCE_RESOLVED: a plugin-wide root path, a STREAM_READ stream of exactly the declared size, or an error */
+    VOSU_OP_ARTIFACT_RELEASE = 83,  /* host -> plugin, CBOR, no reply: {"artifact", "key"}, after the artifact left core's registry and every lease got STREAM_CLOSE */
 } vosu_opcode;
 
 /* Reserved opcode range (A5.2, docs/v2/plugin-abi.md §7.6): every opcode

@@ -105,12 +105,13 @@ pub use focus::{
 };
 pub(crate) use host::SurfaceRequester;
 pub use host::resource_requests::{
-    MAX_PENDING_RESOURCE_REQUESTS, ResourceOwner, ResourceReply, ResourceRequest,
+    LeaseOwner, MAX_PENDING_RESOURCE_REQUESTS, ResourceOwner, ResourceReply, ResourceRequest,
     ResourceRequestError, ResourceRequests,
 };
 pub use host::resources::{OverlayRootRetirement, RootCapability};
 pub use host::{
-    DiagnosticSession, DiscoveryObserver, PackageRegistration, PluginHost, ProcessRecord,
+    ArtifactSource, DiagnosticSession, DiscoveryObserver, PackageRegistration, PluginHost,
+    ProcessRecord,
     ProviderRegistration, ValidationSnapshot,
 };
 pub use host_services::PluginHostHandler;

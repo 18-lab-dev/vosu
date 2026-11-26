@@ -22,3 +22,7 @@ pub const VOSU_PUBLISH_BATCH_MAX_BYTES: u32 = VOSU_FRAME_MAX_BYTES;
 /// [`VOSU_FRAME_MAX_BYTES`] so the reply's own CBOR overhead can never push
 /// the message over the universal cap (`include/vosu_plugin.h:95-101`).
 pub const VOSU_STREAM_CHUNK_MAX_BYTES: u32 = VOSU_FRAME_MAX_BYTES - 64;
+
+/// Upper bound on an artifact `name`'s UTF-8 length in a
+/// `VOSU_OP_ARTIFACT_DECLARE` (`docs/v2/plugin-abi.md` §6.13, AF.12).
+pub const VOSU_ARTIFACT_NAME_MAX_BYTES: u32 = 255;

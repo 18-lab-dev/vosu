@@ -5,6 +5,7 @@
 //! sessions before presenting their principal; ownership does not authorize an
 //! expired token. HTTP response policy (including no-store) belongs to the server.
 
+pub mod artifacts;
 pub mod deadline;
 pub mod invocation;
 pub mod jobs;
@@ -17,6 +18,10 @@ pub use invocation::{
 };
 pub use registry::{ActionDescriptor, ActionRegistry, ToolAuthority};
 
+pub use artifacts::{
+    ArtifactDeclaration, ArtifactDownload, ArtifactError, ArtifactHost, ArtifactRefusal,
+    ArtifactView, ReleaseNotice,
+};
 pub use deadline::DeadlineGuard;
 pub use jobs::{
     CancellationRequest, JobError, JobFailure, JobOwner, JobProgress, JobRegistry, JobSnapshot,

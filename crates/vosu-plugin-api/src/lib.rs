@@ -39,6 +39,10 @@ pub use cbor::action::{
     ActionCall, ActionCancel, ActionInvoke, ActionProgress, ActionResult, ActionStatus, Caller,
     CallerKind,
 };
+pub use cbor::artifact::{
+    ArtifactDeclare, ArtifactDeclared, ArtifactOpen, ArtifactRelease,
+    is_artifact_name,
+};
 pub use cbor::common::ErrorInfo;
 pub use cbor::log::{LogLevel, LogRecord};
 pub use cbor::read_plan::ReadPlanCancel;
@@ -66,8 +70,8 @@ pub use flat::read_plan::{
     vosu_read_result_kind, vosu_stage_base, vosu_stage_base_kind, vosu_stage_header,
 };
 pub use limits::{
-    VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_PUBLISH_BATCH_MAX_BYTES,
-    VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
+    VOSU_ARTIFACT_NAME_MAX_BYTES, VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR,
+    VOSU_PUBLISH_BATCH_MAX_BYTES, VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
 pub use manifest::{
     ActionDeclaration, ActionSessionMode, Capability, MatchTable, PluginManifest, ResourceKind,

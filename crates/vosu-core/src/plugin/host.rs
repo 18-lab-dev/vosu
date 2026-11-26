@@ -646,6 +646,9 @@ impl PluginHostHandler for PluginHost {
             Message::ActionCancel(cancel) => self.handle_action_cancel(instance, cancel),
             Message::ActionProgress(progress) => self.handle_action_progress(instance, progress),
             Message::ActionResult(result) => self.handle_action_result(instance, result),
+            Message::ArtifactDeclare(declare) => {
+                self.handle_artifact_declare(instance, correlation_id, declare)
+            }
             Message::RootDeclare(request) => self.handle_root_declare(instance, request),
             Message::ResourceResolved(reply) => self.handle_resource_reply(
                 instance,
@@ -921,6 +924,8 @@ mod diagnostics;
 pub use diagnostics::DiagnosticSession;
 mod action_delivery;
 mod actions;
+mod artifacts;
+pub use artifacts::ArtifactSource;
 mod api;
 mod capabilities;
 mod instance_loss;

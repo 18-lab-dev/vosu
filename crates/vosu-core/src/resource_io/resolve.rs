@@ -219,26 +219,7 @@ impl ResourceResolver {
             return Err(ResourceRequestError::Cancelled);
         }
         let root = host.resource_root(owner.instance, owner.handle, root)?;
-        let path = SafeRelativePath::parse(path).map_err(|_| ResourceRequestError::InvalidReply)?;
-        tokio::task::spawn_blocking(move || {
-            let child = root.open_child(&path)?;
-            if !child.metadata.is_file() {
-                return Err(ResourceRequestError::InvalidReply);
-            }
-            let identity =
-                FileIdentity::of(&child.file).map_err(|_| ResourceRequestError::InvalidReply)?;
-            Ok(Arc::new(ResolvedFile {
-                size: identity.size,
-                identity,
-                gone: AtomicBool::new(false),
-                modified: child.metadata.modified().ok(),
-                root,
-                child: Mutex::new(child),
-                current: AtomicBool::new(true),
-            }))
-        })
-        .await
-        .map_err(|_| ResourceRequestError::Cancelled)?
+        open_root_file(root, path).await
     }
     pub fn retire(&self, id: &ResourceId) {
         self.files
@@ -266,4 +247,32 @@ impl ResourceResolver {
                 }
             });
     }
+}
+
+/// Opens `path` inside retained `root` with ADR 0005 confinement, without
+/// reading any bytes; shared by session resources and job artifacts.
+pub(super) async fn open_root_file(
+    root: RootCapability,
+    path: &str,
+) -> Result<Arc<ResolvedFile>, ResourceRequestError> {
+    let path = SafeRelativePath::parse(path).map_err(|_| ResourceRequestError::InvalidReply)?;
+    tokio::task::spawn_blocking(move || {
+        let child = root.open_child(&path)?;
+        if !child.metadata.is_file() {
+            return Err(ResourceRequestError::InvalidReply);
+        }
+        let identity =
+            FileIdentity::of(&child.file).map_err(|_| ResourceRequestError::InvalidReply)?;
+        Ok(Arc::new(ResolvedFile {
+            size: identity.size,
+            identity,
+            gone: AtomicBool::new(false),
+            modified: child.metadata.modified().ok(),
+            root,
+            child: Mutex::new(child),
+            current: AtomicBool::new(true),
+        }))
+    })
+    .await
+    .map_err(|_| ResourceRequestError::Cancelled)?
 }

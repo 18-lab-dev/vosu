@@ -312,7 +312,8 @@ pub(crate) fn route(opcode: vosu_opcode) -> Route {
         | VOSU_OP_ACTION_PROGRESS
         | VOSU_OP_TIMER_SET
         | VOSU_OP_TIMER_CANCEL
-        | VOSU_OP_STATE_SUBSCRIBE => Route::Acknowledged,
+        | VOSU_OP_STATE_SUBSCRIBE
+        | VOSU_OP_ARTIFACT_DECLARE => Route::Acknowledged,
         VOSU_OP_DEMAND_CHANGED
         | VOSU_OP_READ_PLAN_RESULT
         | VOSU_OP_SESSION_ATTACHED
@@ -327,7 +328,10 @@ pub(crate) fn route(opcode: vosu_opcode) -> Route {
         | VOSU_OP_ACTION_INVOKE
         | VOSU_OP_SETTINGS_CHANGED
         | VOSU_OP_TIMER_FIRED
-        | VOSU_OP_STATE_UPDATE => Route::NoEffect,
+        | VOSU_OP_STATE_UPDATE
+        | VOSU_OP_ARTIFACT_DECLARED
+        | VOSU_OP_ARTIFACT_OPEN
+        | VOSU_OP_ARTIFACT_RELEASE => Route::NoEffect,
     }
 }
 
