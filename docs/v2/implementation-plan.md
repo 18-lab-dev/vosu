@@ -92,20 +92,20 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-plugin-internal` (AF.9) | `publish = false` companion: `PlanMemory` and the SDK-side synchronous-read interception (D5) — a wrapper around the SDK glue's `dispatch` — the bundled-registration glue for the root crate's `BUNDLED` array, the intercepting `cdylib` form for the osu! process fixture, and the opt-in `read_plan_profile` diagnostics, moved out of `vosu-plugin-api` by S0 with every internal caller (D11). Its users (`vosu-osu`, the adapters, `vosu-plugin-testkit`, `vosu-core` for host-side profile spans, the root crate) are all `publish = false`; `scripts/check-crate-boundaries.py` enforces both. | `vosu-plugin-api` |
 | `crates/vosu-sys` (core-owned) | Native boundary: `src/platform*`, `src/process*` (Linux/Windows `ProcessMemory` backends, signature region walk, module tables), process-event backends `src/instance/events*` with the eBPF build step. All platform `unsafe`. | `vosu-plugin-api` (M5 R0: implements the platform-neutral `memory` vocabulary — `ProcessMemory`, read requests, `MemoryError`/`ReadStatus`, `ProcessBitness`, signature `Pattern` — instead of defining it) |
 | `crates/vosu-net` (core-owned) | Hardened HTTPS streaming and archive extraction (`src/net*`), later credential origin scoping and the per-host private-network exception (ADR 0023). | `vosu-sys`; `vosu-plugin-api` (F S0: the SDK's package-path `portable_component` rule) |
-| `crates/vosu-surface` (core-owned) | Rust-only API for **bundled** surface plugins (D3), listed exhaustively in the ADR 0019 amendment: exact route and WebSocket-feed registration on a listener role; state reads that go through the same subscription, demand, and `requires` path as `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE` handles; management-route provenance. No `ProcessMemory`, configuration writes, or credentials. Not part of the C ABI. | `vosu-plugin-api` |
-| `crates/vosu-core` | Config, logging, report, updater, desktop integration, generic discovery/generations/focus (generalized `src/instance*`), plugin registry and host (in-process dispatch, `vosu plugin-host` supervision and channel), state bus and demand compiler, listeners/origins/auth/API keys/broker/file confinement/WebSocket hub primitives, API v1 (sessions, subscriptions, reads, resources, trees, jobs), catalog v2, sources, credentials, resolver, 1.x migration, lifecycle. | `vosu-sys`, `vosu-net`, `vosu-plugin-api`, `vosu-surface`, `vosu-plugin-internal` (S0: host-side `read_plan_profile` spans; bundled test fixtures) |
+| `crates/vosu-surface` (core-owned) | Rust-only API for **bundled** surface plugins (D3), listed exhaustively in the ADR 0019 amendment: exact route and WebSocket-feed registration on a listener role; state reads that go through the same subscription, demand, and `requires` path as `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE` handles; management-route provenance; and, from M7, the A7.1 presentation views core pushes to the two hosts that need them ([A7 freeze](#a7-approved-contract-freeze-2026-11-24)). No `ProcessMemory`, configuration writes, or credentials. Not part of the C ABI. | `vosu-plugin-api` |
+| `crates/vosu-core` | Config, logging, report, updater, desktop integration, generic discovery/generations/focus (generalized `src/instance*`), plugin registry and host (in-process dispatch, `vosu plugin-host` supervision and channel), state bus and demand compiler, listeners/origins/auth/API keys/broker/file confinement/WebSocket hub primitives, API v1 (sessions, subscriptions, reads, resources, trees, jobs), catalog v2, sources, credentials, resolver, 1.x migration, lifecycle; from M7 (A7.1) also every privileged dashboard management handler, the tool registry with launch codes, launch sessions and action authority, and the dashboard-off switch. | `vosu-sys`, `vosu-net`, `vosu-plugin-api`, `vosu-surface`, `vosu-plugin-internal` (S0: host-side `read_plan_profile` spans; bundled test fixtures) |
 | `crates/vosu-osu-model` | osu! value types and osu!-exact helpers shared by reader, calculator, and adapters: `src/model/{memory,states,enums}*` and the calculation root helpers (`src/calculation/root/{helpers,mods,scores}.rs`: JS-compatible rounding and number writing, mods, grades, legacy hits). | none |
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`, `vosu-net` (the moved offset-generator's hardened ZIP extraction, `vosu_net::extract_zip_atomic`, DD, and since M5 R1 the atomic offset-cache publish/read convention, `vosu_net::publish`). The interim `vosu-sys` edge (DC) was removed by M5 R1: reads use `PlanMemory`, every scan goes through an injected `ScanBackend` (the host's `SCAN_REQUEST`; no region-walk fallback), the lazer executable root comes from the `SESSION_ATTACHED` `path` fact, and the offset generator's composer injects the gated `vosu_sys::process_spawn` spawn. `vosu-sys` remains a dev-dependency only |
 | `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`, `vosu-plugin-api` (the reducer's `MemoryRead`/`ReadStatus`/`MemoryError` from `vosu_plugin_api::memory`; the interim `vosu-sys` edge was removed by M5 R0) |
 | `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-plugin-internal` (S0: `PlanMemory`, bundled and process registration), `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; no `vosu-surface` dependency after M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
-| `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
+| `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp` (api-v1.md "Route ownership"). `/api/ingame` is a removed route, not an adapter route (section 6). | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
 | `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration), `vosu-adapter-support`, `vosu-osu-model` |
 | `crates/vosu-adapter-streamcompanion` | streamCompanion-compatible `/json/sc`, `/tokens`; computes strains, breaks, kiai points, and timing points itself from the chart resource (D2). | gosumemory's list plus `vosu-osu-calc` |
-| `crates/vosu-dashboard` | Dashboard pages, server-side render, embedded `assets/server/`, report page, plugin/tool/overlay management UI, `VOSU_DASHBOARD=off`. | `vosu-surface`, `vosu-plugin-api` |
-| `crates/vosu-overlay-host` | Overlay hosting: counter discovery/download/settings/profiles (`src/counters*`), the community overlay catalog (`src/server/catalog.rs`), `/websocket/commands` (`src/server/commands*`), overlay static serving. | `vosu-surface`, `vosu-plugin-api`, `vosu-net` |
-| `crates/vosu-tool-host` | Web-only tool hosting: static UI serving, launch sessions, bridge, tool settings (`src/tools/mod.rs` minus services). | `vosu-surface`, `vosu-plugin-api` |
+| `crates/vosu-dashboard` | Dashboard page shells, the embedded dashboard-only `assets/server/` files, and the browser presentation of every management view (plugins, tools, overlays, catalog, settings, status, D20 notice including the removed `/api/ingame` route's vosulay install action). It holds no management authority: every view reads and writes the exact core or host routes in the [A7 freeze](#a7-approved-contract-freeze-2026-11-24). Inactive, but still registered, when the dashboard is off (A7.3). | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (bundled registration only, as for the adapters) |
+| `crates/vosu-overlay-host` | Overlay hosting: counter discovery/download/settings/profiles (`src/counters*`), the community overlay catalog (`src/server/catalog.rs`) and its card presentation, `/websocket/commands` command processing (`src/server/commands*`), overlay static serving. | `vosu-surface`, `vosu-plugin-api`, `vosu-net`, `vosu-plugin-internal` (bundled registration only) |
+| `crates/vosu-tool-host` | Web-only tool hosting: tool UI static serving and art, the read-only `_settings` view, the v2 browser bridge and the shared design-system assets. Launch codes, sessions and action authority are core's (A7.1, A7.2). | `vosu-surface`, `vosu-plugin-api`, `vosu-plugin-internal` (bundled registration only) |
 | `crates/vosu-proptest` (dev-only) | `vosu_proptest_config()` from `src/proptest_support.rs`, shared by every crate with `prop_*` tests. | none |
 | `crates/vosu-plugin-testkit` (test-harness only) | Bundled test plugin with echo/progress/cancel/stream actions and a synthetic game, for API v1, bridge, and plugin-host tests and as the SDK reference example; also `vosu-core`'s own dev-dependency for `PluginHost` session/focus end-to-end tests (`session.rs`'s `SessionPlugin`). | `vosu-plugin-api`, `vosu-plugin-internal` (S0: bundled registration, `PlanMemory`) |
 | `.` (`vosu`) | `main.rs`, `vosux` and `plugin-host` argv dispatch, Windows resources, the explicit `BUNDLED` registration array (D13), integration tests, benches, examples. | every crate above |
@@ -250,7 +250,7 @@ v2/main:
            └─ M6a  manifest.toml + catalog-v2.json validation
                └─ M6b  sources, credentials, resolver
   F    ecosystem fan-out: after M3 + M6a and v2.0.0-alpha.1
-  M7   dashboard, overlay host, tool host; /api/ingame          (needs M3, M5, M6b)
+  M7   dashboard, overlay host, tool host                       (needs M3, M5, M6b)
   M8   migration, release smoke, day-0 gate, release      (needs all, M4b included)
 ```
 
@@ -1373,8 +1373,8 @@ Scope:
   Removed-route attribution retains at most 128 validated installed overlays
   (LRU, 24-hour inactivity expiry) and one unknown bucket per fixed feature.
   D20 consumes only identity, feature, first/last seen and saturating count;
-  unknown requests never acquire a guessed overlay name. M8 day-0 execution,
-  M7's migration-guide notice UI and the clean-room page remain separate work.
+  unknown requests never acquire a guessed overlay name. M8 day-0 execution
+  and M7's migration-guide notice UI remain separate work.
   First-party consumer migration inputs include
   `assets/server/tool-bridge-v1.js` (selected-v2 URL and renderer pointer map),
   the overlay quickstart's selected-v2 client, and consumers of legacy skin
@@ -1407,8 +1407,8 @@ Scope:
   `security` (sandbox header, path confinement, peer and Origin policy,
   request limits — permanent), `contract` (the ADR 0004 legacy calculation
   endpoint's separate contract — permanent), `licensing` (`/api/ingame`'s
-  functional-rather-than-byte-identical compatibility, ADR 0021 — permanent,
-  since vosu cannot ship upstream's LGPL assets), and `temporary` (a
+  removal, ADR 0021's 2026-11-25 amendment — permanent, since vosu cannot
+  ship upstream's LGPL page and 2.0 has no replacement), and `temporary` (a
   pre-release gap with a task that closes it — must be gone by day-0). The
   one `temporary` entry at this freeze is `stable-tournament`'s `tourney`
   members (`v1`, `v2`, `v2-precise`), until the stable manager aggregate
@@ -1463,8 +1463,8 @@ Approved public additions ship in osu! schema 1.3.0 together with producers;
 A4 alone does not claim that schema implementation or parity evidence.
 State-schema differences do not exempt adapter wire output. M8 retires
 exactly the four keys listed above, preserving API-v1 debounce/unknown keys.
-M4b retains capture/golden tooling ownership; M8 day-0 execution and separate
-clean-room page work are not completed by M4a.
+M4b retains capture/golden tooling ownership; M8 day-0 execution is not
+completed by M4a.
 
 The approved D17 case names, common baseline harness and evidence requirements
 are [frozen in the benchmark guide](../testing/benchmarks.md#m4a-d17-contract).
@@ -1594,8 +1594,9 @@ Not part of this exit:
 - Live parity is an optional diagnostic and did not run. M4b owns the
   pilot/full owner captures and `adapter_golden`; no capture exists, and
   none is claimed.
-- The clean-room `/api/ingame` page (licensing), M5 process execution and the
-  M8 day-0 gate and migration remain separate work.
+- M5 process execution and the M8 day-0 gate and migration remain separate
+  work. The clean-room `/api/ingame` page this list also named at the M4a
+  exit was withdrawn on 2026-11-25 (section 6).
 
 **M8 migration inventory.** Delete exactly `ENABLE_KEY_OVERLAY`,
 `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS` and
@@ -1638,8 +1639,7 @@ Captures (D14), against the pinned upstream revision (`Cargo.toml`
    Mismatches become M4a follow-up fixes immediately.
 2. **Full set** before M8: every pair in `SUPPORTED_MATRIX`
    (`tools/live-parity/live_parity.py`: Windows stable, Windows lazer, Linux
-   lazer), in the same owner-authorized session as the `/api/ingame`
-   observation (section 6).
+   lazer), in one owner-authorized session.
 3. **Recapture** of all three if the pin moves before M8.
 
 Exit: `cargo test --locked --features test-harness --test adapter_golden`
@@ -1710,8 +1710,8 @@ in summary:
     scope; unused rules fail; whole-route subtraction needs whole-route
     ledger scope.
 12. **`/api/ingame` (A4b.12).** Not captured, not a golden. The clean-room
-    observation is separate human work; its author is named by the owner
-    when M7 needs it, and M4b does not depend on it.
+    observation this item kept separate was withdrawn with the endpoint on
+    2026-11-25 (section 6).
 13. **Size (A4b.13).** Per platform at most 8 MiB of JSON/CBOR envelopes and
     4 MiB of approved binary assets; text stays UTF-8, never compressed.
 14. **Brand (A4b.14).** Exact per-file allowlist entries (`parity` for
@@ -2226,9 +2226,9 @@ Scope:
   `settings_schema`, the verbatim trust warning in catalog-v2.md "Trust"),
   "Add support for `<name>`" from game detection, install plans with the D8
   disclosure, the D20 notice for overlays that use removed 1.x APIs, the
-  `/api/ingame` deprecation banner with one-click vosulay install,
-  `VOSU_DASHBOARD=off` and its configuration key (ADR 0019).
-- `/api/ingame` clean-room implementation in the upstream adapter (section 6).
+  D20 notice for the removed `/api/ingame` route with its vosulay install
+  action (A7.5), `VOSU_DASHBOARD=off` and its configuration key (ADR 0019).
+- `/api/ingame` is not served in 2.0 (section 6); it is a D20 removed route.
 - Core lifecycle absorbs the rest of `src/runtime/`; the root package is
   `main.rs` plus the explicit `BUNDLED` array, and startup asserts that the
   registry contains exactly that list (D13).
@@ -2238,11 +2238,378 @@ Exit: rewritten `python tests/tool_host_smoke.py --binary target/debug/vosu`
 `python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright index.mjs>`
 against a `cargo build --locked --features test-harness` binary, including
 the D20 notice for a fixture overlay that subscribes to
-`/websocket/v2/subscribe`; `python tests/catalog_art_smoke.py`;
+`/websocket/v2/subscribe`, and the `ingame-page` notice with its vosulay
+install action after a request to `/api/ingame`;
+`python tests/catalog_art_smoke.py`;
 `cargo test --locked --test server_compat` (origins, CSRF, API keys,
-counters); `cargo test --locked --test config_compat`;
-`cargo test --locked --test daemon_smoke` including `VOSU_DASHBOARD=off`; a
-new `tests/ingame_compat.rs` derived only from the behavioral specification.
+counters, and `/api/ingame` as the ordinary removed-route 404 on every
+method); `cargo test --locked --test config_compat`;
+`cargo test --locked --test daemon_smoke` including `VOSU_DASHBOARD=off`.
+
+#### A7 approved contract freeze (2026-11-24)
+
+Main adopted A7.1–A7.5 on 2026-11-24, exactly as recommended and with the
+proposed values, under the owner's delegated spec authority. The A7.5
+install target is the AF.2 identity, which AF.2 (approved the same day) made
+the agreement A7.5 waited for. These decisions are normative. They freeze
+M7's inputs and outputs. They do not claim that any route, crate, test,
+native run, browser run or measurement exists or passes; every inventory below
+states the baseline (`v2/main` `33f957de`) and the required destination.
+
+On 2026-11-25 the owner dropped `/api/ingame` from 2.0
+([ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md)'s
+amendment). A7.5 below is rewritten as removed-route notice semantics. Its
+adopted limits (one warning per process lifetime, 24 hours of inactivity)
+and its install target are unchanged.
+
+Inherited contracts are unchanged and are not reopened: A4.1–A4.6 and the
+[adapter surface contracts](adapter-surfaces.md), A5.1–A5.8 including M5
+U0's `/api/plugins` approval and management routes, A6b.1–A6b.8 including
+M6b H0's `/api/catalog/*` inventory, AF.1–AF.13, ADR 0024's console-less
+graphical startup, tray **Show logs** and `vosu logs`, and the rule that no
+network log endpoint exists.
+
+The full text is here and in:
+
+- [plugin ABI §7.5](plugin-abi.md#75-bundled-only-http-surfaces-d3):
+  the A7.1 presentation contract (page context, presentation views, no ABI
+  opcode);
+- [API v1 "Tool launch sessions (A7.2)"](api-v1.md#tool-launch-sessions-a72):
+  the session exchange and its scope;
+- [tool protocol "2.0 transition inventory (A7.2)"](../tools/protocol.md#20-transition-inventory-a72):
+  retained and deleted tool routes and the frozen v2 bridge type surface;
+- [catalog v2 "Bundled host manifests (A7)"](catalog-v2.md#bundled-host-manifests-a7)
+  and the M7 additions to [API placement](catalog-v2.md#api-placement);
+- [adapter surfaces](adapter-surfaces.md#a74-d20-notice-presentation): A7.4
+  notice presentation and the A7.5 `/api/ingame` removed-route notice;
+- the 2026-11-24 A7 amendments to ADR [0016](../decisions/0016-separate-dashboard-origin.md),
+  [0017](../decisions/0017-tool-host.md), [0019](../decisions/0019-plugin-runtime-and-trust.md)
+  and [0021](../decisions/0021-api-v1-and-upstream-adapters.md);
+- [M7 test and fixture conventions](../testing/verification.md#m7-test-and-fixture-conventions-a7).
+
+| ID | Decision |
+| --- | --- |
+| A7.1 | Privileged management handlers stay in core and are registered on the dashboard listener with the existing dashboard provenance and `X-Vosu-CSRF`. Bundled hosts receive only bounded, redacted presentation data, through three enumerated channels: core-owned exact JSON routes the browser calls, core's page-context injection, and two core-pushed presentation views. No host receives a generic core handle, configuration writer, credential reader, App or runtime handle, and the ABI gains no opcode. |
+| A7.2 | Retained under the `/tools` prefix, each by exact method and path: the session exchange, the v2 bridge, the theme and design-system assets, each tool's static UI and art, and its password-filtered `_settings`. Deleted: the four named host endpoints (`self`, `settings`, `context`, `overlays`), the v1 bridge, the CLI host routes, every `/tools/<id>/api/*` proxy route and the bridge's `fetch`. No prefix wildcard decides survival or deletion. |
+| A7.3 | Boolean `ENABLE_DASHBOARD`, default `true`. `VOSU_DASHBOARD=off` forces the dashboard off; any other value of that variable is a startup error. Off binds no dashboard listener, opens no browser and registers no dashboard route, but `vosu.dashboard` stays in the compiled and initialized bundled registry, inactive. No dashboard control or API changes the key. Tray **Show logs**, `vosu logs` and network-Apply recovery are preserved. |
+| A7.4 | N0's accessor and limits are reused unchanged: 128 known overlays with LRU eviction, 24-hour inactivity expiry, one unknown bucket per fixed feature, saturating counts. The dashboard renders elapsed age, feature, count, the escaped installed identity and a fixed migration-guide link. Unknown traffic is a generic advisory with no overlay action. The notice refreshes only with existing status reads; there is no notice timer, persistence or dismissal protocol. |
+| A7.5 (rewritten 2026-11-25) | `/api/ingame` is a D20 removed route: the ordinary exact 404 on every method, recorded by the unchanged A4.5 recorder under the fixed feature `ingame-page`. One WARN per process lifetime, on the first request. The recorder's 24-hour inactivity expiry replaces the separate last-use marker; nothing records a URL, IP or referrer. The dashboard shows the D20 notice for `ingame-page`, including its unknown bucket. Its install button starts the normal M6b plan flow for the `kind = "tool"` entry `vosulay-editor` from `18-lab-dev/vosulay` (AF.2; the plan adds `vosu.vosulay`), with every required approval before confirmation. Already installed shows launch and manage. A missing entry or offline catalog shows truthful retry guidance. |
+| A7.1-OR (2026-11-25) | `vosu.overlayhost` receives the overlay root as its `static_folder_path` ABI setting, seeded by core from `STATIC_FOLDER_PATH` until M8 migrates the key (not bridge B2). It writes only through `vosu-net`'s hardened ZIP and atomic publish primitives after SDK path validation, and serves only through a core-minted read-only `RootLease`. |
+
+##### Ownership and dependency direction (A7.1)
+
+| Owner | Owns in M7 | Never owns |
+| --- | --- | --- |
+| `vosu-core` | Both listeners, the exact router, peer/Origin/Host/CORS policy, API keys and the native broker, CSRF and the management-provenance witness, overlay connection accounting, the D20 recorder (including the `/api/ingame` tombstone and its one-per-process warning), the styled 404 page, page-context injection. Configuration and `/api/settingsSave`, the network-Apply journal, the updater, report generation (including the `report.html` template), desktop integration (tray, browser and folder opening), plugin registry, settings storage and approvals, the catalog, and the **tool registry**: per-tool enabled and trust state, settings values, legacy detection, launch codes, launch sessions and action authority. | Presentation HTML, CSS or JS other than the styled 404 page and the generated report. |
+| `vosu.dashboard` | The page shells for `/`, `/settings` (including `?overlay=` and `?tool=`), `/available` and `/tools`; the dashboard-only assets; every browser view of management data. | Any management authority, state route, configuration value or overlay-listener route. |
+| `vosu.overlayhost` | Counter discovery, the community catalog and its card HTML, download, update, delete, names and aliases, details, catalog update annotations, settings and profile storage, `/websocket/commands` command processing, overlay static serving, alias redirects, `COUNTER_PATH` injection and the preview colour scheme. | Key verification, CSRF, folder opening, configuration, credentials. |
+| `vosu.toolhost` | Tool static UI and art, `_settings`, the v2 bridge, the shared design-system assets on both listener roles. | Launch codes, sessions, action authority, tool state or settings writes. |
+| Adapters | A4's routes unchanged; no adapter registers `/api/ingame` (section 6). | Any dashboard route. |
+
+Dependency direction:
+
+- A host depends only on `vosu-surface`, `vosu-plugin-api` and, for its
+  bundled registration (`export_plugin!(bundled …)`, AF.9), `vosu-plugin-internal`;
+  the overlay host also depends on `vosu-net`. A host never depends on
+  `vosu-core`, `vosu-sys`, another host, an adapter crate, or any osu!
+  reader, state, model or calculation crate. `scripts/crate-boundaries.txt`
+  records exactly these edges (I0).
+- Core never depends on a host crate. The root's `BUNDLED` array is the only
+  code naming the hosts; core receives their descriptors (D13, I0).
+- Core reaches a host only through route and feed invocation
+  (`SurfaceRequest`, with the `ManagementProvenance` witness on dashboard
+  requests), read-only `RootLease`s, and the two presentation views below.
+  A host reaches core only through route registration, its responses, and
+  the ordinary ABI (logging, settings).
+- The browser reaches core and hosts only through the exact routes inventoried
+  below. The dashboard listener never serves or proxies API v1.
+
+**Presentation channels (exhaustive).** These are the only ways management
+data reaches a host or a page:
+
+1. **Core JSON routes.** The browser calls core's exact dashboard-listener
+   routes (the inventory below). The dashboard host renders their responses
+   client-side.
+2. **Page context.** Core replaces the first `<!--vosu-context-->` marker in
+   an HTML `ResponseBody::Bytes` from a `vosu.dashboard` dashboard-role `GET`
+   route with `<script id="vosu-context" type="application/json">` carrying
+   `overlayOrigin`, `csrf` and `rollbackOrigin`, exactly today's
+   `Origins::page_context`. The host never receives the CSRF secret. A
+   response without the marker gets no context. Core still applies the
+   dashboard CSP, `frame-ancestors 'none'` and `nosniff`.
+3. **Presentation views.** Core pushes two immutable, latest-only views,
+   each bound to one bundled requester:
+   - `ToolHostView` to `vosu.toolhost`: a generation, the dashboard origin
+     (or `null` when the dashboard is off) for the bridge's `dashboardUrl`,
+     plus per installed tool its id, name, version, a servable flag, its ui
+     `entry`, its declared `icon` and `banner` relative paths, its effective
+     non-password settings values, and a read-only `RootLease` for its
+     package directory. It holds no path, session, code, credential or status
+     reason.
+   - `OverlayRootView` to `vosu.overlayhost`: a generation and a read-only
+     `RootLease` for the effective overlay root, used for confined static
+     serving (ADR 0005).
+
+   The overlay host's **write** authority over that root is not a view and
+   never goes through a lease: see "Overlay-root storage (A7.1-OR)" below. A
+   view carries no pathname, `PathBuf`, OS handle or `vosu-sys` type
+   (adapter surfaces R0).
+
+**Redacted DTOs.** Owners serialize these exact shapes; additions need a later
+approval, and no field carries a secret, credential, absolute game path or
+`internal.paths` value.
+
+| DTO | Owner and route | Fields |
+| --- | --- | --- |
+| `DashboardStatus` | core, `GET /api/dashboard/status` | Existing `available`, `instances[{client,pid,version,state,pollIntervalMs,precisePollIntervalMs}]` and `connections`, unchanged; plus `removed_routes` (`RemovedRouteNotice[]`) and `update` (`null` or `{"version","major","release_url"}`, today's update notice). No `ingame` field: `/api/ingame` use is a `removed_routes` notice (A7.5). |
+| `RemovedRouteNotice` | core, inside `DashboardStatus` | `overlay`: `null` (unknown bucket) or `{"id","name"}` for a currently installed overlay revalidated at this read; `feature`: `"selected-v2-feed"`, `"legacy-skin-index"` or `"ingame-page"`; `attempts` (saturating); `first_seen_seconds_ago`, `last_seen_seconds_ago` (whole seconds from monotonic instants). At most 387 entries (128 overlays × 3 features + 3 unknown buckets). |
+| `SettingsView` | core, `GET /api/settings` (new) | `values` for exactly the 17 keys today's Settings page renders (`ENABLE_AUTOUPDATE`, `OPEN_DASHBOARD_ON_STARTUP`, `START_AT_LOGIN`, `DEBUG_LOG`, `CALCULATE_PP`, `READ_MANIA_SCROLL_SPEED`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `API_V1_SUBSCRIPTION_DEBOUNCE`, `SHOW_MP_COMMANDS`, `SERVER_IP`, `SERVER_PORT`, `DASHBOARD_IP`, `DASHBOARD_PORT`, `ALLOWED_IPS`, `MAX_PACKAGE_MIB`, `STATIC_FOLDER_PATH`) and `updates_externally_managed`. Never `ENABLE_DASHBOARD`. |
+| `ToolView` (2.0) | core, `GET /api/tools[/<id>]` | `id`, `name`, `version`, `description`, `author`, `homepage`, `icon_url`, `banner_url`, `source` (`dev`, `official`, `user`), `update_available`, `trusted`, `enabled`, `status` (`running`, `blocked`, `untrusted`, `disabled`, `invalid`), `status_detail` (`needs-2.0-update` for a legacy `tool.toml`-only package), `ui_url`, `requires` and `optional` as `[{"id","version","satisfied","provider"}]` (`provider` is the resolved plugin id or `null`), `has_settings`. The service-era fields `kind`, `startup`, `service_role`, `interfaces`, `autostart`, `starts_with_vosu`, `cli`, `api`, `permissions`, `data`, `process`, `required_by` and `path` are removed. |
+| `ToolSettings` | core, `GET`/`POST /api/tools/<id>/settings` | Unchanged 1.x shape: `{"settings","values","secrets"}` with every `password` value `""`; POST keeps the stored secret for `""` or an omitted field and clears it for `null`. |
+| `PluginSettings` | core, `GET`/`POST /api/plugins/<id>/settings` (new, M7 D1) | GET `{"schema","values","secrets"}` from the validated `settings_schema` with defaults applied and every `password` value `""`; POST takes `[{"uniqueID","value"}]` with the same password rule, validates the whole document before storing, and on success delivers the complete effective object as one `SETTINGS_CHANGED` (plugin-abi.md §6.9). An invalid POST changes nothing. |
+| `PluginView`, catalog views | core, `/api/plugins`, `/api/catalog/*` | M5 U0 and M6b H0 shapes, unchanged. |
+
+##### Route, method, listener and provider inventory
+
+The baseline router is `src/server/routes.rs::classify`, the
+`catalog_api` table, `plugin_management_action`, `src/tools/http.rs`, the
+API-v1 router and `src/server/service/surface.rs`. "O" is the overlay
+listener, "D" the dashboard listener. Every M7 registration is an exact
+method and path, or a validated template or `Children` matcher where the
+row says so. A known path with an unlisted method is 405 only where the
+owner's existing contract says so, otherwise 404. Every route not listed is
+404 on both listeners, without upgrade or static fallthrough.
+
+| Method and path | Listener today | Provider today | M7 owner and disposition |
+| --- | --- | --- | --- |
+| `GET /`, `/settings`, `/available`, `/tools` | D page; O 302 to D (path and query kept) | `RuntimePages` (`PageDataProvider::render`) | Dashboard host page shells on D; core keeps the O→D 302 for exactly these four paths. Both are absent when the dashboard is off (O 404). |
+| `GET /favicon.ico` | O, D | embedded `ServerAssets` | Tool host, both roles (design-system set). |
+| `GET /assets/<name>` | O, D, every file in `assets/server/` | embedded `ServerAssets` | Exact per-name registrations. Design-system set (tool host, both roles): `tokens.css`, `system.css`, `theme-init.js`, the eight `.woff2` fonts, `fonts-OFL.txt`. Dashboard set (dashboard host, D only): `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog.css`, `dashboard-catalog.js`, `dashboard-catalog-browse.js`, `dashboard-catalog-flow.js`, `dashboard-catalog-sources.js`, `dashboard-plugins.css`, `dashboard-plugins.js`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css`. Removed (404): `homepage.html`, `report.html`, `design.html`, `tool-bridge.js`, `tool-bridge-v1.js` under `/assets/`, and every dashboard-set name on O. |
+| `GET /api/dashboard` | O, D | core transport | Core, unchanged `{"origin"}`. 404 when the dashboard is off. |
+| `GET /api/dashboard/status` | D | `ReportInputProvider::dashboard_status` + connections | Core, `DashboardStatus`. |
+| `GET /api/settings` | — | — | New core D route, `SettingsView`. |
+| `POST /api/settingsSave` | D (management) | `ConfigUpdateService` | Core, unchanged, except that a body naming `ENABLE_DASHBOARD` is 400 and publishes nothing. |
+| `POST /api/runUpdates` | D (management) | `UpdaterHandoff` | Core, unchanged. |
+| `POST /api/generateReport` | D (management) | `generate_report_document` | Core, unchanged; the report lists `vosu.dashboard` as `inactive` when off. |
+| `GET`, `POST /api/keys` | D (management) | `ApiKeys` | Core, unchanged. |
+| `GET /api/counters/search/<query>?source=installed\|available` | O, D | `PageDataProvider::search_counters` (HTML fragment) | Overlay host, D only; the HTML contract is unchanged, except that card URLs are origin-relative and the dashboard prefixes `overlayOrigin` from page context. |
+| `GET /api/counters/details/<folder>`, `GET /api/counters/updates`, `POST /api/counters/names/<folder>`, `POST /api/counters/download/<url>?name=&update=`, `POST /api/counters/delete/<folder>` | D (POSTs management) | `ProductionRouteDelegate` counter handlers | Overlay host, D only; mutations require the core witness. |
+| `POST /api/counters/open-root`, `POST /api/counters/open/<folder>` | D (management) | `CounterService::open*` | Core (desktop integration), D only, confined to one normal component of the effective overlay root. |
+| `GET`, `POST /api/counters/settings/<folder>[?profile=&update=yes]`, `GET`, `POST /api/counters/profiles` | O, D; POST by dashboard, `settings:write`/`profiles:manage` key or broker | counter settings handlers | Overlay host, both roles. Core evaluates the unchanged key, broker and dashboard rules before dispatch; `update=yes` stays dashboard-only. The provider sees no credential. |
+| `GET /websocket/commands` (upgrade) | O; key/broker scope `settings:write` | `CommandProcessor` | Overlay host feed, O only. Core keeps admission, key grants and revocation close. |
+| `GET`, `HEAD` overlay static `/<folder>/…`, alias redirects | O | `CounterStatic` + `alias_redirect` | Overlay host, O only, through `OverlayRootView`'s `RootLease`; preview requests stay excluded from connection counts. |
+| `GET /json`, `/json/sc`, `/json/v2`, `/json/v2/precise`, `/api/calculate/pp`, `GET /backgroundImage`, `GET /Songs/…`, `GET`/`HEAD /files/beatmap/…`, `GET`/`HEAD /files/skin/…`, WS `/ws`, `/tokens`, `/websocket/v2`, `/websocket/v2/precise` | O (A4 adapter registrations) | adapters through `adapter_routes` | Unchanged A4 owners, O only. |
+| `/websocket/v2/subscribe`, `GET /files/skin/` | O (removed, recorded) | `RemovedNotices` | Unchanged exact 404 tombstones; core keeps the recorder. |
+| `/api/ingame`, every method | — (404) | — | Core, O only: an exact 404 tombstone recorded as `ingame-page` (A7.5); never registered by an adapter or host. On D it stays an unknown-route 404. |
+| `/api/v1/*` | O; D 404 | API-v1 router | Core, unchanged ([route inventory](../testing/verification.md#final-api-v1-route-inventory)); `X-Vosu-Tool-Session` authority moves to core's tool registry. |
+| `GET /api/plugins`, `POST`/`DELETE /api/plugins/<id>/approval`, `POST /api/plugins/<id>/{restart,stop}` | D | `runtime::plugin_management` | Core, unchanged (M5 U0). |
+| `GET`, `POST /api/plugins/<id>/settings` | — | — | New core D routes (`PluginSettings`). |
+| `/api/catalog/*` (H0's 20 method/path pairs) | D | `catalog_api` | Core, unchanged (M6b H0). |
+| `GET /api/tools`, `GET /api/tools/<id>` | D | `ToolHost::dashboard` | Core, `ToolView` 2.0. |
+| `POST /api/tools/<id>/{enable,disable,trust}` | D (management) | `ToolHost::dashboard` | Core; `enable` of a legacy package is 400 `needs-2.0-update`. |
+| `POST /api/tools/<id>/launch` `{"theme"}` | D (management) | `ToolHost::dashboard` | Core, unchanged response `{"url"}` (A7.2 limits). |
+| `GET`, `POST /api/tools/<id>/settings` | D (POST management) | `ToolHost::dashboard` | Core, `ToolSettings`. |
+| `POST /api/tools/<id>/{start,stop,restart,open-data,clear-cache}`, `GET /api/tools/<id>/logs`, `PUT /api/tools/<id>/autostart` | D | `ToolHost::dashboard` | **Deleted** (404). |
+| `GET /tools` on O | O 302 | core | Core 302 to D; 404 when off. |
+| `POST /tools/_host/v1/session` | O | `ToolHost::host_api` | Core (A7.2), O only. |
+| `GET /tools/_host/v2/bridge.js`, `GET /tools/_host/v1/theme.css`, `GET /tools/_host/v1/design` | O | `ToolHost::overlay`/`host_api` | Tool host, O only. |
+| `GET`, `HEAD /tools/<id>/`, `/tools/<id>/<path>`, `/tools/<id>/_icon`, `/tools/<id>/_banner`; `GET /tools/<id>` 302 to `/tools/<id>/` | O | `ToolHost::overlay` | Tool host, O only, through `ToolHostView`; 503 when not servable, art in every state. |
+| `GET /tools/<id>/_settings` | O | `ToolHost::overlay` | Tool host, O only, password values omitted. |
+| `GET /tools/_host/v1/{self,settings,context,overlays}` | O (tool token) | `ToolHost::host_api` | **Deleted** (404). |
+| `GET /tools/_host/v1/bridge.js` | O | `ToolHost::host_api` | **Deleted** (404). |
+| `GET /tools/_host/v1/cli`, `POST /tools/_host/v1/cli/<id>`, `POST /tools/_host/v1/cli/<id>/open`, `PUT /tools/_host/v1/cli/<id>/autostart`, `DELETE /tools/_host/v1/cli/session/<session>` | O (broker) | `ToolHost::cli_api` | **Deleted** (404). |
+| every method on `/tools/<id>/api/<rest>`, including upgrades | O | `ToolHost::proxy` | **Deleted** (404, no static fallthrough). |
+| test-harness adapter capture endpoint | O, loopback capability | `adapter_capture` | Unchanged, `test-harness` only. |
+
+Core's baseline route reservations (`reserve_core_routes`) hold whole
+prefixes on both roles: `/assets`, `/api/dashboard`, `/api/counters`,
+`/tools`, `/api/tools` and `/api/v1` with every method. M7 replaces each with
+the exact registrations above. No prefix reservation survives except
+`/api/v1` on the overlay role, which core's own API-v1 router serves.
+
+##### Privileged management operations
+
+Each is a dashboard-listener `POST`, `PUT` or `DELETE` that requires dashboard
+provenance and `X-Vosu-CSRF` **before** any effect, except where a row names a
+key scope. API keys never authorize any other row.
+
+| Operation | Owner | Authorization |
+| --- | --- | --- |
+| Configuration save, network Apply and confirm | core | dashboard + CSRF |
+| Update installation (`runUpdates`, major-consent) | core | dashboard + CSRF |
+| Report generation | core | dashboard + CSRF |
+| API-key list, create, revoke | core | dashboard + CSRF (also for GET) |
+| Plugin approve, revoke, restart, stop, settings write | core | dashboard + CSRF |
+| Catalog sources, credentials, trust, private network, refresh, install, confirm, uninstall, promote, offer accept | core | dashboard + CSRF |
+| Tool enable, disable, trust, launch, settings write | core | dashboard + CSRF |
+| Open overlay root or folder | core | dashboard + CSRF |
+| Overlay download, delete, names, developer settings (`update=yes`) | overlay host | dashboard + CSRF (core witness) |
+| Overlay settings write, profile management | overlay host | dashboard + CSRF, or `settings:write` / `profiles:manage` key, or native broker (unchanged) |
+| `/websocket/commands` settings writes | overlay host | `settings:write` key or broker on upgrade (unchanged) |
+
+##### State consumers and pointers
+
+The baseline has no `SnapshotManager`, `RegularState` or B1 (M4a removed
+them). The first-party state consumers and their M7 destinations are:
+
+| Consumer (baseline) | Reads today | M7 destination |
+| --- | --- | --- |
+| Dashboard status card (`homepage.js` every 2 s) | `GET /api/dashboard/status` host diagnostics | Unchanged core diagnostics, plus the browser's `GET /api/v1/sessions` from the overlay origin (session summaries, which create no demand) for game-agnostic labels. No API-v1 subscription and no new precise demand. Poll intervals are shown only for sessions whose `vosu.client.game` is `osu`. |
+| Tool context (`src/runtime/tool_context.rs`, `crates/vosu-adapter-upstream/src/files/tool_context.rs`, `PluginHost::display_path` for it) | selected session's absolute songs, game, skin and beatmap paths | **Deleted** with `/tools/_host/v1/context`. Tools read `/vosu.client`, `/vosu.chart`, `/vosu.skin` and granted `vosu.osu` fields and resources through API v1. |
+| Tool overlay listing (`/tools/_host/v1/overlays`) | absolute overlay folders | **Deleted**. |
+| v1 bridge `subscribe` (`tool-bridge-v1.js`) | the removed `/websocket/v2/subscribe` | **Deleted** with the v1 bridge. |
+| v2 bridge (`tool-bridge.js`) | `WS /api/v1/sessions/{session}/subscribe` with caller pointers; action and job routes | Unchanged, plus the A7.2 removals. |
+| Report generation (`RuntimeReportInput::capture`) | host diagnostic sessions, counters, log directory | Core, unchanged; counter facts come from the overlay root through core's own discovery read, not from the overlay host. |
+| Bundled adapters | A4 captures and subscriptions | Unchanged. |
+
+No first-party consumer reads `internal.paths`, and none places an absolute
+game path in HTML, bootstrap context, JSON, a cache or a browser log.
+
+##### Asset inventory
+
+All 32 files of `assets/server/` keep their paths, bytes and
+`assets/SHA256SUMS` entries unless a unit changes them through the reviewed
+digest workflow. Each is embedded exactly once:
+
+| Owner | Files |
+| --- | --- |
+| Tool host (design-system set and bridge) | `tokens.css`, `system.css`, `design.html`, `theme-init.js`, `favicon.ico`, eight `.woff2` fonts, `fonts-OFL.txt`, `tool-bridge.js` |
+| Dashboard host | `homepage.html`, `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog*.{js,css}` (five files), `dashboard-plugins.{js,css}`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css` |
+| Core | `report.html` (report generation) |
+| Deleted | `tool-bridge-v1.js` |
+
+`theme.css` stays the concatenation `tokens.css` + `\n` + `system.css`,
+served from those same embedded bytes.
+
+##### Legacy deletion inventory
+
+T0, T1 and C0 delete these, migrating every in-repo caller and test first.
+Each test-assertion removal needs the `Assertions-Removed:` trailer and a
+replacement security assertion (X0).
+
+- `src/tools/{process,cli,http}.rs` service, proxy, host-API and CLI
+  paths; `src/tools/manifest.rs` (`tool.toml` loading and its fallback);
+  `src/tools/capabilities.rs` service permissions; the old
+  `RouteExtension` in `src/server/service/routing.rs`; service tokens,
+  readiness, ports, health probes, backoff, autostart and logs.
+- `docs/tools/tool.schema.json` and the `[service]`, `[cli]`, `[api]`,
+  `[permissions]` and `[[requires]]`-by-tool-id manifest contract.
+- The vosux dotless tool form and the options `--list`, `--json`, `--open`
+  and `--autostart`. `vosux <plugin-id> <action> [json] [--detach]
+  [--session <id>]` and `vosu x` stay; `--help` describes only the action
+  form. A dotless first argument exits 2 (usage).
+- `assets/server/tool-bridge-v1.js`, `vosu.fetch`, and the
+  `/assets/`-served copies listed above.
+- `src/runtime/tool_context.rs`, the upstream adapter's `tool_context`
+  view, and `PluginHost::display_path` once nothing else calls it.
+- The broad `reserve_core_routes` prefixes, `Endpoint::{ToolOverlay,
+  ToolManagement}` and every root route delegate that a host or core route
+  replaces.
+
+The plugin-host supervisor, `vosu_sys::process_spawn`, M5's reused process,
+job and backoff helpers, `--plugin`, `--tool <dir>` (now loading only a
+`kind = "tool"` `manifest.toml`), and plugin-action vosux stay. Legacy
+installed tools keep their files, settings and data untouched and are
+reported, not executed (`needs-2.0-update`). M8 owns their one-time
+migration.
+
+##### Dashboard off (A7.3)
+
+- **Inputs.** `ENABLE_DASHBOARD` in `vosu.toml`, boolean, default `true`,
+  validated like every other boolean key. Environment `VOSU_DASHBOARD`:
+  unset leaves the key in charge; exactly `off` forces off; any other value,
+  including empty, `on` or `OFF`, fails startup with a configuration error
+  naming the variable, before any listener binds. The effective value is
+  read once at startup; a live edit of the key is logged as needing a
+  restart and is not applied. `/api/settingsSave` rejects the key, and
+  `SettingsView` never contains it.
+- **Effects when off.** No dashboard listener binds, and
+  `OPEN_DASHBOARD_ON_STARTUP`, the second-launch handoff and the tray open no
+  dashboard. The second-launch dashboard probe is skipped, so the existing
+  single-instance and bind refusals apply. The tray keeps **Show logs** and
+  **Quit** and omits **Open dashboard**. `GET /api/dashboard` and the O→D
+  redirects are 404. Core registers no dashboard-listener route, including
+  its own management routes.
+- **Registry.** `vosu.dashboard` is validated and registered, so the
+  registry still equals `BUNDLED` exactly, but no instance is created: no
+  `create`, routes, settings delivery or state demand. Diagnostics list it as
+  `inactive` with reason `dashboard_disabled`. Overlay, adapter, API-v1 and
+  tool hosting are unaffected. Process plugins needing approval stay
+  `approval_required` with A5.5's WARN.
+- **Recovery.** The network-Apply journal is still recovered by the owning
+  runtime before listeners start. Editing the key in `vosu.toml` and
+  restarting re-enables the dashboard; nothing in the dashboard can disable
+  itself (ADR 0019).
+
+##### `/api/ingame` removed (2026-11-25)
+
+The owner dropped `/api/ingame` from 2.0 on 2026-11-25. Landing **G** and its
+units B0 and G0 are withdrawn. No behavioral document, eligible author or
+clean-room implementation is needed, and M8 does not wait on any of them.
+`/api/ingame` is a D20 removed route (A7.5). N1 adds its `ingame-page`
+tombstone, warning and notice to the recorder it moves into core. The
+notice's vosulay action uses the install-plan affordance that D1 delivers.
+
+##### Unit file ownership
+
+| Unit | Owns |
+| --- | --- |
+| A7 | This section and the documents it links |
+| S0 | Dashboard status state reads, `homepage.js` status card |
+| D0 | `crates/vosu-dashboard/`, dashboard page shells and dashboard-set assets, `src/server/pages.rs` presentation |
+| O0 | `crates/vosu-overlay-host/`, `src/counters*`, `src/server/{catalog.rs,commands*}` |
+| T0 | `crates/vosu-tool-host/`, `src/tools/` deletion, core tool registry and launch authority |
+| T1 | `assets/server/{tool-bridge.js,tool-bridge-v1.js,tokens.css,system.css,design.html}`, `docs/tools/{protocol,design}.md`, bridge browser tests |
+| D1 | Dashboard management views, `/api/plugins/<id>/settings` and `/api/settings` handlers |
+| N1 | The D20 notice view and its `DashboardStatus` field, including the `/api/ingame` tombstone, warning and vosulay install action (A7.5) |
+| C0 | Remaining `src/runtime/` and generic `src/server/` moves into core |
+| I0 | Workspace and crate manifests, lockfile, `BUNDLED`, route table, digests, boundary inventories, test roots |
+| X0, X1 | Rewritten smokes and fixtures; evidence and documentation closure |
+
+**Counterexamples ruled out by this text:** a generic core handle disguised as
+a surface view; a removed host endpoint surviving because its prefix also
+serves the session exchange; off-mode dropping a compiled plugin from the
+exact registry list; a tool host minting or checking a session; a dashboard
+page reading configuration in-process; a CSRF token reaching a provider;
+`/assets/report.html` or the v1 bridge still served; a prefix reservation
+serving a deleted route; the dashboard listener serving API v1 or a state
+route.
+
+##### Overlay-root storage (A7.1-OR, approved 2026-11-25)
+
+Main approved option (a) on 2026-11-25. The overlay host must write inside
+the effective overlay root (community downloads and updates, delete, names
+and aliases, settings and profile files), while no path may cross
+`vosu-surface`, surface root operations are read-only, and bridge B2 must not
+gain a second plugin id. Frozen:
+
+1. **Setting.** `vosu.overlayhost` declares `static_folder_path` in its
+   `settings_schema` and receives it through ABI §6.9 (`init.settings`, then
+   complete `SETTINGS_CHANGED` objects). Core's M7 per-plugin settings
+   storage holds it. Until M8 migrates the key, core seeds and keeps it from
+   the existing `STATIC_FOLDER_PATH`, resolved to an absolute path by the
+   unchanged rule (`./static` maps to the data root; another relative path
+   resolves from the launch directory). The Settings page still edits
+   `STATIC_FOLDER_PATH` through `/api/settingsSave`, and each effective change
+   reaches the host as one `SETTINGS_CHANGED`. It is **not** added to bridge
+   B2. M8's migration list gains this key.
+2. **Writes.** The host performs every write under the root itself, using only
+   `vosu-net`'s existing hardened primitives: `extract_zip_atomic` (path,
+   symlink, entry-count and expanded-size checks) and the atomic
+   publish/replace helpers. It validates every relative name with the shared
+   SDK path rules before use. It makes no ad-hoc `std::fs` write outside those
+   primitives; a missing primitive is added to `vosu-net`, never inlined.
+   Settings, profile and name files are published same-directory and
+   atomically, and their readers use the matching retrying read
+   (`AGENTS.md`).
+3. **Serving.** Static serving still uses `OverlayRootView`'s core-minted
+   read-only `RootLease`. A write never goes through a lease.
+4. **Tests (O0).** Traversal and absolute names, symlinked archive or folder
+   entries, the root changing while a download is in flight, and a write
+   racing a served read.
+
+Core's `open-root` and `open/<folder>` handlers read the same effective
+value from the storage core owns.
 
 ### M8: 1.x migration and day-0 release gate
 
@@ -2250,8 +2617,10 @@ Scope: first-start migration exactly per catalog-v2.md "First-start migration
 from 1.x" (sources verbatim with `trusted: false` except official identities;
 official tools queued through `replaces`; user tools disabled with
 `needs-2.0-update`; user overlays left enabled, flagged by D20 when they use
-removed APIs) plus removed configuration keys and the D19 move of the
-osu!-specific keys into `vosu.osu` settings (deleting bridge B2), idempotent
+removed APIs) plus removed configuration keys, the D19 move of the
+osu!-specific keys into `vosu.osu` settings (deleting bridge B2) and the
+A7.1-OR move of `STATIC_FOLDER_PATH` into `vosu.overlayhost`'s
+`static_folder_path` setting (ending core's M7 seeding), idempotent
 like `src/config/migration.rs`; the day-0 check (catalog-v2.md "Day-0
 release check") as `scripts/check-day0.py` wired into `release.yml` and
 covered by `scripts/test_gate_tooling.py`, extended to fail closed when
@@ -2270,7 +2639,10 @@ and Windows path layouts, run twice to prove idempotence and once after a
 simulated crash mid-migration; `cargo test --locked --test config_compat`;
 `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture`
 extended to start `vosu plugin-host` from the packaged binary, read
-`/api/v1/sessions`, and confirm the bundled set; native updater tests;
+`/api/v1/sessions`, confirm the bundled set, and assert that `GET /api/ingame`
+on the packaged binary's overlay listener is the ordinary removed-route 404
+with no upgrade and no `Deprecation` or `Link` header (ADR 0021's
+2026-11-25 amendment; no `ingame_compat` target exists); native updater tests;
 `python scripts/check-day0.py` passing against the four repositories; M4b's
 full set green; an owner-run live session on Windows stable, Windows lazer,
 and Linux lazer through menu → play → paused → result with one official
@@ -2323,45 +2695,26 @@ Between M4a and M4b the adapters are checked by the source oracle plus the
 behavior 1.x reproduced; M4b turns that from "same as 1.x" into "same as the
 pinned upstream".
 
-## 6. Clean-room `/api/ingame`
+## 6. `/api/ingame` (withdrawn)
 
-ADR 0021 requires `/api/ingame` to be written from a behavioral specification
-by contributors who have not read the upstream page assets. This repository's
-own history contains such assets: `assets/server/ingame.{html,js,css}` were
-deleted in `1ccd4cc` ("Remove in-game overlay integration", 2026-07-17,
-recorded in `CHANGELOG.md` and [ADR 0008](../decisions/0008-external-in-game-overlays.md)).
+Until 2026-11-25 this section required a clean-room `/api/ingame`. An
+eligible author who had never read upstream's LGPL page assets would write
+a behavioral specification, and a second clean contributor would implement
+it. The owner withdrew that requirement on 2026-11-25
+([ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md)'s
+amendment). vosu 2.0 serves no `/api/ingame`. vosulay is the supported
+in-game overlay path, through the official `vosulay-editor` tool and its
+`vosu.vosulay` supervisor.
 
-- **Specification author:** a contributor named by the owner who attests to
-  never having read the upstream page sources or this repository's files at
-  those paths before `1ccd4cc`. Method: black-box observation only. Run the
-  pinned upstream with its in-game overlay client and a live osu! session;
-  record (a) the requests the page makes to the daemon (routes, query
-  parameters, WebSocket messages, settings keys), capturing request lines and
-  daemon-route response bodies but never the bodies of the page's own HTML,
-  JavaScript, or CSS; (b) user-visible behavior: which overlays appear, edit
-  mode entry and exit, placement persistence, reaction to overlay
-  install/removal, error states. The output is
-  `docs/v2/ingame-behavior.md` (normative behavior, no upstream text or code).
-- **Who (adopted):** the owner if eligible; otherwise a contributor who
-  has never worked in this repository's history before `1ccd4cc`. The plan's
-  implementing agents are not eligible, because they routinely read history.
-- **When:** scheduled in the same owner-authorized session as the M4b full-set
-  captures (D14), because both need the pinned upstream and a live client.
-  If the owner is not eligible as author, the owner operates the machine while
-  the named author observes; an agent operates it only if the owner
-  explicitly asks, and then never inspects, records or summarizes page source
-  (A4b.12). M4b captures no `/api/ingame` record, and the full set does not
-  wait for the author to be named. The M7 implementation blocks on this
-  document; if the session slips, the endpoint lands as a separate step
-  before M8 rather than holding M7.
-- **Implementer:** a second clean contributor (or agent) given only the
-  behavioral spec, ADR 0021's deprecation requirements (`Deprecation` and
-  `Link: <…>; rel="successor-version"` headers, one first-request warning,
-  the edit-mode notice, the dashboard banner), and the 2.0 overlay host. Agent
-  prompts state the history restriction explicitly (no `git show`/`git log -p`
-  of those paths). Lands in M7; `tests/ingame_compat.rs` is derived from the
-  spec only; the divergence file records "functionally compatible, not
-  byte-identical".
+- No `docs/v2/ingame-behavior.md`, eligible author, observation session,
+  second implementer or `tests/ingame_compat.rs` exists or is planned.
+- `/api/ingame` is a D20 removed route
+  ([adapter surfaces A7.5](adapter-surfaces.md#a75-apiingame-removed-route-notice)).
+  Every method gets the ordinary exact 404, and requests are attributed
+  under `ingame-page`. Core logs one WARN per process, and the dashboard
+  notice offers the vosulay install plan.
+- M4b still captures no `/api/ingame` record. No fixture or document
+  contains upstream page HTML, JavaScript or CSS (A4b.12).
 
 ## 7. Ecosystem fan-out
 
@@ -2856,16 +3209,15 @@ states what was adopted and why. Spec amendments land in A1.
   compile-time list does not give more simply.
 - **D14 Owner-controlled captures** (amended by A4b.1, 2026-11-24). A
   one-pair pilot capture runs as soon as the M4b tooling lands; the full set
-  (Windows stable, Windows lazer, Linux lazer) runs in one later session,
-  scheduled with the `/api/ingame` observation; a pin move before M8 triggers
+  (Windows stable, Windows lazer, Linux lazer) runs in one later session;
+  a pin move before M8 triggers
   a full recapture. Captures are owner-controlled, not owner-hand-operated:
   the owner authorizes each session in writing (commit and pin, client
   build and install, scenario, account/data/media policy, evidence path, GUI
   operator scope, review route) and keeps control of scope and publication;
   an agent operates the isolated VM test installs within that authorization,
   and main reviews every candidate fixture before commit (A4b.8). VM
-  lifecycle approval is not capture authorization. The `/api/ingame`
-  observation stays human work by the clean-room author. Why: a single
+  lifecycle approval is not capture authorization. Why: a single
   end-of-project session would surface adapter mismatches only at the
   release gate, and agent operation keeps the pilot from waiting on the
   owner's hands while the owner keeps control of scope and publication.

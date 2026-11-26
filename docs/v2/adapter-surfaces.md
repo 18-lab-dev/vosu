@@ -252,8 +252,9 @@ record query strings, arbitrary paths/referrers, peer IPs, request bodies,
 credentials or private state.
 
 Retain an in-memory deduplicated map keyed by validated installed overlay id
-and a fixed removed-feature enum (`selected-v2-feed`, `legacy-skin-index`, or
-an explicitly recognized removed-field request). Maximum **128 known overlay
+and a fixed removed-feature enum (`selected-v2-feed`, `legacy-skin-index`,
+`ingame-page` (added 2026-11-25, A7.5), or an explicitly recognized
+removed-field request). Maximum **128 known overlay
 entries**, LRU eviction, **24-hour inactivity TTL**, plus **one unknown bucket
 per feature**. Time is injected for tests; expiration occurs on bounded map
 access/notice reads, not a periodic wakeup. Duplicate attempts update last-seen
@@ -266,4 +267,116 @@ an actionable overlay link. Restart clears notices; no durable tracking.
 M8 migrates exactly the four retired configuration inputs listed in the source
 inventory, idempotently preserving unrelated keys and API-v1 debounce. The
 D20 notice links to the maintained migration guide when its owning UI lands;
-A4 does not claim M8 execution, M4b owner captures or clean-room page completion.
+A4 does not claim M8 execution or M4b owner captures.
+
+## A7 bundled host surfaces
+
+Frozen 2026-11-24 for M7 (A7.1). `vosu.dashboard`, `vosu.overlayhost` and
+`vosu.toolhost` obtain bundled requesters exactly as the adapters do: only
+after their explicit bundled registration succeeds, bound to the actual
+instance. They register only the exact routes in the
+[A7 inventory](implementation-plan.md#route-method-listener-and-provider-inventory),
+under the same collision, tombstone and lease rules as above. Their manifests
+declare no field or resource capability, so `capture` and `subscribe` grant
+them nothing; M7 hosts read no session state. The only additional inputs are
+the two A7.1 presentation views
+([plugin ABI §7.5](plugin-abi.md#75-bundled-only-http-surfaces-d3)).
+
+A host receives `RootLease`s for tool package directories and the overlay
+root only through those views. They follow the R0 operations above: open a
+validated relative child, bounded directory listing, same-object metadata
+and bytes. A newer view generation invalidates future opens on older leases,
+and an already opened file stays bound to its object. A lease is read-only.
+
+**Overlay-root writes (A7.1-OR, approved 2026-11-25).** `vosu.overlayhost`
+learns the overlay root only from its `static_folder_path` ABI setting
+(plugin-abi.md §6.9), which core seeds from `STATIC_FOLDER_PATH` until M8.
+It never receives the path through this surface. It performs every write
+itself, using only `vosu-net`'s hardened primitives: `extract_zip_atomic`,
+with its path, symlink, entry-count and expanded-size checks, and the atomic
+publish/replace helpers. Every relative name is validated with the SDK's
+shared path rules before use. It makes no ad-hoc `std::fs` write; a missing
+primitive is added to `vosu-net`, never inlined. Configuration and settings
+files are replaced in the same directory and atomically, and every reader of
+such a file uses the matching retrying read or a documented exclusion
+(`AGENTS.md`). Static serving uses only the read-only `RootLease`. O0's
+required counterexamples: traversal and absolute names; symlinked archive
+entries and symlinked folders; the root changing while a download is in
+flight (the download publishes into the root it started with or fails, never
+into the new root); and a write racing a served read (the reader sees the
+complete old or the complete new file).
+
+## A7.4 D20 notice presentation
+
+Frozen 2026-11-24 for M7 N1. The A4.5 recorder and its limits are reused
+exactly. N1 moves its ownership into core transport without resetting it or
+adding a second recorder, and carries live notices across the composition
+change.
+
+- **Read path.** Notices are read only by core's `GET /api/dashboard/status`
+  handler, through the bounded accessor: expiry, then revalidation of each
+  known identity against the current installed overlays, then a snapshot.
+  The response field `removed_routes` holds at most 387 entries
+  (128 overlays × 3 features + 3 unknown buckets), each
+  `{"overlay": null | {"id","name"}, "feature", "attempts",
+  "first_seen_seconds_ago", "last_seen_seconds_ago"}`. An identity that is
+  no longer installed is dropped at that read, never shown as actionable.
+- **Rendering.** The dashboard escapes every string, shows the feature as
+  fixed text, the attempt count and the elapsed ages, and links each known
+  overlay to its existing dashboard card. Every notice also carries one fixed,
+  compile-time migration-guide link, built from no request data:
+  `https://github.com/18-lab-dev/vosu/blob/main/docs/v2/migration-from-1x.md#overlays-that-used-removed-apis`
+  (X1 writes that guide). An unknown bucket is a generic advisory with no
+  overlay name, link or action. The overlay stays enabled, and no reinstall,
+  disable or retry control for the overlay or the removed request exists.
+  The one feature action is the `ingame-page` successor install (A7.5
+  below). It belongs to the feature rather than to an overlay, so it also
+  appears on that feature's unknown bucket.
+- **Lifetime.** The view refreshes only with the existing status refresh.
+  There is no notice timer, persistence, dismissal route or acknowledgement
+  state; restart clears notices. Dashboard previews are never recorded.
+
+## A7.5 `/api/ingame` removed-route notice
+
+Frozen 2026-11-24 for G0 as a clean-room endpoint. Rewritten 2026-11-25 by
+the owner's decision to drop `/api/ingame` from 2.0
+([ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md)'s
+2026-11-25 amendment). No page, behavioral document or landing G exists, and
+vosulay is the supported in-game overlay path. The adopted limits are kept:
+one warning per process and 24 hours of inactivity.
+
+- **Route.** `/api/ingame` is a removed route under A4.5, exactly like
+  `/websocket/v2/subscribe` and `/files/skin/`. No adapter, host or core
+  route registers it. Every method, with or without an upgrade request,
+  gets the ordinary exact `Not Found` 404: no upgrade, redirect, static or
+  overlay fallthrough, and no `Deprecation` or `Link` header. The status is
+  404, not 410. A4.5 fixes that status for every removed route, and 410 is
+  reserved for an authentic retired API v1 resource, tree or artifact id
+  ([API v1](api-v1.md)). 1.x already answers 404 here, so the status does
+  not change for any client. Near misses stay unknown-route 404 and are not
+  recorded.
+- **Attribution.** Core's A4.5 recorder records the request under the fixed
+  feature `ingame-page`, with A4.5's identity rules unchanged. Upstream's
+  in-game client carries no validated installed overlay identity, so its
+  requests land in the `ingame-page` unknown bucket. A request with a
+  validated `l` identity or same-origin overlay path provenance is
+  attributed to that overlay. The 24-hour inactivity TTL is the recorder's
+  own. Nothing records a URL, query, IP, referrer, Origin or request body,
+  and restart clears everything.
+- **Warning.** On the first admitted request to the removed route, under any
+  concurrency, core logs exactly one WARN per daemon process. The WARN says
+  that `/api/ingame` was removed in 2.0 and that vosulay is the in-game
+  overlay path. Later requests log nothing. The warning is not persisted.
+- **Notice.** The D20 notice for `ingame-page` renders exactly as A7.4 does
+  (escaped identity or unknown advisory, attempts, ages, the fixed
+  migration-guide link) and refreshes only with the status read.
+  `DashboardStatus` has no separate `ingame` field. The notice offers one
+  action for the successor: the ordinary install plan for
+  `{"kind":"tool","id":"vosulay-editor","source":"18-lab-dev/vosulay"}`
+  (AF.2; the plan adds `vosu.vosulay`), as
+  [catalog v2 "API placement"](catalog-v2.md#api-placement) states, with
+  every approval and trust step the plan lists before confirmation.
+  Already installed shows launch and manage instead. A missing entry or an
+  offline source shows truthful retry guidance for the catalog, never an
+  invented plan. The notice disappears when the recorder expires the entry.
+

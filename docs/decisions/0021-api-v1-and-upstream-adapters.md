@@ -273,3 +273,55 @@ and whole-route subtraction without whole-route ledger scope fail. The
   targets the `kind = "tool"` entry `vosulay-editor` in
   `18-lab-dev/vosulay`'s `catalog-v2.json`, whose requirements bring in the
   `vosu.vosulay` supervisor through the normal install plan.
+
+**2026-11-24** (A7.4, A7.5, M7 contract freeze; full text in
+[adapter surfaces](../v2/adapter-surfaces.md#a74-d20-notice-presentation)):
+
+- **D20 notice (A7.4).** The A4.5 recorder and its limits are reused
+  unchanged. The dashboard renders its bounded notices from the existing
+  status read, with escaped identities, elapsed ages and a fixed
+  migration-guide link, and with no timer, persistence or dismissal.
+- **`/api/ingame` deprecation (A7.5).** "The first request logs one warning"
+  means one warning per daemon process. "While the endpoint is in use" means
+  while an in-memory last-use marker is live, expiring after 24 hours
+  without a request and recording no URL, IP or referrer. The install target
+  named in the AF amendment above is the A7.5 target. The button starts the
+  ordinary install plan with every approval the plan lists; it never
+  approves anything itself. The endpoint is still landing G, which needs the
+  eligible author's behavioral document first. Until G lands, the endpoint is
+  outstanding, not complete or waived.
+
+**2026-11-25** (owner decision; full text in
+[adapter surfaces](../v2/adapter-surfaces.md#a75-apiingame-removed-route-notice)):
+
+- **`/api/ingame` is removed from 2.0.** The owner withdrew the clean-room
+  requirement. vosu 2.0 serves no `/api/ingame` page of any origin, so no
+  behavioral specification, eligible author, second implementer or
+  landing G exists. This supersedes the "`/api/ingame`" section above
+  (line 93), the rejected "Dropping `/api/ingame`" alternative (line 131),
+  and the deprecation headers, banner and editing-mode notice of the A7.5
+  amendment above. The supported in-game overlay path is
+  [vosulay](https://github.com/18-lab-dev/vosulay): the official
+  `vosulay-editor` tool, whose install plan adds the `vosu.vosulay`
+  supervisor ([ADR 0008](0008-external-in-game-overlays.md)).
+- **A D20 removed route.** `/api/ingame` is handled like
+  `/websocket/v2/subscribe` and `/files/skin/`: every method gets the
+  ordinary exact `Not Found` 404. It never upgrades, redirects, falls
+  through to static files, or carries a `Deprecation` or `Link` header.
+  The response is 404 and not 410 for three reasons. A4.5 fixes the
+  ordinary 404 for every removed route. In this repository, 410 means only
+  an authentic but retired API v1 resource, tree or artifact id. And 1.x
+  has answered 404 since it removed the route, so existing clients see no
+  change. The unchanged A4.5 recorder attributes these requests under one
+  new fixed feature, `ingame-page`.
+- **Notice semantics (A7.5 rewritten).** The adopted limits stay the same:
+  one WARN per daemon process, on the first request to the removed route,
+  and a 24-hour inactivity expiry, which is now the recorder's own TTL
+  rather than a separate marker. The dashboard shows the D20 notice for
+  `ingame-page`, including for the unknown bucket. Its one action starts
+  the A7.5 vosulay install through the ordinary plan, approval and trust
+  flow, and never approves anything itself.
+- **Divergence class.** The permanent `licensing` class now covers this
+  removal (`adr0021-removed-ingame-page`): vosu cannot ship upstream's LGPL
+  page, and 2.0 has no replacement. The four classes and the day-0 rule are
+  unchanged. `/api/ingame` is still never captured or used as a golden.

@@ -265,3 +265,25 @@ and `docs/v2/implementation-plan.md` section 7):
   official plugin, including the supervisor through a separately identified
   non-CEF fixture child (A8.6), must pass a process-runtime smoke in its own
   CI before M8.
+
+**2026-11-24** (A7, M7 contract freeze; Main adopted A7.1–A7.5 as
+recommended under delegated authority, and approved A7.1-OR on 2026-11-25;
+full text in the
+[A7 freeze](../v2/implementation-plan.md#a7-approved-contract-freeze-2026-11-24)
+and [plugin ABI §7.5](../v2/plugin-abi.md#75-bundled-only-http-surfaces-d3)):
+
+- **Management presentation (A7.1).** Privileged management handlers stay
+  in core. `vosu-surface` gains no configuration writer, credential reader or
+  core handle. It gains only two enumerated, read-only presentation views
+  (`ToolHostView`, `OverlayRootView`) and core's page-context injection. The
+  overlay host learns its root from its own `static_folder_path` ABI setting,
+  writes only through `vosu-net`'s hardened primitives, and serves through a
+  read-only `RootLease` (A7.1-OR).
+- **Dashboard off (A7.3).** "The dashboard cannot be disabled from the
+  dashboard" is now exact: boolean `ENABLE_DASHBOARD`, default `true`, and
+  `VOSU_DASHBOARD=off`, which forces it off. Any other value of the variable
+  is a startup error. No dashboard control or API changes the key.
+  `vosu.dashboard` stays in the compiled and initialized registry, which
+  still equals `BUNDLED` exactly, but no instance is created. Overlay,
+  adapter, API-v1 and tool hosting continue, and the tray keeps **Show
+  logs**.
