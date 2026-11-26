@@ -22,6 +22,7 @@ use super::{
     auth::{AuthorizationDecision, AuthorizationPolicy, MutationAuthorization, RequestHeaders},
     websocket::UpgradeCallbackTracker,
 };
+use vosu_core::removed_routes::RemovedFeature;
 
 mod responses;
 use responses::*;
@@ -105,12 +106,6 @@ pub enum Endpoint {
     WsV2Precise,
     Removed(RemovedFeature),
     WsCommands,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum RemovedFeature {
-    SelectedV2Feed,
-    LegacySkinIndex,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -451,11 +446,21 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     if let Some(endpoint @ Endpoint::Removed(_)) = classify(&method, &path) {
-        let _ = providers
-            .delegate
-            .handle(endpoint, request, Bytes::new())
-            .await;
-        return cors(not_found());
+        // A removed route answers exactly like an unknown one (A4.5, A7.5).
+        // Only the overlay listener's tombstones are recorded; on the
+        // dashboard listener the path is simply unknown.
+        let response = cors(not_found_for(&request));
+        if !providers
+            .authorization
+            .origins()
+            .is_some_and(|(_, dashboard)| dashboard)
+        {
+            let _ = providers
+                .delegate
+                .handle(endpoint, request, Bytes::new())
+                .await;
+        }
+        return response;
     }
     let websocket_upgrade = request
         .headers()
@@ -883,6 +888,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/websocket/v2/precise" if get => Some(WsV2Precise),
         "/websocket/v2/subscribe" => Some(Removed(RemovedFeature::SelectedV2Feed)),
         "/files/skin/" => Some(Removed(RemovedFeature::LegacySkinIndex)),
+        "/api/ingame" => Some(Removed(RemovedFeature::IngamePage)),
         "/files/skin" => None,
         "/websocket/commands" if get => Some(WsCommands),
         "/api/dashboard/status" if get => Some(DashboardStatus),

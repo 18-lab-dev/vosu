@@ -17,6 +17,8 @@ pub struct ProductionRuntime {
     authorizer: Arc<ReloadableAuthorizer>,
     update_handed_off: AtomicBool,
     update_notice: Option<UpdateNotice>,
+    /// Core's D20 recorder (A7.4/A7.5): one per process, outliving any route composition.
+    removed_routes: Arc<vosu_core::removed_routes::RemovedRoutes>,
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     /// A7.1-OR: the overlay root seed, its `SETTINGS_CHANGED` delivery and
     /// the read-only lease generations `vosu.overlayhost` serves through.
@@ -363,7 +365,8 @@ impl ProductionRuntime {
             .with_api_keys(Arc::new(api_keys))
             .with_tools(tools.clone())
             .with_plugins(Arc::new(management))
-            .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()));
+            .with_api_v1(self.api_v1.action_router(&self.plugins, tools.clone()))
+            .with_removed_routes(Arc::clone(&self.removed_routes));
         let live_config = Arc::clone(&self.config);
         let delegate = match self.catalog.get_mut() {
             Some(catalog) => delegate.with_catalog(catalog.api(
@@ -936,6 +939,7 @@ pub async fn run_cli() -> io::Result<()> {
         )),
         update_handed_off: AtomicBool::new(false),
         update_notice: None,
+        removed_routes: Arc::default(),
         counters: AsyncMutex::new(None),
         overlay_root: AsyncMutex::new(None),
         settings_storage,

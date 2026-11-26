@@ -23,6 +23,7 @@ pub mod desktop;
 pub mod identity;
 pub mod logging;
 pub mod plugin;
+pub mod removed_routes;
 pub mod report;
 pub mod resource_io;
 pub mod resources;

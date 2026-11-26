@@ -183,6 +183,8 @@ fn registrations_are_exact_dashboard_gets_for_pages_and_the_dashboard_set() {
         "/assets/dashboard-status.js",
         "/assets/dashboard-pages.js",
         "/assets/update-notice.css",
+        "/assets/dashboard-notices.js",
+        "/assets/dashboard-notices.css",
     ] {
         assert!(paths.contains(&expected), "{expected}");
     }
@@ -199,7 +201,7 @@ fn registrations_are_exact_dashboard_gets_for_pages_and_the_dashboard_set() {
         assert!(!paths.contains(&foreign), "{foreign}");
         assert!(routes.response(foreign, &[]).is_none(), "{foreign}");
     }
-    assert_eq!(paths.len(), 4 + 16);
+    assert_eq!(paths.len(), 4 + 18);
 
     let (content_type, script) = body(&routes, "/assets/homepage.js", &[]);
     assert_eq!(content_type, "text/javascript; charset=utf-8");

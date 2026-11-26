@@ -34,6 +34,8 @@ pub(crate) const ASSETS: &[Asset] = &[
     asset!("dashboard-catalog-flow.js", JS),
     asset!("dashboard-catalog-sources.js", JS),
     asset!("dashboard-pages.js", JS),
+    asset!("dashboard-notices.css", CSS),
+    asset!("dashboard-notices.js", JS),
     asset!("dashboard-plugins.css", CSS),
     asset!("dashboard-plugins.js", JS),
     asset!("dashboard-status.js", JS),

@@ -9,7 +9,11 @@ grids, the 2.0 Tools page (Ready, Blocked and legacy Disabled cards, launching
 service-era tool route), that the dashboard's own previews are not counted as
 connected browser sources, the status strip's session join, the update notice
 (minor, major with consent, unsafe release URLs) and Settings filled from
-SettingsView or replaced by an alert when that read fails. Only test ports
+SettingsView or replaced by an alert when that read fails. Then, with
+tests/dashboard_notices_browser.mjs, the D20 removed-route notice (M7-N01,
+M7-G01–G03): a real 1.x overlay page requests the removed WebSocket and
+`/api/ingame`, and the dashboard shows the notice through its own status
+refresh, with one daemon WARN for `/api/ingame`. Only test ports
 25150/25151 are used.
 """
 import argparse
@@ -34,6 +38,42 @@ OVERLAY = '''<!doctype html>
 <script>new WebSocket(`ws://${{location.host}}/websocket/commands?l=${{encodeURIComponent(location.pathname.split('/')[1])}}`);</script>
 </body></html>
 '''
+
+# A 1.x overlay that still uses two removed routes. Its name is hostile
+# markup, which the dashboard must show as text.
+HOSTILE_NAME = '<img src=x onerror="window.__d20=1">Hostile & "quoted"'
+HOSTILE = '''<!doctype html>
+<html><head><meta charset="utf-8"><title>1.x overlay</title></head>
+<body><p>1.x overlay</p>
+<script>
+const socket = new WebSocket(`ws://${location.host}/websocket/v2/subscribe?l=hostile-overlay`);
+socket.onopen = () => { document.body.dataset.opened = 'true'; };
+socket.onclose = () => { document.body.dataset.socket = 'closed'; };
+fetch('/api/ingame').then((response) => { document.body.dataset.ingame = String(response.status); });
+</script></body></html>
+'''
+INGAME_WARNING = '/api/ingame was removed in vosu 2.0'
+
+
+def removed_routes(static, args, environment):
+    """D20: real removed requests, then the notice in the browser."""
+    folder = static / 'hostile-overlay'
+    folder.mkdir()
+    (folder / 'index.html').write_text(HOSTILE)
+    (folder / 'metadata.txt').write_text(f'Name: {HOSTILE_NAME}\nAuthor: 1.x\nVersion: 1.0.0\nResolution: 400x100\n')
+    # The upstream in-game client carries no identity: the unknown bucket.
+    # Every exact request is the ordinary 404; a near miss is not recorded.
+    for method in ['GET', 'POST', 'PUT']:
+        expected = curl('/api/definitely-unknown', method=method)
+        assert curl('/api/ingame?sentinel=never-retain', method=method) == expected, method
+        assert expected[0] == 404, expected
+    assert curl('/api/ingame/')[0] == 404
+    assert curl('/files/skin/?l=overlay-1')[0] == 404
+    subprocess.run(['node', str(ROOT / 'tests/dashboard_notices_browser.mjs'), str(args.playwright_module.resolve()),
+                    str(args.evidence.resolve()), str(static)], check=True, env=environment)
+    status, body = curl('/api/dashboard/status', dashboard=True)
+    assert status == 200 and 'ingame' not in json.loads(body), body
+    assert 'never-retain' not in body, body
 
 
 def main():
@@ -130,8 +170,15 @@ STATIC_FOLDER_PATH = {json.dumps(str(static))}
                 subprocess.run(['node', str(ROOT / 'tests/dashboard_browser.mjs'),
                                 str(args.playwright_module.resolve()), str(args.evidence.resolve())],
                                check=True, env=environment)
+                removed_routes(static, args, environment)
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=15) == 0
+                # One WARN per daemon process for /api/ingame, in each log
+                # sink that records it, and never the request's query.
+                logs = [args.evidence / 'daemon.log', *root.rglob('*.log')]
+                counts = [path.read_text(errors='replace').count(INGAME_WARNING) for path in logs]
+                assert max(counts) == 1 and all(count in (0, 1) for count in counts), list(zip(logs, counts))
+                assert not any('never-retain' in path.read_text(errors='replace') for path in logs)
             finally:
                 if daemon.poll() is None:
                     daemon.terminate()

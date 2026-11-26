@@ -162,6 +162,8 @@ pub(super) struct Mounted {
     pub origin: String,
     pub providers: RouteProviders,
     pub delegate: Arc<ProductionRouteDelegate>,
+    /// The delegate's D20 recorder, read with an injected clock.
+    pub removed: Arc<vosu_core::removed_routes::RemovedRoutes>,
     pub hubs: Option<WebSocketHubs>,
     pub client: reqwest::Client,
     listener: Option<ListenerOwner>,
@@ -207,6 +209,7 @@ impl Mounted {
         let host = fixture.h.host.clone();
         let schemas = Arc::new(Schemas(fixture.providers.clone()));
         let files = fixture.files.clone();
+        let removed = Arc::new(vosu_core::removed_routes::RemovedRoutes::default());
         let (hubs, leases, api, processor, relays, counters, delegate, (port, providers, listener)) =
             fixture.h.runtime.block_on(async {
                 let hubs = WebSocketHubs::start(schemas.clone());
@@ -244,7 +247,8 @@ impl Mounted {
                 let delegate = Arc::new(
                     ProductionRouteDelegate::new(services)
                         .with_surface(SurfaceRouter::new(host.clone(), upstream))
-                        .with_api_v1(ApiV1Router::new(source, api.clone())),
+                        .with_api_v1(ApiV1Router::new(source, api.clone()))
+                        .with_removed_routes(removed.clone()),
                 );
                 // A probed free port can be taken by a parallel test process
                 // before the listener binds; retry with a fresh one.
@@ -314,10 +318,15 @@ impl Mounted {
             api,
             processor,
             relays,
+            removed,
             counters,
             leases,
             _roots: roots,
         }
+    }
+    /// The overlay folder root the delegate's overlay service reads.
+    pub(super) fn static_root(&self) -> PathBuf {
+        self._roots.path().join("static")
     }
     pub(super) fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
         self.fixture

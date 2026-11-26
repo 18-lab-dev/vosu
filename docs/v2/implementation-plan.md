@@ -2384,7 +2384,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | --- | --- | --- | --- |
 | `GET /`, `/settings`, `/available`, `/tools` | D page; O 302 to D (path and query kept) | `RuntimePages` (`PageDataProvider::render`) | Dashboard host page shells on D; core keeps the O→D 302 for exactly these four paths. Both are absent when the dashboard is off (O 404). |
 | `GET /favicon.ico` | O, D | embedded `ServerAssets` | Tool host, both roles (design-system set). |
-| `GET /assets/<name>` | O, D, every file in `assets/server/` | embedded `ServerAssets` | Exact per-name registrations. Design-system set (tool host, both roles): `tokens.css`, `system.css`, `theme-init.js`, the eight `.woff2` fonts, `fonts-OFL.txt`. Dashboard set (dashboard host, D only): `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog.css`, `dashboard-catalog.js`, `dashboard-catalog-browse.js`, `dashboard-catalog-flow.js`, `dashboard-catalog-sources.js`, `dashboard-plugins.css`, `dashboard-plugins.js`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css`. Removed (404): `homepage.html`, `report.html`, `design.html`, `tool-bridge.js`, `tool-bridge-v1.js` under `/assets/`, and every dashboard-set name on O. |
+| `GET /assets/<name>` | O, D, every file in `assets/server/` | embedded `ServerAssets` | Exact per-name registrations. Design-system set (tool host, both roles): `tokens.css`, `system.css`, `theme-init.js`, the eight `.woff2` fonts, `fonts-OFL.txt`. Dashboard set (dashboard host, D only): `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog.css`, `dashboard-catalog.js`, `dashboard-catalog-browse.js`, `dashboard-catalog-flow.js`, `dashboard-catalog-sources.js`, `dashboard-notices.css`, `dashboard-notices.js`, `dashboard-plugins.css`, `dashboard-plugins.js`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css`. Removed (404): `homepage.html`, `report.html`, `design.html`, `tool-bridge.js`, `tool-bridge-v1.js` under `/assets/`, and every dashboard-set name on O. |
 | `GET /api/dashboard` | O, D | core transport | Core, unchanged `{"origin"}`. 404 when the dashboard is off. |
 | `GET /api/dashboard/status` | D | `ReportInputProvider::dashboard_status` + connections | Core, `DashboardStatus`. |
 | `GET /api/settings` | — | — | New core D route, `SettingsView`. |
@@ -2399,7 +2399,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | `GET /websocket/commands` (upgrade) | O; key/broker scope `settings:write` | `CommandProcessor` | Overlay host feed, O only. Core keeps admission, key grants and revocation close. |
 | `GET`, `HEAD` overlay static `/<folder>/…`, alias redirects | O | `CounterStatic` + `alias_redirect` | Overlay host, O only, through `OverlayRootView`'s `RootLease`; preview requests stay excluded from connection counts. |
 | `GET /json`, `/json/sc`, `/json/v2`, `/json/v2/precise`, `/api/calculate/pp`, `GET /backgroundImage`, `GET /Songs/…`, `GET`/`HEAD /files/beatmap/…`, `GET`/`HEAD /files/skin/…`, WS `/ws`, `/tokens`, `/websocket/v2`, `/websocket/v2/precise` | O (A4 adapter registrations) | adapters through `adapter_routes` | Unchanged A4 owners, O only. |
-| `/websocket/v2/subscribe`, `GET /files/skin/` | O (removed, recorded) | `RemovedNotices` | Unchanged exact 404 tombstones; core keeps the recorder. |
+| `/websocket/v2/subscribe`, `GET /files/skin/` | O (removed, recorded) | core `vosu_core::removed_routes::RemovedRoutes` | Unchanged exact 404 tombstones; core keeps the recorder, one per process. On D they are unknown-route 404s and unrecorded. |
 | `/api/ingame`, every method | — (404) | — | Core, O only: an exact 404 tombstone recorded as `ingame-page` (A7.5); never registered by an adapter or host. On D it stays an unknown-route 404. |
 | `/api/v1/*` | O; D 404 | API-v1 router | Core, unchanged ([route inventory](../testing/verification.md#final-api-v1-route-inventory)); `X-Vosu-Tool-Session` authority moves to core's tool registry. |
 | `GET /api/plugins`, `POST`/`DELETE /api/plugins/<id>/approval`, `POST /api/plugins/<id>/{restart,stop}` | D | `runtime::plugin_management` | Core, unchanged (M5 U0). |
@@ -2474,7 +2474,7 @@ digest workflow. Each is embedded exactly once:
 | Owner | Files |
 | --- | --- |
 | Tool host (design-system set and bridge) | `tokens.css`, `system.css`, `design.html`, `theme-init.js`, `favicon.ico`, eight `.woff2` fonts, `fonts-OFL.txt`, `tool-bridge.js` |
-| Dashboard host | `homepage.html`, `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog*.{js,css}` (five files), `dashboard-plugins.{js,css}`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css` |
+| Dashboard host | `homepage.html`, `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog*.{js,css}` (five files), `dashboard-notices.{js,css}`, `dashboard-plugins.{js,css}`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css` |
 | Core | `report.html` (report generation) |
 | Deleted | `tool-bridge-v1.js` |
 
