@@ -21,9 +21,10 @@ requests never carry Host, so it had no security role; nothing restored.
   `scripts/check-*.py` except standalone-crates (still running when handed
   off), incl. check-deleted-assertions --base v2/main (local v2/main
   fast-forwarded to origin/v2/main e83598be).
-- Not yet confirmed: runtime_wakeups + performance_invariants output, prop_,
-  check-standalone-crates, tool_host_smoke, fmt check, workspace clippy
-  -D warnings, `cargo xwin clippy` (C_INCLUDE_PATH unset).
+- Also passed: runtime_wakeups, performance_invariants, and `prop_`
+  (25 test binaries, 0 failed).
+- Not yet confirmed: check-standalone-crates, tool_host_smoke, fmt check,
+  workspace clippy -D warnings, `cargo xwin clippy` (C_INCLUDE_PATH unset).
 
 ## Remaining
 - Run the unconfirmed acceptance items above.
