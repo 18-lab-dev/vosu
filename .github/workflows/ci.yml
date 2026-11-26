@@ -147,6 +147,9 @@ jobs:
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Check published SDK version integrity
+        if: needs.changes.outputs.verified != 'true'
+        run: python scripts/check-sdk-published.py
       # Builds and stages the plugin-host fixture libraries the root native
       # test reads through VOSU_PLUGIN_HOST_{TESTKIT,OSU}_LIBRARY; the test
       # never runs Cargo itself and fails when they are missing.

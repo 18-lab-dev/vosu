@@ -3,7 +3,7 @@ use crate::plugin::host::tests::test_process;
 use vosu_plugin_api::SessionIdentify;
 
 #[test]
-fn actions_session_ownership_is_fixed_and_detach_only_requests_cancellation() {
+fn actions_keep_owner_handles_and_detach_only_requests_cancellation() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let _entered = runtime.enter();
     let (_dir, host) = test_host(runtime.handle().clone());
@@ -69,23 +69,31 @@ fn actions_session_ownership_is_fixed_and_detach_only_requests_cancellation() {
         &[],
     );
     let other_action = host.get("tests.actions.sessionother.nested.echo").unwrap();
-    assert_eq!(
-        executor.invoke(
+    let guest_id = executor
+        .invoke(
             Principal::Broker,
-            other_action,
+            other_action.clone(),
             Some(attached.session.clone()),
             json!("x"),
-            sink.clone()
-        ),
-        Err(InvocationError::InvalidSession)
-    );
+            sink.clone(),
+        )
+        .unwrap();
+    let Message::SessionAttached(guest) = other.recv_timeout(WAIT).unwrap() else {
+        panic!("the callee must learn the handle before ACTION_INVOKE");
+    };
+    assert_eq!(guest.session, attached.session);
+    assert_eq!(guest.handle, attached.handle);
+    assert!(guest.name.is_none() && guest.path.is_none());
+    let invoked = invoke_message(&other);
+    assert_eq!(invoked.session, Some(guest.handle));
+    assert_eq!(invoked.invocation, guest_id);
     let id = executor
         .invoke(
             Principal::Broker,
             action.clone(),
             Some(attached.session.clone()),
             json!("input"),
-            sink,
+            sink.clone(),
         )
         .unwrap();
     let mut received = false;
@@ -98,7 +106,23 @@ fn actions_session_ownership_is_fixed_and_detach_only_requests_cancellation() {
         }
     }
     assert!(received, "invocation was not delivered");
+    let prepared = executor
+        .prepare(
+            Principal::Broker,
+            other_action,
+            Some(attached.session.clone()),
+            json!("detach before starting"),
+        )
+        .unwrap();
     host.process_exited(91901);
+    assert_eq!(prepared.invoke(sink), Err(InvocationError::InvalidSession));
+    let Message::ActionCancel(cancel) = other.recv_timeout(WAIT).unwrap() else {
+        panic!("detach must cancel the guest invocation");
+    };
+    assert_eq!(cancel.invocation, guest_id);
+    assert!(
+        matches!(other.recv_timeout(WAIT).unwrap(), Message::SessionDetached(event) if event.handle == guest.handle)
+    );
     let mut cancelled = false;
     for _ in 0..16 {
         if let Message::ActionCancel(cancel) = events.recv_timeout(WAIT).unwrap() {

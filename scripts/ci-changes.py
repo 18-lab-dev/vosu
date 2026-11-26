@@ -33,8 +33,9 @@ UI_PREFIXES = (
 # verify step (~40 s warm, a few minutes cold) runs only when one of these
 # changed, so a pure daemon change does not repackage the SDK.
 SDK_PATHS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+SDK_CRATE_PREFIX = "crates/vosu-plugin-api/"
 SDK_PREFIXES = (
-    "crates/vosu-plugin-api/",
+    SDK_CRATE_PREFIX,
     ".cargo/",
     ".github/workflows/",
     "scripts/sdk-package.py",
@@ -63,7 +64,10 @@ def classify(paths):
     native = False
     ui = False
     for path in paths:
-        if path.endswith(".md") or path.startswith("docs/") or path in {".gitignore", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE"}:
+        # The SDK's README and licenses are shipped package inputs.
+        if not path.startswith(SDK_CRATE_PREFIX) and (
+            path.endswith(".md") or path.startswith("docs/") or path in {".gitignore", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE"}
+        ):
             continue
         code = True
         # Pure schema/calculator changes retain the Windows cross-check. Everything

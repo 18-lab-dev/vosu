@@ -6,7 +6,7 @@ description: "Build a 2.0 web tool, connect it to live state and a plugin action
 
 # Create a tool
 
-A vosu **tool** is a static web application hosted beside your overlays. vosu serves its files, the dashboard opens it, and it reads live game state and calls plugin actions through [API v1](../v2/api-v1.md) from the browser. A tool runs no process of its own: native work belongs to a [plugin](../v2/plugin-abi.md) action. Here you will build **Hello web**: a live chart and play readout with the chart's background, a setting, and an optional beatmap import action, then publish it for other users.
+A vosu **tool** is a static web application hosted beside your overlays. It reads live game state through [API v1](../v2/api-v1.md) without a credential. A tab launched from the dashboard can also invoke its declared actions through the tool bridge. A tool runs no process of its own: native work belongs to a [plugin](../plugins/authoring.md) action. Here you will build **Hello web**: a live chart and play readout with the chart's background, a setting, and an optional beatmap import action, then package it for other users.
 
 ## 1. Prepare
 
@@ -62,7 +62,7 @@ Create `$TOOL/web/index.html`:
 
 ## 3. Run an isolated vosu
 
-Do not reuse your normal config, data, cache, runtime directory or listener ports. This setup leaves an already-running vosu untouched, disables startup browser opening and automatic updates, uses spare ports **25850/25851**, and keeps all tutorial state in `$LAB`. Prerelease builds keep their configuration in a `prerelease/` subdirectory.
+Do not reuse your normal config, data, cache, runtime directory or listener ports. This setup leaves an already-running vosu untouched, disables startup browser opening and automatic updates, uses spare ports **25850/25851**, and keeps all tutorial state in `$LAB`. Prerelease builds keep their configuration in a `prerelease/` subdirectory; see [alpha paths](../migration/2.0.md#try-an-alpha-without-moving-1x-data).
 
 ```sh
 export HOME="$LAB/home"
@@ -106,7 +106,12 @@ vosu watches the package: edits to `manifest.toml`, `settings.json` and the UI a
 
 ## 4. Connect the bridge
 
-In a second shell, re-export `TOOL` and `VOSU_SOURCE` to their absolute paths (`printf '%s\n' "$TOOL" "$VOSU_SOURCE"` in the first shell). Replace the starter page with the maintained complete page and its art:
+In a second shell, re-export `TOOL`, `VOSU_SOURCE`, `VOSU_BIN` and `LAB` to
+the same absolute paths (print them with
+`printf '%s\n' "$TOOL" "$VOSU_SOURCE" "$VOSU_BIN" "$LAB"` in the first
+shell). Change into `$VOSU_SOURCE` so the later Cargo command uses the
+checkout's pinned toolchain. Replace the starter page with the maintained
+complete page and its art:
 
 ```sh
 cp "$VOSU_SOURCE/examples/tools/hello-web/web/index.html" "$TOOL/web/index.html"
@@ -130,7 +135,7 @@ $('access').textContent = vosu.canWrite ? 'Session' : 'Read-only';
 $('run').disabled = !vosu.canWrite;
 ```
 
-**Open** gave this tab a single-use launch code in the URL fragment. The bridge removed it from the URL before anything else ran and exchanged it for a session that lives only in the page's memory. Now open <http://127.0.0.1:25850/tools/hello-web/> **directly** in another tab, or reload: the badge says **Read-only** and **Import** stays disabled. That is by design: only a tab the dashboard opened can invoke actions, and reopening from the dashboard restores it. Never store anything that grants authority in `localStorage`, `sessionStorage`, IndexedDB or cookies, never open same-origin pages with an opener, and never frame overlays: overlays share this origin.
+**Open** gave this tab a single-use launch code in the URL fragment. The bridge stripped it before asynchronous work and exchanged it for a session that lives only in the page's memory. Now open <http://127.0.0.1:25850/tools/hello-web/> **directly** in another tab, or reload: the badge says **Read-only** and **Import** stays disabled. Read-only tabs still get state, settings and public resources. Reopen the tool from the dashboard for a fresh session; only resolved, declared actions are available. Never store anything that grants authority in `localStorage`, `sessionStorage`, IndexedDB or cookies, never open same-origin pages with an opener, and never frame overlays: overlays share this origin.
 
 **Check:** the launched tab shows **Session**; the direct tab shows **Read-only**, and its address bar never contained a launch code.
 
@@ -159,7 +164,11 @@ const stop = vosu.subscribe(fields, frame => {
 addEventListener('pagehide', stop, { once: true });
 ```
 
-Frames address fields by their index in `fields`: initial `[0, revision, pairs]`, update `[1, revision, pairs, removed]`, error `[2, code, message]`. An initial frame replaces everything; it arrives after every reconnect and whenever another game session takes focus. A removed index means the value is now unknown, not zero. Declare what you read in the manifest so the install plan can show it:
+Frames address fields by their index in `fields`: initial `[0, revision, pairs]`, update `[1, revision, pairs, removed]`, error `[2, code, message]`. An initial frame replaces everything; it arrives after every reconnect and whenever another game session takes focus. A removed index means the value is now unknown, not zero.
+
+Read capabilities describe dependencies and are not action grants or a read
+firewall. In this example the chart and play namespaces are required;
+client and status are also built in, and background is optional:
 
 ```sh
 cat >> "$TOOL/manifest.toml" <<'EOF'
@@ -219,7 +228,7 @@ On the Tools page, choose this tool's **Settings**, change **Accuracy decimals**
 
 ## 8. Call a plugin action
 
-Tools reach native work only through plugin actions. The official osu! plugin declares `vosu.osu.beatmap.import`, which imports a `.osz` archive into the focused osu! client. Grant it as optional, so the tool still works without osu!:
+Tools reach native work only through plugin actions. The bundled osu! plugin declares `vosu.osu.beatmap.import`, which imports a `.osz` archive into the focused osu! client. An independently packaged native plugin needs its own reviewed install plan, with [native approval](../plugins/authoring.md#runtime-trust-and-native-approval) where required. Declare this action optional so the readout can work without a resolved import capability:
 
 ```sh
 cat >> "$TOOL/manifest.toml" <<'EOF'
@@ -242,6 +251,12 @@ const result = await vosu.invoke('vosu.osu.beatmap.import', { sourcePath: $('sou
 The capability id is `action:<plugin-id>.<name>`; the call uses the bare `<plugin-id>.<name>`. This action's session mode is `required`, so the call omits `session` (the focused session); an action declared `none` takes `session: null`. Aborting the signal cancels the job, even while it is still being created. Errors carry a `code`: `forbidden` without a session or a resolved grant, `unknown_session` when no game is focused, `invalid_arguments`, `cancelled`, or the plugin's own code. See [Actions](protocol.md#actions).
 
 **Check:** in the launched tab with no game, **Import** reports that no osu! session is focused. In the direct tab the button stays disabled. With osu! running and a real `.osz` path, stable reports the import as queued and lazer as submitted.
+
+This is a short action. A job's deadline is 30 seconds, including jobs
+started with `vosu.start`. For a long render or download, use short actions
+around a [plugin-owned operation](../v2/api-v1.md#plugin-owned-operations-af3);
+use a [job artifact](../v2/api-v1.md#job-artifacts-af12) to return its
+protected file rather than exposing a local path or a public URL.
 
 ## 9. Package and publish
 
@@ -278,7 +293,7 @@ cargo run --locked -p vosu-plugin-api --example vosu-package-check -- \
   --source YOUR-ACCOUNT/YOUR-REPO --registry-context "$LAB/registry.json"
 ```
 
-**Check:** it prints `vosu-package-check: passed: 1 packages` and exits 0. Without the `vosu.osu` registration it fails with `manifest.unknown-namespace` at the action id. Publishers without a vosu checkout install the checker from the registry, as the checker section describes.
+**Check:** it reports `1 packages, 0 actions, 0 schema assets` and exits 0. Without the `vosu.osu` registration it fails with `manifest.unknown-namespace` at the action id. Publishers without a vosu checkout can [install the checker from crates.io](../v2/catalog-v2.md#package-checker-af10) at the exact supported SDK version.
 
 Publish only when you intend to distribute:
 
@@ -289,5 +304,7 @@ Publish only when you intend to distribute:
 Do not ask users to disable HTTPS or package verification; production downloads reject private and reserved hosts, including localhost. For a local automated installation test only, build `cargo build --locked --features test-harness`, serve `$LAB/dist` with `python -m http.server 25860 --bind 127.0.0.1 --directory "$LAB/dist"`, regenerate the catalog with `--base-url https://catalog.invalid:25860`, set `VOSU_CATALOG_TEST_SOCKET=127.0.0.1:25860` on the isolated daemon, and add `https://catalog.invalid:25860/catalog-v2.json` as the source. That loopback exception exists only in test-harness builds. Launch without `--tool` for this test.
 
 For updates, bump the manifest version, regenerate the ZIP, digest and catalog, and publish new assets; users update through their configured source. See [Catalog sources and installation](protocol.md#catalog-sources-and-installation).
+The [catalog guide](catalog.md) explains replacement ids and why a 1.x
+catalog must still refer to its original 1.x packages.
 
 **Final check:** a fresh isolated vosu installs Hello web from the catalog with no development override; it stays untrusted until approved, then its live state, settings and read-only boundary work as before. Stop every tutorial process when finished, and open a fresh shell to return to your normal HOME and XDG environment; keep or remove the temporary `$LAB` directory.

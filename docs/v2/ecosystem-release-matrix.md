@@ -90,9 +90,9 @@ be invented for an overlay without its source.
 | Axis | Value |
 | --- | --- |
 | Application (`host` ranges match this) | `2.0.0-alpha.N` prereleases, then `2.0.0`. The F landing head (f/alpha with M4a and M4b merged), from which `v2.0.0-alpha.1` is cut, declares `2.0.0-alpha.1`. |
-| Alpha host range | `>=2.0.0-alpha.1, <3.0.0`, or a higher alpha minimum for a package that needs a later alpha's contract (B0 artifacts, P0 header asset). |
+| Alpha host range | `>=2.0.0-alpha.1, <3.0.0`, or a higher alpha minimum for a package that needs a later alpha's contract (B0 artifacts, P0 header asset, ADR 0025 Linux runtime table). Require a host build with that contract; the SDK pin does not set the host minimum. |
 | Stable host range | `>=2.0.0, <3.0.0` unless the owner explicitly asks to keep an alpha-compatible range (A8.5). |
-| SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. `1.0.0-alpha.1` is the pre-B0 first publication (its approved `v2/main` commit predates the artifact codecs); the workspace now declares `1.0.0-alpha.2`, which adds B0's artifact opcodes and codecs. crates.io had no `vosu-plugin-api` crate on 2026-11-25. Each publication is a separate owner-approved operation (S1). Consumers pin it exactly (`=1.0.0-alpha.N`); a package using artifacts pins `=1.0.0-alpha.2` or later. |
+| SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. Published `1.0.0-alpha.1` predates B0; published `1.0.0-alpha.2` adds B0's artifact opcodes and codecs. The workspace declares `1.0.0-alpha.3`, the first SDK whose checker supports ADR 0025. Consumers pin one exact registry version. Artifact APIs require alpha.2 or later; `[runtime.linux]` packaging requires alpha.3 or later. Each publication is separately owner-approved (S1). |
 | ABI / `manifest_version` / `catalog_version` | ABI 1; manifest format 1; catalog 2 for `catalog-v2.json`, 1 for the frozen `catalog.json`. |
 | Core namespace schemas in `2.0.0-alpha.1` | `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin` 1.0.0; `vosu.osu` 1.3.0, including M4a's `keys.overlay` physical keys. A package that requires `vosu.osu` 1.3.0 needs no host minimum above `2.0.0-alpha.1`. |
 | Core action | `vosu.osu.beatmap.import` 1.0.0, `session = "required"`, `cli = true`. |
@@ -102,10 +102,12 @@ be invented for an overlay without its source.
 **2026-11-26:** The Linux user-namespace opt-in
 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)) adds an
 optional manifest and catalog field without changing the runtime ABI or
-artifact codecs. The matrix does not require another SDK prerelease number
-for this key; the in-tree crate stays `1.0.0-alpha.2`. Publication still
-requires separate owner approval; publishers adopting the opt-in need a
-package checker and host built from a revision supporting it.
+artifact codecs. `vosu-package-check` from `1.0.0-alpha.3` or later is
+required for `[runtime.linux]`; older checkers reject the runtime table.
+Publishers also need a host build supporting the opt-in. The native
+library can use an older SDK if it is otherwise ABI-v1 compatible; the
+host neither checks nor infers the SDK version. Alpha.3 publication
+requires separate owner approval.
 
 ### vosu-tools: seven plugins, seven web tools
 
@@ -249,7 +251,11 @@ between the two columns only by amending this table.
 | skin-studio | → `vosu.tools.skin-studio` data dir | `stable_skins_dir`, `lazer_skins`, `credits` | `skin-studio-v2`: `start_ruleset` |
 | downloader | → `vosu.tools.downloader` data dir | `concurrency`, `max_file_mb`, `no_video`, `songs_dir`, `sources`, `client_id`, `client_secret` (write-only secret) | `downloader-v2`: `hide_owned`, `follow_current_map` |
 | map-preview | none (no service) | — | `map-preview-v2`: `skin`, `mania_scroll_speed`, `note_speed`, `show_bar`, `show_progress`, `controls_open` |
-| vosulay | → `vosu.vosulay` data dir | the native keys V1 lists here before V2 lands (**pending V1**) | `vosulay-editor`: presentation keys V1 lists (**pending V1**) |
+| vosulay | → `vosu.vosulay` data dir | `backend`: no persisted managed-tool key (1.x used host-provided `VOSU_URL`); `autostart`: no user setting (1.x `tool.toml` set `service.startup = "always"`, preserved by the `true` default) | `vosulay-editor`: none |
+
+In vosulay 1.x, `config.json` has a standalone `settings.vosu_url` key, but
+tool mode overrides it with the host's `VOSU_URL`. The AF.2 data copy can
+preserve that JSON field without promoting it to the supervisor's `backend`.
 
 Rules:
 
@@ -340,13 +346,23 @@ operations; unit agents only prepare them.
 | Tag, draft, sign and publish `v2.0.0-alpha.1` as a prerelease, `make_latest=false` | R0 | release workflow for tag `v2.0.0-alpha.1` on the approved `v2/main` commit; `sign-release.py` (uploads signatures) | owner-blocked; R0 trigger |
 | Publish `vosu-plugin-api` `1.0.0-alpha.N` to crates.io | S0 | `cargo publish --locked -p vosu-plugin-api` from the approved commit, after rechecking that the version is unoccupied | owner-blocked; S1 |
 | Each later host alpha (B0 artifacts, P0 header asset) | R0/B0/P0 | as for alpha.1, new tag | owner-blocked |
-| Each later SDK alpha (B0 codecs) | B0 | as for the first SDK alpha, new version | owner-blocked |
+| Each later SDK alpha (B0 codecs, ADR 0025 manifest validation) | B0 / ADR 0025 | as for the first SDK alpha, new version | alpha.2 published; alpha.3 owner-blocked |
 | Ecosystem prerelease tags and draft uploads (vosu-tools, vosulay, vosu-overlays, quickstart) | C0, V2, O0, Q0 | each repository's own release workflow at the approved tag | owner-blocked |
 | Make `18-lab-dev/vosu-overlay-quickstart` public | Q0 | repository visibility change (AF.5 approves the outcome; the operation is still separately confirmed) | owner-blocked |
 | Stable latest releases of vosu-tools, vosulay, vosu-overlays with both catalogs; quickstart `v2.0.0` latest | R1 | each repository's own release workflow; then unauthenticated `/releases/latest` readback | owner-blocked |
 | Any later 1.x coexistence release | owner request only | that repository's 1.x release workflow; updates [section 2](#2-repositories-and-frozen-1x-sources) first | not planned |
 | Winget, Scoop, AUR or other package-manager changes | vosulay and vosu package owners | outside F | not part of F |
 | Live verification sessions | X0 | named VM install, temporary roots and owned process identities (AF.11) | approved in principle; each run scheduled by Main |
+
+After publishing the SDK, add the version and its registry SHA-256 to
+[`crates/vosu-plugin-api/published.toml`](../../crates/vosu-plugin-api/published.toml).
+Run `python scripts/check-sdk-published.py --ledger-entry <published.crate>`
+on the exact released archive, confirm the printed SHA-256 against the
+registry checksum, and append the entry. It also records the archive's
+file hashes for offline CI: Cargo embeds the source commit in
+`.cargo_vcs_info.json`, so the raw archive hash can change even when the
+shipped contents are identical. Any change to those contents under a
+recorded version requires an SDK version bump.
 
 ## 9. Lock files and receipts
 
@@ -424,12 +440,12 @@ M8 E0/G0 consume these receipts inside its candidate evidence manifest
 ## 10. Owner-blocked and pending items
 
 - Every remaining operation in [section 8](#8-publication-operations-and-owners). The F
-  trigger is met: `v2.0.0-alpha.1` was published on 2026-11-25. The crates.io
-  publication of `vosu-plugin-api` `1.0.0-alpha.1` (S1) awaits its owner approval.
+  trigger is met: `v2.0.0-alpha.1` was published on 2026-11-25. The
+  SDK's `1.0.0-alpha.1` and `1.0.0-alpha.2` are published; SDK
+  `1.0.0-alpha.3` awaits separate owner approval.
 - Exact ecosystem tags for vosu-tools and vosu-overlays.
 - Porting the 18 remaining `v0.4.0` overlays to v2 entries (O0; decided 2026-11-25, all ported, none retired; [section 2](#2-repositories-and-frozen-1x-sources)).
-- vosulay settings rows (V1) and the vosulay runtime's minimum compatible
-  version (V0).
+- The vosulay runtime's minimum compatible version (V0).
 - T0's action ledger, T2's timeline point bound, and the owner publication of
-  the host alpha and SDK `1.0.0-alpha.2` carrying B0's artifact contract.
+  a host alpha carrying B0's artifact contract and ADR 0025.
 - The 1.x support-window end (AF.4).

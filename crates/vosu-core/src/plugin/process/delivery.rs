@@ -35,11 +35,11 @@
 //! violation that ends the channel rather than an unbounded queue or a
 //! dropped message.
 //!
-//! **Ordering.** Frames naming a session (state, demand, focus, attach,
-//! detach) are session-affine: under `concurrent_dispatch` no two run at
-//! once and none overtakes an earlier one, so a session's `STATE_UPDATE`
-//! parts and updates are dispatched strictly in order and its final state
-//! precedes its `SESSION_DETACHED`. Everything else may run concurrently.
+//! **Ordering.** State, demand, focus, lifecycle, and scoped actions are
+//! session-affine: under `concurrent_dispatch` no two run at once and none
+//! overtakes an earlier one. A session's state parts are strictly ordered,
+//! its final state precedes detach, and attach precedes its actions.
+//! Everything else may run concurrently.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
@@ -88,6 +88,8 @@ enum LatestKey {
 enum Lane {
     Terminal,
     Ordinary,
+    Invoke(u64),
+    Cancel(u64),
     Latest(LatestKey),
     State(StateUpdate),
 }
@@ -109,6 +111,12 @@ struct HandleField {
 #[derive(Deserialize)]
 struct InvocationField {
     invocation: u64,
+}
+
+#[derive(Deserialize)]
+struct ActionFields {
+    invocation: u64,
+    session: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -174,6 +182,17 @@ pub(crate) fn inspect(header: &FrameHeader, payload: &[u8]) -> Result<Inbound, D
             let key = LatestKey::Progress(invocation().map_err(|_| malformed())?);
             inbound(Lane::Latest(key), None, Release::Nothing)
         }
+        VOSU_OP_ACTION_INVOKE => {
+            let action = decode::<ActionFields>(payload).map_err(|_| malformed())?;
+            let lane = action
+                .session
+                .map_or(Lane::Ordinary, |_| Lane::Invoke(action.invocation));
+            inbound(lane, action.session, Release::Nothing)
+        }
+        VOSU_OP_ACTION_CANCEL => {
+            let invocation = invocation().map_err(|_| malformed())?;
+            inbound(Lane::Cancel(invocation), None, Release::Nothing)
+        }
         VOSU_OP_STATE_UPDATE => {
             let update = decode::<StateUpdate>(payload).map_err(|_| malformed())?;
             let session = update.session;
@@ -208,6 +227,7 @@ enum Item {
     Frame {
         entry: Entry,
         session: Option<u64>,
+        invocation: Option<u64>,
     },
     Latest {
         key: LatestKey,
@@ -248,6 +268,8 @@ struct QueueState {
     ordinary: VecDeque<Item>,
     latest: HashMap<LatestKey, Entry>,
     states: HashMap<u64, StateSlot>,
+    /// A cancel arriving before a scoped invoke is taken must wait behind it.
+    queued_invokes: HashMap<u64, u64>,
     /// Session-affine deliveries currently being dispatched.
     running: HashMap<u64, usize>,
     bytes: usize,
@@ -353,7 +375,14 @@ impl QueueState {
             }
             let item = self.ordinary.remove(index).expect("index is in bounds");
             let delivery = match item {
-                Item::Frame { entry, session } => {
+                Item::Frame {
+                    entry,
+                    session,
+                    invocation,
+                } => {
+                    if let Some(invocation) = invocation {
+                        self.queued_invokes.remove(&invocation);
+                    }
                     self.bytes -= entry.len();
                     if entry.header.opcode == vosu_opcode::VOSU_OP_SESSION_DETACHED as u32
                         && let Some(session) = session
@@ -549,11 +578,25 @@ impl DeliveryQueue {
                 let entry = state.take(header, buffer);
                 state.terminal.push_back(entry);
             }
-            Lane::Ordinary => {
+            Lane::Ordinary | Lane::Invoke(_) | Lane::Cancel(_) => {
                 state.admit_bytes(len, self.budget)?;
                 let entry = state.take(header, buffer);
-                let session = inbound.session;
-                state.ordinary.push_back(Item::Frame { entry, session });
+                let (session, invocation) = match inbound.lane {
+                    Lane::Invoke(invocation) => {
+                        let session = inbound.session.expect("scoped invocation");
+                        state.queued_invokes.insert(invocation, session);
+                        (Some(session), Some(invocation))
+                    }
+                    Lane::Cancel(invocation) => {
+                        (state.queued_invokes.get(&invocation).copied(), None)
+                    }
+                    _ => (inbound.session, None),
+                };
+                state.ordinary.push_back(Item::Frame {
+                    entry,
+                    session,
+                    invocation,
+                });
             }
         }
         drop(state);

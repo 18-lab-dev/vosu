@@ -73,6 +73,87 @@ fn router(
 }
 
 #[test]
+fn http_can_invoke_a_guest_action_and_detach_cancels_it() {
+    let mut h = Harness::new();
+    let pid = 783302;
+    h.publisher("test.guest-action.game", pid);
+    let id = "test.guest-action.callee";
+    h.load(
+        &format!(
+            "{}\n[[actions]]\nname='run'\nversion='1.0.0'\ntitle='Guest'\nargs_schema='args.json'\nresult_schema='result.json'\nsession='required'\n[[provides]]\nid='action:{id}.run'\nversion='1.0.0'\n",
+            super::support::manifest(id)
+        ),
+        &[],
+        &[("args.json", "{}"), ("result.json", "{}")],
+        super::support::f5::guest::vosu_plugin_vtable,
+    );
+    h.runtime.block_on(bounded(async {
+        let (api, hub) = router(&h, JobRegistry::new(), InvocationPolicy::default().deadline);
+        let target = h.id();
+        let sessions = api
+            .handle(request(Method::GET, "/api/v1/sessions", Value::Null))
+            .await;
+        let sessions = value(sessions).await;
+        assert_eq!(sessions["sessions"][0]["session"], target);
+        assert_eq!(
+            sessions["sessions"][0]["plugin"]["id"],
+            "test.guest-action.game"
+        );
+        let path = |target: &str| format!("/api/v1/sessions/{target}/actions/{id}.run");
+        let unknown = api
+            .handle(request(Method::POST, &path("session-999"), json!({})))
+            .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(value(unknown).await["error"]["code"], "unknown_session");
+
+        // The real provider only succeeds if its SESSION_ATTACHED arrived
+        // before its first ACTION_INVOKE; it never subscribed to vosu.sessions.
+        let args = json!({"sentinel": "non-owner invocation"});
+        let response = api
+            .handle(request(Method::POST, &path(&target), args.clone()))
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let job = value(response).await;
+        assert_eq!(job["state"], "succeeded");
+        assert_eq!(job["session"], target);
+        assert_eq!(job["result"], args);
+
+        let pending = api
+            .handle(request(
+                Method::POST,
+                &format!("{}?wait=0", path(&target)),
+                json!({"mode": "wait_progress"}),
+            ))
+            .await;
+        assert_eq!(pending.status(), StatusCode::ACCEPTED);
+        let job = pending.headers()["location"].to_str().unwrap().to_owned();
+        let progress = api
+            .handle(request(
+                Method::GET,
+                &format!("{job}?after=0&wait=1000"),
+                Value::Null,
+            ))
+            .await;
+        assert_eq!(value(progress).await["progress"]["fraction"], 0.375);
+        h.host.process_exited(pid);
+        let terminal = api
+            .handle(request(
+                Method::GET,
+                &format!("{job}?after=1&wait=1000"),
+                Value::Null,
+            ))
+            .await;
+        assert_eq!(value(terminal).await["state"], "cancelled");
+        let detached = api
+            .handle(request(Method::POST, &path(&target), json!({})))
+            .await;
+        assert_eq!(detached.status(), StatusCode::NOT_FOUND);
+        assert_eq!(value(detached).await["error"]["code"], "unknown_session");
+        hub.shutdown();
+    }));
+}
+
+#[test]
 fn timeout_survives_real_late_abi_success_and_instance_loss_fails_running_job() {
     let h = Harness::new();
     let (events, _) = fixture::load(&h, 783301, "fixture.jthree.loss", "");

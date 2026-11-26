@@ -24,6 +24,10 @@ class ClassifyTests(unittest.TestCase):
         self.assertFalse(native)
         self.assertFalse(ui)
 
+    def test_sdk_readme_change_runs_validation(self):
+        code, _, _ = ci_changes.classify(["crates/vosu-plugin-api/README.md"])
+        self.assertTrue(code)
+
     def test_vosu_osu_model_edit_stays_schema_only(self):
         code, native, ui = ci_changes.classify(["crates/vosu-osu-model/src/enums.rs"])
         self.assertTrue(code)
