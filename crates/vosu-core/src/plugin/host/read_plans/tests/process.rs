@@ -733,8 +733,25 @@ fn read_plan_process_results_never_reach_a_new_generation() {
         drop(instances);
     }
     // Supervision starts the next generation under the same instance id
-    // after the first backoff (M5 C0).
+    // after the first backoff (M5 C0). The launcher hands the child over
+    // before `launch` returns, so the host has not published it yet: wait
+    // until it is live, or `mark` below can find no instance to dispatch to.
     let mut new = rig.launcher.take_child();
+    {
+        let instances = rig.host.instances.lock().unwrap();
+        let (instances, timeout) = rig
+            .host
+            .instances_changed
+            .wait_timeout_while(instances, BOUND, |map| {
+                !matches!(
+                    map.get(&PluginInstanceId::new(9_641)),
+                    Some(super::super::super::InstanceSlot::Live(_))
+                )
+            })
+            .unwrap();
+        assert!(!timeout.timed_out(), "the next generation was published");
+        drop(instances);
+    }
     target.release();
     rig.drain_broker();
     rig.mark(9_641, 2);
