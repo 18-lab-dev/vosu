@@ -163,11 +163,12 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                 for path in ['/tools/_host/v1/self', '/tools/_host/v1/settings',
                              '/tools/_host/v1/context', '/tools/_host/v1/overlays',
                              '/tools/_host/v1/bridge.js', '/tools/_host/v1/cli',
-                             '/assets/tool-bridge-v1.js']:
+                             '/assets/tool-bridge-v1.js', '/assets/tool-bridge.js',
+                             '/assets/design.html']:
                     status, _ = curl(path)
                     assert status == 404, (path, status)
                 print('curl deleted /tools/_host/v1/{self,settings,context,overlays,bridge.js,cli} '
-                      'and /assets/tool-bridge-v1.js -> 404')
+                      'and /assets/{tool-bridge-v1.js,tool-bridge.js,design.html} -> 404')
 
                 # The v2 web tool: static UI, explicit api/* 404, 503 when not servable.
                 wait_for(lambda: tool_view('fixture-v2')['status'] == 'running')

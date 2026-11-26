@@ -29,7 +29,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
   unchanged except as listed below.
 - `GET /api/counters/search/<query>` is served on the dashboard listener
   only, like the other dashboard reads; the overlay listener answers 404.
-- A counter route whose folder, query or URL is empty (for example
+  An empty query (`/api/counters/search/?source=installed|available`)
+  returns the whole list, which the dashboard's Overlays and Available pages
+  load.
+- A counter route whose folder or URL is empty (for example
   `POST /api/counters/delete/` or `GET /api/counters/settings/`) is 404
   instead of a `{"error":"no folder name"}` body.
 - An overlay HTML page larger than 64 MiB that needs the injected

@@ -120,6 +120,9 @@ fn registrations_follow_the_a7_listener_roles() {
                         RoutePath::Children(base) => path
                             .strip_prefix(base.as_str())
                             .is_some_and(|rest| rest.len() > 1 && rest.starts_with('/')),
+                        RoutePath::Prefix(base) => path
+                            .strip_prefix(base.as_str())
+                            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
                         _ => false,
                     }
             })
@@ -129,6 +132,7 @@ fn registrations_follow_the_a7_listener_roles() {
     use ListenerRole::{Dashboard, Overlay};
     for (method, path) in [
         ("GET", "/api/counters/search/x"),
+        ("GET", "/api/counters/search/"),
         ("GET", "/api/counters/details/x"),
         ("GET", "/api/counters/updates"),
         ("POST", "/api/counters/names/x"),
@@ -152,6 +156,50 @@ fn registrations_follow_the_a7_listener_roles() {
         assert!(roles(path, "POST").is_empty(), "{path}");
     }
     assert_eq!(routes.len(), 15);
+}
+
+/// The dashboard's Overlays page loads its whole list through the empty query.
+#[tokio::test]
+async fn the_empty_search_lists_every_installed_overlay() {
+    let fixture = fixture();
+    for (folder, name) in [("first", "First Overlay"), ("second", "Second Overlay")] {
+        let folder = fixture.root.path().join("static").join(folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("index.html"), b"<!doctype html>").unwrap();
+        std::fs::write(
+            folder.join("metadata.txt"),
+            format!("Name: {name}\nAuthor: CI\nVersion: 1.0\n"),
+        )
+        .unwrap();
+    }
+    let ProviderResponse::Http(response) = fixture
+        .routes
+        .respond(request(
+            "GET",
+            "/api/counters/search/?source=installed",
+            b"",
+            None,
+        ))
+        .await
+    else {
+        panic!("search answers over HTTP");
+    };
+    assert_eq!(response.status, 200);
+    let ResponseBody::Bytes(html) = response.body else {
+        panic!("search answers with bytes");
+    };
+    let html = String::from_utf8(html.to_vec()).unwrap();
+    assert!(
+        html.contains("First Overlay") && html.contains("Second Overlay"),
+        "{html}"
+    );
+    // The prefix registration's bare base is not a search.
+    let (status, _) = send(
+        &fixture.routes,
+        request("GET", "/api/counters/search", b"", None),
+    )
+    .await;
+    assert_eq!(status, 404);
 }
 
 #[tokio::test]

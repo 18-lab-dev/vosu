@@ -14,6 +14,9 @@
 //    major consent, and a release link only for an http(s) URL.
 // 7. Settings fills from SettingsView without saving anything, and a failed
 //    SettingsView read replaces the form with an alert.
+// 8. Tools are 2.0 web tools: Ready, Blocked and legacy Disabled cards, a
+//    launch through the single-use exchange, and no request to a deleted
+//    service-era tool route from any page.
 import fs from 'node:fs';
 
 const [modulePath, evidence] = process.argv.slice(2);
@@ -23,6 +26,8 @@ fs.mkdirSync(evidence, { recursive: true });
 const OVERLAY = 'http://127.0.0.1:25150';
 const DASHBOARD = 'http://127.0.0.1:25151';
 const TOLERANCE = 0.5;
+// Service-era tool routes deleted in 2.0 (A7.2); the dashboard must never call them.
+const DELETED_TOOL_ROUTE = /^\/api\/tools\/[^/]+\/(start|stop|restart|open-data|clear-cache|logs|autostart)$/;
 const report = { baselines: [], keyboard: [], previews: {}, heads: [], saveState: [], toolStatuses: [] };
 const failures = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
@@ -38,6 +43,11 @@ async function open(path, { theme = 'dark', width = 1280, height = 900, reducedM
   await context.addInitScript((value) => { try { localStorage.setItem('vosu.theme.v1', value); } catch (_) { /* opaque */ } }, theme);
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(`${path}: page error ${error.message}`));
+  // The 2.0 Tools page never calls a deleted service-era tool route.
+  page.on('request', (request) => {
+    const route = new URL(request.url()).pathname;
+    if (DELETED_TOOL_ROUTE.test(route)) failures.push(`${path}: requested deleted ${request.method()} ${route}`);
+  });
   await page.goto(DASHBOARD + path, { waitUntil: 'networkidle' });
   await page.waitForTimeout(800);
   return { context, page };
@@ -158,51 +168,66 @@ async function walkGrid(name, page, gridSelector, cardSelector) {
   await context.close();
 }
 
-// Card status describes availability, while the API and Details retain process state.
+// 2.0 web tools: a servable tool is Ready and opens through the single-use
+// launch exchange, an unmet `requires` is Blocked, and a 1.x `tool.toml`
+// package is Disabled with needs-2.0-update. No card or drawer offers a
+// service control.
 for (const theme of ['dark', 'light']) {
   const { context, page } = await open('/tools', { theme, width: 1920, height: 1080 });
   await page.waitForSelector('#tools-root > .tool-card');
   const card = (id) => page.locator(`#tools-root > [data-tool-id="${id}"]`);
   const label = (id) => card(id).locator('.tool-card__status > span').nth(1);
-  for (const [id, expected] of [['ui-only', 'Ready'], ['backend', theme === 'dark' ? 'Ready' : 'Working'], ['backend-idle', 'Ready'], ['fixture', 'Stopped']]) {
+  const expectations = [['fixture-v2', 'Ready'], ['fixture-v2-two', 'Ready'], ['fixture-v2-blocked', 'Blocked'], ['fixture', 'Disabled']];
+  for (const [id, expected] of expectations) {
     check(await label(id).textContent() === expected, `${theme}: ${id} must show ${expected}`);
   }
-  const response = await context.request.get(`${OVERLAY}/tools/backend/api/v1/read`);
-  check(response.ok(), `${theme}: backend request must succeed`);
-  await page.waitForFunction(() => document.querySelector('#tools-root > [data-tool-id="backend"] .tool-card__status')?.textContent.includes('Working'));
   const views = await page.evaluate(async () => (await fetch('/api/tools').then((r) => r.json())).tools);
-  check(views.find((v) => v.id === 'ui-only').status === 'running', `${theme}: UI API status must remain running`);
-  check(views.find((v) => v.id === 'backend').status === 'running', `${theme}: backend API status must remain running`);
-  check(await card('backend').locator('[data-tool-action="start"]').count() === 0, `${theme}: backend must not expose Start`);
-  report.toolStatuses.push({ theme, labels: await Promise.all(['ui-only', 'backend', 'backend-idle', 'fixture'].map(async (id) => [id, await label(id).textContent()])) });
+  check(views.find((v) => v.id === 'fixture-v2').status === 'running', `${theme}: fixture-v2 must be servable`);
+  check(views.find((v) => v.id === 'fixture-v2-blocked').status === 'blocked', `${theme}: unmet requires must block`);
+  check(views.find((v) => v.id === 'fixture').status_detail === 'needs-2.0-update', `${theme}: legacy package must need the 2.0 update`);
+  check(await card('fixture-v2-blocked').locator('[data-tool-action="launch"]').count() === 0, `${theme}: a blocked tool must not offer Open`);
+  check(await card('fixture').locator('[data-tool-action="launch"], [data-tool-action="enable"], [data-tool-action="trust"]').count() === 0,
+    `${theme}: a legacy package offers no launch, enable or trust`);
+  report.toolStatuses.push({ theme, labels: await Promise.all(expectations.map(async ([id]) => [id, await label(id).textContent()])) });
   await page.screenshot({ path: `${evidence}/tool-statuses-${theme}-1920.png` });
   await page.setViewportSize({ width: 1440, height: 1080 });
   await page.screenshot({ path: `${evidence}/tool-statuses-${theme}-1440.png` });
-  await card('backend').locator('[data-tool-action="details"]').click();
-  check(await page.locator('dialog.tool-details .tool-status').textContent() === 'Running', `${theme}: Details must retain process status`);
+
+  const popup = context.waitForEvent('page', { timeout: 15000 });
+  const launched = page.waitForResponse((response) => response.url().endsWith('/api/tools/fixture-v2/launch'), { timeout: 15000 });
+  await card('fixture-v2').locator('[data-tool-action="launch"]').click();
+  const tool = await popup;
+  check((await launched).status() === 200, `${theme}: launch must succeed`);
+  await tool.waitForFunction(() => document.documentElement.dataset.ready === 'true', null, { timeout: 15000 });
+  check(new URL(tool.url()).pathname === '/tools/fixture-v2/', `${theme}: launch must open the tool UI, got ${tool.url()}`);
+  check(new URL(tool.url()).hash === '', `${theme}: the bridge must consume the launch fragment`);
+  check(await tool.title() === 'M3 browser fixture', `${theme}: the tool page must load`);
+  await tool.close();
+
+  await card('fixture-v2-blocked').locator('[data-tool-action="details"]').click();
+  const drawer = page.locator('dialog.tool-details');
+  check(await drawer.locator('.tool-status').textContent() === 'Blocked', `${theme}: Details must show the blocked status`);
+  check(await drawer.locator('.tool-dependency[data-satisfied="false"]').count() > 0, `${theme}: Details must list the unmet requirement`);
+  check(await page.locator('[data-tool-action="start"], [data-tool-action="stop"], [data-tool-action="restart"], [data-tool-action="logs"], [data-tool-action="data"]').count() === 0,
+    `${theme}: no service controls`);
   await context.close();
 }
 
-// Cover every raw lifecycle/error label without changing the host status contract.
+// Cover every 2.0 status label without changing the host status contract.
 {
   const { context, page } = await open('/tools');
   const base = await page.evaluate(async () => (await fetch('/api/tools').then((r) => r.json())).tools[0]);
-  const statuses = ['stopped', 'starting', 'running', 'failed', 'blocked', 'untrusted', 'disabled', 'invalid'];
-  const tools = [null, 'backend', 'background'].flatMap((role, index) => statuses.map((status) => ({
-    ...base, id: `status-${index}-${status}`, name: `${role ?? 'ui'} ${status}`,
-    status, service_role: role, interfaces: role === 'background' ? ['service'] : ['ui'],
+  const labels = { running: 'Ready', blocked: 'Blocked', untrusted: 'Untrusted', disabled: 'Disabled', invalid: 'Invalid' };
+  const tools = Object.keys(labels).map((status) => ({
+    ...base, id: `status-${status}`, name: `web ${status}`, status,
     trusted: status !== 'untrusted', enabled: status !== 'disabled',
-  })));
+  }));
   await page.route('**/api/tools', (route) => route.fulfill({ json: { tools } }));
   await page.reload();
   for (const view of tools) {
-    const normal = ['stopped', 'starting', 'running'].includes(view.status);
-    const expected = view.service_role !== 'background' && normal
-      ? (view.service_role === 'backend' && view.status !== 'stopped' ? 'Working' : 'Ready')
-      : view.status[0].toUpperCase() + view.status.slice(1);
     const card = page.locator(`#tools-root > [data-tool-id="${view.id}"]`);
     await card.waitFor();
-    check(await card.locator('.tool-card__status > span').nth(1).textContent() === expected, `${view.id}: expected ${expected}`);
+    check(await card.locator('.tool-card__status > span').nth(1).textContent() === labels[view.status], `${view.id}: expected ${labels[view.status]}`);
     check(await card.getAttribute('data-status') === view.status, `${view.id}: raw status changed`);
   }
   await context.close();

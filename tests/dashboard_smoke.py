@@ -4,9 +4,11 @@
 Runs tests/dashboard_browser.mjs with an installed playwright index.mjs:
 text baselines in the header and status strip (within 0.5 px), keyboard
 reachability of every card control on the Overlays, Available and Tools
-grids, that the dashboard's own previews are not counted as connected
-browser sources, the status strip's session join, the update notice (minor,
-major with consent, unsafe release URLs) and Settings filled from
+grids, the 2.0 Tools page (Ready, Blocked and legacy Disabled cards, launching
+`fixture-v2` through the single-use exchange, and no call to a deleted
+service-era tool route), that the dashboard's own previews are not counted as
+connected browser sources, the status strip's session join, the update notice
+(minor, major with consent, unsafe release URLs) and Settings filled from
 SettingsView or replaced by an alert when that read fails. Only test ports
 25150/25151 are used.
 """
@@ -74,19 +76,25 @@ DASHBOARD_PORT = 25151
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 STATIC_FOLDER_PATH = {json.dumps(str(static))}
 ''')
+        # 2.0 web tools from the fixture-v2 package. Without its test plugin
+        # the declared `requires` cannot resolve: the two Ready copies drop
+        # them, `fixture-v2-blocked` keeps them. `fixture` is a 1.x
+        # `tool.toml` package, listed Disabled with needs-2.0-update.
         tools = []
-        for tool_id in ['fixture', 'fixture-two', 'ui-only', 'backend', 'backend-idle']:
+        v2_manifest = (ROOT / 'tests/fixtures/tool-host-v2/manifest.toml').read_text()
+        for tool_id in ['fixture-v2', 'fixture-v2-two', 'fixture-v2-blocked']:
             tool = root / 'tools' / tool_id
-            shutil.copytree(ROOT / 'tests/fixtures/tool-host', tool)
-            manifest = tool / 'tool.toml'
-            text = manifest.read_text().replace('id = "fixture"', f'id = "{tool_id}"')
-            text = text.replace('name = "Tool host fixture"', f'name = "{tool_id}"')
-            if tool_id == 'ui-only':
-                text = text.split('[service]')[0]
-            elif tool_id.startswith('backend'):
-                text = text.replace('[service]', '[service]\nrole = "backend"')
-            manifest.write_text(text)
+            shutil.copytree(ROOT / 'tests/fixtures/tool-host-v2', tool)
+            text = v2_manifest.replace("id = 'fixture-v2'", f"id = '{tool_id}'")
+            if tool_id != 'fixture-v2':
+                text = text.replace("name = 'M3 browser fixture'", f"name = '{tool_id}'")
+            if tool_id != 'fixture-v2-blocked':
+                text = text.split('[[requires]]')[0]
+            (tool / 'manifest.toml').write_text(text)
             tools += ['--tool', str(tool)]
+        legacy = root / 'tools' / 'fixture'
+        shutil.copytree(ROOT / 'tests/fixtures/tool-host', legacy)
+        tools += ['--tool', str(legacy)]
         # A catalog-v2 source with two overlays and two tools, so the
         # Available and Tools pages have catalog cards beside the
         # (unreachable) community catalog. Needs a `--features test-harness`

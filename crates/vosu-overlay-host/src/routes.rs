@@ -64,7 +64,9 @@ impl OverlayRoutes {
 
     /// Every route this host owns, by listener role and exact method. Folder,
     /// query and URL captures are `Children` matchers: a nested overlay folder
-    /// may arrive with a literal `/`.
+    /// may arrive with a literal `/`. Search is a `Prefix` so its empty query
+    /// (`/api/counters/search/`) reaches it: that is the whole list the
+    /// dashboard's Overlays and Available pages load into their shells.
     pub fn descriptors() -> Vec<RouteDescriptor> {
         use ListenerRole::{Dashboard, Overlay};
         let route = |listener, method: &str, path: RoutePath, websocket| RouteDescriptor {
@@ -74,7 +76,7 @@ impl OverlayRoutes {
             websocket,
         };
         let mut routes = vec![
-            route(Dashboard, "GET", RoutePath::Children(SEARCH.into()), false),
+            route(Dashboard, "GET", RoutePath::Prefix(SEARCH.into()), false),
             route(Dashboard, "GET", RoutePath::Children(DETAILS.into()), false),
             route(Dashboard, "GET", RoutePath::Exact(UPDATES.into()), false),
             route(Dashboard, "POST", RoutePath::Children(NAMES.into()), false),
@@ -132,6 +134,9 @@ impl OverlayRoutes {
         }
         if path == PROFILES {
             return self.profiles(&request);
+        }
+        if path == SEARCH {
+            return not_found();
         }
         if let Some(raw) = capture(path, SEARCH) {
             return self.search(raw, &request).await;
