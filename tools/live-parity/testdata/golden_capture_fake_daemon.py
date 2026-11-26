@@ -39,8 +39,15 @@ READS: dict[tuple[str, str], int] = {}
 COUNTS: dict[str, int] = {}
 
 
+def state() -> dict:
+    return json.loads(STATE.read_text("utf-8"))
+
+
 def barrier() -> str:
-    return json.loads(STATE.read_text("utf-8"))["barrier"]
+    data = state()
+    if MODE == "vosu" and "vosu_barrier" in data:
+        return data["vosu_barrier"]
+    return data["barrier"]
 
 
 def envelope(schema: str, advance: bool) -> dict:

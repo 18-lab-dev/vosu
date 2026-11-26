@@ -187,6 +187,19 @@ contributes only diagnostic cadence/framing and coarse lifecycle evidence,
 never an exact payload fixture. Each platform scenario traverses
 menu → play → paused → result → client exit.
 
+While waiting for the `play` barrier, an upstream `paused` observation is
+tolerated, never treated as out of order, only before gameplay has started
+(owner amendment, 2026-11-26, after the first full pilot's run 3). The
+player loader reports state `play` before gameplay begins, with a clock
+that has not advanced yet; upstream's own rule (`game.paused = playTime ==
+previousPlayTime`) reports that as `paused`. "Gameplay started" is defined
+purely from that observed clock: once it has advanced even once since the
+wait for `play` began, this tolerance ends. A `paused` observed after that
+point, an upstream value further out of order than `paused` at any time, or
+a vosu-side `paused` observed while waiting for `play`, are all still
+out-of-order aborts; the barrier's stability requirement (§6, three
+consecutive observations reporting `play`) is unchanged.
+
 A case is recorded as:
 
 1. Wait for the case's barrier.
