@@ -55,7 +55,7 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         manifest: vosu_overlay_host::MANIFEST,
         settings_schema: Some(vosu_overlay_host::SETTINGS_SCHEMA),
         namespace_schemas: &[],
-        action_schemas: &[],
+        action_schemas: vosu_overlay_host::ACTION_SCHEMAS,
         vtable: vosu_overlay_host::vosu_plugin_vtable,
     },
     vosu_core::plugin::BundledPlugin {

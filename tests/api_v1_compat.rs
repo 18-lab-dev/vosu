@@ -21,6 +21,8 @@ mod import_fixture;
 mod job_fixture;
 #[path = "api_v1/jobs.rs"]
 mod jobs;
+#[path = "api_v1/overlay_query.rs"]
+mod overlay_query;
 #[path = "api_v1/relay.rs"]
 mod relay;
 #[path = "api_v1/resource_lifecycle.rs"]

@@ -129,6 +129,7 @@ pub(super) fn counter(
         compatiblewith: None,
         assets: None,
         download_link: None,
+        version_known: true,
     })
 }
 

@@ -117,6 +117,7 @@ impl CounterService {
                 compatiblewith: None,
                 assets: None,
                 download_link: None,
+                version_known: false,
             });
         }
         Ok((found, broken))
@@ -172,6 +173,7 @@ pub fn parse_metadata(
         compatiblewith: None,
         assets: None,
         download_link: None,
+        version_known: true,
     })
 }
 

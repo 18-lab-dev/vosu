@@ -9,3 +9,17 @@ runtime = "in-process"
 # A7.1-OR: the overlay root arrives only as this ABI setting, which core
 # seeds from STATIC_FOLDER_PATH until M8 migrates the key.
 settings_schema = "settings.schema.json"
+
+# Plugin-callable overlay listing (catalog-v2.md "Overlay query action").
+[[provides]]
+id = "action:vosu.overlayhost.overlays.query"
+version = "1.0.0"
+
+[[actions]]
+name = "overlays.query"
+version = "1.0.0"
+title = "List installed overlays"
+args_schema = "schemas/overlays-query.args.json"
+result_schema = "schemas/overlays-query.result.json"
+session = "none"
+cli = false
