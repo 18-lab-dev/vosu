@@ -602,6 +602,68 @@ class MatrixTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "after the no-client barrier"):
             rm._build()
 
+    def test_upstream_timeout_is_declared_per_case_under_a_ledger_row(self) -> None:
+        # Main's decision (2026-11-26): these seven, named by ID, never a class rule.
+        trailing = {f"ws.near.{name}-trailing-slash" for name in ("v2", "v2-precise", "ws", "tokens")}
+        self.assertEqual(set(rm.UPSTREAM_TIMEOUT), trailing | {
+            "ws.near.v2-subscribe", "files.skin.index.upgrade", "origin-peer.host.malformed-port"})
+        rows = dict(re.findall(r"^\| ([a-zA-Z0-9.-]+) \| (security|contract|licensing|temporary) \|",
+                               (ROOT / "tests/fixtures/upstream/DIVERGENCES.md").read_text("utf-8"),
+                               re.M))
+        self.assertEqual(rows[rm.NEAR_UPGRADE_LEDGER], "security")
+        for case_id, ledger_id in rm.UPSTREAM_TIMEOUT.items():
+            case = rm.CASES[case_id]
+            self.assertEqual(rm.upstream_timeout_ledger(case_id), ledger_id)
+            self.assertIn(ledger_id, case.ledger, case_id)
+            self.assertIn(rows[ledger_id], ("security", "contract"), case_id)
+            self.assertEqual(case.role, rm.GOLDEN, case_id)
+            self.assertNotIn("timeout", case.outcomes, case_id)
+            # Upstream must time out; vosu keeps the case's outcomes and may never time out.
+            self.assertEqual(rm.allowed_outcomes(case, "source"), frozenset({"timeout"}))
+            self.assertEqual(rm.allowed_outcomes(case, "vosu"), case.outcomes)
+            if case_id in trailing:
+                self.assertEqual(case.ledger, (rm.NEAR_UPGRADE_LEDGER,))
+        for case in rm.MATRIX:
+            if case.id not in rm.UPSTREAM_TIMEOUT:
+                self.assertIsNone(rm.upstream_timeout_ledger(case.id))
+                self.assertEqual(rm.allowed_outcomes(case, "source"), case.outcomes, case.id)
+        unledgered = dataclasses.replace(rm.CASES["ws.near.v2-trailing-slash"], ledger=())
+        with mock.patch.object(rm, "_ws_cases", lambda: [unledgered]), \
+                self.assertRaisesRegex(ValueError, "under its ledger row upstream-unanswered"):
+            rm._build()
+        with mock.patch.dict(rm.UPSTREAM_TIMEOUT, {"ws.near.no-such-case": rm.NEAR_UPGRADE_LEDGER}), \
+                self.assertRaisesRegex(ValueError, "unknown upstream-timeout cases"):
+            rm._build()
+
+    def test_a_timeout_is_allowed_only_from_upstream_on_a_declared_case(self) -> None:
+        declared = rm.CASES["ws.near.v2-trailing-slash"]
+        plain = rm.CASES["ws.near.v2-subscribe-plain"]
+        self.assertIsNone(rm.upstream_timeout_ledger(plain.id))
+        records = {
+            (case.id, daemon): self.run_against_silent_server(case, daemon)
+            for case in (declared, plain) for daemon in ("source", "vosu")}
+        for (case_id, daemon), record in records.items():
+            self.assertEqual(record["outcome"], "timeout", (case_id, daemon))
+            self.assertEqual(record["outcome_allowed"],
+                             case_id == declared.id and daemon == "source", (case_id, daemon))
+
+    def run_against_silent_server(self, case: rm.RouteCase, daemon: str) -> dict:
+        """One case against a server that reads the request and never answers."""
+        with socket.socket() as listener:
+            listener.bind((rm.HOST, 0))
+            listener.listen()
+            held: list[socket.socket] = []
+            accept = threading.Thread(target=lambda: held.append(listener.accept()[0]), daemon=True)
+            accept.start()
+            endpoint = pr.RouteEndpoint(daemon, listener.getsockname()[1])
+            try:
+                return pr.run_case(rm.render(case, rm.MatrixContext("linux-lazer", CONTEXT_VALUES)),
+                                   endpoint, limits=pr.Limits(deadline_s=0.5))
+            finally:
+                accept.join(5)
+                for sock in held:
+                    sock.close()
+
     def test_every_ledger_reference_is_an_existing_non_temporary_row(self) -> None:
         ledger = (ROOT / "tests/fixtures/upstream/DIVERGENCES.md").read_text(encoding="utf-8")
         rows = dict(re.findall(r"^\| ([a-zA-Z0-9.-]+) \| (security|contract|licensing|temporary) \|",

@@ -349,7 +349,7 @@ def run_case(rendered: rm.RenderedCase, endpoint: RouteEndpoint, *,
                                    "value": values[0]}
             record.update(_exchange(endpoint, rendered.with_validator(values[0]), rendered,
                                     limits, "request"))
-    record["outcome_allowed"] = record["outcome"] in case.outcomes
+    record["outcome_allowed"] = record["outcome"] in rm.allowed_outcomes(case, endpoint.daemon)
     return record
 
 
