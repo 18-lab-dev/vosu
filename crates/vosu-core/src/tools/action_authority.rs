@@ -152,7 +152,7 @@ impl ToolRegistry {
             (providers.actions.clone(), providers.capabilities.clone())
         };
         manifest
-            .validate_context(&self.validation_snapshot(installed.as_ref()), entry.source)
+            .validate_context(&self.validation_snapshot(installed.as_ref()), &self.version, entry.source)
             .map_err(|_| Forbidden)?;
         let descriptor = registry.get(action).ok_or(Forbidden)?;
         if descriptor.id != action
@@ -190,7 +190,7 @@ impl ToolRegistry {
             (providers.actions.clone(), providers.capabilities.clone())
         };
         if let Err(error) =
-            manifest.validate_context(&self.validation_snapshot(installed.as_ref()), entry.source)
+            manifest.validate_context(&self.validation_snapshot(installed.as_ref()), &self.version, entry.source)
         {
             return Some(error);
         }

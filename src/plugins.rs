@@ -10,6 +10,32 @@
 //! dashboard host (registered even when `ENABLE_DASHBOARD` is off), the
 //! overlay host and the web tool host.
 
+use vosu_core::runtime::{Bundle, OverlayRootSetting};
+
+/// The executable's version, startup identity and concrete bundled hosts.
+pub static BUNDLE: Bundle = Bundle {
+    version: env!("CARGO_PKG_VERSION"),
+    // A child started from a replaced executable refuses to mix generations.
+    plugin_host_identity: concat!("vosu/", env!("CARGO_PKG_VERSION"), "/plugin-host-1"),
+    plugins: BUNDLED,
+    required: &[
+        "vosu.osu",
+        "vosu.adapter.upstream",
+        "vosu.adapter.gosumemory",
+        "vosu.adapter.streamcompanion",
+        "vosu.dashboard",
+        "vosu.overlayhost",
+        "vosu.toolhost",
+    ],
+    dashboard: "vosu.dashboard",
+    tool_host: "vosu.toolhost",
+    overlay_root: OverlayRootSetting {
+        plugin: "vosu.overlayhost",
+        key: vosu_overlay_host::root::STATIC_FOLDER_PATH,
+    },
+    hosts: &crate::bundle::Hosts,
+};
+
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
 
@@ -50,7 +76,7 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         action_schemas: &[],
         vtable: vosu_dashboard::vosu_plugin_vtable,
     },
-    // Index 5 is `OVERLAY_HOST_INDEX`: composition mints its overlay root lease.
+    // The overlay host's instance id is its position in BUNDLE.required.
     vosu_core::plugin::BundledPlugin {
         manifest: vosu_overlay_host::MANIFEST,
         settings_schema: Some(vosu_overlay_host::SETTINGS_SCHEMA),

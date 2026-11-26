@@ -33,11 +33,11 @@ use crate::plugin::{
 };
 use vosu_sys::platform::Paths;
 
+use super::Bundle;
 use super::plugin_management::{PluginManagement, Roster, Trust};
 
-/// Matches `src/server/runtime.rs::DRAIN_TIMEOUT` and the tool-process
-/// 5-second wait in `src/tools/process.rs`: the same shutdown-grace
-/// precedent `docs/v2/plugin-abi.md` §4 cites for `destroy`.
+/// Matches the listener drain and the shutdown grace documented for plugin
+/// `destroy` in `docs/v2/plugin-abi.md` §4.
 pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 /// Worker count for the shared `concurrent_dispatch` pool every loaded

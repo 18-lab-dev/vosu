@@ -20,6 +20,7 @@ async fn host(root: &Path) -> Arc<ToolRegistry> {
         ExtraRoots { dev: Vec::new() },
         "http://127.0.0.1:25150".into(),
         Some("http://127.0.0.1:25151".into()),
+        semver::Version::parse(FIXTURE_VERSION).unwrap(),
     ))
     .unwrap()
 }

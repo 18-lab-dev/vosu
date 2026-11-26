@@ -1,6 +1,6 @@
 // Permanent surface dispatch after ordinary transport admission.
 use vosu_surface::routes::{
-    ProviderResponse, ResponseBody, ResponseFuture, RouteProvider, SurfaceRequest, SurfaceResponse,
+    ProviderResponse, ResponseBody, ResponseFuture, SurfaceRequest, SurfaceResponse,
 };
 
 /// Core's own routes (A7 route inventory), reserved so no bundled host can

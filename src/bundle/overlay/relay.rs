@@ -1,23 +1,11 @@
-trait RelayControl: Send + Sync {
-    fn try_send_text(&self, bytes: Bytes) -> bool;
-    fn close(&self);
-    fn apply_filters(&self, filters: Vec<vosu_surface::filter::Filter>);
-}
-impl RelayControl for websocket::ConnectionControl {
-    fn try_send_text(&self, bytes: Bytes) -> bool { self.try_send_text(bytes) }
-    fn close(&self) { self.cleanup(); }
-    fn apply_filters(&self, filters: Vec<vosu_surface::filter::Filter>) { self.set_filters(filters); }
-}
-impl RelayControl for Arc<dyn vosu_surface::routes::FeedControl> {
-    fn try_send_text(&self, bytes: Bytes) -> bool { self.as_ref().try_send_text(bytes) }
-    fn close(&self) { self.as_ref().close(); }
-    fn apply_filters(&self, filters: Vec<vosu_surface::filter::Filter>) {
-        if let Ok(bytes) = serde_json::to_vec(&filters) { let _ = self.replace_filters(Bytes::from(bytes)); }
-    }
-}
-/// The overlay host's `applyFilters` carries the raw legacy filter source;
-/// the transport owns parsing and limits. `None` keeps the prior plan.
-fn parse_command_filters(source: &[u8]) -> Option<Vec<vosu_surface::filter::Filter>> {
+use std::{collections::HashMap, sync::{Arc, Mutex, PoisonError, Weak}};
+
+use tokio_util::sync::CancellationToken;
+use vosu_core::server::service::{COMMANDS_NAMESPACE, RelayControl};
+use vosu_overlay_host::commands::{CommandAction, CommandClient, CommandProcessor, Relay, RelaySink};
+
+/// A rejected legacy filter source keeps the connection's prior plan.
+pub(super) fn parse_command_filters(source: &[u8]) -> Option<Vec<vosu_surface::filter::Filter>> {
     vosu_adapter_support::filtered::parse_filters(std::str::from_utf8(source).ok()?)
 }
 struct RelayClient {
@@ -55,7 +43,7 @@ impl Drop for RelayLifecycle {
     }
 }
 
-struct RelayRegistration {
+pub(super) struct RelayRegistration {
     sink: WebSocketRelaySink,
     client_id: u64,
 }
@@ -97,7 +85,7 @@ impl WebSocketRelaySink {
         }
     }
 
-    fn bind_processor(&self, processor: &Arc<CommandProcessor>) {
+    pub(super) fn bind_processor(&self, processor: &Arc<CommandProcessor>) {
         *self
             .processor
             .lock()
@@ -105,14 +93,6 @@ impl WebSocketRelaySink {
     }
 
     pub async fn shutdown(&self) {
-        let processor = self
-            .processor
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .upgrade();
-        if let Some(processor) = processor {
-            processor.shutdown().await;
-        }
         self.lifecycle.cancellation.cancel();
         let worker = self
             .lifecycle
@@ -125,15 +105,16 @@ impl WebSocketRelaySink {
         }
     }
 
+    #[cfg(test)]
     pub fn is_shutdown(&self) -> bool {
         self.lifecycle.cancellation.is_cancelled()
     }
 
-    fn register(
+    pub(super) fn register(
         &self,
         channel: u64,
         client: CommandClient,
-        control: impl RelayControl + 'static,
+        control: Arc<dyn RelayControl>,
     ) -> RelayRegistration {
         let client_id = client.id;
         self.clients
@@ -144,7 +125,7 @@ impl WebSocketRelaySink {
                 RelayClient {
                     channel,
                     client,
-                    control: Arc::new(control),
+                    control,
                 },
             );
         RelayRegistration {
@@ -186,7 +167,7 @@ async fn run_relay_worker(
         let target_channel = event
             .except
             .and_then(client_channel)
-            .unwrap_or(COMMANDS_CHANNEL);
+            .unwrap_or(COMMANDS_NAMESPACE);
         let recipients = {
             let clients = clients.lock().unwrap_or_else(PoisonError::into_inner);
             clients
@@ -226,65 +207,7 @@ async fn run_relay_worker(
     }
 }
 
-const COMMANDS_CHANNEL: u64 = 5;
-
 fn client_channel(client_id: u64) -> Option<u64> {
     let channel = client_id % 8;
-    (1..=COMMANDS_CHANNEL).contains(&channel).then_some(channel)
-}
-
-#[derive(Clone)]
-pub struct WebSocketEndpoints {
-    pub v1: WebSocketHub,
-    pub sc: WebSocketHub,
-    pub v2: WebSocketHub,
-    pub precise: WebSocketHub,
-    pub commands: WebSocketHub,
-    pub processor: Arc<CommandProcessor>,
-    pub relays: Arc<WebSocketRelaySink>,
-}
-
-impl WebSocketEndpoints {
-    fn hub(&self, endpoint: Endpoint) -> (&WebSocketHub, bool, u64) {
-        match endpoint {
-            Endpoint::WsV1 => (&self.v1, false, 1),
-            Endpoint::WsTokens => (&self.sc, false, 2),
-            Endpoint::WsV2 => (&self.v2, false, 3),
-            Endpoint::WsV2Precise => (&self.precise, false, 4),
-            Endpoint::WsCommands => (&self.commands, true, 5),
-            _ => unreachable!("hub requested for non-WebSocket endpoint"),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct ProductionServices {
-    pub counters: Arc<ReloadableCounterService>,
-    pub beatmap: Arc<dyn CurrentBeatmapProvider>,
-    pub config: Arc<dyn ConfigUpdateService>,
-    pub report_input: Arc<dyn ReportInputProvider>,
-    pub report_probe: Arc<dyn ReportProbe>,
-    pub updater: Arc<dyn UpdaterHandoff>,
-    pub websocket: WebSocketEndpoints,
-}
-
-impl ProductionServices {
-    pub fn with_native_report_probe(
-        counters: Arc<ReloadableCounterService>,
-        beatmap: Arc<dyn CurrentBeatmapProvider>,
-        config: Arc<dyn ConfigUpdateService>,
-        report_input: Arc<dyn ReportInputProvider>,
-        updater: Arc<dyn UpdaterHandoff>,
-        websocket: WebSocketEndpoints,
-    ) -> Self {
-        Self {
-            counters,
-            beatmap,
-            config,
-            report_input,
-            report_probe: Arc::new(NativeReportProbe),
-            updater,
-            websocket,
-        }
-    }
+    (1..=COMMANDS_NAMESPACE).contains(&channel).then_some(channel)
 }

@@ -6,7 +6,7 @@
 use std::{
     collections::HashMap,
     convert::Infallible,
-    path::{Path, PathBuf},
+    path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex, PoisonError},
     task::{Context, Poll},
@@ -27,6 +27,10 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
+#[cfg(test)]
+use std::path::Path;
+#[cfg(test)]
+use crate::server::files;
 
 #[cfg(test)]
 use crate::server::files::{MissingKind, ResourceOutcome};
@@ -34,7 +38,6 @@ use crate::server::files::{MissingKind, ResourceOutcome};
 use crate::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
 
 use crate::server::{
-    files,
     pages::EmbeddedResponse,
     routes::{
         CachedJson, Endpoint, PeerAddress, ProviderFuture, ResponseFlushBarrier,

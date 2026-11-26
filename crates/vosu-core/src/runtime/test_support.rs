@@ -31,19 +31,14 @@ pub struct TestGame {
     pub foreground: Arc<crate::plugin::SyntheticForegroundSource>,
 }
 
-/// Owns the real production listener, WebSocket hubs, command workers, and
-/// counter service used by the in-process harness. Shutdown follows the same
-/// stop-accepting / 1001-close / listener-drain order as `ProductionRuntime`.
+/// Owns the real listener, hubs, adapters, plugin instances and overlay
+/// workers. Startup errors use the same ordered cleanup as a normal stop.
 #[cfg(feature = "test-harness")]
 pub struct TestProductionComposition {
-    address: std::net::SocketAddr,
     listener: Option<ListenerOwner>,
     hubs: Option<WebSocketHubs>,
-    processor: Option<Arc<CommandProcessor>>,
-    relays: Option<Arc<WebSocketRelaySink>>,
-    counters: Option<Arc<ReloadableCounterService>>,
-    overlay_root: Option<Arc<super::overlay_root::OverlayRootComposition>>,
-    adapters: Arc<adapters::Adapters>,
+    overlay: Option<Arc<dyn OverlayComposition>>,
+    adapters: Option<Arc<adapters::Adapters>>,
     plugins: Arc<PluginHost>,
     logger: Logger,
 }
@@ -51,7 +46,11 @@ pub struct TestProductionComposition {
 #[cfg(feature = "test-harness")]
 impl TestProductionComposition {
     pub fn address(&self) -> std::net::SocketAddr {
-        self.address
+        self.listener
+            .as_ref()
+            .and_then(|listener| listener.state().effective.clone())
+            .expect("listener has an effective address before composition returns")
+            .address
     }
 
     /// The composition's plugin host. Fixture games use it to report
@@ -66,44 +65,43 @@ impl TestProductionComposition {
         &self,
         schema: WebSocketSchema,
     ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
-        self.adapters.provider(schema).capture_for_harness()
+        self.adapters.as_ref().expect("adapters started").provider(schema).capture_for_harness()
     }
 
     pub async fn shutdown(mut self) {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let listener = self.listener.take();
-            if let Some(listener) = listener.as_ref() {
-                listener.stop_accepting();
-            }
-            if let Some(hubs) = self.hubs.take() {
-                hubs.shutdown().await;
-            }
-            if let Some(listener) = listener {
-                listener.join().await;
-            }
-            if let Some(processor) = self.processor.take() {
-                processor.shutdown().await;
-            }
-            if let Some(relays) = self.relays.take() {
-                relays.shutdown().await;
-            }
-            if let Some(overlay_root) = self.overlay_root.take() {
-                overlay_root.retire();
-            }
-            if let Some(counters) = self.counters.take() {
-                counters.shutdown().await;
-            }
-            self.adapters.shutdown().await.expect("chart shutdown");
-            let plugins = self.plugins.clone();
-            tokio::task::spawn_blocking(move || {
-                plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
-            })
-            .await
-            .expect("plugin shutdown");
-            self.logger.shutdown().await.expect("logger shutdown");
+            self.stop().await;
         })
         .await
         .expect("test production composition did not shut down within 30s");
+    }
+
+    async fn stop(&mut self) {
+        if let Some(listener) = self.listener.as_ref() {
+            listener.stop_accepting();
+        }
+        if let Some(hubs) = self.hubs.take() {
+            hubs.shutdown().await;
+        }
+        if let Some(listener) = self.listener.take() {
+            listener.join().await;
+        }
+        let adapters = match self.adapters.take() {
+            Some(adapters) => adapters.shutdown().await,
+            None => Ok(()),
+        };
+        let plugins = Arc::clone(&self.plugins);
+        let destroyed = tokio::task::spawn_blocking(move || {
+            plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+        })
+        .await;
+        if let Some(overlay) = self.overlay.take() {
+            overlay.shutdown().await;
+        }
+        let logged = self.logger.shutdown().await;
+        adapters.expect("chart shutdown");
+        destroyed.expect("plugin shutdown");
+        logged.expect("logger shutdown");
     }
 }
 
@@ -112,6 +110,7 @@ impl TestProductionComposition {
 /// Only the updater and hardened network policy are injected.
 #[cfg(feature = "test-harness")]
 pub async fn start_test_production_composition(
+    bundle: &'static Bundle,
     options: TestProductionCompositionOptions,
 ) -> io::Result<TestProductionComposition> {
     let config = options.config.current();
@@ -119,19 +118,24 @@ pub async fn start_test_production_composition(
     let static_root = std::path::absolute(&options.static_root)?;
     let plugin_data = options.settings_root.join("plugins");
     let plugin_settings_root = options.settings_root.join("core");
-    let counters = Arc::new(ReloadableCounterService::production(
-        static_root.clone(),
-        options.settings_root,
-        options.cache_root.clone(),
-    ));
-    let beatmap = Arc::new(RuntimeBeatmap {
-        counters: Arc::clone(&counters),
-    });
-    let counter_facade = Arc::new(RuntimeCounterFacade {
-        counters: Arc::clone(&counters),
-    });
-    let relays = Arc::new(WebSocketRelaySink::new());
-    let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
+    let overlay_instance = bundle
+        .instance(bundle.overlay_root.plugin)
+        .ok_or_else(|| io::Error::other("the overlay host is not a required bundled plugin"))?;
+    let endpoint = options
+        .network
+        .endpoints()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "test network endpoints missing"))?
+        .catalog
+        .clone();
+    let catalog = OverlayCatalog::Test {
+        client: vosu_net::streaming::StreamingClient::for_test_network(
+            options.network,
+            vosu_net::streaming::Deadlines::default(),
+            vosu_net::streaming::DownloadLimits::default(),
+        ),
+        endpoint,
+    };
+    fs::create_dir_all(&plugin_data)?;
     let logger = Logger::new(
         &options.logs_root,
         LoggerOptions::default(),
@@ -142,6 +146,7 @@ pub async fn start_test_production_composition(
         Arc::new(crate::plugin::settings::PluginSettingsStore::open(
             &plugin_settings_root,
         )),
+        bundle.overlay_root,
     ));
     storage.seed_overlay_root(&static_root);
     let settings = Arc::new(PluginSettingsService::new(
@@ -149,7 +154,7 @@ pub async fn start_test_production_composition(
     ));
     let plugins = match &options.game {
         Some(game) => {
-            fs::create_dir_all(&plugin_data)?;
+            // The fixture uses a synthetic foreground and ephemeral resource ids.
             PluginHost::new_with_foreground(
                 logger.clone(),
                 settings.clone(),
@@ -157,130 +162,101 @@ pub async fn start_test_production_composition(
                 game.foreground.clone(),
             )
         }
-        None => api_v1::resource_host(logger.clone(), settings.clone(), &plugin_data).await?,
+        None => match api_v1::resource_host(logger.clone(), settings.clone(), &plugin_data).await {
+            Ok(host) => host,
+            Err(error) => {
+                logger.shutdown().await?;
+                return Err(error);
+            }
+        },
     };
-    let mut bundled = crate::plugins::BUNDLED.to_vec();
-    if let Some(game) = &options.game {
-        bundled[0] = game.plugin;
-    }
-    let loaded = crate::plugin::load_bundled(
-        crate::application_version(),
-        &super::dev_plugins::source_snapshot(&plugins, &bundled, &[]),
-        &bundled,
-    )
-    .map_err(io::Error::other)?;
-    let pool = crate::plugin::WorkerPool::new(4, crate::plugin::DEFAULT_QUEUE_CAPACITY);
-    for (index, plugin) in loaded.iter().enumerate() {
-        plugins
-            .create_instance(
-                crate::plugin::PluginInstanceId::new(index as u64),
-                plugin,
-                plugin_data.join(plugin.manifest().id.as_str()),
-                Some(pool.clone()),
-            )
-            .map_err(io::Error::other)?;
-    }
-    let overlay_root = Arc::new(super::overlay_root::OverlayRootComposition::new(
-        Arc::clone(&plugins),
-        crate::plugin::PluginInstanceId::new(dev_plugins::OVERLAY_HOST_INDEX),
-        &plugin_data.join(super::overlay_root::OVERLAY_HOST_ID),
-        storage,
-        settings,
-        Arc::clone(&counters),
-    ));
-    overlay_root.apply(&static_root);
-    let (adapters, hubs) =
-        adapters::Adapters::start(&plugins, options.config.clone(), true).await?;
-    let endpoints = options
-        .network
-        .endpoints()
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "test network endpoints missing",
-            )
-        })?
-        .clone();
-    let test_client = vosu_net::streaming::StreamingClient::for_test_network(
-        options.network,
-        vosu_net::streaming::Deadlines::default(),
-        vosu_net::streaming::DownloadLimits::default(),
-    );
-    let catalog = CatalogService::new(
-        test_client,
-        endpoints.catalog,
-        &current_version().to_string(),
-    );
-    if let Err(error) = overlay_root.mount_routes(
-        OverlayPresenter::new(Arc::clone(&counters), catalog, CancellationToken::new()),
-        processor.clone(),
-        hubs.v1.clone(),
-    ) {
-        hubs.shutdown().await;
-        processor.shutdown().await;
-        relays.shutdown().await;
-        return Err(error);
-    }
-    let services = ProductionServices::with_native_report_probe(
-        Arc::clone(&counters),
-        beatmap.clone(),
-        Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
-        Arc::new(RuntimeReportInput {
-            config: Arc::clone(&options.config),
-            plugins: Arc::clone(&plugins),
-            files: adapters.files.clone(),
-            counters: Arc::clone(&counters),
-            logs: options.logs_root,
-            update: None,
-        }),
-        options.updater,
-        WebSocketEndpoints {
+    let mut owner = TestProductionComposition {
+        listener: None,
+        hubs: None,
+        overlay: None,
+        adapters: None,
+        plugins,
+        logger,
+    };
+    let result = async {
+        let mut bundled = bundle.plugins.to_vec();
+        if let Some(game) = &options.game {
+            bundled[0] = game.plugin;
+        }
+        let plugins = &owner.plugins;
+        let loaded = crate::plugin::load_bundled(
+            &bundle.version(),
+            &dev_plugins::source_snapshot(plugins, &bundled, &[]),
+            &bundled,
+        )
+        .map_err(io::Error::other)?;
+        let pool = crate::plugin::WorkerPool::new(4, crate::plugin::DEFAULT_QUEUE_CAPACITY);
+        for (index, plugin) in loaded.iter().enumerate() {
+            plugins
+                .create_instance(
+                    crate::plugin::PluginInstanceId::new(index as u64),
+                    plugin,
+                    plugin_data.join(plugin.manifest().id.as_str()),
+                    Some(pool.clone()),
+                )
+                .map_err(io::Error::other)?;
+        }
+        let overlay = bundle.hosts.overlay(OverlayInputs {
+            host: Arc::clone(plugins),
+            instance: overlay_instance,
+            data_dir: plugin_data.join(bundle.overlay_root.plugin),
+            storage,
+            settings,
+            static_root,
+            settings_root: options.settings_root,
+            cache_root: options.cache_root,
+            version: bundle.version(),
+            catalog,
+            shutdown: CancellationToken::new(),
+        });
+        owner.overlay = Some(overlay.clone());
+        let (adapters, hubs) =
+            adapters::Adapters::start(bundle, plugins, options.config.clone(), true).await?;
+        owner.adapters = Some(adapters.clone());
+        let websocket = WebSocketEndpoints {
             v1: hubs.v1.clone(),
             sc: hubs.stream_companion.clone(),
             v2: hubs.v2.clone(),
             precise: hubs.v2_precise.clone(),
             commands: hubs.v1.clone(),
-            processor: processor.clone(),
-            relays: relays.clone(),
-        },
-    );
-    let providers = RouteProviders {
-        authorization: Arc::new(AuthorizationPolicy::new(
-            &config.allowed_ips,
-            &config.server_ip,
-        )),
-        delegate: Arc::new(
-            ProductionRouteDelegate::new(services)
-                .with_surface(adapters.router(plugins.clone()))
-                .with_overlay_static(overlay_root.serving()),
-        ),
-    };
-    let listener = match ListenerOwner::start(providers, options.target).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            hubs.shutdown().await;
-            processor.shutdown().await;
-            relays.shutdown().await;
-            counters.shutdown().await;
-            return Err(error);
-        }
-    };
-    let address = listener
-        .state()
-        .effective
-        .as_ref()
-        .expect("listener start returned without effective address")
-        .address;
-    Ok(TestProductionComposition {
-        address,
-        listener: Some(listener),
-        hubs: Some(hubs),
-        processor: Some(processor),
-        relays: Some(relays),
-        counters: Some(counters),
-        overlay_root: Some(overlay_root),
-        adapters,
-        plugins,
-        logger,
-    })
+        };
+        owner.hubs = Some(hubs);
+        overlay.mount(websocket.commands.clone())?;
+        let services = ProductionServices::with_native_report_probe(
+            Arc::clone(&overlay),
+            Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
+            Arc::new(RuntimeReportInput {
+                config: Arc::clone(&options.config),
+                plugins: Arc::clone(plugins),
+                adapters: Arc::clone(&adapters),
+                overlay,
+                logs: options.logs_root,
+                update: None,
+            }),
+            options.updater,
+            websocket,
+        );
+        let providers = RouteProviders {
+            authorization: Arc::new(AuthorizationPolicy::new(
+                &config.allowed_ips,
+                &config.server_ip,
+            )),
+            delegate: Arc::new(
+                ProductionRouteDelegate::new(services).with_surface(adapters.router(plugins.clone())),
+            ),
+        };
+        owner.listener = Some(ListenerOwner::start(providers, options.target).await?);
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        owner.shutdown().await;
+        return Err(error);
+    }
+    Ok(owner)
 }

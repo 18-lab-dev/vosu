@@ -35,7 +35,7 @@ async fn resource_route_uses_production_provider_composition() {
         let schema =
             r#"{"title":"test.r4.composition","version":"1.0.0","type":"object","properties":{}}"#;
         let loaded = plugin::load_bundled(
-            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &semver::Version::parse("2.0.0-alpha.1").unwrap(),
             &crate::plugin::ValidationSnapshot::default(),
             &[plugin::BundledPlugin {
                 manifest,

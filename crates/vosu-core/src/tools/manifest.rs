@@ -13,10 +13,10 @@ pub(super) struct ToolPackage {
 }
 
 impl ToolPackage {
-    pub fn parse(text: &str) -> Result<Self, String> {
+    pub fn parse(text: &str, version: &semver::Version) -> Result<Self, String> {
         let package = PackageManifest::parse(text).map_err(|error| error.to_string())?;
         if package
-            .host_support(crate::application_version())
+            .host_support(version)
             .map_err(|error| error.to_string())?
             != vosu_plugin_api::manifest::HostSupport::Supported
         {
@@ -46,10 +46,11 @@ impl ToolPackage {
     pub(super) fn validate_context(
         &self,
         snapshot: &crate::plugin::ValidationSnapshot,
+        version: &semver::Version,
         source: &str,
     ) -> Result<(), String> {
         match snapshot
-            .validate(&self.package, crate::application_version(), source, false)
+            .validate(&self.package, version, source, false)
             .map_err(|error| error.to_string())?
         {
             vosu_plugin_api::manifest::HostSupport::Supported => Ok(()),

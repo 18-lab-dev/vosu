@@ -2,17 +2,17 @@
 //! (`docs/v2/implementation-plan.md` M1 §4, phase d2b, unit d):
 //! [`start_discovery`] is the one production entry point
 //! [`super::lifecycle`] calls after plugins load, and the platform
-//! [`ProcessSource`] it picks ([`vosu_core::plugin::LinuxSource`] with the
-//! `linux-process-events` feature, [`vosu_core::plugin::WindowsProcessSource`]
+//! [`ProcessSource`] it picks ([`crate::plugin::LinuxSource`] with the
+//! `linux-process-events` feature, [`crate::plugin::WindowsProcessSource`]
 //! on Windows, [`PollingLinuxSource`] otherwise — a Linux build without
 //! that feature, e.g. a plain local `cargo build`/`cargo run` without
-//! `--features`). `vosu_core::plugin::ForegroundPoller` has no wrapper
+//! `--features`). `crate::plugin::ForegroundPoller` has no wrapper
 //! here: it takes no `ProcessSource`, so `lifecycle.rs` starts it
 //! directly, under the same [`PluginHost::has_enabled_matchers`] gate
 //! [`start_discovery`] applies.
 //!
 //! This is the sole production discovery path. The bundled osu! plugin
-//! classifies sessions and publishes legacy surface state through B1.
+//! classifies sessions and publishes state through the ABI state bus.
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use std::io;
@@ -70,9 +70,9 @@ fn process_source() -> Arc<dyn ProcessSource> {
 /// Builds this platform's production [`ProcessSource`]
 /// (`docs/v2/implementation-plan.md` M1 §4, phase d2b, unit d): Linux
 /// with the `linux-process-events` feature gets the real eBPF/CN_PROC-
-/// backed [`vosu_core::plugin::LinuxSource`] (degrading to polling on its
+/// backed [`crate::plugin::LinuxSource`] (degrading to polling on its
 /// own when no event backend is available, that type's own doc comment);
-/// Windows gets [`vosu_core::plugin::WindowsProcessSource`]; a Linux
+/// Windows gets [`crate::plugin::WindowsProcessSource`]; a Linux
 /// build without the feature gets [`PollingLinuxSource`].
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 fn platform_process_source() -> Arc<dyn ProcessSource> {
@@ -96,8 +96,8 @@ fn platform_process_source() -> Arc<dyn ProcessSource> {
 /// command's explicit `--features linux-process-events`), so this only
 /// ever runs for an explicit `--no-default-features` local build.
 ///
-/// Honors the same unified pre-filter (`vosu_core::plugin::Prefilter`,
-/// §6.1, P3) [`vosu_core::plugin::LinuxSource`] does, just applied to a
+/// Honors the same unified pre-filter (`crate::plugin::Prefilter`,
+/// §6.1, P3) [`crate::plugin::LinuxSource`] does, just applied to a
 /// plain `/proc` substring scan instead of the kernel/CN_PROC side —
 /// `vosu_sys::events::CommHints` (and its kernel-facing validation) is
 /// gated on the same `linux-process-events` feature this module is
@@ -351,7 +351,7 @@ mod tests {
                 "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=['{comm}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
             );
             let loaded = load_bundled(
-                &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                &semver::Version::parse("2.0.0-alpha.1").unwrap(),
                 &crate::plugin::ValidationSnapshot::default(),
                 &[BundledPlugin {
                     manifest: &manifest,
@@ -434,7 +434,7 @@ mod tests {
                 "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=[]\n[[provides]]\nid='game:fixture'\nversion='*'\n"
             );
             let loaded = load_bundled(
-                &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                &semver::Version::parse("2.0.0-alpha.1").unwrap(),
                 &crate::plugin::ValidationSnapshot::default(),
                 &[BundledPlugin {
                     manifest: &manifest,
@@ -581,7 +581,7 @@ mod tests {
                 "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{name}'\nname='vosu.testkit.{name}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{name}']\n[[provides]]\nid='game:fixture'\nversion='*'\n"
             );
             let loaded = load_bundled(
-                &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                &semver::Version::parse("2.0.0-alpha.1").unwrap(),
                 &crate::plugin::ValidationSnapshot::default(),
                 &[BundledPlugin {
                     manifest: &manifest,

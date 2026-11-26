@@ -10,7 +10,7 @@ use vosu_proptest::bounded;
 
 const ACTION: &str = "fixture.game.beatmap.import";
 const OPTIONAL: &str = "fixture.game.utility.inspect";
-const FIXTURE: &str = include_str!("../../tests/fixtures/tools/action-web/manifest.toml");
+const FIXTURE: &str = include_str!("../../../../tests/fixtures/tools/action-web/manifest.toml");
 #[derive(Default)]
 struct Registry(Mutex<HashMap<String, Arc<ActionDescriptor>>>);
 impl Registry {
@@ -68,7 +68,7 @@ impl capabilities::InstalledCapabilities for Registry {
 fn fixture() -> String {
     FIXTURE.replace(
         ">=2.0.0-alpha.1, <3.0.0",
-        &format!("={}", env!("CARGO_PKG_VERSION")),
+        &format!("={FIXTURE_VERSION}"),
     )
 }
 fn request(method: Method, path: &str) -> Request {
@@ -89,6 +89,7 @@ async fn host(root: &Path, paths: Vec<PathBuf>) -> Arc<ToolRegistry> {
         ExtraRoots { dev: paths },
         "http://127.0.0.1:25150".into(),
         Some("http://127.0.0.1:25151".into()),
+        semver::Version::parse(FIXTURE_VERSION).unwrap(),
     ))
     .unwrap()
 }
@@ -126,7 +127,8 @@ async fn launch(host: &Arc<ToolRegistry>, id: &str) -> String {
 #[test]
 fn v2_manifest_rejects_wrong_kind_legacy_fields_internal_and_duplicates() {
     let text = fixture();
-    assert!(manifest::ToolPackage::parse(&text).is_ok());
+    let version = semver::Version::parse(FIXTURE_VERSION).unwrap();
+    assert!(manifest::ToolPackage::parse(&text, &version).is_ok());
     for invalid in [
         text.replace("kind = \"tool\"", "kind = \"overlay\""),
         text.replace("[ui]", "[service]\ncommand=['run']\n[ui]"),
@@ -144,10 +146,10 @@ fn v2_manifest_rejects_wrong_kind_legacy_fields_internal_and_duplicates() {
         text.replace("action:fixture.game.beatmap.import", "unknown:fixture.game"),
         text.replace("action:fixture.game.beatmap.import", "game:osu"),
         text.replace("root = \"web\"", "root = '../outside'"),
-        text.replace(&format!("={}", env!("CARGO_PKG_VERSION")), "=0.0.0"),
+        text.replace(&format!("={FIXTURE_VERSION}"), "=0.0.0"),
         format!("{text}\n[[provides]]\nid='field:fixture.game'\nversion='1.0.0'"),
     ] {
-        assert!(manifest::ToolPackage::parse(&invalid).is_err(), "{invalid}");
+        assert!(manifest::ToolPackage::parse(&invalid, &version).is_err(), "{invalid}");
     }
 }
 

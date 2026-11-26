@@ -35,14 +35,25 @@ pub fn open_root(opener: &dyn FolderOpener, root: &Path) -> Result<(), OpenError
     Ok(opener.open(root)?)
 }
 
-pub fn open_folder(opener: &dyn FolderOpener, root: &Path, name: &str) -> Result<(), OpenError> {
-    Ok(opener.open(&openable_folder(root, name)?)?)
+pub fn open_folder(
+    opener: &dyn FolderOpener,
+    root: &Path,
+    name: &str,
+    valid: impl FnOnce(&str) -> bool,
+) -> Result<(), OpenError> {
+    Ok(opener.open(&openable_folder(root, name, valid)?)?)
 }
 
 /// One normal component of `root`: a real child directory confined to the
 /// root, or a top-level link to a directory (a separately configured mount).
-fn openable_folder(root: &Path, name: &str) -> Result<PathBuf, OpenError> {
-    vosu_overlay_host::validate_component(name).map_err(|_| OpenError::InvalidName)?;
+fn openable_folder(
+    root: &Path,
+    name: &str,
+    valid: impl FnOnce(&str) -> bool,
+) -> Result<PathBuf, OpenError> {
+    if !valid(name) {
+        return Err(OpenError::InvalidName);
+    }
     let path = root.join(name);
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -84,14 +95,16 @@ mod tests {
         let counter = statics.join("counter");
         std::fs::create_dir_all(&counter).unwrap();
         let opener = RecordingOpener::default();
+        let open = |name| {
+            open_folder(&opener, &statics, name, |name| {
+                !name.is_empty() && !matches!(name, "." | "..") && !name.contains(['/', '\\', '\0'])
+            })
+        };
         open_root(&opener, &statics).unwrap();
-        assert!(open_folder(&opener, &statics, "../outside").is_err());
-        assert!(open_folder(&opener, &statics, "a/b").is_err());
-        assert!(matches!(
-            open_folder(&opener, &statics, "missing"),
-            Err(OpenError::Missing)
-        ));
-        open_folder(&opener, &statics, "counter").unwrap();
+        assert!(open("../outside").is_err());
+        assert!(open("a/b").is_err());
+        assert!(matches!(open("missing"), Err(OpenError::Missing)));
+        open("counter").unwrap();
         assert_eq!(
             opener.0.lock().unwrap().as_slice(),
             &[statics.clone(), counter.clone()]
@@ -103,20 +116,14 @@ mod tests {
             let outside = root.path().join("outside");
             std::fs::create_dir(&outside).unwrap();
             symlink(&outside, statics.join("link")).unwrap();
-            open_folder(&opener, &statics, "link").unwrap();
+            open("link").unwrap();
             assert_eq!(opener.0.lock().unwrap().last(), Some(&statics.join("link")));
             let outside_file = root.path().join("outside-file");
             std::fs::write(&outside_file, "").unwrap();
             symlink(&outside_file, statics.join("file-link")).unwrap();
-            assert!(matches!(
-                open_folder(&opener, &statics, "file-link"),
-                Err(OpenError::Symlink)
-            ));
+            assert!(matches!(open("file-link"), Err(OpenError::Symlink)));
             symlink(root.path().join("gone"), statics.join("dangling")).unwrap();
-            assert!(matches!(
-                open_folder(&opener, &statics, "dangling"),
-                Err(OpenError::Symlink)
-            ));
+            assert!(matches!(open("dangling"), Err(OpenError::Symlink)));
         }
     }
 }

@@ -69,7 +69,7 @@ id = "action:fixture.c0.metadata.hidden"
 version = "1.0.0"
 "#;
     let loaded = load_bundled(
-        &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+        &semver::Version::parse("2.0.0-alpha.1").unwrap(),
         &crate::plugin::ValidationSnapshot::default(),
         &[BundledPlugin {
             manifest,

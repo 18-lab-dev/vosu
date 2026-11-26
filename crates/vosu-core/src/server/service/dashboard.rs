@@ -1,20 +1,3 @@
-/// Folder → display name (the user's nickname, else the overlay's own) of
-/// every overlay installed now; a failed scan identifies nothing.
-fn installed_overlay_names(counters: &ReloadableCounterService) -> HashMap<String, String> {
-    let Ok(installed) = counters.installed() else { return HashMap::new() };
-    let nicknames = counters.names().snapshot();
-    installed
-        .into_iter()
-        .map(|counter| {
-            let name = nicknames
-                .get(&counter.folder_name)
-                .and_then(|name| name.nickname.clone())
-                .unwrap_or(counter.name);
-            (counter.folder_name, name)
-        })
-        .collect()
-}
-
 /// `DashboardStatus.removed_routes` (A7.4): `{"overlay": null | {"id","name"},
 /// "feature", "attempts", "first_seen_seconds_ago", "last_seen_seconds_ago"}`.
 /// `notices` is already expired and revalidated against `names`; the names
@@ -76,7 +59,7 @@ impl Drop for OverlayConnection {
     }
 }
 
-fn socket_overlay(request: &Request<Body>) -> Option<String> {
+fn socket_overlay(request: &Request<Body>, composition: &dyn OverlayComposition) -> Option<String> {
     // The dashboard's own preview frames are not browser sources: their
     // pages mark every socket they open with `vosu-preview=1`
     // (`PREVIEW_SOCKET_SCRIPT`), since a WebSocket handshake has no Referer.
@@ -84,9 +67,10 @@ fn socket_overlay(request: &Request<Body>) -> Option<String> {
         return None;
     }
     if let Some(raw) = request.uri().query().and_then(|query| decoded_query_value(query, "l")) {
-        let client = CommandClient::from_query(0, Some(&raw)).ok()?;
-        let (overlay, _) = vosu_overlay_host::split_counter(&client.overlay);
-        if valid_overlay_component(overlay) { return Some(overlay.to_owned()); }
+        let overlay = composition.query_overlay(&raw)?;
+        if valid_overlay_component(&overlay) {
+            return Some(overlay);
+        }
     }
     // WebSocket Origin contains no path. It cannot distinguish overlays on one origin.
     // A Referer (sent by non-browser clients) is useful only when it names a

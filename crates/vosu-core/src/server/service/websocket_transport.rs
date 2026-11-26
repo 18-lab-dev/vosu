@@ -6,9 +6,8 @@ enum SocketTerminal {
 async fn bridge_socket(
     socket: WebSocket,
     feed: vosu_surface::routes::SurfaceFeed,
-    processor: Arc<CommandProcessor>,
+    composition: Arc<dyn OverlayComposition>,
     client_namespace: u64,
-    relays: Arc<WebSocketRelaySink>,
     (query, mutation, key_grant): (Option<&str>, crate::server::auth::MutationAuthorization, Option<crate::server::api_keys::KeyGrant>),
 ) {
     let vosu_surface::routes::SurfaceFeed { state: connection, receiver: mut outbound } = feed;
@@ -17,14 +16,15 @@ async fn bridge_socket(
         return;
     };
     let overlay = query.and_then(|query| decoded_query_value(query, "l"));
-    let client = match CommandClient::from_query(client_id, overlay.as_deref()) {
-        Ok(client) => client,
-        Err(_) => {
-            connection.close();
-            return;
-        }
+    let Some(session) = composition.command_session(
+        client_namespace,
+        client_id,
+        overlay.as_deref(),
+        Arc::new(Arc::clone(&connection)),
+    ) else {
+        connection.close();
+        return;
     };
-    let _relay_registration = relays.register(client_namespace, client.clone(), connection.clone());
     let (mut sink, mut stream) = socket.split();
     let (terminal_tx, mut terminal_rx) = tokio::sync::mpsc::channel::<SocketTerminal>(1);
 
@@ -165,20 +165,14 @@ async fn bridge_socket(
             {
                 return Some(SocketTerminal::SendClose { code: 1008, reason: "Same-origin required" });
             }
-            match processor.process(&client, text) {
-                CommandAction::Reply(bytes) => {
+            match session.process(text) {
+                CommandReply::Reply(bytes) => {
                     if !reader_connection.send_text(bytes).await {
                         break;
                     }
                 }
-                CommandAction::ApplyFilters(source) => {
-                    if let Some(filters) = parse_command_filters(&source)
-                        && let Ok(bytes) = serde_json::to_vec(&filters)
-                    {
-                        let _ = reader_connection.replace_filters(Bytes::from(bytes));
-                    }
-                }
-                CommandAction::NoAck => {}
+                CommandReply::ApplyFilters(filters) => reader_connection.apply_filters(filters),
+                CommandReply::NoAck => {}
             }
         }
         None

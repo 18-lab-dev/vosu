@@ -38,6 +38,9 @@ use tokio_util::sync::CancellationToken;
 
 pub use view::ToolHostViews;
 
+#[cfg(test)]
+const FIXTURE_VERSION: &str = "2.0.0-alpha.1";
+
 /// Legacy-package diagnosis (`ToolView.status_detail`, A7.2).
 const NEEDS_UPDATE: &str = "needs-2.0-update";
 
@@ -90,6 +93,7 @@ pub struct ToolRegistry {
     roots: Vec<(PathBuf, &'static str)>,
     overlay_url: String,
     dashboard_url: Option<String>,
+    version: semver::Version,
     origins: Mutex<Option<Arc<crate::server::origins::Origins>>>,
     view: view::Publisher,
     /// Serializes discovery and every `state.json`/settings write.
@@ -170,7 +174,7 @@ struct Found {
     fingerprint: Vec<u8>,
 }
 
-fn inspect(path: &Path) -> Found {
+fn inspect(path: &Path, version: &semver::Version) -> Found {
     let fallback_id = || {
         path.file_name()
             .unwrap_or_default()
@@ -206,7 +210,7 @@ fn inspect(path: &Path) -> Found {
             };
         }
     };
-    let parsed = ToolPackage::parse(&text);
+    let parsed = ToolPackage::parse(&text, version);
     let mut error = parsed.as_ref().err().cloned();
     let schema_bytes = match fs::read(path.join("settings.json")) {
         Ok(bytes) => Some(bytes),
@@ -250,6 +254,7 @@ impl ToolRegistry {
         extra: ExtraRoots,
         overlay_url: String,
         dashboard_url: Option<String>,
+        version: semver::Version,
     ) -> io::Result<Arc<Self>> {
         let ExtraRoots { dev } = extra;
         let user = data.clone();
@@ -292,6 +297,7 @@ impl ToolRegistry {
             view: view::Publisher::new(dashboard_url.clone()),
             overlay_url,
             dashboard_url,
+            version,
             origins: Mutex::new(None),
             gate: tokio::sync::Mutex::new(()),
             stopping: AtomicBool::new(false),
@@ -492,7 +498,7 @@ impl ToolRegistry {
                     .collect()
             };
             for path in paths {
-                let mut candidate = inspect(&path);
+                let mut candidate = inspect(&path, &self.version);
                 // A user-root directory with neither manifest is not a tool.
                 if *source != "dev"
                     && candidate.manifest.is_none()

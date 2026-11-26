@@ -82,6 +82,11 @@ impl ProductionRuntime {
         self.api_v1.shutdown();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
             watch.abort();
+            if let Err(error) = watch.await
+                && !error.is_cancelled()
+            {
+                result = Err(io::Error::other(format!("plugin settings watch failed: {error}")));
+            }
         }
         if let Some(catalog) = self.catalog.lock().await.take() {
             catalog.shutdown().await;

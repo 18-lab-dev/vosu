@@ -280,7 +280,7 @@ async fn prerelease_startup_and_restart_import_only_once_into_isolated_roots() {
         launch: root.path().to_owned(),
         root: root.path().to_owned(),
     };
-    let channel = BuildChannel::from_version(env!("CARGO_PKG_VERSION")).unwrap();
+    let channel = BuildChannel::from_version("2.0.0-alpha.1").unwrap();
     assert_eq!(channel, BuildChannel::Prerelease);
     let normal = Paths::resolve(&resolver, BuildChannel::Release).unwrap();
     fs::create_dir_all(normal.config()).unwrap();

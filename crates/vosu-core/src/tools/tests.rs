@@ -11,7 +11,7 @@ use vosu_surface::files::{FileError, RelativeChild};
 fn manifest(id: &str, extra: &str) -> String {
     format!(
         "manifest_version=1\nkind='tool'\nid='{id}'\nname='Test {id}'\nversion='1.0.0'\nhost='={}'\nicon='art/icon.svg'\n[ui]\nroot='web'\n{extra}",
-        env!("CARGO_PKG_VERSION")
+        FIXTURE_VERSION
     )
 }
 fn put(root: &Path, id: &str, extra: &str) -> PathBuf {
@@ -46,6 +46,7 @@ async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolRegistry> {
         ExtraRoots { dev },
         "http://127.0.0.1:25150".into(),
         Some("http://127.0.0.1:25151".into()),
+        semver::Version::parse(FIXTURE_VERSION).unwrap(),
     ))
     .unwrap();
     host.activate(None);
@@ -514,6 +515,7 @@ async fn tool_host_view_has_no_dashboard_origin_while_the_dashboard_is_off() {
         ExtraRoots { dev: Vec::new() },
         "http://127.0.0.1:25150".into(),
         None,
+        semver::Version::parse(FIXTURE_VERSION).unwrap(),
     ))
     .unwrap();
     assert_eq!(unset.tool_host_views().borrow().dashboard_origin, None);

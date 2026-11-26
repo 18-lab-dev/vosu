@@ -4,83 +4,23 @@
 //! `SETTINGS_CHANGED`, and mints the read-only `OverlayRootView` lease the
 //! host serves through, retiring the previous generation's lease. A7 route
 //! inventory: the host's counter API and command feed registrations.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use arc_swap::ArcSwapOption;
-use serde_json::{Map, Value};
-use crate::plugin::settings::{
-    BRIDGE_B2_PLUGIN_ID, ConfigSettingsBridgeB2, PluginSettingsService, PluginSettingsStore,
-    SettingsChangeDelivery, SettingsError, SettingsSchemaSource, SettingsStorage,
+use vosu_core::{
+    plugin::{
+        OverlayRootRetirement, PluginHost, PluginInstanceId,
+        settings::{PluginSettingsService, SettingsChangeDelivery, SettingsSchemaSource},
+    },
+    runtime::RuntimeSettingsStorage,
+    server::websocket::WebSocketHub,
 };
-use crate::plugin::{OverlayRootRetirement, PluginHost, PluginInstanceId};
 use vosu_overlay_host::{
     OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic, ReloadableCounterService,
     commands::CommandProcessor, presentation::OverlayPresenter,
 };
 use vosu_plugin_api::{Message, SettingsChanged};
 use vosu_surface::routes::RegistrationLease;
-
-use crate::server::websocket::WebSocketHub;
-
-pub(crate) const OVERLAY_HOST_ID: &str = "vosu.overlayhost";
-
-/// Core's settings storage: bridge B2 for `vosu.osu` and the core-held
-/// `static_folder_path` seed for `vosu.overlayhost` until M8 (not B2, which
-/// never gains a second plugin id); every other plugin id is core's own
-/// per-plugin store (A7.1). The seed has no other writer: the Settings page
-/// still edits `STATIC_FOLDER_PATH`, and so the vosu.toml-backed two are not
-/// editable through the plugin settings route.
-pub struct RuntimeSettingsStorage {
-    bridge: Arc<ConfigSettingsBridgeB2>,
-    plugins: Arc<PluginSettingsStore>,
-    overlay_root: ArcSwapOption<PathBuf>,
-}
-
-impl RuntimeSettingsStorage {
-    pub fn new(bridge: Arc<ConfigSettingsBridgeB2>, plugins: Arc<PluginSettingsStore>) -> Self {
-        Self {
-            bridge,
-            plugins,
-            overlay_root: ArcSwapOption::empty(),
-        }
-    }
-
-    pub fn seed_overlay_root(&self, root: &Path) {
-        self.overlay_root.store(Some(Arc::new(root.to_owned())));
-    }
-}
-
-impl SettingsStorage for RuntimeSettingsStorage {
-    fn load(&self, plugin_id: &str) -> Result<Map<String, Value>, SettingsError> {
-        match plugin_id {
-            BRIDGE_B2_PLUGIN_ID => self.bridge.load(plugin_id),
-            OVERLAY_HOST_ID => {
-                let root = self.overlay_root.load();
-                let value = root
-                    .as_deref()
-                    .map_or_else(String::new, |root| root.to_string_lossy().into_owned());
-                Ok(Map::from_iter([(
-                    vosu_overlay_host::root::STATIC_FOLDER_PATH.to_owned(),
-                    Value::String(value),
-                )]))
-            }
-            _ => self.plugins.load(plugin_id),
-        }
-    }
-
-    fn store(&self, plugin_id: &str, values: &Map<String, Value>) -> Result<(), SettingsError> {
-        match plugin_id {
-            BRIDGE_B2_PLUGIN_ID => self.bridge.store(plugin_id, values),
-            OVERLAY_HOST_ID => Err(SettingsError::NotBridged(plugin_id.to_owned())),
-            _ => self.plugins.store(plugin_id, values),
-        }
-    }
-
-    fn editable(&self, plugin_id: &str) -> bool {
-        !matches!(plugin_id, BRIDGE_B2_PLUGIN_ID | OVERLAY_HOST_ID)
-    }
-}
 
 /// Owns the overlay root's generations, the overlay host's route
 /// registrations and its `overlays.query` binding for one composition.
@@ -89,11 +29,11 @@ pub struct OverlayRootComposition {
     instance: PluginInstanceId,
     storage: Arc<RuntimeSettingsStorage>,
     settings: Arc<PluginSettingsService>,
-    counters: Arc<ReloadableCounterService>,
-    serving: Arc<OverlayStatic>,
-    generation: Mutex<(u64, Option<OverlayRootRetirement>)>,
+    pub(super) counters: Arc<ReloadableCounterService>,
+    pub(super) serving: OverlayStatic,
+    generation: Mutex<Option<(u64, Option<OverlayRootRetirement>)>>,
     routes: Mutex<Option<RegistrationLease>>,
-    _query: OverlayQueryBinding,
+    query: Mutex<Option<OverlayQueryBinding>>,
 }
 
 impl OverlayRootComposition {
@@ -107,22 +47,18 @@ impl OverlayRootComposition {
         settings: Arc<PluginSettingsService>,
         counters: Arc<ReloadableCounterService>,
     ) -> Self {
-        let serving = Arc::new(OverlayStatic::new(Arc::clone(&counters)));
+        let serving = OverlayStatic::new(Arc::clone(&counters));
         Self {
             host,
             instance,
             storage,
             settings,
-            _query: vosu_overlay_host::bind_overlay_query(data_dir, &counters),
+            query: Mutex::new(Some(vosu_overlay_host::bind_overlay_query(data_dir, &counters))),
             counters,
             serving,
-            generation: Mutex::new((0, None)),
+            generation: Mutex::new(Some((0, None))),
             routes: Mutex::new(None),
         }
-    }
-
-    pub fn serving(&self) -> Arc<OverlayStatic> {
-        Arc::clone(&self.serving)
     }
 
     /// Registers `vosu.overlayhost`'s counter API and `/websocket/commands`
@@ -149,7 +85,8 @@ impl OverlayRootComposition {
                     std::io::Error::other(format!("overlay host registration failed: {error:?}"))
                 })
             })?;
-        *self.routes.lock().unwrap_or_else(|p| p.into_inner()) = Some(lease);
+        let previous = self.routes.lock().unwrap_or_else(|p| p.into_inner()).replace(lease);
+        drop(previous);
         Ok(())
     }
 
@@ -159,43 +96,51 @@ impl OverlayRootComposition {
     /// that cannot be opened serves nothing until the next change.
     pub fn apply(&self, root: &Path) {
         self.storage.seed_overlay_root(root);
-        let schema = self.host.schema_for(OVERLAY_HOST_ID);
-        if let Ok(values) = self
-            .settings
-            .effective_settings(OVERLAY_HOST_ID, schema.as_ref())
+        let id = self.storage.overlay_setting().plugin;
+        let schema = self.host.schema_for(id);
+        if let Ok(values) = self.settings.effective_settings(id, schema.as_ref())
         {
             if let Err(error) = self.counters.apply_settings(&values) {
                 tracing::warn!(%error, "overlay root setting was not applied");
             }
             self.host.settings_changed(
-                OVERLAY_HOST_ID,
+                id,
                 Message::SettingsChanged(SettingsChanged { values }),
             );
         }
+        let lease = self.host.overlay_root_lease(self.instance, root);
         let mut generation = self.generation.lock().unwrap_or_else(|p| p.into_inner());
-        generation.0 += 1;
-        match self.host.overlay_root_lease(self.instance, root) {
+        let Some((sequence, current)) = generation.as_mut() else {
+            return;
+        };
+        *sequence += 1;
+        match lease {
             Ok((lease, retirement)) => {
                 self.serving.set_view(OverlayRootView {
-                    generation: generation.0,
+                    generation: *sequence,
                     root: lease,
                 });
-                generation.1 = Some(retirement);
+                *current = Some(retirement);
             }
             Err(error) => {
                 tracing::warn!(%error, "overlay root lease was not minted; serving nothing");
                 self.serving.clear_view();
-                generation.1 = None;
+                *current = None;
             }
         }
     }
 
     /// Retires the current lease and unregisters the routes (shutdown).
     pub fn retire(&self) {
-        self.serving.clear_view();
-        self.generation.lock().unwrap_or_else(|p| p.into_inner()).1 = None;
+        {
+            let mut generation = self.generation.lock().unwrap_or_else(|p| p.into_inner());
+            self.serving.clear_view();
+            generation.take();
+        }
         // Unregistration re-enters the plugin host; never under this lock.
         let routes = self.routes.lock().unwrap_or_else(|p| p.into_inner()).take();
         drop(routes);
+        let query = self.query.lock().unwrap_or_else(|p| p.into_inner()).take();
+        drop(query);
     }
 }

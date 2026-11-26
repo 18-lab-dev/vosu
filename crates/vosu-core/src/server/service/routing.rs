@@ -212,7 +212,7 @@ impl ProductionRouteDelegate {
     }
 
     fn counter_open_root(&self) -> Response {
-        match super::overlay_folders::open_root(self.opener.as_ref(), &self.services.counters.current_root()) {
+        match super::overlay_folders::open_root(self.opener.as_ref(), &self.services.overlay.current_root()) {
             Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
             Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
         }
@@ -226,8 +226,9 @@ impl ProductionRouteDelegate {
             None => json_response(StatusCode::OK, json!({ "error": "no folder name" })),
             Some(name) => match super::overlay_folders::open_folder(
                 self.opener.as_ref(),
-                &self.services.counters.current_root(),
+                &self.services.overlay.current_root(),
                 name,
+                |name| self.services.overlay.valid_folder(name),
             ) {
                 Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
@@ -347,13 +348,13 @@ impl ProductionRouteDelegate {
     /// Overlay static serving, alias redirects and `COUNTER_PATH` belong to
     /// the overlay host and read only through its `OverlayRootView` lease.
     fn counter_static(&self, request: &Request<Body>) -> impl Future<Output = Response> + Send + '_ {
-        let surface = self.overlay_static.as_ref().zip(surface_request(request, Arc::new(empty_selection())));
+        let surface = surface_request(request, Arc::new(empty_selection()));
         let head = request.method() == Method::HEAD;
         async move {
-            let Some((serving, surface)) = surface else {
+            let Some(surface) = surface else {
                 return not_found();
             };
-            let mut response = surface_http_response(serving.serve(&surface).await);
+            let mut response = surface_http_response(self.services.overlay.serve_static(surface).await);
             if head {
                 *response.body_mut() = Body::empty();
             }
@@ -370,7 +371,7 @@ impl ProductionRouteDelegate {
             );
         };
         let connections = self.connections.clone();
-        let overlay = socket_overlay(&request);
+        let overlay = socket_overlay(&request, self.services.overlay.as_ref());
         let (hub, commands, client_namespace) = self.services.websocket.hub(endpoint);
         // Every feed, `/websocket/commands` included, is a bundled host's
         // registration; the commands hub only frames the overlay host's feed.
@@ -381,8 +382,7 @@ impl ProductionRouteDelegate {
             },
             None => hub.surface_feed(commands),
         };
-        let processor = Arc::clone(&self.services.websocket.processor);
-        let relays = Arc::clone(&self.services.websocket.relays);
+        let composition = Arc::clone(&self.services.overlay);
         let query = request.uri().query().map(str::to_owned);
         let mut mutation = request.extensions()
             .get::<crate::server::auth::MutationAuthorization>()
@@ -416,9 +416,8 @@ impl ProductionRouteDelegate {
                 bridge_socket(
                     socket,
                     feed,
-                    processor,
+                    composition,
                     client_namespace,
-                    relays,
                     (query.as_deref(), mutation, key_grant),
                 )
                 .await;

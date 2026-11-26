@@ -27,6 +27,8 @@ pub mod removed_routes;
 pub mod report;
 pub mod resource_io;
 pub mod resources;
+pub mod runtime;
 pub mod server;
 pub mod state;
+pub mod tools;
 pub mod updater;
