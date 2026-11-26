@@ -9,12 +9,28 @@ use vosu_surface::files::{FileError, OpenedFile, RelativeChild, RootLease};
 /// lease holds only a weak host reference, so the caller keeps the host.
 struct Minted {
     _logs: tempfile::TempDir,
-    _host: Arc<PluginHost>,
     lease: RootLease,
     retirement: crate::plugin::OverlayRootRetirement,
+    _host: OverlayHost,
+}
+
+/// The lease needs the real `vosu.overlayhost` id, which the testkit keys a
+/// process-global registry by: nextest isolates each test, `cargo test` does
+/// not, so tests take turns and destroy the instance (unregistering it).
+struct OverlayHost {
+    host: Arc<PluginHost>,
+    _serial: std::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for OverlayHost {
+    fn drop(&mut self) {
+        self.host.destroy_all(std::time::Duration::from_secs(5));
+    }
 }
 
 fn lease(rt: &tokio::runtime::Runtime, root: &Path) -> Minted {
+    static OVERLAY_HOST_ID: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let serial = OVERLAY_HOST_ID.lock().unwrap_or_else(|p| p.into_inner());
     let (logs, host) = test_host(rt.handle().clone());
     reader(&host, "vosu.overlayhost", 9301, &[]);
     let (lease, retirement) = host
@@ -22,9 +38,12 @@ fn lease(rt: &tokio::runtime::Runtime, root: &Path) -> Minted {
         .unwrap();
     Minted {
         _logs: logs,
-        _host: host,
         lease,
         retirement,
+        _host: OverlayHost {
+            host,
+            _serial: serial,
+        },
     }
 }
 
