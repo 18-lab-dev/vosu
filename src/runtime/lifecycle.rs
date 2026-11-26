@@ -211,6 +211,9 @@ impl ProductionRuntime {
         let overlay_root = Arc::new(super::overlay_root::OverlayRootComposition::new(
             Arc::clone(&self.plugins),
             vosu_core::plugin::PluginInstanceId::new(dev_plugins::OVERLAY_HOST_INDEX),
+            &self
+                .paths
+                .bundled_plugin_data_dir(super::overlay_root::OVERLAY_HOST_ID),
             Arc::clone(&self.settings_storage),
             Arc::clone(&self.plugin_settings),
             Arc::clone(&counters),

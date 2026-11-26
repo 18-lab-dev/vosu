@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "after": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+  }
+}

@@ -15,7 +15,7 @@ use vosu_core::plugin::settings::{
 };
 use vosu_core::plugin::{OverlayRootRetirement, PluginHost, PluginInstanceId};
 use vosu_overlay_host::{
-    OverlayRootView, OverlayRoutes, OverlayStatic, ReloadableCounterService,
+    OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic, ReloadableCounterService,
     commands::CommandProcessor, presentation::OverlayPresenter,
 };
 use vosu_plugin_api::{Message, SettingsChanged};
@@ -82,8 +82,8 @@ impl SettingsStorage for RuntimeSettingsStorage {
     }
 }
 
-/// Owns the overlay root's generations and the overlay host's route
-/// registrations for one composition.
+/// Owns the overlay root's generations, the overlay host's route
+/// registrations and its `overlays.query` binding for one composition.
 pub struct OverlayRootComposition {
     host: Arc<PluginHost>,
     instance: PluginInstanceId,
@@ -93,12 +93,16 @@ pub struct OverlayRootComposition {
     serving: Arc<OverlayStatic>,
     generation: Mutex<(u64, Option<OverlayRootRetirement>)>,
     routes: Mutex<Option<RegistrationLease>>,
+    _query: OverlayQueryBinding,
 }
 
 impl OverlayRootComposition {
+    /// `data_dir` is the one core gave the `instance`'s `create`: it keys
+    /// the instance's `overlays.query` binding to `counters`.
     pub fn new(
         host: Arc<PluginHost>,
         instance: PluginInstanceId,
+        data_dir: &Path,
         storage: Arc<RuntimeSettingsStorage>,
         settings: Arc<PluginSettingsService>,
         counters: Arc<ReloadableCounterService>,
@@ -109,6 +113,7 @@ impl OverlayRootComposition {
             instance,
             storage,
             settings,
+            _query: vosu_overlay_host::bind_overlay_query(data_dir, &counters),
             counters,
             serving,
             generation: Mutex::new((0, None)),

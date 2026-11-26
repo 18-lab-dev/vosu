@@ -2456,7 +2456,7 @@ them). The first-party state consumers and their M7 destinations are:
 | --- | --- | --- |
 | Dashboard status card (`homepage.js` every 2 s) | `GET /api/dashboard/status` host diagnostics | Unchanged core diagnostics, plus the browser's `GET /api/v1/sessions` from the overlay origin (session summaries, which create no demand) for game-agnostic labels. No API-v1 subscription and no new precise demand. Poll intervals are shown only for sessions whose `vosu.client.game` is `osu`. |
 | Tool context (`src/runtime/tool_context.rs`, `crates/vosu-adapter-upstream/src/files/tool_context.rs`, `PluginHost::display_path` for it) | selected session's absolute songs, game, skin and beatmap paths | **Deleted** with `/tools/_host/v1/context`. Tools read `/vosu.client`, `/vosu.chart`, `/vosu.skin` and granted `vosu.osu` fields and resources through API v1. |
-| Tool overlay listing (`/tools/_host/v1/overlays`) | absolute overlay folders | **Deleted**. |
+| Tool overlay listing (`/tools/_host/v1/overlays`) | absolute overlay folders | **Deleted**. Since 2026-11-26 a plugin lists installed overlays, with no path or `password` value, through `vosu.overlayhost.overlays.query` ([catalog v2](catalog-v2.md#overlay-query-action)); tools have no replacement. |
 | v1 bridge `subscribe` (`tool-bridge-v1.js`) | the removed `/websocket/v2/subscribe` | **Deleted** with the v1 bridge. |
 | v2 bridge (`tool-bridge.js`) | `WS /api/v1/sessions/{session}/subscribe` with caller pointers; action and job routes | Unchanged, plus the A7.2 removals. |
 | Report generation (`RuntimeReportInput::capture`) | host diagnostic sessions, counters, log directory | Core, unchanged; counter facts come from the overlay root through core's own discovery read, not from the overlay host. |

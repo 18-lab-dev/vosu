@@ -27,6 +27,15 @@ All notable user-visible changes to vosu are documented here. Older sections are
   `resource:skin`) now see it as always available at the `vosu.chart` /
   `vosu.skin` schema version, as the install resolver already did. Before,
   the tool host reported them as missing and blocked such tools.
+- Plugins can list installed overlays again: the bundled overlay host
+  provides the sessionless action `vosu.overlayhost.overlays.query`, which
+  a plugin calls after declaring it in `requires` or `optional`. Each page
+  (up to 50, resumed with `after`) gives every overlay's folder id, display
+  name, entry page URL, version when the package states one and its current
+  settings values, with no file path and no `password` value. Tools and
+  `vosux` cannot call it; it replaces 1.x's `/tools/_host/v1/overlays` for
+  plugins such as the replay renderer, which no longer need their own
+  overlay-folder setting.
 
 - Job artifacts (AF.12): a plugin action run by a tool or `vosux` can
   declare protected or sessionless output files (an export, a stored replay,

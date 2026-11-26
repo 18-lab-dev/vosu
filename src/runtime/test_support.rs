@@ -183,6 +183,7 @@ pub async fn start_test_production_composition(
     let overlay_root = Arc::new(super::overlay_root::OverlayRootComposition::new(
         Arc::clone(&plugins),
         vosu_core::plugin::PluginInstanceId::new(dev_plugins::OVERLAY_HOST_INDEX),
+        &plugin_data.join(super::overlay_root::OVERLAY_HOST_ID),
         storage,
         settings,
         Arc::clone(&counters),

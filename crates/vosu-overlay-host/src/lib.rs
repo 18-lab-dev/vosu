@@ -1,7 +1,7 @@
 //! `vosu.overlayhost` (M7 O0): counter discovery, the community catalog and
 //! its cards, download/update/delete, names and aliases, settings and
-//! profile storage, `/websocket/commands` command processing and the
-//! preview colour scheme.
+//! profile storage, `/websocket/commands` command processing, the
+//! preview colour scheme and the plugin-callable `overlays.query` action.
 //!
 //! The crate depends only on `vosu-surface`, `vosu-plugin-api`,
 //! `vosu-plugin-internal` and `vosu-net` (A7.1). It learns the overlay root
@@ -26,6 +26,7 @@ mod names;
 mod plugin;
 pub mod presentation;
 pub mod preview_scheme;
+pub mod query;
 pub mod root;
 mod routes;
 mod serve;
@@ -40,6 +41,7 @@ pub use model::{
 };
 pub use names::{OverlayName, OverlayNames};
 pub use plugin::vosu_plugin_vtable;
+pub use query::{OverlayQueryBinding, bind_overlay_query};
 pub use routes::{COMMANDS, CommandFeeds, OverlayRoutes};
 pub use serve::{OverlayRootView, OverlayStatic};
 pub use service::{
@@ -56,6 +58,18 @@ pub use settings::{
 pub const MANIFEST: &str = include_str!("../manifest.toml");
 /// Exactly one `text` setting, `static_folder_path` (A7.1-OR).
 pub const SETTINGS_SCHEMA: &str = include_str!("../settings.schema.json");
+/// Package-relative paths of the `overlays.query` argument and result
+/// schemas paired with their embedded text (`BundledPlugin::action_schemas`).
+pub const ACTION_SCHEMAS: &[(&str, &str)] = &[
+    (
+        "schemas/overlays-query.args.json",
+        include_str!("../schemas/overlays-query.args.json"),
+    ),
+    (
+        "schemas/overlays-query.result.json",
+        include_str!("../schemas/overlays-query.result.json"),
+    ),
+];
 
 /// The daemon version: the bundled manifest's `version`, which catalog-v2
 /// "Bundled host manifests (A7)" requires to equal the vosu package

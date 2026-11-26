@@ -61,6 +61,11 @@ pub struct Counter {
     pub assets: Option<Vec<Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_link: Option<String>,
+    /// Whether `version` comes from the package (`manifest.toml` or
+    /// `metadata.txt`) rather than the placeholder an `index.html`-only
+    /// folder shows. Never serialized: the overlay query reads it.
+    #[serde(skip)]
+    pub(crate) version_known: bool,
 }
 
 fn is_false(value: &bool) -> bool {

@@ -568,6 +568,58 @@ means queued/submitted, not completed game installation. Error/result text
 avoids unnecessary source/destination path disclosure. Workers are owned,
 cancelled and joined/reaped, never abandoned or self-joined.
 
+#### Overlay query action
+
+Added 2026-11-26. `vosu.overlayhost.overlays.query` is version `1.0.0`,
+`session = "none"`, `cli = false`, declared by the `vosu.overlayhost`
+manifest with `schemas/overlays-query.args.json` and
+`schemas/overlays-query.result.json`. It replaces, for plugins only, the 1.x
+`/tools/_host/v1/overlays` listing that A7.2 deleted, so a plugin no longer
+needs its own overlay-folder setting.
+
+- **Callers.** Core routes it only to a plugin whose manifest names
+  `action:vosu.overlayhost.overlays.query` in `requires` or `optional`
+  ([plugin ABI §6.12](plugin-abi.md#612-cross-plugin-state-reads-and-calls)
+  `ACTION_CALL`); any other plugin gets `permission_denied` from core
+  and never reaches the host. The host itself answers only
+  `caller.kind = "plugin"`: a tool or `vosux` invocation fails with
+  `permission_denied`, so no browser tool or command line can list overlays.
+- **Arguments.** `{"after"?: string, "limit"?: integer}`, no other
+  properties. `limit` is 1–50, default 20; `after` (1–4,096 characters) is
+  the previous page's `next`.
+- **Result.** `{"overlays": [entry…], "next": string|null}`, at most 50
+  entries ordered by folder id, starting after `after` (exclusive). `next`
+  names the last entry when more follow and is `null` on the last page. A
+  page also stops once its entries reach 256 KiB of JSON, so it always fits
+  the ABI frame. Each entry is exactly
+  `{"id", "name", "entry", "version", "settings"}`:
+  - `id`: the overlay folder relative to the overlay root, `/`-separated
+    for a nested folder;
+  - `name`: the dashboard nickname if set, else the package's own name;
+  - `entry`: the origin-relative page URL on the overlay listener with each
+    folder segment percent-encoded (`/my%20hud/`);
+  - `version`: the `manifest.toml` or `metadata.txt` version, `null` for a
+    folder that only has `index.html`;
+  - `settings`: the values the overlay receives for the active profile
+    (saved, else the schema default, number and checkbox coerced) for
+    exactly the keys its current settings schema declares, minus every
+    `password` and `header` key; a key any `password` setting declares is
+    omitted even when another setting reuses it. `{}` for a nested folder
+    (no settings store); `null` when the settings cannot be read or encode
+    to more than 32 KiB of JSON.
+- **Never included:** an absolute or root-relative filesystem path, a
+  `password` value, a broken overlay (one the dashboard shows as an error
+  card), an alias, or anything from the community catalog.
+- **Freshness.** Every call rescans the overlay root, so installs,
+  downloads and deletes show in the next call. Nothing is cached and no
+  event is published.
+- **Errors.** `unavailable` while overlay storage is not composed yet,
+  `busy` past 16 queued queries, `query_failed` when the overlay root
+  cannot be walked (fixed message, no path), `invalid_arguments` and
+  `unknown_action`. The host answers from one worker thread; dispatch only
+  enqueues. A query runs to completion: `ACTION_CANCEL` is accepted and
+  ignored ([plugin ABI §6.8](plugin-abi.md#68-actions)).
+
 #### Bundled host manifests (A7)
 
 Frozen 2026-11-24 for M7 (D0, O0, T0; I0 embeds them). The three hosts are
@@ -579,15 +631,17 @@ version, `host = ">=<that version>, <3.0.0"`, `abi_version = 1` and
 | `id` | `name` (D10: describes what it serves) | `provides` / `requires` / `optional` / `[[actions]]` / `[[resource_kinds]]` | `settings_schema` |
 | --- | --- | --- | --- |
 | `vosu.dashboard` | `Dashboard pages` | none | none |
-| `vosu.overlayhost` | `Overlay hosting and commands` | none | `settings.schema.json` with exactly one `text` setting, `static_folder_path` (A7.1-OR) |
+| `vosu.overlayhost` | `Overlay hosting and commands` | `provides` and `[[actions]]` for `action:vosu.overlayhost.overlays.query` only ([Overlay query action](#overlay-query-action), 2026-11-26) | `settings.schema.json` with exactly one `text` setting, `static_folder_path` (A7.1-OR) |
 | `vosu.toolhost` | `Web tool hosting` | none | none |
 
-None of them declares a field, resource, action or game capability, so the
-resolver never offers one as a provider and no host gains state, resource
-or action authority through its manifest. Their HTTP authority is only their
-exact `vosu-surface` registrations. A bundled host manifest that requests
-`process` stays invalid (A5). When the dashboard is off, `vosu.dashboard` is
-still validated and registered, but no instance is created (A7.3).
+None of them declares a field, resource or game capability, and only
+`vosu.overlayhost` declares an action, the read-only overlay query above. So
+the resolver offers a host only as that action's provider, and no host gains
+state, resource or write authority through its manifest. Their HTTP
+authority is only their exact `vosu-surface` registrations. A bundled host
+manifest that requests `process` stays invalid (A5). When the dashboard is
+off, `vosu.dashboard` is still validated and registered, but no instance is
+created (A7.3).
 
 ### `kind = "tool"`
 

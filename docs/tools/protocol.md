@@ -187,6 +187,11 @@ environment, `tool.schema.json`, the vosux tool form and its `--list`,
 `--json`, `--open` and `--autostart` options, and the bridge's `vosu.fetch`
 are deleted too.
 
+A tool has no replacement for the overlay list. A plugin that needs it calls
+the sessionless `vosu.overlayhost.overlays.query` action, which refuses tool
+and command-line callers
+([catalog v2 "Overlay query action"](../v2/catalog-v2.md#overlay-query-action)).
+
 ## Launch and session exchange
 
 Write authority belongs to one browser tab, never to a URL, a cookie or the
