@@ -77,7 +77,7 @@ _SCHEMA_OF_PATH = {"/json": "v1", "/json/sc": "sc", "/json/v2": "v2",
                    "/websocket/v2": "v2", "/websocket/v2/precise": "v2-precise"}
 OPERATOR_STEPS = {
     "menu": "open song select on the approved map (menu)",
-    "play": "start the approved map (active play)",
+    "play": "resume the song-select track, then start the approved map (active play)",
     "paused": "pause gameplay and leave it paused",
     "result": "resume, finish the map and stay on the result screen",
     "no-client": "close the client",
