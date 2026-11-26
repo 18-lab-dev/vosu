@@ -130,3 +130,33 @@ async fn read_server_frame(
     .await
     .expect("server WebSocket frame timed out")
 }
+
+/// A dashboard card preview's socket is not a browser source: with one stock
+/// command socket open, the overlay still counts one connection. The
+/// preview's own reply proves its connection is live before the status read.
+async fn assert_preview_socket_not_counted(port: u16, client: &reqwest::Client, management: &str) {
+    let (mut preview, mut buffer) = websocket_connect(
+        port,
+        "/websocket/commands?l=seeded-counter&vosu-preview=1",
+        None,
+    )
+    .await;
+    preview
+        .write_all(&masked_frame(1, b"getSettings:seeded-counter:"))
+        .await
+        .unwrap();
+    assert_eq!(read_server_frame(&mut preview, &mut buffer).await.0, 1);
+    let status: serde_json::Value = client
+        .get(format!("{management}/api/dashboard/status"))
+        .header("Origin", management)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        status["connections"],
+        serde_json::json!({ "seeded-counter": 1 })
+    );
+}

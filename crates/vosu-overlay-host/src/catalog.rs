@@ -481,6 +481,30 @@ mod tests {
             (service, request)
         }
 
+        /// ADR 0023: the community catalog is a public request. No source
+        /// credential, cookie or private-network exception reaches it; the
+        /// overlay host has no credential to send.
+        #[tokio::test]
+        async fn community_catalog_requests_carry_no_credentials() {
+            let (service, request) = vosu_proptest::bounded!(constrained_service(
+                200,
+                body(serde_json::json!([])),
+                None
+            ));
+            vosu_proptest::bounded!(service.fetch(&[], &CancellationToken::new())).unwrap();
+            let request = vosu_proptest::bounded!(request)
+                .unwrap()
+                .to_ascii_lowercase();
+            assert!(request.starts_with("get /api.json "), "{request}");
+            for header in [
+                "\r\nauthorization:",
+                "\r\ncookie:",
+                "\r\nproxy-authorization:",
+            ] {
+                assert!(!request.contains(header), "{header} sent: {request}");
+            }
+        }
+
         #[tokio::test]
         async fn constrained_harness_covers_valid_status_malformed_and_size() -> io::Result<()> {
             let valid_body = body(serde_json::json!([valid("A", "B", "1", "a")]));

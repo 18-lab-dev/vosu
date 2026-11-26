@@ -5,7 +5,7 @@ use vosu_surface::routes::{
     SurfaceResponse,
 };
 
-fn reader(
+pub(super) fn reader(
     host: &Arc<crate::plugin::host::PluginHost>,
     name: &str,
     instance: u64,

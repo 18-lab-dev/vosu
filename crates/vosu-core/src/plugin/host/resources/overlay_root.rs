@@ -8,8 +8,25 @@
 use super::surface_files::{Authority, Root, native_error, open_root, opened};
 use super::*;
 use vosu_surface::files::{
-    DirectoryReader, FileError, OpenedFile, Operation, RelativeChild, RootLease, RootOperations,
+    DirectoryReader, FileError, FileReader, OpenedFile, Operation, RelativeChild, RootLease,
+    RootOperations,
 };
+
+/// A file opened through one lease generation: every read first checks that
+/// the generation is still current, so a retired root stops serving even
+/// files that were already open.
+struct Generational {
+    file: OpenedFile,
+    current: Arc<AtomicBool>,
+}
+impl FileReader for Generational {
+    fn read(&self, offset: u64, len: u32) -> Operation<'_, Vec<u8>> {
+        if !self.current.load(Ordering::Acquire) {
+            return Box::pin(async { Err(FileError::TargetGone) });
+        }
+        self.file.read(offset, len)
+    }
+}
 
 /// Ends one minted overlay root generation. Dropping it retires the lease.
 pub struct OverlayRootRetirement(Arc<AtomicBool>);
@@ -64,12 +81,17 @@ impl RootOperations for OverlayRoot {
     fn open(&self, path: &RelativeChild) -> Operation<'_, OpenedFile> {
         let (root, path) = (self.clone(), path.clone());
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
+            let current = Arc::clone(&root.0.current);
+            let file = tokio::task::spawn_blocking(move || {
                 let (capability, child) = root.select(&path)?;
                 opened(open_root(&capability, &child)?)
             })
             .await
-            .map_err(|_| FileError::TargetGone)?
+            .map_err(|_| FileError::TargetGone)??;
+            Ok(OpenedFile::new(
+                file.metadata.clone(),
+                Generational { file, current },
+            ))
         })
     }
 

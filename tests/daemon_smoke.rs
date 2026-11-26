@@ -491,6 +491,11 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         serde_json::from_slice::<serde_json::Value>(&payload).unwrap()["message"]["title"],
         "persisted seeded"
     );
+    bounded!(assert_preview_socket_not_counted(
+        port,
+        &client,
+        &management
+    ));
     bounded!(commands.write_all(&masked_frame(
         1,
         br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"csrf"}]"#,

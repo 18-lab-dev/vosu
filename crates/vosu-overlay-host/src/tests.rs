@@ -644,3 +644,156 @@ async fn shutdown_cancels_and_joins_active_installs() {
         Err(CounterError::ShuttingDown)
     ));
 }
+
+/// Installs into its destination only after the test releases it.
+struct GatedDownloader {
+    started: tokio::sync::Semaphore,
+    release: tokio::sync::Semaphore,
+}
+
+impl CounterDownloader for Arc<GatedDownloader> {
+    fn download_and_install(
+        &self,
+        _request: DownloadRequest,
+        destination: PathBuf,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CounterError>> + Send + 'static>> {
+        let gate = Arc::clone(self);
+        Box::pin(async move {
+            gate.started.add_permits(1);
+            gate.release.acquire().await.unwrap().forget();
+            std::fs::create_dir_all(&destination)?;
+            std::fs::write(destination.join("index.html"), "installed")?;
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_root_change_during_a_download_installs_into_the_starting_root() {
+    let root = tempfile::tempdir().unwrap();
+    let root_a = root.path().join("static-a");
+    let root_b = root.path().join("static-b");
+    std::fs::create_dir_all(&root_a).unwrap();
+    std::fs::create_dir_all(&root_b).unwrap();
+    let gate = Arc::new(GatedDownloader {
+        started: tokio::sync::Semaphore::new(0),
+        release: tokio::sync::Semaphore::new(0),
+    });
+    let service = Arc::new(ReloadableCounterService::from_service(CounterService::new(
+        root_a.clone(),
+        root.path().join("settings"),
+        Arc::new(Arc::clone(&gate)),
+    )));
+    let download = {
+        let service = Arc::clone(&service);
+        tokio::spawn(async move {
+            service
+                .download(&DownloadRequest {
+                    url: "https://example.com/counter.zip".into(),
+                    name: "counter".into(),
+                    update: false,
+                })
+                .await
+        })
+    };
+    bounded!(gate.started.acquire()).unwrap().forget();
+    // The A7.1-OR path: core delivers the new `static_folder_path` while the
+    // install is in flight.
+    service
+        .apply_settings(&vosu_plugin_api::CborValue::Map(vec![(
+            vosu_plugin_api::CborValue::Text(crate::root::STATIC_FOLDER_PATH.into()),
+            vosu_plugin_api::CborValue::Text(root_b.to_string_lossy().into()),
+        )]))
+        .unwrap();
+    assert_eq!(service.current_root(), root_b);
+    gate.release.add_permits(1);
+    bounded!(download).unwrap().unwrap();
+    assert!(root_a.join("counter/index.html").is_file());
+    assert!(!root_b.join("counter").exists());
+    // The next download goes to the new root.
+    gate.release.add_permits(1);
+    bounded!(service.download(&DownloadRequest {
+        url: "https://example.com/next.zip".into(),
+        name: "next".into(),
+        update: false,
+    }))
+    .unwrap();
+    assert!(root_b.join("next/index.html").is_file());
+    assert!(!root_a.join("next").exists());
+    bounded!(service.shutdown());
+}
+
+/// ADR 0023: a community package download is a public request. It never
+/// carries a source credential or cookie, whatever the URL.
+#[cfg(feature = "test-harness")]
+#[tokio::test]
+async fn package_downloads_carry_no_credentials() {
+    use std::net::{IpAddr, Ipv4Addr};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use vosu_net::{AddressResolver, ResolverFuture, TestNetworkConfig};
+
+    struct Loopback;
+    impl AddressResolver for Loopback {
+        fn resolve<'a>(&'a self, _host: &'a str) -> ResolverFuture<'a> {
+            Box::pin(async { Ok(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]) })
+        }
+    }
+    let listener = bounded!(tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))).unwrap();
+    let socket = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut chunk).await.unwrap();
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        String::from_utf8(bytes).unwrap()
+    });
+    let client = vosu_net::streaming::StreamingClient::for_test_network(
+        TestNetworkConfig::new(
+            Arc::new(Loopback),
+            vec!["packages.invalid".to_owned()],
+            vec![socket],
+        )
+        .unwrap(),
+        vosu_net::streaming::Deadlines::default(),
+        vosu_net::streaming::DownloadLimits::default(),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let static_root = root.path().join("static");
+    std::fs::create_dir_all(&static_root).unwrap();
+    let service = CounterService::new(
+        static_root.clone(),
+        root.path().join("settings"),
+        Arc::new(HardenedCounterDownloader::with_client(
+            client,
+            root.path().join("cache"),
+        )),
+    );
+    let result = bounded!(service.download(&DownloadRequest {
+        url: format!("http://packages.invalid:{}/counter.zip", socket.port()),
+        name: "counter".into(),
+        update: false,
+    }));
+    assert!(result.is_err());
+    assert!(!static_root.join("counter").exists());
+    let request = bounded!(server).unwrap().to_ascii_lowercase();
+    assert!(request.starts_with("get /counter.zip "), "{request}");
+    for header in [
+        "\r\nauthorization:",
+        "\r\ncookie:",
+        "\r\nproxy-authorization:",
+    ] {
+        assert!(!request.contains(header), "{header} sent: {request}");
+    }
+    bounded!(service.shutdown());
+}

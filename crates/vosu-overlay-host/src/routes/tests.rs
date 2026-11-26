@@ -291,3 +291,117 @@ fn search_source_is_explicit_and_errors_are_escaped_non_200() {
         200
     );
 }
+
+async fn text_value(fixture: &Fixture, query: &str) -> Value {
+    let path = format!("/api/counters/settings/counter{query}");
+    let (status, body) = send(&fixture.routes, request("GET", &path, b"", None)).await;
+    assert_eq!(status, 200, "{body}");
+    body["values"]["text"].clone()
+}
+
+async fn save_text(fixture: &Fixture, query: &str, value: &str) {
+    let path = format!("/api/counters/settings/counter{query}");
+    let body = format!(r#"[{{"uniqueID":"text","value":"{value}"}}]"#);
+    let (status, body) = send(
+        &fixture.routes,
+        request("POST", &path, body.as_bytes(), None),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["result"]),
+        (200, &json!("success")),
+        "{body}"
+    );
+}
+
+async fn manage_profiles(fixture: &Fixture, body: &str) -> (u16, Value) {
+    send(
+        &fixture.routes,
+        request("POST", "/api/counters/profiles", body.as_bytes(), None),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_same_folder_in_another_profile_never_writes_the_wrong_instance() {
+    let fixture = fixture();
+    let folder = fixture.root.path().join("static/counter");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("settings.json"),
+        br#"[{"uniqueID":"text","type":"text","title":"Text","description":"","value":"hello"}]"#,
+    )
+    .unwrap();
+    let (status, _) = manage_profiles(&fixture, r#"{"action":"create","name":"stream"}"#).await;
+    assert_eq!(status, 200);
+
+    // An explicit profile writes only that profile's instance.
+    save_text(&fixture, "?profile=stream", "streaming").await;
+    assert_eq!(text_value(&fixture, "").await, "hello");
+    assert_eq!(text_value(&fixture, "?profile=stream").await, "streaming");
+    save_text(&fixture, "", "default").await;
+    assert_eq!(text_value(&fixture, "?profile=stream").await, "streaming");
+    assert_eq!(text_value(&fixture, "?profile=default").await, "default");
+
+    // Without a profile, a write goes to the active profile, not default.
+    let (status, registry) =
+        manage_profiles(&fixture, r#"{"action":"activate","name":"stream"}"#).await;
+    assert_eq!((status, &registry["active"]), (200, &json!("stream")));
+    save_text(&fixture, "", "live").await;
+    assert_eq!(text_value(&fixture, "?profile=stream").await, "live");
+    assert_eq!(text_value(&fixture, "?profile=default").await, "default");
+    // A profile that does not exist is refused, never created by a write.
+    let (status, body) = send(
+        &fixture.routes,
+        request(
+            "POST",
+            "/api/counters/settings/counter?profile=missing",
+            br#"[{"uniqueID":"text","value":"x"}]"#,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(body["error"].is_string(), "{body}");
+    fixture.processor.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_metadata_only_overlay_stays_listed_and_configurable() {
+    let fixture = fixture();
+    let folder = fixture.root.path().join("static/meta-only");
+    std::fs::create_dir_all(&folder).unwrap();
+    // No index.html: a 1.x metadata-only overlay (catalog-v2 legacy rules).
+    std::fs::write(
+        folder.join("metadata.txt"),
+        "Name: Meta Only\nAuthor: sxlvia\nVersion: 1.0\n",
+    )
+    .unwrap();
+    let ProviderResponse::Http(response) = fixture
+        .routes
+        .respond(request(
+            "GET",
+            "/api/counters/search/meta?source=installed",
+            b"",
+            None,
+        ))
+        .await
+    else {
+        panic!("search answers over HTTP");
+    };
+    assert_eq!(response.status, 200);
+    let ResponseBody::Bytes(html) = response.body else {
+        panic!("search answers with bytes");
+    };
+    let html = String::from_utf8(html.to_vec()).unwrap();
+    assert!(html.contains("Meta Only"), "{html}");
+    let (status, body) = send(
+        &fixture.routes,
+        request("GET", "/api/counters/settings/meta-only", b"", None),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(body.get("error").is_none(), "{body}");
+    assert!(body["settings"].is_array(), "{body}");
+    fixture.processor.shutdown().await;
+}
