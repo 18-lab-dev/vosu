@@ -179,6 +179,10 @@ pub struct PluginHost {
     state_runtime: Handle,
     state_serial: Mutex<()>,
     state_demand_serial: Mutex<()>,
+    /// Held shared across a non-owner's publication, from its liveness
+    /// re-check to its notification; retirement takes it exclusively once
+    /// before clearing that plugin's namespace, so no commit lands after.
+    guest_publications: std::sync::RwLock<()>,
     pub(super) surfaces: Mutex<crate::state::surface::SurfaceReaders>,
     api_readers: Mutex<crate::api::ApiReaders>,
     resource_state: Mutex<resources::ResourceState>,
@@ -353,6 +357,7 @@ impl PluginHost {
             state_runtime: runtime.clone(),
             state_serial: Mutex::new(()),
             state_demand_serial: Mutex::new(()),
+            guest_publications: std::sync::RwLock::new(()),
             surfaces: Mutex::new(Default::default()),
             api_readers: Mutex::new(Default::default()),
             resource_state: Mutex::new(resources::ResourceState::default()),

@@ -26,6 +26,9 @@ mod races;
 /// endpoints, readiness failure, loss retirement, bundled isolation.
 mod process_backend;
 
+/// Non-owner own-namespace publication (§6.6/§6.7, 2026-11-26): handle
+/// authority, namespace scope, demand, detach and provider unload.
+mod guest_publish;
 mod resource_composition;
 /// P0 review: `create_instance` building `init.settings` from the
 /// loaded plugin's own schema, and `PluginHost::schema_for` (plugin-id

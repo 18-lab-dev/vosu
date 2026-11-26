@@ -304,7 +304,8 @@ A scalar value (`VOSU_VALUE_BOOL`/`I64`/`U64`/`F64`) or a string/byte leaf (`VOS
 plugin's own `SESSION_IDENTIFY` for it, or for a handle unknown to this
 plugin instance, is refused with `VOSU_ERR_INVALID_ARGUMENT`; a detached
 handle is refused with `VOSU_ERR_TARGET_GONE`; a handle owned by another
-plugin is refused with `VOSU_ERR_PERMISSION_DENIED`. Core creates any
+plugin is refused with `VOSU_ERR_PERMISSION_DENIED` unless the non-owner
+rule below admits the publication. Core creates any
 missing intermediate object a pointer needs; a pointer that descends
 through an existing array or scalar is refused (`VOSU_ERR_INVALID_ARGUMENT`),
 since arrays are published whole (above). `VOSU_VALUE_NULL` at `/resources`
@@ -317,6 +318,36 @@ and it carries no CBOR tags — any violation is `VOSU_ERR_INVALID_ARGUMENT`.
 JSON projection writes a non-finite `f64` as `null` (matching JS
 `JSON.stringify`) and `VOSU_VALUE_BYTES` as standard base64; no schema in
 this freeze declares a bytes field.
+
+**Non-owner own-namespace publication (amended 2026-11-26).** A plugin may
+also publish into a session another plugin owns, but only into its own
+namespace: the one its `provides` licenses, named by its own plugin id.
+This is admitted only while the session is live and identified and this
+plugin instance has been sent `SESSION_ATTACHED` for the session's handle
+(as a `vosu.sessions` subscriber, §6.2) and no `SESSION_DETACHED` for it
+since; every entry of the message must then target that namespace with a
+plain value. Everything else is refused with `VOSU_ERR_PERMISSION_DENIED`
+and commits nothing:
+
+- a handle this instance was never sent `SESSION_ATTACHED` for, or one
+  whose `vosu.sessions` watch was lost (§6.2 "Lifecycle backpressure")
+  until the replay attaches it again;
+- any common or core namespace (`vosu.client`, `vosu.chart`, `vosu.play`,
+  …), including fields the plugin's own `covers` names, which apply only to
+  sessions it owns;
+- the owner's namespace or any other plugin's namespace;
+- `VOSU_VALUE_RESOURCE_REF`/`TREE_REF` entries: a reference resolves
+  through the owning plugin's session authority (§6.5), and core resource
+  kinds stay the owner's.
+
+A handle whose session detached answers `VOSU_ERR_TARGET_GONE`, as for the
+owner. The commit budget below applies unchanged: 4 MiB for the namespace,
+and the session's 65,536 keys shared with the owner. The namespace is
+projected and served like any other plugin namespace (API v1 reads and
+subscriptions, §6.12 `STATE_SUBSCRIBE`) and receives `DEMAND_CHANGED`
+(§6.7). When the publishing instance unloads, crashes or is disabled, core
+removes its namespace from every session it published into without owning,
+as one new revision of each. The owner's rules above are unchanged.
 
 **Commit budget (K3, A2b).** The resulting committed state is bounded to
 4 MiB per namespace and 65,536 keys per session. A `PUBLISH_FIELD` or
@@ -334,6 +365,8 @@ Core tracks, per session and per (namespace, pointer) selector, whether any subs
 
 - `regular`/`precise`: host-computed acceleration gates, each the union, across every currently selected (namespace, pointer) pair for this session, of that field's declared `x-sampling-lane` (`docs/v2/state-schema.md#sampling-lanes`) — `regular` unions the `regular`/`both` lanes, `precise` the `precise`/`both` lanes — after core's own gameplay-status gating is already applied (`docs/v2/state-schema.md`'s `activity: "gameplay"` rule: `vosu.status.status` is `play` or `pause`). A plugin never reads `x-sampling-lane` itself to decide its own gating; core's compiler is its only consumer. `regular`/`precise` tell a plugin when to sample *above* its baseline, never whether to sample at all.
 - `selectors`: the session's full current set of subscribed (namespace, pointer) pairs, so a plugin with several independently accelerated fields knows exactly which ones currently have a subscriber, since the two lane flags alone only say whether *any* do.
+
+**Non-owning providers (amended 2026-11-26).** A plugin that publishes its own namespace into a session it does not own (§6.6) also receives `DEMAND_CHANGED` for that session's handle, starting once it has been sent `SESSION_ATTACHED` for it. Its snapshot covers only its own namespace: `selectors` lists the selected pairs in that namespace and `regular`/`precise` are compiled from those alone, so it never learns other subscribers' selectors. The owning game plugin's snapshot is unchanged and still covers every selector for the session.
 
 ### 6.8 Actions
 

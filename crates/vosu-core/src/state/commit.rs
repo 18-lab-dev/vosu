@@ -41,6 +41,10 @@ pub enum CommitError {
     Detached,
     #[error("session belongs to another plugin")]
     NotOwner,
+    #[error("a non-owning publisher may publish only its own namespace, not {0}")]
+    NotOwnNamespace(String),
+    #[error("a non-owning publisher may not publish resource or tree references")]
+    GuestReference,
     #[error("core namespace root must be an object")]
     CoreRoot,
     #[error("state document exceeds its byte or key budget")]
@@ -52,7 +56,9 @@ pub enum CommitError {
 impl From<CommitError> for vosu_status {
     fn from(error: CommitError) -> Self {
         match error {
-            CommitError::NotOwner => VOSU_ERR_PERMISSION_DENIED,
+            CommitError::NotOwner
+            | CommitError::NotOwnNamespace(_)
+            | CommitError::GuestReference => VOSU_ERR_PERMISSION_DENIED,
             CommitError::Detached => VOSU_ERR_TARGET_GONE,
             _ => VOSU_ERR_INVALID_ARGUMENT,
         }
@@ -85,11 +91,14 @@ fn permitted(grant: &PublisherGrant, ns: &str, p: &Pointer) -> Result<(), Commit
     }
 }
 
+/// `guest` is a non-owning publisher (`docs/v2/plugin-abi.md` §6.6,
+/// 2026-11-26): it may write plain values into its own namespace only.
 pub(super) fn validate<'a>(
     grant: &PublisherGrant,
     old: &SessionState,
     entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
     references: &super::ReferenceStore,
+    guest: bool,
 ) -> Result<Vec<Validated>, CommitError> {
     let mut validated: Vec<Validated> = Vec::with_capacity(entries.len());
     let mut lookup = ReadIndex::default();
@@ -98,7 +107,21 @@ pub(super) fn validate<'a>(
             return Err(CommitError::UnknownSession);
         }
         let pointer = Pointer::parse(entry.pointer)?;
-        permitted(grant, entry.ns, &pointer)?;
+        if guest {
+            if grant.permits(entry.ns, &pointer) != Permit::Own {
+                return Err(CommitError::NotOwnNamespace(entry.ns.into()));
+            }
+            // Resolution routes to the binding instance's own session
+            // authority, which a non-owner never holds.
+            if matches!(
+                entry.value,
+                PublishValueRef::ResourceRef(_) | PublishValueRef::TreeRef(_)
+            ) {
+                return Err(CommitError::GuestReference);
+            }
+        } else {
+            permitted(grant, entry.ns, &pointer)?;
+        }
         let mut reference = None;
         let mut value = match entry.value {
             PublishValueRef::Null => StateValue::Null,

@@ -157,6 +157,31 @@ impl StateStore {
         instance: u64,
         entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
     ) -> Result<CommitOutcome, CommitError> {
+        self.commit_inner(grant, key, instance, false, entries)
+    }
+
+    /// A non-owning publisher's commit (`docs/v2/plugin-abi.md` §6.6,
+    /// 2026-11-26). The host has already checked that the instance holds
+    /// the session's handle; this admits only plain values in the
+    /// publisher's own namespace, under the same budgets and close rules.
+    pub fn commit_as_guest<'a>(
+        &self,
+        grant: &PublisherGrant,
+        key: SessionKey,
+        instance: u64,
+        entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
+    ) -> Result<CommitOutcome, CommitError> {
+        self.commit_inner(grant, key, instance, true, entries)
+    }
+
+    fn commit_inner<'a>(
+        &self,
+        grant: &PublisherGrant,
+        key: SessionKey,
+        instance: u64,
+        guest: bool,
+        entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
+    ) -> Result<CommitOutcome, CommitError> {
         let slot = self
             .sessions
             .read()
@@ -164,7 +189,7 @@ impl StateStore {
             .get(&key)
             .cloned()
             .ok_or(CommitError::UnknownSession)?;
-        if slot.owner != grant.plugin_id {
+        if !guest && slot.owner != grant.plugin_id {
             return Err(CommitError::NotOwner);
         }
         let mut meta = slot.commit.lock().unwrap();
@@ -172,7 +197,7 @@ impl StateStore {
             return Err(CommitError::Detached);
         }
         let previous = slot.current.load_full();
-        let validated = validate(grant, &previous, entries, &self.resources)?;
+        let validated = validate(grant, &previous, entries, &self.resources, guest)?;
         if validated.is_empty() {
             return Ok(CommitOutcome {
                 current: previous.clone(),
@@ -299,6 +324,45 @@ impl StateStore {
         drop(meta);
         notify(&slot, outcome.current.revision);
         Some(outcome)
+    }
+
+    /// Removes namespace `ns` from every open session another plugin owns,
+    /// once `ns`'s provider unloaded, crashed or was disabled. Guests never
+    /// bind references, so no registry binding lives under `ns` there.
+    pub fn clear_guest_namespace(&self, ns: &str) -> Vec<CommitOutcome> {
+        let slots: Vec<_> = self
+            .sessions
+            .read()
+            .unwrap()
+            .values()
+            .filter(|slot| slot.owner.as_ref() != ns)
+            .cloned()
+            .collect();
+        let mut outcomes = Vec::new();
+        for slot in slots {
+            let mut meta = slot.commit.lock().unwrap();
+            let previous = slot.current.load_full();
+            if meta.closed || previous.namespace(ns).is_none() {
+                continue;
+            }
+            let namespaces = previous
+                .namespace_entries()
+                .iter()
+                .filter(|(name, _)| name.as_ref() != ns)
+                .cloned()
+                .collect();
+            meta.usage.remove(ns);
+            let outcome = publish(
+                &slot,
+                previous,
+                namespaces,
+                vec![(Arc::from(ns), Pointer::root())],
+            );
+            drop(meta);
+            notify(&slot, outcome.current.revision);
+            outcomes.push(outcome);
+        }
+        outcomes
     }
 }
 

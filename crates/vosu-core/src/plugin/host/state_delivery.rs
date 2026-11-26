@@ -154,7 +154,10 @@ impl PluginHost {
                     .collect::<Vec<_>>()
             };
             for attached in attachments {
+                let key = SessionKey(attached.handle);
                 self.queue_attachment(who, attached);
+                // A providing watcher learns its namespace's current demand.
+                self.refresh_state_demand(key);
             }
             return vosu_status::VOSU_OK;
         };
@@ -291,21 +294,41 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .demand(key, status);
-        let who = {
+        let (owner, guests) = {
             let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
             let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
             let Some((owner, _)) = sessions.owner_and_pid(SessionHandle(key.0)) else {
                 return;
             };
-            instances.iter().find_map(|(id, slot)| match slot {
-                InstanceSlot::Live(entry) if &entry.plugin_id == owner => Some(*id),
-                _ => None,
-            })
+            let mut found = None;
+            let mut guests = Vec::new();
+            for (id, slot) in instances.iter() {
+                let InstanceSlot::Live(entry) = slot else {
+                    continue;
+                };
+                if &entry.plugin_id == owner {
+                    found = found.or(Some(*id));
+                } else if entry.publisher.grant.provides_own_namespace()
+                    && self.state_handle_named(*id, key, true)
+                {
+                    guests.push((*id, entry.plugin_id.clone()));
+                }
+            }
+            (found, guests)
         };
-        let Some(who) = who else {
-            return;
-        };
-        let slot = self.delivery_slot(who, key);
+        if let Some(who) = owner {
+            self.offer_state_demand(who, key, self.delivery_slot(who, key), demand);
+        }
+        self.refresh_guest_demand(key, status, guests);
+    }
+
+    fn offer_state_demand(
+        &self,
+        who: PluginInstanceId,
+        key: SessionKey,
+        slot: Arc<Mutex<Slot>>,
+        demand: DemandSnapshot,
+    ) {
         {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
             if pending.last_demand.is_none() && demand == DemandSnapshot::default() {
@@ -319,6 +342,45 @@ impl PluginHost {
             pending.demand = Some(demand);
         }
         self.schedule_state_slot(who, key, slot);
+    }
+
+    /// `who`'s live slot for `key` once `SESSION_ATTACHED` named the handle
+    /// to it: delivered, or with `queued` also still queued ahead of
+    /// anything else. Never creates a slot.
+    fn named_state_slot(
+        &self,
+        who: PluginInstanceId,
+        key: SessionKey,
+        queued: bool,
+    ) -> Option<Arc<Mutex<Slot>>> {
+        let delivery = self
+            .state_delivery
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let slot = delivery.slots.get(&(who, key))?;
+        let pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+        (!pending.dead && (pending.known || (queued && pending.attached.is_some())))
+            .then(|| slot.clone())
+    }
+
+    pub(super) fn state_handle_named(
+        &self,
+        who: PluginInstanceId,
+        key: SessionKey,
+        queued: bool,
+    ) -> bool {
+        self.named_state_slot(who, key, queued).is_some()
+    }
+
+    pub(super) fn offer_guest_demand(
+        &self,
+        who: PluginInstanceId,
+        key: SessionKey,
+        demand: DemandSnapshot,
+    ) {
+        if let Some(slot) = self.named_state_slot(who, key, true) {
+            self.offer_state_demand(who, key, slot, demand);
+        }
     }
 
     fn end_sessions_watch(&self, who: PluginInstanceId) {
