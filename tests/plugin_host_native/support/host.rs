@@ -115,6 +115,49 @@ pub fn prime_executable() {
     });
 }
 
+/// This binary's tests assume `nextest`'s one-OS-process-per-test isolation
+/// (`docs/testing/verification.md`'s "CI baseline"), or a single filtered
+/// `cargo test` run: several PID-keyed test hooks
+/// (`vosu_core::plugin::test_support::set_session_memory`, [`Host::offer_target`])
+/// and `prime_executable`'s one-shot evaluation cache are documented as
+/// "unique/once within this test binary", which plain `cargo test`'s default
+/// harness (every test as one OS thread, all sharing this process) can
+/// violate the moment two tests' fixtures run at once. Tracks which thread
+/// currently owns a live [`Host`] (same-thread nesting, as `broker.rs`'s
+/// direct/process-host pair uses, is unaffected) and panics with a clear
+/// message the first time a second thread tries to create one concurrently,
+/// rather than silently racing or hanging.
+static HOST_OWNER: std::sync::LazyLock<std::sync::Mutex<(Option<std::thread::ThreadId>, usize)>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new((None, 0)));
+
+fn enter_host_owner() {
+    let mut owner = HOST_OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let this_thread = std::thread::current().id();
+    if let Some(thread) = owner.0 {
+        assert_eq!(
+            thread, this_thread,
+            "a support::Host is still live on another thread of this process ({thread:?} vs \
+             {this_thread:?}): run tests/plugin_host_native through `cargo nextest run` (one \
+             process per test) or a single filtered `cargo test`, never the whole binary's \
+             default multi-threaded harness"
+        );
+    }
+    owner.0 = Some(this_thread);
+    owner.1 += 1;
+}
+
+fn leave_host_owner() {
+    let mut owner = HOST_OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    owner.1 -= 1;
+    if owner.1 == 0 {
+        owner.0 = None;
+    }
+}
+
 impl Host {
     /// A host whose logs and instance data live under `root`.
     pub fn new(root: &Path) -> Self {
@@ -127,6 +170,7 @@ impl Host {
         root: &Path,
         configure: impl FnOnce(ProcessHostLauncher) -> ProcessHostLauncher,
     ) -> Self {
+        enter_host_owner();
         prime_executable();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let host = {
@@ -265,6 +309,7 @@ impl Drop for Host {
         for pid in self.targets.lock().unwrap().drain(..) {
             vosu_core::plugin::test_support::clear_session_memory(pid);
         }
+        leave_host_owner();
     }
 }
 
