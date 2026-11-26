@@ -1,4 +1,4 @@
-//! Lock order: instances -> action state. Session lookups precede action state.
+//! Lock order: instances -> sessions -> state delivery -> action state.
 //! No plugin dispatch or sink callback runs while action state is locked.
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +23,8 @@ pub(super) const MAX_RELAYS: usize = 64;
 pub(super) struct PendingInvocation {
     pub action: Arc<ActionDescriptor>,
     pub session: Option<SessionHandle>,
+    guest_session: bool,
+    pub(super) queued_message: Option<OwnedMessage>,
     pub sink: Option<Arc<dyn InvocationSink>>,
     pub deadline: Option<tokio::task::JoinHandle<()>>,
     pub cancelled: bool,
@@ -229,10 +231,7 @@ impl PluginHost {
                 (_, Some(id)) => {
                     let handle = sessions
                         .identified_sessions()
-                        .find(|(h, owner, _)| {
-                            owner.as_str() == action.provider_id
-                                && sessions.public_id_of(*h) == Some(id)
-                        })
+                        .find(|(h, _, _)| sessions.public_id_of(*h) == Some(id))
                         .map(|(h, _, _)| h)
                         .ok_or(InvocationError::InvalidSession)?;
                     Some(handle)
@@ -252,6 +251,9 @@ impl PluginHost {
         if handle.is_some_and(|handle| !sessions.is_identified(handle)) {
             return Err(InvocationError::InvalidSession);
         }
+        let guest_session = handle
+            .and_then(|handle| sessions.owner_and_pid(handle))
+            .is_some_and(|(owner, _)| owner.as_str() != action.provider_id);
         let id = {
             let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
             let registered = state
@@ -296,6 +298,8 @@ impl PluginHost {
                 PendingInvocation {
                     action: Arc::clone(&action),
                     session: handle,
+                    guest_session,
+                    queued_message: None,
                     sink: None,
                     deadline: None,
                     cancelled: false,
@@ -335,14 +339,15 @@ impl PluginHost {
         sink: Arc<dyn InvocationSink>,
         policy: InvocationPolicy,
     ) -> Result<(), InvocationError> {
-        {
+        let guest_session = {
             let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
             let pending = state
                 .pending
                 .get_mut(&invocation)
                 .ok_or(InvocationError::Unavailable)?;
             pending.sink = Some(sink);
-        }
+            pending.session.filter(|_| pending.guest_session)
+        };
         let weak = self.self_ref.clone();
         let timer = self.state_runtime.spawn(async move {
             tokio::time::sleep(policy.deadline).await;
@@ -358,6 +363,20 @@ impl PluginHost {
                 timer.abort();
             }
         }
+        if let Some(handle) = guest_session {
+            match self.queue_guest_action(provider, handle, invocation, message) {
+                Ok(()) => {}
+                Err(InvocationError::InvalidSession) => {
+                    self.discard_prepared_action(invocation);
+                    return Err(InvocationError::InvalidSession);
+                }
+                Err(_) => self.finish_action(
+                    invocation,
+                    failure("plugin_crashed", "Action provider unavailable"),
+                ),
+            }
+            return Ok(());
+        }
         let dispatched = {
             let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
             match instances.get(&provider) {
@@ -371,14 +390,7 @@ impl PluginHost {
                 failure("plugin_crashed", "Action provider unavailable"),
             );
         }
-        let cancel = {
-            let mut state = self.action_state.lock().unwrap_or_else(|p| p.into_inner());
-            state.pending.get_mut(&invocation).is_some_and(|pending| {
-                pending.dispatched = true;
-                pending.cancelled
-            })
-        };
-        if cancel {
+        if self.mark_action_dispatched(invocation) {
             let _ = self.dispatch_to_instance(
                 provider,
                 &Message::ActionCancel(ActionCancel { invocation }),
@@ -386,6 +398,29 @@ impl PluginHost {
             );
         }
         Ok(())
+    }
+
+    /// An advisory cancellation that raced dispatch must follow the invoke.
+    pub(super) fn mark_action_dispatched(&self, invocation: InvocationId) -> bool {
+        self.action_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pending
+            .get_mut(&invocation)
+            .is_some_and(|pending| {
+                pending.dispatched = true;
+                pending.cancelled
+            })
+    }
+
+    pub(super) fn take_queued_action(&self, invocation: InvocationId) -> Option<OwnedMessage> {
+        self.action_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pending
+            .get_mut(&invocation)?
+            .queued_message
+            .take()
     }
 
     pub(crate) fn cancel_action(&self, invocation: InvocationId) {

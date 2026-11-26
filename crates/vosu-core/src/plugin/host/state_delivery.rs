@@ -1,7 +1,7 @@
 //! Latest-only state delivery on existing instance workers. Lock order: focus ->
 //! delivery serialization -> instances -> sessions -> schema registry ->
-//! subscriptions -> delivery map -> individual slot. Publication validation/build
-//! never holds delivery serialization, so it cannot stall identify or SYNC reads.
+//! subscriptions -> delivery map -> action state -> individual slot. Publication
+//! validation/build never holds delivery serialization, so it cannot stall identify or SYNC reads.
 //! Workers release every lock before plugin code. Retries retain weak host/slot
 //! references; at most one queued/running/retrying job owns each slot.
 use std::collections::{HashMap, HashSet};
@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::{InstanceSlot, PluginHost};
+use crate::actions::InvocationId;
 use crate::plugin::{
     PluginInstanceId,
     dispatch::{DispatchTarget, OwnedMessage},
@@ -18,8 +19,8 @@ use crate::state::{
     CommitOutcome, DemandSnapshot, PendingUpdate, Pointer, SessionKey, SubscriberId, split_update,
 };
 use vosu_plugin_api::{
-    FocusChanged, Message, SessionAttached, SessionDetached, StateSubscribe, VOSU_FRAME_MAX_BYTES,
-    vosu_status,
+    ActionCancel, FocusChanged, Message, SessionAttached, SessionDetached, StateSubscribe,
+    VOSU_FRAME_MAX_BYTES, vosu_status,
 };
 
 pub(super) struct DeliveryState {
@@ -59,6 +60,8 @@ struct Slot {
     // revision per selected key (at most 256); wholesale replacement clears it.
     revisions: Vec<(String, String, u64)>,
     attached: Option<SessionAttached>,
+    /// Only ids live here; the action reservation owns the bytes and frees them on timeout.
+    actions: Vec<InvocationId>,
     focus: Option<FocusChanged>,
     last_focus: Option<FocusChanged>,
     detached: Option<SessionDetached>,
@@ -68,6 +71,7 @@ struct Slot {
 impl Slot {
     fn dirty(&self) -> bool {
         !self.pending.is_empty()
+            || !self.actions.is_empty()
             || self.attached.is_some()
             || self.focus.is_some()
             || self.detached.is_some()
@@ -179,14 +183,7 @@ impl PluginHost {
         let owns = sessions
             .owner_and_pid(handle)
             .is_some_and(|(owner, _)| owner == &plugin);
-        let known = self
-            .state_delivery
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .slots
-            .get(&(who, key))
-            .is_some_and(|slot| slot.lock().unwrap_or_else(|p| p.into_inner()).known);
-        if !owns && !known {
+        if !owns && !self.state_handle_named(who, key, false) {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
         let state = self.state.store.current(key);
@@ -349,9 +346,9 @@ impl PluginHost {
         self.schedule_state_slot(who, key, slot);
     }
 
-    /// `who`'s live slot for `key` once `SESSION_ATTACHED` named the handle
-    /// to it: delivered, or with `queued` also still queued ahead of
-    /// anything else. Never creates a slot.
+    /// A watcher's live slot for `key` once `SESSION_ATTACHED` named the handle
+    /// to it, or is still pending when `queued` is true. An action alone does
+    /// not grant the publication and demand access of a `vosu.sessions` watch.
     fn named_state_slot(
         &self,
         who: PluginInstanceId,
@@ -364,8 +361,11 @@ impl PluginHost {
             .unwrap_or_else(|p| p.into_inner());
         let slot = delivery.slots.get(&(who, key))?;
         let pending = slot.lock().unwrap_or_else(|p| p.into_inner());
-        (!pending.dead && (pending.known || (queued && pending.attached.is_some())))
-            .then(|| slot.clone())
+        (pending.lifecycle
+            && !delivery.ending.contains(&who)
+            && !pending.dead
+            && (pending.known || (queued && pending.attached.is_some())))
+        .then(|| slot.clone())
     }
 
     pub(super) fn state_handle_named(
@@ -437,7 +437,7 @@ impl PluginHost {
         for (key, slot) in slots {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
             pending.focus = None;
-            if pending.known {
+            if pending.known || !pending.actions.is_empty() {
                 // Revoke handle knowledge before releasing serialization. A
                 // restart is deferred until all lost notifications have drained.
                 pending.known = false;
@@ -538,9 +538,6 @@ impl PluginHost {
         };
         {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
-            if pending.attached.is_some() {
-                return;
-            }
             pending.focus = Some(FocusChanged {
                 handle: key.0,
                 focused: self
@@ -558,8 +555,10 @@ impl PluginHost {
                     .available()
                     .then(|| self.foreground.foreground_pid() == Some(attached.pid)),
             });
+            if !pending.known && pending.attached.is_none() {
+                pending.attached = Some(attached);
+            }
             pending.last_focus = pending.focus;
-            pending.attached = Some(attached);
         }
         self.schedule_state_slot(who, key, slot);
     }
@@ -706,7 +705,7 @@ impl PluginHost {
         let mut overflow = Vec::new();
         for (who, slot) in slots {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
-            if !pending.known && pending.attached.is_some() {
+            if !pending.known && pending.attached.is_some() && pending.actions.is_empty() {
                 pending.dead = true;
                 pending.pending.clear();
                 drop(pending);
@@ -895,7 +894,7 @@ impl PluginHost {
         slot: &Arc<Mutex<Slot>>,
         target: &DispatchTarget,
     ) {
-        let (attached, focus, entries, demand, detached) = {
+        let (attached, focus, entries, demand, actions, detached) = {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
             if pending.dead {
                 return;
@@ -909,6 +908,7 @@ impl PluginHost {
                 pending.focus.take(),
                 pending.pending.take(),
                 pending.demand.take(),
+                std::mem::take(&mut pending.actions),
                 pending.detached.take(),
             )
         };
@@ -946,6 +946,14 @@ impl PluginHost {
             };
             send(Message::DemandChanged(demand));
         }
+        for invocation in actions {
+            if let Some(message) = self.take_queued_action(invocation) {
+                message.call(target);
+                if self.mark_action_dispatched(invocation) {
+                    send(Message::ActionCancel(ActionCancel { invocation }));
+                }
+            }
+        }
         if let Some(detached) = detached {
             send(Message::SessionDetached(detached));
             slot.lock().unwrap_or_else(|p| p.into_inner()).dead = true;
@@ -972,6 +980,8 @@ impl PluginHost {
         self.schedule_state_slot(who, key, slot.clone());
     }
 }
+
+mod actions;
 
 #[cfg(test)]
 mod tests;

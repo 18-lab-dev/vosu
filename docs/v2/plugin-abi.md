@@ -200,6 +200,15 @@ A session is not exposed anywhere outside core — `/api/v1/sessions`, other plu
 `SESSION_ATTACHED` carries no `focused`/`foreground` field; a plugin that needs either waits for the first `FOCUS_CHANGED` (sent once, promptly, after the session is identified, even if neither changes relative to the previous state).
 
 **Delivery ordering.** Core sends a plugin instance `SESSION_ATTACHED` for a handle before any other message naming that handle to it — not only to the owning game plugin, but to any plugin a handle is about to be named to for any reason (a `STATE_SUBSCRIBE`/`STATE_UPDATE` targeting that session, an `ACTION_INVOKE`/`ACTION_CALL` carrying it, a `RESOURCE_RESOLVE` for a session-scoped root). A plugin that has no use for session lifecycle itself may simply ignore the fields it does not need.
+
+**Session-bound actions (2026-11-26).** A provider need not own the
+identified session an action targets. For both HTTP invocations and plugin
+calls (§6.12), the callee's `ACTION_INVOKE.session` is the handle core
+announced to that instance. If needed, core sends a non-owning attachment
+without private process facts before the invoke, even without a
+`vosu.sessions` watch; it does not implicitly subscribe the callee to that
+watch. A detach still cancels its in-flight actions and ends that handle.
+
 The owner's final committed state must flush to subscribers before its
 `SESSION_DETACHED` is delivered (A2b). A full dispatch queue never drops
 or reorders a `SESSION_DETACHED`, for the owner or for a `vosu.sessions`

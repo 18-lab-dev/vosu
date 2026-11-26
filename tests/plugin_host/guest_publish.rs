@@ -65,7 +65,7 @@ fn load(
     let events = publisher::register(id);
     let loaded = plugin::load_bundled(
         &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
-        &plugin::ValidationSnapshot::default(),
+        &host.validation_snapshot(),
         &[plugin::BundledPlugin {
             manifest,
             settings_schema: None,
@@ -115,13 +115,9 @@ fn publish(id: &str, handle: u64, ns: &str, pointer: &str, value: u64) -> vosu_s
     publisher::host_services(id).send_flat(vosu_opcode::VOSU_OP_PUBLISH_BATCH, 0, 0, &bytes)
 }
 
-#[test]
-fn non_owner_tool_publishes_its_own_namespace_for_api_v1_and_leaves_with_its_plugin() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let _enter = runtime.enter();
-    let logs = tempfile::tempdir().unwrap();
+fn test_host(runtime: &tokio::runtime::Runtime, logs: &std::path::Path) -> Arc<PluginHost> {
     let logger = vosu_core::logging::Logger::new(
-        logs.path(),
+        logs,
         vosu_core::logging::LoggerOptions {
             version: "test".into(),
             debug_log: true,
@@ -130,14 +126,22 @@ fn non_owner_tool_publishes_its_own_namespace_for_api_v1_and_leaves_with_its_plu
         Arc::new(Console),
     )
     .unwrap();
-    let host = PluginHost::new_with_foreground(
+    PluginHost::new_with_foreground(
         logger,
         Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
             Storage,
         ))),
         runtime.handle().clone(),
         Arc::new(plugin::SyntheticForegroundSource::new(None)),
-    );
+    )
+}
+
+#[test]
+fn non_owner_tool_publishes_its_own_namespace_for_api_v1_and_leaves_with_its_plugin() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let logs = tempfile::tempdir().unwrap();
+    let host = test_host(&runtime, logs.path());
 
     let game = load(
         &host,
@@ -242,4 +246,183 @@ fn non_owner_tool_publishes_its_own_namespace_for_api_v1_and_leaves_with_its_plu
     );
     drop(subscription);
     host.destroy_all(WAIT);
+}
+
+mod action_relay {
+    use super::*;
+    use std::sync::Mutex;
+    use std::sync::mpsc::{SyncSender, sync_channel};
+
+    use vosu_plugin_api::{
+        ActionCall, ActionResult, ActionStatus, CallerKind, CborValue, ConcurrentPlugin, Init,
+        PluginError, TimerFired, VtableHostServices,
+    };
+
+    const CALLER: &str = "test.guest-action-replay.game";
+    const CALLEE: &str = "test.guest-action-replay.callee";
+    const ACTION: &str = "test.guest-action-replay.callee.run";
+
+    struct Hooks {
+        events: SyncSender<Message>,
+        release_attach: Mutex<Receiver<()>>,
+    }
+    static HOOKS: Mutex<Option<Hooks>> = Mutex::new(None);
+
+    struct Callee {
+        host: VtableHostServices,
+        hooks: Hooks,
+    }
+
+    impl ConcurrentPlugin for Callee {
+        fn create(host: VtableHostServices, _: Init) -> Result<Self, PluginError> {
+            let hooks = HOOKS.lock().unwrap().take().unwrap();
+            Ok(Self { host, hooks })
+        }
+
+        fn on_message(&self, message: Message, _: u64) -> Result<(), PluginError> {
+            match &message {
+                Message::SessionAttached(_) => {
+                    self.hooks.events.try_send(message).unwrap();
+                    self.hooks
+                        .release_attach
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(WAIT)
+                        .unwrap();
+                }
+                Message::ActionInvoke(invoke) => {
+                    assert_eq!(
+                        self.host.send(
+                            &Message::ActionResult(ActionResult {
+                                invocation: invoke.invocation,
+                                status: ActionStatus::Ok,
+                                value: Some(invoke.args.clone()),
+                                code: None,
+                                message: None,
+                            }),
+                            0
+                        ),
+                        vosu_status::VOSU_OK
+                    );
+                    self.hooks.events.try_send(message).unwrap();
+                }
+                Message::TimerFired(_) => self.hooks.events.try_send(message).unwrap(),
+                _ => {}
+            }
+            Ok(())
+        }
+    }
+    vosu_plugin_internal::export_plugin!(bundled concurrent Callee);
+
+    #[test]
+    fn action_call_uses_the_guest_handle_after_a_concurrent_watcher_attach() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _enter = runtime.enter();
+        let logs = tempfile::tempdir().unwrap();
+        let host = test_host(&runtime, logs.path());
+        let (events, replies) = sync_channel(8);
+        let (release, release_attach) = sync_channel(1);
+        *HOOKS.lock().unwrap() = Some(Hooks {
+            events,
+            release_attach: Mutex::new(release_attach),
+        });
+        let callee = PluginInstanceId::new(2);
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &host.validation_snapshot(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest(
+                    CALLEE,
+                    &format!(
+                        "[[actions]]\nname='run'\nversion='1.0.0'\ntitle='Guest'\nargs_schema='args.json'\nresult_schema='result.json'\nsession='required'\n[[provides]]\nid='action:{ACTION}'\nversion='1.0.0'\n"
+                    ),
+                ),
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[("args.json", "{}"), ("result.json", "{}")],
+                vtable: vosu_plugin_vtable,
+            }],
+        )
+        .unwrap();
+        host.create_instance(
+            callee,
+            &loaded[0],
+            logs.path().into(),
+            Some(plugin::WorkerPool::new(2, 64)),
+        )
+        .unwrap();
+        let game = load(
+            &host,
+            1,
+            CALLER,
+            &manifest(
+                CALLER,
+                &format!(
+                    "[match]\nprocess_names=['{CALLER}']\n[[provides]]\nid='game:fixture'\nversion='*'\n[[requires]]\nid='action:{ACTION}'\nversion='^1.0'\n"
+                ),
+            ),
+            &[],
+        );
+        host.process_appeared(plugin::ProcessRecord {
+            pid: 4802,
+            name: CALLER.into(),
+            path: format!("/games/{CALLER}"),
+            command_line: CALLER.into(),
+            argv: Some(vec![CALLER.into()]),
+            bitness: vosu_plugin_api::Bitness::X64,
+            start_time: 1,
+        });
+        let handle = until(&game, |event| match event {
+            PublisherEvent::Attached { handle } => Some(handle),
+            _ => None,
+        });
+        assert_eq!(
+            host.handle(
+                callee,
+                Message::StateSubscribe(StateSubscribe {
+                    session: None,
+                    selectors: vec![Selector {
+                        ns: "vosu.sessions".into(),
+                        pointer: String::new(),
+                    }],
+                }),
+                0,
+            ),
+            vosu_status::VOSU_OK
+        );
+        let Message::SessionAttached(attached) = replies.recv_timeout(WAIT).unwrap() else {
+            panic!("the callee must first learn the handle");
+        };
+        assert_eq!(attached.handle, handle);
+        assert!(attached.path.is_none());
+        let args = CborValue::Text("guest relay".into());
+        assert_eq!(
+            publisher::host_services(CALLER).send(
+                &Message::ActionCall(ActionCall {
+                    invocation: 42,
+                    action: ACTION.into(),
+                    session: Some(handle),
+                    args: args.clone(),
+                }),
+                0
+            ),
+            vosu_status::VOSU_OK
+        );
+
+        // Another worker can process unrelated work while this attachment
+        // callback is held, but must not invoke the session-bound action.
+        let probe = Message::TimerFired(TimerFired { timer: 7 });
+        host.dispatch_to_instance(callee, &probe, 0).unwrap();
+        assert_eq!(replies.recv_timeout(WAIT).unwrap(), probe);
+        release.send(()).unwrap();
+        let Message::ActionInvoke(invoke) = replies.recv_timeout(WAIT).unwrap() else {
+            panic!("the existing attachment must not be duplicated");
+        };
+        assert_eq!(invoke.session, Some(attached.handle));
+        assert_eq!(invoke.action, ACTION);
+        assert_eq!(invoke.caller.kind, CallerKind::Plugin);
+        assert_eq!(invoke.caller.id, CALLER);
+        assert_eq!(invoke.args, args);
+        host.destroy_all(WAIT);
+    }
 }

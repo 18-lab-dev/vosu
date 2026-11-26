@@ -34,6 +34,7 @@ pub struct ApiFixturePlugin {
     actions: ActionFixture,
     // Keep bounded observation alive without a background consumer.
     events: std::sync::mpsc::Receiver<crate::actions::ActionEvent>,
+    sessions: HashSet<u64>,
     streams: HashMap<u64, u64>,
     next_stream: u64,
     /// Generated artifact streams, which belong to no session.
@@ -148,6 +149,7 @@ impl Plugin for ApiFixturePlugin {
             id: init.plugin_id,
             actions,
             events,
+            sessions: HashSet::new(),
             streams: HashMap::new(),
             next_stream: 100,
             artifact_streams: HashSet::new(),
@@ -160,6 +162,10 @@ impl Plugin for ApiFixturePlugin {
     fn on_message(&mut self, message: Message, correlation: u64) -> Result<(), PluginError> {
         match message {
             Message::SessionAttached(session) => {
+                self.sessions.insert(session.handle);
+                if session.name.is_none() {
+                    return Ok(()); // Guest attachments have no private process facts.
+                }
                 self.send(
                     Message::SessionIdentify(SessionIdentify {
                         handle: session.handle,
@@ -182,9 +188,8 @@ impl Plugin for ApiFixturePlugin {
                 self.publish(session.handle)?;
             }
             Message::SessionDetached(session) => {
+                self.sessions.remove(&session.handle);
                 self.streams.retain(|_, handle| *handle != session.handle);
-                // All fixture invocations are session-less; core owns detached
-                // session invocation cancellation for session-bound test scripts.
             }
             Message::ResourceResolve(request) => {
                 let reply = if request.kind == "fixture-file"
@@ -311,6 +316,21 @@ impl Plugin for ApiFixturePlugin {
                 self.send(Message::ResourceResolved(reply), correlation)?;
             }
             Message::ActionInvoke(invoke) => {
+                if invoke
+                    .session
+                    .is_some_and(|handle| !self.sessions.contains(&handle))
+                {
+                    return self.send(
+                        Message::ActionResult(ActionResult {
+                            invocation: invoke.invocation,
+                            status: ActionStatus::Error,
+                            value: None,
+                            code: Some("unknown_session".into()),
+                            message: None,
+                        }),
+                        0,
+                    );
+                }
                 let mode = match &invoke.args {
                     CborValue::Map(entries) => entries.iter().find_map(|(k, v)| {
                         if k == &CborValue::Text("mode".into()) {
