@@ -85,11 +85,13 @@ fn persist_no_clobber(temp: tempfile::NamedTempFile, target: &Path) -> io::Resul
 
 #[cfg(windows)]
 fn persist_no_clobber(temp: tempfile::NamedTempFile, target: &Path) -> io::Result<bool> {
-    let temp_path = temp.into_temp_path();
+    let mut temp_path = temp.into_temp_path();
     let moved = move_no_replace(&temp_path, target)?;
     if moved {
-        // The temporary name is gone; disarm its removal guard.
-        temp_path.keep().map_err(|error| error.error)?;
+        // The temporary name is gone; only disarm its removal guard.
+        // `TempPath::keep` would first touch the (now missing) temporary
+        // name's attributes and fail with NotFound after a successful move.
+        temp_path.disable_cleanup(true);
     }
     Ok(moved)
 }
@@ -97,7 +99,9 @@ fn persist_no_clobber(temp: tempfile::NamedTempFile, target: &Path) -> io::Resul
 #[cfg(windows)]
 fn move_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
     use std::os::windows::ffi::OsStrExt as _;
-    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_NORMAL, MOVEFILE_WRITE_THROUGH, MoveFileExW, SetFileAttributesW,
+    };
 
     let source_wide = source
         .as_os_str()
@@ -109,6 +113,13 @@ fn move_no_replace(source: &Path, target: &Path) -> io::Result<bool> {
         .encode_wide()
         .chain(Some(0))
         .collect::<Vec<_>>();
+    // tempfile creates the file FILE_ATTRIBUTE_TEMPORARY; clear that before
+    // it becomes the published file, as tempfile's own persist does.
+    // SAFETY: `source_wide` is a NUL-terminated UTF-16 string held alive for
+    // the call, the only precondition `SetFileAttributesW` documents for it.
+    if unsafe { SetFileAttributesW(source_wide.as_ptr(), FILE_ATTRIBUTE_NORMAL) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
     // SAFETY: both buffers are NUL-terminated UTF-16 strings held alive for
     // the call, the only precondition `MoveFileExW` documents for its pointer
     // arguments. Without MOVEFILE_REPLACE_EXISTING the move never replaces.
@@ -273,6 +284,14 @@ mod tests {
         assert!(publish_file(&target, b"first", ".settings-", Publish::CreateNew).unwrap());
         assert!(!publish_file(&target, b"second", ".settings-", Publish::CreateNew).unwrap());
         assert_eq!(read_published(&target).unwrap(), b"first");
+        #[cfg(windows)]
+        {
+            // The published file is an ordinary file, not tempfile's
+            // FILE_ATTRIBUTE_TEMPORARY (0x100) scratch file.
+            use std::os::windows::fs::MetadataExt as _;
+            let attributes = std::fs::metadata(&target).unwrap().file_attributes();
+            assert_eq!(attributes & 0x100, 0);
+        }
         assert!(publish_file(&target, b"third", ".settings-", Publish::Replace).unwrap());
         assert_eq!(read_published(&target).unwrap(), b"third");
         assert_eq!(
