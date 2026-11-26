@@ -149,6 +149,44 @@ fn cancel_is_advisory_idempotent_and_session_never_retargets() {
 }
 
 #[test]
+fn invalidated_launch_owner_cancels_only_its_own_running_jobs() {
+    let registry = JobRegistry::new();
+    let revoked = JobOwner::for_tool(Arc::from("tool"));
+    let other_tab = JobOwner::for_tool(Arc::from("tool"));
+    let create = |owner: &JobOwner| {
+        registry
+            .create(Principal::Tool(owner.clone()), "fixture.work".into(), None)
+            .unwrap()
+    };
+    let first = create(&revoked);
+    let done = create(&revoked);
+    registry
+        .finish(&done.id, TerminalOutcome::Succeeded(Value::from(1)))
+        .unwrap();
+    let kept = create(&other_tab);
+    let broker = registry
+        .create(Principal::Broker, "fixture.work".into(), None)
+        .unwrap();
+    assert_eq!(registry.cancel_owner(&revoked), vec![first.id.clone()]);
+    assert!(registry.cancel_owner(&revoked).is_empty());
+    // Advisory: the public state stays running until the provider answers.
+    assert!(
+        !registry
+            .request_cancel(&first.id, &Principal::Broker)
+            .unwrap()
+            .dispatch
+    );
+    for id in [&kept.id, &broker.id] {
+        assert!(
+            registry
+                .request_cancel(id, &Principal::Broker)
+                .unwrap()
+                .dispatch
+        );
+    }
+}
+
+#[test]
 fn snapshots_are_immutable_and_first_terminal_result_wins() {
     let registry = JobRegistry::new();
     let initial = create(&registry);

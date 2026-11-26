@@ -53,4 +53,42 @@ impl PluginHost {
             .max()
             .cloned()
     }
+
+    /// The plugin id of the live instance whose provided capability resolves
+    /// `capability` at [`Self::installed_capability_version`]'s version.
+    /// `None` for core namespaces, actions and unresolved capabilities.
+    pub fn installed_capability_provider(&self, capability: &str) -> Option<String> {
+        let kind = parse_capability(capability).ok()?;
+        if matches!(kind, CapabilityId::Action(_)) {
+            return None;
+        }
+        if let CapabilityId::Field(field) = kind
+            && (covers("vosu.osu.internal", field)
+                || crate::state::schema::CORE_NAMESPACES
+                    .iter()
+                    .any(|ns| covers(ns, field)))
+        {
+            return None;
+        }
+        self.instances
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .filter_map(|slot| match slot {
+                InstanceSlot::Live(entry) => Some(entry),
+                _ => None,
+            })
+            .flat_map(|entry| {
+                entry
+                    .capabilities
+                    .iter()
+                    .map(move |provided| (&entry.plugin_id, provided))
+            })
+            .filter(|(_, provided)| {
+                provided.id == capability
+                    || matches!(kind, CapabilityId::Field(_)) && covers(&provided.id, capability)
+            })
+            .max_by(|(_, a), (_, b)| a.version.cmp(&b.version))
+            .map(|(plugin, _)| plugin.clone())
+    }
 }

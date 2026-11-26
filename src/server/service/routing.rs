@@ -1,14 +1,10 @@
-/// Everything routing needs from an optional out-of-process tool host for the
-/// reserved `/tools` overlay prefix and the dashboard tool management routes,
-/// so this module does not depend on `crate::tools` directly.
-pub trait RouteExtension: Send + Sync {
-    /// `/tools/<id>/...`: proxy an authenticated request into the owning tool.
-    fn overlay(
-        self: Arc<Self>,
-        request: Request<Body>,
-        body: Bytes,
-    ) -> ProviderFuture<'static, Response>;
-    /// `/api/tools...`: dashboard discovery, install, settings and lifecycle.
+/// Core's exact tool registry routes (A7.2), so this module does not depend
+/// on `crate::tools` directly: the overlay-listener launch-session exchange
+/// and the dashboard-listener `/api/tools` management routes.
+pub trait ToolRegistryRoutes: Send + Sync {
+    /// `POST /tools/_host/v1/session`.
+    fn session(self: Arc<Self>, body: Bytes) -> ProviderFuture<'static, Response>;
+    /// `/api/tools...`: the 2.0 tool views, enable/disable/trust, launch and settings.
     fn dashboard(
         self: Arc<Self>,
         request: Request<Body>,
@@ -31,7 +27,7 @@ pub struct ProductionRouteDelegate {
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
     removed: RemovedNotices,
-    tools: Option<Arc<dyn RouteExtension>>,
+    tools: Option<Arc<dyn ToolRegistryRoutes>>,
     plugins: Option<Arc<dyn PluginManagementRoutes>>,
     catalog: Option<crate::server::catalog_api::CatalogApi>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
@@ -60,7 +56,7 @@ impl ProductionRouteDelegate {
         self.api_keys = Some(keys);
         self
     }
-    pub fn with_tools(mut self, tools: Arc<dyn RouteExtension>) -> Self {
+    pub fn with_tools(mut self, tools: Arc<dyn ToolRegistryRoutes>) -> Self {
         self.tools = Some(tools);
         self
     }
@@ -104,10 +100,23 @@ impl ProductionRouteDelegate {
                 Some(router) => router.handle(request).await,
                 None => crate::server::api_v1::error::error(StatusCode::NOT_FOUND, "invalid_request", "Unknown API route"),
             },
-            Endpoint::ToolOverlay => match &self.tools {
-                Some(tools) => Arc::clone(tools).overlay(request, body).await,
+            Endpoint::ToolSession => match &self.tools {
+                Some(tools) => Arc::clone(tools).session(body).await,
                 None => not_found(),
             },
+            // The bundled tool host's exact registrations; core adds nosniff
+            // to every response it serves on the overlay origin.
+            Endpoint::ToolHost => {
+                let mut response = match &self.surface {
+                    Some(surface) => surface.http(&request).await,
+                    None => not_found(),
+                };
+                response.headers_mut().insert(
+                    header::X_CONTENT_TYPE_OPTIONS,
+                    axum::http::HeaderValue::from_static("nosniff"),
+                );
+                response
+            }
             Endpoint::ToolManagement => match &self.tools {
                 Some(tools) => Arc::clone(tools).dashboard(request, body).await,
                 None => not_found(),

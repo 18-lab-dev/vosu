@@ -8,9 +8,6 @@ use vosu_surface::{
     state::{IdentifiedSession, SessionTarget},
 };
 
-mod tool_context;
-pub use tool_context::ToolContext;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
     Background,

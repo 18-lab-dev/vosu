@@ -52,12 +52,13 @@ impl ApiV1Service {
     pub(super) fn action_router(
         &self,
         host: &Arc<PluginHost>,
-        tools: Arc<crate::tools::ToolHost>,
+        tools: Arc<crate::tools::ToolRegistry>,
     ) -> ApiV1Router {
         tools.set_action_providers(
             host.clone(),
             Arc::new(InstalledProviders(Arc::downgrade(host))),
         );
+        tools.set_jobs(self.jobs.clone());
         let actions = crate::server::api_v1::actions::ActionRoutes::new(
             host.clone(),
             host.invocation_executor(),
@@ -102,6 +103,10 @@ impl crate::tools::capabilities::InstalledCapabilities for InstalledProviders {
         self.0
             .upgrade()
             .map_or_else(Default::default, |host| host.validation_snapshot())
+    }
+
+    fn provider(&self, capability: &str) -> Option<String> {
+        self.0.upgrade()?.installed_capability_provider(capability)
     }
 }
 #[cfg(test)]

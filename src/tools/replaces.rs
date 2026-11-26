@@ -93,23 +93,13 @@ fn move_once(from: &Path, to: &Path, present: bool) -> io::Result<()> {
     }
 }
 
-impl ToolHost {
+impl ToolRegistry {
     fn replacement_journal(&self) -> PathBuf {
         self.config.join("tool-replacement.json")
     }
     fn replacement_stage(&self) -> PathBuf {
         // Nested below a directory without a manifest: discovery never sees it.
         self.data.join(".replacement-stage").join("package")
-    }
-    fn tool_data(&self, id: &str) -> PathBuf {
-        self.data
-            .parent()
-            .unwrap_or(&self.data)
-            .join("tool-data")
-            .join(id)
-    }
-    fn tool_settings(&self, id: &str) -> PathBuf {
-        self.config.join("settings").join(format!("{id}.json"))
     }
     pub(super) fn recover_replacement(&self) -> Result<(), String> {
         let path = self.replacement_journal();
@@ -119,8 +109,8 @@ impl ToolHost {
             Err(error) => return Err(error.to_string()),
         };
         let tx: Replacement = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-        if !manifest::valid_id(&tx.old)
-            || !manifest::valid_id(&tx.new)
+        if !crate::server::ids::valid_id(&tx.old)
+            || !crate::server::ids::valid_id(&tx.new)
             || tx.old == tx.new
             || !tx.state.trusted
             || tx.state.catalog_source.is_none()
@@ -163,13 +153,7 @@ impl ToolHost {
             Ok(())
         };
         apply().map_err(|e| format!("tool replacement recovery: {e}"))?;
-        self.cli_sessions
-            .lock()
-            .retain(|_, session| session.tool != tx.old);
-        self.sessions
-            .lock()
-            .retain(|_, session| session.tool != tx.old);
-        self.codes.lock().retain(|_, code| code.tool != tx.old);
+        self.invalidate_tool(&tx.old);
         Ok(())
     }
 }

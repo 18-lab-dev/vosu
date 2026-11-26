@@ -400,6 +400,42 @@ impl JobRegistry {
             })
             .collect()
     }
+
+    /// Advisory cancellation of every running job one launch session created,
+    /// when core invalidates that session (API v1 "Tool launch sessions"
+    /// item 6). Bound invocations are cancelled after the registry lock is
+    /// released; an unbound one is cancelled when it binds. Returns the ids.
+    pub fn cancel_owner(&self, owner: &JobOwner) -> Vec<String> {
+        let principal = Principal::Tool(owner.clone());
+        let mut dispatch = Vec::new();
+        let ids = {
+            let mut state = self.inner.lock();
+            state.cleanup(Instant::now());
+            state
+                .entries
+                .iter_mut()
+                .filter_map(|(id, entry)| {
+                    if matches!(entry.owner, Principal::Tool(_))
+                        && entry.visible_to(&principal)
+                        && !entry.snapshot.state.is_terminal()
+                        && !entry.cancel_requested
+                    {
+                        entry.cancel_requested = true;
+                        dispatch.extend(entry.invocation.clone());
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        for (host, invocation) in dispatch {
+            if let Some(host) = host.upgrade() {
+                host.cancel_action(invocation);
+            }
+        }
+        ids
+    }
 }
 
 #[cfg(test)]

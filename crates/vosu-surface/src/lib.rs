@@ -9,3 +9,4 @@ pub mod requester;
 pub mod resources;
 pub mod routes;
 pub mod state;
+pub mod tool_view;

@@ -108,7 +108,6 @@ mod service;
 mod signals;
 #[cfg(feature = "test-harness")]
 mod test_support;
-mod tool_context;
 mod tracing_log;
 mod worker;
 

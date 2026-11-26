@@ -51,6 +51,7 @@ pub(super) const REQUIRED: &[&str] = &[
     "vosu.adapter.upstream",
     "vosu.adapter.gosumemory",
     "vosu.adapter.streamcompanion",
+    "vosu.toolhost",
 ];
 
 /// Loads required production plugins first, followed by optional bundled
@@ -67,7 +68,7 @@ pub(super) fn load_bundled(
 ) -> std::io::Result<u64> {
     if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
-            "required bundled plugin set is incomplete: osu and all three adapters are required",
+            "required bundled plugin set is incomplete: osu, all three adapters and the tool host are required",
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {

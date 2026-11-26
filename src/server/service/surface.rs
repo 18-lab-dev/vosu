@@ -24,16 +24,7 @@ pub fn reserve_core_routes(
             ("/api/settingsSave", &["POST"][..], false),
             ("/api/runUpdates", &["POST"][..], false),
             ("/api/generateReport", &["POST"][..], false),
-            (
-                "/tools",
-                &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"][..],
-                true,
-            ),
-            (
-                "/api/tools",
-                &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"][..],
-                true,
-            ),
+            ("/tools", &["GET"][..], false),
             (
                 "/api/v1",
                 &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"][..],
@@ -53,6 +44,39 @@ pub fn reserve_core_routes(
                 });
             }
         }
+    }
+    // Core's exact tool routes (A7.2); no `/tools` or `/api/tools` prefix
+    // reservation survives, so a deleted route has no owner at all.
+    let tool = |listener, method: &str, path: RoutePath| RouteDescriptor {
+        listener,
+        method: method.into(),
+        path,
+        websocket: false,
+    };
+    descriptors.push(tool(
+        ListenerRole::Overlay,
+        "POST",
+        RoutePath::Exact("/tools/_host/v1/session".into()),
+    ));
+    descriptors.push(tool(
+        ListenerRole::Dashboard,
+        "GET",
+        RoutePath::Exact("/api/tools".into()),
+    ));
+    for (method, path) in [
+        ("GET", "/api/tools/{id}"),
+        ("GET", "/api/tools/{id}/settings"),
+        ("POST", "/api/tools/{id}/settings"),
+        ("POST", "/api/tools/{id}/enable"),
+        ("POST", "/api/tools/{id}/disable"),
+        ("POST", "/api/tools/{id}/trust"),
+        ("POST", "/api/tools/{id}/launch"),
+    ] {
+        descriptors.push(tool(
+            ListenerRole::Dashboard,
+            method,
+            RoutePath::Template(path.into()),
+        ));
     }
     descriptors.push(RouteDescriptor {
         listener: ListenerRole::Overlay,
@@ -424,7 +448,7 @@ async fn surface_game_response(
                     .flatten();
                 match files::plan_response(
                     file.metadata.size,
-                    files::content_type(Path::new(&name)),
+                    vosu_surface::files::content_type(Path::new(&name)),
                     files::media_range_eligible(Path::new(&name)),
                     range,
                 ) {

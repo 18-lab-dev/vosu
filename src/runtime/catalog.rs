@@ -7,8 +7,8 @@
 //! - plugins: `<data>/catalog/plugins/<id>` package trees, replaced whole by
 //!   the I0 journal. Durable plugin data stays `<data>/plugins/<id>` (the
 //!   bundled convention), outside every replaced tree;
-//! - tools: the legacy tool host's user root `<data>/tools`, served by that
-//!   host after `ToolHost::rescan_installed` until M7 replaces it;
+//! - tools: core's tool registry user root `<data>/tools`, presented to the
+//!   bundled tool host after `ToolRegistry::rescan_installed`;
 //! - overlays: the counter static folder resolved at startup, served by the
 //!   existing overlay host and pinned for the daemon lifetime;
 //! - downloads: `<cache>/catalog/downloads`.
@@ -77,7 +77,7 @@ struct RootHandoff {
     overlays: Option<PathBuf>,
     pool: Arc<WorkerPool>,
     next_instance: AtomicU64,
-    tools: OnceLock<Arc<crate::tools::ToolHost>>,
+    tools: OnceLock<Arc<crate::tools::ToolRegistry>>,
     counters: OnceLock<Arc<ReloadableCounterService>>,
 }
 impl RuntimeHandoff for RootHandoff {
@@ -247,7 +247,7 @@ impl CatalogComposition {
     /// any catalog operation can start.
     pub fn attach_web_hosts(
         &self,
-        tools: Arc<crate::tools::ToolHost>,
+        tools: Arc<crate::tools::ToolRegistry>,
         counters: Arc<ReloadableCounterService>,
     ) {
         let _ = self.handoff.tools.set(tools);

@@ -19,4 +19,3 @@ pub use service::{
 pub use settings::{
     Profiles, SettingsError, SettingsStore, qualified_counter, split_counter, validate_component,
 };
-pub(crate) use settings::{coerce_checkbox, coerce_number, normalize_settings};

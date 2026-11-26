@@ -3538,6 +3538,7 @@ dependencies = [
  "vosu-proptest",
  "vosu-surface",
  "vosu-sys",
+ "vosu-tool-host",
  "windows-sys 0.61.2",
  "winresource",
  "zip",
@@ -3923,6 +3924,18 @@ dependencies = [
  "vosu-net",
  "vosu-proptest",
  "zip",
+]
+
+[[package]]
+name = "vosu-tool-host"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde_json",
+ "tokio",
+ "vosu-plugin-api",
+ "vosu-plugin-internal",
+ "vosu-surface",
 ]
 
 [[package]]
