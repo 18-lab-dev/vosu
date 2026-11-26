@@ -2403,7 +2403,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | `/api/ingame`, every method | — (404) | — | Core, O only: an exact 404 tombstone recorded as `ingame-page` (A7.5); never registered by an adapter or host. On D it stays an unknown-route 404. |
 | `/api/v1/*` | O; D 404 | API-v1 router | Core, unchanged ([route inventory](../testing/verification.md#final-api-v1-route-inventory)); `X-Vosu-Tool-Session` authority moves to core's tool registry. |
 | `GET /api/plugins`, `POST`/`DELETE /api/plugins/<id>/approval`, `POST /api/plugins/<id>/{restart,stop}` | D | `runtime::plugin_management` | Core, unchanged (M5 U0). |
-| `GET`, `POST /api/plugins/<id>/settings` | — | — | New core D routes (`PluginSettings`). |
+| `GET`, `POST /api/plugins/<id>/settings` | — | — | Core D routes (`PluginSettings`), served by `runtime::plugin_management` over core's `PluginSettingsStore` (M7 D1); `<id>` is any listed or loaded plugin, a catalog-installed one included; `vosu.osu` and `vosu.overlayhost` POSTs are 409 `settings_managed_elsewhere` until M8. |
 | `/api/catalog/*` (H0's 20 method/path pairs) | D | `catalog_api` | Core, unchanged (M6b H0). |
 | `GET /api/tools`, `GET /api/tools/<id>` | D | `ToolHost::dashboard` | Core, `ToolView` 2.0. |
 | `POST /api/tools/<id>/{enable,disable,trust}` | D (management) | `ToolHost::dashboard` | Core; `enable` of a legacy package is 400 `needs-2.0-update`. |

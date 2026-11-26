@@ -4,6 +4,24 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M7
 
+- Plugin settings: the Tools page has a **Settings** dialog for every
+  non-bundled plugin, catalog-installed ones included, served by the new
+  dashboard-only `GET`/`POST /api/plugins/<id>/settings`. Values come from
+  the plugin's validated `settings.schema.json` with its defaults applied;
+  `password` values are never shown again (blank keeps the stored one,
+  **Clear** removes it, and a failed save clears what was typed). A save is
+  validated as a whole: an unknown setting or wrong type changes nothing,
+  and a valid one reaches the plugin as one complete `SETTINGS_CHANGED`.
+  vosu stores them in `plugins/settings.json` in its config directory;
+  `vosu.osu`'s settings stay on the Settings page until M8.
+- The Tools page lists **Plugins** (native code vosu loads) apart from
+  **Web tools** (pages it serves). Catalog plugins show their source trust,
+  runtime, approval and load outcome, and a plugin whose trust was revoked
+  while it runs inside vosu says *revocation pending restart*: it keeps
+  running until you restart vosu, which vosu never does for you. Untrusting
+  a source names such plugins instead of claiming they stopped. Web tool
+  cards show **Update available** when the tool's own catalog source lists
+  a newer installable version (`ToolView.update_available`).
 - vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
   that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
   request gets the ordinary 404 that other removed routes return, as in 1.x

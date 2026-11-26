@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import threading
@@ -122,6 +123,13 @@ ALLOWED_IPS = "127.0.0.1,localhost"
         shutil.copy(shutil.which('sleep'), game)
         processes = []
         with (args.evidence / 'daemon.log').open('w') as log:
+            # The browser phase uses fixed ports: another smoke's daemon on
+            # them would answer with its own fixture listener ("source
+            # unavailable"), so refuse to start instead.
+            for port in (25150, 25151):
+                with socket.socket() as probe:
+                    if probe.connect_ex(('127.0.0.1', port)) == 0:
+                        raise SystemExit(f'127.0.0.1:{port} is already in use; another catalog smoke is running')
             daemon = subprocess.Popen([str(binary), '--update=false'], cwd=root, env=environment,
                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
             try:
@@ -137,8 +145,8 @@ ALLOWED_IPS = "127.0.0.1,localhost"
                 # Mutations need dashboard provenance and CSRF; overlay listener has no catalog routes.
                 assert curl('/api/catalog/refresh', dashboard=True, method='POST', data={})[0] == 403
                 assert curl('/api/catalog/sources')[0] == 404
-                # The removed 1.x immediate install route installs nothing.
-                assert curl('/api/tools/catalog-tool/install', dashboard=True, method='POST', headers=headers, data={})[0] in (400, 404)
+                # The removed 1.x immediate install route is a plain 404 (A7 inventory) and installs nothing.
+                assert curl('/api/tools/catalog-tool/install', dashboard=True, method='POST', headers=headers, data={})[0] == 404
                 view = api('refresh', headers, 'POST')
                 assert [s['status'] for s in view['sources']] == ['ok', 'ok'], view
                 entries = api('entries', headers)['entries']
