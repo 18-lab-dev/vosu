@@ -22,7 +22,7 @@ The daemon is implemented in Rust, with an embedded vanilla HTML, CSS, and JavaS
 counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon:
 no Node.js, Electron, or separately installed .NET/C# runtime is required.
 
-This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](docs/decisions/0008-external-in-game-overlays.md) records this product boundary.
+The daemon does not render in-game overlays. Use [vosulay](https://github.com/18-lab-dev/vosulay) separately or integrate it through its official 2.0 plugin and web editor. [ADR 0008](docs/decisions/0008-external-in-game-overlays.md) records the boundary.
 
 ## Why this build
 
@@ -38,21 +38,14 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### 2.0 alpha builds
 
-This development branch builds **2.0.0-alpha.1**; the plugin SDK retains its
-independent version. Alpha config, data, cache and broker state live under
-`prerelease/` within their normal roots. On first start only, alpha imports
-normal-root settings read-only (`vosu.toml` overrides `vosu.env`, which overrides
-the older legacy env file). An existing alpha config or alpha env file takes
-precedence. Unreadable or malformed import input aborts startup without changing
-it; fix the input and retry. Once alpha has its own config, it never reads the
-normal settings again, even when they change.
-
-The import copies only recognized settings, not broker credentials, resource
-secrets, plugins or overlay files. Imported `STATIC_FOLDER_PATH` values are
-excluded: alpha uses its isolated data root's `static/`. A path deliberately set
-in alpha's own config is an explicit override and may leave isolation, including
-relative paths resolved from the launch directory. Returning to 1.x leaves its
-original settings intact. The stable release below remains available separately.
+This branch builds the **2.0.0-alpha.1** application version; the published
+plugin SDK has its own `1.0.0-alpha.N` version. The stable 1.x install below
+is separate. Alpha writes to its own `prerelease/` roots by default and
+imports recognized 1.x settings once, read-only. It does not import your
+overlays, plugins or credentials. Configure spare ports to run both
+instances at once, and do not point alpha at a live 1.x overlay directory.
+See the [2.0 migration guide](docs/migration/2.0.md) for paths, the stable
+first-start migration, and changes to tools and overlays.
 
 ### Portable archive
 
@@ -215,7 +208,15 @@ exit codes and Ctrl-C. On Linux, **Show logs** uses `xdg-terminal-exec`,
 `$TERMINAL`, or an installed common terminal; without one it opens the log
 file in the default application.
 
-The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation. The analogous `--plugin <directory>` repeatable argument loads a development plugin (`docs/v2/plugin-abi.md`) from a directory holding its own `manifest.toml` and compiled library. A `runtime = "process"` plugin runs in its own `vosu plugin-host` process, and only after you approve exactly its manifest and library bytes in the dashboard's Plugins section (Tools page); changed bytes need a new approval, and you can revoke, stop or restart it there. Prerelease builds accept only `process` plugins from `--plugin`; debug builds also keep the in-process developer exception; stable release builds refuse `--plugin`. Approval runs native code with your account's rights and is not a sandbox.
+Use repeatable `--tool <directory>` arguments to serve trusted development
+web tools from their package directories. Manifest, settings and UI edits do
+not require a daemon restart. Use `--plugin <directory>` to register a
+development native plugin in debug or prerelease builds. A prerelease release
+build accepts only `runtime = "process"` for a development plugin, and it
+does not load until you approve the exact manifest and library in **Tools →
+Plugins**. Changed bytes need a new approval. A process host is **not a
+sandbox**. See the [tool protocol](docs/tools/protocol.md) and [plugin
+authoring guide](docs/plugins/authoring.md).
 
 On Linux, a process plugin can ask to create user namespaces for a
 Chromium-style sandbox. The dashboard shows this opt-in before approval.
@@ -258,51 +259,65 @@ Offset caches now live in the bundled osu! plugin's data directory:
 - Linux: `${XDG_DATA_HOME:-$HOME/.local/share}/vosu/plugins/vosu.osu/offsets`.
 - Windows: `plugins\vosu.osu\offsets` under the portable executable directory.
 
-M1 does not migrate the former platform-cache `offsets` directory. Existing
-files are left untouched; when embedded offsets do not match, the first load of
+vosu does not migrate the former platform-cache `offsets` directory. Existing
+files stay untouched; when embedded offsets do not match, the first load of
 each lazer version regenerates locally. The generator payload and scratch
-workspace live in the sibling `offset-generator` directory.
+workspace live in the sibling `offset-generator` directory. Prereleases use
+the [prerelease data root](docs/migration/2.0.md#try-an-alpha-without-moving-1x-data).
 
 Offset entries are keyed by client version and remain the validated
 `<version>.json` contract. The separately extracted generator payload cache is
 keyed by platform/runtime and embedded bundle checksum, so a helper from another
 release build cannot be reused accidentally.
 
-### 2.0 development: state bus
+### API v1 state
 
-The M2 build also publishes each identified osu! session on the state bus at
-`/vosu.osu`, alongside common `vosu.status`, `vosu.chart`, `vosu.play` and
-`vosu.skin` state and core-owned `vosu.client` facts. Bundled/plugin readers
-can select fields through the state subscription API. This is not a new
-`GET /vosu.osu` route: the public 2.0 HTTP/WebSocket transport arrives in M3;
-the existing `/json*` endpoints still use the legacy bridge.
-
-For 2.0 subscriptions, selecting `/vosu.osu/play/hitOffsets` or
-`/vosu.osu/play/keyHitErrors` (or an overlapping parent/child selector) is
-the opt-in to extended hit-error collection. No `ENABLE_HIT_OFFSETS` or
-`ENABLE_MANIA_KEY_HIT_ERRORS` setting is needed for bus collection; requesting
-an unrelated precise field does not opt in. Existing 1.x outputs still honor
-those flags, so a bus subscriber does not expose these fields to legacy clients.
-See the [2.0 state schema](docs/v2/state-schema.md) for paths, privacy and
-sampling rules. Resource references await M3; install paths remain private
-plugin state, not API-visible fields.
+Use [API v1](docs/v2/api-v1.md) for live session state, public resources and
+selected-field WebSocket subscriptions. The common namespaces describe the
+client, status, chart, play and skin; `vosu.osu` adds game-specific fields.
+Select only what you display. Selecting `/vosu.osu/play/hitOffsets` or
+`/vosu.osu/play/keyHitErrors` (or an overlapping selector) opts into that
+collection; there is no separate API v1 precise socket or `ENABLE_*` gate.
+API v1 serves file and tree references, never private paths. The
+upstream-compatible `/json*` and WebSocket feeds are separate adapters.
 
 ## Tools
 
-The dashboard's **Tools** page manages installed applications and lists tools and plugins from your catalog sources in **Available**. Official [18-LAB tools and their SDK](https://github.com/18-lab-dev/vosu-tools) live separately; vosu embeds none. Every installation is a catalog v2 **install plan**: vosu resolves the package and its dependencies once, shows each package with its source and, for plugins, native code, runtime, trust, approval and whether it can read the osu! client's install paths, and installs only after you confirm the whole plan once. Packages are downloaded over HTTPS without credentials, checked against catalog SHA-256 and size, and committed together, dependencies first; nothing is installed unless all of them are. The outcome shows each package's load result. **Uninstall…** previews what goes with it (dependencies nothing else needs; their data stays) and refuses while another package still requires it; you choose to keep or remove its data. A running in-process plugin cannot be unloaded safely: after removing it, or untrusting its source, vosu shows **Restart vosu to finish** until you restart.
+The dashboard's **Tools** page manages web tools and native plugins. **Available**
+lists packages from your sources. Official [18-LAB tools](https://github.com/18-lab-dev/vosu-tools)
+ship separately; vosu embeds none. A catalog v2 install plan shows each
+package and dependency, its source, and any native runtime, trust, approval
+or declared access to the osu! client's install paths. Read the plan and
+confirm it once. Packages are fetched over HTTPS without source credentials,
+checked against the catalog size and SHA-256, and committed together,
+dependencies first. A successful install reports each package's load or
+activation outcome separately. **Uninstall…** previews which unused
+dependencies go with the package and refuses while another package needs
+it. Removing an in-process plugin or untrusting its source requires a
+vosu restart to take effect.
 
-[vosulay](https://github.com/18-lab-dev/vosulay) is available from its official catalog source for in-game overlays: one install plan adds the `vosulay-editor` web tool and the `vosu.vosulay` plugin it requires. Rendering and game integration stay outside the vosu daemon, and standalone vosulay remains supported.
+For in-game overlays, install the [native vosulay runtime](https://github.com/18-lab-dev/vosulay)
+separately. When its 2.0 catalog is published, install `vosulay-editor` from
+that official source; the plan adds `vosu.vosulay` to supervise the runtime.
+Neither ZIP installs the native runtime. Standalone vosulay remains supported.
 
-A 2.0 tool is a static web application served on the overlay origin; it runs no process of its own. It reads game state through [API v1](docs/v2/api-v1.md) like an overlay, and anything native is a plugin action it may invoke only when its manifest's `requires`/`optional` lists that action and the action resolves to an installed plugin. Open a tool from the dashboard to give that one tab the session actions need; opening the same URL directly, reloading or bookmarking it is read-only. Tools from a source you have not trusted stay untrusted until you trust them on the Tools page. Installed tools go under `<vosu data directory>/tools/<id>/`; developers can use `vosu --tool <directory>` for a trusted development override. A 1.x tool that ships only `tool.toml` is listed as needing a 2.0 update and is never run.
+A tool is a static web application on the overlay origin. It reads API v1 like
+an overlay and runs no service. Only a dashboard-launched tab can invoke the
+actions its manifest declares and an installed provider supplies. Opening the
+URL directly, reloading or bookmarking it is read-only. Third-party tools
+stay untrusted until the user trusts them; an old `tool.toml`-only tool is
+never run or served and shows **needs 2.0 update**. Installed tools live under
+`<vosu data directory>/tools/<id>/`. See the
+[2.0 migration guide](docs/migration/2.0.md) for the service and settings port.
 
 Catalog installation, update and uninstall are dashboard-only plans; the former `vosux --sources`, `--install`, `--update` and `--uninstall` options are removed. **Settings / Catalog sources** lets you add, remove, disable, and reorder sources: GitHub `owner/repo[@tag]`, a repository URL on GitHub, GitLab (nested groups too), Codeberg or a self-hosted GitLab/Gitea/Forgejo, or an HTTPS URL ending in `/catalog-v2.json`. Defaults are exactly `18-lab-dev/vosu-tools`, `18-lab-dev/vosulay` and `18-lab-dev/vosu-overlays`, always trusted. Other sources start untrusted: **Trusted** shows the trust warning before every grant and lets that source's plugins run in-process. **Credential…** saves a write-only read-only token (or Basic pair for a static URL); it is never shown again. **Private network** lets that one host resolve to a private address for catalog requests only.
 
 Catalogs may provide tools, overlays and plugins. The overlay **Available** page lists catalog overlays beside the existing community catalog and installs them through the same plan review. When a running game matches an uninstalled catalog game plugin, Tools offers **Add support for …**, which opens the same plan. See [catalog v2](docs/v2/catalog-v2.md#api-placement) for the routes and the [catalog source contract](docs/tools/protocol.md#catalog-sources-and-installation).
 
-Start with [Create a tool](docs/tools/create-a-tool.md) for a guided path from an
-empty directory to a published catalog. Keep the [authoring reference](docs/tools/authoring.md)
-and [protocol contract](docs/tools/protocol.md) nearby, or inspect the build-free
-[Hello web example](examples/tools/hello-web/).
+Building an extension? Start with [Create a tool](docs/tools/create-a-tool.md),
+the [plugin authoring guide](docs/plugins/authoring.md), or the
+[overlay authoring guide](docs/overlays/authoring.md). The
+[Hello web example](examples/tools/hello-web/) needs no frontend build.
 
 From a terminal, invoke a plugin action with `vosux <dotted-plugin-id> <action> [json-args]`
 (or `vosu x`); omitted arguments mean `{}`. Required and optional session actions
@@ -322,7 +337,13 @@ the same isolated, channel-aware broker path.
 
 The dashboard's `/tools` page manages tools; `/api/tools` lists status and metadata, and `/api/tools/<id>/{enable,disable,trust,launch,settings}` change them. Management POSTs require dashboard provenance and CSRF. The overlay listener redirects `GET /tools` to that page and serves each tool's static UI at `/tools/<id>/`, its art at `/tools/<id>/_icon` and `/_banner`, its non-password settings at `/tools/<id>/_settings`, and the bridge at `/tools/_host/v2/bridge.js`; `/tools/<id>/api/…` is always 404. The `tools` counter name is reserved. The [tool protocol](docs/tools/protocol.md#20-transition-inventory-a72) lists every route.
 
-Tool UIs, like overlays, read API v1 without credentials under the overlay listener's peer policy. Actions need the launched tab's session, held only in that page's memory and sent only on API v1 action and job requests; a tab can read and cancel only the jobs it started. A tool page itself gains no OS access, but the plugins behind its actions run native code under their own trust and approval. Only trust sources and approve plugins you trust. See [security](docs/security.md#hosted-tools).
+Tool UIs, like overlays, read API v1 without credentials under the overlay
+listener's peer policy. Actions need the launched tab's in-memory session;
+it is sent only for actions, jobs and job artifacts. The tab can read and
+cancel only its own jobs. The tool page itself gets no OS access, but the
+plugins behind its actions are native code. Inspect source trust, runtime
+and any required approval; only authorize code you trust. See
+[security](docs/security.md#hosted-tools).
 
 ## Build from source
 
@@ -407,6 +428,10 @@ With `linux-process-events` compiled, an unset `VOSU_PROCESS_EVENTS` selects `au
 Do not run the ordinary vosu daemon as root to bypass ptrace or eBPF policy. Pattern or offset resolution may remain pending and retry while the process is alive; that alone does not confirm support for a game build.
 
 ## Files and migration
+
+The paths below are the normal roots. For prerelease roots, the read-only
+1.x settings import and the stable package migration, see
+[Migrating from 1.x to 2.0](docs/migration/2.0.md).
 
 ### Linux
 
@@ -573,13 +598,13 @@ The overlay listener serves `GET /api/v1/sessions`, session summaries at
 state is never exposed.
 
 WebSocket subscriptions use `/api/v1/sessions/subscribe` for session events and
-`/api/v1/sessions/{id|active}/subscribe` for selected fields, with the same
-pointer-array/frame protocol described below. `active` follows focus; its initial
-upgrade returns 404 when there is no focus. API v1 uses the independent, live
-`API_V1_SUBSCRIPTION_DEBOUNCE` setting. These read endpoints need no credential
-but retain peer/Origin checks, and are not served by the dashboard listener.
-`/websocket/v2/subscribe` is removed (ordinary 404, never an upgrade).
-Use the [API v1 specification](docs/v2/api-v1.md) for selected state.
+`/api/v1/sessions/{id|active}/subscribe` for selected fields. `active` follows
+focus; its initial upgrade returns 404 when there is no focus. API v1 uses
+the independent, live `API_V1_SUBSCRIPTION_DEBOUNCE` setting. Reads need no
+credential but retain peer/Origin checks, and the dashboard listener does
+not serve these routes. See the [API v1 specification](docs/v2/api-v1.md)
+for selected state and the [overlay migration notes](docs/v2/migration-from-1x.md#overlays-that-used-removed-apis)
+for removed routes. A notice **does not disable the overlay**.
 
 Plugin actions use `POST /api/v1/sessions/{id|active}/actions/{action}` or
 `POST /api/v1/actions/{action}`, according to the action's declared session mode.
@@ -637,9 +662,9 @@ ignores Range; GET retains existing single-range behaviour. Peer policy/CORS are
 Lazer skins use content-addressed storage, not an export folder. Consequently v2
 `folders.skin` / `directPath.skinFolder` retain their existing compatibility
 semantics rather than exposing the files store as a fictional skin folder.
-Tools should use API v1 skin trees and resources instead; the
-permission-filtered tool context exposes the same availability and built-in identity
-while keeping `skin.folder:null` for lazer.
+Tools and overlays should use API v1 skin trees and resources instead:
+follow the published `vosu.skin.tree` reference rather than constructing a
+local skin path.
 
 ### Pages, counters, reports, and updates
 

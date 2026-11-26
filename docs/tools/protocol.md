@@ -11,8 +11,8 @@ A **tool** is a static web application packaged as a `kind = "tool"`
 service, port, token or command-line entry of its own: vosu serves its files,
 and the tool reads game state and calls plugin actions through
 [API v1](../v2/api-v1.md) from the browser. Work that needs native code,
-filesystem access or a game client belongs in a [plugin](../v2/plugin-abi.md)
-that declares an action; a tool reaches it only through that action
+filesystem access or a game client belongs in a [plugin](../plugins/authoring.md)
+that declares an action; a tool reaches native work only through that action
 ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)).
 
 Responsibilities are split exactly as the
@@ -87,7 +87,7 @@ keep its subject centred. A missing icon falls back to the name's initials.
 A directory with only the 1.x `tool.toml` is never parsed, run or served. It
 is listed as `disabled` with `status_detail: "needs-2.0-update"`, enabling,
 trusting or launching it is refused with 400, and its files, settings and data
-stay untouched for the one-time 1.x migration.
+stay untouched for [the one-time 1.x migration](../migration/2.0.md#what-the-stable-first-start-migration-transfers).
 
 ## Discovery and state
 
@@ -221,8 +221,8 @@ tool's id. The exact rules are [API v1 "Tool launch sessions"](../v2/api-v1.md#t
 4. **Scope.** The token is sent only as `X-Vosu-Tool-Session` on
    `POST /api/v1/actions/{action}`, `POST /api/v1/sessions/{session}/actions/{action}`
    and `GET`/`DELETE /api/v1/jobs/{id}` (and `GET`/`HEAD` of a job's
-   artifacts), and only for jobs that same session created. Every other route
-   is public under the overlay listener's peer policy and needs no token.
+   artifacts). A launch session can access only the jobs it created. It
+   does not grant authority on unrelated routes or change public read access.
 5. **Lifetime.** A session lasts until the tool is disabled, untrusted,
    uninstalled or replaced, or vosu restarts. A reload, a bookmark or a
    replayed launch URL has no session and is read-only.
@@ -446,11 +446,14 @@ invoke an action only when:
 
 - the action's capability is in its `requires` or `optional`;
 - that capability resolves to an installed, enabled provider;
-- the request carries this tab's live launch session (`vosu.canWrite`).
+- the request carries this tab's live launch session.
 
-Otherwise the request is 401 `unauthorized` (no or stale session) or 403
-`forbidden` (capability not granted or not resolved). Core rechecks all three
-on every action and job request.
+`vosu.canWrite` says the page holds a session; core still validates the
+token and grant at request time. The bridge refuses to send a request
+without its session (`forbidden`); the API returns 401 `unauthorized` for a
+missing or stale token and 403 `forbidden` if the action is not granted or
+no longer resolves. Core rechecks live launch authority and the action
+grant on job requests and also checks job ownership.
 
 Each action declares a **session mode** in its plugin's manifest, which
 decides the valid `session` option:
@@ -469,10 +472,25 @@ action's schema (400 `invalid_arguments`); failures, `timed_out` and
 result that completes first stands. A tab can read and cancel only the jobs it
 created.
 
+The core deadline is 30 seconds, separate from the HTTP `wait` parameter.
+`vosu.start` creates an ordinary job with the same deadline as `vosu.invoke`.
+For longer work, use short actions around a
+[plugin-owned operation](../v2/api-v1.md#plugin-owned-operations-af3): the
+plugin returns its own `operationId`, not a job id. When a render or export
+is ready, a short output action can declare an
+[artifact](../v2/api-v1.md#job-artifacts-af12) on its own job. Use
+`handle.artifacts()` on the job from `vosu.start`; `vosu.invoke` returns only
+the action result.
+
+The native CLI uses a different credential. It can invoke only a provider
+action marked `cli = true`, via `vosux <plugin-id> <action> [json-args]` or
+`vosu x <plugin-id> <action> [json-args]`. It does not run a tool CLI or
+inherit a browser launch session. See [CLI usage](../../README.md#tools).
+
 ## Catalog sources and installation
 
-vosu 2.0 installs tools, overlays and plugins only through catalog v2 install
-plans: sources, write-only credentials, source trust, the private-network
+vosu 2.0 installs catalog packages through catalog v2 install plans:
+sources, write-only credentials, source trust, the private-network
 exception, plan review and confirmation, catalog jobs, uninstall and catalog
 art are the dashboard-only `/api/catalog/*` routes in
 [catalog v2 "API placement"](../v2/catalog-v2.md#api-placement), driven by
@@ -490,19 +508,17 @@ a catalog and its extracted packages with the SDK's
 [`vosu-package-check`](../v2/catalog-v2.md#package-checker-af10) before
 publishing; see [Create a tool](create-a-tool.md#9-package-and-publish).
 
+During [1.x coexistence](../v2/catalog-v2.md#1x-coexistence), official
+releases also carry the frozen `catalog.json` that still points to the old
+1.x ZIPs. It is not another index for these 2.0 packages.
+
 Catalog art (`icon_url`, `banner_url`) loads through `GET /api/catalog/art`,
 inert and sandboxed; installed tools' art keeps coming from
 `/tools/<id>/_icon` and `/_banner`.
 
 ## From 1.x
 
-| 1.x | 2.0 |
-| --- | --- |
-| `tool.toml`, `[service]`, `[cli]`, `[api]`, `[permissions]` | `manifest.toml` `kind = "tool"` with `[ui]`, `requires`, `optional` |
-| A service process and `/tools/<id>/api/*` | A plugin action, invoked with `vosu.invoke`/`vosu.start` |
-| `vosu.fetch` | Removed; call API v1 or your own static files with `fetch` (no token) |
-| `/tools/_host/v1/bridge.js` | `/tools/_host/v2/bridge.js` |
-| `vosu.subscribe` on `/websocket/v2/subscribe` | `vosu.subscribe` on `/api/v1/sessions/{session}/subscribe`, with [API v1 pointers](../v2/state-schema.md#1x-to-20-field-mapping) |
-| `/tools/_host/v1/context` and absolute paths | `/vosu.client`, `/vosu.chart`, `/vosu.skin` and resource references |
-| `/tools/_host/v1/settings` (with passwords) | `vosu.settings()` (never passwords) |
-| `vosux <tool>` | `vosux <plugin-id> <action>` for a plugin action declared `cli = true` |
+See [Migrating from 1.x to 2.0](../migration/2.0.md#port-a-service-or-overlay-package)
+for the service and metadata port, replacements and the immutable 1.x
+guide. The [field mapping](../v2/state-schema.md#1x-to-20-field-mapping)
+maps legacy state to API v1.

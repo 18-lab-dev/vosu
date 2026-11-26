@@ -2,12 +2,29 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 authoring and migration
+
+- New [plugin](docs/plugins/authoring.md) and [overlay](docs/overlays/authoring.md)
+  authoring guides and a [1.x → 2.0 migration guide](docs/migration/2.0.md)
+  cover the web-only tool model, the native approval boundary, alpha's
+  read-only settings import, dual catalogs and the approved stable
+  data/settings transfer. Adapting an overlay does not require native
+  permissions or access to private paths.
+- The independent `vosu-plugin-api` SDK versions `1.0.0-alpha.1` and
+  `1.0.0-alpha.2` are published on crates.io. Both use ABI v1; alpha.2
+  adds job artifacts. The application's version and package `host`
+  requirement are separate.
+
 ## Unreleased — 2.0 M7
 
 - Process plugins can request Linux user namespaces, with explicit
   per-artifact approval. This lets plugins such as the replay renderer use
   Chromium's sandbox. The install plan and approval prompt disclose the
   request; other plugins and Windows launch behavior are unchanged.
+
+- Session-bound actions can now run against sessions owned by another plugin.
+  The provider learns the session handle before the action is invoked.
+  The provider can subscribe to that session's state from the action handler.
 
 - Shutdown closes the overlay command and API v1 subscription WebSockets and
   waits for their workers before destroying plugin instances. Slow plugin
@@ -69,9 +86,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
   that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
   request gets the ordinary 404 that other removed routes return, as in 1.x
-  since the in-game overlay was removed. Use vosulay, installed as the
-  official `vosulay-editor` tool, for in-game overlays. The daemon logs one
-  warning per run on the first `/api/ingame` request.
+  since the in-game overlay was removed. Use vosulay standalone or with the
+  separately installed vosulay runtime and the official `vosulay-editor`
+  tool and `vosu.vosulay` plugin. The daemon logs one warning per run on the
+  first `/api/ingame` request.
 - The dashboard shows a notice when an overlay, or an unidentified client,
   still requests a route 2.0 removed: the selected-field feed
   `/websocket/v2/subscribe`, the skin folder listing `/files/skin/` or
@@ -129,8 +147,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   and requests cancellation of the jobs they started.
 - `GET /api/tools[/<id>]` returns the 2.0 `ToolView`. The service-era
   fields (`kind`, `startup`, `autostart`, `cli`, `api`, `permissions`,
-  `process`, `required_by`, `path` and others) are gone, and
-  `update_available` is `false` until the dashboard's catalog work feeds it.
+  `process`, `required_by`, `path` and others) are gone.
+  `update_available` reflects newer installable versions from the tool's
+  own catalog source.
 - A request for a directory inside a tool's UI, such as `/tools/<id>/docs/`,
   serves that directory's `index.html`; `/tools/<id>/docs` redirects to it.
 - `vosux` keeps only the plugin action form

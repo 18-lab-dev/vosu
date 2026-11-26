@@ -320,6 +320,57 @@ fn session_affine_deliveries_are_serialized() {
 }
 
 #[test]
+fn scoped_action_and_early_cancel_wait_for_the_attachment_callback() {
+    use vosu_plugin_api::{ActionCancel, Bitness, SessionAttached};
+
+    let queue = DeliveryQueue::default();
+    push(
+        &queue,
+        &Message::SessionAttached(SessionAttached {
+            session: "session-1".into(),
+            handle: 1,
+            generation: 1,
+            pid: 42,
+            bitness: Bitness::X64,
+            name: None,
+            path: None,
+            command_line: None,
+            argv: None,
+        }),
+    )
+    .unwrap();
+    let attached = queue.next().unwrap();
+    let Message::ActionInvoke(mut scoped) = invoke(8) else {
+        unreachable!()
+    };
+    scoped.session = Some(1);
+    push(&queue, &Message::ActionInvoke(scoped)).unwrap();
+    push(
+        &queue,
+        &Message::ActionCancel(ActionCancel { invocation: 8 }),
+    )
+    .unwrap();
+    push(&queue, &Message::TimerFired(TimerFired { timer: 7 })).unwrap();
+    let unrelated = queue.next().unwrap();
+    let Delivery::Frame { entry, .. } = &unrelated else {
+        panic!("unrelated work should be eligible");
+    };
+    assert_eq!(entry.header.opcode, vosu_opcode::VOSU_OP_TIMER_FIRED as u32);
+    queue.done(unrelated);
+    queue.done(attached);
+    assert_eq!(
+        drain(&queue)
+            .iter()
+            .map(Message::opcode)
+            .collect::<Vec<_>>(),
+        [
+            vosu_opcode::VOSU_OP_ACTION_INVOKE,
+            vosu_opcode::VOSU_OP_ACTION_CANCEL
+        ]
+    );
+}
+
+#[test]
 fn nothing_is_accepted_after_destroy_and_loss_ends_delivery() {
     let queue = DeliveryQueue::default();
     push(&queue, &invoke(1)).unwrap();

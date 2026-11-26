@@ -2,6 +2,13 @@
 
 See the [tool protocol](protocol.md#catalog-sources-and-installation) for sources, install plans and the package format, and [Create a tool](create-a-tool.md) for packaging a tool.
 
+**Match the format to the daemon.** A 2.0 release lists its web tools and
+native plugin dependencies in `catalog-v2.json`. During official 1.x
+coexistence, the same release also carries an unchanged `catalog.json`
+pointing to the independently built, immutable 1.x release artifacts.
+Never list a 2.0 ZIP in that frozen catalog. A direct source URL must name
+the matching catalog file; each daemon reads only its own format.
+
 ## `replaces`
 
 A tool's `manifest.toml` and its `catalog-v2.json` entry may both declare an optional array of former tool ids, and the two must agree:
@@ -12,7 +19,13 @@ replaces = ["mania-ratings"]
 
 `replaces` defaults to `[]`. Ids follow the tool id rule (1–32 lowercase ASCII letters, digits or hyphens, beginning with a letter or digit). Within one source and kind, an entry cannot replace itself, claim an id twice, share a claim with another entry, or name another current id; a tool can never replace a plugin or an overlay. The full rule is [catalog v2](../v2/catalog-v2.md#catalog-v2json).
 
-In 2.0 an install plan never migrates data: adding a package whose `replaces` names an installed package fails with no change. To move to the new id, uninstall the former tool first; the new package starts with its own settings, trust and enabled state. The one-time move of official 1.x tools to their 2.0 successors, including their presentation settings and trust, is the first-start migration in [catalog v2](../v2/catalog-v2.md#first-start-migration-from-1x), not an ordinary update.
+An ordinary 2.0 install plan never migrates data: adding a package whose
+`replaces` names an installed package fails without changing it. Uninstall
+the former tool before installing an unrelated third-party replacement; the
+new package has its own settings, trust and enabled state. The approved
+[first-start migration](../migration/2.0.md#what-the-stable-first-start-migration-transfers)
+for official 1.x tools is separate. `replaces` can name a former web tool,
+not move native data or secrets to a plugin; the closed AF.2 map owns that.
 
 ## 1.x migrations in progress
 
