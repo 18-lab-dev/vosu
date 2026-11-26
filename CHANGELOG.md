@@ -171,6 +171,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Child processes the daemon starts now go through one creation path, so a
   plugin host's inherited channel handles never leak into other children on
   Windows.
+- A plugin now always learns that a game session ended, even when its
+  message queue was full at that moment or it was being stopped or
+  restarted (2026-11-25). Previously the session-ended message could be
+  lost in that case. Plugins that follow sessions of other plugins get the
+  same guarantee.
 
 ## 2.0.0-alpha.1 — prerelease
 

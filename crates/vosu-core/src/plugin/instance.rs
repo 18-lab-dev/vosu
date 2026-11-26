@@ -94,6 +94,7 @@ pub struct PluginInstance {
     in_flight: InFlightTracker,
     dispatch: Dispatch,
     outbox: Arc<super::outbox::ReservedOutbox>,
+    lifecycle: super::dispatch_queue::LifecycleLane,
     /// Set once `destroy_inner` has run, whether from an explicit
     /// `destroy()` call or from `Drop`, so `Drop` never runs it twice.
     destroyed: bool,
@@ -166,12 +167,18 @@ impl PluginInstance {
             Dispatch::Serial(worker) => worker.queue(),
             Dispatch::Concurrent(pool) => pool.queue(),
         };
-        let outbox = super::outbox::ReservedOutbox::new(queue, backend.target(), in_flight.clone());
+        let outbox = super::outbox::ReservedOutbox::new(
+            Arc::clone(&queue),
+            backend.target(),
+            in_flight.clone(),
+        );
+        let lifecycle = super::dispatch_queue::LifecycleLane::new(queue);
         Ok(Self {
             id,
             backend,
             in_flight,
             outbox,
+            lifecycle,
             dispatch,
             destroyed: false,
         })
@@ -282,7 +289,29 @@ impl PluginInstance {
         &self,
         task: super::dispatch::DispatchTask,
     ) -> Result<(), HostError> {
-        let job = Job {
+        self.submit(self.task_job(task))
+    }
+
+    /// Queues `task`, which delivers `session`'s `SESSION_DETACHED`, after
+    /// every job already queued for this instance, even when its ordinary
+    /// queue is full (§7.6 "Lifecycle terminals are reserved"). At most one
+    /// per session is pending; a second is refused until the first has run.
+    pub(crate) fn dispatch_lifecycle(
+        &self,
+        session: u64,
+        task: super::dispatch::DispatchTask,
+    ) -> Result<(), HostError> {
+        self.lifecycle
+            .submit(session, task, |task| self.task_job(task))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lifecycle_pending(&self) -> usize {
+        self.lifecycle.len()
+    }
+
+    fn task_job(&self, task: super::dispatch::DispatchTask) -> Job {
+        Job {
             target: self.backend.target(),
             message: OwnedMessage {
                 opcode: 0,
@@ -293,8 +322,7 @@ impl PluginInstance {
             task: Some(task),
             reply: None,
             in_flight: self.enter_in_flight(),
-        };
-        self.submit(job)
+        }
     }
 
     /// Entered before the job is submitted, so a job still sitting in the
