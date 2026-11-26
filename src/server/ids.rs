@@ -1,5 +1,5 @@
-//! Shared identifier validation for anything routable under a reserved prefix
-//! (currently out-of-process tools, dispatched through [`super::service::RouteExtension`]).
+//! The tool id rule shared by `/api/tools/<id>` route classification, tool
+//! discovery and the 1.x `replaces` journal recovery.
 
 /// `^[a-z0-9][a-z0-9-]{0,31}$`
 pub fn valid_id(id: &str) -> bool {
