@@ -453,12 +453,15 @@ A plugin invokes another plugin's declared action with `VOSU_OP_ACTION_CALL` (pl
 
 ### 6.13 Invocation-owned artifacts (AF.12)
 
-Approved 2026-11-24 as an additive minor revision; B0 adds the opcodes,
-SDK codecs and header constants below in one change, and until then the
-values are reserved. A host or plugin that predates them answers
-`VOSU_ERR_UNSUPPORTED` (§5); a plugin then fails its action with a clear
-error and never falls back to a public resource. [API v1](api-v1.md#job-artifacts-af12)
-owns the HTTP route, authorization, lifetime and bounds.
+Approved 2026-11-24 as an additive minor revision and implemented by B0:
+the opcodes below, `VOSU_ARTIFACT_NAME_MAX_BYTES` (255) and their SDK codecs
+(`ArtifactDeclare`, `ArtifactDeclared`, `ArtifactOpen`, `ArtifactRelease`,
+`is_artifact_name`, `HostServices::declare_artifact`) ship in
+`vosu-plugin-api` `1.0.0-alpha.2`; `1.0.0-alpha.1` predates them. A host or
+plugin that predates them answers `VOSU_ERR_UNSUPPORTED` (§5); a plugin then
+fails its action with a clear error and never falls back to a public
+resource. [API v1](api-v1.md#job-artifacts-af12) owns the HTTP route,
+authorization, lifetime and bounds.
 
 - `VOSU_OP_ARTIFACT_DECLARE = 80` (plugin → host, CBOR, nonzero
   `correlation_id`): `{"invocation": u64, "key": <CBOR>, "name": string,
@@ -474,7 +477,13 @@ owns the HTTP route, authorization, lifetime and bounds.
   by `correlation_id`): `{"artifact": string}` or
   `{"error": {"code": string, "message": string}}`, with codes
   `invocation_finished`, `caller_not_supported`, `too_many_artifacts` and
-  `invalid_name`. A refused declaration does not end the invocation.
+  `invalid_name`. A refused declaration does not end the invocation. An
+  invocation that already finished, timed out, never existed or belongs to
+  another instance is answered alike with `invocation_finished`, so a stale
+  id reveals nothing about another caller. Core reserves the reply's
+  delivery before recording anything, and reserves each accepted artifact's
+  later `ARTIFACT_RELEASE` delivery from a class of its own bounded by the
+  live-artifact limit, so a release never waits on other terminal traffic.
 - `VOSU_OP_ARTIFACT_OPEN = 82` (host → plugin, CBOR, correlated):
   `{"artifact": string, "key": <CBOR>}`, sent per download. The reply is a
   `VOSU_OP_RESOURCE_RESOLVED` with no session: `{"root", "path"}` against a
@@ -482,12 +491,18 @@ owns the HTTP route, authorization, lifetime and bounds.
   retained-handle confinement and identity checks as §6.5, or
   `{"stream", "size"}` served through `STREAM_READ`/`STREAM_CHUNK`/`STREAM_CLOSE`
   as a request-owned lease (A3/R18 above), or an error. A size different from
-  the declared `size` fails the download.
+  the declared `size` fails the download. A root re-declaration retires
+  every session-scoped resolution (§6.5) but no artifact stream lease; a
+  file opened from a plugin-wide root still follows that root's epoch.
 - `VOSU_OP_ARTIFACT_RELEASE = 83` (host → plugin, CBOR, no reply):
   `{"artifact": string, "key": <CBOR>}`, sent once after the artifact leaves
-  core's registry (job retention ended or evicted, package disabled or
-  uninstalled) and after every lease has received `STREAM_CLOSE`. The plugin
-  may then delete what backs it. Nothing is sent to a lost instance.
+  core's registry (job retention ended or evicted, the job ended other than
+  `succeeded`, or its launch session was invalidated) and after every lease
+  has received `STREAM_CLOSE`. The plugin may then delete what backs it.
+  Nothing is sent to a lost instance (crash, kill, disable, uninstall); its
+  artifacts read as released. A process plugin host delivers
+  `ARTIFACT_DECLARED` and `ARTIFACT_RELEASE` on its terminal lane with
+  `STREAM_CLOSE` (§7.6), so a release never overtakes a close.
 
 Artifact ids are opaque, unguessable and valid only under their own job;
 they are not resource ids and carry no session, PID or handle.

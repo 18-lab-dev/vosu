@@ -1,5 +1,6 @@
 //! Public API v1 transport adapters; composition and routing are owned by the server.
 pub mod actions;
+mod artifacts;
 mod authorization;
 pub mod error;
 mod http;

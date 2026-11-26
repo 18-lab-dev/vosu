@@ -22,9 +22,9 @@ pub async fn open_artifact(
         .open_artifact(provider, artifact, key, deadline)
         .await?
     {
-        ArtifactSource::File { root, path } => {
-            open_root_file(root, &path).await.map(ResolvedResource::File)
-        }
+        ArtifactSource::File { root, path } => open_root_file(root, &path)
+            .await
+            .map(ResolvedResource::File),
         ArtifactSource::Stream(lease) => Ok(ResolvedResource::Stream(lease)),
     }
 }

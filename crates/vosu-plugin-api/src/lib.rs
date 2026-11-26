@@ -40,8 +40,7 @@ pub use cbor::action::{
     CallerKind,
 };
 pub use cbor::artifact::{
-    ArtifactDeclare, ArtifactDeclared, ArtifactOpen, ArtifactRelease,
-    is_artifact_name,
+    ArtifactDeclare, ArtifactDeclared, ArtifactOpen, ArtifactRelease, is_artifact_name,
 };
 pub use cbor::common::ErrorInfo;
 pub use cbor::log::{LogLevel, LogRecord};

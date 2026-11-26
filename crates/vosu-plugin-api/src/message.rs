@@ -16,11 +16,10 @@ use crate::opcode::vosu_opcode;
 use crate::validate::{self, ValidationError};
 use crate::{
     ActionCall, ActionCancel, ActionInvoke, ActionProgress, ActionResult, ArtifactDeclare,
-    ArtifactDeclared, ArtifactOpen, ArtifactRelease, FocusChanged, LogRecord,
-    ReadPlanCancel, ResourceResolve, ResourceResolved, RootDeclare, ScanRequest, ScanResult,
-    SessionAttached, SessionDecline, SessionDetached, SessionIdentify, SettingsChanged,
-    StateSubscribe, StateUpdate, StreamChunk, StreamClose, StreamRead, TimerCancel, TimerFired,
-    TimerSet, TreeList, TreeLookup,
+    ArtifactDeclared, ArtifactOpen, ArtifactRelease, FocusChanged, LogRecord, ReadPlanCancel,
+    ResourceResolve, ResourceResolved, RootDeclare, ScanRequest, ScanResult, SessionAttached,
+    SessionDecline, SessionDetached, SessionIdentify, SettingsChanged, StateSubscribe, StateUpdate,
+    StreamChunk, StreamClose, StreamRead, TimerCancel, TimerFired, TimerSet, TreeList, TreeLookup,
 };
 
 /// Every way decoding or encoding a [`Message`] can fail.

@@ -29,8 +29,8 @@
 //! (`CborError::Decode`): spec ambiguity trade-off recorded in this
 //! crate's M1 report, not in this doc comment.
 
-pub mod artifact;
 pub mod action;
+pub mod artifact;
 pub mod codec;
 pub mod common;
 pub mod log;

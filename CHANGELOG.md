@@ -4,6 +4,17 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M7
 
+- Job artifacts (AF.12): a plugin action run by a tool or `vosux` can
+  declare protected or sessionless output files (an export, a stored replay,
+  a rendered video) owned by that one job. `GET`/`HEAD
+  /api/v1/jobs/{job}/artifacts/{artifact}` serves them only to the launch
+  session or broker that can read the job, with one byte range,
+  `Cache-Control: no-store` and `Content-Disposition: attachment`, streamed
+  without buffering and released when the job expires, fails, or its launch
+  session ends. A succeeded job lists them as `artifacts`; `vosux` prints that
+  list on stderr. Public resources are unchanged. The plugin SDK gains the
+  `ARTIFACT_DECLARE`/`DECLARED`/`OPEN`/`RELEASE` opcodes in
+  `vosu-plugin-api` `1.0.0-alpha.2`.
 - vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
   that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
   request gets the ordinary 404 that other removed routes return, as in 1.x

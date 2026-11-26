@@ -1,6 +1,6 @@
 //! Request-owned stream authority. Close is idempotent and capacity-reserved.
-use crate::plugin::{OwnedMessage, outbox::OutboxSlot};
 use crate::plugin::{LeaseOwner, ResourceRequests};
+use crate::plugin::{OwnedMessage, outbox::OutboxSlot};
 use std::sync::{Arc, Mutex};
 use vosu_plugin_api::{Message, StreamClose};
 

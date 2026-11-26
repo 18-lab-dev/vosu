@@ -10,6 +10,7 @@ use vosu_core::actions::Principal;
 
 pub(super) const TOOL_SESSION: &str = "x-vosu-tool-session";
 
+#[derive(Clone)]
 pub(super) struct Credentials {
     pub principal: Principal,
     token: Option<String>,

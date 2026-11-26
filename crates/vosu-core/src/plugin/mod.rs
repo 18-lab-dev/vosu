@@ -111,8 +111,7 @@ pub use host::resource_requests::{
 pub use host::resources::{OverlayRootRetirement, RootCapability};
 pub use host::{
     ArtifactSource, DiagnosticSession, DiscoveryObserver, PackageRegistration, PluginHost,
-    ProcessRecord,
-    ProviderRegistration, ValidationSnapshot,
+    ProcessRecord, ProviderRegistration, ValidationSnapshot,
 };
 pub use host_services::PluginHostHandler;
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};

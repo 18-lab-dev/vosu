@@ -18,9 +18,7 @@ use vosu_plugin_api::{
     Message, ResourceResolved, is_artifact_name, vosu_status,
 };
 
-use super::resource_requests::{
-    LeaseOwner, ResourceReply, ResourceRequest, ResourceRequestError,
-};
+use super::resource_requests::{LeaseOwner, ResourceReply, ResourceRequest, ResourceRequestError};
 use super::resources::RootCapability;
 use super::{InstanceSlot, OwnedMessage, PluginHost};
 use crate::actions::{ArtifactDeclaration, ArtifactHost, ArtifactRefusal};

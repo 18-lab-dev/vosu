@@ -528,8 +528,7 @@ impl JobRegistry {
                 .entries
                 .iter_mut()
                 .filter_map(|(id, entry)| {
-                    if !matches!(entry.owner, Principal::Tool(_)) || !entry.visible_to(&principal)
-                    {
+                    if !matches!(entry.owner, Principal::Tool(_)) || !entry.visible_to(&principal) {
                         return None;
                     }
                     entry.revoked = true;

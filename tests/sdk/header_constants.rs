@@ -275,7 +275,10 @@ fn opcode_values_match_the_header() {
             ("VOSU_OP_STATE_SUBSCRIBE", VOSU_OP_STATE_SUBSCRIBE as u32),
             ("VOSU_OP_STATE_UPDATE", VOSU_OP_STATE_UPDATE as u32),
             ("VOSU_OP_ARTIFACT_DECLARE", VOSU_OP_ARTIFACT_DECLARE as u32),
-            ("VOSU_OP_ARTIFACT_DECLARED", VOSU_OP_ARTIFACT_DECLARED as u32),
+            (
+                "VOSU_OP_ARTIFACT_DECLARED",
+                VOSU_OP_ARTIFACT_DECLARED as u32,
+            ),
             ("VOSU_OP_ARTIFACT_OPEN", VOSU_OP_ARTIFACT_OPEN as u32),
             ("VOSU_OP_ARTIFACT_RELEASE", VOSU_OP_ARTIFACT_RELEASE as u32),
         ],

@@ -114,7 +114,12 @@ fn declared_rejects_a_reply_mixing_both_shapes() {
 #[test]
 fn artifact_names_are_one_safe_component() {
     let longest = "a".repeat(VOSU_ARTIFACT_NAME_MAX_BYTES as usize);
-    for valid in ["replay.osr", "Skin export (1).osk", "動画.mp4", longest.as_str()] {
+    for valid in [
+        "replay.osr",
+        "Skin export (1).osk",
+        "動画.mp4",
+        longest.as_str(),
+    ] {
         assert!(is_artifact_name(valid), "{valid:?}");
     }
     let too_long = format!("{longest}a");
