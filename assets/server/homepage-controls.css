@@ -1187,21 +1187,6 @@ dialog[data-stacked]::backdrop {
   font-size: 0.85em;
 }
 
-/* Permission ids, routes, the command and the folder, for tool authors. */
-.tool-details__developer summary {
-  min-height: 1.5rem;
-  color: var(--fg-dim);
-  cursor: pointer;
-}
-
-.tool-details__developer[open] summary {
-  margin-bottom: var(--space-2);
-}
-
-.tool-details__developer .v-facts code {
-  overflow-wrap: anywhere;
-}
-
 /* API keys: one row per key, permissions as plain choices. */
 .api-key-list {
   display: grid;
@@ -1262,122 +1247,6 @@ dialog[data-stacked]::backdrop {
   grid-column: 1 / -1;
 }
 
-/* Data dialog: one row per directory with its size. */
-.tool-data {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  border-top: var(--hair) solid var(--rule);
-}
-
-.tool-data > div {
-  display: grid;
-  grid-template-columns: 6rem minmax(0, 1fr) auto;
-  gap: var(--space-3);
-  align-items: baseline;
-  padding: var(--space-3) 0;
-  border-bottom: var(--hair) solid var(--rule);
-}
-
-.tool-data dt {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.tool-data dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.tool-data code {
-  font-size: var(--step--1);
-}
-
-.tool-data__size {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Logs drawer: a modal dialog docked to the right edge. */
-.dashboard-dialog.logs-drawer {
-  width: min(100vw, 52rem);
-  max-width: none;
-  height: 100vh;
-  max-height: none;
-  margin: 0 0 0 auto;
-  border-width: 0 0 0 var(--hair);
-}
-
-.logs-drawer .dialog-frame {
-  height: 100vh;
-  max-height: none;
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.logs-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: center;
-  padding: var(--space-2) var(--space-5);
-  color: var(--fg-dim);
-  font-size: var(--step--1);
-  border-bottom: var(--hair) solid var(--rule);
-}
-
-.logs-toolbar [role="status"] {
-  margin-left: auto;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.logs-output {
-  margin: 0;
-  padding: var(--space-3) var(--space-5);
-  overflow: auto;
-  overscroll-behavior: contain;
-  color: var(--fg-dim);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  line-height: 1.55;
-  background: var(--bg-sunken);
-}
-
-.logs-output:focus-visible {
-  outline-offset: -2px;
-}
-
-.log-line {
-  display: grid;
-  grid-template-columns: 6.5rem 3.5rem minmax(0, 1fr);
-  gap: var(--space-3);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.log-line__time,
-.log-line__stream {
-  color: var(--muted);
-}
-
-.log-line[data-stream="stderr"] .log-line__text {
-  color: var(--danger);
-}
-
-.log-line[data-stream="host"] .log-line__text {
-  color: var(--note);
-}
-
-.logs-empty {
-  color: var(--muted);
-}
-
 /* ------------------------------------------------------------- narrow */
 
 @media (max-width: 42rem) {
@@ -1422,24 +1291,6 @@ dialog[data-stacked]::backdrop {
 
   .tool-card__actions .settings-overflow {
     margin-left: 0;
-  }
-
-  .tool-data > div {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .tool-data dd:first-of-type {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
-  .log-line {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
-
-  .log-line__stream {
-    display: none;
   }
 
   .dialog-body {

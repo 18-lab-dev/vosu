@@ -1,16 +1,16 @@
-// Tools page: renders `GET /api/tools` and drives the lifecycle, launch,
-// data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
+// Tools page: renders the 2.0 `GET /api/tools` ToolView and drives the
+// enable, disable, trust and launch actions of the dashboard API in
+// docs/tools/protocol.md. Tools are web-only: there is nothing to start, stop
+// or read logs from.
 
 import { cardBanner, cardIcon } from './dashboard-catalog.js';
 import { mountCatalogBrowser } from './dashboard-catalog-browse.js';
 import { mountPlugins } from './dashboard-plugins.js';
-import { toolAutostartControl } from './homepage-settings.js';
 
+// `running` means servable: valid, enabled, trusted and every `requires`
+// entry resolved.
 const STATUS_LABELS = {
-  stopped: 'Stopped',
-  starting: 'Starting',
-  running: 'Running',
-  failed: 'Failed',
+  running: 'Ready',
   blocked: 'Blocked',
   untrusted: 'Untrusted',
   disabled: 'Disabled',
@@ -19,30 +19,20 @@ const STATUS_LABELS = {
 // system.css .v-dot states for each tool status.
 const STATUS_DOTS = {
   running: 'ok',
-  starting: 'busy',
-  failed: 'error',
   invalid: 'error',
   blocked: 'warn',
   untrusted: 'warn',
 };
 const SOURCE_LABELS = { dev: 'Dev', official: 'Official', user: 'User' };
-// One chip per interface a tool provides, in this order.
-const INTERFACE_LABELS = { ui: 'UI', service: 'Service', cli: 'CLI' };
 const BUSY_LABELS = {
-  start: 'Starting…',
-  stop: 'Stopping…',
-  restart: 'Restarting…',
   enable: 'Enabling…',
   disable: 'Disabling…',
   trust: 'Trusting…',
-  'open-data': 'Opening…',
-  'clear-cache': 'Clearing…',
 };
+// `status_detail` of a package with only the 1.x `tool.toml`.
+const LEGACY_DETAIL = 'needs-2.0-update';
 const AUTHORING_DOCS = 'https://github.com/18-lab-dev/vosu/blob/main/docs/tools/protocol.md';
 const POLL_MS = 3000;
-const LOG_POLL_MS = 2000;
-// Matches the host's bounded buffer, so the drawer never holds more than vosu.
-const MAX_LOG_LINES = 1000;
 
 function el(tag, { className, text, attrs } = {}, ...children) {
   const node = document.createElement(tag);
@@ -56,64 +46,17 @@ function el(tag, { className, text, attrs } = {}, ...children) {
   return node;
 }
 
-function formatBytes(value) {
-  if (!Number.isFinite(value) || value < 0) return 'Unknown';
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let size = value;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  const digits = unit === 0 || size >= 100 ? 0 : 1;
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(size)} ${units[unit]}`;
-}
-
-function parseTime(value) {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    // Seconds and milliseconds are both plausible epoch encodings.
-    return new Date(value < 1e12 ? value * 1000 : value);
-  }
-  if (typeof value === 'string' && value) {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-  return null;
-}
-
 function list(values) {
   return Array.isArray(values) ? values : [];
 }
 
-function hasService(view) {
-  return view.service_role === 'background';
+function statusOf(view) {
+  return String(view.status ?? 'invalid');
 }
-
 
 function cardStatus(view) {
-  const status = String(view.status ?? 'stopped');
-  if (!hasService(view) && view.enabled && view.trusted && ['stopped', 'starting', 'running'].includes(status)) {
-    const working = view.service_role === 'backend' && status !== 'stopped';
-    return { label: working ? 'Working' : 'Ready', dot: working ? 'busy' : 'ok' };
-  }
+  const status = statusOf(view);
   return { label: STATUS_LABELS[status] ?? status, dot: STATUS_DOTS[status] ?? 'idle' };
-}
-// Installed views carry `kind` and `cli`; catalog entries list `interfaces`.
-function interfacesOf(view) {
-  if (Array.isArray(view.interfaces)) return view.interfaces;
-  return [
-    (view.kind === 'ui' || view.kind === 'hybrid') && 'ui',
-    hasService(view) && 'service',
-    view.cli && 'cli',
-  ].filter(Boolean);
-}
-
-function interfaceChips(view) {
-  return Object.keys(INTERFACE_LABELS).filter((key) => interfacesOf(view).includes(key)).map((key) => el('span', {
-    className: 'badge',
-    text: INTERFACE_LABELS[key],
-    attrs: { 'data-interface': key, title: `Provides a ${key === 'ui' ? 'browser UI' : key === 'cli' ? 'command-line interface' : 'background service'}` },
-  }));
 }
 
 export function mountTools({
@@ -169,7 +112,7 @@ export function mountTools({
   // drawer's Uninstall action.
   window.addEventListener('vosu:catalog-changed', async () => { await refresh(); refreshOpenDetails(); });
   // One Tab stop per card grid; arrows move between cards.
-  const installedGrid = rovingGrid(root, '.tool-card');
+  rovingGrid(root, '.tool-card');
 
   function tokensOf(query) {
     return String(query).toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -178,7 +121,7 @@ export function mountTools({
   function matches(view, tokens) {
     if (tokens.length === 0) return true;
     const text = [
-      view.name, view.id, view.author, view.description, view.source, view.kind, view.status, cardStatus(view).label,
+      view.name, view.id, view.author, view.description, view.source, view.status, cardStatus(view).label,
     ].map((value) => String(value ?? '').toLocaleLowerCase()).join(' ');
     return tokens.every((token) => text.includes(token));
   }
@@ -189,40 +132,37 @@ export function mountTools({
   }
 
   function statusValue(view) {
-    const status = String(view.status ?? 'stopped');
+    const status = statusOf(view);
     const value = el('span', {}, el('span', {
       className: 'tool-status',
       text: STATUS_LABELS[status] ?? status,
       attrs: { 'data-status': status },
     }));
-    const process = view.process;
-    const notes = [];
-    if (process?.pid) notes.push(`PID ${process.pid}`);
-    const started = parseTime(process?.started_at);
-    if (started) notes.push(`since ${started.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`);
-    if (Number.isInteger(process?.restarts) && process.restarts > 0) {
-      notes.push(`${process.restarts} restart${process.restarts === 1 ? '' : 's'}`);
-    }
-    if (notes.length) value.append(el('span', { className: 'tool-detail', text: notes.join(' · ') }));
     if (view.status_detail) value.append(el('span', { className: 'tool-detail', text: view.status_detail }));
     return value;
   }
 
-  function actionButton(label, action, { primary = false, danger = false, update = false, disabled = false, describe } = {}) {
-    const button = el('button', {
-      className: `button${primary ? ' button-primary' : ''}${danger ? ' button-danger' : ''}${update ? ' button-update' : ''}`,
+  function dependency(requirement) {
+    return el('li', {
+      className: 'tool-dependency',
+      attrs: { 'data-satisfied': String(Boolean(requirement.satisfied)) },
+    }, el('code', { text: requirement.id }), requirement.version ? ` ${requirement.version}` : '',
+    el('span', { className: 'tool-dependency__state', text: requirement.satisfied ? 'OK' : 'Unmet' }));
+  }
+
+  function actionButton(label, action, { primary = false, danger = false, describe } = {}) {
+    return el('button', {
+      className: `button${primary ? ' button-primary' : ''}${danger ? ' button-danger' : ''}`,
       text: label,
       attrs: { type: 'button', 'data-tool-action': action, 'aria-label': describe },
     });
-    button.disabled = disabled;
-    return button;
   }
 
   // Cards carry identity, status and the primary actions; everything else
-  // (description, facts, routes, maintenance actions) lives in Details.
+  // (description, facts, maintenance actions) lives in Details.
   function renderCard(view) {
     const name = view.name || view.id;
-    const status = String(view.status ?? 'stopped');
+    const status = statusOf(view);
     const displayStatus = cardStatus(view);
     const card = el('article', {
       className: 'tool-card',
@@ -233,8 +173,7 @@ export function mountTools({
       view.version ? el('span', { className: 'tool-card__version', text: `v${view.version}` }) : null);
     const line = el('p', { className: 'tool-card__status' },
       el('span', { className: 'v-dot', attrs: { 'data-state': displayStatus.dot } }),
-      el('span', { text: displayStatus.label }),
-      ...interfaceChips(view));
+      el('span', { text: displayStatus.label }));
     if (view.source && view.source !== 'official') {
       line.append(el('span', { className: 'badge', text: SOURCE_LABELS[view.source] ?? view.source, attrs: { 'data-source': view.source } }));
     }
@@ -244,23 +183,17 @@ export function mountTools({
       el('div', { className: 'tool-card__head' }, title, line)));
 
     const actions = el('div', { className: 'tool-card__actions' });
-    const usable = view.trusted && view.enabled && !['invalid', 'untrusted', 'disabled'].includes(status);
-    if (!view.trusted && status !== 'invalid') {
+    // A 1.x package can only be updated to 2.0; vosu refuses every action.
+    const legacy = view.status_detail === LEGACY_DETAIL;
+    if (!view.trusted && status !== 'invalid' && !legacy) {
       actions.append(actionButton('Trust…', 'trust', { primary: true, describe: `Trust ${name}` }));
     }
-    // A disabled tool's next step is Enable; Open returns once it is usable.
-    const enable = !view.enabled && view.trusted && status !== 'invalid';
+    // A disabled tool's next step is Enable. Open appears once the tool is
+    // servable; a blocked tool's Details names the unmet requirement.
+    const enable = !view.enabled && view.trusted && status !== 'invalid' && !legacy;
     if (enable) actions.append(actionButton('Enable', 'enable', { primary: true, describe: `Enable ${name}` }));
-    if (view.ui_url && !enable) {
-      actions.append(actionButton('Open', 'launch', {
-        primary: view.trusted, disabled: !usable, describe: `Open ${name} in a new tab`,
-      }));
-    }
-    if (hasService(view) && usable) {
-      const running = status === 'running' || status === 'starting';
-      actions.append(running
-        ? actionButton('Stop', 'stop', { describe: `Stop ${name}` })
-        : actionButton('Start', 'start', { describe: `Start ${name}` }));
+    if (view.ui_url && status === 'running') {
+      actions.append(actionButton('Open', 'launch', { primary: true, describe: `Open ${name} in a new tab` }));
     }
     if (view.has_settings) {
       actions.append(actionButton('Settings', 'settings', { describe: `Settings for ${name}` }));
@@ -272,13 +205,7 @@ export function mountTools({
 
   function detailsContent(view) {
     const name = view.name || view.id;
-    const status = String(view.status ?? 'stopped');
-    const requires = list(view.requires);
-    const requiredBy = list(view.required_by);
-    const permissions = list(view.permissions?.host);
-    const data = view.data ?? {};
-    const apiRead = list(view.api?.read);
-    const apiWrite = list(view.api?.write);
+    const status = statusOf(view);
     const homepage = absoluteHttpUrl(view.homepage);
     const facts = el('dl', { className: 'v-facts' });
     const add = (label, value) => { if (value !== null && value !== undefined) facts.append(el('dt', { text: label }), el('dd', {}, value)); };
@@ -286,38 +213,11 @@ export function mountTools({
     add('Version', view.version ? `v${view.version}` : null);
     add('Author', view.author || null);
     add('Source', SOURCE_LABELS[view.source] ?? view.source ?? null);
-    if (hasService(view)) add('Startup', view.starts_with_vosu ? 'With vosu' : 'On demand');
-    add('Storage', `${formatBytes(Number(data.data_bytes))} data · ${formatBytes(Number(data.cache_bytes))} cache`);
-    add('Requires', idList(requires, (dependency) => el('li', {
-      className: 'tool-dependency',
-      attrs: { 'data-satisfied': String(Boolean(dependency.satisfied)) },
-    }, el('code', { text: dependency.id }), dependency.version ? ` ${dependency.version}` : '',
-    el('span', { className: 'tool-dependency__state', text: dependency.satisfied ? 'OK' : 'Unmet' })), 'Nothing'));
-    add('Required by', idList(requiredBy, (id) => el('li', {}, el('code', { text: id })), 'No tools'));
+    add('Requires', idList(list(view.requires), dependency, 'Nothing'));
+    if (list(view.optional).length) add('Uses if present', idList(list(view.optional), dependency, 'Nothing'));
     if (homepage) add('Homepage', el('a', { text: new URL(homepage).host, attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer' } }));
 
-    // Permission ids, routes and the command line matter to tool authors,
-    // not to everyday use.
-    const developer = el('dl', { className: 'v-facts' });
-    const addDeveloper = (label, value) => developer.append(el('dt', { text: label }), el('dd', {}, value));
-    addDeveloper('Permissions', idList(permissions, (permission) => el('li', {}, el('code', { text: permission })), 'None'));
-    if (apiRead.length || apiWrite.length) {
-      addDeveloper('API routes', el('ul', {},
-        ...apiRead.map((route) => el('li', {}, 'read ', el('code', { text: route }))),
-        ...apiWrite.map((route) => el('li', {}, 'write ', el('code', { text: route })))));
-    }
-    if (view.cli) addDeveloper('Command', el('code', { text: view.cli.usage }));
-    if (view.path) addDeveloper('Folder', el('code', { text: view.path }));
-    const developerDetails = el('details', { className: 'tool-details__developer' }, el('summary', { text: 'Developer details' }), developer);
-
     const actions = el('div', { className: 'v-row' });
-    const usable = view.trusted && view.enabled && !['invalid', 'untrusted', 'disabled'].includes(status);
-    if (hasService(view) && usable && (status === 'running' || status === 'starting')) {
-      actions.append(actionButton('Restart', 'restart', { describe: `Restart ${name}` }));
-    }
-    actions.append(
-      actionButton('Data', 'data', { describe: `Data folders for ${name}` }),
-      actionButton('Logs', 'logs', { describe: `Logs for ${name}` }));
     if (status !== 'invalid' && view.trusted && view.enabled) {
       actions.append(actionButton('Disable', 'disable', { danger: true, describe: `Disable ${name}` }));
     }
@@ -327,10 +227,8 @@ export function mountTools({
     }
     return [
       view.description ? el('p', { className: 'tool-details__description', text: view.description }) : null,
-      toolAutostartControl(view, { requestJson, notify, errorText, onChange: refresh }),
       facts,
-      developerDetails,
-      actions,
+      actions.childElementCount ? actions : null,
     ].filter(Boolean);
   }
 
@@ -398,7 +296,7 @@ export function mountTools({
     if (showEmpty && !empty) {
       empty = el('div', { className: 'no-results' },
         el('h2', { text: 'No matching tools' }),
-        el('p', { text: 'Try fewer words, an author, or a status such as running.' }));
+        el('p', { text: 'Try fewer words, an author, or a status such as ready.' }));
       root.append(empty);
     } else if (!showEmpty) {
       empty?.remove();
@@ -526,36 +424,23 @@ export function mountTools({
   }
 
   async function confirmFor(view, action) {
+    if (action !== 'trust') return true;
     const name = view.name || view.id;
-    if (action === 'trust') {
-      const permissions = list(view.permissions?.host);
-      return confirmAction(
-        `Trust ${name}?`,
-        [
-          `${name}${view.version ? ` ${view.version}` : ''}${view.author ? ` by ${view.author}` : ''}`,
-          view.path ? `Folder: ${view.path}` : '',
-          '',
-          `${name} runs as your OS user, with the same access to your files, network, and accounts as any program you start yourself.`,
-          `Its permissions (${permissions.length ? permissions.join(', ') : 'none declared'}) only limit what vosu's host API returns to it. They are not a sandbox.`,
-          '',
-          'Trust tools only from authors you trust.',
-        ].filter((line, index, lines) => line !== '' || (index > 0 && lines[index - 1] !== '')).join('\n'),
-        'Trust tool',
-      );
-    }
-    const dependents = list(view.required_by);
-    if ((action === 'disable' || action === 'stop') && dependents.length) {
-      return confirmAction(
-        `${action === 'disable' ? 'Disable' : 'Stop'} ${name}?`,
-        `${dependents.join(', ')} ${dependents.length === 1 ? 'depends' : 'depend'} on ${name} and will be blocked until it runs again.`,
-        action === 'disable' ? 'Disable' : 'Stop',
-        { danger: true },
-      );
-    }
-    return true;
+    const declared = [...list(view.requires), ...list(view.optional)].map((requirement) => requirement.id);
+    return confirmAction(
+      `Trust ${name}?`,
+      [
+        `${name}${view.version ? ` ${view.version}` : ''}${view.author ? ` by ${view.author}` : ''}`,
+        '',
+        `vosu will serve ${name}'s pages, and a tab you open from this dashboard can read and run what it declares: ${declared.length ? declared.join(', ') : 'nothing beyond its own pages'}.`,
+        '',
+        'Trust tools only from authors you trust.',
+      ].join('\n'),
+      'Trust tool',
+    );
   }
 
-  async function lifecycle(button, view, action) {
+  async function changeState(button, view, action) {
     if (state.pending.has(view.id)) return;
     if (!await confirmFor(view, action)) return;
     state.pending.add(view.id);
@@ -563,9 +448,7 @@ export function mountTools({
     const name = view.name || view.id;
     try {
       await requestJson(api(view.id, `/${action}`), { method: 'POST' });
-      const done = {
-        start: 'started', stop: 'stopped', restart: 'restarted', enable: 'enabled', disable: 'disabled', trust: 'trusted',
-      };
+      const done = { enable: 'enabled', disable: 'disabled', trust: 'trusted' };
       notify(`${name} ${done[action] ?? 'updated'}.`, 'success');
     } catch (error) {
       notify(`Could not ${action} ${name}: ${errorText(error)}`, 'error', 5000);
@@ -574,167 +457,6 @@ export function mountTools({
       setBusy(button, false);
       await refresh();
     }
-  }
-
-  function openData(view) {
-    const name = view.name || view.id;
-    const { dialog, body } = createActionDialog(`${name} data`);
-    // Folder paths and sizes only; what each folder is for is in the docs.
-    const rows = el('dl', { className: 'tool-data' });
-    const help = el('p', { className: 'field-help' });
-    const openFolder = el('button', { className: 'button', text: 'Open data folder', attrs: { type: 'button' } });
-    const clear = el('button', { className: 'button button-danger', text: 'Clear cache', attrs: { type: 'button' } });
-    const close = el('button', { className: 'button button-primary', text: 'Done', attrs: { type: 'button' } });
-    const status = el('p', { attrs: { role: 'status' } });
-    let current = view;
-
-    function paint() {
-      const data = current.data ?? {};
-      rows.replaceChildren(
-        el('div', {}, el('dt', { text: 'Data' }), el('dd', {}, el('code', { text: data.data_dir ?? 'Unknown' })),
-          el('dd', { className: 'tool-data__size', text: formatBytes(Number(data.data_bytes)) })),
-        el('div', {}, el('dt', { text: 'Cache' }), el('dd', {}, el('code', { text: data.cache_dir ?? 'Unknown' })),
-          el('dd', { className: 'tool-data__size', text: formatBytes(Number(data.cache_bytes)) })),
-      );
-      // The protocol lets the dashboard clear a cache only while nothing uses
-      // it, and an empty cache has nothing to clear.
-      const busy = Boolean(current.process?.pid);
-      const empty = Number(data.cache_bytes) === 0;
-      clear.disabled = busy || empty;
-      help.textContent = busy ? `Stop ${name} to clear its cache.` : '';
-      help.hidden = !busy;
-    }
-
-    async function reload() {
-      try {
-        current = await requestJson(api(view.id));
-        paint();
-      } catch (_error) {
-        // The sizes shown remain the last known ones.
-      }
-    }
-
-    async function post(button, action, success) {
-      setBusy(button, true, BUSY_LABELS[action]);
-      try {
-        await requestJson(api(view.id, `/${action}`), { method: 'POST' });
-        status.textContent = success;
-        await reload();
-        refresh();
-      } catch (error) {
-        status.textContent = `${errorText(error)}`;
-      } finally {
-        setBusy(button, false);
-        paint();
-      }
-    }
-
-    openFolder.addEventListener('click', () => post(openFolder, 'open-data', 'Opened the data folder.'));
-    clear.addEventListener('click', async () => {
-      const size = formatBytes(Number(current.data?.cache_bytes));
-      if (!await confirmAction(`Clear the ${name} cache?`, `${current.data?.cache_dir ?? ''}\n${size} will be deleted.`, 'Clear cache', { danger: true })) return;
-      post(clear, 'clear-cache', 'Cache cleared.');
-    });
-    close.addEventListener('click', () => dialog.close());
-    paint();
-    body.append(rows, help, status, el('div', { className: 'dialog-actions' }, openFolder, clear, close));
-    close.focus();
-    reload();
-  }
-
-  function openLogs(view) {
-    const name = view.name || view.id;
-    const titleId = `logs-title-${view.id}`;
-    const dialog = el('dialog', { className: 'dashboard-dialog logs-drawer', attrs: { 'aria-labelledby': titleId } });
-    const closeButton = el('button', { className: 'icon-button', text: '✕', attrs: { type: 'button', 'aria-label': 'Close logs' } });
-    const follow = el('input', { className: 'v-toggle', attrs: { type: 'checkbox', role: 'switch', checked: true } });
-    const copy = el('button', { className: 'button', text: 'Copy', attrs: { type: 'button' } });
-    const status = el('p', { attrs: { role: 'status' } });
-    // A log region would read every new line aloud; users read it on demand.
-    const output = el('div', {
-      className: 'logs-output',
-      attrs: { role: 'log', 'aria-live': 'off', tabindex: '0', 'aria-label': `${name} log output` },
-    });
-    const empty = el('p', { className: 'logs-empty', text: 'No output yet.' });
-    output.append(empty);
-    dialog.append(el('div', { className: 'dialog-frame' },
-      el('header', { className: 'dialog-header' },
-        el('h2', { text: `${name} logs`, attrs: { id: titleId } }),
-        closeButton),
-      el('div', { className: 'logs-toolbar' }, el('label', { className: 'v-check' }, follow, 'Follow output'), copy, status),
-      output));
-
-    let after = 0;
-    let timer = 0;
-    let open = true;
-    let count = 0;
-
-    function line(entry) {
-      const time = parseTime(entry.ts);
-      const stream = String(entry.stream ?? 'stdout');
-      return el('div', { className: 'log-line', attrs: { 'data-stream': stream } },
-        el('span', { className: 'log-line__time', text: time ? time.toLocaleTimeString(undefined, { hour12: false }) : String(entry.ts ?? '') }),
-        el('span', { className: 'log-line__stream', text: stream }),
-        el('span', { className: 'log-line__text', text: String(entry.text ?? '') }));
-    }
-
-    async function poll() {
-      if (!open) return;
-      try {
-        const payload = await requestJson(`${api(view.id, '/logs')}?after=${encodeURIComponent(after)}`);
-        const lines = list(payload.lines);
-        if (lines.length) {
-          empty.remove();
-          const fragment = document.createDocumentFragment();
-          for (const entry of lines) {
-            fragment.append(line(entry));
-            if (Number.isFinite(entry.seq)) after = Math.max(after, entry.seq);
-          }
-          output.append(fragment);
-          while (output.childElementCount > MAX_LOG_LINES) output.firstElementChild.remove();
-          count = output.childElementCount;
-          if (follow.checked) output.scrollTop = output.scrollHeight;
-        }
-        status.textContent = `${follow.checked ? 'Live' : 'Paused'} · ${count} line${count === 1 ? '' : 's'}`;
-      } catch (error) {
-        status.textContent = `Retrying · ${errorText(error)}`;
-      }
-      if (open) timer = window.setTimeout(poll, LOG_POLL_MS);
-    }
-
-    follow.addEventListener('change', () => {
-      status.textContent = `${follow.checked ? 'Live' : 'Paused'} · ${count} line${count === 1 ? '' : 's'}`;
-      if (follow.checked) output.scrollTop = output.scrollHeight;
-    });
-    // Scrolling back through history pauses following until the user returns
-    // to the end.
-    output.addEventListener('scroll', () => {
-      const atEnd = output.scrollHeight - output.scrollTop - output.clientHeight < 8;
-      if (follow.checked !== atEnd && count > 0) {
-        follow.checked = atEnd;
-        status.textContent = `${atEnd ? 'Live' : 'Paused'} · ${count} line${count === 1 ? '' : 's'}`;
-      }
-    }, { passive: true });
-    copy.addEventListener('click', async () => {
-      const text = [...output.querySelectorAll('.log-line')]
-        .map((row) => [...row.children].map((cell) => cell.textContent).join('  ')).join('\n');
-      try {
-        await navigator.clipboard.writeText(text);
-        notify('Logs copied.', 'success', 2600);
-      } catch (error) {
-        notify(`Could not copy logs: ${errorText(error)}`, 'error');
-      }
-    });
-    closeButton.addEventListener('click', () => dialog.close());
-    dialog.addEventListener('close', () => {
-      open = false;
-      window.clearTimeout(timer);
-      dialog.remove();
-    }, { once: true });
-    document.body.append(dialog);
-    showModal(dialog);
-    output.focus();
-    poll();
   }
 
   function handleAction(event) {
@@ -746,13 +468,11 @@ export function mountTools({
     const action = button.dataset.toolAction;
     if (action === 'launch') launch(button, view);
     else if (action === 'details') openDetails(view);
-    else if (action === 'data') openData(view);
     else if (action === 'settings') openToolSettings(view.id, view.name || view.id);
-    else if (action === 'logs') openLogs(view);
     else if (action === 'catalog-uninstall') {
       const record = catalog.record('tool', view.id);
       if (record) catalog.uninstall(record, view.name || view.id);
-    } else lifecycle(button, view, action);
+    } else if (action in BUSY_LABELS) changeState(button, view, action);
   }
   root.addEventListener('click', handleAction);
 

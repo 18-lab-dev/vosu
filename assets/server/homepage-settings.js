@@ -133,44 +133,6 @@ export function createOverflow(label, text = '⋯') {
 // Above this many settings a search field helps; below it is noise.
 const SEARCH_THRESHOLD = 8;
 
-export function toolAutostartControl(view, { requestJson, notify, errorText, onChange = () => {} }) {
-  if (view.service_role !== 'background') return null;
-  const row = document.createElement('div');
-  row.className = 'v-row';
-  const label = document.createElement('label');
-  label.className = 'v-check';
-  const toggle = document.createElement('input');
-  toggle.type = 'checkbox';
-  toggle.className = 'v-toggle';
-  toggle.setAttribute('role', 'switch');
-  toggle.checked = Boolean(view.starts_with_vosu);
-  label.append(toggle, 'Start with vosu');
-  const reset = document.createElement('button');
-  reset.type = 'button';
-  reset.className = 'v-btn v-btn--ghost v-btn--sm';
-  reset.textContent = 'Use default';
-  reset.disabled = view.autostart === null;
-  async function save(autostart) {
-    toggle.disabled = reset.disabled = true;
-    try {
-      view = await requestJson(`/api/tools/${encodeURIComponent(view.id)}/autostart`, {
-        method: 'PUT', body: JSON.stringify({ autostart }),
-      });
-      onChange(view);
-    } catch (error) {
-      notify(`Could not save startup: ${errorText(error)}`, 'error');
-    } finally {
-      toggle.checked = Boolean(view.starts_with_vosu);
-      toggle.disabled = false;
-      reset.disabled = view.autostart === null;
-    }
-  }
-  toggle.addEventListener('change', () => save(toggle.checked));
-  reset.addEventListener('click', () => save(null));
-  row.append(label, reset);
-  return row;
-}
-
 export function createSettingsEditor({
   results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
 }) {
@@ -191,7 +153,6 @@ export function createSettingsEditor({
   dialog?.addEventListener('close', () => {
     state.navigationObserver?.disconnect();
     state.dirty = false;
-    dialog.querySelector('[data-tool-startup]')?.remove();
   });
   // An inline settings page with unsaved edits asks before navigating away.
   window.addEventListener('beforeunload', (event) => {
@@ -208,7 +169,6 @@ export function createSettingsEditor({
     const requestId = ++state.dialogRequest;
     state.dirty = false;
     dialogTitle.textContent = title;
-    dialog.querySelector('[data-tool-startup]')?.remove();
     dialogBody.replaceChildren();
     if (!dialog.open) showModal(dialog);
     return { container: dialogBody, requestId };
@@ -870,12 +830,6 @@ export function createSettingsEditor({
       const { schema, values, secrets } = settingsPayload(payload);
       const title = typeof view.name === 'string' && view.name ? view.name : id;
       renderCounterSettings(container, { kind: 'tool', id, name: title }, schema, values, { inline, dialogRequestId: requestId, secrets });
-      const startup = toolAutostartControl(view, { requestJson, notify, errorText });
-      if (startup) {
-        startup.dataset.toolStartup = '';
-        if (inline) container.prepend(startup);
-        else dialogTitle.after(startup);
-      }
     } catch (error) {
       showLoadError(container, requestId, error, inline);
     }
