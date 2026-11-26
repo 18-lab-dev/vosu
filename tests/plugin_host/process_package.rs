@@ -222,7 +222,7 @@ fn process_package_constructor_never_runs_in_core() {
 #[test]
 fn bundled_plugins_remain_linked_in_process_code() {
     let mut echo = Vec::new();
-    for entry in vosu::plugins::BUNDLED {
+    for entry in vosu::BUNDLED {
         let manifest = vosu_plugin_api::manifest::PackageManifest::parse(entry.manifest)
             .and_then(vosu_plugin_api::manifest::PackageManifest::into_plugin)
             .expect("bundled manifests parse");

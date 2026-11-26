@@ -11,8 +11,8 @@ use bytes::Bytes;
 pub use charts::Charts;
 use counted::{Counted, Counts};
 use std::{sync::Arc, time::Duration};
-use vosu::server::{
-    bus_provider::BusStateProvider,
+use vosu_core::server::bus_provider::BusStateProvider;
+use vosu_core::server::{
     routes::{CachedJson, StateJsonProvider, StateRoute},
     websocket::{Connection, Outbound, OutboundReceiver, Schema, WebSocketHub},
 };
@@ -159,11 +159,7 @@ pub struct Hub {
 impl Hub {
     /// Connects a real hub client and waits for its first frame, leaving that
     /// frame in flight: later frames require the transport's acknowledgement.
-    pub fn connect(
-        &self,
-        rig: &Rig,
-        filters: Option<Vec<vosu_adapter_support::filtered::Filter>>,
-    ) -> Client {
+    pub fn connect(&self, rig: &Rig, filters: Option<Vec<vosu_surface::filter::Filter>>) -> Client {
         let _enter = rig.runtime().enter();
         let (connection, receiver) = self.hub.connect();
         let mut client = Client {

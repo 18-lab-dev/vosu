@@ -101,7 +101,7 @@ impl Run {
                 let launcher =
                     vosu_core::plugin::process::launcher::ProcessHostLauncher::with_executable(
                         Path::new(env!("CARGO_BIN_EXE_vosu")),
-                        vosu::plugin_host::BUILD_IDENTITY,
+                        vosu::BUNDLE.plugin_host_identity,
                     )
                     .unwrap();
                 h.host.install_process_launcher(Arc::new(launcher)).unwrap();
@@ -121,7 +121,7 @@ impl Run {
                 .unwrap();
                 receipts = Some(directory);
                 let loaded = vosu_core::plugin::load_official_test_fixture(
-                    vosu::application_version(),
+                    &vosu::BUNDLE.version(),
                     &h.host.validation_snapshot(),
                     &staged.dir,
                     cfg!(debug_assertions),

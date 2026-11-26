@@ -9,10 +9,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use vosu::server::{
-    adapter_capture::{FORMAT, schema_from_query, schema_name},
-    websocket::Schema,
-};
+use vosu_core::server::adapter_capture::{FORMAT, schema_from_query, schema_name};
+use vosu_core::server::websocket::Schema;
 use vosu_plugin_api::CborValue;
 
 /// The members the envelope digest covers, in envelope order.

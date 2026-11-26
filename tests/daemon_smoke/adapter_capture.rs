@@ -151,7 +151,7 @@ async fn adapter_capture_route_exists_only_with_the_harness_feature_and_a_capabi
 #[cfg(feature = "test-harness")]
 #[tokio::test]
 async fn adapter_capture_endpoint_policy_on_the_real_daemon() {
-    use vosu::server::adapter_capture::endpoint;
+    use vosu_core::server::adapter_capture::endpoint;
     assert_eq!(PATH, endpoint::PATH);
     assert_eq!(HEADER, endpoint::CAPABILITY_HEADER.as_str());
     assert_eq!(ENV, endpoint::CAPABILITY_ENV);

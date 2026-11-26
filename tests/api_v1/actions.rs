@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use vosu::server::api_v1::{
+use vosu_core::server::api_v1::{
     actions::ActionRoutes, router::ApiV1Router, subscriptions::ApiV1SubscriptionHub,
 };
 use vosu_core::{
@@ -77,7 +77,7 @@ mod fixture {
     vosu_plugin_internal::export_plugin!(bundled Echo);
 }
 struct Installed(std::sync::Weak<PluginHost>);
-impl vosu::tools::capabilities::InstalledCapabilities for Installed {
+impl vosu_core::tools::capabilities::InstalledCapabilities for Installed {
     fn version(&self, capability: &str) -> Option<semver::Version> {
         self.0.upgrade()?.installed_capability_version(capability)
     }
@@ -122,18 +122,19 @@ fn load(h: &Harness, root: &std::path::Path) {
     clippy::disallowed_methods,
     reason = "isolated temporary tool fixtures, not user state"
 )]
-async fn tools(h: &Harness, root: &std::path::Path) -> Arc<vosu::tools::ToolRegistry> {
+async fn tools(h: &Harness, root: &std::path::Path) -> Arc<vosu_core::tools::ToolRegistry> {
     let path = root.join("tool");
     std::fs::create_dir_all(path.join("web")).unwrap();
     std::fs::write(path.join("web/index.html"), "fixture").unwrap();
     std::fs::write(path.join("manifest.toml"), format!("manifest_version=1\nkind='tool'\nid='j-two'\nname='J two'\nversion='1.0.0'\nhost='={}'\n[ui]\nroot='web'\n[[requires]]\nid='action:fixture.jtwo.echo'\nversion='*'\n[[requires]]\nid='field:fixture.jtwo.value.child'\nversion='^1.0.0'\n[[requires]]\nid='game:jtwo'\nversion='*'\n", env!("CARGO_PKG_VERSION"))).unwrap();
-    let tools = vosu::tools::ToolRegistry::new(
+    let tools = vosu_core::tools::ToolRegistry::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
-        vosu::tools::ExtraRoots { dev: vec![path] },
+        vosu_core::tools::ExtraRoots { dev: vec![path] },
         "http://127.0.0.1:25050".into(),
         Some("http://127.0.0.1:25051".into()),
+        vosu::BUNDLE.version(),
     )
     .await
     .unwrap();
@@ -158,7 +159,7 @@ async fn value(response: axum::response::Response) -> Value {
     )
     .unwrap()
 }
-async fn launch(tools: &Arc<vosu::tools::ToolRegistry>) -> String {
+async fn launch(tools: &Arc<vosu_core::tools::ToolRegistry>) -> String {
     let response = tools
         .dashboard(
             request(Method::POST, "/api/tools/j-two/launch", None, Value::Null),

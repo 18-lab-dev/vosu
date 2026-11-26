@@ -80,7 +80,7 @@ fn http_only_sc_reads_keep_chart_facts_and_idle_starts_no_chart_work() {
         let first = sc(&m).await;
         let first = if first["mapStrains"].as_object().unwrap().is_empty() {
             assert!(
-                started.elapsed() >= vosu::server::bus_provider::DERIVED_HTTP_WAIT,
+                started.elapsed() >= vosu_core::server::bus_provider::DERIVED_HTTP_WAIT,
                 "a chart-less read returned before the bounded wait elapsed: {:?} {:?} {first}",
                 started.elapsed(),
                 m.fixture.chart.counts()

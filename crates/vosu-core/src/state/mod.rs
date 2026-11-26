@@ -14,7 +14,7 @@ mod client;
 mod commit;
 mod demand;
 mod document;
-mod ecma_number;
+pub(crate) mod ecma_number;
 mod grant;
 mod pointer;
 mod projector;

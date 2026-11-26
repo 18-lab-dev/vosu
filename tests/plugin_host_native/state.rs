@@ -251,7 +251,7 @@ fn osu_publisher(run: &Services) -> std::sync::mpsc::Receiver<PublisherEvent> {
     publisher::register_manifest(id, &manifest);
     let events = publisher::register(id);
     let loaded = plugin::load_bundled(
-        vosu::application_version(),
+        &vosu::BUNDLE.version(),
         &run.host().validation_snapshot(),
         &[plugin::BundledPlugin {
             manifest: &manifest,

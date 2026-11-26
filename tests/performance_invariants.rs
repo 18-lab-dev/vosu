@@ -4,12 +4,12 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
+use vosu_surface::filter::Filter;
 
 use bytes::Bytes;
 use tokio::sync::watch;
-use vosu::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
+use vosu_core::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset, ScoringMode,
@@ -783,7 +783,7 @@ impl StateProvider for TestProvider {
     }
 }
 
-async fn text(receiver: &mut vosu::server::websocket::OutboundReceiver) -> Bytes {
+async fn text(receiver: &mut vosu_core::server::websocket::OutboundReceiver) -> Bytes {
     match tokio::time::timeout(Duration::from_secs(2), receiver.recv())
         .await
         .unwrap()

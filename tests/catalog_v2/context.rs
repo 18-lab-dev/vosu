@@ -81,7 +81,7 @@ fn explicit_officialness_and_application_prerelease_support_are_distinct() {
 #[test]
 fn authoritative_foreign_revision_and_source_local_replacements_matrix() {
     use vosu_plugin_api::manifest::{NamespaceRevision, SchemaProvenance};
-    let app = vosu::application_version();
+    let app = &vosu::BUNDLE.version();
     let mut value = manifest("plugin");
     value["provides"] = json!([{"id":"field:vosu.play.combo","version":"1.0.0"}]);
     let package = parse(&value).unwrap();

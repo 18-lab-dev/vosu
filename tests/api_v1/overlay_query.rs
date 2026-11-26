@@ -4,7 +4,7 @@
 use super::{job_fixture as fixture, support::Harness};
 use serde_json::{Value, json};
 use std::sync::Arc;
-use vosu::server::{
+use vosu_core::server::{
     origins::Origins,
     runtime::{EffectiveListener, ListenTarget, ListenerState},
 };
@@ -66,7 +66,7 @@ fn only_a_declaring_plugin_lists_installed_overlays() {
         h.root.path().join("config/settings"),
         h.root.path().join("cache"),
     ));
-    let bundled = vosu::plugins::BUNDLED
+    let bundled = vosu::BUNDLED
         .iter()
         .find(|entry| entry.manifest == vosu_overlay_host::MANIFEST)
         .unwrap();

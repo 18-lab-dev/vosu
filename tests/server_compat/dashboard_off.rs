@@ -16,14 +16,14 @@ async fn on_listener(
 ) -> Response {
     let mut providers = providers();
     let origins =
-        vosu::server::origins::Origins::new("http://127.0.0.1:24050".into(), DASHBOARD.into())
+        vosu_core::server::origins::Origins::new("http://127.0.0.1:24050".into(), DASHBOARD.into())
             .unwrap();
     let origins = if dashboard_enabled {
         origins
     } else {
         origins.without_dashboard()
     };
-    providers.authorization = Arc::new(vosu::server::origins::OriginAuthorizer {
+    providers.authorization = Arc::new(vosu_core::server::origins::OriginAuthorizer {
         inner: providers.authorization,
         origins: Arc::new(origins),
         dashboard: dashboard_listener,

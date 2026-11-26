@@ -14,5 +14,6 @@ path = "src/lib.rs"
 
 [dependencies]
 bytes = "=1.12.1"
+serde = { version = "=1.0.228", features = ["derive"] }
 tokio = { version = "=1.52.3", default-features = false, features = ["sync"] }
 vosu-plugin-api = { path = "../vosu-plugin-api" }

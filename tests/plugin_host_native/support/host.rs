@@ -148,7 +148,7 @@ impl Host {
         };
         let launcher = ProcessHostLauncher::with_executable(
             Path::new(env!("CARGO_BIN_EXE_vosu")),
-            vosu::plugin_host::BUILD_IDENTITY,
+            vosu::BUNDLE.plugin_host_identity,
         )
         .unwrap();
         host.install_process_launcher(Arc::new(configure(launcher)))
@@ -164,7 +164,7 @@ impl Host {
     /// Validates the staged package in `dir` as a development package.
     pub fn load(&self, dir: &Path) -> LoadedPlugin {
         plugin::load_development(
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             &vosu_core::plugin::ValidationSnapshot::default(),
             dir,
             true,

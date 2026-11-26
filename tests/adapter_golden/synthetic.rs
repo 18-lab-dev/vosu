@@ -31,7 +31,7 @@ use super::{
     websocket::{self, Frame, Step},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use vosu::server::adapter_capture::schema_from_query;
+use vosu_core::server::adapter_capture::schema_from_query;
 use vosu_plugin_api::CborValue;
 
 pub const EXPORT_ENV: &str = "VOSU_GOLDEN_SYNTHETIC_EXPORT";

@@ -348,8 +348,8 @@ fn tournament_eight_session_publication_latency() {
 
 #[test]
 fn api_v1_idle_hub_creates_no_runtime_task() {
-    use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
     use vosu_core::api::SessionTarget;
+    use vosu_core::server::api_v1::subscriptions::ApiV1SubscriptionHub;
     let id = "test.x1.wakeups";
     let mut fixture = adapter_fixture::Fixture::new(ClientType::Stable);
     let (handle, _) = fixture.h.publisher(id, 992002);
@@ -408,7 +408,7 @@ mod adapter;
 /// client (positive control) arms the 1 ms cadence and wakes the runtime.
 #[test]
 fn idle_adapter_hubs_arm_no_timer_and_wake_nothing() {
-    use vosu::server::websocket::{Schema, WebSocketHub};
+    use vosu_core::server::websocket::{Schema, WebSocketHub};
     let rig = adapter::Rig::new();
     let wakes = Arc::new(AtomicUsize::new(0));
     let runtime = tokio::runtime::Builder::new_multi_thread()

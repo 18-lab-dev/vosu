@@ -2,55 +2,47 @@ use super::*;
 #[path = "../../crates/vosu-adapter-upstream/tests/support/mod.rs"]
 mod support;
 use support::Case;
-use vosu::server::service::{DeclaredCalculateProvider, RegisteredProvider, SurfaceRouter};
-use vosu_surface::listener::ListenerRole;
-use vosu_surface::routes::{RegistrationLease, RouteDescriptor, RoutePath, RouteProvider};
+use vosu_core::server::service::SurfaceRouter;
+use vosu_surface::{requester::BundledRequester, routes::RegistrationLease};
+
+struct NoState;
+impl StateJsonProvider for NoState {
+    fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
+        Box::pin(async { CachedJson::NotReady })
+    }
+}
+impl StateProvider for NoState {
+    fn poll_rate(&self, _: Schema) -> Duration {
+        Duration::from_millis(100)
+    }
+    fn subscribe(&self, _: Schema) -> watch::Receiver<u64> {
+        watch::channel(0).1
+    }
+    fn capture(&self, _: Schema) -> Option<Arc<dyn StateSnapshot>> {
+        None
+    }
+}
 
 fn providers(
     case: &Case,
-    provider: vosu_adapter_upstream::files::Provider,
+    upstream: Arc<dyn BundledRequester>,
 ) -> (RouteProviders, RegistrationLease) {
-    let mut entries: Vec<(RouteDescriptor, Arc<dyn RouteProvider>)> = Vec::new();
-    for (path, methods) in [
-        ("/backgroundImage", &["GET"][..]),
-        ("/Songs", &["GET"][..]),
-        ("/files/beatmap", &["GET", "HEAD"][..]),
-        ("/files/skin", &["GET", "HEAD"][..]),
-    ] {
-        for method in methods {
-            let path = if path == "/backgroundImage" {
-                RoutePath::Exact(path.into())
-            } else {
-                RoutePath::Children(path.into())
-            };
-            entries.push((
-                RouteDescriptor {
-                    listener: ListenerRole::Overlay,
-                    method: (*method).into(),
-                    path,
-                    websocket: false,
-                },
-                Arc::new(RegisteredProvider::File {
-                    provider: provider.clone(),
-                }),
-            ));
-        }
-    }
-    entries.push((
-        RouteDescriptor {
-            listener: ListenerRole::Overlay,
-            method: "GET".into(),
-            path: RoutePath::Exact("/api/calculate/pp".into()),
-            websocket: false,
-        },
-        Arc::new(RegisteredProvider::Calculate(provider.clone())),
-    ));
+    let state = Arc::new(NoState);
+    let [entries, _, _] = vosu::BUNDLE.hosts.adapter_routes(
+        std::array::from_fn(|_| state.clone() as Arc<dyn StateJsonProvider>),
+        [
+            Schema::V1,
+            Schema::StreamCompanion,
+            Schema::V2,
+            Schema::V2Precise,
+        ]
+        .map(|schema| WebSocketHub::new(schema, state.clone())),
+        upstream,
+    );
     let lease = case.requester.register_routes(entries).unwrap();
     (
         RouteProviders {
             authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
-            state: Arc::new(StateFixture),
-            calculation: Arc::new(DeclaredCalculateProvider(provider)),
             delegate: Arc::new(SurfaceRouter::new(
                 case.host.clone(),
                 case.requester.clone(),
@@ -74,7 +66,7 @@ fn request(method: Method, path: &str, headers: &[(&str, &str)]) -> Request<Body
     request
 }
 fn dispatch(case: &Case, method: Method, path: &str, headers: &[(&str, &str)]) -> Response {
-    let (providers, _lease) = providers(case, case.provider.clone());
+    let (providers, _lease) = providers(case, case.requester.clone());
     case.run(routes::dispatch(
         State(providers),
         request(method, path, headers),
@@ -244,7 +236,12 @@ fn declared_root_http_lazer_skin_404_and_calculation_security_divergence() {
 fn unprovisioned_declared_provider_fails_closed_with_legacy_not_ready_envelope() {
     let case = Case::new(false);
     for path in ["/Songs/Set/bg.jpg", "/api/calculate/pp?path=/outside.osu"] {
-        let (providers, _lease) = providers(&case, Default::default());
+        // The game fixture is not granted the upstream adapter's file selectors.
+        let upstream = case
+            .host
+            .surface_requester(vosu_core::plugin::PluginInstanceId::new(1))
+            .unwrap();
+        let (providers, _lease) = providers(&case, upstream);
         let response = case.run(routes::dispatch(
             State(providers),
             request(Method::GET, path, &[]),

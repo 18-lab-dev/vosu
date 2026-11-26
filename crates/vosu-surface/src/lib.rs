@@ -2,6 +2,7 @@
 //! use to register routes, WebSocket feeds, and state reads (D3,
 //! plan:94). This crate is permanent.
 pub mod files;
+pub mod filter;
 pub mod listener;
 pub mod management;
 pub mod projection;

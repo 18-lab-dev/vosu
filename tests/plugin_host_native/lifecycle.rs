@@ -109,7 +109,7 @@ impl Scenario {
         )
         .unwrap();
         let loaded = plugin::load_development(
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             &vosu_core::plugin::ValidationSnapshot::default(),
             &package,
             true,
@@ -286,7 +286,7 @@ fn startup_error(result: Result<(), HostError>) -> String {
 /// `destroy` run.
 #[test]
 fn lifecycle_starts_dispatches_and_destroys_a_process_plugin() {
-    let scenario = Scenario::process("happy", Mode::Normal, vosu::plugin_host::BUILD_IDENTITY);
+    let scenario = Scenario::process("happy", Mode::Normal, vosu::BUNDLE.plugin_host_identity);
     scenario.create().expect("the plugin host reaches READY");
 
     let (pid, _) = scenario.marker("create").expect("create ran in the child");
@@ -297,7 +297,7 @@ fn lifecycle_starts_dispatches_and_destroys_a_process_plugin() {
         assert_eq!(identity.parent(), Some(std::process::id()));
         let argv = identity.argv();
         assert_eq!(argv[1], "plugin-host", "{argv:?}");
-        assert_eq!(argv[2], vosu::plugin_host::BUILD_IDENTITY);
+        assert_eq!(argv[2], vosu::BUNDLE.plugin_host_identity);
         assert_eq!(argv.len(), 5, "{argv:?}");
     }
     let (constructor_pid, _) = scenario.marker("constructor").unwrap();
@@ -362,7 +362,7 @@ fn lifecycle_send_statuses_match_the_in_process_runtime() {
         );
         if runtime_kind == "process" {
             let launcher =
-                ProcessHostLauncher::with_executable(vosu(), vosu::plugin_host::BUILD_IDENTITY)
+                ProcessHostLauncher::with_executable(vosu(), vosu::BUNDLE.plugin_host_identity)
                     .unwrap();
             scenario
                 .host
@@ -389,7 +389,7 @@ fn lifecycle_send_statuses_match_the_in_process_runtime() {
 #[cfg(target_os = "linux")]
 #[test]
 fn lifecycle_library_constructor_runs_only_after_the_privilege_drop() {
-    let scenario = Scenario::process("drop", Mode::Normal, vosu::plugin_host::BUILD_IDENTITY);
+    let scenario = Scenario::process("drop", Mode::Normal, vosu::BUNDLE.plugin_host_identity);
     scenario.create().unwrap();
     let (pid, status) = scenario.marker("constructor").unwrap();
     assert_ne!(pid, std::process::id(), "core mapped the library");
@@ -436,7 +436,7 @@ fn lifecycle_startup_failures_name_their_stage_and_publish_nothing() {
         ("abi", Mode::WrongAbi, "stage abi (abi_mismatch)", false),
         ("entry", Mode::NoEntry, "stage library (load_failed)", false),
     ] {
-        let scenario = Scenario::process(name, mode, vosu::plugin_host::BUILD_IDENTITY);
+        let scenario = Scenario::process(name, mode, vosu::BUNDLE.plugin_host_identity);
         let reason = startup_error(scenario.create());
         assert!(reason.starts_with(expected), "{name}: {reason}");
         assert_eq!(scenario.has_marker("create"), created, "{name}");
@@ -465,7 +465,7 @@ fn lifecycle_a_create_that_hangs_is_killed_at_the_startup_deadline() {
     let scenario = Scenario::process_with(
         "hang",
         Mode::CreateHangs,
-        ProcessHostLauncher::with_executable(vosu(), vosu::plugin_host::BUILD_IDENTITY)
+        ProcessHostLauncher::with_executable(vosu(), vosu::BUNDLE.plugin_host_identity)
             .unwrap()
             .with_deadlines(deadline, deadline),
     );
@@ -492,7 +492,7 @@ fn lifecycle_a_destroy_that_hangs_is_killed_after_its_grace() {
     let scenario = Scenario::process(
         "stuck",
         Mode::DestroyHangs,
-        vosu::plugin_host::BUILD_IDENTITY,
+        vosu::BUNDLE.plugin_host_identity,
     );
     scenario.create().unwrap();
     let (pid, _) = scenario.marker("create").unwrap();
@@ -531,7 +531,7 @@ fn lifecycle_an_updated_executable_is_refused_as_a_generation_mismatch() {
 /// An exit core did not request is one loss: the instance is retired.
 #[test]
 fn lifecycle_an_unexpected_exit_retires_the_instance() {
-    let scenario = Scenario::process("killed", Mode::Normal, vosu::plugin_host::BUILD_IDENTITY);
+    let scenario = Scenario::process("killed", Mode::Normal, vosu::BUNDLE.plugin_host_identity);
     scenario.create().unwrap();
     let (pid, _) = scenario.marker("create").unwrap();
     let identity = Identity::of(pid);
@@ -605,7 +605,7 @@ fn assert_refused(output: &Output, touched: bool, code: i32, case: &str) {
 /// log, configuration or data file appears.
 #[test]
 fn lifecycle_missing_or_invalid_descriptors_start_no_daemon() {
-    let identity = OsStr::new(vosu::plugin_host::BUILD_IDENTITY);
+    let identity = OsStr::new(vosu::BUNDLE.plugin_host_identity);
     let our_pid = std::process::id().to_string();
     let our_pid = OsStr::new(&our_pid);
     #[cfg(target_os = "linux")]

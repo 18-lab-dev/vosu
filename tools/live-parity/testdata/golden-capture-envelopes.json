@@ -1,6 +1,6 @@
 {
   "format": "vosu-golden-capture-fake-envelopes-v1",
-  "generator": "src/server/adapter_capture/tests.rs export_golden_capture_fake_envelopes",
+  "generator": "crates/vosu-core/src/server/adapter_capture/tests.rs export_golden_capture_fake_envelopes",
   "reads_per_schema": 3,
   "barriers": {
     "no-client": {

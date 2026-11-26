@@ -7,11 +7,11 @@ use super::adapter::{self as rig, Rig, input, json_at};
 use bytes::Bytes;
 use criterion::Criterion;
 use std::{cell::Cell, time::Duration};
-use vosu::server::{
+use vosu_core::api::SessionTarget;
+use vosu_core::server::{
     api_v1::subscriptions::ApiV1SubscriptionHub, routes::StateRoute, subscription_wire,
     websocket::Schema,
 };
-use vosu_core::api::SessionTarget;
 use vosu_osu_state::Delivery;
 
 async fn api_frame(receiver: &mut subscription_wire::Receiver) -> Bytes {

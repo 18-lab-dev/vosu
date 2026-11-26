@@ -21,7 +21,7 @@ Keep all validated game processes in one daemon-owned lifecycle. Assign a monoto
 
 Selection is deterministic: a matching tournament-manager instance wins; otherwise the lowest matching PID wins. Focus is separate metadata rather than the sole ownership mechanism. Publish the ordered roster, focus, readiness, and offset readiness as a semantic lifecycle snapshot; do not create an independent API server per game process.
 
-Implementation now lives in core's [`DiscoveryService`](../../crates/vosu-core/src/plugin/discovery.rs), osu! classification and session lifecycle in [`vosu-osu`](../../crates/vosu-osu/src/plugin.rs) and [`session.rs`](../../crates/vosu-osu/src/session.rs), selection in core’s Focus rule, lifecycle composition in [`runtime/lifecycle.rs`](../../src/runtime/lifecycle.rs), and publication in [`runtime/worker.rs`](../../src/runtime/worker.rs).
+Implementation now lives in core's [`DiscoveryService`](../../crates/vosu-core/src/plugin/discovery.rs), osu! classification and session lifecycle in [`vosu-osu`](../../crates/vosu-osu/src/plugin.rs) and [`session.rs`](../../crates/vosu-osu/src/session.rs), selection in core’s Focus rule, lifecycle composition in [`runtime/lifecycle.rs`](../../crates/vosu-core/src/runtime/lifecycle.rs), and publication in the [state bus](../../crates/vosu-core/src/state/mod.rs).
 
 The former `src/instance` implementation was removed in M1.
 

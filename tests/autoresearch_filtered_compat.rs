@@ -6,7 +6,7 @@ const _: fn() = benchmark::benches;
 use benchmark::*;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
-use vosu::server::websocket::{Schema, StateProvider, StateSnapshot, WebSocketHub};
+use vosu_core::server::websocket::{Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_proptest::bounded;
 
 #[test]
@@ -106,8 +106,8 @@ async fn unchanged_changed_and_blocked_latest_only_then_cleanup() {
 
 #[test]
 fn escaped_unicode_metadata_and_populated_tournament_reference() {
-    use vosu_adapter_support::filtered::Filter;
     use vosu_osu_model::launch::InstanceSettings;
+    use vosu_surface::filter::Filter;
     let base = fixture();
     let mut state = (*base.state).clone();
     Arc::make_mut(&mut state.regular).menu.title = Some("狐 \"kitsune\"\n\\尾".into());

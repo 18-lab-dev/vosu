@@ -15,14 +15,15 @@ linux-process-events = ["vosu-sys/linux-process-events"]
 # Bench-only deterministic foreground injection. Unlike test-harness it permits
 # optimized release benches; production must never enable it.
 bench-harness = []
-test-harness = ["bench-harness"]
+# The catalog harness transport needs vosu-net's test network.
+test-harness = ["bench-harness", "vosu-net/test-harness"]
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
 arc-swap = "1.8.2"
-axum = { version = "=0.8.9", default-features = false }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
 base64 = "=0.22.1"
 bytes = "=1.12.1"
 chrono = { version = "0.4.44", features = ["serde"] }
@@ -30,6 +31,9 @@ ciborium = "=0.2.2"
 ciborium-io = "=0.2.2"
 ciborium-ll = "=0.2.2"
 futures-util = "0.3.32"
+getrandom = "=0.4.3"
+httpdate = "=1.0.3"
+parking_lot = "0.12.5"
 libloading = "0.8.6"
 notify = "=8.2.0"
 open = "=5.4.0"
@@ -40,12 +44,14 @@ serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
 sha2 = "=0.11.0"
 sysinfo = { version = "=0.39.5", default-features = false, features = ["system"] }
+subtle = "=2.6.1"
 tempfile = "3.26.0"
 thiserror = "2.0.18"
-tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util"] }
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 toml = "=1.1.2"
 tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["registry"] }
 url = "=2.5.8"
 vosu-net = { path = "../vosu-net" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
@@ -70,6 +76,9 @@ wmi = "=0.18.4"
 proptest = "1.12"
 vosu-plugin-testkit = { path = "../vosu-plugin-testkit", features = ["test-harness"] }
 vosu-proptest = { path = "../vosu-proptest" }
+tokio = { version = "=1.52.3", features = ["test-util"] }
+reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "stream", "json"] }
+tokio-tungstenite = "=0.29.0"
 # I0 package-download tests observe real request headers over the exact
 # loopback harness; production never enables this feature.
 vosu-net = { path = "../vosu-net", features = ["test-harness"] }

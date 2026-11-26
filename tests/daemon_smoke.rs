@@ -189,6 +189,16 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "dashboard CSRF pages must not be CORS-readable by overlays"
     );
     let management = dashboard.url().origin().ascii_serialization();
+    let registry = bounded!(client.get(format!("{management}/api/plugins")).send()).unwrap();
+    assert_eq!(registry.status(), 200);
+    let registry: serde_json::Value = bounded!(registry.json()).unwrap();
+    let plugins = registry["plugins"].as_array().unwrap();
+    let ids: Vec<_> = plugins
+        .iter()
+        .map(|plugin| plugin["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vosu::BUNDLE.plugin_ids);
+    assert!(plugins.iter().all(|plugin| plugin["state"] == "running"));
     let dashboard = bounded!(dashboard.text()).unwrap();
     let csrf = dashboard
         .split("\"csrf\":\"")

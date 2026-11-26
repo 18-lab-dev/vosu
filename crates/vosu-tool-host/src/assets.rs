@@ -1,7 +1,8 @@
 //! The tool host's embedded files (A7 asset inventory): the v2 bridge, the
 //! theme/design pages and the shared design-system set. Each file is embedded
 //! once here; served bytes are exactly the reviewed `assets/server/` bytes.
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
+use std::sync::LazyLock;
 
 macro_rules! asset {
     ($name:literal) => {
@@ -9,21 +10,26 @@ macro_rules! asset {
     };
 }
 
-pub(crate) const BRIDGE: &str = include_str!("../../../assets/server/tool-bridge.js");
-pub(crate) const DESIGN: &[u8] = asset!("design.html");
-/// One source for the dashboard and tools: the tokens, then the shared
-/// components (docs/tools/design.md).
-pub(crate) const THEME: &str = concat!(
-    include_str!("../../../assets/server/tokens.css"),
-    "\n",
-    include_str!("../../../assets/server/system.css"),
-);
+pub(crate) static BRIDGE: &str = include_str!("../../../assets/server/tool-bridge.js");
+pub(crate) static DESIGN: &[u8] = asset!("design.html");
+static TOKENS: &[u8] = asset!("tokens.css");
+static SYSTEM: &[u8] = asset!("system.css");
+
+/// Assemble the existing combined response once without embedding a second
+/// copy of the two sheets already served individually under `/assets`.
+pub(crate) static THEME: LazyLock<Bytes> = LazyLock::new(|| {
+    let mut theme = BytesMut::with_capacity(TOKENS.len() + 1 + SYSTEM.len());
+    theme.extend_from_slice(TOKENS);
+    theme.extend_from_slice(b"\n");
+    theme.extend_from_slice(SYSTEM);
+    theme.freeze()
+});
 
 /// The design-system set served under `/assets/<name>` on both listener
 /// roles, plus `/favicon.ico`.
-pub(crate) const DESIGN_SYSTEM: &[(&str, &[u8])] = &[
-    ("/assets/tokens.css", asset!("tokens.css")),
-    ("/assets/system.css", asset!("system.css")),
+pub(crate) static DESIGN_SYSTEM: &[(&str, &[u8])] = &[
+    ("/assets/tokens.css", TOKENS),
+    ("/assets/system.css", SYSTEM),
     ("/assets/theme-init.js", asset!("theme-init.js")),
     (
         "/assets/barlow-condensed-latin-500-normal.woff2",

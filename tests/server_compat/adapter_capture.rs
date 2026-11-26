@@ -5,16 +5,14 @@
 use super::mounted::*;
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use vosu::{
-    runtime::ListenerOwner,
-    server::adapter_capture::{
-        AdapterCaptureSample, DerivedStatus, FORMAT,
-        endpoint::{
-            AdapterCaptureEndpoint, BAD_METHOD_BODY, BAD_QUERY_BODY, CAPABILITY_HEADER, Capability,
-            CaptureSource, PATH,
-        },
-        schema_name,
+use vosu_core::runtime::ListenerOwner;
+use vosu_core::server::adapter_capture::{
+    AdapterCaptureSample, DerivedStatus, FORMAT,
+    endpoint::{
+        AdapterCaptureEndpoint, BAD_METHOD_BODY, BAD_QUERY_BODY, CAPABILITY_HEADER, Capability,
+        CaptureSource, PATH,
     },
+    schema_name,
 };
 use vosu_plugin_api::CborValue;
 
@@ -146,7 +144,7 @@ fn harness_listener(m: &Mounted) -> (ListenerOwner, String) {
                 .local_addr()
                 .unwrap()
                 .port();
-            let target = vosu::server::runtime::ListenTarget {
+            let target = vosu_core::server::runtime::ListenTarget {
                 host: "127.0.0.1".into(),
                 port,
             };

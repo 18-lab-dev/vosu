@@ -4,11 +4,11 @@ mod adapter_fixture;
 mod api_e2e;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::{hint::black_box, time::Duration};
-use vosu::server::{
+use vosu_core::api::SessionTarget;
+use vosu_core::server::{
     api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
     subscription_wire::Outbound,
 };
-use vosu_core::api::SessionTarget;
 use vosu_plugin_api::PublishValueRef;
 #[path = "support/api_v1.rs"]
 mod support;
@@ -135,7 +135,7 @@ fn bench(c: &mut Criterion) {
     });
     let resource = support::resource_host("test.x1.resources", 991004);
     let urls = support::resource_urls(&resource, "test.x1.resources");
-    let resources = std::sync::Arc::new(vosu::server::api_v1::resources::ResourceHttp::new(
+    let resources = std::sync::Arc::new(vosu_core::server::api_v1::resources::ResourceHttp::new(
         &resource.host,
         Duration::from_secs(5),
     ));

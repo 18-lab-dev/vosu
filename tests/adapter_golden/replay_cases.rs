@@ -14,7 +14,7 @@ use super::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use std::sync::LazyLock;
-use vosu::server::websocket::Schema;
+use vosu_core::server::websocket::Schema;
 use vosu_plugin_api::{CborValue, vosu_status};
 
 const SENTINEL: &[u8] = b"R0 private-path sentinel";

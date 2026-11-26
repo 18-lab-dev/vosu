@@ -2,7 +2,7 @@
 //! supports (`docs/v2/implementation-plan.md` M1 "Core plugin host" Exit):
 //! `--plugin <dir>`'s `dlopen` (`vosu_core::plugin::load_development`)
 //! against the real compiled `cdylib` artifact, and the explicit `BUNDLED`
-//! array (`vosu_core::plugin::load_bundled`, `vosu::plugins::BUNDLED`)
+//! array (`vosu_core::plugin::load_bundled`, `vosu::BUNDLED`)
 //! against the same plugin's bundled-form vtable. Both exercise `create`,
 //! `dispatch`, and `destroy` end to end (`docs/v2/plugin-abi.md` §1, §2,
 //! §4), rather than an in-process-only fixture like `vosu-core`'s own unit
@@ -307,7 +307,7 @@ fn development_settings_schema_is_read_from_the_manifest_dir() {
 fn bundled_echo_create_dispatch_destroy() {
     // The required adapters in BUNDLED need `vosu.osu`'s fields, which only
     // composition's bundled-provider snapshot supplies; load the echo entry.
-    let echo_entry: Vec<_> = vosu::plugins::BUNDLED
+    let echo_entry: Vec<_> = vosu::BUNDLED
         .iter()
         .filter(|entry| {
             vosu_plugin_api::manifest::PackageManifest::parse(entry.manifest)

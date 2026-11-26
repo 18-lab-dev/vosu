@@ -4,8 +4,8 @@ mod cost;
 
 #[test]
 fn idle_hub_adds_no_publication_allocations_or_demand() {
-    use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
     use vosu_core::api::SessionTarget;
+    use vosu_core::server::api_v1::subscriptions::ApiV1SubscriptionHub;
     let id = "test.x1.allocations";
     let fixture = cost::Telemetry::new(id, 992001);
     let source = fixture.h.host.api_state_source();
@@ -85,8 +85,10 @@ fn reference_publication_uses_only_prepared_metadata() {
 
 #[test]
 fn slow_consumer_retains_one_frame_and_delivers_latest() {
-    use vosu::server::{api_v1::subscriptions::ApiV1SubscriptionHub, subscription_wire::Outbound};
     use vosu_core::api::SessionTarget;
+    use vosu_core::server::{
+        api_v1::subscriptions::ApiV1SubscriptionHub, subscription_wire::Outbound,
+    };
     let id = "test.x1.slow";
     let fixture = cost::Telemetry::new(id, 992003);
     let hub =

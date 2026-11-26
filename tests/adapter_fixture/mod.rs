@@ -10,12 +10,12 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, mpsc},
     time::Duration,
 };
-use vosu::server::{
-    bus_provider::BusStateProvider,
+use vosu_core::plugin::PluginInstanceId;
+use vosu_core::server::bus_provider::BusStateProvider;
+use vosu_core::server::{
     routes::{CachedJson, StateJsonProvider, StateRoute},
     websocket::Schema,
 };
-use vosu_core::plugin::PluginInstanceId;
 use vosu_osu::{
     fixtures::{Publisher, Roster},
     project::SessionFacts,

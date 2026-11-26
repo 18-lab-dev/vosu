@@ -102,3 +102,90 @@ fn query_parser_preserves_js_counts_and_mod_shapes() {
         assert!(performance_request(&q).is_err());
     }
 }
+
+#[test]
+fn parses_every_pp_input_and_both_structured_mod_shapes() {
+    let raw = "path=%2Ftmp%2Fa.osu&lazer=true&mode=3&ar=9.1&cs=4&hp=6&od=8&clockRate=1.5&passedObjects=10&combo=20&nMisses=1&n100=2&n300=3&n50=4&nGeki=5&nKatu=6&mods=%5B%7B%22acronym%22%3A%22DT%22%7D%5D&acc=98.5&sliderEndHits=7&smallTickHits=8&largeTickHits=9&hitresultPriority=1";
+    let q = PpQuery::parse(Some(raw)).unwrap();
+    assert_eq!(q.path.as_deref(), Some("/tmp/a.osu"));
+    assert_eq!(q.lazer, Some(true));
+    assert_eq!(q.mode, Some(3));
+    assert_eq!(
+        (q.ar, q.cs, q.hp, q.od, q.clock_rate),
+        (Some(9.1), Some(4.0), Some(6.0), Some(8.0), Some(1.5))
+    );
+    assert_eq!(
+        (
+            q.passed_objects,
+            q.combo,
+            q.n_misses,
+            q.n100,
+            q.n300,
+            q.n50,
+            q.n_geki,
+            q.n_katu
+        ),
+        (
+            Some(10),
+            Some(20),
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(4),
+            Some(5),
+            Some(6)
+        )
+    );
+    assert!(matches!(q.mods, Some(ModsInput::Json(Value::Array(_)))));
+    assert_eq!(q.accuracy, Some(98.5));
+    assert_eq!(
+        (q.slider_end_hits, q.small_tick_hits, q.large_tick_hits),
+        (Some(7), Some(8), Some(9))
+    );
+    assert_eq!(q.hitresult_priority, Some(1));
+    assert!(matches!(
+        PpQuery::parse(Some("mods=%7B%22acronym%22%3A%22HD%22%7D"))
+            .unwrap()
+            .mods,
+        Some(ModsInput::Json(Value::Object(_)))
+    ));
+}
+
+#[test]
+fn count_inputs_use_bounded_javascript_numeric_coercion() {
+    let query = PpQuery::parse(Some(
+        "passedObjects=10.0&combo=1e2&nMisses=%2B3&n100=0x10&n300=0b11&n50=0o7&nGeki=&nKatu=4.0&sliderEndHits=5e1&smallTickHits=6.0&largeTickHits=7",
+    )).unwrap();
+    assert_eq!(
+        (
+            query.passed_objects,
+            query.combo,
+            query.n_misses,
+            query.n100,
+            query.n300,
+            query.n50
+        ),
+        (Some(10), Some(100), Some(3), Some(16), Some(3), Some(7)),
+    );
+    assert_eq!(
+        (
+            query.n_geki,
+            query.n_katu,
+            query.slider_end_hits,
+            query.small_tick_hits,
+            query.large_tick_hits
+        ),
+        (Some(0), Some(4), Some(50), Some(6), Some(7)),
+    );
+
+    for value in ["10.5", "-1", "NaN", "Infinity", "4294967296", "1e100"] {
+        assert!(
+            PpQuery::parse(Some(&format!("combo={value}"))).is_err(),
+            "{value}"
+        );
+    }
+    assert_eq!(
+        PpQuery::parse(Some("combo=4294967295")).unwrap().combo,
+        Some(u32::MAX),
+    );
+}

@@ -103,13 +103,16 @@ vosu -> vosu-osu-model
 vosu -> vosu-osu-calc
 vosu -> vosu-osu-reader
 vosu -> vosu-osu-state
-vosu -> vosu-pp
 vosu -> vosu-proptest
 vosu -> vosu-surface
 vosu -> vosu-osu
 vosu-osu -> vosu-proptest
 
 vosu-adapter-support -> vosu-osu-model
+# M7 C0: the legacy filter value type (`vosu_surface::filter::Filter`) and
+# its bounds are shared with core's latest-only transport; the parser and
+# projection semantics stay here.
+vosu-adapter-support -> vosu-surface
 vosu -> vosu-adapter-support
 vosu -> vosu-adapter-upstream
 vosu -> vosu-adapter-gosumemory

@@ -22,22 +22,25 @@ pub(super) mod seeds;
 pub(super) use futures_util::{SinkExt, StreamExt};
 use oracle::adapter_fixture::Fixture;
 pub(super) use oracle::adapter_fixture::host::WAIT;
-use vosu::{
-    runtime::{ListenerOwner, WebSocketHubs},
-    server::{
-        api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
-        bus_provider::BusStateProvider,
-        origins::{OriginAuthorizer, Origins},
-        service::{
-            BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-            ProductionRouteDelegate, ProductionServices, ReportInputProvider, SurfaceRouter,
-            UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
-            adapter_routes, reserve_core_routes,
-        },
-        websocket::StateDemand,
+use vosu_core::plugin::{PluginHost, PluginInstanceId};
+use vosu_core::server::bus_provider::BusStateProvider;
+use vosu_core::server::{
+    api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
+    origins::{OriginAuthorizer, Origins},
+    websocket::StateDemand,
+};
+use vosu_core::{
+    config::ConfigStore,
+    plugin::settings::{ConfigSettingsBridgeB2, PluginSettingsService, PluginSettingsStore},
+    runtime::{
+        ListenerOwner, OverlayCatalog, OverlayInputs, RuntimeSettingsStorage, WebSocketHubs,
+    },
+    server::service::{
+        ConfigUpdateService, OverlayComposition, ProductionRouteDelegate, ProductionServices,
+        ReportInputProvider, SurfaceRouter, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
+        reserve_core_routes,
     },
 };
-use vosu_core::plugin::{PluginHost, PluginInstanceId};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::Delivery;
 use vosu_surface::routes::RegistrationLease;
@@ -109,12 +112,6 @@ impl UpdaterHandoff for Unused {
         Box::pin(async { Err("unused".into()) })
     }
 }
-struct NoBeatmap;
-impl CurrentBeatmapProvider for NoBeatmap {
-    fn files(&self) -> BeatmapFiles {
-        BeatmapFiles::default()
-    }
-}
 
 /// Registers the production adapter route table under the fixture's
 /// upstream (2), gosuMemory (3) and streamCompanion (4) plugin instances.
@@ -122,9 +119,9 @@ fn mount(
     host: &Arc<PluginHost>,
     schemas: &Schemas,
     hubs: &WebSocketHubs,
-    files: &vosu_adapter_upstream::files::Provider,
+    upstream: Arc<dyn vosu_surface::requester::BundledRequester>,
 ) -> Vec<RegistrationLease> {
-    let groups = adapter_routes(
+    let groups = vosu::BUNDLE.hosts.adapter_routes(
         std::array::from_fn(|index| schemas.0[index].clone() as Arc<dyn StateJsonProvider>),
         [
             hubs.v1.clone(),
@@ -132,7 +129,7 @@ fn mount(
             hubs.v2.clone(),
             hubs.v2_precise.clone(),
         ],
-        files,
+        upstream,
     );
     let mut leases = vec![reserve_core_routes(host, true).unwrap()];
     for (index, group) in groups.into_iter().enumerate() {
@@ -168,9 +165,7 @@ pub(super) struct Mounted {
     pub client: reqwest::Client,
     listener: Option<ListenerOwner>,
     api: ApiV1SubscriptionHub,
-    processor: Arc<CommandProcessor>,
-    relays: Arc<WebSocketRelaySink>,
-    counters: Arc<vosu_overlay_host::ReloadableCounterService>,
+    overlay: Arc<dyn OverlayComposition>,
     _roots: TempDir,
     pub publisher: Option<Arc<vosu_osu::fixtures::Publisher>>,
     pub fixture: Fixture,
@@ -208,28 +203,59 @@ impl Mounted {
         std::fs::write(roots.path().join("static/counter/index.html"), "overlay").unwrap();
         let host = fixture.h.host.clone();
         let schemas = Arc::new(Schemas(fixture.providers.clone()));
-        let files = fixture.files.clone();
         let removed = Arc::new(vosu_core::removed_routes::RemovedRoutes::default());
-        let (hubs, leases, api, processor, relays, counters, delegate, (port, providers, listener)) =
+        let (hubs, leases, api, overlay, delegate, (port, providers, listener)) =
             fixture.h.runtime.block_on(async {
                 let hubs = WebSocketHubs::start(schemas.clone());
-                let leases = mount(&host, &schemas, &hubs, &files);
+                let upstream = host.surface_requester(PluginInstanceId::new(2)).unwrap();
+                let leases = mount(&host, &schemas, &hubs, upstream.clone());
                 let source = host.api_state_source();
                 let api = ApiV1SubscriptionHub::new(source.clone(), Duration::ZERO);
-                let relays = Arc::new(WebSocketRelaySink::new());
-                let processor = Arc::new(CommandProcessor::new(
-                    Arc::new(StaticSettings),
-                    relays.clone(),
+                let bundle = &vosu::BUNDLE;
+                let instance = bundle.instance(bundle.overlay_root.plugin).unwrap();
+                let bundled_overlay = bundle
+                    .plugins
+                    .iter()
+                    .copied()
+                    .find(|plugin| plugin.manifest == vosu_overlay_host::MANIFEST)
+                    .unwrap();
+                let data_dir = roots.path().join("overlay-data");
+                let loaded = vosu_core::plugin::load_bundled(
+                    &bundle.version(),
+                    &host.validation_snapshot(),
+                    &[bundled_overlay],
+                )
+                .unwrap();
+                host.create_instance(instance, &loaded[0], data_dir.clone(), None)
+                    .unwrap();
+                let config = Arc::new(
+                    ConfigStore::initialize(roots.path().join("vosu.toml"))
+                        .await
+                        .unwrap(),
+                );
+                let storage = Arc::new(RuntimeSettingsStorage::new(
+                    Arc::new(ConfigSettingsBridgeB2::new(config.clone())),
+                    Arc::new(PluginSettingsStore::open(roots.path())),
+                    bundle.overlay_root,
                 ));
-                let counters = Arc::new(vosu_overlay_host::ReloadableCounterService::production(
-                    roots.path().join("static"),
-                    roots.path().join("settings"),
-                    roots.path().join("cache"),
-                ));
+                let overlay = bundle.hosts.overlay(OverlayInputs {
+                    host: host.clone(),
+                    instance,
+                    data_dir,
+                    settings: Arc::new(PluginSettingsService::new(storage.clone())),
+                    storage,
+                    static_root: roots.path().join("static"),
+                    settings_root: roots.path().join("settings"),
+                    cache_root: roots.path().join("cache"),
+                    version: bundle.version(),
+                    catalog: OverlayCatalog::Production,
+                    shutdown: CancellationToken::new(),
+                    origins: Arc::new(Origins::new(String::new(), String::new()).unwrap()),
+                });
+                config.shutdown().await.unwrap();
                 let unused = Arc::new(Unused);
                 let services = ProductionServices::with_native_report_probe(
-                    counters.clone(),
-                    Arc::new(NoBeatmap),
+                    overlay.clone(),
                     unused.clone(),
                     unused.clone(),
                     unused,
@@ -239,11 +265,8 @@ impl Mounted {
                         v2: hubs.v2.clone(),
                         precise: hubs.v2_precise.clone(),
                         commands: hubs.v1.clone(),
-                        processor: processor.clone(),
-                        relays: relays.clone(),
                     },
                 );
-                let upstream = host.surface_requester(PluginInstanceId::new(2)).unwrap();
                 let delegate = Arc::new(
                     ProductionRouteDelegate::new(services)
                         .with_surface(SurfaceRouter::new(host.clone(), upstream))
@@ -274,11 +297,9 @@ impl Mounted {
                             ),
                             dashboard: false,
                         }),
-                        state: schemas.clone(),
-                        calculation: Arc::new(DeclaredCalculateProvider(files.clone())),
                         delegate: delegate.clone(),
                     };
-                    let target = vosu::server::runtime::ListenTarget {
+                    let target = vosu_core::server::runtime::ListenTarget {
                         host: "127.0.0.1".into(),
                         port,
                     };
@@ -291,9 +312,7 @@ impl Mounted {
                     hubs,
                     leases,
                     api,
-                    processor,
-                    relays,
-                    counters,
+                    overlay,
                     delegate,
                     bound.expect("a free loopback port"),
                 )
@@ -316,10 +335,8 @@ impl Mounted {
                 .unwrap(),
             listener: Some(listener),
             api,
-            processor,
-            relays,
             removed,
-            counters,
+            overlay,
             leases,
             _roots: roots,
         }
@@ -390,20 +407,14 @@ impl Mounted {
     pub(super) fn shutdown(mut self) {
         let listener = self.listener.take().unwrap();
         let hubs = self.hubs.take().unwrap();
-        let (api, processor, relays, counters) = (
-            self.api.clone(),
-            self.processor.clone(),
-            self.relays.clone(),
-            self.counters.clone(),
-        );
+        let api = self.api.clone();
+        let overlay = self.overlay.clone();
         self.block_on(async move {
             listener.stop_accepting();
             hubs.shutdown().await;
             listener.join().await;
             api.shutdown();
-            processor.shutdown().await;
-            relays.shutdown().await;
-            counters.shutdown().await;
+            overlay.shutdown().await;
         });
         self.leases.clear();
     }

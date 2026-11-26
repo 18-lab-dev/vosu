@@ -25,6 +25,21 @@ pub(super) fn write_js_number(out: &mut Vec<u8>, value: f64) {
     }
 }
 
+/// [`write_js_number`] into any writer: API-v1 pointer frames serialize
+/// selected values with this one number convention.
+pub(crate) fn write_js_number_to<W>(writer: &mut W, value: f64) -> std::io::Result<()>
+where
+    W: ?Sized + std::io::Write,
+{
+    if !value.is_finite() {
+        writer.write_all(b"null")
+    } else if value == 0.0 {
+        writer.write_all(b"0")
+    } else {
+        writer.write_all(finite_ecma_number(value).as_bytes())
+    }
+}
+
 /// ECMA-262 `Number::toString` for one finite, non-zero `f64`: shortest
 /// round-tripping digits (`zmij`, a `ryu`-family formatter) reshaped into
 /// JS's own decimal/exponential split (`point > 21` or `point <= -6` goes

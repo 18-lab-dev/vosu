@@ -1,5 +1,2 @@
-runtime -> plugin_host
-runtime -> plugins
-runtime -> server
-runtime -> tools
-tools -> server
+# Bundle descriptor points to the executable-specific host implementations.
+plugins -> bundle

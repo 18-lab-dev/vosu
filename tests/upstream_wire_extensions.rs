@@ -11,22 +11,18 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use vosu::server::{
-    routes::StateRoute,
-    service::{RegisteredProvider, SurfaceRouter},
+use vosu_core::plugin::PluginInstanceId;
+use vosu_core::server::service::SurfaceRouter;
+use vosu_core::server::{
+    routes::StateJsonProvider,
     websocket::{Outbound, Schema, WebSocketHub},
 };
-use vosu_core::plugin::PluginInstanceId;
 use vosu_osu_model::{
     launch::InstanceSettings,
     memory::{ClientRenderState, PlaybackClock},
 };
 use vosu_plugin_api::Selector;
-use vosu_surface::{
-    listener::ListenerRole,
-    routes::{RouteDescriptor, RoutePath},
-    state::SessionTarget,
-};
+use vosu_surface::state::SessionTarget;
 
 fn no_extensions(bytes: &[u8]) {
     let value: Value = serde_json::from_slice(bytes).unwrap();
@@ -137,20 +133,20 @@ fn v2_http_and_websocket_frames_omit_extensions_but_bus_facts_are_unchanged() {
         json!(1.37)
     );
     let provider = replay.fixture.providers[2].clone();
-    let _routes = requester
-        .register_routes(vec![(
-            RouteDescriptor {
-                listener: ListenerRole::Overlay,
-                method: "GET".into(),
-                path: RoutePath::Exact("/json/v2".into()),
-                websocket: false,
-            },
-            Arc::new(RegisteredProvider::State {
-                provider: provider.clone(),
-                route: StateRoute::V2,
-            }),
-        )])
-        .unwrap();
+    let [routes, _, _] = vosu::BUNDLE.hosts.adapter_routes(
+        std::array::from_fn(|index| {
+            replay.fixture.providers[index].clone() as Arc<dyn StateJsonProvider>
+        }),
+        [
+            Schema::V1,
+            Schema::StreamCompanion,
+            Schema::V2,
+            Schema::V2Precise,
+        ]
+        .map(|schema| WebSocketHub::new(schema, provider.clone())),
+        requester.clone(),
+    );
+    let _routes = requester.register_routes(routes).unwrap();
     let router = SurfaceRouter::new(replay.fixture.h.host.clone(), requester);
     let request = Request::builder()
         .uri("/json/v2")

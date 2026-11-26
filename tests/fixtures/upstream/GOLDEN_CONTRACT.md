@@ -108,10 +108,7 @@ performance or timing evidence.
   skins, audio or images are never committed, even when the client shows them.
 - Paths: private roots appear in candidates only as synthetic roots (§7).
 - Raw captures stay private (§1).
-- Review: main reviews each candidate before commit: the diff, the
-  brand inventory, the privacy and asset checks and the replay result. `golden`
-  never writes canonical fixtures. Fixture commits are separate from adapter
-  fixes, because their review is privacy, licensing and content review.
+- vosu_core::server
 - **Nothing is uploaded or published**: no GitHub release, artifact store,
   attachment, issue or external service receives raw captures or candidates.
 
@@ -238,43 +235,16 @@ filtered-feed cases send exact legacy filter messages and record the
 resulting frame. Full feed sequences, normal close and slow-reader behavior
 are raw diagnostics, not payload goldens.
 
-A `no-client` feed upgrade (`ws.*.upgrade.no-client`) is a **handshake-only
-golden** (main decision, 2026-11-25: with no client the pinned upstream sends
-no state frame): both daemons record the upgrade handshake and whether any
-frame arrived within the case's bounded receive window, and the record keeps
-exactly the frames observed (with none, only the close exchange). Its upstream
-sandwich must agree as for any case. When vosu sends a state frame there and
-upstream sends none, or the reverse, the case is still recorded as observed
-and `golden-capture` lists it as a finding for review; it is never normalized.
+vosu_core::server
 
 Raw HTTP records keep request bytes, status line, ordered raw headers and body
 bytes. Raw WS records keep opcode, fin, mask, length and payload bytes. A
 golden compares the message body after transfer-coding removal; the raw
 framing stays in the private capture.
 
-A connection that the daemon closes or resets before sending any response byte is
-an explicit outcome, not a failure: the record is `{"outcome": "closed"}` with the
-request (and, for the `ws` family, no frames), and it is compared like any other
-record. Both upstream sandwich records must close, and vosu must close too. A
-partial response is never a golden. Golden captures hold only golden-role
-route-matrix cases. Negative and diagnostic cases carry a `negative` or
-`diagnostic` ID segment, and `golden` and `adapter_golden` refuse both.
+vosu_core::server
 
-A case whose request kills the pinned upstream daemon has the explicit outcome
-`upstream_crashed`; it is neither a failure nor an exclusion (main's contract
-decision and the owner amendment of 2026-11-25). Only route-matrix cases under the
-reviewed ledger row `upstream-malformed-uri-crash` ([DIVERGENCES.md](DIVERGENCES.md))
-have it: upstream answers a request target with a malformed percent escape, then its
-response logger throws and the process exits. These cases run last, after the
-`no-client` barrier and its cases, so they can never abort the barrier sequence.
-Before each attempt that finds upstream exited, the capture launches and re-attests a
-fresh upstream and waits until both daemons report `no-client`. The record holds the
-request, every byte upstream sent before it died and its nonzero exit code, followed
-by the usual vosu sandwich: vosu must answer (a response, not a closed connection)
-and its dumps must agree. `golden` checks the record and the ledger row and treats
-the case as a documented divergence (upstream crashes, vosu answers): with no
-upstream answer to replay, it writes no case file and lists the case, its ledger ID
-and vosu's status in its summary.
+vosu_core::server
 
 A case the pinned upstream cannot answer in full has a declared expected upstream
 outcome only when the route matrix names it by ID (`UPSTREAM_EXPECTED`, Main's decisions
@@ -368,15 +338,7 @@ column of this table exactly.
 
 Normalization version: 2
 
-Version 2 (1 → 2) widens `root-prefix`: in a request target the closing `/`
-of a route prefix ends a token, so an absolute root spelled right after it is
-rewritten, while a root inside a path segment is still never rewritten and
-fails the privacy scan. The counterexamples are `golden`'s
-`test_absolute_root_right_after_a_route_prefix_is_replaced` and
-`adapter_golden`'s `golden_gates_take_a_request_root_only_at_a_token_boundary`:
-`adapter_golden` refuses a fixture whose request target carries a synthetic
-root anywhere `root-prefix` cannot put one, or carries one without listing
-`root-prefix` in the case's `normalized` rules.
+vosu_core::server
 
 | Rule ID | Scope | Replacement | Retained local invariant |
 |---|---|---|---|
@@ -388,12 +350,7 @@ root anywhere `root-prefix` cannot put one, or carries one without listing
 | `raw-capability-redaction` | Request header `X-Vosu-Test-Capture` in private raw evidence, redacted by `golden-capture` | `<redacted>` | `golden` rejects any occurrence of the header or its value in a capture or candidate; dump calls are not route records |
 | `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 2: none.** |
 
-Synthetic roots: one distinct root per attested root, named after its
-declared slot as `C:\vosu-golden\<name>\` on Windows or `/vosu-golden/<name>/`
-on Linux, for example `C:\vosu-golden\osu!\` or `/vosu-golden/osu/`. The
-manifest records the mapping from slot to synthetic root, never the private
-prefix. Replay creates real temporary roots and maps resources to them;
-echoed display paths are data and never become root authority.
+vosu_core::server
 
 **Never normalized:** status, route or method, body error class;
 content-type, security, cache, range or upgrade semantics; numbers; null
@@ -558,22 +515,7 @@ exists, and it also fails when the marker names another pin or holds more than
 the reason line, when a marker sits beside `<pin>/`, or when another 40-hex
 fixture directory exists. X0 deletes the marker in the fixture commit.
 
-The comparator's own coverage comes from `tests/fixtures/golden-synthetic/`
-and the counterexample tests over it. That tree is written by G0's writer with
-`provenance: "synthetic"` from R0 replays of vosu's corpus source. It holds a
-`windows-stable` platform and a lazer-shaped `linux-lazer` platform with the
-same case IDs. Route bytes depend on the replaying OS (upstream `game.focused`
-exists only on Windows), so a synthetic platform's name also names the host OS
-it is exported and compared on: `windows-*` only on Windows and `linux-*` only
-on Linux, and each OS must have at least one. Regenerate the tree with
-`python tests/adapter_golden/generate_synthetic.py --foreign-export <path>`
-after running the exporter natively on the other OS (the script's docstring
-has the `vm-test` step). A synthetic tree is refused under
-`tests/fixtures/upstream/<pin>/`. A committed capture also
-needs a review receipt, distinct source and vosu attestations, and brand
-inventory lines that are exact allowlist entries. Each replay asset file gets
-the declared modification time 2026-01-01T00:00:00Z, and `header-last-modified`
-holds vosu's `Last-Modified` to it.
+vosu_core::server
 
 Replay inputs follow what the platform's production host records:
 

@@ -19,14 +19,14 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use vosu::server::api_v1::{
+use vosu_core::actions::{
+    ActionDescriptor, InvocationPolicy, JobOwner, JobRegistry, Principal, ToolAuthority,
+};
+use vosu_core::server::api_v1::{
     actions::{ActionAuthority, ActionRoutes},
     resources::ResourceHttp,
     router::ApiV1Router,
     subscriptions::ApiV1SubscriptionHub,
-};
-use vosu_core::actions::{
-    ActionDescriptor, InvocationPolicy, JobOwner, JobRegistry, Principal, ToolAuthority,
 };
 use vosu_plugin_api::{Message, VOSU_STREAM_CHUNK_MAX_BYTES};
 

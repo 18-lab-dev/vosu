@@ -77,11 +77,7 @@ impl Routes {
         match request.path.as_str() {
             BRIDGE if get => return self.bridge(),
             THEME if get => {
-                return bytes(
-                    200,
-                    "text/css; charset=utf-8",
-                    Bytes::from_static(assets::THEME.as_bytes()),
-                );
+                return bytes(200, "text/css; charset=utf-8", assets::THEME.clone());
             }
             DESIGN if get => {
                 return bytes(

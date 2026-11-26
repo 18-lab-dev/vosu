@@ -1,4 +1,4 @@
-//! M6b K0 root composition through the real `vosu::runtime::CatalogComposition`:
+//! M6b K0 root composition through the real `vosu_core::runtime::CatalogComposition`:
 //! S0/C0 open, I0 recovery/executor/store, the root runtime handoff with a
 //! real `dlopen` of the testkit cdylib into a real `PluginHost`, G0 offers
 //! observing the actual `DiscoveryService`, T0 revocation and shutdown join.
@@ -25,7 +25,7 @@ use std::{
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
-use vosu::runtime::{CatalogComposition, CatalogRoots, catalog_target};
+use vosu_core::runtime::{CatalogComposition, CatalogRoots, catalog_target};
 use vosu_core::{
     catalog::{
         install::{DownloadFuture, InstallLayout, JOURNAL_FILE, LoadStatus, PackageTransport},
@@ -147,7 +147,7 @@ fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
 /// adds the plugin's own namespace schema (`x-visibility` on `/internal`).
 fn package(memory: &Memory, id: &str, schema: Option<&str>) -> Value {
     let (library, bytes) = testkit_cdylib();
-    let host = format!("={}", vosu::application_version());
+    let host = format!("={}", vosu::BUNDLE.version);
     let target = catalog_target();
     let mut manifest = json!({"manifest_version":1,"kind":"plugin","id":id,"name":id,
         "version":"1.0.0","host":host,"abi_version":1,"runtime":"in-process",
@@ -223,7 +223,7 @@ fn prerequisites(runtime: &CatalogRuntime) -> Prerequisites {
         installed_generation: runtime.installed_generation(),
         limit_generation: 1,
         snapshot_fingerprint: [7; 32],
-        application: vosu::application_version().to_string(),
+        application: vosu::BUNDLE.version.to_owned(),
         target: catalog_target().into(),
         max_package_bytes: 512 * 1024 * 1024,
     }
@@ -262,7 +262,7 @@ fn plan(
         &vosu_core::state::schema::SchemaRegistry::with_core().unwrap(),
         &[],
     );
-    let application: &Version = vosu::application_version();
+    let application: &Version = &vosu::BUNDLE.version();
     plans::build(
         &Snapshot {
             candidates: &candidates,
@@ -324,9 +324,14 @@ async fn k0_official_x_visibility_plugin_installs_registers_and_user_source_is_r
     let base = tempfile::tempdir().unwrap();
     let (_logs, host) = plugin_host();
     let memory = Arc::new(Memory::default());
-    let catalog = CatalogComposition::start(Arc::clone(&host), roots(base.path()), memory.clone())
-        .await
-        .unwrap();
+    let catalog = CatalogComposition::start(
+        Arc::clone(&host),
+        roots(base.path()),
+        memory.clone(),
+        &vosu::BUNDLE,
+    )
+    .await
+    .unwrap();
     let runtime = catalog.services();
     let entry = package(&memory, "vosu.osu", Some(INTERNAL));
     let job = install(
@@ -365,9 +370,14 @@ async fn k0_untrust_blocks_the_next_load_until_restart_then_retrust_loads() {
     let base = tempfile::tempdir().unwrap();
     let memory = Arc::new(Memory::default());
     let (_logs, host) = plugin_host();
-    let catalog = CatalogComposition::start(Arc::clone(&host), roots(base.path()), memory.clone())
-        .await
-        .unwrap();
+    let catalog = CatalogComposition::start(
+        Arc::clone(&host),
+        roots(base.path()),
+        memory.clone(),
+        &vosu::BUNDLE,
+    )
+    .await
+    .unwrap();
     let runtime = catalog.services();
     runtime.replace_sources(sources(true)).await.unwrap();
     runtime.set_trust(identity(USER), true).await.unwrap();
@@ -392,9 +402,14 @@ async fn k0_untrust_blocks_the_next_load_until_restart_then_retrust_loads() {
 
     // Restart: the persisted untrust blocks the startup load...
     let (_logs, host) = plugin_host();
-    let catalog = CatalogComposition::start(Arc::clone(&host), roots(base.path()), memory.clone())
-        .await
-        .unwrap();
+    let catalog = CatalogComposition::start(
+        Arc::clone(&host),
+        roots(base.path()),
+        memory.clone(),
+        &vosu::BUNDLE,
+    )
+    .await
+    .unwrap();
     let runtime = catalog.services();
     assert_eq!(
         runtime.executor().unwrap().load_reports()[0].status,
@@ -460,9 +475,14 @@ async fn k0_recovers_before_discovery_offers_observe_discovery_and_shutdown_join
     .unwrap();
     let (_logs, host) = plugin_host();
     let memory = Arc::new(Memory::default());
-    let catalog = CatalogComposition::start(Arc::clone(&host), roots(base.path()), memory.clone())
-        .await
-        .unwrap();
+    let catalog = CatalogComposition::start(
+        Arc::clone(&host),
+        roots(base.path()),
+        memory.clone(),
+        &vosu::BUNDLE,
+    )
+    .await
+    .unwrap();
     // Recovery completed inside start, before discovery exists.
     assert!(!journal.exists() && !half.exists());
     let runtime = catalog.services();
@@ -481,7 +501,7 @@ async fn k0_recovers_before_discovery_offers_observe_discovery_and_shutdown_join
     let ticket = store.begin_fetch().unwrap();
     let game = json!({"catalog_version":2,"name":"Games","published":"informational",
         "plugins":[{"id":"acme.game","name":"Acme game","version":"3.1.0",
-            "host":format!("={}", vosu::application_version()),
+            "host":format!("={}", vosu::BUNDLE.version),
             "runtime":"process","provides":[{"id":"field:acme.game","version":"1.0.0",
                 "schema_version":"1.0.0","lanes":[]},{"id":"game:mygame","version":"*"}],
             "matcher":{"process_names":["mygame"]},
@@ -496,7 +516,7 @@ async fn k0_recovers_before_discovery_offers_observe_discovery_and_shutdown_join
             }],
             &[],
             &[],
-            vosu::application_version(),
+            &vosu::BUNDLE.version(),
             catalog_target(),
         )
         .unwrap();

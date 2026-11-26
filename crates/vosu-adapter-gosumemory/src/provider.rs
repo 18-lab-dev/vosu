@@ -1,8 +1,9 @@
 //! Unmounted gosuMemory projection and selector-derived sampling demand.
 use bytes::Bytes;
 use std::sync::{Arc, OnceLock};
-use vosu_adapter_support::filtered::{Filter, SharedDocument, selects_path};
+use vosu_adapter_support::filtered::{SharedDocument, selects_path};
 use vosu_plugin_api::Selector;
+use vosu_surface::filter::Filter;
 use vosu_surface::{
     projection::{Projection, ProjectionError, ProjectionView},
     state::CapturedSelection,

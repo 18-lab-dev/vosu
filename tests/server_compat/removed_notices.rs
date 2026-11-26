@@ -162,11 +162,11 @@ fn m7_g01_api_ingame_is_the_ordinary_404_and_only_the_exact_path_is_recorded() {
     // The dashboard listener has no tombstone: an unknown-route 404 that
     // records nothing.
     let origins = Arc::new(
-        vosu::server::origins::Origins::new(m.origin.clone(), "http://127.0.0.1:24051".into())
+        vosu_core::server::origins::Origins::new(m.origin.clone(), "http://127.0.0.1:24051".into())
             .unwrap(),
     );
     let mut providers = m.providers.clone();
-    providers.authorization = Arc::new(vosu::server::origins::OriginAuthorizer {
+    providers.authorization = Arc::new(vosu_core::server::origins::OriginAuthorizer {
         inner: Arc::new(AuthorizationPolicy::new("127.0.0.1,localhost", "127.0.0.1")),
         origins,
         dashboard: true,

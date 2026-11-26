@@ -23,18 +23,18 @@ use axum::{
 use futures_util::StreamExt;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
-use vosu::{
-    runtime::{TestProductionCompositionOptions, start_test_production_composition},
-    server::overlay_folders::{FolderOpener, open_folder},
-    server::runtime::ListenTarget,
-    server::service::{DeferredUpdateTrigger, UpdateRouteResult, UpdaterHandoff},
-};
+use vosu_core::server::runtime::ListenTarget;
 use vosu_core::{
     app::{
         App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupFlags, StartupOutcome,
         StartupPlatform,
     },
     config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
+};
+use vosu_core::{
+    runtime::{TestProductionCompositionOptions, start_test_production_composition},
+    server::overlay_folders::{FolderOpener, open_folder},
+    server::service::{DeferredUpdateTrigger, UpdateRouteResult, UpdaterHandoff},
 };
 use vosu_net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
 use vosu_overlay_host::{CounterError, CounterService, DownloadRequest, HardenedCounterDownloader};
@@ -117,12 +117,13 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     std::fs::create_dir_all(&update_program).unwrap();
     let update_target = update_program.join(if cfg!(windows) { "vosu.exe" } else { "vosu" });
     std::fs::write(&update_target, b"unchanged harness executable").unwrap();
-    let updater = vosu::runtime::test_updater_handoff(
+    let updater = vosu_core::runtime::test_updater_handoff(
         update_target.clone(),
         update_program.clone(),
         CancellationToken::new(),
         mock.test_network_config()
             .expect("updater exact-listener config"),
+        vosu::BUNDLE.version(),
     )
     .expect("construct injected updater handoff");
     let update_listener = bounded!(tokio::net::TcpListener::bind((
@@ -209,7 +210,10 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     let discovered = counters.discover().expect("discover installed counter");
     assert_eq!(discovered.len(), 1);
     assert_eq!(discovered[0].name, "Harness Counter");
-    open_folder(&opener, &static_root, "harness-counter").expect("open installed counter");
+    open_folder(&opener, &static_root, "harness-counter", |name| {
+        vosu_overlay_host::validate_component(name).is_ok()
+    })
+    .expect("open installed counter");
     assert_eq!(opener.0.load(Ordering::Acquire), 1);
     counters
         .delete("harness-counter")
@@ -422,7 +426,7 @@ impl UpdaterHandoff for PreparedUpdate {
     fn run_update(
         &self,
         _: bool,
-    ) -> vosu::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
+    ) -> vosu_core::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         let triggered = self.triggered.clone();
         Box::pin(async move {
             Ok(UpdateRouteResult::Updated(DeferredUpdateTrigger::new(
@@ -444,6 +448,7 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
     );
     let triggered = CancellationToken::new();
     let composition = bounded!(start_test_production_composition(
+        &vosu::BUNDLE,
         TestProductionCompositionOptions {
             target: ListenTarget::new("127.0.0.1", 0),
             config: Arc::clone(&config),

@@ -14,3 +14,4 @@ bytes = "=1.12.1"
 serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
 vosu-osu-model = { path = "../vosu-osu-model" }
+vosu-surface = { path = "../vosu-surface" }

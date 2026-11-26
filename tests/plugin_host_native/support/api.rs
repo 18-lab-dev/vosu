@@ -14,20 +14,16 @@ use axum::response::Response;
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
-use vosu::server::api_v1::actions::{ActionAuthority, ActionRoutes};
-use vosu::server::api_v1::resources::ResourceHttp;
-use vosu::server::api_v1::router::ApiV1Router;
-use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
-use vosu::server::auth::AuthorizationPolicy;
-use vosu::server::origins::{OriginAuthorizer, Origins};
-use vosu::server::routes::{
-    self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, ProviderFuture,
-    RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
-};
-use vosu::server::websocket::UpgradeCallbackTracker;
-use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_core::actions::JobRegistry;
 use vosu_core::plugin::PluginHost;
+use vosu_core::server::api_v1::actions::{ActionAuthority, ActionRoutes};
+use vosu_core::server::api_v1::resources::ResourceHttp;
+use vosu_core::server::api_v1::router::ApiV1Router;
+use vosu_core::server::api_v1::subscriptions::ApiV1SubscriptionHub;
+use vosu_core::server::auth::AuthorizationPolicy;
+use vosu_core::server::origins::{OriginAuthorizer, Origins};
+use vosu_core::server::routes::{self, Endpoint, ProviderFuture, RouteDelegate, RouteProviders};
+use vosu_core::server::websocket::UpgradeCallbackTracker;
 
 use super::services::{BOUND, LONG};
 
@@ -39,20 +35,6 @@ pub async fn bounded<T>(future: impl Future<Output = T>) -> T {
     tokio::time::timeout(BOUND, future)
         .await
         .expect("bounded API operation")
-}
-
-struct Legacy;
-
-impl StateJsonProvider for Legacy {
-    fn cached_json(&self, _: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        Box::pin(async { panic!("legacy state route reached") })
-    }
-}
-
-impl CalculatePpProvider for Legacy {
-    fn calculate_pp(&self, _: PpQuery) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async { panic!("legacy calculation reached") })
-    }
 }
 
 struct Delegate(ApiV1Router);
@@ -126,8 +108,6 @@ impl Api {
                     origins,
                     dashboard: false,
                 }),
-                state: Arc::new(Legacy),
-                calculation: Arc::new(Legacy),
                 delegate: Arc::new(Delegate(api)),
             };
             let router = axum::Router::new()

@@ -7,16 +7,16 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu::server::websocket::{
+use vosu_core::server::websocket::{
     Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,
     states::{HitErrorArray, KeypressButton},
 };
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_surface::filter::Filter;
 
 pub const SCHEMAS: [(Schema, Schema, &str); 4] = [
     (Schema::V1, Schema::V1, "v1"),

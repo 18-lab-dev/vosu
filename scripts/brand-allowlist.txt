@@ -55,7 +55,7 @@ crates/vosu-dashboard/src/settings.rs 2 upstream settings copy naming the upstre
 crates/vosu-overlay-host/src/catalog.rs 6 upstream overlay catalog client for the upstream tosu.app catalog endpoint
 crates/vosu-overlay-host/src/cards.rs 1 upstream catalog search empty state naming tosu as a client overlays declare compatibility with
 crates/vosu-overlay-host/src/commands.rs 1 parity counter-command compatibility test named for tosu-style counter frame paths
-src/server/files.rs 1 upstream doc comment describing upstream tosu file-range compatibility behavior
+crates/vosu-core/src/server/files.rs 1 upstream doc comment describing upstream tosu file-range compatibility behavior
 crates/vosu-core/src/updater/tests_release.rs 2 migration updater test fixture rejecting the former tosu release asset name
 tests/config_compat.rs 2 migration compatibility test covering the legacy tosu.env migration input
 tests/daemon_smoke.rs 6 migration daemon smoke test covering the legacy tosu config-root migration

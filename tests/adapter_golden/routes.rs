@@ -9,7 +9,7 @@ use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
 };
-use vosu::server::websocket::Schema;
+use vosu_core::server::websocket::Schema;
 
 /// Larger than the 8 MiB capture budget, so a bound hit is a failure.
 const MAX_RESPONSE: usize = 16 * 1024 * 1024;

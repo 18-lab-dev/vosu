@@ -104,7 +104,7 @@ pub(crate) struct Package {
     pub(crate) entry: Value,
 }
 fn host() -> String {
-    format!("={}", vosu::application_version())
+    format!("={}", vosu::BUNDLE.version)
 }
 pub(crate) fn package(id: &str, version: &str, runtime: &str, requires: Value) -> Package {
     let library = format!("lib/{id}.so");
@@ -156,7 +156,7 @@ pub(crate) fn prerequisites() -> Prerequisites {
         installed_generation: 0,
         limit_generation: 1,
         snapshot_fingerprint: [9; 32],
-        application: vosu::application_version().to_string(),
+        application: vosu::BUNDLE.version.to_owned(),
         target: TARGET.into(),
         max_package_bytes: 512 * 1024 * 1024,
     }
@@ -194,7 +194,7 @@ fn plan(packages: &[&Package], record: &SourceRecord, request: &str) -> plans::P
         &vosu_core::state::schema::SchemaRegistry::with_core().unwrap(),
         &[],
     );
-    let application: &Version = vosu::application_version();
+    let application: &Version = &vosu::BUNDLE.version();
     let plan = plans::build(
         &Snapshot {
             candidates: &candidates,

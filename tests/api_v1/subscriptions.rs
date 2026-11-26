@@ -2,8 +2,8 @@ use super::support::*;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::sync::Arc;
-use vosu::server::subscription_wire::Outbound;
 use vosu_core::api::SessionTarget;
+use vosu_core::server::subscription_wire::Outbound;
 use vosu_plugin_api::PublishValueRef;
 
 #[test]

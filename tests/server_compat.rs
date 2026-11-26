@@ -34,9 +34,9 @@ use std::{
     },
     time::Duration,
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
 use vosu_surface::files::content_type;
+use vosu_surface::filter::Filter;
 
 use axum::{
     body::{Body, Bytes, to_bytes},
@@ -48,16 +48,18 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use vosu::server::{
+use vosu_adapter_upstream::calculate::PpQuery;
+use vosu_core::report::escape_html;
+use vosu_core::server::overlay_folders::{FolderOpener, open_folder};
+use vosu_core::server::{
     auth::{AuthorizationPolicy, RequestHeaders},
     files::{
         ByteRange, MissingKind, RangeError, ResourceOutcome, parse_range, resolve_encoded_resource,
         trailing_slash_location,
     },
-    overlay_folders::{FolderOpener, open_folder},
     routes::{
-        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
-        ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
+        self, CachedJson, Endpoint, PeerAddress, ProviderFuture, RouteDelegate, RouteProviders,
+        StateJsonProvider, StateRoute,
     },
     runtime::{
         BoundListener, HostResolver, ListenTarget, ListenerBinder, ListenerRuntime, RuntimeFuture,
@@ -67,8 +69,6 @@ use vosu::server::{
         StateSnapshot, WebSocketHub,
     },
 };
-use vosu_adapter_upstream::calculate::PpQuery;
-use vosu_core::report::escape_html;
 use vosu_net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast};
 use vosu_osu_model::{
     ModsInput as CalculationModsInput, calculate_accuracy, calculate_grade, calculate_mods,
@@ -88,9 +88,9 @@ use vosu_overlay_host::{
 
 #[tokio::test]
 async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
-    struct KeysDelegate(Arc<vosu::server::api_keys::ApiKeys>);
+    struct KeysDelegate(Arc<vosu_core::server::api_keys::ApiKeys>);
     impl RouteDelegate for KeysDelegate {
-        fn api_keys(&self) -> Option<Arc<vosu::server::api_keys::ApiKeys>> {
+        fn api_keys(&self) -> Option<Arc<vosu_core::server::api_keys::ApiKeys>> {
             Some(self.0.clone())
         }
         fn handle(&self, _: Endpoint, _: Request<Body>, _: Bytes) -> ProviderFuture<'_, Response> {
@@ -102,7 +102,7 @@ async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
         ("profiles:manage", "/api/counters/profiles"),
     ] {
         let root = tempfile::tempdir().unwrap();
-        let keys = Arc::new(vosu::server::api_keys::ApiKeys::load(
+        let keys = Arc::new(vosu_core::server::api_keys::ApiKeys::load(
             root.path().join("api-keys.toml"),
             None,
         ));
@@ -137,8 +137,6 @@ async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
             .insert(ConnectInfo(PeerAddress("127.0.0.1:12345".parse().unwrap())));
         let providers = RouteProviders {
             authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
-            state: Arc::new(StateFixture),
-            calculation: Arc::new(CalculateFixture),
             delegate: Arc::new(KeysDelegate(keys)),
         };
         let response = bounded!(routes::dispatch(State(providers), request));
@@ -153,9 +151,9 @@ async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
 
 #[tokio::test]
 async fn api_key_peer_scope_and_management_boundaries() {
-    struct KeysDelegate(Arc<vosu::server::api_keys::ApiKeys>);
+    struct KeysDelegate(Arc<vosu_core::server::api_keys::ApiKeys>);
     impl RouteDelegate for KeysDelegate {
-        fn api_keys(&self) -> Option<Arc<vosu::server::api_keys::ApiKeys>> {
+        fn api_keys(&self) -> Option<Arc<vosu_core::server::api_keys::ApiKeys>> {
             Some(self.0.clone())
         }
         fn handle(&self, _: Endpoint, _: Request<Body>, _: Bytes) -> ProviderFuture<'_, Response> {
@@ -168,7 +166,7 @@ async fn api_key_peer_scope_and_management_boundaries() {
         }
     }
     let root = tempfile::tempdir().unwrap();
-    let keys = Arc::new(vosu::server::api_keys::ApiKeys::load(
+    let keys = Arc::new(vosu_core::server::api_keys::ApiKeys::load(
         root.path().join("api-keys.toml"),
         None,
     ));
@@ -178,8 +176,6 @@ async fn api_key_peer_scope_and_management_boundaries() {
     let key = created["key"].as_str().unwrap();
     let providers = RouteProviders {
         authorization: Arc::new(AuthorizationPolicy::new("192.0.2.7", "127.0.0.1")),
-        state: Arc::new(StateFixture),
-        calculation: Arc::new(CalculateFixture),
         delegate: Arc::new(KeysDelegate(keys)),
     };
     for (method, path, peer, origin, credential, expected) in [
@@ -282,30 +278,47 @@ async fn api_key_peer_scope_and_management_boundaries() {
     }
 }
 
-struct StateFixture;
-impl StateJsonProvider for StateFixture {
-    fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson> {
-        Box::pin(async move {
-            if route == StateRoute::V1 {
-                CachedJson::Ready(Bytes::from_static(br#"{"ok":true}"#))
-            } else {
-                CachedJson::NotReady
+/// The bundled adapters' registered state and calculation routes: `/json`
+/// is ready, every other state route is not, and `/api/calculate/pp`
+/// parses its query exactly as the upstream adapter's registration does.
+fn registered_route(request: &Request<Body>) -> ProviderFuture<'static, Response> {
+    let path = request.uri().path().to_owned();
+    let query = request.uri().query().map(str::to_owned);
+    Box::pin(async move {
+        let (status, body) = if path == "/api/calculate/pp" {
+            match PpQuery::parse(query.as_deref()) {
+                Ok(query) => {
+                    let body = json!({"lazer": query.lazer, "mode": query.mode, "passed": query.passed_objects});
+                    (
+                        StatusCode::OK,
+                        Bytes::from(serde_json::to_vec(&body).unwrap()),
+                    )
+                }
+                Err(message) => (
+                    StatusCode::BAD_REQUEST,
+                    Bytes::from(serde_json::to_vec(&json!({"error": message})).unwrap()),
+                ),
             }
-        })
-    }
-}
-struct CalculateFixture;
-impl CalculatePpProvider for CalculateFixture {
-    fn calculate_pp(&self, query: PpQuery) -> ProviderFuture<'_, CalculateResult> {
-        Box::pin(async move {
-            let body =
-                json!({"lazer": query.lazer, "mode": query.mode, "passed": query.passed_objects});
-            CalculateResult::Ready(Bytes::from(serde_json::to_vec(&body).unwrap()))
-        })
-    }
+        } else if path == "/json" {
+            CachedJson::Ready(Bytes::from_static(br#"{"ok":true}"#)).status_body()
+        } else {
+            CachedJson::NotReady.status_body()
+        };
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    })
 }
 struct DelegateFixture;
 impl RouteDelegate for DelegateFixture {
+    fn registered_http<'a>(
+        &'a self,
+        request: &'a Request<Body>,
+    ) -> Option<ProviderFuture<'a, Response>> {
+        Some(registered_route(request))
+    }
     fn handle(
         &self,
         endpoint: Endpoint,
@@ -328,8 +341,6 @@ fn providers() -> RouteProviders {
             "127.0.0.1,localhost,absolute",
             "127.0.0.1",
         )),
-        state: Arc::new(StateFixture),
-        calculation: Arc::new(CalculateFixture),
         delegate: Arc::new(DelegateFixture),
     }
 }
@@ -338,13 +349,13 @@ async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -
     let dashboard = origin == Some("http://localhost:24051");
     let mut providers = providers();
     let origins = Arc::new(
-        vosu::server::origins::Origins::new(
+        vosu_core::server::origins::Origins::new(
             "http://127.0.0.1:24050".into(),
             "http://127.0.0.1:24051".into(),
         )
         .unwrap(),
     );
-    providers.authorization = Arc::new(vosu::server::origins::OriginAuthorizer {
+    providers.authorization = Arc::new(vosu_core::server::origins::OriginAuthorizer {
         inner: providers.authorization,
         origins: Arc::clone(&origins),
         dashboard,
@@ -729,7 +740,12 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
         changed_legacy_schema
     );
     assert_eq!(std::fs::read(&legacy_values_path).unwrap(), legacy_values);
-    assert!(open_folder(&NoopOpener, &static_root, "../outside").is_err());
+    assert!(
+        open_folder(&NoopOpener, &static_root, "../outside", |name| {
+            vosu_overlay_host::validate_component(name).is_ok()
+        })
+        .is_err()
+    );
     assert!(restarted.delete("counter/child").is_err());
 }
 
