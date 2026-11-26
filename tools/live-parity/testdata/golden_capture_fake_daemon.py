@@ -141,6 +141,13 @@ class Handler(socketserver.BaseRequestHandler):
         path, _, query = target.partition("?")
         if path in OPTIONS.get("close_paths", ()):
             return True
+        if path in OPTIONS.get("silent_paths", ()):
+            # The pinned upstream's `upgrade` handler leaves a path it does not own
+            # unanswered (parity_golden_timeout): hold the connection until the client goes.
+            sock.settimeout(None)
+            while sock.recv(65536):
+                pass
+            return True
         if MODE == "vosu" and OPTIONS.get("request_budget") and len(
                 urllib.parse.parse_qsl(query, keep_blank_values=True)) > 128:
             # adapter-surface-request-budget: the request never reaches a provider.

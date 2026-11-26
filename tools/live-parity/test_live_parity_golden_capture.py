@@ -9,6 +9,7 @@ endpoint authorization, lifecycle and cleanup and not_ready no-client dumps.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import io
 import json
@@ -36,6 +37,8 @@ from parity_golden_config import validate_golden_config
 from parity_golden_rules import NON_GOLDEN_SEGMENTS
 import parity_golden_client as golden_client
 import parity_golden_rehearsal as rehearsal
+import parity_golden_timeout as no_response
+import parity_routes as pr
 import route_matrix as rm
 import route_security as rs
 
@@ -477,6 +480,72 @@ class FakeTraversalTests(CaptureTestCase):
         with mock.patch.object(crash, "EXIT_TIMEOUT_S", 0.5):
             self.refuses("upstream survived a request the ledger", scenario, FakeClient(self.state),
                          self.config(scenario))
+
+    SILENT = ("ws.near.v2-trailing-slash", "files.skin.index.upgrade")
+
+    def short_deadline(self):
+        """The 30 s case deadline cut to 1 s, so an unanswered request times out quickly."""
+        return mock.patch.object(pr, "run_identical", functools.partial(
+            pr.run_identical, limits=pr.Limits(deadline_s=1.0)))
+
+    def test_declared_upstream_timeout_is_a_complete_case_golden_lists(self) -> None:
+        scenario = gc.ScenarioSet("test-silent", ("menu",), (*self.SILENT, "state-http.json-v2.get.menu"))
+        silent = {"silent_paths": ["/websocket/v2/", "/files/skin/"]}
+        with self.short_deadline():
+            capture = self.capture(scenario, FakeClient(self.state),
+                                   self.config(scenario, source_options=silent))
+        cases = {case["id"]: case for case in capture["cases"]}
+        for case_id in self.SILENT:
+            (attempt,) = cases[case_id]["attempts"]
+            self.assertEqual(attempt["outcome"], "complete")
+            # The explicit transport record; a `ws` family record also has no frames.
+            frames = {"frames": []} if cases[case_id]["family"] == "ws" else {}
+            for record in attempt["source"]:
+                self.assertEqual(record, {"attempt": 1, "request": record["request"],
+                                          "outcome": "timeout", **frames})
+            self.assertTrue(attempt["vosu"]["route"]["status_line"].startswith("HTTP/1.1 404"))
+        _platform, files, summary = parity_golden._platform_files(capture, None, "captured")
+        self.assertEqual(summary[no_response.SUMMARY_KEY], [
+            {"id": "files.skin.index.upgrade", "ledger_id": "adr0021-removed-legacy-skin-index",
+             "attempts": 1, "vosu_status": 404},
+            {"id": "ws.near.v2-trailing-slash", "ledger_id": rm.NEAR_UPGRADE_LEDGER,
+             "attempts": 1, "vosu_status": 404}])
+        self.assertEqual(summary["cases"], 1)
+        for case_id in self.SILENT:
+            self.assertNotIn(f"cases/{case_id}.json", files)
+        self.golden(self.out)
+
+        def refused(pattern: str, case_id: str, edit) -> None:
+            changed = json.loads(self.out.read_text("utf-8"))
+            edit(next(case for case in changed["cases"] if case["id"] == case_id)["attempts"][-1])
+            with self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                parity_golden._platform_files(changed, None, "captured")
+
+        timeout = lambda attempt: attempt["source"][0]
+        refused("vosu must answer", self.SILENT[0], lambda a: a["vosu"].update(route={
+            "attempt": 1, "request": timeout(a)["request"], "outcome": "closed", "frames": []}))
+        refused("both upstream sandwich records must time out", self.SILENT[0],
+                lambda a: a["source"][1].update(outcome="closed"))
+        # Only a declared case may record upstream's timeout, and only from upstream.
+        refused(r"outcome: expected one of \['closed'\]", self.SILENT[0],
+                lambda a: a["vosu"].update(route={**timeout(a)}))
+        menu = "state-http.json-v2.get.menu"
+        refused(r"outcome: expected one of \['closed'\]", menu, lambda a: a.update(source=[
+            {"attempt": 1, "request": a["source"][0]["request"], "outcome": "timeout"}] * 2))
+
+    def test_upstream_timeout_on_an_undeclared_case_fails_the_run(self) -> None:
+        case_id = "state-http.json-v2.near.trailing-slash"
+        self.assertIsNone(rm.upstream_timeout_ledger(case_id))
+        scenario = gc.ScenarioSet("test-undeclared", ("menu",), (case_id,))
+        with self.short_deadline():
+            self.refuses(r"failed 3 whole-case attempts: source outcome 'timeout' is not allowed",
+                         scenario, FakeClient(self.state),
+                         self.config(scenario, source_options={"silent_paths": ["/json/v2/"]}))
+
+    def test_declared_case_fails_when_upstream_answers(self) -> None:
+        scenario = gc.ScenarioSet("test-answered", ("menu",), (self.SILENT[0],))
+        self.refuses(r"source outcome 'rejected' is not allowed", scenario,
+                     FakeClient(self.state), self.config(scenario))
 
 
 class PlanTests(unittest.TestCase):

@@ -42,7 +42,8 @@ from live_parity import PINNED_SOURCE_REVISION, Sample, barrier_of
 import parity_daemon as daemon_mod
 import parity_golden
 from parity_golden import CAPTURE_FORMAT, ENVELOPE_FORMAT, GoldenError
-from parity_golden_rules import TRANSPORT_OUTCOMES, dump_sandwich_difference
+from parity_golden_rules import dump_sandwich_difference
+import parity_golden_timeout as no_response
 from parity_probes import HttpProbe, _assert_one_owner
 from parity_process import _process_alive
 import parity_routes as pr
@@ -334,8 +335,7 @@ class HarnessDump:
         if absent != 404 or wrong != 404:
             raise CaptureError("the adapter capture endpoint answers without the launch capability")
         self.fetch("v2")
-        return {"with_capability": served, "without_capability": absent,
-                "wrong_capability": wrong}
+        return {"with_capability": served, "without_capability": absent, "wrong_capability": wrong}
 
 
 def _unique(items: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -366,10 +366,11 @@ def _unmask(frame: bytes, mask_hex: str, length: int) -> bytes:
 def golden_record(record: dict[str, Any], attempt: int, family: str) -> dict[str, Any]:
     """One P0 raw record as a `vosu-golden-capture-v1` record (body after transfer decoding).
 
-    A connection closed before any response byte is the explicit transport record
-    `{"outcome": "closed"}`, compared like any other part; it is never dropped."""
+    A connection closed before any response byte, or upstream's silence on a declared case
+    (parity_golden_timeout), is an explicit transport record `{"outcome": "closed"|"timeout"}`,
+    compared like any other part; it is never dropped."""
     response = record.get("response")
-    if record.get("outcome") in TRANSPORT_OUTCOMES and not response \
+    if record.get("outcome") in no_response.transport_outcomes(record) and not response \
             and record["received"]["length"] == 0:
         value = {"attempt": attempt, "request": _g0_bytes(pr.decode_bytes(record["request"])),
                  "outcome": record["outcome"]}
@@ -626,11 +627,10 @@ class Session:
                    "vosu": {"dump_before": {"attempt": number, "envelope": before},
                             "route": vosu_record,
                             "dump_after": {"attempt": number, "envelope": after}}}
-        value = {"id": case.id, "family": case.family, "barrier": case.barrier,
-                 "dump_schema": schema, "conditional": validator,
-                 "attempts": [*failed, attempt]}
+        value = {"id": case.id, "family": case.family, "barrier": case.barrier, "dump_schema": schema,
+                 "conditional": validator, "attempts": [*failed, attempt]}
         try:  # The same validators `golden` applies, so a recorded case is accepted unchanged.
-            parity_golden._check_sandwiches(parity_golden._case(copy.deepcopy(value), 0))
+            no_response.check(parity_golden._case(copy.deepcopy(value), 0))
         except GoldenError as exc:
             return str(exc)
         finding = rm.handshake_only_finding(case, upstream[0]["outcome"], route["outcome"])

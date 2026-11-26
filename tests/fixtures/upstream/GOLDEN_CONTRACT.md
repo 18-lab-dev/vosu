@@ -263,6 +263,21 @@ the case as a documented divergence (upstream crashes, vosu answers): with no
 upstream answer to replay, it writes no case file and lists the case, its ledger ID
 and vosu's status in its summary.
 
+A case the pinned upstream never answers has the expected upstream outcome `timeout`
+only when the route matrix names it by ID (`UPSTREAM_TIMEOUT`, Main's decision of
+2026-11-26, never a class rule) under its reviewed ledger row: the four
+`ws.near.*-trailing-slash` upgrades (`upstream-unanswered-near-upgrade`),
+`ws.near.v2-subscribe` (`adr0021-removed-selected-v2-feed`), `files.skin.index.upgrade`
+(`adr0021-removed-legacy-skin-index`) and `origin-peer.host.malformed-port`
+(`adapter-listener-policy`). Upstream's `upgrade` handler leaves an upgrade to a path it
+does not own unanswered, and its router throws on a `Host` with a non-numeric port
+before responding. For these cases a recorded no-response within the case deadline is
+a complete observation: both upstream sandwich records are `{"outcome": "timeout"}`
+(an upstream answer fails the attempt), vosu must answer rather than copy the hang, and
+its dumps must agree. `golden` writes no case file and lists the case, its ledger ID and
+vosu's status in its summary under `upstream_timeout`. Any other case that times out
+fails, and `golden-rehearsal` never counts a `timeout` as client-dependent.
+
 ### Route matrix families
 
 | Family | Required cases |
@@ -394,7 +409,7 @@ path, account, capability or credential. The platform `inventory.json`
 carries the privacy-scan result as `privacy_scan`. A case's `expected` record
 holds the status code, the §6 compared headers plus `date`, the body and the
 frames, all from upstream, or exactly `{"outcome": "closed"}` (§6). An
-`upstream_crashed` case has no case file (§6).
+`upstream_crashed` or `upstream_timeout` case has no case file (§6).
 
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so

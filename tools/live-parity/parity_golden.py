@@ -18,8 +18,7 @@ Capture shape (written by `golden-capture`; every object is closed):
                               "target", "sha256"},
                      "client": {"variant", "version", "sha256"}},
      "roots": [{"slot", "private"}],
-     "assets": [{"id", "slot", "relative", "media_type", "generator", "license",
-                 "sha256", "b64"}],
+     "assets": [{"id", "slot", "relative", "media_type", "generator", "license", "sha256", "b64"}],
      "expected_cases": [case id, ...],
      "cases": [{"id", "family", "barrier", "dump_schema",
                 "conditional": null|"etag"|"last-modified",
@@ -34,6 +33,7 @@ Capture shape (written by `golden-capture`; every object is closed):
            | {"attempt", "request": bytes, "outcome": "closed", "frames": [] (ws only)}
              (the connection closed without a response byte; expected {"outcome": "closed"})
     A final attempt may be `upstream_crashed` instead (parity_golden_crash): no case file.
+    Upstream records may be `timeout` on a declared case (parity_golden_timeout): no case file.
     frame  = {"from": "client"|"server", "fin", "opcode", "masked", "mask_key": hex|null,
               "length", "payload": bytes}
     dump   = {"attempt", "envelope": vosu-adapter-capture-v1}
@@ -51,6 +51,7 @@ from pathlib import Path
 import re
 import parity_golden_crash as crash
 import parity_golden_ledger as ledger
+import parity_golden_timeout as no_response
 import parity_volatile as volatile
 import shutil
 import subprocess
@@ -199,7 +200,8 @@ def _utf8(data: bytes) -> str | None:
 # ---------------------------------------------------------------- records
 
 
-def _record(value: Any, where: str, attempt: int, ws: bool) -> dict[str, Any]:
+def _record(value: Any, where: str, attempt: int, ws: bool,
+            outcomes: tuple[str, ...] = TRANSPORT_OUTCOMES) -> dict[str, Any]:
     transport = isinstance(value, dict) and "outcome" in value
     keys = (("attempt", "request", "outcome") if transport
             else ("attempt", "request", "status_line", "headers", "body")) + (("frames",) if ws else ())
@@ -211,8 +213,8 @@ def _record(value: Any, where: str, attempt: int, ws: bool) -> dict[str, Any]:
     if request is None:
         raise GoldenError(f"{where}.request: binary request bytes")
     if transport:
-        # GOLDEN_CONTRACT §6: the peer closed the connection without a response byte.
-        _str(value["outcome"], f"{where}.outcome", choices=TRANSPORT_OUTCOMES)
+        # GOLDEN_CONTRACT §6: no response byte (closed, or upstream silent on a declared case).
+        _str(value["outcome"], f"{where}.outcome", choices=outcomes)
         if ws and value["frames"] != []:
             raise GoldenError(f"{where}.frames: a connection closed without a response has no frames")
         return {"request": request, "outcome": value["outcome"], "status": None, "headers": [],
@@ -524,8 +526,8 @@ def _case(value: Any, index: int) -> dict[str, Any]:
         source = _list(attempt["source"], f"{at}.source")
         if len(source) != 2:
             raise GoldenError(f"case {case_id}: upstream sandwich needs exactly two records")
-        records = [_record(item, f"{at}.source[{side}]", number, ws)
-                   for side, item in enumerate(source)]
+        records = [_record(item, f"{at}.source[{side}]", number, ws,
+                           no_response.record_outcomes(case_id)) for side, item in enumerate(source)]
         vosu = _obj(attempt["vosu"], f"{at}.vosu", ("dump_before", "route", "dump_after"))
         route = _record(vosu["route"], f"{at}.vosu.route", number, ws)
         dumps = []
@@ -743,7 +745,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
             or sorted(expected_ids) != sorted(ids) or len(set(expected_ids)) != len(expected_ids)):
         raise GoldenError("capture is incomplete: recorded cases differ from expected_cases")
     crashed = [crash.check_case(case) for case in cases if crash.OUTCOME in case]
-    cases = [case for case in cases if crash.OUTCOME not in case]
+    silent = [no_response.check_case(case) for case in cases if no_response.applies(case)]
+    cases = [case for case in cases if crash.OUTCOME not in case and not no_response.applies(case)]
     cases.sort(key=lambda case: case["id"])
     for case in cases:
         _check_sandwiches(case)
@@ -820,7 +823,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
                           f"{asset_bytes} asset bytes of {ASSET_BUDGET}); reduce the scenario "
                           "or get owner approval")
     summary = {"cases": len(cases), "families": json.loads(files["manifest.json"])["case_counts"],
-               crash.OUTCOME: sorted(crashed, key=lambda case: case["id"])}
+               crash.OUTCOME: sorted(crashed, key=lambda case: case["id"]),
+               no_response.SUMMARY_KEY: sorted(silent, key=lambda case: case["id"])}
     return platform, files, summary
 
 
@@ -865,12 +869,9 @@ def _scan(platform: str, files: dict[str, bytes], state: _Platform) -> dict[str,
         latin = blob.decode("latin-1")
         if rewriter.leftover_slots(latin) or OLD_BRAND.search(latin):
             raise GoldenError(f"{platform}: private root or old-brand text inside a CBOR byte string")
-    return {"result": "clean", "text_files": text_files,
-            "binary_files": len(files) - text_files,
-            "cbor_text_strings": len(state.cbor_texts),
-            "cbor_byte_strings": len(state.cbor_blobs),
-            "cbor_old_brand_strings": 0,
-            "attested_roots": len(rewriter.roots),
+    return {"result": "clean", "text_files": text_files, "binary_files": len(files) - text_files,
+            "cbor_text_strings": len(state.cbor_texts), "cbor_byte_strings": len(state.cbor_blobs),
+            "cbor_old_brand_strings": 0, "attested_roots": len(rewriter.roots),
             "checks": ["attested private roots", "drive, admin-share and device paths",
                        "profile and private POSIX directories", "capability header",
                        "credential headers",
@@ -994,7 +995,6 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
     print(json.dumps({
         "candidate": str(target), "source_revision": PINNED_SOURCE_REVISION,
         "inventory_sha256": hashlib.sha256(files["inventory.json"]).hexdigest(),
-        "files": len(files), "platforms": dict(sorted(platforms.items())),
-        "privacy_scan": "clean",
+        "files": len(files), "platforms": dict(sorted(platforms.items())), "privacy_scan": "clean",
     }, sort_keys=True))
     return 0

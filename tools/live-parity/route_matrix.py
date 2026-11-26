@@ -358,6 +358,35 @@ def upstream_crash_ledger(case: RouteCase) -> str | None:
     return UPSTREAM_CRASH_LEDGER if UPSTREAM_CRASH_LEDGER in case.ledger else None
 
 
+# The pinned upstream sends no byte before the case deadline, on every attempt and in both
+# sandwich records (rehearsal and the first M4b full pilot run, 2026-11-26): its `upgrade`
+# handler answers only the exact WebSocket paths it owns and leaves every other Upgrade
+# unanswered, and its HTTP router's `new URL` throws on a Host with a non-numeric port
+# before any response. Main's decision names each case (never a class rule): upstream's
+# expected outcome is `timeout`, and vosu's bounded answer is the ledger row's divergence.
+NEAR_UPGRADE_LEDGER = "upstream-unanswered-near-upgrade"
+UPSTREAM_TIMEOUT = {
+    "ws.near.v2-trailing-slash": NEAR_UPGRADE_LEDGER,
+    "ws.near.v2-precise-trailing-slash": NEAR_UPGRADE_LEDGER,
+    "ws.near.ws-trailing-slash": NEAR_UPGRADE_LEDGER,
+    "ws.near.tokens-trailing-slash": NEAR_UPGRADE_LEDGER,
+    "ws.near.v2-subscribe": "adr0021-removed-selected-v2-feed",
+    "files.skin.index.upgrade": "adr0021-removed-legacy-skin-index",
+    "origin-peer.host.malformed-port": "adapter-listener-policy",
+}
+
+
+def upstream_timeout_ledger(case_id: str) -> str | None:
+    """The ledger row under which upstream never answers this case, or None."""
+    return UPSTREAM_TIMEOUT.get(case_id)
+
+
+def allowed_outcomes(case: RouteCase, daemon: str) -> frozenset[str]:
+    """What `daemon` may record for `case`: upstream must time out on a declared case."""
+    return frozenset({"timeout"}) if daemon == "source" and case.id in UPSTREAM_TIMEOUT \
+        else case.outcomes
+
+
 def handshake_only_finding(case: RouteCase, source: str, vosu: str) -> dict | None:
     """A completed handshake-only golden (`HANDSHAKE_ONLY`) whose upstream and vosu
     outcomes disagree on a state frame inside the window. Both records stay in the capture
@@ -469,7 +498,8 @@ def _ws_cases() -> list[RouteCase]:
     for name, path in (("v2-trailing-slash", "/websocket/v2/"),
                        ("v2-precise-trailing-slash", "/websocket/v2/precise/"),
                        ("ws-trailing-slash", "/ws/"), ("tokens-trailing-slash", "/tokens/")):
-        cases.append(_ws(f"ws.near.{name}", path, first, outcomes=REJECTED | UPGRADED))
+        cases.append(_ws(f"ws.near.{name}", path, first, outcomes=REJECTED | UPGRADED,
+                         ledger=(NEAR_UPGRADE_LEDGER,)))
     subscribe = ("adr0021-removed-selected-v2-feed",)
     cases += [
         _ws("ws.near.v2-subscribe", "/websocket/v2/subscribe", first,
@@ -676,7 +706,14 @@ def _build() -> tuple[RouteCase, ...]:
                                             or case.barrier != "no-client"):
             raise ValueError(f"{case.id}: an upstream-crashing case is a golden plain HTTP "
                              "request run after the no-client barrier")
+        ledger_id = upstream_timeout_ledger(case.id)
+        if ledger_id is not None and (ledger_id not in case.ledger or case.role != GOLDEN
+                                      or case.validator or upstream_crash_ledger(case)):
+            raise ValueError(f"{case.id}: an upstream-timeout case is a golden case under "
+                             f"its ledger row {ledger_id}")
         seen.add(case.id)
+    if not seen >= set(UPSTREAM_TIMEOUT):
+        raise ValueError(f"unknown upstream-timeout cases {sorted(set(UPSTREAM_TIMEOUT) - seen)}")
     return cases
 
 
@@ -692,7 +729,8 @@ def golden_eligible(case: RouteCase) -> bool:
 __all__ = [
     "BARRIERS", "CASES", "COMPARED_HEADERS", "CaseUnavailable", "Close", "FAMILIES", "Hold",
     "MATRIX", "MatrixContext", "PLATFORMS", "Recv", "RenderedCase", "RequestLedger", "RouteCase",
-    "SecurityAbort", "Send", "UPSTREAM_CRASH_LEDGER", "Validator", "WS_COMPARED_HEADERS",
-    "client_frame", "golden_eligible", "manifest", "mask_frame", "render", "requirements_unmet",
-    "select", "split_headers", "upstream_crash_ledger", "ws_key",
+    "SecurityAbort", "Send", "UPSTREAM_CRASH_LEDGER", "UPSTREAM_TIMEOUT", "Validator",
+    "WS_COMPARED_HEADERS", "allowed_outcomes", "client_frame", "golden_eligible", "manifest",
+    "mask_frame", "render", "requirements_unmet", "select", "split_headers",
+    "upstream_crash_ledger", "upstream_timeout_ledger", "ws_key",
 ]

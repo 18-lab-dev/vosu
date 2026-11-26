@@ -231,6 +231,40 @@ class PlanTests(unittest.TestCase):
         self.assertRegex(unrendered[0][1], "^linux-lazer: .*symlink fixture unavailable")
 
 
+class ClientDependentTests(unittest.TestCase):
+    """Pilot run 1 (2026-11-26): the rehearsal had listed seven deterministic upstream hangs
+    as client-dependent, so the menu barrier failed on `ws.near.v2-trailing-slash`."""
+
+    def classify(self, case_id: str, reason: str) -> dict:
+        """`_golden_case` for a case whose every attempt failed with `reason`."""
+        session = mock.Mock(spec=rehearsal.Rehearsal)
+        session._attempt.return_value = reason
+        item = mock.Mock(case=rm.CASES[case_id])
+        entry: dict = {}
+        self.assertIsNone(rehearsal.Rehearsal._golden_case(session, item, entry, None, None, None))
+        self.assertEqual(session._attempt.call_count, gc.MAX_ATTEMPTS)
+        return entry
+
+    def test_a_timeout_is_never_client_dependent(self) -> None:
+        for case_id in ("ws.near.v2-trailing-slash", "ws.near.v2-subscribe",
+                        "origin-peer.host.malformed-port", "state-http.json-v2.get.menu"):
+            for daemon in ("source", "vosu"):
+                entry = self.classify(case_id, f"{daemon} outcome 'timeout' is not allowed")
+                self.assertNotIn("client_dependent", entry, (case_id, daemon))
+                self.assertRegex(entry["failure"], "outcome 'timeout' is not allowed")
+
+    def test_missing_game_data_at_a_client_barrier_is_client_dependent(self) -> None:
+        for case_id, reason in (
+                ("ws.v2.upgrade.menu", "source outcome 'upgraded-timeout' is not allowed"),
+                ("files.conditional.if-none-match-etag",
+                 "source outcome 'validator-missing' is not allowed")):
+            entry = self.classify(case_id, reason)
+            self.assertEqual(entry, {"client_dependent": [reason] * gc.MAX_ATTEMPTS}, case_id)
+        # At its own no-client barrier the same failure stays strict.
+        entry = self.classify("ws.v2.upgrade.no-client", "vosu outcome 'upgraded-timeout' is not allowed")
+        self.assertIn("failure", entry)
+
+
 @unittest.skipUnless(sys.platform.startswith("linux") and UNSHARE, "needs util-linux unshare")
 class IsolatedEntryTests(unittest.TestCase):
     """Rehearsal 2026-11-25: the phase, PID 1 of its namespace, outlived its receipt."""
