@@ -45,6 +45,12 @@ RUNNER_ONLY = (
     # whose cache missed: they recompile without testing, as a `--no-run`
     # prefix of the full test command already covered just above.
     re.compile(r"^cargo test --workspace --lib --bins --tests --examples --all-features --locked(?: --target \S+)? --no-run$"),
+    # WER LocalDumps bookkeeping around the native test step (not a check of
+    # its own): scripts/windows-crash-dumps.ps1 runs with a different
+    # -DumpFolder in scripts/native-ci.ps1 (a task-owned VM folder, in a
+    # try/finally around the same nextest invocation already covered above),
+    # so its hosted-runner-temp-path invocation here cannot textually match.
+    re.compile(r"^scripts/windows-crash-dumps\.ps1 -Action (Enable|Disable)"),
 )
 
 # Machine-specific arguments compared as placeholders on both sides.

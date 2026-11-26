@@ -62,10 +62,20 @@ $overallExit = $overallExit -bor (Invoke-Step 'cargo-clippy' @(
 $fixturesExit = Invoke-VosuPluginHostFixtures -CargoExe $cargo -WorkingDirectory $source `
     -LogDir $logs -Steps $steps -Target 'x86_64-pc-windows-msvc' -ScratchRoot 'V:\agent-desktop\tmp'
 $overallExit = $overallExit -bor $fixturesExit
+$werDumpFolder = Join-Path $WorkRoot 'wer-dumps'
 if ($fixturesExit -eq 0) {
-    $overallExit = $overallExit -bor (Invoke-Step 'cargo-test-workspace' @(
-            'nextest', 'run', '--workspace', '--lib', '--bins', '--tests', '--examples',
-            '--all-features', '--locked', '--target', 'x86_64-pc-windows-msvc'))
+    & (Join-Path $PSScriptRoot 'windows-crash-dumps.ps1') -Action Enable -DumpFolder $werDumpFolder
+    try {
+        $overallExit = $overallExit -bor (Invoke-Step 'cargo-test-workspace' @(
+                'nextest', 'run', '--workspace', '--lib', '--bins', '--tests', '--examples',
+                '--all-features', '--locked', '--target', 'x86_64-pc-windows-msvc'))
+    } finally {
+        & (Join-Path $PSScriptRoot 'windows-crash-dumps.ps1') -Action Disable
+    }
+    $dumps = Get-ChildItem $werDumpFolder -Filter '*.dmp' -ErrorAction SilentlyContinue
+    if ($dumps) {
+        Write-Output "Native test crash dumps captured: $werDumpFolder ($($dumps.Count) file(s))"
+    }
 }
 
 $overallExit = $overallExit -bor (Invoke-Step 'cargo-test-doc' @(

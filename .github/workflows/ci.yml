@@ -388,9 +388,26 @@ jobs:
       - name: Prepare plugin-host fixture libraries
         if: needs.changes.outputs.verified != 'true'
         run: python scripts/plugin-host-fixtures.py --target x86_64-pc-windows-msvc --env-file $env:GITHUB_ENV
+      - name: Enable WER crash dumps for native tests
+        if: needs.changes.outputs.verified != 'true'
+        run: scripts/windows-crash-dumps.ps1 -Action Enable -DumpFolder "${{ runner.temp }}/wer-dumps"
       - name: Test native Windows workspace
         if: needs.changes.outputs.verified != 'true'
         run: cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
+      - name: Upload native crash dumps
+        if: failure() && needs.changes.outputs.verified != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-crash-dumps
+          path: |
+            ${{ runner.temp }}/wer-dumps/*.dmp
+            target/x86_64-pc-windows-msvc/debug/deps/*.exe
+            target/x86_64-pc-windows-msvc/debug/deps/*.pdb
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Disable WER crash dumps
+        if: always() && needs.changes.outputs.verified != 'true'
+        run: scripts/windows-crash-dumps.ps1 -Action Disable
       - name: Warm build for cache refresh (already verified on ci/<topic>)
         if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc --no-run
