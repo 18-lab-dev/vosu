@@ -12,6 +12,14 @@ The vosu-tools replay renderer renders untrusted overlays, skins and replays. It
 
 A process plugin can request `user_namespaces = true` in `[runtime.linux]` with `mode = "process"` in `[runtime]`. The table form is necessary because TOML cannot also give `runtime` a scalar value. Existing scalar runtime declarations remain valid; in-process plugins cannot use the Linux table.
 
+The opt-in requires the package checker from `vosu-plugin-api`
+`1.0.0-alpha.3` or later. The published `alpha.1` and `alpha.2` checkers
+reject the runtime table. The host checks the manifest and ABI v1
+descriptor, not the SDK version used to build the library: the opt-in
+changes no ABI and does not require rebuilding a compatible library.
+The package's `host` range must independently require a vosu build
+that understands the table.
+
 Show the request in the catalog install plan and in native approval, with fixed wording: “On Linux, this plugin can create user namespaces, which Chromium-style sandboxes need.” On Linux, opting in requires explicit approval even for trusted and official sources. Approval stays bound to the exact artifact: native approval uses the manifest and library SHA-256 digests; install confirmation pins the package hash and its mirrored declaration. Changing the declaration requires new approval.
 
 Only an approved Linux process host selects the opt-in filter. It permits `unshare`, `clone` and `clone3` to create user namespaces. It still refuses all `setns` with `EPERM` and kills on a foreign audit architecture or an x32 syscall number. `no_new_privs`, the capability drop, parent-death handling, and fail-closed startup remain mandatory. Readback records the selected filter and the opt-in probe checks that `setns` is denied without changing the host namespace. The default filter and Windows job object do not change.

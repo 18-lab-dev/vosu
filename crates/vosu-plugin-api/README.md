@@ -8,7 +8,7 @@ namespace-schema validators that the vosu host itself runs.
 
 The SDK's major version is the ABI major (1); it is versioned independently of
 the vosu application (2.x). Depend on an exact prerelease while 1.0 is in
-alpha:
+alpha. Use the pin below once `1.0.0-alpha.3` is published:
 
 ```toml
 [package]
@@ -20,7 +20,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-vosu-plugin-api = "=1.0.0-alpha.2"
+vosu-plugin-api = "=1.0.0-alpha.3"
 ```
 
 ## A plugin
@@ -69,10 +69,12 @@ registration context, `manifest::schema` compiles namespace schemas into
 sampling-lane records, and `catalog` validates a `catalog-v2.json` and
 compares every entry with the package it describes. The
 `vosu-package-check` example runs all of them over a publisher's catalog and
-its already-extracted packages:
+its already-extracted packages.
+Packages declaring `[runtime.linux]` need the checker from
+`1.0.0-alpha.3` or later; older checkers reject the runtime table.
 
 ```sh
-cargo install --locked --version "=1.0.0-alpha.2" vosu-plugin-api \
+cargo install --locked --version "=1.0.0-alpha.3" vosu-plugin-api \
     --example vosu-package-check --root "$PWD/sdk-tools"
 sdk-tools/bin/vosu-package-check --catalog "$PWD/dist/catalog-v2.json" \
     --packages-root "$PWD/dist/extracted" --host-version 2.0.0-alpha.1 \

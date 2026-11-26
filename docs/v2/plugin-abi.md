@@ -1019,6 +1019,14 @@ mode = "process"
 user_namespaces = true
 ```
 
+Publishers must validate this table with `vosu-package-check` from
+`vosu-plugin-api` `1.0.0-alpha.3` or later. Older SDK checkers only accept
+the scalar and reject the table form. Set `host` to require a vosu build
+that supports the table; it is an application version requirement, not an
+SDK version requirement. The host does not reject an otherwise ABI-v1
+compatible library built against an older SDK: this is a package
+validation change, not a change to the native ABI.
+
 | Field | Meaning |
 | --- | --- |
 | `runtime.mode` | Required in the table form; same execution-mode request as the scalar `runtime`. |

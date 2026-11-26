@@ -21,6 +21,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   per-artifact approval. This lets plugins such as the replay renderer use
   Chromium's sandbox. The install plan and approval prompt disclose the
   request; other plugins and Windows launch behavior are unchanged.
+  Packaging an opt-in requires the `vosu-plugin-api` `1.0.0-alpha.3`
+  checker or later; older checkers reject the runtime table. The SDK is
+  bumped in-tree only. The native ABI remains v1.
 
 - Session-bound actions can now run against sessions owned by another plugin.
   The provider learns the session handle before the action is invoked.

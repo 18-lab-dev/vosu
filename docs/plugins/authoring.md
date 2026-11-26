@@ -4,21 +4,22 @@ Choose a plugin when your extension needs native code, a state provider, or an a
 
 ## Pin the SDK and the host separately
 
-Use the published [`vosu-plugin-api`](https://crates.io/crates/vosu-plugin-api) crate, not a daemon workspace dependency, a Git checkout or `vosu-plugin-internal`. Both `1.0.0-alpha.1` and `1.0.0-alpha.2` are on crates.io; use the exact `=1.0.0-alpha.2` pin for a new alpha plugin. Keep the lockfile and test against the exact vosu builds you support. For a Rust library:
+Use the published [`vosu-plugin-api`](https://crates.io/crates/vosu-plugin-api) crate, not a daemon workspace dependency, a Git checkout or `vosu-plugin-internal`. Pin the published version you support exactly, keep the lockfile, and test against the exact vosu builds you support. Versions `1.0.0-alpha.1` and `1.0.0-alpha.2` are on crates.io. For a new Rust library, use this pin once `1.0.0-alpha.3` is published:
 
 ```toml
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-vosu-plugin-api = "=1.0.0-alpha.2"
+vosu-plugin-api = "=1.0.0-alpha.3"
 ```
 
 | Version | Meaning |
 | --- | --- |
 | `vosu-plugin-api` `1.0.0-alpha.2` | Rust SDK release; alpha.2 adds job-artifact codecs and host calls that alpha.1 does not have. |
+| `vosu-plugin-api` `1.0.0-alpha.3` | First SDK with package checking for `[runtime.linux]`; older checkers reject the runtime table. It adds no native ABI requirements. |
 | `abi_version = 1` | Native ABI major; the shared library exports `vosu_plugin_entry_v1`. Additive opcodes do not change that symbol. |
-| `host` | Semver requirement on the **vosu application**, not the SDK. Use `>=2.0.0, <3.0.0` for stable-only packages. Explicitly include the prerelease of the host you support when testing alphas; `>=2.0.0` does not admit an alpha. The first host alpha predates job artifacts; set an appropriate host minimum for the features you use. |
+| `host` | Semver requirement on the **vosu application**, not the SDK. Use `>=2.0.0, <3.0.0` for stable-only packages. Explicitly include the prerelease of the host you support when testing alphas; `>=2.0.0` does not admit an alpha. The first host alpha predates job artifacts and `[runtime.linux]`; require a host build that supports the features you use. |
 | `manifest_version = 1`, `catalog_version = 2` | Package and catalog formats, not ABI or application versions. |
 | Package `version`, capability versions | Independent semver. A field uses its namespace schema version; an action uses the version of that action, not its package version. |
 
@@ -40,7 +41,7 @@ Every ZIP puts [`manifest.toml`](../v2/catalog-v2.md#package-manifest-v2-manifes
 
 `runtime = "in-process"` shares the daemon's address space and privileges. It is permitted only for bundled plugins and plugins from official or explicitly trusted sources (except for the debug-only development override). An ineligible request is refused, never silently run as `process`. Hashes, HTTPS, catalog credentials and private-network permission do not make an author trusted.
 
-An untrusted-source process plugin needs **explicit approval** before it can run. Inspect the dashboard install plan: it names the native code, requested runtime, source, required approvals and any declared access to private osu! paths. Approval binds the manifest and target library hashes and runtime to the exact source/version/package identity (or canonical development directory); changed bytes require approval again. Bundled or source-trusted process plugins need no separate approval. Revoking trust blocks new loads; affected process plugins stop and may need fresh approval. In-process code already loaded is reported as **revocation pending restart**: vosu does not unload it or restart on your behalf.
+An untrusted-source process plugin needs **explicit approval** before it can run. On Linux this also applies to an official or trusted plugin requesting [user namespaces](../v2/plugin-abi.md#8-manifesttoml-runtime-fields-for-kind--plugin). Inspect the dashboard install plan: it names the native code, requested runtime, source, required approvals, and any declared user-namespace or private osu! path access. Approval binds the manifest and target library hashes and runtime to the exact source/version/package identity (or canonical development directory); changed bytes require approval again. Revoking trust blocks new loads; affected process plugins stop and may need fresh approval. In-process code already loaded is reported as **revocation pending restart**: vosu does not unload it or restart on your behalf.
 
 In an isolated debug or prerelease build, `vosu --plugin <directory>` registers a development package. A prerelease release build admits only the process runtime for such packages, and still requires approval in **Tools → Plugins**. A debug build additionally has an explicit in-process exception; a debug process plugin still needs approval. Stable release builds refuse this development option. See [runtime policy](../v2/plugin-abi.md#71-runtime-request-and-the-hosts-decision) and [approval and management](../v2/catalog-v2.md#process-plugin-approval-and-management-a55-approved-2026-11-24).
 

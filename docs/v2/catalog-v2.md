@@ -383,7 +383,9 @@ validation through `vosu-package-check`, an example binary of the published
 `vosu-plugin-api` crate built only on the SDK's existing manifest, namespace
 and catalog APIs; it is not a second validator, a daemon dependency or a
 user demo. S0 delivers it; it is installed from the registry at the pinned
-SDK version:
+SDK version. To validate a plugin declaring `[runtime.linux]`, pin
+`1.0.0-alpha.3` or later: older checkers reject the table form. This is
+independent of the host application version used for `--host-version`.
 
 ```sh
 cargo install --locked --version "$SDK_VERSION" vosu-plugin-api --example vosu-package-check --root "$RUN_ROOT/sdk-tools"
