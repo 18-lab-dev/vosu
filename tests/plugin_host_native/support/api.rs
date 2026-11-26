@@ -14,6 +14,7 @@ use axum::response::Response;
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
+use vosu::server::api_v1::actions::{ActionAuthority, ActionRoutes};
 use vosu::server::api_v1::resources::ResourceHttp;
 use vosu::server::api_v1::router::ApiV1Router;
 use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
@@ -25,9 +26,10 @@ use vosu::server::routes::{
 };
 use vosu::server::websocket::UpgradeCallbackTracker;
 use vosu_adapter_upstream::calculate::PpQuery;
+use vosu_core::actions::JobRegistry;
 use vosu_core::plugin::PluginHost;
 
-use super::services::BOUND;
+use super::services::{BOUND, LONG};
 
 pub type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -80,6 +82,27 @@ pub struct Api {
 impl Api {
     /// Serves `host`'s API v1 with a resource deadline of `deadline`.
     pub fn new(host: &Arc<PluginHost>, deadline: Duration) -> Self {
+        Self::serve(host, deadline, None)
+    }
+
+    /// [`Api::new`] plus the action, job and job-artifact routes (B0):
+    /// `jobs` holds the jobs and `tools` decides launch sessions.
+    pub fn with_actions(
+        host: &Arc<PluginHost>,
+        deadline: Duration,
+        jobs: JobRegistry,
+        tools: Arc<dyn ActionAuthority>,
+    ) -> Self {
+        let actions = ActionRoutes::new(
+            host.clone(),
+            host.invocation_executor_with_policy(LONG),
+            jobs,
+            tools,
+        );
+        Self::serve(host, deadline, Some(actions))
+    }
+
+    fn serve(host: &Arc<PluginHost>, deadline: Duration, actions: Option<ActionRoutes>) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -92,6 +115,11 @@ impl Api {
             let origins = Arc::new(
                 Origins::new(format!("http://{address}"), "http://127.0.0.1:24051".into()).unwrap(),
             );
+            let mut api = ApiV1Router::new(host.api_state_source(), hub.clone())
+                .with_resources(Arc::new(ResourceHttp::new(host, deadline)));
+            if let Some(actions) = actions {
+                api = api.with_actions(actions);
+            }
             let providers = RouteProviders {
                 authorization: Arc::new(OriginAuthorizer {
                     inner: Arc::new(AuthorizationPolicy::new("127.0.0.1,localhost", "127.0.0.1")),
@@ -100,10 +128,7 @@ impl Api {
                 }),
                 state: Arc::new(Legacy),
                 calculation: Arc::new(Legacy),
-                delegate: Arc::new(Delegate(
-                    ApiV1Router::new(host.api_state_source(), hub.clone())
-                        .with_resources(Arc::new(ResourceHttp::new(host, deadline))),
-                )),
+                delegate: Arc::new(Delegate(api)),
             };
             let router = axum::Router::new()
                 .fallback(

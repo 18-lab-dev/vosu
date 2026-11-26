@@ -109,6 +109,14 @@ const WORK_ARGS: &str = r#"{"type":"object","required":["n"],"additionalProperti
 const WORK_RESULT: &str = r#"{"type":"object","required":["n","invocation","caller"],"additionalProperties":false,"properties":{
 "n":{"type":"integer"},"invocation":{"type":"integer"},"caller":{"type":"string","maxLength":256}}}"#;
 
+/// B0's `make`: artifacts to declare, by opaque key (the entry itself).
+const MAKE_ARGS: &str = r#"{"type":"object","required":["declare"],"additionalProperties":false,"properties":{
+"declare":{"type":"array","maxItems":8,"items":{"type":"object","required":["name","size","source"],"additionalProperties":false,"properties":{
+"name":{"type":"string","maxLength":255},"size":{"type":"integer","minimum":0},
+"source":{"enum":["stream","file"]},"path":{"type":"string","maxLength":256}}}}}}"#;
+const MAKE_RESULT: &str =
+    r#"{"type":"object","required":["declared"],"properties":{"declared":{"type":"array"}}}"#;
+
 /// The services package manifest for `spec`.
 fn manifest(spec: &Spec, plugin_id: &str, process: &str) -> String {
     let runtime = if spec.in_process {
@@ -119,14 +127,14 @@ fn manifest(spec: &Spec, plugin_id: &str, process: &str) -> String {
     let mut text = format!(
         "kind = 'plugin'\nmanifest_version = 1\nid = '{plugin_id}'\nname = 'I0 services fixture'\n\
          version = '1.0.0'\nhost = '>=2.0.0-alpha.1, <3.0.0'\nabi_version = 1\nruntime = '{runtime}'\n\
-         root_slots = ['files']\nsettings_schema = 'settings.json'\n\n\
+         root_slots = ['files', 'artifacts']\nsettings_schema = 'settings.json'\n\n\
          [targets.x86_64-unknown-linux-gnu]\nlibrary = 'lib/libtestkit_process_plugin.so'\n\
          [targets.x86_64-pc-windows-msvc]\nlibrary = 'lib/testkit_process_plugin.dll'\n\n\
          [match]\nprocess_names = ['{process}', '{process}.exe']\n\n\
          [[provides]]\nid = 'game:fixture'\nversion = '*'\n\
          [[provides]]\nid = 'field:{plugin_id}'\nversion = '1.0.0'\nschema = 'namespace.json'\n"
     );
-    for action in ["drive", "work"] {
+    for action in ["drive", "work", "make"] {
         text.push_str(&format!(
             "[[provides]]\nid = 'action:{plugin_id}.{action}'\nversion = '1.0.0'\n"
         ));
@@ -141,7 +149,7 @@ fn manifest(spec: &Spec, plugin_id: &str, process: &str) -> String {
             "[[resource_kinds]]\nkind = '{kind}'\ntree = {tree}\nfamilies = ['chart-text']\n"
         ));
     }
-    for action in ["drive", "work"] {
+    for action in ["drive", "work", "make"] {
         text.push_str(&format!(
             "[[actions]]\nname = '{action}'\nversion = '1.0.0'\ntitle = 'I0 {action}'\n\
              args_schema = '{action}.args.json'\nresult_schema = '{action}.result.json'\n\
@@ -169,6 +177,8 @@ fn stage(dir: &Path, spec: &Spec, plugin_id: &str, process: &str) -> Staged {
         ("drive.result.json", DRIVE_RESULT.to_owned()),
         ("work.args.json", WORK_ARGS.to_owned()),
         ("work.result.json", WORK_RESULT.to_owned()),
+        ("make.args.json", MAKE_ARGS.to_owned()),
+        ("make.result.json", MAKE_RESULT.to_owned()),
     ];
     for (name, text) in assets {
         std::fs::write(dir.join(name), text).unwrap();
