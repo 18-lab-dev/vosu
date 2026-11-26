@@ -492,9 +492,7 @@ impl CounterService {
             active_installs: Arc::new(AtomicUsize::new(0)),
             install_done: Arc::new(tokio::sync::Notify::new()),
             install_slots: Arc::new(tokio::sync::Semaphore::new(4)),
-            installed: Arc::new(std::sync::RwLock::new(Arc::new(
-                manifest::OverlaysOnly,
-            ))),
+            installed: Arc::new(std::sync::RwLock::new(Arc::new(manifest::OverlaysOnly))),
         }
     }
 

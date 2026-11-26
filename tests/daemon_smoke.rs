@@ -16,7 +16,7 @@ use vosu_proptest::bounded;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-use vosu::counters::SettingsStore;
+use vosu_overlay_host::SettingsStore;
 
 include!("daemon_smoke/roots.rs");
 #[path = "daemon_smoke/adapter_capture.rs"]

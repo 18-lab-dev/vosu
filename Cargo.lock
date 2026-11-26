@@ -3950,6 +3950,7 @@ dependencies = [
  "vosu",
  "vosu-core",
  "vosu-net",
+ "vosu-overlay-host",
  "vosu-proptest",
  "zip",
 ]

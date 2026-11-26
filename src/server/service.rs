@@ -27,7 +27,9 @@ use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use vosu_adapter_upstream::calculate::PpQuery;
 
 use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
-use vosu_overlay_host::commands::{CommandAction, CommandClient, CommandProcessor, Relay, RelaySink};
+use vosu_overlay_host::commands::{
+    CommandAction, CommandClient, CommandProcessor, Relay, RelaySink,
+};
 use vosu_overlay_host::{
     CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
 };

@@ -13,7 +13,6 @@ mod replaces;
 #[cfg(test)]
 mod tests;
 
-use vosu_overlay_host::{CounterSetting, SettingInput};
 use manifest::Manifest;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -32,6 +31,7 @@ use std::{
 use subtle::ConstantTimeEq as _;
 use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
+use vosu_overlay_host::{CounterSetting, SettingInput};
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct Saved {

@@ -104,10 +104,7 @@ mod tests {
             std::fs::create_dir(&outside).unwrap();
             symlink(&outside, statics.join("link")).unwrap();
             open_folder(&opener, &statics, "link").unwrap();
-            assert_eq!(
-                opener.0.lock().unwrap().last(),
-                Some(&statics.join("link"))
-            );
+            assert_eq!(opener.0.lock().unwrap().last(), Some(&statics.join("link")));
             let outside_file = root.path().join("outside-file");
             std::fs::write(&outside_file, "").unwrap();
             symlink(&outside_file, statics.join("file-link")).unwrap();

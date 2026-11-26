@@ -91,6 +91,8 @@ vosu-osu -> vosu-sys
 vosu-test-harness -> vosu
 vosu-test-harness -> vosu-core
 vosu-test-harness -> vosu-net
+# Counter download/lifecycle integration test; development dependency only.
+vosu-test-harness -> vosu-overlay-host
 
 vosu -> vosu-core
 vosu -> vosu-plugin-api
@@ -134,3 +136,14 @@ vosu-adapter-upstream -> vosu-osu
 vosu-adapter-upstream -> vosu-osu-state
 vosu-adapter-upstream -> vosu-osu-calc
 vosu -> vosu-adapter-upstream
+
+# M7 O0 (A7.1): the overlay host depends only on the surface, the SDK, its
+# bundled registration and vosu-net's hardened download/ZIP/publish
+# primitives (A7.1-OR); never on core, vosu-sys, another host, an adapter
+# or any osu! crate. Only the root's BUNDLED array names it.
+vosu-overlay-host -> vosu-surface
+vosu-overlay-host -> vosu-plugin-api
+vosu-overlay-host -> vosu-plugin-internal
+vosu-overlay-host -> vosu-net
+vosu-overlay-host -> vosu-proptest
+vosu -> vosu-overlay-host

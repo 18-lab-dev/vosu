@@ -40,7 +40,7 @@ fn legacy_discovery_matrix_preserves_files_and_manifest_precedence() {
             std::fs::create_dir(directory.join("manifest.toml")).unwrap();
         }
     }
-    let service = vosu::counters::CounterService::production(
+    let service = vosu_overlay_host::CounterService::production(
         static_root.clone(),
         root.path().join("settings"),
         root.path().join("cache"),
@@ -85,7 +85,7 @@ fn legacy_exact_read_bound_and_utf8_are_enforced_by_real_reader() {
         let directory = root.path().join("static/legacy");
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("metadata.txt"), &bytes).unwrap();
-        let service = vosu::counters::CounterService::production(
+        let service = vosu_overlay_host::CounterService::production(
             root.path().join("static"),
             root.path().join("settings"),
             root.path().join("cache"),

@@ -4,7 +4,7 @@ use vosu_adapter_support::filtered::*;
 
 #[test]
 fn command_filters_preserve_last_write_precedence_at_each_depth() {
-    use crate::server::commands::{CommandAction, CommandClient, Relay, RelaySink};
+    use vosu_overlay_host::commands::{CommandAction, CommandClient, Relay, RelaySink};
 
     struct UnusedProviders;
     impl SettingsProvider for UnusedProviders {
@@ -43,6 +43,7 @@ fn command_filters_preserve_last_write_precedence_at_each_depth() {
         else {
             panic!("valid filter command was rejected");
         };
+        let filters = parse_filters(std::str::from_utf8(&filters).unwrap()).unwrap();
         let bytes = encode_projection(&source, &filters).unwrap();
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(), expected);
     }

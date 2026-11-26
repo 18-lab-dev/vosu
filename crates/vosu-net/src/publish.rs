@@ -275,7 +275,10 @@ mod tests {
         assert_eq!(read_published(&target).unwrap(), b"first");
         assert!(publish_file(&target, b"third", ".settings-", Publish::Replace).unwrap());
         assert_eq!(read_published(&target).unwrap(), b"third");
-        assert_eq!(std::fs::read_dir(target.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(target.parent().unwrap()).unwrap().count(),
+            1
+        );
     }
 
     #[cfg(unix)]

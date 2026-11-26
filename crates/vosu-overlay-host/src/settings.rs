@@ -601,16 +601,14 @@ fn read_json<T>(path: &Path) -> Result<T, SettingsError>
 where
     T: serde::de::DeserializeOwned,
 {
-    Ok(serde_json::from_slice(
-        &vosu_net::publish::read_published(path)?,
-    )?)
+    Ok(serde_json::from_slice(&vosu_net::publish::read_published(
+        path,
+    )?)?)
 }
 
 /// See [`read_json`]: same retrying-read rationale.
 fn read_toml(path: &Path) -> Result<toml::Value, SettingsError> {
-    Ok(toml::from_slice(&vosu_net::publish::read_published(
-        path,
-    )?)?)
+    Ok(toml::from_slice(&vosu_net::publish::read_published(path)?)?)
 }
 
 fn read_schema_toml(path: &Path) -> Result<Vec<CounterSetting>, SettingsError> {

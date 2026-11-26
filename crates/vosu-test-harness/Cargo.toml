@@ -29,6 +29,7 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 
 [dev-dependencies]
 vosu-core = { path = "../vosu-core" }
+vosu-overlay-host = { path = "../vosu-overlay-host", features = ["test-harness"] }
 vosu-proptest = { path = "../vosu-proptest" }
 # D15 forge fixture (tests/network_integration/forge): TLS recorder server
 # and expected credential headers. Versions match the locked reqwest stack.

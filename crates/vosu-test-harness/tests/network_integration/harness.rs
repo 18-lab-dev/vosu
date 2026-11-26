@@ -24,10 +24,8 @@ use futures_util::StreamExt;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use vosu::{
-    counters::{
-        CounterError, CounterOpener, CounterService, DownloadRequest, HardenedCounterDownloader,
-    },
     runtime::{TestProductionCompositionOptions, start_test_production_composition},
+    server::overlay_folders::{FolderOpener, open_folder},
     server::runtime::ListenTarget,
     server::service::{DeferredUpdateTrigger, UpdateRouteResult, UpdaterHandoff},
 };
@@ -39,11 +37,12 @@ use vosu_core::{
     config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
 };
 use vosu_net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
+use vosu_overlay_host::{CounterError, CounterService, DownloadRequest, HardenedCounterDownloader};
 use vosu_test_harness::{MockNetwork, USER_AGENT};
 
 #[derive(Default)]
 struct RecordingOpener(AtomicUsize);
-impl CounterOpener for RecordingOpener {
+impl FolderOpener for RecordingOpener {
     fn open(&self, path: &Path) -> io::Result<()> {
         assert!(
             path.is_dir(),
@@ -190,17 +189,12 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     let static_root = roots.path().join("static");
     let settings_root = roots.path().join("settings");
     let cache_root = roots.path().join("cache");
-    let opener = Arc::new(RecordingOpener::default());
+    let opener = RecordingOpener::default();
     let downloader = Arc::new(HardenedCounterDownloader::with_client(
         client.clone(),
         cache_root.clone(),
     ));
-    let counters = CounterService::new(
-        static_root.clone(),
-        settings_root,
-        opener.clone(),
-        downloader,
-    );
+    let counters = CounterService::new(static_root.clone(), settings_root, downloader);
     bounded!(counters.download(&DownloadRequest {
         url: mock.endpoints().counter_redirect.clone(),
         name: "harness-counter".to_owned(),
@@ -215,9 +209,7 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     let discovered = counters.discover().expect("discover installed counter");
     assert_eq!(discovered.len(), 1);
     assert_eq!(discovered[0].name, "Harness Counter");
-    counters
-        .open("harness-counter")
-        .expect("open installed counter");
+    open_folder(&opener, &static_root, "harness-counter").expect("open installed counter");
     assert_eq!(opener.0.load(Ordering::Acquire), 1);
     counters
         .delete("harness-counter")
@@ -253,7 +245,6 @@ async fn counter_download_failures_name_the_download_host() {
     let counters = CounterService::new(
         static_root.clone(),
         roots.path().join("settings"),
-        Arc::new(RecordingOpener::default()),
         Arc::new(HardenedCounterDownloader::with_client(
             client,
             roots.path().join("cache"),

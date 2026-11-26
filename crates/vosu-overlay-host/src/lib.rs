@@ -39,8 +39,8 @@ pub use model::{
 pub use names::{OverlayName, OverlayNames};
 pub use plugin::vosu_plugin_vtable;
 pub use service::{
-    CounterDownloader, CounterError, CounterService, HardenedCounterDownloader,
-    InstalledPackages, ReloadableCounterService, parse_metadata,
+    CounterDownloader, CounterError, CounterService, HardenedCounterDownloader, InstalledPackages,
+    ReloadableCounterService, parse_metadata,
 };
 pub use settings::{
     Profiles, SettingsError, SettingsStore, coerce_checkbox, coerce_number, normalize_settings,

@@ -178,7 +178,7 @@ pub(super) struct Mounted {
     api: ApiV1SubscriptionHub,
     processor: Arc<CommandProcessor>,
     relays: Arc<WebSocketRelaySink>,
-    counters: Arc<vosu::counters::ReloadableCounterService>,
+    counters: Arc<vosu_overlay_host::ReloadableCounterService>,
     _roots: TempDir,
     pub publisher: Option<Arc<vosu_osu::fixtures::Publisher>>,
     pub fixture: Fixture,
@@ -228,7 +228,7 @@ impl Mounted {
                     Arc::new(StaticSettings),
                     relays.clone(),
                 ));
-                let counters = Arc::new(vosu::counters::ReloadableCounterService::production(
+                let counters = Arc::new(vosu_overlay_host::ReloadableCounterService::production(
                     roots.path().join("static"),
                     roots.path().join("settings"),
                     roots.path().join("cache"),

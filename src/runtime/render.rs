@@ -158,4 +158,3 @@ pub(super) fn escape_html(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
 }
-

@@ -435,7 +435,7 @@ async fn launch_codes_are_bound_single_use_and_expiring_and_ui_is_confined() {
 #[test]
 fn reservation_covers_validation_and_encoded_static_paths() {
     for name in ["tools", "Tools", "TOOLS"] {
-        assert!(crate::counters::validate_component(name).is_err());
+        assert!(vosu_overlay_host::validate_component(name).is_err());
     }
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("tools")).unwrap();

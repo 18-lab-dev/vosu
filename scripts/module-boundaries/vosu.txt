@@ -1,10 +1,7 @@
-runtime -> counters
 runtime -> plugin_host
 runtime -> plugins
 runtime -> server
 runtime -> tools
 server -> assets
-server -> counters
-tools -> counters
 tools -> server
 vosux -> tools

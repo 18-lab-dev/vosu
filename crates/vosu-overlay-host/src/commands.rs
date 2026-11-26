@@ -491,10 +491,8 @@ mod tests {
             br#"[{"uniqueID":"color","type":"text","value":"default"}]"#,
         )
         .unwrap();
-        let store = crate::SettingsStore::new(
-            root.path().join("static"),
-            root.path().join("settings"),
-        );
+        let store =
+            crate::SettingsStore::new(root.path().join("static"), root.path().join("settings"));
         store.manage_profile("create", "stream", None).unwrap();
         let relays = Arc::new(Providers::default());
         let processor =

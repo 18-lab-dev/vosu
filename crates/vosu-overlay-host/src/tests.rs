@@ -1,3 +1,4 @@
+mod cards;
 mod manifest;
 mod settings;
 use std::path::{Path, PathBuf};
@@ -40,7 +41,11 @@ fn fixture() -> (tempfile::TempDir, CounterService, Arc<RecordingDownloader>) {
     let static_root = root.path().join("static");
     std::fs::create_dir(&static_root).unwrap();
     let downloader = Arc::new(RecordingDownloader::default());
-    let service = CounterService::new(static_root, root.path().join("settings"), downloader.clone());
+    let service = CounterService::new(
+        static_root,
+        root.path().join("settings"),
+        downloader.clone(),
+    );
     (root, service, downloader)
 }
 
@@ -611,7 +616,11 @@ async fn shutdown_cancels_and_joins_active_installs() {
         started: Arc::new(tokio::sync::Semaphore::new(0)),
         finished: Arc::new(AtomicBool::new(false)),
     });
-    let service = CounterService::new(static_root, root.path().join("settings"), downloader.clone());
+    let service = CounterService::new(
+        static_root,
+        root.path().join("settings"),
+        downloader.clone(),
+    );
     let request = DownloadRequest {
         url: "https://example.com/a.zip".into(),
         name: "counter".into(),

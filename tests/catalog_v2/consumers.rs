@@ -17,7 +17,7 @@ fn overlay_corpus_uses_real_manifest_first_discovery() {
             std::fs::write(dir.join("metadata.txt"), metadata).unwrap();
             std::fs::write(dir.join("index.html"), "overlay").unwrap();
             std::fs::write(dir.join("settings.json"), "[]\n").unwrap();
-            let service = vosu::counters::CounterService::production(
+            let service = vosu_overlay_host::CounterService::production(
                 root.path().join("static"),
                 root.path().join("settings"),
                 root.path().join("cache"),

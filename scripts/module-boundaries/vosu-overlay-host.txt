@@ -1,0 +1,13 @@
+cards -> catalog
+cards -> model
+cards -> names
+cards -> preview_scheme
+commands -> settings
+names -> settings
+plugin -> root
+presentation -> cards
+presentation -> catalog
+presentation -> model
+presentation -> preview_scheme
+presentation -> service
+service -> root

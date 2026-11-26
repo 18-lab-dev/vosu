@@ -43,34 +43,24 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use vosu::{
-    counters::{
-        CounterDownloader, CounterError, CounterOpener, CounterService, DownloadRequest,
-        SettingInput,
+use vosu::server::{
+    auth::{AuthorizationPolicy, RequestHeaders},
+    files::{
+        ByteRange, MissingKind, RangeError, ResourceOutcome, content_type, parse_range,
+        resolve_encoded_resource, trailing_slash_location,
     },
-    server::{
-        auth::{AuthorizationPolicy, RequestHeaders},
-        catalog::decode_response,
-        commands::{
-            CommandAction, CommandClient, CommandProcessor, Relay, RelaySink, SettingsProvider,
-        },
-        files::{
-            ByteRange, MissingKind, RangeError, ResourceOutcome, content_type, parse_range,
-            resolve_encoded_resource, trailing_slash_location,
-        },
-        pages::{PageLookup, PageService},
-        routes::{
-            self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
-            ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
-        },
-        runtime::{
-            BoundListener, HostResolver, ListenTarget, ListenerBinder, ListenerRuntime,
-            RuntimeFuture,
-        },
-        websocket::{
-            Inbound, MAX_MESSAGE_BYTES, MESSAGE_TOO_BIG, Outbound, Schema, StateProvider,
-            StateSnapshot, WebSocketHub,
-        },
+    overlay_folders::{FolderOpener, open_folder},
+    pages::{PageLookup, PageService},
+    routes::{
+        self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
+        ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
+    },
+    runtime::{
+        BoundListener, HostResolver, ListenTarget, ListenerBinder, ListenerRuntime, RuntimeFuture,
+    },
+    websocket::{
+        Inbound, MAX_MESSAGE_BYTES, MESSAGE_TOO_BIG, Outbound, Schema, StateProvider,
+        StateSnapshot, WebSocketHub,
     },
 };
 use vosu_adapter_upstream::calculate::PpQuery;
@@ -83,6 +73,13 @@ use vosu_osu_model::{
 use vosu_osu_model::{
     enums::{GameState, GradeEnum, Rulesets},
     states::Mod,
+};
+use vosu_overlay_host::{
+    CounterDownloader, CounterError, CounterService, DownloadRequest, SettingInput,
+    catalog::decode_response,
+    commands::{
+        CommandAction, CommandClient, CommandProcessor, Relay, RelaySink, SettingsProvider,
+    },
 };
 
 #[tokio::test]
@@ -640,7 +637,7 @@ fn embedded_pages_and_assets_preserve_status_mime_and_no_cache_contract() {
 
 #[derive(Default)]
 struct NoopOpener;
-impl CounterOpener for NoopOpener {
+impl FolderOpener for NoopOpener {
     fn open(&self, _path: &Path) -> io::Result<()> {
         Ok(())
     }
@@ -681,7 +678,6 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
     let service = CounterService::new(
         static_root.clone(),
         settings_root.clone(),
-        Arc::new(NoopOpener),
         Arc::new(NoopDownloader),
     );
 
@@ -730,12 +726,8 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
         .unwrap();
     assert!(values_path.is_file());
 
-    let restarted = CounterService::new(
-        static_root,
-        settings_root,
-        Arc::new(NoopOpener),
-        Arc::new(NoopDownloader),
-    );
+    let restarted =
+        CounterService::new(static_root.clone(), settings_root, Arc::new(NoopDownloader));
     assert_eq!(restarted.discover().unwrap()[0].settings, registered_schema);
     let persisted = restarted.get_counter_values("counter").unwrap();
     assert_eq!(persisted["title"], "legacy");
@@ -745,7 +737,7 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
         changed_legacy_schema
     );
     assert_eq!(std::fs::read(&legacy_values_path).unwrap(), legacy_values);
-    assert!(restarted.open("../outside").is_err());
+    assert!(open_folder(&NoopOpener, &static_root, "../outside").is_err());
     assert!(restarted.delete("counter/child").is_err());
 }
 

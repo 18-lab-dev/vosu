@@ -112,12 +112,7 @@ pub fn query_tokens(query: &str) -> Vec<&str> {
     tokens
 }
 
-pub fn matches_catalog_query(
-    name: &str,
-    author: &str,
-    compatible: &[String],
-    query: &str,
-) -> bool {
+pub fn matches_catalog_query(name: &str, author: &str, compatible: &[String], query: &str) -> bool {
     let tokens = query_tokens(query);
     if tokens.is_empty() {
         return true;
@@ -171,26 +166,24 @@ pub fn render_local_counters(
                 .filter(|other| other.name.eq_ignore_ascii_case(&counter.name))
                 .nth(1)
                 .is_some();
-            render_counter_card(
-                &CounterCard {
-                    name: &counter.name,
-                    author: &counter.author,
-                    version: &counter.version,
-                    folder: &counter.folder_name,
-                    downloaded: counter.downloaded,
-                    updatable: counter.updatable,
-                    download_link: counter.download_link.as_deref(),
-                    author_links: &counter.authorlinks,
-                    settings: !counter.settings.is_empty(),
-                    resolution: &counter.resolution,
-                    compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
-                    show_folder: duplicate_name,
-                    preview_scheme: schemes.get(index).copied().unwrap_or_default(),
-                    nickname: name.and_then(|name| name.nickname.as_deref()),
-                    alias: name.and_then(|name| name.alias.as_deref()),
-                    ..CounterCard::default()
-                },
-            )
+            render_counter_card(&CounterCard {
+                name: &counter.name,
+                author: &counter.author,
+                version: &counter.version,
+                folder: &counter.folder_name,
+                downloaded: counter.downloaded,
+                updatable: counter.updatable,
+                download_link: counter.download_link.as_deref(),
+                author_links: &counter.authorlinks,
+                settings: !counter.settings.is_empty(),
+                resolution: &counter.resolution,
+                compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
+                show_folder: duplicate_name,
+                preview_scheme: schemes.get(index).copied().unwrap_or_default(),
+                nickname: name.and_then(|name| name.nickname.as_deref()),
+                alias: name.and_then(|name| name.alias.as_deref()),
+                ..CounterCard::default()
+            })
         })
         .collect()
 }
@@ -224,32 +217,30 @@ pub fn render_catalog_counters(counters: &[CatalogOverlay], query: Option<&str>)
                 .as_str()
                 .map(str::to_owned)
                 .unwrap_or_else(|| counter.version.to_string());
-            render_counter_card(
-                &CounterCard {
-                    name: &counter.name,
-                    author: &counter.author,
-                    version: &version,
-                    folder: counter.folder_name.as_deref().unwrap_or(&counter.name),
-                    external: true,
-                    downloaded: counter.downloaded,
-                    updatable: counter.updatable,
-                    download_link: counter.download_link.as_deref(),
-                    author_links: &counter.authorlinks,
-                    settings: counter
-                        .settings
-                        .as_ref()
-                        .is_some_and(|value| !value.is_empty()),
-                    assets: &assets,
-                    resolution: &counter.resolution,
-                    compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
-                    show_folder: false,
-                    usecase: counter.usecase.as_ref(),
-                    // Catalog cards show images, not live frames.
-                    preview_scheme: PreviewScheme::Light,
-                    nickname: None,
-                    alias: None,
-                },
-            )
+            render_counter_card(&CounterCard {
+                name: &counter.name,
+                author: &counter.author,
+                version: &version,
+                folder: counter.folder_name.as_deref().unwrap_or(&counter.name),
+                external: true,
+                downloaded: counter.downloaded,
+                updatable: counter.updatable,
+                download_link: counter.download_link.as_deref(),
+                author_links: &counter.authorlinks,
+                settings: counter
+                    .settings
+                    .as_ref()
+                    .is_some_and(|value| !value.is_empty()),
+                assets: &assets,
+                resolution: &counter.resolution,
+                compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
+                show_folder: false,
+                usecase: counter.usecase.as_ref(),
+                // Catalog cards show images, not live frames.
+                preview_scheme: PreviewScheme::Light,
+                nickname: None,
+                alias: None,
+            })
         })
         .collect()
 }
@@ -533,7 +524,11 @@ fn render_installed_card(card: &CounterCard<'_>, status: &str, identity: &str) -
         || format!("/{}/", card.folder),
         |alias| format!("/{alias}/"),
     );
-    let copy_url = escape_html(&card.alias.map_or_else(|| path.clone(), |alias| format!("/{alias}/")));
+    let copy_url = escape_html(
+        &card
+            .alias
+            .map_or_else(|| path.clone(), |alias| format!("/{alias}/")),
+    );
     let settings = if card.settings {
         format!(
             r#"<button class="icon-button" type="button" data-action="counter-settings" data-folder="{folder}" aria-label="Settings for {name}" title="Settings">{SETTINGS_ICON}</button>"#
