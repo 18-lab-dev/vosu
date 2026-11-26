@@ -1,9 +1,11 @@
 // Required real-browser/ABI smoke for the one tool bridge, driven by
 // tool_host_smoke.py: dashboard launch, single-use exchange, invoke, progress,
-// abort and the T1 counterexamples (bookmark/reload, replayed code, abort
+// abort, the T1 counterexamples (bookmark/reload, replayed code, abort
 // racing creation, reconnect and unsubscribe, the removed v1 bridge and
-// token confinement).
+// token confinement) and B0 job artifacts (a streamed, ranged and downloaded
+// sessionless artifact; another tab and a revoked tab refused).
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 const [modulePath] = process.argv.slice(2);
 if (!modulePath) throw new Error('A Playwright index.mjs is required');
 const OVERLAY = 'http://127.0.0.1:25150';
@@ -226,8 +228,136 @@ try {
     assert.match(url, /^ws:\/\/127\.0\.0\.1:25150\/api\/v1\/sessions\/[^/]+\/subscribe$/, url);
   }
 
-  // Every request: same two origins only; the code and token never in a URL,
-  // Referer or body; the session header only on action and job routes.
+  // B0 (AF.12): the fixture tool downloads a protected, sessionless,
+  // multi-chunk artifact through the bridge; another tab and a revoked tab
+  // are refused. Two fresh launches: the owner and another tab.
+  const launchTool = async () => {
+    const opened = context.waitForEvent('page', {timeout: 15000});
+    const launched = dashboard.waitForResponse(r => r.url().endsWith('/api/tools/fixture-v2/launch'), {timeout: 15000});
+    await dashboard.locator('[data-tool-id="fixture-v2"] [data-tool-action="launch"]').click();
+    const page = await opened;
+    const url = (await (await launched).json()).url;
+    await page.waitForFunction(() => document.documentElement.dataset.ready === 'true', {timeout: 15000});
+    return {page, code: new URLSearchParams(new URL(url).hash.slice(1)).get('vosu-launch')};
+  };
+  const owner = await launchTool();
+  const other = await launchTool();
+  // Mirrors crates/vosu-plugin-testkit/src/fixture.rs `ARTIFACT_*`.
+  const ARTIFACT_SIZE = 2_621_447;
+  const ARTIFACT_NAME = 'fixture-artifact-7913.bin';
+  const artifactByte = offset => (offset * 31 + 7) % 251;
+  const made = await owner.page.evaluate(async () => {
+    const {vosu} = await import('/tools/_host/v2/bridge.js');
+    const byte = offset => (offset * 31 + 7) % 251;
+    const handle = await vosu.start('test.api.fixture.run', {mode: 'artifact'}, {session: null});
+    const result = await handle.done;
+    const listed = await handle.artifacts();
+    const [artifact] = listed;
+    window.fixtureArtifact = artifact;
+    // Streamed, never read whole.
+    const response = await artifact.fetch();
+    const reader = response.body.getReader();
+    let total = 0;
+    let mismatch = -1;
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      for (let i = 0; mismatch < 0 && i < value.length; i += 1) {
+        if (value[i] !== byte(total + i)) mismatch = total + i;
+      }
+      total += value.length;
+    }
+    const head = await artifact.fetch({method: 'HEAD'});
+    const ranged = await artifact.fetch({range: {start: 1048570, end: 1048580}});
+    // The File System Access route pipes the body into the chosen file.
+    const native = window.showSaveFilePicker;
+    let saved = null;
+    window.showSaveFilePicker = async ({suggestedName}) => ({
+      async createWritable() {
+        saved = {name: suggestedName, size: 0, closed: false};
+        return new WritableStream({
+          write(chunk) { saved.size += chunk.byteLength; },
+          close() { saved.closed = true; },
+        });
+      },
+    });
+    try { await artifact.download(); } finally { window.showSaveFilePicker = native; }
+    return {
+      job: handle.id, result, count: listed.length,
+      artifact: {id: artifact.id, name: artifact.name, type: artifact.type, size: artifact.size},
+      status: response.status, total, mismatch,
+      cache: response.headers.get('cache-control'),
+      disposition: response.headers.get('content-disposition'),
+      head: [head.status, head.headers.get('content-length')],
+      ranged: [ranged.status, ranged.headers.get('content-range'), [...new Uint8Array(await ranged.arrayBuffer())]],
+      relisted: (await vosu.artifacts(handle.id)).map(value => value.id),
+      saved,
+    };
+  });
+  assert.deepEqual(made.result, {mode: 'artifact'});
+  assert.equal(made.count, 1);
+  assert.deepEqual(made.artifact, {id: made.artifact.id, name: ARTIFACT_NAME, type: 'application/octet-stream', size: ARTIFACT_SIZE});
+  assert.deepEqual([made.status, made.total, made.mismatch], [200, ARTIFACT_SIZE, -1]);
+  assert.equal(made.cache, 'no-store');
+  assert.match(made.disposition, /^attachment;.*fixture-artifact-7913\.bin/);
+  assert.deepEqual(made.head, [200, String(ARTIFACT_SIZE)]);
+  assert.deepEqual(made.ranged, [206, `bytes 1048570-1048580/${ARTIFACT_SIZE}`,
+    Array.from({length: 11}, (_, i) => artifactByte(1048570 + i))]);
+  assert.deepEqual(made.relisted, [made.artifact.id]);
+  assert.deepEqual(made.saved, {name: ARTIFACT_NAME, size: ARTIFACT_SIZE, closed: true});
+  // Without the picker: a Blob saved through <a download>.
+  const downloaded = owner.page.waitForEvent('download', {timeout: 15000});
+  await owner.page.evaluate(async () => {
+    const native = window.showSaveFilePicker;
+    window.showSaveFilePicker = undefined;
+    try { await window.fixtureArtifact.download(); } finally { window.showSaveFilePicker = native; }
+  });
+  const download = await downloaded;
+  assert.equal(download.suggestedFilename(), ARTIFACT_NAME);
+  const file = await readFile(await download.path());
+  assert.equal(file.length, ARTIFACT_SIZE);
+  assert.ok(file.every((value, offset) => value === artifactByte(offset)), 'downloaded bytes');
+  console.log(`v2 browser: the tool streamed, ranged and downloaded a ${ARTIFACT_SIZE}-byte sessionless artifact`);
+
+  // Counterexample: another tab, and no session at all, cannot read it.
+  const artifactUrl = `${OVERLAY}/api/v1/jobs/${encodeURIComponent(made.job)}/artifacts/${encodeURIComponent(made.artifact.id)}`;
+  const foreign = await other.page.evaluate(async ({job, url}) => {
+    const {vosu} = await import('/tools/_host/v2/bridge.js');
+    let listed;
+    try { listed = await vosu.artifacts(job); } catch (error) { listed = error.code; }
+    return {listed, bare: (await fetch(url, {credentials: 'omit'})).status};
+  }, {job: made.job, url: artifactUrl});
+  assert.deepEqual(foreign, {listed: 'unknown_job', bare: 401});
+  const exchanged = [];
+  for (const response of traffic.filter(r => r.url().endsWith('/tools/_host/v1/session') && r.status() === 200)) {
+    exchanged.push((await response.json()).session);
+  }
+  assert.equal(exchanged.length, 3, 'the first launch, the owner and the other tab');
+  const otherRead = await context.request.get(artifactUrl, {headers: {'X-Vosu-Tool-Session': exchanged[2]}, timeout: 10000});
+  assert.equal(otherRead.status(), 404);
+  assert.equal((await otherRead.json()).error.code, 'unknown_job');
+  // Counterexample: disabling the tool revokes the owner's launch session,
+  // and the artifact with it.
+  const csrf = await dashboard.evaluate(() => JSON.parse(document.getElementById('vosu-context').textContent).csrf);
+  const disabled = await dashboard.evaluate(async csrf => (await fetch('/api/tools/fixture-v2/disable', {
+    method: 'POST', headers: {'Content-Type': 'application/json', 'X-Vosu-CSRF': csrf}, body: '{}',
+  })).status, csrf);
+  assert.equal(disabled, 200);
+  const revoked = await owner.page.evaluate(async () => {
+    const outcomes = [];
+    for (const options of [undefined, {method: 'HEAD'}, {range: {start: 0, end: 0}}]) {
+      try { await window.fixtureArtifact.fetch(options); outcomes.push('read'); } catch (error) { outcomes.push(error.code); }
+    }
+    return outcomes;
+  });
+  assert.deepEqual(revoked, ['unauthorized', 'http_error', 'unauthorized']);
+  const ownerRead = await context.request.get(artifactUrl, {headers: {'X-Vosu-Tool-Session': exchanged[1]}, timeout: 10000});
+  assert.equal(ownerRead.status(), 401);
+  console.log('v2 browser: another tab, a sessionless request and a revoked tab cannot read the artifact');
+
+  // Every request: same two origins only; the codes and tokens never in a URL,
+  // Referer or body; the session header only on action, job and artifact routes.
+  const codes = [code, owner.code, other.code];
   let authenticated = 0;
   for (const request of requests) {
     const url = new URL(request.url());
@@ -236,23 +366,25 @@ try {
     // A launch navigation carries the code in its fragment, which no request
     // sends; what reaches the wire must be free of both secrets.
     const sent = request.url().split('#')[0];
-    for (const secret of [token, code]) {
+    for (const secret of [...exchanged, ...codes]) {
       assert.equal(sent.includes(secret), false, `secret in URL ${sent}`);
       assert.equal((headers.referer || '').includes(secret), false, `secret in Referer of ${url}`);
     }
     const body = request.postData() || '';
-    assert.equal(body.includes(token), false, `token in body of ${url}`);
-    if (body.includes(code)) assert.equal(url.pathname, '/tools/_host/v1/session', `code in body of ${url}`);
+    for (const secret of exchanged) assert.equal(body.includes(secret), false, `token in body of ${url}`);
+    if (codes.some(value => body.includes(value))) assert.equal(url.pathname, '/tools/_host/v1/session', `code in body of ${url}`);
     const header = headers['x-vosu-tool-session'];
     if (header === undefined) continue;
-    assert.equal(header, token);
-    assert.match(url.pathname, /^\/api\/v1\/((sessions\/[^/]+\/)?actions\/[^/]+|jobs\/[^/]+)$/, `session header sent to ${url}`);
+    assert.ok(exchanged.includes(header), `unknown session header to ${url}`);
+    assert.match(url.pathname, /^\/api\/v1\/((sessions\/[^/]+\/)?actions\/[^/]+|jobs\/[^/]+(\/artifacts\/[^/]+)?)$/, `session header sent to ${url}`);
     authenticated += 1;
   }
   assert.ok(authenticated >= 6, `expected authenticated action and job requests, saw ${authenticated}`);
+  assert.ok(requests.some(r => /\/artifacts\/[^/]+$/.test(new URL(r.url()).pathname) && r.headers()['x-vosu-tool-session'] === exchanged[1]),
+    'the artifact reads carried the owner session');
   assert.ok(requests.some(r => new URL(r.url()).pathname === '/tools/fixture-v2/_icon'), 'artwork was requested');
   assert.ok(requests.some(r => new URL(r.url()).pathname === '/tools/fixture-v2/_settings'), 'settings were read');
-  console.log('v2 browser: no v1 bridge or removed socket; the token stays in memory and on action and job routes only');
+  console.log('v2 browser: no v1 bridge or removed socket; the tokens stay in memory and on action, job and artifact routes only');
 } finally {
   await browser.close();
 }

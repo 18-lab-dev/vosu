@@ -239,7 +239,9 @@ import { vosu } from '/tools/_host/v2/bridge.js';
 ```
 
 **Frozen type surface.** F T0 (vosu-tools) codes against exactly this; it
-changes only through a later approved amendment.
+changes only through a later approved amendment. The job artifact members
+(`Artifact`, `JobHandle.artifacts`, `vosu.artifacts`) are the AF.12 amendment
+implemented by B0 ([Job artifacts](../v2/api-v1.md#job-artifacts-af12)).
 
 ```ts
 type SessionTarget = string;              // a session id or "active"; nonempty, not "." or ".."
@@ -251,8 +253,9 @@ interface ActionError extends Error {
   code: string; // "cancelled", "forbidden" (no launch session), an API v1
                 // error code ("unauthorized", "forbidden", "invalid_arguments",
                 // "unknown_action", "unknown_session", "timed_out",
-                // "plugin_crashed", …), or "http_error" / "invalid_job" when the
-                // response has none
+                // "invalid_range", "unknown_job", "unknown_artifact",
+                // "released_artifact", "too_many_downloads", "plugin_crashed", …),
+                // or "http_error" / "invalid_job" when the response has none
 }
 
 interface ActionOptions {
@@ -263,11 +266,28 @@ interface ActionOptions {
   onProgress?: (progress: Progress) => void;
 }
 
+interface ArtifactReadOptions {
+  method?: "GET" | "HEAD";                  // default "GET"; HEAD never opens the provider
+  range?: { start: number; end?: number };  // one inclusive byte range: 206, or 416
+                                            // "invalid_range" outside the artifact
+  signal?: AbortSignal;                     // aborts the request; rejects "cancelled"
+}
+
+interface Artifact {
+  readonly id: string;    // opaque; valid only under its own job
+  readonly name: string;  // one file-name component, the attachment name
+  readonly type: string;  // the served Content-Type
+  readonly size: number;  // exact byte length
+  fetch(options?: ArtifactReadOptions): Promise<Response>; // 200 or 206, body unread
+  download(options?: { signal?: AbortSignal }): Promise<void>; // save as `name`
+}
+
 interface JobHandle {
   readonly id: string;
   readonly done: Promise<unknown>;  // resolves with result; rejects with ActionError
   cancel(): Promise<unknown>;       // advisory DELETE; a completed result stands
   onProgress(fn: (progress: Progress) => void): () => boolean; // ≤ 256 per handle
+  artifacts(): Promise<readonly Artifact[]>; // after `done`; rejects as `done` does
 }
 
 type Status = "connecting" | "open" | "closed";
@@ -290,6 +310,7 @@ declare const vosu: Readonly<{
   ): () => void;                  // stop: closes the socket, cancels reconnects
   invoke(actionId: string, args?: unknown, options?: ActionOptions): Promise<unknown>;
   start(actionId: string, args?: unknown, options?: ActionOptions): Promise<JobHandle>;
+  artifacts(jobId: string, options?: { signal?: AbortSignal }): Promise<readonly Artifact[]>;
 }>;
 export { vosu };
 ```
@@ -322,13 +343,34 @@ Behavior frozen with the types:
   nothing. `onFrame` receives each parsed frame; a frame that is not JSON is
   skipped. Unknown option keys, a non-object option and an invalid session
   throw synchronously without opening a socket.
+- **Artifacts.** A succeeded job's `artifacts` list (API v1
+  [Job artifacts](../v2/api-v1.md#job-artifacts-af12)) becomes frozen
+  `Artifact` objects. `handle.artifacts()` waits for `done` and reads the
+  terminal job document `start` already polled, with no further request;
+  `vosu.artifacts(jobId)` reads `GET /api/v1/jobs/{jobId}` once for a job this
+  launch session created and resolves `[]` while it runs or when it ended
+  other than `succeeded`. `invoke` still resolves with `result` alone: run an
+  action that declares artifacts with `start`. Each artifact's URL is built
+  from its job and artifact ids (nonempty, not `.`/`..`, percent-encoded); the
+  listed `url` is never followed. `fetch` sends `GET` or `HEAD` with at most
+  one `Range: bytes=start-[end]` and resolves with the unread `Response`, so
+  a caller streams `body` or adapts it for media; any other status rejects
+  with the API v1 error code. `download` saves the bytes as `name`: where
+  `showSaveFilePicker` exists it opens the picker first (still inside the
+  caller's click), then pipes the response body into the chosen file, so a
+  multi-gigabyte artifact is never held in memory; otherwise it reads a
+  `Blob` and clicks a temporary `<a download>` whose object URL is revoked
+  after 30 seconds. Closing the picker rejects with `code: "cancelled"`.
+  Without a launch session these methods reject with `code: "forbidden"` and
+  send nothing; another tab's session gets 404 `unknown_job`, and a revoked
+  session cannot read what it created.
 - **Requests.** Every request is to the page's own origin with
-  `credentials: "omit"`. The exchange, action and job requests also use
-  `cache: "no-store"` and `redirect: "error"`. Only action and job requests
-  carry `X-Vosu-Tool-Session`; `settings()`, subscriptions, resources, trees,
-  art and every request the tool makes itself carry no token. The bridge
-  never takes a URL from its caller and never writes cookies,
-  `localStorage`, `sessionStorage` or IndexedDB.
+  `credentials: "omit"`. The exchange, action, job and artifact requests also
+  use `cache: "no-store"` and `redirect: "error"`. Only action, job and job
+  artifact requests carry `X-Vosu-Tool-Session`; `settings()`, subscriptions,
+  resources, trees, art and every request the tool makes itself carry no
+  token. The bridge never takes a URL from its caller or a job document and
+  never writes cookies, `localStorage`, `sessionStorage` or IndexedDB.
 
 ## State through API v1
 
