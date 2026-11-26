@@ -12,6 +12,7 @@ use vosu_core::config::{BINDING_ORDER, ConfigDocument, ConfigStore};
 const EXPECTED_DEFAULT: &str = concat!(
     "DEBUG_LOG = false\n",
     "ENABLE_AUTOUPDATE = true\n",
+    "ENABLE_DASHBOARD = true\n",
     "OPEN_DASHBOARD_ON_STARTUP = true\n",
     "START_AT_LOGIN = false\n",
     "\n",

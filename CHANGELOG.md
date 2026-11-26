@@ -2,6 +2,17 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M7 (dashboard host)
+
+- The dashboard can be turned off: set `ENABLE_DASHBOARD = false` in
+  `vosu.toml` or start vosu with `VOSU_DASHBOARD=off` (any other value of
+  that variable stops startup). Off, vosu binds no dashboard listener, opens
+  no browser, skips the second-launch dashboard check and shows only **Show
+  logs** and **Quit** in the tray; `GET /api/dashboard` and the overlay
+  listener's dashboard redirects return 404, while overlays, API v1 and tool
+  hosting keep running. `/api/settingsSave` rejects `ENABLE_DASHBOARD`, and
+  a live edit of the key takes effect only after a restart.
+
 ## Unreleased — 2.0 F (SDK packaging)
 
 - Make the `vosu-plugin-api` SDK crate packageable on its own (AF.9): it

@@ -14,6 +14,10 @@ pub struct Origins {
     listeners: RwLock<Option<[tokio::sync::watch::Receiver<super::runtime::ListenerState>; 2]>>,
     pub csrf: String,
     pub previous_dashboard: RwLock<Option<String>>,
+    /// A7.3: false when the dashboard is off for this run. Its origin is then
+    /// never trusted, and the overlay listener's dashboard discovery and
+    /// redirects are 404, since nothing of ours serves that origin.
+    dashboard_enabled: bool,
 }
 impl Origins {
     pub fn new(overlay: String, dashboard: String) -> std::io::Result<Self> {
@@ -25,7 +29,16 @@ impl Origins {
             csrf: random.iter().map(|v| format!("{v:02x}")).collect(),
             listeners: RwLock::new(None),
             previous_dashboard: RwLock::new(None),
+            dashboard_enabled: true,
         })
+    }
+    /// These origins for a run with the dashboard off (A7.3).
+    pub fn without_dashboard(mut self) -> Self {
+        self.dashboard_enabled = false;
+        self
+    }
+    pub fn dashboard_enabled(&self) -> bool {
+        self.dashboard_enabled
     }
     pub fn observe_listeners(
         &self,
@@ -169,6 +182,7 @@ impl RequestAuthorizer for OriginAuthorizer {
     ) -> AuthorizationDecision {
         let mut decision = self.inner.authorize(peer, headers);
         if !decision.header_ok
+            && self.origins.dashboard_enabled
             && let Some(source) = headers
                 .origin
                 .or(headers.referer)

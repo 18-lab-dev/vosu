@@ -448,6 +448,7 @@ Edit `vosu.toml` in the platform configuration root. It is a flat, typed TOML do
 
 ```toml
 ENABLE_AUTOUPDATE = true
+ENABLE_DASHBOARD = true
 OPEN_DASHBOARD_ON_STARTUP = true
 START_AT_LOGIN = false
 POLL_RATE = 150.0
@@ -465,6 +466,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | Binding | Default | Meaning |
 | --- | ---: | --- |
 | `ENABLE_AUTOUPDATE` | `true` | Install stable vosu releases at startup. Self-updating release builds check for new releases at every start either way. |
+| `ENABLE_DASHBOARD` | `true` | Run the dashboard listener; `false` turns the dashboard off (see [Dashboard and counters](#dashboard-and-counters)). Read at startup only: restart vosu after changing it. |
 | `OPEN_DASHBOARD_ON_STARTUP` | `true` | Open the effective dashboard listener after startup. |
 | `START_AT_LOGIN` | `false` | Linux only: run vosu as a systemd user service at graphical login. |
 | `DEBUG_LOG` | `false` | Include debug-level file and console logging. |
@@ -496,6 +498,8 @@ Authorization requires an allowed network peer and, when supplied, an allowed `O
 vosu keeps a tray icon whenever the Linux desktop's StatusNotifier host or Windows notification area is available. **Open dashboard** opens the current effective listener (wildcard listeners map to loopback); **Quit** performs normal graceful shutdown. Headless sessions continue without a tray.
 
 Launching vosu again checks the configured listener for vosu's identity, opens that instance's dashboard, and exits successfully. A different service on the same port is not treated as vosu and retains the normal bind-error behavior. Updater helper/candidate/rollback processes never perform this handoff or start a tray.
+
+**Dashboard off.** Set `ENABLE_DASHBOARD = false` in `vosu.toml`, or start vosu with `VOSU_DASHBOARD=off`, to run without the dashboard. `VOSU_DASHBOARD` accepts only `off`; any other value, including an empty one, stops startup with an error naming the variable. With the dashboard off, vosu binds no dashboard listener, opens no browser at startup, skips the second-launch dashboard check (a second launch then fails on the busy port as usual), and its tray offers only **Show logs** and **Quit**. On the overlay listener, `GET /api/dashboard` and the `/`, `/settings`, `/available` and `/tools` redirects return 404. Overlays, the legacy state APIs, API v1 and tool hosting keep working, and `vosu logs` still follows the log. The `vosu.dashboard` plugin stays registered but inactive (`dashboard_disabled`), as the startup log says. Nothing in the dashboard can turn it off: `/api/settingsSave` rejects `ENABLE_DASHBOARD` with 400. To turn the dashboard back on, set the key to `true`, leave `VOSU_DASHBOARD` unset and restart vosu; a live edit of the key is only logged as needing a restart.
 
 The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can set `Name`, `Author`, `AuthorLinks` (comma-separated), `Version`, and `Resolution` (`WxH`); other keys are ignored. An immediate `ignore.txt` excludes its directory from discovery, and directories named `node_modules` are never traversed. Mutation APIs accept counter names containing one normal path component.
 

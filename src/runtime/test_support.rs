@@ -167,7 +167,8 @@ pub async fn start_test_production_composition(
             )
             .map_err(io::Error::other)?;
     }
-    let (adapters, hubs) = adapters::Adapters::start(&plugins, options.config.clone()).await?;
+    let (adapters, hubs) =
+        adapters::Adapters::start(&plugins, options.config.clone(), true).await?;
     let endpoints = options
         .network
         .endpoints()

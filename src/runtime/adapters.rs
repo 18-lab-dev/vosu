@@ -13,13 +13,15 @@ pub(super) struct Adapters {
     config: Arc<ConfigStore>,
 }
 impl Adapters {
+    /// `dashboard` is the A7.3 switch: off mounts no dashboard host routes.
     pub(super) async fn start(
         host: &Arc<PluginHost>,
         config: Arc<ConfigStore>,
+        dashboard: bool,
     ) -> io::Result<(Arc<Self>, WebSocketHubs)> {
         let adapters = Arc::new(Self::new(host, config)?);
         let hubs = WebSocketHubs::start(adapters.clone());
-        if let Err(error) = adapters.mount(host, &hubs) {
+        if let Err(error) = adapters.mount(host, &hubs, dashboard) {
             hubs.shutdown().await;
             adapters.shutdown().await?;
             return Err(error);
@@ -89,7 +91,12 @@ impl Adapters {
     pub(super) fn router(&self, host: Arc<PluginHost>) -> crate::server::service::SurfaceRouter {
         crate::server::service::SurfaceRouter::new(host, self.requesters[0].clone())
     }
-    pub(super) fn mount(&self, host: &Arc<PluginHost>, hubs: &WebSocketHubs) -> io::Result<()> {
+    pub(super) fn mount(
+        &self,
+        host: &Arc<PluginHost>,
+        hubs: &WebSocketHubs,
+        dashboard: bool,
+    ) -> io::Result<()> {
         let groups = crate::server::service::adapter_routes(
             std::array::from_fn(|index| {
                 self.schemas[index].clone() as Arc<dyn crate::server::routes::StateJsonProvider>
@@ -113,8 +120,11 @@ impl Adapters {
                 io::Error::other(format!("adapter registration failed: {error:?}"))
             })?);
         }
-        // The dashboard host's page shells and assets (M7 D0).
-        leases.push(super::dashboard::mount(host)?);
+        // The dashboard host's page shells and assets (M7 D0). Off (A7.3), it
+        // was never created, so it registers nothing.
+        if dashboard {
+            leases.push(super::dashboard::mount(host)?);
+        }
         *self.routes.lock().unwrap() = leases;
         Ok(())
     }

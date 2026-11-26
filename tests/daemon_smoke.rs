@@ -26,6 +26,10 @@ mod adapter_capture;
 mod api_fixture;
 #[path = "daemon_smoke/broker.rs"]
 mod broker;
+// Discovery isolation exists only in harness builds; never read a real game.
+#[cfg(feature = "test-harness")]
+#[path = "daemon_smoke/dashboard_off.rs"]
+mod dashboard_off;
 
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     let deadline = Instant::now() + Duration::from_secs(20);

@@ -6,6 +6,9 @@
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub enable_auto_update: bool,
+    /// A7.3: whether the dashboard listener and host run. Read once at
+    /// startup; a live edit needs a restart, and no dashboard route changes it.
+    pub enable_dashboard: bool,
     pub open_dashboard_on_startup: bool,
     pub start_at_login: bool,
     pub debug_log: bool,
@@ -28,6 +31,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             enable_auto_update: true,
+            enable_dashboard: true,
             open_dashboard_on_startup: true,
             start_at_login: false,
             debug_log: false,
@@ -70,6 +74,7 @@ impl Config {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigKey {
     EnableAutoUpdate,
+    EnableDashboard,
     OpenDashboardOnStartup,
     StartAtLogin,
     DebugLog,
@@ -122,10 +127,16 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 17] = [
+const SCHEMA_ITEMS: [ConfigItem; 18] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
+        ConfigDefault::Boolean(true),
+        None,
+    ),
+    item(
+        ConfigKey::EnableDashboard,
+        "ENABLE_DASHBOARD",
         ConfigDefault::Boolean(true),
         None,
     ),
@@ -247,9 +258,10 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 17] = [
+pub const BINDING_ORDER: [&str; 18] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
+    "ENABLE_DASHBOARD",
     "OPEN_DASHBOARD_ON_STARTUP",
     "START_AT_LOGIN",
     "SHOW_MP_COMMANDS",

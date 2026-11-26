@@ -437,6 +437,14 @@ impl ProductionRouteDelegate {
                 );
             }
         };
+        // A7.3: the dashboard switch lives only in vosu.toml. Nothing the
+        // dashboard serves may turn it off, so the save publishes nothing.
+        if values.get("ENABLE_DASHBOARD").is_some() {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "ENABLE_DASHBOARD can only be changed in vosu.toml" }),
+            );
+        }
         if let Some(object) = values.as_object_mut() {
             object.insert("_request_origin".into(), headers.get(header::HOST).and_then(|v| v.to_str().ok()).map_or(Value::Null, |host| Value::String(format!("http://{host}"))));
         }

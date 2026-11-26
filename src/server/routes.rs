@@ -381,14 +381,15 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 .authorization
                 .origins()
                 .is_some_and(|(origins, _)| {
-                    headers
-                        .origin
-                        .or(headers.referer)
-                        .and_then(|value| url::Url::parse(value).ok())
-                        .is_some_and(|source| {
-                            source.origin().ascii_serialization()
-                                == origins.safe_origin(true, request.headers(), local_ip)
-                        })
+                    origins.dashboard_enabled()
+                        && headers
+                            .origin
+                            .or(headers.referer)
+                            .and_then(|value| url::Url::parse(value).ok())
+                            .is_some_and(|source| {
+                                source.origin().ascii_serialization()
+                                    == origins.safe_origin(true, request.headers(), local_ip)
+                            })
                 });
         let key_route = (request.method() == Method::POST
             && matches!(
@@ -496,7 +497,12 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         return cors(not_found_for(&request));
     };
     if let Some((origins, dashboard)) = providers.authorization.origins() {
+        // A7.3: with the dashboard off, nothing serves its origin, so there is
+        // nothing to discover and nowhere to redirect.
         if method == Method::GET && path == "/api/dashboard" {
+            if !origins.dashboard_enabled() {
+                return cors(not_found_for(&request));
+            }
             return cors(json(
                 StatusCode::OK,
                 Bytes::from(serde_json::json!({"origin": origins.dashboard()}).to_string()),
@@ -523,6 +529,9 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 Endpoint::Root | Endpoint::Settings | Endpoint::Available | Endpoint::Tools
             )
         {
+            if !origins.dashboard_enabled() {
+                return not_found_for(&request);
+            }
             let target = format!(
                 "{}{}",
                 origins.safe_origin(true, request.headers(), local_ip),
