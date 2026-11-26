@@ -287,6 +287,27 @@ class IsolatedEntryTests(unittest.TestCase):
         self.assertIn("golden-rehearsal: terminated by SIGTERM", err)
 
 
+class RelayTests(unittest.TestCase):
+    """Rehearsal 2026-11-25: the outer phase read the phase's stderr to its end before its
+    stdout, so a full stdout pipe (the daemons inherit it) blocked the phase after its
+    receipt."""
+
+    def test_a_full_stdout_pipe_does_not_block_the_phase(self) -> None:
+        # Blocked, the child ends itself after 20 s with exit 9.
+        code = textwrap.dedent("""\
+            import os, sys, threading
+            threading.Timer(20, os._exit, (9,)).start()
+            sys.stdout.write("x" * (1 << 20))
+            sys.stdout.flush()
+            print("progress", file=sys.stderr, flush=True)
+            os._exit(3)
+            """)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = rehearsal._relay([sys.executable, "-c", code])
+        self.assertEqual((result, len(out.getvalue()), err.getvalue()), (3, 1 << 20, "progress\n"))
+
+
 class SharedLogReleaseTests(unittest.TestCase):
     """Pilot 2: the client still held its `.nauth.log` open (WinError 32) at removal."""
 
