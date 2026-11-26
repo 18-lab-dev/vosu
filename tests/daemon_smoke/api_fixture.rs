@@ -32,7 +32,7 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         .spawn()
         .unwrap();
     let target_pid = target.id();
-    let _target = ChildGuard(Some(target));
+    let mut target = ChildGuard(Some(target));
     let (mut daemon, config) = isolated_daemon(root.path());
     fs::create_dir_all(&config).unwrap();
     let port = available_port();
@@ -181,6 +181,46 @@ async fn debug_fixture_is_discovered_identified_and_serves_published_bytes() {
         (10, b"api-v1-alive".to_vec())
     );
     drop(api);
+
+    let mut fixture_child = target.0.take().unwrap();
+    fixture_child.kill().unwrap();
+    vosu_proptest::wait::child(&mut fixture_child).unwrap();
+    let log_path = root.path().join("daemon.log");
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let log = fs::read_to_string(&log_path).unwrap();
+            if log.contains("fixture received SESSION_DETACHED (Exited)") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "fixture detach deadline: {}",
+            fs::read_to_string(&log_path).unwrap()
+        )
+    });
+    let roster: serde_json::Value = client
+        .get(format!("{base}/api/v1/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        roster["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session["pid"] != target_pid),
+        "fixture still in roster after detach: {roster}"
+    );
+
     fs::write(root.path().join("stop"), "").unwrap();
     let status = vosu_proptest::wait::child(daemon.0.as_mut().unwrap()).unwrap();
     assert!(status.success(), "{status}");

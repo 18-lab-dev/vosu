@@ -13,9 +13,9 @@ use crate::resources::CAPACITY;
 use std::collections::{HashMap, HashSet};
 use vosu_plugin_api::{
     ActionResult, ActionStatus, ArtifactDeclare, ArtifactDeclared, CborBytes, CborValue, ErrorInfo,
-    HostServices, Init, Message, Plugin, PluginError, PublishBatchWriter, PublishValueRef,
-    ResourceRef, ResourceResolved, RootDeclare, SessionIdentify, StreamChunk, TreeEntry,
-    VOSU_STREAM_CHUNK_MAX_BYTES, VtableHostServices, encode, vosu_opcode, vosu_status,
+    HostServices, Init, LogLevel, Message, Plugin, PluginError, PublishBatchWriter,
+    PublishValueRef, ResourceRef, ResourceResolved, RootDeclare, SessionIdentify, StreamChunk,
+    TreeEntry, VOSU_STREAM_CHUNK_MAX_BYTES, VtableHostServices, encode, vosu_opcode, vosu_status,
 };
 
 pub const STREAM_BYTES: &[u8] = b"fixture-generated-stream-7913\n";
@@ -193,6 +193,14 @@ impl<const IDENTIFIES_SESSIONS: bool> Plugin for ApiFixture<IDENTIFIES_SESSIONS>
             Message::SessionDetached(session) => {
                 self.sessions.remove(&session.handle);
                 self.streams.retain(|_, handle| *handle != session.handle);
+                let status = self.host.log(
+                    LogLevel::Info,
+                    &format!("fixture received SESSION_DETACHED ({:?})", session.reason),
+                    CborValue::Map(Vec::new()),
+                );
+                if status != vosu_status::VOSU_OK {
+                    return Err(status.into());
+                }
             }
             Message::ResourceResolve(request) => {
                 let reply = if request.kind == "fixture-file"

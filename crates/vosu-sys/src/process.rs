@@ -14,6 +14,11 @@ mod launch_context;
 pub use launch_context::{LaunchContext, launch_context};
 pub mod scanner;
 
+#[cfg(feature = "test-harness")]
+mod liveness;
+#[cfg(feature = "test-harness")]
+pub use liveness::ProcessLiveness;
+
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]
