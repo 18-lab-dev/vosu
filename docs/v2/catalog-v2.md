@@ -587,12 +587,24 @@ needs its own overlay-folder setting.
 - **Arguments.** `{"after"?: string, "limit"?: integer}`, no other
   properties. `limit` is 1–50, default 20; `after` (1–4,096 characters) is
   the previous page's `next`.
-- **Result.** `{"overlays": [entry…], "next": string|null}`, at most 50
-  entries ordered by folder id, starting after `after` (exclusive). `next`
-  names the last entry when more follow and is `null` on the last page. A
-  page also stops once its entries reach 256 KiB of JSON, so it always fits
-  the ABI frame. Each entry is exactly
-  `{"id", "name", "entry", "version", "settings"}`:
+- **Result.** `{"origin": string|null, "overlays": [entry…], "next":
+  string|null}`, at most 50 entries ordered by folder id, starting after
+  `after` (exclusive). `next` names the last entry when more follow and is
+  `null` on the last page. A page also stops once its entries reach 256 KiB
+  of JSON, so it always fits the ABI frame.
+- **`origin`** (added 2026-11-26) is the base URL core actually serves
+  overlays on, `scheme://host:port` with no trailing slash
+  (`http://127.0.0.1:24050`): the overlay listener's effective bound
+  address, the same value dashboard pages receive as `overlayOrigin`
+  without a request `Host` (a wildcard bind such as `0.0.0.0` or `::`
+  reports loopback). A plugin resolves each entry's `entry` against it and
+  never takes the overlay URL from a browser. It is read on every call, so
+  after a network Apply rebinds the listener the next answer reports the
+  new origin; a rebind that fails keeps reporting the address still being
+  served. It is `null` whenever the overlay listener has no bound address
+  (before it first binds, and after it stops); core never substitutes the
+  configured address then.
+- Each entry is exactly `{"id", "name", "entry", "version", "settings"}`:
   - `id`: the overlay folder relative to the overlay root, `/`-separated
     for a nested folder;
   - `name`: the dashboard nickname if set, else the package's own name;

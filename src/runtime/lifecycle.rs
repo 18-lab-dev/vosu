@@ -217,6 +217,7 @@ impl ProductionRuntime {
             Arc::clone(&self.settings_storage),
             Arc::clone(&self.plugin_settings),
             Arc::clone(&counters),
+            Arc::clone(&self.origins),
         ));
         overlay_root.apply(&counters.current_root());
         {

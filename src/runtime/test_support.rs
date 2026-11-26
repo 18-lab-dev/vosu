@@ -180,6 +180,11 @@ pub async fn start_test_production_composition(
             )
             .map_err(io::Error::other)?;
     }
+    // Observes the overlay listener once it starts, as production does.
+    let origins = Arc::new(crate::server::origins::Origins::new(
+        String::new(),
+        String::new(),
+    )?);
     let overlay_root = Arc::new(super::overlay_root::OverlayRootComposition::new(
         Arc::clone(&plugins),
         vosu_core::plugin::PluginInstanceId::new(dev_plugins::OVERLAY_HOST_INDEX),
@@ -187,6 +192,7 @@ pub async fn start_test_production_composition(
         storage,
         settings,
         Arc::clone(&counters),
+        Arc::clone(&origins),
     ));
     overlay_root.apply(&static_root);
     let (adapters, hubs) =
@@ -267,6 +273,10 @@ pub async fn start_test_production_composition(
             return Err(error);
         }
     };
+    origins.observe_listeners(
+        listener.state.clone(),
+        tokio::sync::watch::channel(Default::default()).1,
+    );
     let address = listener
         .state()
         .effective

@@ -35,7 +35,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
   settings values, with no file path and no `password` value. Tools and
   `vosux` cannot call it; it replaces 1.x's `/tools/_host/v1/overlays` for
   plugins such as the replay renderer, which no longer need their own
-  overlay-folder setting.
+  overlay-folder setting. Each page also names `origin`, the overlay
+  listener's base URL as vosu actually serves it (for example
+  `http://127.0.0.1:24050`), so a plugin can load overlay pages without
+  asking a browser; it follows a listener rebind and is `null` while the
+  overlay listener is not bound.
 
 - Job artifacts (AF.12): a plugin action run by a tool or `vosux` can
   declare protected or sessionless output files (an export, a stored replay,

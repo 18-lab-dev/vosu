@@ -6,6 +6,7 @@ use vosu_plugin_api::manifest::action_schema::CompiledActionSchema;
 use vosu_plugin_api::{Caller, vosu_status};
 
 const WAIT: Duration = Duration::from_secs(10);
+const ORIGIN: &str = "http://127.0.0.1:24050";
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -32,7 +33,7 @@ impl Fixture {
     }
 
     fn page(&self, after: Option<&str>, limit: usize) -> Value {
-        let page = query_page(&self.counters, after, limit).unwrap();
+        let page = query_page(&self.counters, Some(ORIGIN.into()), after, limit).unwrap();
         result_schema().validate_result(&page).unwrap();
         page
     }
@@ -80,6 +81,7 @@ fn entries_name_folders_and_entry_pages_never_paths() {
     assert_eq!(
         page,
         json!({
+            "origin": ORIGIN,
             "overlays": [
                 {"id": "bare", "name": "bare", "entry": "/bare/", "version": null, "settings": {}},
                 {"id": "legacy", "name": "My legacy", "entry": "/legacy/", "version": "1.4", "settings": {}},
@@ -325,19 +327,46 @@ fn the_instance_answers_plugins_once_and_refuses_every_other_caller() {
         (1, Some("unavailable"))
     );
 
-    let binding = bind_overlay_query(&data_dir, &fixture.counters);
-    let other = bind_overlay_query(&fixture.root.path().join("elsewhere"), &fixture.counters);
-    worker
-        .invoke(
-            &host,
-            invoke(2, CallerKind::Plugin, QUERY_ACTION, json!({"limit": 5})),
-        )
-        .unwrap();
-    let answered = results.recv_timeout(WAIT).unwrap();
-    assert_eq!(answered.invocation, 2);
-    assert_eq!(answered.status, ActionStatus::Ok);
-    let value: Value = answered.value.unwrap().deserialized().unwrap();
+    let listener = Arc::new(Mutex::new(Some(ORIGIN.to_owned())));
+    let source: OverlayOrigin = {
+        let listener = Arc::clone(&listener);
+        Arc::new(move || listener.lock().unwrap().clone())
+    };
+    let binding = bind_overlay_query(&data_dir, &fixture.counters, source);
+    let other = bind_overlay_query(
+        &fixture.root.path().join("elsewhere"),
+        &fixture.counters,
+        Arc::new(|| Some("http://elsewhere.invalid:1".into())),
+    );
+    let query = |worker: &mut QueryWorker, invocation| -> Value {
+        worker
+            .invoke(
+                &host,
+                invoke(
+                    invocation,
+                    CallerKind::Plugin,
+                    QUERY_ACTION,
+                    json!({"limit": 5}),
+                ),
+            )
+            .unwrap();
+        let answered = results.recv_timeout(WAIT).unwrap();
+        assert_eq!(answered.invocation, invocation);
+        assert_eq!(answered.status, ActionStatus::Ok);
+        answered.value.unwrap().deserialized().unwrap()
+    };
+    let value = query(&mut worker, 2);
     assert_eq!(ids(&value), ["alpha"]);
+    assert_eq!(value["origin"], ORIGIN);
+    // The origin is read per query: a rebind shows in the next answer,
+    // and an unbound overlay listener reports `null`.
+    *listener.lock().unwrap() = Some("http://[::1]:24071".into());
+    assert_eq!(query(&mut worker, 20)["origin"], "http://[::1]:24071");
+    *listener.lock().unwrap() = None;
+    let unbound_listener = query(&mut worker, 21);
+    assert_eq!(unbound_listener["origin"], Value::Null);
+    assert_eq!(ids(&unbound_listener), ["alpha"]);
+    result_schema().validate_result(&unbound_listener).unwrap();
 
     for (invocation, kind, action, args, code) in [
         (

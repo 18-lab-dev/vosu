@@ -15,12 +15,13 @@ use vosu_core::plugin::settings::{
 };
 use vosu_core::plugin::{OverlayRootRetirement, PluginHost, PluginInstanceId};
 use vosu_overlay_host::{
-    OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic, ReloadableCounterService,
-    commands::CommandProcessor, presentation::OverlayPresenter,
+    OverlayOrigin, OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic,
+    ReloadableCounterService, commands::CommandProcessor, presentation::OverlayPresenter,
 };
 use vosu_plugin_api::{Message, SettingsChanged};
 use vosu_surface::routes::RegistrationLease;
 
+use crate::server::origins::Origins;
 use crate::server::websocket::WebSocketHub;
 
 pub(crate) const OVERLAY_HOST_ID: &str = "vosu.overlayhost";
@@ -98,7 +99,8 @@ pub struct OverlayRootComposition {
 
 impl OverlayRootComposition {
     /// `data_dir` is the one core gave the `instance`'s `create`: it keys
-    /// the instance's `overlays.query` binding to `counters`.
+    /// the instance's `overlays.query` binding to `counters` and to the
+    /// overlay listener's effective origin in `origins`, read per query.
     pub fn new(
         host: Arc<PluginHost>,
         instance: PluginInstanceId,
@@ -106,14 +108,16 @@ impl OverlayRootComposition {
         storage: Arc<RuntimeSettingsStorage>,
         settings: Arc<PluginSettingsService>,
         counters: Arc<ReloadableCounterService>,
+        origins: Arc<Origins>,
     ) -> Self {
         let serving = Arc::new(OverlayStatic::new(Arc::clone(&counters)));
+        let origin: OverlayOrigin = Arc::new(move || origins.overlay_listener());
         Self {
             host,
             instance,
             storage,
             settings,
-            _query: vosu_overlay_host::bind_overlay_query(data_dir, &counters),
+            _query: vosu_overlay_host::bind_overlay_query(data_dir, &counters, origin),
             counters,
             serving,
             generation: Mutex::new((0, None)),

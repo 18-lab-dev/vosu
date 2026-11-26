@@ -4,16 +4,20 @@
 //! declares `action:vosu.overlayhost.overlays.query` in `requires` or
 //! `optional`; this host additionally answers only `caller.kind = "plugin"`.
 //!
-//! An entry carries the overlay's folder id, display name, origin-relative
-//! entry page, its version when the package states one, and its effective
-//! settings values for the active profile. It never carries a filesystem
-//! path, and never a `password` setting's value.
+//! A page carries the overlay listener's `origin` (core's effective
+//! `scheme://host:port`, or `null` while that listener is not bound), so a
+//! plugin never takes the URL from a browser. An entry carries the
+//! overlay's folder id, display name, origin-relative entry page, its
+//! version when the package states one, and its effective settings values
+//! for the active profile. It never carries a filesystem path, and never a
+//! `password` setting's value.
 //!
 //! The bundled instance and the composition that owns the overlay storage
 //! share no Rust object across the plugin vtable, so composition binds its
-//! [`ReloadableCounterService`] to the instance's `data_dir` (which core
-//! assigns per bundled plugin and composition) with [`bind_overlay_query`].
-//! The instance answers from its own worker thread; dispatch only enqueues.
+//! [`ReloadableCounterService`] and its [`OverlayOrigin`] source to the
+//! instance's `data_dir` (which core assigns per bundled plugin and
+//! composition) with [`bind_overlay_query`]. The instance answers from its
+//! own worker thread; dispatch only enqueues.
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak, mpsc};
@@ -48,6 +52,10 @@ pub const PAGE_BUDGET: usize = 256 * 1024;
 /// Queries waiting for the worker; one more is answered `busy`.
 const QUEUE: usize = 16;
 
+/// Core's effective overlay listener origin (`scheme://host:port`, no
+/// trailing slash), read on every query; `None` while it is not bound.
+pub type OverlayOrigin = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
 /// Composition's binding of the overlay storage to one bundled instance's
 /// `data_dir`. Dropping it unbinds; a later query answers `unavailable`.
 #[must_use = "dropping the binding unbinds the overlay query"]
@@ -59,17 +67,20 @@ struct Binding {
     id: u64,
     data_dir: PathBuf,
     counters: Weak<ReloadableCounterService>,
+    origin: OverlayOrigin,
 }
 
 /// Live bindings: at most one per composition alive in this process.
 static BINDINGS: Mutex<Vec<Binding>> = Mutex::new(Vec::new());
 static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
 
-/// Binds `counters` to the `vosu.overlayhost` instance created with
-/// `data_dir`. The newest live binding for a directory wins.
+/// Binds `counters` and the overlay listener's `origin` to the
+/// `vosu.overlayhost` instance created with `data_dir`. The newest live
+/// binding for a directory wins.
 pub fn bind_overlay_query(
     data_dir: &Path,
     counters: &Arc<ReloadableCounterService>,
+    origin: OverlayOrigin,
 ) -> OverlayQueryBinding {
     let id = NEXT_BINDING.fetch_add(1, Ordering::Relaxed);
     let mut bindings = BINDINGS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -78,6 +89,7 @@ pub fn bind_overlay_query(
         id,
         data_dir: data_dir.to_owned(),
         counters: Arc::downgrade(counters),
+        origin,
     });
     OverlayQueryBinding { id }
 }
@@ -91,14 +103,21 @@ impl Drop for OverlayQueryBinding {
     }
 }
 
-fn bound(data_dir: &Path) -> Option<Arc<ReloadableCounterService>> {
+/// The live binding for `data_dir`. The origin source is called by the
+/// caller, outside the registry lock.
+fn bound(data_dir: &Path) -> Option<(Arc<ReloadableCounterService>, OverlayOrigin)> {
     BINDINGS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .iter()
         .rev()
         .filter(|binding| binding.data_dir == data_dir)
-        .find_map(|binding| binding.counters.upgrade())
+        .find_map(|binding| {
+            binding
+                .counters
+                .upgrade()
+                .map(|counters| (counters, Arc::clone(&binding.origin)))
+        })
 }
 
 #[derive(Deserialize)]
@@ -113,9 +132,11 @@ struct QueryArgs {
 /// One page of installed overlays ordered by folder id: those after `after`
 /// (exclusive), at most `limit` (clamped to `1..=MAX_PAGE`) and at most
 /// [`PAGE_BUDGET`] encoded bytes. `next` is the cursor for the following
-/// page, `null` on the last one. Re-reads the overlay root on every call.
+/// page, `null` on the last one; `origin` is reported as given. Re-reads
+/// the overlay root on every call.
 pub fn query_page(
     counters: &ReloadableCounterService,
+    origin: Option<String>,
     after: Option<&str>,
     limit: usize,
 ) -> Result<Value, CounterError> {
@@ -142,7 +163,7 @@ pub fn query_page(
         used += size;
         overlays.push(entry);
     }
-    Ok(json!({ "overlays": overlays, "next": next }))
+    Ok(json!({ "origin": origin, "overlays": overlays, "next": next }))
 }
 
 fn last_id(overlays: &[Value]) -> Value {
@@ -309,14 +330,14 @@ impl<H: HostServices> Worker<H> {
     }
 
     fn answer(&self, job: &Job) -> ActionResult {
-        let Some(counters) = bound(&self.data_dir) else {
+        let Some((counters, origin)) = bound(&self.data_dir) else {
             return error(
                 job.invocation,
                 "unavailable",
                 "overlay storage is not ready",
             );
         };
-        let page = match query_page(&counters, job.after.as_deref(), job.limit) {
+        let page = match query_page(&counters, origin(), job.after.as_deref(), job.limit) {
             Ok(page) => page,
             Err(failure) => {
                 tracing::warn!(error = %failure, "overlay query failed");
