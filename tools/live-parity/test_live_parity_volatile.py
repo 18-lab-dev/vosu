@@ -111,7 +111,7 @@ class BarrierTests(unittest.TestCase):
 
         def observe(_source, _dump):
             calls.append(1)
-            return {"source": "menu", "vosu": "menu"}, views[len(calls) - 1]
+            return {"source": "menu", "vosu": "menu"}, views[len(calls) - 1], None
         session._observe = observe
         return session, calls
 
