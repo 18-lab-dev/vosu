@@ -43,7 +43,7 @@ import parity_daemon as daemon_mod
 import parity_golden
 from parity_golden import CAPTURE_FORMAT, ENVELOPE_FORMAT, GoldenError
 from parity_golden_rules import dump_sandwich_difference
-import parity_golden_timeout as no_response
+import parity_golden_expected as no_response
 from parity_probes import HttpProbe, _assert_one_owner
 from parity_process import _process_alive
 import parity_routes as pr
@@ -366,13 +366,13 @@ def _unmask(frame: bytes, mask_hex: str, length: int) -> bytes:
 def golden_record(record: dict[str, Any], attempt: int, family: str) -> dict[str, Any]:
     """One P0 raw record as a `vosu-golden-capture-v1` record (body after transfer decoding).
 
-    A connection closed before any response byte, or upstream's silence on a declared case
-    (parity_golden_timeout), is an explicit transport record `{"outcome": "closed"|"timeout"}`,
-    compared like any other part; it is never dropped."""
+    A connection closed before any response byte, or upstream's declared outcome
+    (parity_golden_expected), is an explicit transport record, compared; never dropped."""
     response = record.get("response")
+    sent = record.get("request") or record["prime"]["request"]  # validator-missing: the prime
     if record.get("outcome") in no_response.transport_outcomes(record) and not response \
-            and record["received"]["length"] == 0:
-        value = {"attempt": attempt, "request": _g0_bytes(pr.decode_bytes(record["request"])),
+            and (record.get("received") or {"length": 0})["length"] == 0:
+        value = {"attempt": attempt, "request": _g0_bytes(pr.decode_bytes(sent)),
                  "outcome": record["outcome"]}
         if family == "ws":
             value["frames"] = []
@@ -611,7 +611,9 @@ class Session:
             return f"barrier {case.barrier} not held after the attempt: {guard}"
         for record in (*upstream, route):
             if not record["outcome_allowed"]:
-                return f"{record['daemon']} outcome {record['outcome']!r} is not allowed"
+                prime = f" (priming status {pr.priming_status(record)})" \
+                    if record["outcome"] == "validator-missing" else ""
+                return f"{record['daemon']} outcome {record['outcome']!r} is not allowed{prime}"
         try:
             records = [golden_record(record, number, case.family) for record in upstream]
             vosu_record = golden_record(route, number, case.family)
@@ -734,8 +736,7 @@ class Session:
         capture = {
             "format": CAPTURE_FORMAT, "source_revision": PINNED_SOURCE_REVISION,
             "platform": self.platform, "scenario_set": self.scenario.id,
-            "authorization": dict(self.golden_cfg["authorization"]),
-            "attestation": identity,
+            "authorization": dict(self.golden_cfg["authorization"]), "attestation": identity,
             "roots": [{"slot": self.golden_cfg["capture_slot"],
                        "private": root.rstrip(separator) + separator}],
             "assets": self._assets(), "expected_cases": expected, "cases": cases,
@@ -988,8 +989,7 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
     assert capture is not None
     print(json.dumps({
         "capture": out_path.name, "transcript": transcript_path.name,
-        "platform": capture["platform"], "scenario_set": scenario.id,
-        "cases": len(capture["cases"]),
+        "platform": capture["platform"], "scenario_set": scenario.id, "cases": len(capture["cases"]),
         "upstream_crashed": sum(case["attempts"][-1]["outcome"] == crash.OUTCOME
                                 for case in capture["cases"]),
         "retried_cases": sum(len(case["attempts"]) > 1 for case in capture["cases"]),

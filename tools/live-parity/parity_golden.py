@@ -33,7 +33,7 @@ Capture shape (written by `golden-capture`; every object is closed):
            | {"attempt", "request": bytes, "outcome": "closed", "frames": [] (ws only)}
              (the connection closed without a response byte; expected {"outcome": "closed"})
     A final attempt may be `upstream_crashed` instead (parity_golden_crash): no case file.
-    Upstream records may be `timeout` on a declared case (parity_golden_timeout): no case file.
+    Upstream records may carry a declared outcome (parity_golden_expected): no case file.
     frame  = {"from": "client"|"server", "fin", "opcode", "masked", "mask_key": hex|null,
               "length", "payload": bytes}
     dump   = {"attempt", "envelope": vosu-adapter-capture-v1}
@@ -51,7 +51,7 @@ from pathlib import Path
 import re
 import parity_golden_crash as crash
 import parity_golden_ledger as ledger
-import parity_golden_timeout as no_response
+import parity_golden_expected as no_response
 import parity_volatile as volatile
 import shutil
 import subprocess

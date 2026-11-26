@@ -358,33 +358,41 @@ def upstream_crash_ledger(case: RouteCase) -> str | None:
     return UPSTREAM_CRASH_LEDGER if UPSTREAM_CRASH_LEDGER in case.ledger else None
 
 
-# The pinned upstream sends no byte before the case deadline, on every attempt and in both
-# sandwich records (rehearsal and the first M4b full pilot run, 2026-11-26): its `upgrade`
+# Upstream outcomes the route matrix declares per case (Main's decisions of 2026-11-26,
+# each case named by ID, never a class rule), each under its reviewed ledger row.
+# `timeout`: the pinned upstream sends no byte before the case deadline, on every attempt
+# and in both sandwich records (rehearsal and the first M4b full pilot run): its `upgrade`
 # handler answers only the exact WebSocket paths it owns and leaves every other Upgrade
 # unanswered, and its HTTP router's `new URL` throws on a Host with a non-numeric port
-# before any response. Main's decision names each case (never a class rule): upstream's
-# expected outcome is `timeout`, and vosu's bounded answer is the ledger row's divergence.
+# before any response. `validator-missing`: upstream's file routes never send `ETag` or
+# `Last-Modified` (no such code in the pinned source; second full pilot run), so a 2xx
+# priming response without the validator is the complete observation. vosu must answer.
 NEAR_UPGRADE_LEDGER = "upstream-unanswered-near-upgrade"
-UPSTREAM_TIMEOUT = {
-    "ws.near.v2-trailing-slash": NEAR_UPGRADE_LEDGER,
-    "ws.near.v2-precise-trailing-slash": NEAR_UPGRADE_LEDGER,
-    "ws.near.ws-trailing-slash": NEAR_UPGRADE_LEDGER,
-    "ws.near.tokens-trailing-slash": NEAR_UPGRADE_LEDGER,
-    "ws.near.v2-subscribe": "adr0021-removed-selected-v2-feed",
-    "files.skin.index.upgrade": "adr0021-removed-legacy-skin-index",
-    "origin-peer.host.malformed-port": "adapter-listener-policy",
+NO_VALIDATOR_LEDGER = "upstream-no-file-validators"
+UPSTREAM_EXPECTED = {
+    "ws.near.v2-trailing-slash": ("timeout", NEAR_UPGRADE_LEDGER),
+    "ws.near.v2-precise-trailing-slash": ("timeout", NEAR_UPGRADE_LEDGER),
+    "ws.near.ws-trailing-slash": ("timeout", NEAR_UPGRADE_LEDGER),
+    "ws.near.tokens-trailing-slash": ("timeout", NEAR_UPGRADE_LEDGER),
+    "ws.near.v2-subscribe": ("timeout", "adr0021-removed-selected-v2-feed"),
+    "files.skin.index.upgrade": ("timeout", "adr0021-removed-legacy-skin-index"),
+    "origin-peer.host.malformed-port": ("timeout", "adapter-listener-policy"),
+    "files.conditional.if-none-match-etag": ("validator-missing", NO_VALIDATOR_LEDGER),
+    "files.conditional.if-modified-since-last-modified": ("validator-missing", NO_VALIDATOR_LEDGER),
+    "files.conditional.if-range-etag": ("validator-missing", NO_VALIDATOR_LEDGER),
+    "files.conditional.if-range-last-modified": ("validator-missing", NO_VALIDATOR_LEDGER),
 }
 
 
-def upstream_timeout_ledger(case_id: str) -> str | None:
-    """The ledger row under which upstream never answers this case, or None."""
-    return UPSTREAM_TIMEOUT.get(case_id)
+def upstream_expected(case_id: str) -> tuple[str, str] | None:
+    """(upstream's declared outcome, its ledger row) for this case, or None."""
+    return UPSTREAM_EXPECTED.get(case_id)
 
 
 def allowed_outcomes(case: RouteCase, daemon: str) -> frozenset[str]:
-    """What `daemon` may record for `case`: upstream must time out on a declared case."""
-    return frozenset({"timeout"}) if daemon == "source" and case.id in UPSTREAM_TIMEOUT \
-        else case.outcomes
+    """What `daemon` may record for `case`: upstream must record a declared outcome."""
+    expected = UPSTREAM_EXPECTED.get(case.id)
+    return frozenset({expected[0]}) if daemon == "source" and expected else case.outcomes
 
 
 def handshake_only_finding(case: RouteCase, source: str, vosu: str) -> dict | None:
@@ -600,8 +608,9 @@ def _file_cases() -> list[RouteCase]:
          Validator("If-Range", "last-modified")),
     ]
     for case_id, method, target, headers, validator in headed:
+        upstream = (NO_VALIDATOR_LEDGER,) if validator else ()
         cases.append(_http(case_id, method, target, headers=headers, validator=validator,
-                           ledger=FILE_SANDBOX))
+                           ledger=FILE_SANDBOX + upstream))
     cases += [
         _http("files.budget.headers-32", "GET", file, headers=_validator_headers(32),
               ledger=BUDGET),
@@ -706,14 +715,16 @@ def _build() -> tuple[RouteCase, ...]:
                                             or case.barrier != "no-client"):
             raise ValueError(f"{case.id}: an upstream-crashing case is a golden plain HTTP "
                              "request run after the no-client barrier")
-        ledger_id = upstream_timeout_ledger(case.id)
-        if ledger_id is not None and (ledger_id not in case.ledger or case.role != GOLDEN
-                                      or case.validator or upstream_crash_ledger(case)):
-            raise ValueError(f"{case.id}: an upstream-timeout case is a golden case under "
-                             f"its ledger row {ledger_id}")
+        expected = upstream_expected(case.id)
+        if expected is not None and (
+                expected[1] not in case.ledger or case.role != GOLDEN or upstream_crash_ledger(case)
+                or (case.validator is None) != (expected[0] == "timeout")):
+            raise ValueError(f"{case.id}: a declared upstream {expected[0]} is a golden case under "
+                             f"its ledger row {expected[1]}, with a validator only for "
+                             "validator-missing")
         seen.add(case.id)
-    if not seen >= set(UPSTREAM_TIMEOUT):
-        raise ValueError(f"unknown upstream-timeout cases {sorted(set(UPSTREAM_TIMEOUT) - seen)}")
+    if not seen >= set(UPSTREAM_EXPECTED):
+        raise ValueError(f"unknown declared cases {sorted(set(UPSTREAM_EXPECTED) - seen)}")
     return cases
 
 
@@ -729,8 +740,8 @@ def golden_eligible(case: RouteCase) -> bool:
 __all__ = [
     "BARRIERS", "CASES", "COMPARED_HEADERS", "CaseUnavailable", "Close", "FAMILIES", "Hold",
     "MATRIX", "MatrixContext", "PLATFORMS", "Recv", "RenderedCase", "RequestLedger", "RouteCase",
-    "SecurityAbort", "Send", "UPSTREAM_CRASH_LEDGER", "UPSTREAM_TIMEOUT", "Validator",
+    "SecurityAbort", "Send", "UPSTREAM_CRASH_LEDGER", "UPSTREAM_EXPECTED", "Validator",
     "WS_COMPARED_HEADERS", "allowed_outcomes", "client_frame", "golden_eligible", "manifest",
     "mask_frame", "render", "requirements_unmet", "select", "split_headers",
-    "upstream_crash_ledger", "upstream_timeout_ledger", "ws_key",
+    "upstream_crash_ledger", "upstream_expected", "ws_key",
 ]

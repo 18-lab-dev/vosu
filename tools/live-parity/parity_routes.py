@@ -349,8 +349,16 @@ def run_case(rendered: rm.RenderedCase, endpoint: RouteEndpoint, *,
                                    "value": values[0]}
             record.update(_exchange(endpoint, rendered.with_validator(values[0]), rendered,
                                     limits, "request"))
-    record["outcome_allowed"] = record["outcome"] in rm.allowed_outcomes(case, endpoint.daemon)
+    allowed = record["outcome"] in rm.allowed_outcomes(case, endpoint.daemon)
+    if record["outcome"] == "validator-missing":  # A complete observation only from a 2xx prime.
+        allowed = allowed and 200 <= (priming_status(record) or 0) < 300
+    record["outcome_allowed"] = allowed
     return record
+
+
+def priming_status(record: dict[str, Any]) -> int | None:
+    """The status of a conditional case's priming response, or None without one."""
+    return ((record.get("prime") or {}).get("response") or {}).get("status")
 
 
 def run_identical(rendered: rm.RenderedCase, endpoints: Iterable[RouteEndpoint], *,

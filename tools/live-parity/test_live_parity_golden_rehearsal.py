@@ -257,12 +257,21 @@ class ClientDependentTests(unittest.TestCase):
         for case_id, reason in (
                 ("ws.v2.upgrade.menu", "source outcome 'upgraded-timeout' is not allowed"),
                 ("files.conditional.if-none-match-etag",
-                 "source outcome 'validator-missing' is not allowed")):
+                 "source outcome 'validator-missing' is not allowed (priming status 500)"),
+                ("files.conditional.if-range-etag",
+                 "vosu outcome 'validator-missing' is not allowed (priming status 404)")):
             entry = self.classify(case_id, reason)
             self.assertEqual(entry, {"client_dependent": [reason] * gc.MAX_ATTEMPTS}, case_id)
         # At its own no-client barrier the same failure stays strict.
         entry = self.classify("ws.v2.upgrade.no-client", "vosu outcome 'upgraded-timeout' is not allowed")
         self.assertIn("failure", entry)
+
+    def test_a_2xx_prime_without_a_validator_is_never_client_dependent(self) -> None:
+        # Pilot run 2 (2026-11-26): upstream's file routes never send a validator.
+        for daemon in ("source", "vosu"):
+            reason = f"{daemon} outcome 'validator-missing' is not allowed (priming status 200)"
+            entry = self.classify("files.conditional.if-none-match-etag", reason)
+            self.assertEqual(entry, {"failure": "; ".join([reason] * gc.MAX_ATTEMPTS)}, daemon)
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and UNSHARE, "needs util-linux unshare")

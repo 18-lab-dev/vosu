@@ -82,12 +82,16 @@ TOOLING_DOCUMENTS = ("tests/fixtures/upstream/GOLDEN_CONTRACT.md",
 # `golden`'s whole-capture check needs a client attestation; none ran.
 NO_CLIENT = {"version": "no-client", "sha256": "0" * 64}
 # Outcomes that only say the daemon had no game data to answer with: a WebSocket with no
-# state frame, a conditional request with no validator to send. A case of a client
-# barrier (menu, paused, result) that fails only on these at `no-client` is
-# client-dependent; any other failure, and any `no-client` case, fails. A `timeout` (not
-# one response byte) is never client-dependent: it hid seven deterministic upstream hangs
-# until the first full pilot run (2026-11-26); declared ones pass (`rm.UPSTREAM_TIMEOUT`).
-CLIENT_DATA = re.compile(r"outcome '(?:upgraded-timeout|validator-missing)' is not allowed")
+# state frame, a conditional request whose priming request got no 2xx (no file to send a
+# validator for). A case of a client barrier (menu, paused, result) that fails only on
+# these at `no-client` is client-dependent; any other failure, and any `no-client` case,
+# fails. Never client-dependent: a `timeout` (not one response byte), which hid seven
+# deterministic upstream hangs until the first full pilot run, and a 2xx priming response
+# without a validator, which hid upstream's missing file validators until the second
+# (2026-11-26). The declared ones pass as their outcome (`rm.UPSTREAM_EXPECTED`).
+CLIENT_DATA = re.compile(r"outcome 'upgraded-timeout' is not allowed"
+                         r"|outcome 'validator-missing' is not allowed \(priming status "
+                         r"(?:None|[013-9]\d\d)\)")
 # The private PID namespace with its own /proc that the daemons and cases run in (the
 # user namespace makes it unprivileged; the network namespace stays shared).
 ISOLATION = ("--user", "--map-current-user", "--pid", "--fork", "--mount-proc")

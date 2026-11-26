@@ -602,65 +602,105 @@ class MatrixTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "after the no-client barrier"):
             rm._build()
 
-    def test_upstream_timeout_is_declared_per_case_under_a_ledger_row(self) -> None:
-        # Main's decision (2026-11-26): these seven, named by ID, never a class rule.
+    def test_upstream_outcomes_are_declared_per_case_under_a_ledger_row(self) -> None:
+        # Main's decisions (2026-11-26): these eleven, named by ID, never a class rule.
         trailing = {f"ws.near.{name}-trailing-slash" for name in ("v2", "v2-precise", "ws", "tokens")}
-        self.assertEqual(set(rm.UPSTREAM_TIMEOUT), trailing | {
-            "ws.near.v2-subscribe", "files.skin.index.upgrade", "origin-peer.host.malformed-port"})
+        conditional = {f"files.conditional.{name}" for name in (
+            "if-none-match-etag", "if-modified-since-last-modified", "if-range-etag",
+            "if-range-last-modified")}
+        timeout = trailing | {"ws.near.v2-subscribe", "files.skin.index.upgrade",
+                              "origin-peer.host.malformed-port"}
+        self.assertEqual({case_id: outcome for case_id, (outcome, _) in rm.UPSTREAM_EXPECTED.items()},
+                         {**dict.fromkeys(timeout, "timeout"),
+                          **dict.fromkeys(conditional, "validator-missing")})
+        # Every case whose validator comes from the daemon's own response is declared.
+        self.assertEqual({case.id for case in rm.MATRIX if case.validator}, conditional)
         rows = dict(re.findall(r"^\| ([a-zA-Z0-9.-]+) \| (security|contract|licensing|temporary) \|",
                                (ROOT / "tests/fixtures/upstream/DIVERGENCES.md").read_text("utf-8"),
                                re.M))
-        self.assertEqual(rows[rm.NEAR_UPGRADE_LEDGER], "security")
-        for case_id, ledger_id in rm.UPSTREAM_TIMEOUT.items():
+        self.assertEqual((rows[rm.NEAR_UPGRADE_LEDGER], rows[rm.NO_VALIDATOR_LEDGER]),
+                         ("security", "contract"))
+        for case_id, (outcome, ledger_id) in rm.UPSTREAM_EXPECTED.items():
             case = rm.CASES[case_id]
-            self.assertEqual(rm.upstream_timeout_ledger(case_id), ledger_id)
+            self.assertEqual(rm.upstream_expected(case_id), (outcome, ledger_id))
             self.assertIn(ledger_id, case.ledger, case_id)
             self.assertIn(rows[ledger_id], ("security", "contract"), case_id)
             self.assertEqual(case.role, rm.GOLDEN, case_id)
-            self.assertNotIn("timeout", case.outcomes, case_id)
-            # Upstream must time out; vosu keeps the case's outcomes and may never time out.
-            self.assertEqual(rm.allowed_outcomes(case, "source"), frozenset({"timeout"}))
+            self.assertNotIn(outcome, case.outcomes, case_id)
+            # Upstream must record it; vosu keeps the case's outcomes and must answer.
+            self.assertEqual(rm.allowed_outcomes(case, "source"), frozenset({outcome}))
             self.assertEqual(rm.allowed_outcomes(case, "vosu"), case.outcomes)
             if case_id in trailing:
                 self.assertEqual(case.ledger, (rm.NEAR_UPGRADE_LEDGER,))
         for case in rm.MATRIX:
-            if case.id not in rm.UPSTREAM_TIMEOUT:
-                self.assertIsNone(rm.upstream_timeout_ledger(case.id))
+            if case.id not in rm.UPSTREAM_EXPECTED:
+                self.assertIsNone(rm.upstream_expected(case.id))
                 self.assertEqual(rm.allowed_outcomes(case, "source"), case.outcomes, case.id)
         unledgered = dataclasses.replace(rm.CASES["ws.near.v2-trailing-slash"], ledger=())
         with mock.patch.object(rm, "_ws_cases", lambda: [unledgered]), \
                 self.assertRaisesRegex(ValueError, "under its ledger row upstream-unanswered"):
             rm._build()
-        with mock.patch.dict(rm.UPSTREAM_TIMEOUT, {"ws.near.no-such-case": rm.NEAR_UPGRADE_LEDGER}), \
-                self.assertRaisesRegex(ValueError, "unknown upstream-timeout cases"):
+        unvalidated = dataclasses.replace(rm.CASES["files.conditional.if-range-etag"], validator=None)
+        with mock.patch.object(rm, "_file_cases", lambda: [unvalidated]), \
+                self.assertRaisesRegex(ValueError, "with a validator only for validator-missing"):
+            rm._build()
+        with mock.patch.dict(rm.UPSTREAM_EXPECTED,
+                             {"ws.near.no-such-case": ("timeout", rm.NEAR_UPGRADE_LEDGER)}), \
+                self.assertRaisesRegex(ValueError, "unknown declared cases"):
             rm._build()
 
     def test_a_timeout_is_allowed_only_from_upstream_on_a_declared_case(self) -> None:
         declared = rm.CASES["ws.near.v2-trailing-slash"]
         plain = rm.CASES["ws.near.v2-subscribe-plain"]
-        self.assertIsNone(rm.upstream_timeout_ledger(plain.id))
-        records = {
-            (case.id, daemon): self.run_against_silent_server(case, daemon)
-            for case in (declared, plain) for daemon in ("source", "vosu")}
-        for (case_id, daemon), record in records.items():
-            self.assertEqual(record["outcome"], "timeout", (case_id, daemon))
-            self.assertEqual(record["outcome_allowed"],
-                             case_id == declared.id and daemon == "source", (case_id, daemon))
+        self.assertIsNone(rm.upstream_expected(plain.id))
+        for case in (declared, plain):
+            for daemon in ("source", "vosu"):
+                record = self.run_against_server(case, daemon, None)
+                self.assertEqual(record["outcome"], "timeout", (case.id, daemon))
+                self.assertEqual(record["outcome_allowed"],
+                                 case is declared and daemon == "source", (case.id, daemon))
 
-    def run_against_silent_server(self, case: rm.RouteCase, daemon: str) -> dict:
-        """One case against a server that reads the request and never answers."""
+    def test_a_missing_validator_is_allowed_only_from_a_2xx_upstream_prime(self) -> None:
+        declared = rm.CASES["files.conditional.if-none-match-etag"]
+        for status, daemon, allowed in ((200, "source", True), (500, "source", False),
+                                        (200, "vosu", False)):
+            reply = f"HTTP/1.1 {status} X\r\nContent-Length: 5\r\nConnection: close\r\n\r\nchart"
+            record = self.run_against_server(declared, daemon, reply.encode())
+            self.assertEqual((record["outcome"], pr.priming_status(record)),
+                             ("validator-missing", status))
+            self.assertEqual(record["outcome_allowed"], allowed, (status, daemon))
+
+    def run_against_server(self, case: rm.RouteCase, daemon: str, reply: bytes | None) -> dict:
+        """One case against a server that reads each request and sends `reply` and closes,
+        or never answers when `reply` is None."""
         with socket.socket() as listener:
             listener.bind((rm.HOST, 0))
             listener.listen()
             held: list[socket.socket] = []
-            accept = threading.Thread(target=lambda: held.append(listener.accept()[0]), daemon=True)
-            accept.start()
+            stop = threading.Event()
+
+            def serve() -> None:
+                listener.settimeout(0.2)
+                while not stop.is_set():
+                    try:
+                        sock = listener.accept()[0]
+                    except OSError:
+                        continue
+                    held.append(sock)
+                    if reply is not None:
+                        sock.recv(65536)
+                        sock.sendall(reply)
+                        sock.close()
+
+            server = threading.Thread(target=serve, daemon=True)
+            server.start()
             endpoint = pr.RouteEndpoint(daemon, listener.getsockname()[1])
             try:
                 return pr.run_case(rm.render(case, rm.MatrixContext("linux-lazer", CONTEXT_VALUES)),
                                    endpoint, limits=pr.Limits(deadline_s=0.5))
             finally:
-                accept.join(5)
+                stop.set()
+                server.join(5)
                 for sock in held:
                     sock.close()
 

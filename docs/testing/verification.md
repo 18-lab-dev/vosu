@@ -330,11 +330,12 @@ scenario set, or the run is refused before the build.
 
    A menu, paused or result case runs at `no-client`. When every attempt of
    one failed only because a daemon had no game data (a feed with no state
-   frame, a conditional request with no validator to send), the receipt lists
-   it as `client_dependent` instead of failing it. A `timeout` (no response
-   byte at all) is never client-dependent: the seven cases the matrix declares
-   upstream never answers (GOLDEN_CONTRACT §6, `upstream_timeout`) pass as
-   that expected outcome, and any other timeout fails the rehearsal. A
+   frame, a conditional request whose priming request got no 2xx), the receipt
+   lists it as `client_dependent` instead of failing it. A `timeout` (no
+   response byte at all) and a 2xx priming response without a validator are
+   never client-dependent: the eleven cases the matrix declares upstream cannot
+   answer in full (GOLDEN_CONTRACT §6, `upstream_declared`) pass as that
+   expected outcome, and any other one fails the rehearsal. A
    `no-client` case runs at its own barrier, exactly as in a pilot, and stays
    strict. A `no-client` feed upgrade (`ws.*.upgrade.no-client`) is a
    handshake-only golden (GOLDEN_CONTRACT §6): the receipt lists those cases in
