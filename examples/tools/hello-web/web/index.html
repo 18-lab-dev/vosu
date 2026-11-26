@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hello web · vosu</title>
+<link rel="stylesheet" href="/tools/_host/v1/theme.css">
+<style>
+  .chart-art { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--bg-sunken); border-radius: var(--radius); }
+  .chart-art:not([src]) { visibility: hidden; }
+</style>
+<body class="v-app">
+<header class="v-bar">
+  <span class="v-bar__title">Hello web</span>
+  <span class="v-dot" id="live-dot"></span><span class="v-muted" id="live">Connecting</span>
+  <span class="v-bar__spacer"></span>
+  <span class="v-badge" id="access">Read-only</span>
+</header>
+<main class="v-main v-grid" style="--v-min: 18rem; align-content: start">
+  <section class="v-panel">
+    <div class="v-panel__head"><span class="v-label"><b>01</b> / Chart</span><span class="v-muted" id="client"></span></div>
+    <div class="v-panel__body v-stack">
+      <img class="chart-art" id="background" alt="">
+      <span class="v-title" id="title">No chart selected</span>
+      <span class="v-muted" id="artist"></span>
+    </div>
+  </section>
+  <section class="v-panel">
+    <div class="v-panel__head"><span class="v-label"><b>02</b> / Play</span><span class="v-muted" id="status"></span></div>
+    <div class="v-panel__body v-row">
+      <div class="v-stat"><span class="v-stat__label">Combo</span><output class="v-stat__value" id="combo">—</output></div>
+      <div class="v-stat"><span class="v-stat__label">Accuracy</span><output class="v-stat__value" id="accuracy">—</output></div>
+    </div>
+  </section>
+  <section class="v-panel">
+    <div class="v-panel__head"><span class="v-label"><b>03</b> / Import</span></div>
+    <form class="v-panel__body v-stack" id="import">
+      <label class="v-field"><span>Beatmap archive (.osz)</span>
+        <input class="v-input v-input--mono" id="source" required placeholder="/home/me/Downloads/set.osz" autocomplete="off">
+      </label>
+      <div class="v-meter" id="meter" style="--v-value: 0" hidden></div>
+      <div class="v-toolbar">
+        <button class="v-btn v-btn--primary" id="run" type="submit" disabled>Import</button>
+        <button class="v-btn" id="cancel" type="button" disabled>Cancel</button>
+      </div>
+    </form>
+  </section>
+</main>
+<p class="v-toast" id="toast" role="status" hidden></p>
+<script type="module">
+import { vosu } from '/tools/_host/v2/bridge.js';
+
+const $ = id => document.getElementById(id);
+let toastTimer = 0;
+const toast = (message, tone) => {
+  $('toast').textContent = message;
+  $('toast').dataset.tone = tone ?? '';
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5000);
+};
+
+// Read-only until the dashboard's Open grants this tab a session. A reload,
+// bookmark or replayed launch URL stays read-only by design.
+try {
+  await vosu.ready;
+} catch (error) {
+  toast(error.message, 'error');
+}
+$('access').textContent = vosu.canWrite ? 'Session' : 'Read-only';
+$('run').disabled = !vosu.canWrite;
+
+// Settings are a public read: effective values with defaults, never passwords.
+let decimals = 2;
+async function readSettings() {
+  try { decimals = Number((await vosu.settings()).decimals ?? 2); } catch { decimals = 2; }
+}
+await readSettings();
+addEventListener('focus', () => { readSettings().catch(() => {}); });
+
+// JSON Pointers into the focused session's API v1 document. Frames address
+// them by index: initial [0, rev, pairs], update [1, rev, pairs, removed],
+// error [2, code, message]. An initial frame replaces everything, including
+// after a reconnect or a change of the focused session.
+const fields = [
+  '/vosu.client/name',
+  '/vosu.chart/title',
+  '/vosu.chart/artist',
+  '/vosu.chart/resources/background',
+  '/vosu.status/status',
+  '/vosu.play/combo',
+  '/vosu.play/accuracy',
+];
+const values = new Map();
+function render() {
+  $('client').textContent = values.get(0) ?? '';
+  $('title').textContent = values.get(1) ?? 'No chart selected';
+  $('artist').textContent = values.get(2) ?? '';
+  // A resource reference, never a path: an ordinary same-origin read.
+  const background = values.get(3);
+  if (background?.url) $('background').src = background.url;
+  else $('background').removeAttribute('src');
+  $('status').textContent = values.get(4) ?? '';
+  $('combo').textContent = values.get(5) ?? '—';
+  const accuracy = values.get(6);
+  $('accuracy').textContent = typeof accuracy === 'number' ? (accuracy * 100).toFixed(decimals) + '%' : '—';
+}
+const stop = vosu.subscribe(fields, frame => {
+  if (frame[0] === 2) { toast(frame[2], 'error'); return; }
+  if (frame[0] === 0) values.clear();
+  for (const [index, value] of frame[2]) values.set(index, value);
+  for (const index of frame[3] || []) values.delete(index);
+  render();
+}, status => {
+  // `active` with no focused game is refused; the bridge keeps retrying.
+  $('live').textContent = {connecting: 'Connecting', open: 'Live', closed: 'Waiting for a game'}[status];
+  $('live-dot').dataset.state = status === 'open' ? 'ok' : 'warn';
+});
+addEventListener('pagehide', stop, { once: true });
+
+// An optional action on the focused session. Abort cancels the job, also
+// while its creation is still in flight.
+let controller = null;
+$('import').addEventListener('submit', async event => {
+  event.preventDefault();
+  controller = new AbortController();
+  $('run').disabled = true;
+  $('cancel').disabled = false;
+  $('meter').hidden = false;
+  $('meter').style.setProperty('--v-value', '0');
+  try {
+    const result = await vosu.invoke('vosu.osu.beatmap.import', { sourcePath: $('source').value }, {
+      signal: controller.signal,
+      onProgress: progress => $('meter').style.setProperty('--v-value', String(progress?.fraction ?? 0)),
+    });
+    toast(result.refreshRequired ? 'Queued; refresh the song list in osu!' : 'Submitted to osu!', 'ok');
+  } catch (error) {
+    const messages = {
+      cancelled: 'Import cancelled',
+      forbidden: 'Import needs the osu! plugin and a tab opened from the dashboard',
+      unknown_session: 'No osu! session is focused',
+    };
+    toast(messages[error.code] ?? error.message, error.code === 'cancelled' ? undefined : 'error');
+  } finally {
+    controller = null;
+    $('run').disabled = !vosu.canWrite;
+    $('cancel').disabled = true;
+    $('meter').hidden = true;
+  }
+});
+$('cancel').addEventListener('click', () => controller?.abort());
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+manifest_version = 1
+kind = "tool"
+id = "hello-web"
+name = "Hello web"
+version = "0.2.0"
+description = "Live chart and play readout with an optional beatmap import. Static files only; no build step."
+author = "18-LAB"
+icon = "web/icon.svg"
+banner = "web/banner.svg"
+host = ">=2.0.0-alpha.1, <3.0.0"
+
+[ui]
+root = "web"
+
+# Reads are public API v1 state; declaring them is the permission surface the
+# install plan shows and what resolves this tool against installed providers.
+[[requires]]
+id = "field:vosu.chart"
+version = "^1.0.0"
+
+[[requires]]
+id = "field:vosu.play"
+version = "^1.0.0"
+
+[[optional]]
+id = "resource:chart.background"
+version = "^1.0.0"
+
+# An action grant: only a tab opened from the dashboard may invoke it, and only
+# once the official osu! plugin provides it. Missing, the tool still runs.
+[[optional]]
+id = "action:vosu.osu.beatmap.import"
+version = "^1.0.0"
