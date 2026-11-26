@@ -49,3 +49,18 @@ Only tools installed from the exact default source identities `18-lab-dev/vosu-t
 ## Consequences
 
 Overlays can consume tool data (for example current skill ratings) with plain `fetch`. Disabling a tool keeps its data. Tools never receive the dashboard CSRF token, native broker credential, or API keys. A user tool's manifest permissions are informational at the OS level.
+
+## Amendments
+
+**2026-11-24** (A7.2, M7 contract freeze; full text in the
+[tool protocol transition inventory](../tools/protocol.md#20-transition-inventory-a72)
+and [API v1 "Tool launch sessions"](../v2/api-v1.md#tool-launch-sessions-a72)):
+M7 deletes tool services, readiness, ports, service and CLI tokens, the
+`/tools/<id>/api/*` proxy, the host API (`self`, `settings`, `context`,
+`overlays`), the v1 bridge and the CLI host routes, and the vosux tool form,
+as [ADR 0019](0019-plugin-runtime-and-trust.md) decided. The reserved `/tools`
+prefix on the overlay listener, dashboard-minted single-use launch codes,
+page-memory-only sessions, the shared theme and design system, tool art and
+the read-only `_settings` view stay, each by exact method and path. Core, not
+the tool host, owns the launch codes, sessions and action authority. A
+session authorizes only API v1 action and job routes for its own jobs.

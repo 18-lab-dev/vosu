@@ -609,6 +609,56 @@ counter settings/profile writes, unrelated to API v1), and CORS does not
 allow `X-Vosu-Tool-Session` or `Authorization` cross-origin, so no action
 route is reachable from a page on another origin either way.
 
+### Tool launch sessions (A7.2)
+
+Frozen 2026-11-24 for M7 (T0/T1). Core owns launch codes, sessions and this
+authority. The tool host serves pages, art and the bridge but never mints or
+checks a session ([A7 freeze](implementation-plan.md#a7-approved-contract-freeze-2026-11-24)).
+
+1. **Launch.** `POST /api/tools/<id>/launch` on the dashboard listener, with
+   dashboard provenance and `X-Vosu-CSRF`, and an optional body
+   `{"theme":"dark"|"light"}` (default `dark`). It succeeds only for an
+   enabled, trusted, non-legacy tool whose required capabilities resolve,
+   and returns `{"url":"<overlay origin>/tools/<id>/#vosu-launch=<code>&theme=<theme>"}`.
+   The code is 256 random bits, single-use, and expires 60 seconds after
+   minting. At most 1,024 unexpired codes exist; at that bound launch fails
+   with 400 and mints nothing.
+2. **Exchange.** `POST /tools/_host/v1/session` on the overlay listener only,
+   with body `{"tool","code"}` (1 MiB POST limit). The code is compared in
+   constant time and consumed whether or not the rest succeeds. Responses:
+   200 `{"session"}`, a fresh 256-bit token, with `Cache-Control: no-store`;
+   400 for invalid JSON or a missing field; 403 for an unknown, expired,
+   reused or other-tool code, or a tool that is no longer launchable; 429
+   when 1,024 live sessions exist. No cookie is set and no query parameter is
+   read.
+3. **Holding.** The bridge clears the fragment with `history.replaceState`
+   before any asynchronous work, keeps the token only in page memory, and
+   sends it only as `X-Vosu-Tool-Session` on the routes in item 4, with
+   `credentials: "omit"` and `redirect: "error"`. A reload or bookmark has
+   no session.
+4. **Scope.** The header is authority only for `POST /api/v1/actions/{action}`,
+   `POST /api/v1/sessions/{session}/actions/{action}`, `GET`/`DELETE
+   /api/v1/jobs/{id}` and `GET`/`HEAD /api/v1/jobs/{id}/artifacts/{artifact}`,
+   for jobs that this same session created. On every other route it grants
+   nothing and is not required: reads, subscriptions, resources and trees
+   stay public under peer policy, and no authenticated field-read restriction
+   exists.
+5. **Recheck.** Every action and job request rechecks the exact live session,
+   the tool's current enabled and trust state, and the action's capability
+   in the tool's resolved `requires`/`optional` against the current
+   installed graph and its selected provider. A session never pins a
+   provider; a job stays bound to the provider generation that accepted it.
+   A missing or invalid session is 401, and a valid session lacking the
+   capability is 403.
+6. **Invalidation.** Disabling, untrusting, uninstalling or replacing the
+   tool's package, or a daemon restart, invalidates every session and
+   pending code of that tool at once. Core requests advisory cancellation
+   of their running jobs. No later session or tab inherits, reads or cancels
+   them, and a non-owned job is 404.
+
+API keys never acquire action scope, and the native broker keeps its
+separate CLI authority above.
+
 ### Plugin-owned operations (AF.3)
 
 Approved 2026-11-24. The 30-second invocation deadline above is unchanged,
@@ -728,6 +778,12 @@ credentialed reads), and request limits (1 MiB POST bodies, 1 MiB WebSocket
 frames/messages) are the same settings 1.x already enforces for the overlay
 listener; API v1 adds no new listener-level knob beyond
 `API_V1_SUBSCRIPTION_DEBOUNCE` above.
+
+M7 (A7.1) keeps this placement. The dashboard's browser code reads
+`GET /api/v1/sessions` from the overlay origin as an ordinary cross-origin
+public read under the same peer policy and CORS, with no credentials and no
+tool session. The dashboard listener neither serves nor proxies API v1, and
+no server-side dashboard component reads API v1.
 
 ## Route ownership: upstream-compatible adapters
 

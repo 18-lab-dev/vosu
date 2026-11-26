@@ -51,3 +51,24 @@ independently allowed as an overlay hostname to load the destination dashboard.
 ## Consequences
 
 Overlay URLs and browser storage stay unchanged. Dashboard storage moves to its new origin; no overlay receives the dashboard token. Users exposing overlays on a LAN do not implicitly expose the loopback dashboard. Native same-account clients can still read dashboard pages and forge provenance: this boundary isolates browser origins, not hostile local programs. Overlay scripts still have existing read access and their settings command protocol, so this is not a general-purpose overlay sandbox.
+
+## Amendments
+
+**2026-11-24** (A7, M7 contract freeze; full text in the
+[A7 freeze](../v2/implementation-plan.md#a7-approved-contract-freeze-2026-11-24)):
+
+- **Route boundary in 2.0 (A7.1).** The origin split stands. Bundled hosts
+  register exact routes on a listener role, and core keeps the boundary:
+  management routes stay dashboard-only, with dashboard provenance and
+  `X-Vosu-CSRF` checked by core before any effect. The CSRF secret reaches
+  dashboard pages only through core's page-context injection, never a host.
+  The dashboard listener serves no API v1, state, game-file, overlay-static,
+  tool or `/websocket/commands` route and still refuses every upgrade.
+  Dashboard-only embedded assets are no longer served on the overlay
+  listener. The shared design-system assets are, because tool pages and the
+  styled 404 page use them.
+- **Dashboard off (A7.3).** With `ENABLE_DASHBOARD = false` or
+  `VOSU_DASHBOARD=off`, no dashboard listener binds. The overlay→dashboard
+  redirects and `GET /api/dashboard` are 404, tray, startup and second-launch
+  links open nothing, and the overlay listener, its storage origin and the
+  network-Apply journal recovery are unchanged.

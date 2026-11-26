@@ -273,3 +273,20 @@ and whole-route subtraction without whole-route ledger scope fail. The
   targets the `kind = "tool"` entry `vosulay-editor` in
   `18-lab-dev/vosulay`'s `catalog-v2.json`, whose requirements bring in the
   `vosu.vosulay` supervisor through the normal install plan.
+
+**2026-11-24** (A7.4, A7.5, M7 contract freeze; full text in
+[adapter surfaces](../v2/adapter-surfaces.md#a74-d20-notice-presentation)):
+
+- **D20 notice (A7.4).** The A4.5 recorder and its limits are reused
+  unchanged. The dashboard renders its bounded notices from the existing
+  status read, with escaped identities, elapsed ages and a fixed
+  migration-guide link, and with no timer, persistence or dismissal.
+- **`/api/ingame` deprecation (A7.5).** "The first request logs one warning"
+  means one warning per daemon process. "While the endpoint is in use" means
+  while an in-memory last-use marker is live, expiring after 24 hours
+  without a request and recording no URL, IP or referrer. The install target
+  named in the AF amendment above is the A7.5 target. The button starts the
+  ordinary install plan with every approval the plan lists; it never
+  approves anything itself. The endpoint is still landing G, which needs the
+  eligible author's behavioral document first. Until G lands, the endpoint is
+  outstanding, not complete or waived.

@@ -389,6 +389,17 @@ A relayed `ACTION_RESULT` that would land over the cap after remapping is delive
 
 A plugin declares its settings shape with `settings_schema` (§8), a path to a `settings.schema.json` sibling using exactly the overlay/tool `settings.json` schema format ([`docs/tools/protocol.md`](../tools/protocol.md)). Core owns storage, the dashboard editing UI, and `password`-type write-only handling. The plugin's effective settings object is part of the `create` vtable function's `init` parameter (`vosu_plugin.h`: CBOR `{"plugin_id", "settings", "data_dir"}`) — no round trip is needed for the initial value — and every later change arrives as `VOSU_OP_SETTINGS_CHANGED` (host → plugin, CBOR, no reply): `{"values": <CBOR map>}`, where `values` is always the complete effective settings object in `init.settings`'s own shape, never a diff of only the changed keys — matching `SETTINGS_CHANGED`'s one-per-instance coalescing (§7.2), which replaces a queued instance wholesale rather than merging it, exactly because the whole object is self-sufficient.
 
+**M7 storage and editing (A7.1, approved 2026-11-24).** M7 adds core's
+per-plugin settings storage. The dashboard edits it only through the core
+routes `GET`/`POST /api/plugins/<id>/settings`: GET returns the validated
+schema, values with defaults applied and a `secrets` presence map, with every
+`password` value `""`; POST validates the whole submitted document before
+storing, keeps a stored secret for `""` or an omitted field and clears it for
+`null`, and delivers one complete `SETTINGS_CHANGED`. An invalid POST changes
+nothing and publishes nothing. Bridge B2 keeps serving `vosu.osu`'s five keys
+until M8. `vosu.overlayhost`'s `static_folder_path` (A7.1-OR) is seeded by
+core from `STATIC_FOLDER_PATH` until M8, outside B2.
+
 ### 6.10 Logging
 
 `VOSU_OP_LOG_RECORD` (plugin → host, CBOR, no reply): `{"level": "trace"|"debug"|"info"|"warn"|"error", "message": string, "fields": <CBOR map>}`. Core attaches its own structured context (plugin id, session, timestamp) and writes to the daemon's existing logging sink. Records are rate-limited per plugin instance (200/second, matching the host's existing bounded-queue discipline); records past the limit are dropped and counted, with the count itself logged once per second while dropping continues, so a runaway plugin cannot grow host memory or CPU use without bound.
@@ -594,6 +605,7 @@ The ABI itself carries no HTTP opcode, and an external or out-of-process plugin 
 - state reads that go through the same subscription, demand, and `requires`/`optional` capability path as `VOSU_OP_STATE_SUBSCRIBE` (§6.12) — a second entry point onto the same state bus, not a second data path, so `/websocket/v2/precise` and every other adapter route keeps receiving precise-lane sampling exactly as a normal subscriber would;
 - root-confined file responses resolved against the `ROOT_DECLARE` handles declared by the **game plugin that owns the session** (§6.5), never against a path string read off the bus (D2) — an adapter's file route (e.g. `GET /Songs/{path}`) has no root of its own and no path string to open one with; it asks, through `vosu-surface`, for the osu! plugin's already-declared root and a relative path inside it, the same confinement a resource reference resolves through;
 - management-route provenance: a `vosu-surface` management route (for example the dashboard plugin's own settings-save route) still requires dashboard-origin provenance and `X-Vosu-CSRF` exactly as `docs/v2/catalog-v2.md` "API placement" specifies for the catalog routes `vosu-core` itself serves — `vosu-surface` grants no exemption from that rule for any route it carries.
+- presentation views (A7.1, from M7): the two immutable, latest-only, core-pushed views `ToolHostView` (to `vosu.toolhost`) and `OverlayRootView` (to `vosu.overlayhost`) enumerated below, carrying presentation data and read-only `RootLease`s only.
 
 The permanent P0/R0 operation and lifetime contract is
 [Bundled adapter surfaces](adapter-surfaces.md): atomic multi-selector capture
@@ -612,13 +624,48 @@ Feeds expose connection-owned filter replacement, latest-only receive,
 write-completion acknowledgement and synchronous cancellation through the
 surface API. Transport admission and frame limits remain core-owned.
 
-M6b catalog/source/credential/trust/plan/install/job handlers remain **core**
-dashboard-listener handlers. Root and later M7 bundled dashboard render bounded
-redacted views and call those guarded HTTP routes; they receive no secret values,
-generic configuration writer or core service handle through `vosu-surface`.
-M7's management-presentation seam is a separate dependency, not a new ABI
-operation. Moving presentation must retain the same exact methods, listener,
-provenance/CSRF and write-only credential semantics.
+**Management presentation (A7.1, approved 2026-11-24).** Every privileged
+management handler stays in **core** on the dashboard listener: configuration,
+network Apply, updates, reports, API keys, plugin approval, lifecycle and
+settings, catalog sources, credentials, trust, plans, install, uninstall and
+jobs, the tool registry with its launch codes, sessions and action authority,
+and opening folders. The bundled hosts render bounded, redacted views and call
+those guarded HTTP routes. They receive no secret value, generic
+configuration writer, credential reader, App, runtime or core service handle
+through `vosu-surface`. Management data reaches a host or a page only through
+these channels:
+
+1. **Core JSON routes** on the dashboard listener, called by the browser
+   ([inventory](implementation-plan.md#route-method-listener-and-provider-inventory)).
+2. **Page context.** In an HTML `ResponseBody::Bytes` from a `vosu.dashboard`
+   dashboard-role `GET` route, core replaces the first `<!--vosu-context-->`
+   marker with the inert JSON script carrying `overlayOrigin`, `csrf` and
+   `rollbackOrigin`. No provider receives the CSRF secret.
+3. **Presentation views.** `ToolHostView` holds a generation, the dashboard
+   origin (or `null` when the dashboard is off) and, per installed tool, its
+   id, name, version, servable flag, ui entry, declared `icon`/`banner`
+   relative paths, effective non-password settings values and a read-only
+   `RootLease` for its package directory. `OverlayRootView`
+   holds a generation and a read-only `RootLease` for the effective overlay
+   root. Neither holds a pathname, `PathBuf`, OS handle, session, code,
+   credential or `vosu-sys` type. A newer generation replaces the older view
+   atomically; leases from an older generation stop opening new files.
+
+A bundled host that needs configuration uses the ordinary ABI settings
+service (§6.9). The one host storage location is A7.1-OR (approved
+2026-11-25): `vosu.overlayhost` receives its overlay root as its
+`static_folder_path` setting, which core seeds from `STATIC_FOLDER_PATH` until
+M8 migrates the key; it is not part of bridge B2. The overlay host writes
+under that root only through `vosu-net`'s hardened primitives
+(`extract_zip_atomic` with its path, symlink, count and size checks, and the
+atomic publish/replace helpers), after validating every relative name with
+the SDK's shared path rules. It makes no ad-hoc `std::fs` write; a missing
+primitive is added to `vosu-net`. Its files are replaced in the same
+directory and atomically, and readers use the matching retrying read
+(`AGENTS.md`). Static serving goes through the read-only `RootLease`; a write
+never goes through a lease. None of this is a new ABI opcode. Moving
+presentation keeps the same exact methods, listener, provenance/CSRF and
+write-only credential semantics.
 
 `vosu-surface` grants none of: `ProcessMemory` access outside a plugin's own matched session (a `vosu-surface` plugin still reads memory only through `VOSU_OP_READ_PLAN_SUBMIT` like any other plugin), configuration writes, or credentials — a bundled plugin that needs one of these uses the ordinary ABI services, exactly as any other plugin does. M4a deletes the interim typed snapshot/control bridge and the `vosu-osu → vosu-surface` edge: the game plugin publishes through the ABI, and the three ordinary adapters read through their own surface grants. No global snapshot hook, phase task or root control input remains. Host-only operational diagnostics and confined display-path metadata are not plugin authority and are not exposed through surface. A future external HTTP opcode remains possible as an additive minor ABI revision, not a breaking one, but none is defined by this freeze.
 
