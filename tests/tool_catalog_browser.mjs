@@ -21,6 +21,19 @@ const passed = (name) => { cases.push(name); console.log(name); };
 const sources = (page) => page.evaluate(() => fetch('/api/catalog/sources').then((r) => r.json()));
 const record = async (page, source) => (await sources(page)).sources.find((entry) => entry.source === source);
 
+async function changeSource(page, source, operation, field, expected, click) {
+  // Observe the production write, not a GET issued while its transaction
+  // still holds the source store. The write returns the committed view.
+  const endpoint = `${DASHBOARD}/api/catalog/sources/${encodeURIComponent(source)}/${operation}`;
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.url() === endpoint && r.request().method() === 'POST'),
+    click(),
+  ]);
+  check(response.status() === 200, `${operation}: expected HTTP 200, got ${response.status()}`);
+  const saved = (await response.json()).sources?.find((entry) => entry.source === source);
+  check(saved?.[field] === expected, `${operation}: expected ${field}=${expected} in the committed view`);
+}
+
 async function themed(theme) {
   const context = await browser.newContext({
     viewport: { width: 1440, height: 1100 }, colorScheme: theme,
@@ -76,10 +89,9 @@ try {
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   check(!(await record(page, first)).trusted && !await toggle.isChecked(), 'cancelled warning granted trust');
   dialog = await grantWarning(page, toggle);
-  await dialog.getByRole('button', { name: 'Trust source', exact: true }).click();
-  await page.waitForFunction(async (source) => (await (await fetch('/api/catalog/sources')).json()).sources.find((s) => s.source === source).trusted, first);
-  await toggle.click(); // untrust: no warning
-  await page.waitForFunction(async (source) => !(await (await fetch('/api/catalog/sources')).json()).sources.find((s) => s.source === source).trusted, first);
+  await changeSource(page, first, 'trust', 'trusted', true,
+    () => dialog.getByRole('button', { name: 'Trust source', exact: true }).click());
+  await changeSource(page, first, 'trust', 'trusted', false, () => toggle.click()); // no warning
   check(await page.getByRole('dialog', { name: 'Trust this catalog source?' }).count() === 0, 'untrust showed the grant warning');
   dialog = await grantWarning(page, toggle); // shown again: nothing remembered
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -100,10 +112,10 @@ try {
     check(!html.includes(secret) && !storage.includes(secret), 'credential readable in the page or browser storage');
   }
   check((await record(page, first)).has_credential, 'credential not saved');
-  await row.getByRole('switch', { name: `Allow private network for ${first}`, exact: true }).click();
-  await page.waitForFunction(async (source) => (await (await fetch('/api/catalog/sources')).json()).sources.find((s) => s.source === source).private_network, first);
+  const privateNetwork = row.getByRole('switch', { name: `Allow private network for ${first}`, exact: true });
+  await changeSource(page, first, 'private-network', 'private_network', true, () => privateNetwork.click());
   await page.locator('#catalog-sources').screenshot({ path: `${evidence}/sources-dark.png` });
-  await row.getByRole('switch', { name: `Allow private network for ${first}`, exact: true }).click();
+  await changeSource(page, first, 'private-network', 'private_network', false, () => privateNetwork.click());
   await row.getByRole('button', { name: `Credential for ${first}`, exact: true }).click();
   await page.getByRole('dialog', { name: `Credential for ${first}` }).getByRole('button', { name: 'Delete credential' }).click();
   await row.getByText('No credential', { exact: true }).waitFor();
@@ -133,8 +145,8 @@ try {
   // 5. Trust the source (warning again), then the in-process plugin loads.
   ({ row, toggle } = await trustToggle(page, first));
   dialog = await grantWarning(page, toggle);
-  await dialog.getByRole('button', { name: 'Trust source', exact: true }).click();
-  await page.waitForFunction(async (source) => (await (await fetch('/api/catalog/sources')).json()).sources.find((s) => s.source === source).trusted, first);
+  await changeSource(page, first, 'trust', 'trusted', true,
+    () => dialog.getByRole('button', { name: 'Trust source', exact: true }).click());
   await page.goto(`${DASHBOARD}/tools`);
   dialog = await planDialog(page, echo.getByRole('button', { name: `Install acme.echo from ${first}` }), null);
   check((await dialog.textContent()).includes('Trusted source'), 'trusted plan not labelled');
@@ -218,7 +230,7 @@ try {
   // 9. Untrust while acme.echo runs in-process: revocation pending restart.
   // The UI must say it is still running, never that it stopped.
   ({ row, toggle } = await trustToggle(page, first));
-  await toggle.click();
+  await changeSource(page, first, 'trust', 'trusted', false, () => toggle.click());
   const toast = page.locator('#toast .toast__message');
   await page.waitForFunction(() => document.querySelector('#toast .toast__message')?.textContent.includes('restart vosu'));
   const untrusted = await toast.textContent();
