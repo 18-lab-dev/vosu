@@ -113,6 +113,8 @@ impl Adapters {
                 io::Error::other(format!("adapter registration failed: {error:?}"))
             })?);
         }
+        // The dashboard host's page shells and assets (M7 D0).
+        leases.push(super::dashboard::mount(host)?);
         *self.routes.lock().unwrap() = leases;
         Ok(())
     }

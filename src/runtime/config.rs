@@ -299,6 +299,44 @@ impl ConfigUpdateService for RuntimeConfig {
             Ok(())
         })
     }
+
+    fn view(&self) -> serde_json::Value {
+        settings_view(
+            &self.config.current(),
+            vosu_core::desktop::externally_managed(),
+        )
+    }
+}
+
+/// `SettingsView` (A7.1): exactly the 17 keys the Settings page renders, by
+/// their configuration names. `ENABLE_DASHBOARD` is never included: nothing
+/// in the dashboard reads or changes it (A7.3).
+pub(super) fn settings_view(
+    config: &Config,
+    updates_externally_managed: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "values": {
+            "ENABLE_AUTOUPDATE": config.enable_auto_update,
+            "OPEN_DASHBOARD_ON_STARTUP": config.open_dashboard_on_startup,
+            "START_AT_LOGIN": config.start_at_login,
+            "DEBUG_LOG": config.debug_log,
+            "CALCULATE_PP": config.calculate_pp,
+            "READ_MANIA_SCROLL_SPEED": config.read_mania_scroll_speed,
+            "POLL_RATE": config.poll_rate,
+            "PRECISE_DATA_POLL_RATE": config.precise_data_poll_rate,
+            "API_V1_SUBSCRIPTION_DEBOUNCE": config.api_v1_subscription_debounce,
+            "SHOW_MP_COMMANDS": config.show_mp_commands,
+            "SERVER_IP": config.server_ip,
+            "SERVER_PORT": config.server_port,
+            "DASHBOARD_IP": config.dashboard_ip,
+            "DASHBOARD_PORT": config.dashboard_port,
+            "ALLOWED_IPS": config.allowed_ips,
+            "MAX_PACKAGE_MIB": config.max_package_mib,
+            "STATIC_FOLDER_PATH": config.static_folder_path,
+        },
+        "updates_externally_managed": updates_externally_managed,
+    })
 }
 
 fn restore_network(config: &mut Config, previous: &Config) {
@@ -357,6 +395,31 @@ pub(super) fn apply_config_values(
     string!("ALLOWED_IPS", allowed_ips);
 }
 
+/// The update the dashboard advertises. A major release is installed only
+/// after the dashboard's explicit confirmation, so the page renders it
+/// differently.
+#[derive(Clone)]
+pub(super) enum UpdateNotice {
+    Minor(String),
+    Major(vosu_core::updater::MajorRelease),
+}
+
+impl UpdateNotice {
+    /// `DashboardStatus.update`: `{"version","major","release_url"}`.
+    pub(super) fn view(&self) -> serde_json::Value {
+        match self {
+            Self::Minor(version) => {
+                serde_json::json!({"version": version, "major": false, "release_url": null})
+            }
+            Self::Major(release) => serde_json::json!({
+                "version": release.version.to_string(),
+                "major": true,
+                "release_url": release.release_url,
+            }),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct RuntimeReportInput {
     pub(super) config: Arc<ConfigStore>,
@@ -364,6 +427,7 @@ pub(super) struct RuntimeReportInput {
     pub(super) files: vosu_adapter_upstream::files::Provider,
     pub(super) counters: Arc<ReloadableCounterService>,
     pub(super) logs: PathBuf,
+    pub(super) update: Option<UpdateNotice>,
 }
 
 impl ReportInputProvider for RuntimeReportInput {
@@ -384,7 +448,11 @@ impl ReportInputProvider for RuntimeReportInput {
                 })
             })
             .collect();
-        serde_json::json!({ "instances": instances, "available": true })
+        serde_json::json!({
+            "instances": instances,
+            "available": true,
+            "update": self.update.as_ref().map(UpdateNotice::view),
+        })
     }
     fn capture(&self) -> Result<ReportInput, String> {
         let instances = self

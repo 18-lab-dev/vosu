@@ -811,7 +811,7 @@ async fn dashboard_html_has_inert_context_csp_and_never_allows_framing() {
             Box::pin(async {
                 Response::builder()
                     .header(header::CONTENT_TYPE, "text/html")
-                    .body(Body::from("<html><head></head><body></body></html>"))
+                    .body(Body::from("<html><head><!--vosu-context--></head><body><!--vosu-context--></body></html>"))
                     .unwrap()
             })
         }
@@ -845,7 +845,30 @@ async fn dashboard_html_has_inert_context_csp_and_never_allows_framing() {
         assert!(html.contains("type=\"application/json\""));
         assert!(!html.contains("<script>"));
         assert!(!html.contains("window.VOSU_CSRF"));
+        // Only the first marker is replaced (A7.1).
+        assert_eq!(html.matches("type=\"application/json\"").count(), 1);
+        assert!(html.contains("<body><!--vosu-context--></body>"));
     }
+    // A shell without the marker gets no context at all.
+    struct Plain;
+    impl RouteDelegate for Plain {
+        fn handle(&self, _: Endpoint, _: Request, _: Bytes) -> ProviderFuture<'_, Response> {
+            Box::pin(async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .body(Body::from("<html><head></head><body></body></html>"))
+                    .unwrap()
+            })
+        }
+    }
+    let (mut providers, _) = split_providers(true);
+    providers.delegate = Arc::new(Plain);
+    let response = bounded!(dispatch(
+        State(providers),
+        make_request(Method::GET, "/", Body::empty()),
+    ));
+    let html = String::from_utf8(bounded!(body(response)).to_vec()).unwrap();
+    assert_eq!(html, "<html><head></head><body></body></html>");
 }
 
 #[tokio::test]

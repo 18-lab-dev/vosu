@@ -6,7 +6,8 @@
 //! guarantee a compile-time list does not give more simply — forgetting an
 //! entry here is a visible, reviewed omission, not a silent one.
 //!
-//! Production ships the game provider followed by three required projections.
+//! Production ships the game provider followed by three required projections
+//! and the dashboard host (registered even when `ENABLE_DASHBOARD` is off).
 
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
@@ -40,6 +41,13 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         namespace_schemas: &[],
         action_schemas: &[],
         vtable: vosu_adapter_streamcompanion::vosu_plugin_vtable,
+    },
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_dashboard::MANIFEST,
+        settings_schema: None,
+        namespace_schemas: &[],
+        action_schemas: &[],
+        vtable: vosu_dashboard::vosu_plugin_vtable,
     },
     #[cfg(feature = "test-harness")]
     vosu_core::plugin::BundledPlugin {

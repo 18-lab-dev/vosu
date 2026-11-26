@@ -252,12 +252,10 @@ impl ProductionRuntime {
         let services = ProductionServices::with_native_report_probe(
             PageService,
             Arc::new(RuntimePages {
-                pages: PageService,
                 counters: Arc::clone(&counters),
                 catalog: CatalogService::production(&current_version().to_string()),
                 config: Arc::clone(&self.config),
                 shutdown: self.shutdown_token.clone(),
-                update: self.update_notice.clone(),
             }),
             Arc::clone(&counters),
             beatmap.clone(),
@@ -276,6 +274,7 @@ impl ProductionRuntime {
                 counters: Arc::clone(&counters),
                 files: adapters.files.clone(),
                 logs: vosu_core::logging::logs_dir(&self.paths),
+                update: self.update_notice.clone(),
             }),
             Arc::new(RuntimeUpdater::production(
                 program,

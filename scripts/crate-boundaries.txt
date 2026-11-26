@@ -112,6 +112,12 @@ vosu -> vosu-adapter-support
 vosu -> vosu-adapter-upstream
 vosu -> vosu-adapter-gosumemory
 vosu -> vosu-adapter-streamcompanion
+# M7 D0 (A7.1): the dashboard host depends only on the surface, the SDK and
+# bundled registration; the root's BUNDLED array is the only code naming it.
+vosu -> vosu-dashboard
+vosu-dashboard -> vosu-plugin-api
+vosu-dashboard -> vosu-plugin-internal
+vosu-dashboard -> vosu-surface
 
 vosu-adapter-gosumemory -> vosu-adapter-support
 vosu-adapter-gosumemory -> vosu-osu-model

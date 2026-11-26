@@ -2,6 +2,7 @@ import { createSettingsEditor, createActionDialog, createOverflow, showModal } f
 import { mountCatalogSources, mountCatalogOverlays, mountCatalogStatus } from './dashboard-catalog.js';
 import { createAppUpdater } from './dashboard-update.js';
 import { mountDashboardStatus } from './dashboard-status.js';
+import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashboard-pages.js';
 
 (() => {
   'use strict';
@@ -350,7 +351,7 @@ import { mountDashboardStatus } from './dashboard-status.js';
     return Array.from(results?.querySelectorAll(':scope > .counter-card[data-overlay-id]') ?? []);
   }
 
-  // Same markup as the server's empty state (render.rs INSTALLED_EMPTY_STATE).
+  // Same markup as the overlay host's empty state (INSTALLED_EMPTY_STATE).
   function createInstalledEmptyState() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
@@ -1234,10 +1235,6 @@ import { mountDashboardStatus } from './dashboard-status.js';
       (document.querySelector('.page-head') ?? banner.parentElement).append(about);
       show(storageGet(key) !== '1');
     }
-    // "Later" hides the update notice for this version only; the status
-    // strip keeps a way back to it.
-    const notice = document.querySelector('#update-notice');
-    if (notice && !notice.hidden && storageGet(UPDATE_DISMISSED_KEY) === notice.dataset.version) notice.hidden = true;
     const allowlist = document.querySelector('[data-id="ALLOWED_IPS"]');
     const warning = document.querySelector('#allowlist-warning');
     function updateWarning() {
@@ -2020,31 +2017,39 @@ import { mountDashboardStatus } from './dashboard-status.js';
   }
 
   initializeCounts();
-  initializePins({ sanitize: pageKey() === 'installed' && !window.location.search });
-  if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
-  observePreviews();
-  initializeRuntimeSettings();
-  initializeApiKeys();
-  if (pageKey() === 'settings' && !requestedOverlay && !requestedTool) {
-    mountCatalogSources({ root: document.querySelector('#runtime-settings'), requestJson, notify, errorText, setBusy });
-  }
-  initializeSettingsIndex();
-  initializePresentation();
-  initializePinDrag();
-  mountDashboardStatus({ requestJson, overlayOrigin: context.overlayOrigin, installedCards });
+  mountDashboardStatus({
+    requestJson, overlayOrigin: context.overlayOrigin, installedCards,
+    onStatus: (status) => applyUpdateNotice(status.update, storageGet(UPDATE_DISMISSED_KEY)),
+  });
   refreshToolCount(); mountCatalogStatus({ requestJson });
-  if ((pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay) {
-    state.roving = rovingGrid(results, '.counter-card');
-  }
-  refreshCounterUpdates();
-
-  if (pageKey() === 'available') {
-    state.placeSourceOverlays = mountCatalogOverlays({
-      root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay,
-      setCount: (value) => setCount('available', value),
-      initialTokens: queryTokens(searchInput?.value ?? ''),
-    });
-  }
+  const listed = (pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay;
+  // The shell carries no list or settings values: they arrive from the
+  // overlay host's search fragment and core's SettingsView first.
+  const content = listed
+    ? loadOverlayList({ results, source: pageKey(), csrf, overlayOrigin: context.overlayOrigin, emptyState: createInstalledEmptyState })
+      .then((count) => { if (count !== null) setCount(pageKey(), count); state.originalResults = results?.innerHTML ?? ''; })
+    : loadRuntimeSettings({ form: pageKey() === 'settings' ? document.querySelector('#runtime-settings') : null, requestJson, errorText });
+  content.then(() => {
+    initializePins({ sanitize: pageKey() === 'installed' && !window.location.search });
+    if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
+    observePreviews();
+    initializeRuntimeSettings();
+    initializeApiKeys();
+    const runtime = document.querySelector('#runtime-settings');
+    if (runtime && !requestedOverlay && !requestedTool) mountCatalogSources({ root: runtime, requestJson, notify, errorText, setBusy });
+    initializeSettingsIndex();
+    initializePresentation();
+    initializePinDrag();
+    if (listed) state.roving = rovingGrid(results, '.counter-card');
+    refreshCounterUpdates();
+    if (pageKey() === 'available') {
+      state.placeSourceOverlays = mountCatalogOverlays({
+        root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay,
+        setCount: (value) => setCount('available', value),
+        initialTokens: queryTokens(searchInput?.value ?? ''),
+      });
+    }
+  });
 
   if (requestedOverlay) {
     loadCounterSettings(requestedOverlay, { inline: true });

@@ -27,6 +27,9 @@ mod responses;
 use responses::*;
 
 pub const MAX_POST_BODY: usize = 1024 * 1024;
+/// Core replaces the first occurrence in a dashboard page shell with the
+/// page-context script (A7.1, `docs/v2/plugin-abi.md` §7.5).
+pub const PAGE_CONTEXT_MARKER: &str = "<!--vosu-context-->";
 #[derive(Clone, Copy)]
 pub(crate) struct KeyProtocol;
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -58,6 +61,8 @@ pub enum Endpoint {
     CounterSettings,
     ApiKeys,
     SettingsSave,
+    /// Dashboard-only `GET /api/settings` (`SettingsView`, A7.1).
+    SettingsView,
     RunUpdates,
     GenerateReport,
     BackgroundImage,
@@ -501,6 +506,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             && matches!(
                 endpoint,
                 Endpoint::DashboardStatus
+                    | Endpoint::SettingsView
                     | Endpoint::CounterDetails
                     | Endpoint::CounterNames
                     | Endpoint::CounterUpdates
@@ -675,6 +681,14 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     if key_protocol {
         request.extensions_mut().insert(KeyProtocol);
     }
+    if let Some((_, dashboard)) = providers.authorization.origins() {
+        request.extensions_mut().insert(if dashboard {
+            vosu_surface::listener::ListenerRole::Dashboard
+        } else {
+            vosu_surface::listener::ListenerRole::Overlay
+        });
+    }
+    // Core-owned page context for the dashboard host's page shells (A7.1).
     let page_script = providers
         .authorization
         .origins()
@@ -687,10 +701,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             .then(|| origins.page_context(request.headers(), local_ip))
         });
     if let Some((origins, true)) = providers.authorization.origins()
-        && matches!(
-            endpoint,
-            Endpoint::Root | Endpoint::Available | Endpoint::CounterSearch
-        )
+        && endpoint == Endpoint::CounterSearch
     {
         let origin = origins.safe_origin(false, request.headers(), local_ip);
         if let Ok(host) = HeaderValue::from_str(origin.trim_start_matches("http://")) {
@@ -776,11 +787,10 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     header::X_CONTENT_TYPE_OPTIONS,
                     HeaderValue::from_static("nosniff"),
                 );
-                let html = String::from_utf8_lossy(&bytes).replacen(
-                    "<head>",
-                    &format!("<head>{script}"),
-                    1,
-                );
+                // Only the first marker, and only when the shell carries one:
+                // the provider never sees the CSRF secret (A7.1).
+                let html =
+                    String::from_utf8_lossy(&bytes).replacen(PAGE_CONTEXT_MARKER, &script, 1);
                 Response::from_parts(parts, Body::from(html))
             }
             Err(_) => not_found(),
@@ -833,6 +843,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/api/keys" if get || post => Some(ApiKeys),
         "/api/counters/profiles" if get || post => Some(CounterSettings),
         "/api/settingsSave" if post => Some(SettingsSave),
+        "/api/settings" if get => Some(SettingsView),
         "/api/runUpdates" if post => Some(RunUpdates),
         "/api/generateReport" if post => Some(GenerateReport),
         "/backgroundImage" if get => Some(BackgroundImage),

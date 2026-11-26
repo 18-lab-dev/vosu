@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-internal", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-dashboard", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-internal", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -82,6 +82,7 @@ read-plan-profile = ["vosu-plugin-internal/read-plan-profile"]
 vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
 vosu-adapter-gosumemory = { path = "crates/vosu-adapter-gosumemory" }
 vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion" }
+vosu-dashboard = { path = "crates/vosu-dashboard" }
 arc-swap = "1.8.2"
 base64 = { version = "=0.22.1", optional = true }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }

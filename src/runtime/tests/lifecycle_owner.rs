@@ -174,17 +174,14 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &mut plugin_management::Roster::default(),
             )
             .unwrap(),
-            5
+            dev_plugins::REQUIRED.len() as u64 + 1
         );
         assert!(owner.plugins.has_enabled_matchers());
         owner.shutdown().await.unwrap();
-        assert!(
-            console
-                .0
-                .lock()
-                .unwrap()
-                .contains("optional bundled plugin at index 4 failed")
-        );
+        assert!(console.0.lock().unwrap().contains(&format!(
+            "optional bundled plugin at index {} failed",
+            dev_plugins::REQUIRED.len()
+        )));
     })
     .await
     .unwrap();

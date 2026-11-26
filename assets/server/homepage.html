@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!--vosu-context-->
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
@@ -38,12 +39,12 @@
         <a class="nav-link" data-page="installed" href="/"{{CURRENT_INSTALLED}}>
           <span class="nav-index" aria-hidden="true">01</span>
           <span class="nav-label">Overlays</span>
-          <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
+          <span class="nav-count" data-count="installed"></span>
         </a>
         <a class="nav-link" data-page="available" href="/available"{{CURRENT_AVAILABLE}}>
           <span class="nav-index" aria-hidden="true">02</span>
           <span class="nav-label">Available</span>
-          <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
+          <span class="nav-count" data-count="available"></span>
         </a>
         <a class="nav-link" data-page="tools" href="/tools"{{CURRENT_TOOLS}}>
           <span class="nav-index" aria-hidden="true">03</span>
@@ -82,15 +83,15 @@
       <p class="status-cell status-cell--version">
         <span class="status-key status-key--name">vosu</span>
         <span class="status-value">{{CURRENT_VERSION}}</span>
-        <button class="status-update" type="button" data-action="show-update" {{UPDATE_HIDDEN}}>{{NEW_VERSION}} available</button>
+        <button class="status-update" type="button" data-action="show-update" hidden><span data-role="new-version"></span> available</button>
       </p>
     </div>
   </header>
 
-  <div id="update-notice" class="update-notice" role="region" aria-label="vosu update" data-version="{{NEW_VERSION}}" data-major="{{UPDATE_IS_MAJOR}}" {{UPDATE_HIDDEN}}>
-    <p class="update-notice__copy" {{MINOR_NOTICE_HIDDEN}}><strong>vosu {{NEW_VERSION}}</strong> is available. This dashboard is running {{CURRENT_VERSION}}.</p>
-    <div class="update-notice__major" {{MAJOR_NOTICE_HIDDEN}}>
-      <p class="update-notice__copy"><strong>vosu {{NEW_VERSION}} is available &mdash; this is a major update.</strong> <a href="{{RELEASE_URL}}" target="_blank" rel="noopener noreferrer">Read what changes</a> before updating. This dashboard is running {{CURRENT_VERSION}}.</p>
+  <div id="update-notice" class="update-notice" role="region" aria-label="vosu update" data-version="" data-major="false" hidden>
+    <p class="update-notice__copy"><strong>vosu <span data-role="new-version"></span></strong> is available. This dashboard is running {{CURRENT_VERSION}}.</p>
+    <div class="update-notice__major" hidden>
+      <p class="update-notice__copy"><strong>vosu <span data-role="new-version"></span> is available &mdash; this is a major update.</strong> <a data-role="release-url" target="_blank" rel="noopener noreferrer">Read what changes</a> before updating. This dashboard is running {{CURRENT_VERSION}}.</p>
       <label class="update-notice__consent"><input type="checkbox" data-role="major-update-consent"> I've read the release notes and want to install this major update</label>
     </div>
     <div class="update-notice__actions">

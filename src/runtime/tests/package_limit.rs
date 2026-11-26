@@ -1,18 +1,3 @@
-#[test]
-fn package_limit_settings_control_matches_integer_disk_contract() {
-    let settings = render_runtime_settings(&Config::default());
-    assert!(settings.contains(
-        r#"data-id="MAX_PACKAGE_MIB" type="number" value="512" min="1" max="4096" step="1" required"#
-    ));
-    let settings = render_runtime_settings(&Config {
-        max_package_mib: 1536.0,
-        ..Config::default()
-    });
-    assert!(settings.contains(
-        r#"data-id="MAX_PACKAGE_MIB" type="number" value="1536" min="1" max="4096" step="1" required"#
-    ));
-}
-
 #[tokio::test]
 async fn package_limit_save_is_atomic_bounded_and_persisted_for_resolver_composition() {
     let root = tempfile::tempdir().unwrap();
