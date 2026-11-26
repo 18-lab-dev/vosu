@@ -38,9 +38,11 @@ async function rendered(page, selector, name) {
 
 try {
   for (const theme of ['dark', 'light']) {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      storageState: { cookies: [], origins: [{ origin: DASHBOARD, localStorage: [{ name: 'vosu.theme.v1', value: theme }] }] },
+    });
     watchBrowser(context, diagnostics);
-    await context.addInitScript((value) => localStorage.setItem('vosu.theme.v1', value), theme);
     const page = await context.newPage();
     page.on('pageerror', (error) => failures.push(`page error: ${error.message}`));
     await page.goto(`${DASHBOARD}/tools`, { waitUntil: 'networkidle' });

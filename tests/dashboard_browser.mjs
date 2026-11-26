@@ -42,9 +42,11 @@ const browser = await chromium.launch({
 });
 
 async function open(path, { theme = 'dark', width = 1280, height = 900, reducedMotion = 'no-preference' } = {}) {
-  const context = await browser.newContext({ viewport: { width, height }, reducedMotion });
+  const context = await browser.newContext({
+    viewport: { width, height }, reducedMotion,
+    storageState: { cookies: [], origins: [{ origin: DASHBOARD, localStorage: [{ name: 'vosu.theme.v1', value: theme }] }] },
+  });
   watchBrowser(context, diagnostics);
-  await context.addInitScript((value) => { try { localStorage.setItem('vosu.theme.v1', value); } catch (_) { /* opaque */ } }, theme);
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(`${path}: page error ${error.message}`));
   // The 2.0 Tools page never calls a deleted service-era tool route.

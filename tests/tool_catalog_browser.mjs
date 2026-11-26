@@ -22,9 +22,11 @@ const sources = (page) => page.evaluate(() => fetch('/api/catalog/sources').then
 const record = async (page, source) => (await sources(page)).sources.find((entry) => entry.source === source);
 
 async function themed(theme) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, colorScheme: theme });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1100 }, colorScheme: theme,
+    storageState: { cookies: [], origins: [{ origin: DASHBOARD, localStorage: [{ name: 'vosu.theme.v1', value: theme }] }] },
+  });
   watchBrowser(context, diagnostics);
-  await context.addInitScript((value) => localStorage.setItem('vosu.theme.v1', value), theme);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
