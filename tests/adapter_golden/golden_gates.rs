@@ -96,6 +96,58 @@ fn golden_gates_accept_the_untouched_synthetic_copy() {
 }
 
 #[test]
+fn golden_captured_candidate_from_python_loads_after_a_volatile_sandwich() {
+    let dir = TempDir::new().unwrap();
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let output = std::process::Command::new(python)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args([
+            "-I",
+            "-c",
+            r#"
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, "tools/live-parity")
+from parity_golden import golden
+from test_live_parity_golden import capture, case, request, response, volatile_state_case
+
+root = Path(sys.argv[1])
+cases = [volatile_state_case()]
+for case_id, target in (
+    ("ws.get-without-upgrade", "/websocket/v2"),
+    ("files.get-beatmap-file", "/files/beatmap/file"),
+    ("path-security.encoded-parent-files-beatmap", "/files/beatmap/..%2Fsentinel.osu"),
+    ("calculation.no-query", "/api/calculate/pp"),
+    ("origin-peer.http.none", "/json/v2"),
+):
+    frames = [] if case_id.startswith("ws.") else None
+    rejected = response(status="HTTP/1.1 404 Not Found", frames=frames)
+    cases.append(case(case_id, request(target=target), (rejected, rejected)))
+value = capture(cases)
+value["attestation"]["vosu"]["sha256"] = "c" * 64
+capture_file = root / "capture.json"
+capture_file.write_text(json.dumps(value), encoding="utf-8")
+golden([str(capture_file)], str(root / "candidate"), review_receipt="test-only")
+"#,
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let fixture = load(&dir.path().join("candidate"), Provenance::Captured).unwrap();
+    assert_eq!(fixture.platforms[0].name, "windows-lazer");
+    let cases = &fixture.platforms[0].cases;
+    assert_eq!(cases.len(), fixture::FAMILIES.len());
+    assert!(cases.iter().any(|case| case.id == "state-http.get-json-v2"));
+}
+
+#[test]
 fn golden_gates_refuse_tampered_or_incomplete_trees() {
     let v2 = "state-http.get-json-v2";
     refused(
