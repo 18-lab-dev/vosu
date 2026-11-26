@@ -25,7 +25,7 @@ async fn legacy_skin_report_is_removed_without_metadata_or_upgrade() {
     let root = tempfile::tempdir().unwrap();
     let delegate = skin_index_delegate(root.path(), BeatmapFiles::default());
     let request = Request::builder().uri("/files/skin/").header(header::UPGRADE, "websocket").body(Body::empty()).unwrap();
-    let response = bounded!(delegate.dispatch(Endpoint::Removed(super::super::routes::RemovedFeature::LegacySkinIndex), request, Bytes::new()));
+    let response = bounded!(delegate.dispatch(Endpoint::Removed(vosu_core::removed_routes::RemovedFeature::LegacySkinIndex), request, Bytes::new()));
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(!response.headers().contains_key(header::UPGRADE));
     assert_eq!(bounded!(axum::body::to_bytes(response.into_body(), 1024)).unwrap(), "Not Found");
@@ -51,7 +51,7 @@ async fn removed_routes_attribute_only_installed_explicit_identity_or_local_prov
         if let Some(value) = referer { request = request.header(header::REFERER, value); }
         if let Some(value) = origin { request = request.header(header::ORIGIN, value); }
         let before: u64 = delegate.removed_notices().iter().filter(|notice| notice.overlay.as_deref() == expected).map(|notice| notice.attempts).sum();
-        let response = bounded!(delegate.dispatch(Endpoint::Removed(super::super::routes::RemovedFeature::SelectedV2Feed), request.body(Body::empty()).unwrap(), Bytes::new()));
+        let response = bounded!(delegate.dispatch(Endpoint::Removed(vosu_core::removed_routes::RemovedFeature::SelectedV2Feed), request.body(Body::empty()).unwrap(), Bytes::new()));
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let after: u64 = delegate.removed_notices().iter().filter(|notice| notice.overlay.as_deref() == expected).map(|notice| notice.attempts).sum();
         assert_eq!(after, before + 1, "{uri}");

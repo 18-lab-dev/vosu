@@ -2,6 +2,7 @@ import { createSettingsEditor, createActionDialog, createOverflow, showModal } f
 import { mountCatalogSources, mountCatalogOverlays, mountCatalogStatus } from './dashboard-catalog.js';
 import { createAppUpdater } from './dashboard-update.js';
 import { mountDashboardStatus } from './dashboard-status.js';
+import { mountRemovedRouteNotices } from './dashboard-notices.js';
 import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashboard-pages.js';
 
 (() => {
@@ -2017,9 +2018,13 @@ import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashb
   }
 
   initializeCounts();
+  const renderRemovedRoutes = mountRemovedRouteNotices({ requestJson, notify, errorText, currentTheme, absoluteHttpUrl });
   mountDashboardStatus({
     requestJson, overlayOrigin: context.overlayOrigin, installedCards,
-    onStatus: (status) => applyUpdateNotice(status.update, storageGet(UPDATE_DISMISSED_KEY)),
+    onStatus: (status) => {
+      applyUpdateNotice(status.update, storageGet(UPDATE_DISMISSED_KEY));
+      renderRemovedRoutes(status.removed_routes);
+    },
   });
   refreshToolCount(); mountCatalogStatus({ requestJson });
   const listed = (pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay;

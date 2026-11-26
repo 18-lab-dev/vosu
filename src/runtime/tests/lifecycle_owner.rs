@@ -64,6 +64,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             )),
             update_handed_off: AtomicBool::new(false),
             update_notice: None,
+            removed_routes: Arc::default(),
             counters: AsyncMutex::new(None),
             overlay_root: AsyncMutex::new(None),
             settings_storage,

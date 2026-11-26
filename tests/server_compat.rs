@@ -4,6 +4,8 @@
 )]
 #[path = "server_compat/removals.rs"]
 mod removals;
+#[path = "server_compat/removed_notices.rs"]
+mod removed_notices;
 
 #[cfg(feature = "test-harness")]
 #[path = "server_compat/adapter_capture.rs"]

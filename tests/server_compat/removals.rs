@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn removed_routes_are_exact_404_without_upgrade_or_static_fallthrough() {
-    for path in ["/websocket/v2/subscribe", "/files/skin/"] {
+    for path in ["/websocket/v2/subscribe", "/files/skin/", "/api/ingame"] {
         for method in [
             Method::GET,
             Method::HEAD,
@@ -47,6 +47,8 @@ async fn removed_routes_are_exact_404_without_upgrade_or_static_fallthrough() {
         "/websocket/v2/Subscribe",
         "/websocket/v2/subscribe/extra",
         "/files/skin",
+        "/api/ingame/",
+        "/api/Ingame",
     ] {
         let response = bounded!(dispatch(Method::GET, path, None, Body::empty()));
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");

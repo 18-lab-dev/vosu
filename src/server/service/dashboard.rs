@@ -1,51 +1,48 @@
-/// Safe advisory D20 data; no URLs, credentials, or unvalidated names are retained.
-#[derive(Clone, Debug)]
-pub struct RemovedNotice {
-    pub overlay: Option<String>,
-    pub feature: super::routes::RemovedFeature,
-    pub first_seen: std::time::Instant,
-    pub last_seen: std::time::Instant,
-    pub attempts: u64,
+/// Folder → display name (the user's nickname, else the overlay's own) of
+/// every overlay installed now; a failed scan identifies nothing.
+fn installed_overlay_names(counters: &ReloadableCounterService) -> HashMap<String, String> {
+    let Ok(installed) = counters.installed() else { return HashMap::new() };
+    let nicknames = counters.names().snapshot();
+    installed
+        .into_iter()
+        .map(|counter| {
+            let name = nicknames
+                .get(&counter.folder_name)
+                .and_then(|name| name.nickname.clone())
+                .unwrap_or(counter.name);
+            (counter.folder_name, name)
+        })
+        .collect()
 }
 
-#[derive(Clone, Default)]
-struct RemovedNotices(Arc<Mutex<Vec<RemovedNotice>>>);
-
-impl RemovedNotices {
-    const TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
-
-    fn expire(notices: &mut Vec<RemovedNotice>, now: std::time::Instant) {
-        notices.retain(|notice| now.saturating_duration_since(notice.last_seen) < Self::TTL);
-    }
-
-    fn record(&self, overlay: Option<String>, feature: super::routes::RemovedFeature, now: std::time::Instant) {
-        let mut notices = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::expire(&mut notices, now);
-        if let Some(notice) = notices.iter_mut().find(|notice| notice.overlay == overlay && notice.feature == feature) {
-            notice.last_seen = now;
-            notice.attempts = notice.attempts.saturating_add(1);
-            return;
-        }
-        if overlay.is_some() && !notices.iter().any(|notice| notice.overlay == overlay) {
-            let known: std::collections::HashSet<_> = notices.iter().filter_map(|notice| notice.overlay.as_deref()).collect();
-            if known.len() == 128 {
-                let oldest = known.into_iter().min_by_key(|id| notices.iter()
-                    .filter(|notice| notice.overlay.as_deref() == Some(*id))
-                    .map(|notice| notice.last_seen).max()).unwrap().to_owned();
-                notices.retain(|notice| notice.overlay.as_deref() != Some(&oldest));
-            }
-        }
-        notices.push(RemovedNotice { overlay, feature, first_seen: now, last_seen: now, attempts: 1 });
-    }
-
-    fn snapshot(&self, now: std::time::Instant, installed: impl Fn(&str) -> bool) -> Vec<RemovedNotice> {
-        let snapshot = {
-            let mut notices = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-            Self::expire(&mut notices, now);
-            notices.clone()
-        };
-        snapshot.into_iter().filter(|notice| notice.overlay.as_deref().is_none_or(&installed)).collect()
-    }
+/// `DashboardStatus.removed_routes` (A7.4): `{"overlay": null | {"id","name"},
+/// "feature", "attempts", "first_seen_seconds_ago", "last_seen_seconds_ago"}`.
+/// `notices` is already expired and revalidated against `names`; the names
+/// are raw strings the dashboard escapes.
+fn removed_routes_view(
+    notices: &[vosu_core::removed_routes::RemovedNotice],
+    names: &HashMap<String, String>,
+    now: std::time::Instant,
+) -> Value {
+    let ago = |instant: std::time::Instant| now.saturating_duration_since(instant).as_secs();
+    Value::Array(
+        notices
+            .iter()
+            .filter_map(|notice| {
+                let overlay = match &notice.overlay {
+                    None => Value::Null,
+                    Some(id) => json!({ "id": id, "name": names.get(id)? }),
+                };
+                Some(json!({
+                    "overlay": overlay,
+                    "feature": notice.feature.id(),
+                    "attempts": notice.attempts,
+                    "first_seen_seconds_ago": ago(notice.first_seen),
+                    "last_seen_seconds_ago": ago(notice.last_seen),
+                }))
+            })
+            .collect(),
+    )
 }
 
 /// Counts sockets, not people or browser sources. Only explicit overlay identities count.
@@ -110,6 +107,19 @@ fn valid_overlay_component(value: &str) -> bool {
     !value.is_empty() && value != "." && value != ".." && !value.contains(['/', '\\', '\0'])
 }
 
+/// A request from a dashboard card preview: a socket the preview page marked,
+/// or an HTTP request whose Referer is the marked preview page itself.
+fn is_preview_source(request: &Request<Body>) -> bool {
+    is_preview_request(request)
+        || request
+            .headers()
+            .get(header::REFERER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| url::Url::parse(value).ok())
+            .and_then(|url| url.query().map(|query| query.split('&').any(|pair| pair == crate::server::pages::OVERLAY_PREVIEW_QUERY)))
+            .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod dashboard_tests {
     use super::*;
@@ -147,27 +157,33 @@ mod dashboard_tests {
 }
 
 #[cfg(test)]
-mod removed_notice_tests {
+mod removed_routes_view_tests {
     use super::*;
-    use super::super::routes::RemovedFeature::{LegacySkinIndex, SelectedV2Feed};
+    use vosu_core::removed_routes::{RemovedFeature, RemovedRoutes};
 
     #[test]
-    fn bounded_deduplicated_unknown_cannot_evict_known_and_expiry_is_lazy() {
-        let notices = RemovedNotices::default();
-        let now = std::time::Instant::now();
-        for index in 0..129 {
-            notices.record(Some(format!("overlay-{index}")), SelectedV2Feed, now + std::time::Duration::from_secs(index));
-        }
-        for _ in 0..1000 {
-            notices.record(None, SelectedV2Feed, now);
-            notices.record(None, LegacySkinIndex, now);
-        }
-        let snapshot = notices.snapshot(now, |_| true);
-        assert_eq!(snapshot.len(), 130);
-        assert!(!snapshot.iter().any(|notice| notice.overlay.as_deref() == Some("overlay-0")));
-        assert_eq!(snapshot.iter().filter(|notice| notice.overlay.is_none()).count(), 2);
-        assert!(snapshot.iter().filter(|notice| notice.overlay.is_none()).all(|notice| notice.attempts == 1000));
-        assert_eq!(notices.snapshot(now, |_| false).len(), 2);
-        assert!(notices.snapshot(now + RemovedNotices::TTL + std::time::Duration::from_secs(129), |_| true).is_empty());
+    fn view_names_installed_identities_and_never_an_unknown_or_stale_one() {
+        let recorder = RemovedRoutes::default();
+        let start = std::time::Instant::now();
+        recorder.record(Some("<b>x</b>".into()), RemovedFeature::IngamePage, start);
+        recorder.record(Some("gone".into()), RemovedFeature::SelectedV2Feed, start);
+        recorder.record(None, RemovedFeature::IngamePage, start);
+        let now = start + std::time::Duration::from_secs(90);
+        let names = HashMap::from([("<b>x</b>".to_owned(), "<img src=x onerror=alert(1)>".to_owned())]);
+        let notices = recorder.snapshot(now, |id| names.contains_key(id));
+        let view = removed_routes_view(&notices, &names, now);
+        assert_eq!(
+            view,
+            json!([
+                {"overlay": {"id": "<b>x</b>", "name": "<img src=x onerror=alert(1)>"}, "feature": "ingame-page",
+                 "attempts": 1, "first_seen_seconds_ago": 90, "last_seen_seconds_ago": 90},
+                {"overlay": null, "feature": "ingame-page", "attempts": 1,
+                 "first_seen_seconds_ago": 90, "last_seen_seconds_ago": 90},
+            ])
+        );
+        // A name missing from the read's installed set is never shown, even
+        // if the snapshot still held its identity.
+        let all = recorder.snapshot(now, |_| true);
+        assert_eq!(removed_routes_view(&all, &HashMap::new(), now).as_array().unwrap().len(), 1);
     }
 }

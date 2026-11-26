@@ -26,7 +26,8 @@ pub struct ProductionRouteDelegate {
     services: ProductionServices,
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
-    removed: RemovedNotices,
+    /// Core's one D20 recorder, owned by the runtime for the process lifetime.
+    removed: Arc<vosu_core::removed_routes::RemovedRoutes>,
     tools: Option<Arc<dyn ToolRegistryRoutes>>,
     plugins: Option<Arc<dyn PluginManagementRoutes>>,
     catalog: Option<crate::server::catalog_api::CatalogApi>,
@@ -47,7 +48,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, overlay_static: None, opener: Arc::new(super::overlay_folders::SystemOpener), #[cfg(feature = "test-harness")] adapter_capture: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: Arc::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, overlay_static: None, opener: Arc::new(super::overlay_folders::SystemOpener), #[cfg(feature = "test-harness")] adapter_capture: None }
     }
     pub fn with_overlay_static(mut self, serving: Arc<vosu_overlay_host::OverlayStatic>) -> Self {
         self.overlay_static = Some(serving);
@@ -58,11 +59,28 @@ impl ProductionRouteDelegate {
         self.opener = opener;
         self
     }
+    /// Shares the runtime's recorder, so recomposing routes keeps live notices.
+    pub fn with_removed_routes(mut self, removed: Arc<vosu_core::removed_routes::RemovedRoutes>) -> Self {
+        self.removed = removed;
+        self
+    }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
-    pub fn removed_notices(&self) -> Vec<RemovedNotice> {
-        self.removed.snapshot(std::time::Instant::now(), |overlay| {
-            self.services.counters.settings_store().counter_values(overlay).is_ok()
-        })
+    pub fn removed_notices(&self) -> Vec<vosu_core::removed_routes::RemovedNotice> {
+        self.removed_snapshot(std::time::Instant::now()).0
+    }
+    /// The A7.4 read: expiry, then each known identity revalidated against the
+    /// overlays installed now (read once, only when a known notice exists),
+    /// then the bounded snapshot with each identity's display name.
+    fn removed_snapshot(&self, now: std::time::Instant) -> (Vec<vosu_core::removed_routes::RemovedNotice>, HashMap<String, String>) {
+        let installed = std::cell::OnceCell::new();
+        let names = || installed.get_or_init(|| installed_overlay_names(&self.services.counters));
+        let notices = self.removed.snapshot(now, |overlay| names().contains_key(overlay));
+        (notices, installed.into_inner().unwrap_or_default())
+    }
+    fn removed_routes(&self) -> Value {
+        let now = std::time::Instant::now();
+        let (notices, names) = self.removed_snapshot(now);
+        removed_routes_view(&notices, &names, now)
     }
 
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
@@ -103,10 +121,14 @@ impl ProductionRouteDelegate {
     async fn dispatch(&self, endpoint: Endpoint, request: Request<Body>, body: Bytes) -> Response {
         match endpoint {
             Endpoint::Removed(feature) => {
-                let overlay = socket_overlay(&request).filter(|overlay| {
-                    self.services.counters.settings_store().counter_values(overlay).is_ok()
-                });
-                self.removed.record(overlay, feature, std::time::Instant::now());
+                self.removed.admitted(feature);
+                // A7.4: the dashboard's own previews are never recorded.
+                if !is_preview_source(&request) {
+                    let overlay = socket_overlay(&request).filter(|overlay| {
+                        self.services.counters.settings_store().counter_values(overlay).is_ok()
+                    });
+                    self.removed.record(overlay, feature, std::time::Instant::now());
+                }
                 not_found()
             }
             Endpoint::ApiV1 => match &self.api_v1 {
@@ -162,6 +184,7 @@ impl ProductionRouteDelegate {
             Endpoint::DashboardStatus => {
                 let mut status = self.services.report_input.dashboard_status();
                 status["connections"] = json!(self.connections.counts());
+                status["removed_routes"] = self.removed_routes();
                 json_response(StatusCode::OK, status)
             }
             Endpoint::ApiKeys => {

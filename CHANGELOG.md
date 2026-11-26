@@ -26,10 +26,20 @@ All notable user-visible changes to vosu are documented here. Older sections are
   that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
   request gets the ordinary 404 that other removed routes return, as in 1.x
   since the in-game overlay was removed. Use vosulay, installed as the
-  official `vosulay-editor` tool, for in-game overlays. M7's removed-route
-  notice will report `/api/ingame` requests on the dashboard and offer to
-  install vosulay through the normal install plan, and the daemon will log
-  one warning per run.
+  official `vosulay-editor` tool, for in-game overlays. The daemon logs one
+  warning per run on the first `/api/ingame` request.
+- The dashboard shows a notice when an overlay, or an unidentified client,
+  still requests a route 2.0 removed: the selected-field feed
+  `/websocket/v2/subscribe`, the skin folder listing `/files/skin/` or
+  `/api/ingame`. It names an overlay only when vosu can tell which installed
+  overlay sent the request, shows how many requests and how long ago, and
+  links the new [migration guide](docs/v2/migration-from-1x.md#overlays-that-used-removed-apis).
+  The overlay stays enabled. For `/api/ingame` the notice offers to install
+  vosulay through the normal install plan and its approvals, or to launch
+  it when it is installed. Notices are kept in memory for 24 hours after the
+  last request and cleared on restart; dashboard previews are not counted.
+  `GET /api/dashboard/status` gains `removed_routes`, and a removed route on
+  the dashboard listener is an ordinary unknown route that is not recorded.
 - The dashboard can be turned off: set `ENABLE_DASHBOARD = false` in
   `vosu.toml` or start vosu with `VOSU_DASHBOARD=off` (any other value of
   that variable stops startup). Off, vosu binds no dashboard listener, opens

@@ -278,6 +278,12 @@ impl ReloadableCounterService {
         Ok(self.discover_all()?.0)
     }
 
+    /// Readable overlays for a read-only status: unlike [`Self::discover`],
+    /// saved names are never pruned.
+    pub fn installed(&self) -> Result<Vec<Counter>, CounterError> {
+        self.current.load_full().discover()
+    }
+
     /// Readable overlays plus the folders that failed to parse. Names of
     /// broken folders are kept: fixing the file restores the overlay as it was.
     pub fn discover_all(&self) -> Result<(Vec<Counter>, Vec<BrokenOverlay>), CounterError> {
