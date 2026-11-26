@@ -9,10 +9,14 @@
 //! process memory too, without needing `#[cfg(test)]` visibility into
 //! `vosu-core`'s own internals.
 //!
-//! Compiled under `#[cfg(any(test, feature = "test-harness"))]`: always
+//! Compiled under `#[cfg(any(test, feature = "bench-harness"))]`: always
 //! available to `vosu-core`'s own tests, and to any other crate that opts
 //! into `test-harness` (forwarded from the root `test-harness` feature,
-//! guarded by `lib.rs`'s own release `compile_error!`).
+//! guarded by `lib.rs`'s own release `compile_error!`) or `bench-harness`
+//! (the root's release benches only, which drive the real process runtime
+//! against the same fixtures as their in-process cases; production never
+//! enables it). The recording launcher and package writer below stay
+//! `test-harness`-only.
 
 use std::sync::Arc;
 
@@ -20,7 +24,9 @@ use vosu_plugin_api::memory::{ProcessBitness, ProcessMemory};
 
 use super::host::read_plans;
 
+#[cfg(any(test, feature = "test-harness"))]
 mod process;
+#[cfg(any(test, feature = "test-harness"))]
 pub use process::{
     LaunchBehavior, LaunchRecord, RecordedFrame, RecordingEndpoint, RecordingLauncher,
     host_target_triple, write_development_package,

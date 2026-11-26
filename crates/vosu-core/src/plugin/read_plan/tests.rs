@@ -1,6 +1,8 @@
 use super::*;
 
 mod helpers;
+/// Level batching: one native batch per dependency level.
+mod levels;
 mod native;
 mod outstanding;
 mod stages;

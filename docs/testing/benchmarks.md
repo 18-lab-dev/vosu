@@ -182,7 +182,7 @@ M1 PlanMemory's stable 2.65x result and the open CPU finding, and the open
 findings from M2 through M4a.
 
 ```sh
-cargo build --locked --release --example brokered_reads_target
+cargo build --locked --release --example brokered_reads_target --example brokered_reads_plugin
 cargo bench --locked --bench brokered_reads_bench
 cargo bench --locked --bench plan_memory_bench -- 'plan_memory/.*_process$'
 cargo bench --locked --bench memory_reader_bench
@@ -201,9 +201,8 @@ CPUs and the VM, so they are not D17 evidence. The approved bar gates a later
 exclusive run of the production variants. The full method, every table and
 the contention record are in
 [brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result),
-with the accepted method deviations. The production variants
-`production_sync` and `production_async` do not exist yet; they need B0 and
-the E0 launcher.
+with the accepted method deviations. The production variants now exist; see
+[the next section](#m5-p1-production-arm-and-x1-process-runtime-data-exploratory).
 
 The `brokered_reads_bench` runner now runs on Linux and Windows:
 
@@ -262,6 +261,242 @@ Contention moved the absolute Windows numbers by up to 6×: in one busy round
 `section` had a regular-shape p50 of 11.2 µs, most likely (an inference, not
 profiled) because the busy guest avoided waking halted vCPUs.
 That is why only the same-run ratio is the gate.
+
+### M5 P1 production arm and X1 process-runtime data (exploratory)
+
+**No D17 pass is claimed; the official run is still pending.** The first
+production table below is the arm's first exploratory run, at `a5de65cb` plus
+the chunked ring census of the commit after it (`cf17e6fc`); it missed the
+bar. The [broker performance work](#broker-performance-work-exploratory-same-session-ab)
+after it brought the same-session ratios under 2.0 in exploratory runs. All
+of these are runs on the shared Linux host (Ryzen 9 9950X3D, Rust 1.96.1,
+bench profile, default features), pinned
+`taskset -c 0-7,16-23 nice -n 10` while other agents compiled. The first run
+had a load average of 19–23, with `load_other_busy_cpus` at 2.4–6.8 busy
+CPUs during the production sessions. Nothing ran on the Windows VM.
+
+**What runs.** `brokered_reads_bench` gains `production_sync` and
+`production_async` (`benches/support/brokered/production.rs`): this bench
+process is core, a real `PluginHost` with the real process launcher, which
+starts the real `vosu plugin-host` child of the `vosu` executable Cargo built
+for the bench (`CARGO_BIN_EXE_vosu`). The child loads the bench plugin
+(`examples/brokered_reads_plugin.rs`), which submits the frozen plans through
+the SDK (`PlanMemory::read_flat` for `SYNC`, `send_flat` then the dispatched
+result for async), the relay, ring, ingress, broker workers and executor
+against the real target. The only bench seams are `bench-harness` (never
+production): the launcher without an approval record and, for X1, the
+session-memory hook. An ABI stage has one base, so precise's per-key stage
+(18 bases) is 18 ABI stages: 25 ABI stages, same 43 reads, 358 bytes, order,
+response hash and one submission. The diagnostic `executor` variant (not
+D17) runs core's `execute_sync_into` on the same ABI plan in process.
+
+The harness fails on a result hash other than the target's and `direct`'s,
+any response mismatch, a sample that is not one plan frame and one result
+frame (counted from the child's own rings), a plugin-host affinity other
+than core's (its own report and core's read of its pid), a zero plugin-host
+CPU figure, or a lost plugin host. Production code counts no copies or clock
+reads, so those two metrics print `unmeasured`; plugin allocations count the
+plugin library only, not the host relay.
+
+| Shape | `direct` | `shm` | `ring` | `executor` | `production_sync` p50 (p99) | ratio to `shm` | historical bar | `production_async` p50 (p99) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| precise | 7.42 | 11.46 | 14.22 | 17.17 | 30.96 (141.3) | **2.70** | 21.54 | 51.91 (256.5) |
+| regular | 3.55 | 6.64 | 9.42 | 3.53 | 15.01 (73.9) | **2.26** | 13.13 | 23.96 (441.7) |
+
+(p50 in µs.) Per round trip, both production variants carried 4 wire
+frames, 2 of them private control frames (the prototypes carry 2 and 0).
+`production_sync` made about 5 context switches (`ring` 1.96), 3.03
+allocations (all in core) and used 28.7/12.6 µs core and 7.7/7.5 µs
+plugin-host CPU (precise/regular). Cold start, `create_instance` to
+`READY`: 3.3 ms p50, 4.8 ms p99. Attribution, an inference from these
+figures and not a profile: for precise, the 25-stage executor alone costs
+17.2 µs against `direct`'s 7.4 µs (25 native batches instead of 8); for
+regular, the executor costs what `direct` does, so about 11.5 µs is the
+process boundary (relay, ingress, broker-worker hop, control frames and
+wakeups), against 3.1 µs for the prototype `shm`.
+
+**X1 per-capture counts.** `plan_memory_bench` gains
+`plan_memory/{stable_precise,lazer_precise,stable_regular_fields,lazer_regular_fields}_process`
+(`benches/support/plan_process.rs`): the `_plan` cases' fixtures and reader
+calls (`benches/support/plan_process_cases.rs`), with the reader in a real
+plugin host decoding through `vosu_osu::memory::PlanProcessMemory`. Each
+case must decode to its `_plan` case's digest before timing. Counted per
+capture over 16 captures, identical in every capture:
+
+| Capture | Submissions | Stages | Reads | Read bytes | Wire frames | Control frames | Local scans |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| stable precise | 1 | 1 | 2 | 8 | 4 | 2 | 0 |
+| lazer precise | 21 | 26 | 60 | 912 | 84 | 42 | 0 |
+| stable regular fields | 13 | 15 | 56 | 4,324 | 52 | 26 | 0 |
+| lazer regular fields (zero fixture) | 7 | 7 | 7 | 56 | 28 | 14 | 6 |
+
+A whole capture is therefore many round trips, not one. Lazer regular uses
+the existing zero-filled fixture (no populated lazer regular fixture exists),
+so it measures the not-ready path and its region-walk scans. A short
+exploratory Criterion pass (1 s warm-up, 2 s measurement) gave 10.5 µs,
+212 µs, 137 µs and 86 µs. `plan_memory_bench`'s native handles now scan
+through core's region walk as the plan handles do; since M5 R1 its native
+lazer assertion had failed before any case ran.
+
+**Not implemented here:** `live_reader_bench --memory process` (no live
+client was authorized) and the X1 profiles (no client, subscribed precise,
+two plugins in contention, delayed dispatch, full stream, idle host).
+
+#### Broker performance work (exploratory, same-session A/B)
+
+These numbers come from the shared host under the same pinning as above,
+with load averages of 6–24 and up to 10.5 other CPUs busy in some rounds.
+They are exploratory and are not D17 evidence. Each A/B runs the two
+builds' bench executables in interleaved rounds (ABAB…). Each build has its
+own target directory and Criterion home. The figure given is the median of
+the round medians.
+
+**Where the time went at `cf17e6fc`.** `perf`, `strace` and root are
+unavailable on this host, so two other methods were used, and neither was
+committed:
+
+- Per-thread context switches were sampled from `/proc/<pid>/task/*`. Each
+  `SYNC` round trip woke five threads: core's ring reader, its `SYNC` budget
+  timer and a broker worker, then the child's ring reader and the plugin
+  thread.
+- Timestamp probes at every hop were joined by request id across both
+  processes, giving this precise-plan breakdown (p50, 29.8 µs in total):
+
+| Hop | p50 (µs) |
+|---|---:|
+| Plugin sends `ACK_NEXT` + submit and rings the doorbell | 1.17 |
+| Core's ring reader wakes | 1.65 |
+| Reader reads the submission | 0.45 |
+| Reader hand-off: notifies the budget timer, queues the broker job, 2 allocations (p90 21 µs) | 1.36 |
+| Broker worker wakes | about 1.6 |
+| **Broker: validate, execute, dispatch** | **17.8** |
+| Send `REPLY_NEXT` + result and ring | 1.29 |
+| Child's ring reader wakes | 2.05 |
+| Hand the result to the plugin thread | 0.57 |
+| Plugin thread wakes | 0.88 |
+
+The executor was the largest cost, because each of the 25 ABI stages was
+one `process_vm_readv`. The budget-timer wake added a futex wake to the
+reader's critical path, ahead of the broker hand-off.
+
+**Changes and their A/B runs.** Each change is a separate commit, measured
+over four interleaved rounds against the commit before it:
+
+| Commit | Change | Against | Result |
+|---|---|---|---|
+| `3f8c1d9b` | The executor reads each dependency level in one `read_many` batch (stack batches of 64). Precise goes from 25 native calls to 6, regular from 5 to 2. A failed batch falls back to per-op reads. The `SYNC` deadline is checked between levels. | `cf17e6fc` | `executor` p50 17.14 → 5.95 µs (precise) and 3.46 → 1.76 µs (regular). `production_sync` p50 30.32 → 18.52 µs and 14.89 → 12.87 µs. Ratio to `shm` 2.77 → 1.67 and 2.25 → 1.90. |
+| `a0c94fa6` | The reader wakes the budget timer only when a deadline precedes the one it is parked on, about once per 2 s budget. Pending deadlines are a sorted `Vec`, the broker job is boxed once, and emptied pool sub-queues are reused. | `3f8c1d9b` | Core wakeups per round trip 3.04 → 2.02. Core allocations 3.04 → 1.04. Regular core CPU 9.95 → 8.62 µs. Regular p50 12.87 → 11.98 µs, ratio 1.90 → 1.81. Precise ratio 1.67 → 1.59; its p50 median rose 18.52 → 19.58 µs because one round ran with 10.5 other CPUs busy. |
+| `201afe10` | The relay validates a `SYNC` plan flat (`ValidatedPlan` plus the module name's UTF-8 check) instead of decoding it into an owned `ReadPlanSubmit`. Statuses are unchanged. | `a0c94fa6` | Precise p50 17.35 → 16.87 µs, lower in every pair, ratio 1.59 → 1.46. Regular unchanged within noise: 11.55 → 11.63 µs, ratio 1.76 → 1.71. |
+| `be8d0e2d` | A level of one read uses `read_exact` directly, single-stage plans skip level scheduling, and the failure paths move out of line, to keep the bundled path from regressing. | `cf17e6fc` | Bundled `plan_memory` only; see the table below. The production arm was not re-measured at this commit. |
+
+**Final exploratory ratios.** The three measurements of changes 1–2 or 1–3
+gave a `production_sync` p50 over the same run's `shm` of **1.46–1.59**
+(precise) and **1.71–1.81** (regular). The last one (`201afe10`, load
+average 7–11) gave precise 16.87 µs against `shm` 11.52 µs, and regular
+11.63 µs against 6.98 µs. `executor` was 5.89 and 1.78 µs. A round trip still
+costs about 2 core wakeups, 2 plugin wakeups and 1.04 core allocations (the
+broker job's `Box`). Core CPU was 13.4 and 8.3 µs. These ratios come from a
+loaded, shared host and are not the D17 result. D17 is decided only by the
+official sequence below, on an exclusive host.
+
+**The remaining gap is four hops, and the contract fixes them.** About 8 µs
+of each round trip is four consecutive thread hand-offs: plugin thread →
+core's ring reader → broker worker → child's ring reader → plugin thread.
+The prototype `ring` has two. Each hop is required by the approved ABI §7.6
+([plugin-abi.md](../v2/plugin-abi.md#76-process-supervision-protocol-a5-approved-2026-11-24)):
+
+- core's ring reader never handles a message or writes a reply itself;
+- each `SYNC` plan is queued on core's bounded broker workers (M5 B0);
+- the child's waiting thread, not its ring reader, dispatches a `SYNC`
+  result.
+
+Removing any of these hops is a contract change, so none was made.
+
+**Bundled `plan_memory`, `be8d0e2d` against `cf17e6fc`.** Four interleaved
+rounds of the bundled cases, load average 5–20, ratio head/base:
+
+| Case | `cf17e6fc` | `be8d0e2d` | Ratio |
+|---|---:|---:|---:|
+| `floor_one_op` | 0.058 µs | 0.061 µs | **1.055** |
+| `floor_eighteen_independent_ops` | 0.254 µs | 0.205 µs | 0.805 |
+| `floor_fifty_six_independent_ops` | 0.689 µs | 0.551 µs | 0.800 |
+| `stable_precise_native` | 0.009 µs | 0.009 µs | 0.993 |
+| `stable_precise_plan` | 0.083 µs | 0.077 µs | 0.924 |
+| `stable_native` | 1.301 µs | 1.238 µs | 0.952 |
+| `stable_unfused_plans` | 2.847 µs | 2.614 µs | 0.918 |
+| `stable_regular_fields` | 2.849 µs | 2.715 µs | 0.953 |
+| `lazer_precise_native` | 0.515 µs | 0.510 µs | 0.991 |
+| `lazer_precise_plan` | 2.233 µs | 2.282 µs | 1.022 |
+| `lazer_regular_fields` | 11.772 µs | 11.957 µs | 1.016 |
+
+`floor_one_op` is 3 ns (5.5%) slower. That is a small regression, still
+open, though within D17's bundled bar of no regression over 10%. The
+`lazer_precise_plan` and `lazer_regular_fields` ratios of 1.022 and 1.016 are
+within the run-to-run spread: the session before measured the same two
+cases at 1.001 and 0.977. Before change 4, changes 1–3 measured
+`floor_one_op` at 1.155, `stable_precise_plan` at 1.184 and
+`stable_regular_fields` at 1.094 against `cf17e6fc` (three rounds, load
+average 8–15). That run is why change 4 exists.
+
+#### Official command sequence (Main, exclusive host and VM)
+
+Linux, one checkout per revision, each with its own target and Criterion
+home, offset bundle prepared (`python scripts/prepare-offset-generator.py
+--rid linux-x64`), `source scripts/dev-env.sh`, `RUSTC_WRAPPER=sccache`:
+
+```sh
+# Changed head
+export CARGO_TARGET_DIR=$ROOT/targets/m5 CRITERION_HOME=$ROOT/criterion/m5
+cargo build --locked --release --example brokered_reads_target --example brokered_reads_plugin
+cargo bench --locked --bench brokered_reads_bench --bench plan_memory_bench \
+  --bench memory_reader_bench --bench state_bus_bench --no-run
+# M4a head 49e95cf (implementation-plan.md "M4a outcome")
+export CARGO_TARGET_DIR=$ROOT/targets/m4a CRITERION_HOME=$ROOT/criterion/m4a
+cargo bench --locked --bench plan_memory_bench --bench memory_reader_bench --bench state_bus_bench --no-run
+# pre-M0 3a91ff9 (only memory_reader_bench and hot_paths exist there)
+export CARGO_TARGET_DIR=$ROOT/targets/pre-m0 CRITERION_HOME=$ROOT/criterion/pre-m0
+cargo bench --locked --bench memory_reader_bench --no-run
+
+# Changed head, pinned
+taskset -c 0-7,16-23 cargo test --locked --test performance_invariants --test runtime_wakeups
+for N in 1 2 3 4 5; do   # gate: per shape, median of production_sync_p50_over_reference <= 2.0
+  taskset -c 0-7,16-23 $ROOT/targets/m5/release/deps/brokered_reads_bench-HASH --bench --round $N
+done
+taskset -c 0-7,16-23 cargo bench --locked --bench plan_memory_bench -- 'plan_memory/.*_process$'
+# Bundled paths, interleaved, five rounds, one reserved core
+sudo python3 scripts/bench-compare.py --cpu 7 --rounds 5 \
+  --binary m4a=$ROOT/targets/m4a/release/deps/plan_memory_bench-HASH \
+  --binary m5=$ROOT/targets/m5/release/deps/plan_memory_bench-HASH \
+  --filter '^plan_memory/(floor_one_op|floor_eighteen_independent_ops|floor_fifty_six_independent_ops|stable_precise_native|stable_precise_plan|stable_native|stable_unfused_plans|lazer_precise_native|lazer_precise_plan|stable_regular_fields|lazer_regular_fields)$' \
+  --output $ROOT/evidence/plan-memory
+sudo python3 scripts/bench-compare.py --cpu 7 --rounds 5 \
+  --binary m4a=$ROOT/targets/m4a/release/deps/state_bus_bench-HASH \
+  --binary m5=$ROOT/targets/m5/release/deps/state_bus_bench-HASH \
+  --filter '^end_to_end/(bus|bus_precise|api_frame)$' --output $ROOT/evidence/end-to-end
+# memory_reader_bench is a METRIC runner, not Criterion: alternate the three
+# executables five times on the same pinned core and compare METRIC medians.
+for N in 1 2 3 4 5; do for R in pre-m0 m4a m5; do
+  taskset -c 7 $ROOT/targets/$R/release/deps/memory_reader_bench-HASH --bench
+done; done
+```
+
+`end_to_end/adapter*` did not exist at `49e95cf`, and no pre-M0 equivalent of
+the state-bus or `plan_memory` cases exists at this head, so those
+comparisons need a common legacy harness first.
+
+Windows guest, exclusive VM, same source, `--rid win-x64` bundle; prime the
+fresh `vosu.exe` once (`target\release\vosu.exe plugin-host`, exit 70):
+
+```powershell
+cargo build --locked --release --no-default-features --example brokered_reads_target --example brokered_reads_plugin
+cargo bench --locked --no-default-features --bench brokered_reads_bench --bench plan_memory_bench --no-run
+foreach ($n in 1..5) {   # gate: median of production_sync_p50_over_reference (over section) <= 2.0
+  cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\brokered_reads_bench-HASH.exe --bench --round $n
+}
+cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\plan_memory_bench-HASH.exe --bench "plan_memory/.*_process$"
+```
+
+Rerun any round whose `load_other_busy_cpus` reached 2 or more.
 
 ## M4a D17 contract
 

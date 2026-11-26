@@ -210,7 +210,8 @@ pub fn run_startup(candidate: Candidate, count: usize) -> Percentiles {
     percentiles(samples)
 }
 
-/// One measured session of `candidate` for `shape`; prints its metrics.
+/// One measured session of `candidate` for `shape`; prints its metrics and
+/// returns its p50 (on Windows, `section`'s is the D17 denominator).
 /// Panics (failing the run) on any result-hash disagreement.
 pub fn run_session(
     candidate: Candidate,
@@ -219,7 +220,7 @@ pub fn run_session(
     target: &Target,
     settings: &Settings,
     direct_sha: &str,
-) {
+) -> f64 {
     let variant = candidate.name();
     let prefix = format!("{shape}_{variant}");
     let summary_path = settings.output.join(format!("summary-{prefix}.txt"));
@@ -434,6 +435,7 @@ pub fn run_session(
         );
         metric(&prefix, "inherited_fds", fds);
     }
+    timing.p50_ns
 }
 
 /// The key=value summary a helper leaves for core.

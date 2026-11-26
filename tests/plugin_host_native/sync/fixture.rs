@@ -198,9 +198,11 @@ typedef struct two_stage_payload {
     vosu_plan_op ops[2];
 } two_stage_payload;
 
-/* Two root-based stages, each reading 8 bytes at `address`: the in-process
- * runtime checks the budget between stages, so a first stage held past it
- * times the whole call out in both runtimes. */
+/* Two stages, each reading 8 bytes: the first at `address`, the second
+ * through the pointer the first read. The in-process runtime checks the
+ * budget between dependency levels (plugin-abi.md §6.3), so a first stage
+ * held past it times the whole call out in both runtimes. Two root-based
+ * stages would be one level, read in one native batch with no check. */
 static uint32_t submit_two_stage_sync(fixture *self, uint64_t plan, uint64_t address) {
     two_stage_payload p;
     memset(&p, 0, sizeof p);
@@ -211,7 +213,7 @@ static uint32_t submit_two_stage_sync(fixture *self, uint64_t plan, uint64_t add
     p.header.stages_offset = (uint32_t)offsetof(two_stage_payload, stages);
     p.header.stage_count = 2;
     for (uint32_t i = 0; i < 2; i++) {
-        p.stages[i].base.kind = VOSU_STAGE_BASE_ROOT;
+        p.stages[i].base.kind = i == 0 ? VOSU_STAGE_BASE_ROOT : VOSU_STAGE_BASE_DEPENDENT;
         p.stages[i].ops_offset = (uint32_t)(offsetof(two_stage_payload, ops) + i * sizeof(vosu_plan_op));
         p.stages[i].op_count = 1;
         p.ops[i].offset = 0;

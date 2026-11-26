@@ -3,8 +3,9 @@
 //! the dispatch workers of one instance.
 //!
 //! **`send`.** Applies the in-process pre-handler checks locally (private
-//! or unknown opcode, unrecognized flags, SDK decode, a `SYNC` submission
-//! from a dispatch thread) and the per-instance caps
+//! or unknown opcode, unrecognized flags, SDK decode — for a `SYNC` plan
+//! the structural validation the in-process host applies, without an owned
+//! copy — a `SYNC` submission from a dispatch thread) and the per-instance caps
 //! ([`super::admission`]), so a refused message writes nothing. A host →
 //! plugin opcode a plugin sends has no effect in-process and returns
 //! `VOSU_OK` without a write. `VOSU_OP_LOG_RECORD` is written
@@ -46,7 +47,7 @@ use super::frame::{FrameHeader, PRIVATE_OPCODE_BIT, RequestKind, control};
 use super::ring::PayloadBuffer;
 use super::waiters::{Reply, Waiters};
 use crate::plugin::execution::DispatchTarget;
-use crate::plugin::read_plan::{DispatchThreadScope, on_dispatch_thread};
+use crate::plugin::read_plan::{DispatchThreadScope, ValidatedPlan, on_dispatch_thread};
 
 /// A status waiter's backstop after its write completed (A5.2).
 pub(crate) const STATUS_BACKSTOP: Duration = Duration::from_secs(2);
@@ -162,13 +163,31 @@ impl Relay {
         if validate_flags(known, flags).is_err() {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
-        let Ok(message) = Message::decode(known, flags, payload) else {
-            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-        };
         let header = FrameHeader {
             opcode,
             flags,
             correlation,
+        };
+        if known == vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT && flags & VOSU_READ_PLAN_SYNC != 0 {
+            // The SDK check the in-process host applies to a SYNC plan:
+            // structural validation, never an owned copy of its stages.
+            if !ValidatedPlan::new(payload, flags).is_ok_and(|plan| plan.root_name_is_utf8()) {
+                return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+            }
+            // §6.3: a dispatch thread may never block on its own SYNC read.
+            if on_dispatch_thread() {
+                return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+            }
+            return self.acknowledged(
+                &header,
+                payload,
+                RequestKind::Sync,
+                Settle::Nothing,
+                self.sync_backstop,
+            );
+        }
+        let Ok(message) = Message::decode(known, flags, payload) else {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         };
         match route(known) {
             Route::NoEffect => vosu_status::VOSU_OK,
@@ -176,11 +195,16 @@ impl Relay {
                 Ok(()) => vosu_status::VOSU_OK,
                 Err(_) => self.fail(EXIT_CHANNEL_LOST),
             },
-            Route::Acknowledged => {
-                let sync = known == vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT
-                    && flags & VOSU_READ_PLAN_SYNC != 0;
-                self.acknowledged(&header, payload, &message, sync)
-            }
+            Route::Acknowledged => match self.admission.reserve(&message, header.correlation) {
+                Ok(settle) => self.acknowledged(
+                    &header,
+                    payload,
+                    RequestKind::Status,
+                    settle,
+                    STATUS_BACKSTOP,
+                ),
+                Err(status) => status,
+            },
         }
     }
 
@@ -188,21 +212,10 @@ impl Relay {
         &self,
         header: &FrameHeader,
         payload: &[u8],
-        message: &Message,
-        sync: bool,
+        kind: RequestKind,
+        settle: Settle,
+        backstop: Duration,
     ) -> vosu_status {
-        let (kind, settle, backstop) = if sync {
-            // §6.3: a dispatch thread may never block on its own SYNC read.
-            if on_dispatch_thread() {
-                return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-            }
-            (RequestKind::Sync, Settle::Nothing, self.sync_backstop)
-        } else {
-            match self.admission.reserve(message, header.correlation) {
-                Ok(settle) => (RequestKind::Status, settle, STATUS_BACKSTOP),
-                Err(status) => return status,
-            }
-        };
         let id = match self.waiters.reserve(kind, settle) {
             Ok(id) => id,
             Err(settle) => {
