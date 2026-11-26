@@ -135,6 +135,7 @@ pub async fn start_test_production_composition(
         ),
         endpoint,
     };
+    let origins = Arc::new(crate::server::origins::Origins::new(String::new(), String::new())?);
     fs::create_dir_all(&plugin_data)?;
     let logger = Logger::new(
         &options.logs_root,
@@ -213,6 +214,7 @@ pub async fn start_test_production_composition(
             version: bundle.version(),
             catalog,
             shutdown: CancellationToken::new(),
+            origins: origins.clone(),
         });
         owner.overlay = Some(overlay.clone());
         let (adapters, hubs) =
@@ -250,7 +252,12 @@ pub async fn start_test_production_composition(
                 ProductionRouteDelegate::new(services).with_surface(adapters.router(plugins.clone())),
             ),
         };
-        owner.listener = Some(ListenerOwner::start(providers, options.target).await?);
+        let listener = ListenerOwner::start(providers, options.target).await?;
+        origins.observe_listeners(
+            listener.state.clone(),
+            watch::channel(Default::default()).1,
+        );
+        owner.listener = Some(listener);
         Ok(())
     }
     .await;

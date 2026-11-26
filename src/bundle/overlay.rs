@@ -61,6 +61,7 @@ impl Overlay {
             inputs.storage,
             inputs.settings,
             counters.clone(),
+            inputs.origins,
         );
         root.apply(&counters.current_root());
         let relays = Arc::new(WebSocketRelaySink::new());

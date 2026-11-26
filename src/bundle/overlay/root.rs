@@ -13,11 +13,11 @@ use vosu_core::{
         settings::{PluginSettingsService, SettingsChangeDelivery, SettingsSchemaSource},
     },
     runtime::RuntimeSettingsStorage,
-    server::websocket::WebSocketHub,
+    server::{origins::Origins, websocket::WebSocketHub},
 };
 use vosu_overlay_host::{
-    OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic, ReloadableCounterService,
-    commands::CommandProcessor, presentation::OverlayPresenter,
+    OverlayOrigin, OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic,
+    ReloadableCounterService, commands::CommandProcessor, presentation::OverlayPresenter,
 };
 use vosu_plugin_api::{Message, SettingsChanged};
 use vosu_surface::routes::RegistrationLease;
@@ -38,7 +38,8 @@ pub struct OverlayRootComposition {
 
 impl OverlayRootComposition {
     /// `data_dir` is the one core gave the `instance`'s `create`: it keys
-    /// the instance's `overlays.query` binding to `counters`.
+    /// the instance's `overlays.query` binding to `counters` and to the
+    /// overlay listener's effective origin in `origins`, read per query.
     pub fn new(
         host: Arc<PluginHost>,
         instance: PluginInstanceId,
@@ -46,14 +47,16 @@ impl OverlayRootComposition {
         storage: Arc<RuntimeSettingsStorage>,
         settings: Arc<PluginSettingsService>,
         counters: Arc<ReloadableCounterService>,
+        origins: Arc<Origins>,
     ) -> Self {
         let serving = OverlayStatic::new(Arc::clone(&counters));
+        let origin: OverlayOrigin = Arc::new(move || origins.overlay_listener());
         Self {
             host,
             instance,
             storage,
             settings,
-            query: Mutex::new(Some(vosu_overlay_host::bind_overlay_query(data_dir, &counters))),
+            query: Mutex::new(Some(vosu_overlay_host::bind_overlay_query(data_dir, &counters, origin))),
             counters,
             serving,
             generation: Mutex::new(Some((0, None))),

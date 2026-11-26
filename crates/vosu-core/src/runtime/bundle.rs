@@ -126,6 +126,7 @@ pub struct OverlayInputs {
     pub version: semver::Version,
     pub catalog: OverlayCatalog,
     pub shutdown: CancellationToken,
+    pub origins: Arc<crate::server::origins::Origins>,
 }
 
 /// Everything core's runtime would otherwise name a bundled crate for.

@@ -1,8 +1,9 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["overlays", "next"],
+  "required": ["origin", "overlays", "next"],
   "properties": {
+    "origin": { "type": ["string", "null"], "minLength": 8, "maxLength": 512 },
     "overlays": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/overlay" } },
     "next": { "type": ["string", "null"], "minLength": 1 }
   },

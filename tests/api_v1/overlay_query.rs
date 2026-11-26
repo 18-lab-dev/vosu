@@ -1,8 +1,13 @@
 //! The bundled `vosu.overlayhost` answering `overlays.query` over the real
-//! ABI relay: core's grant gate, its schemas, and a live overlay root.
+//! ABI relay: core's grant gate, its schemas, a live overlay root and core's
+//! effective overlay listener origin.
 use super::{job_fixture as fixture, support::Harness};
 use serde_json::{Value, json};
 use std::sync::Arc;
+use vosu::server::{
+    origins::Origins,
+    runtime::{EffectiveListener, ListenTarget, ListenerState},
+};
 use vosu_core::{
     identity::PluginInstanceId,
     plugin::{self, PluginHostHandler},
@@ -11,6 +16,18 @@ use vosu_overlay_host::ReloadableCounterService;
 use vosu_plugin_api::{ActionCall, ActionResult, ActionStatus, CborValue, Message, vosu_status};
 
 const ACTION: &str = "vosu.overlayhost.overlays.query";
+
+/// An overlay listener bound at `address` (configured host = its IP).
+fn bound(address: &str) -> ListenerState {
+    let address: std::net::SocketAddr = address.parse().unwrap();
+    ListenerState {
+        effective: Some(EffectiveListener {
+            target: ListenTarget::new(address.ip().to_string(), address.port()),
+            address,
+        }),
+        ..ListenerState::default()
+    }
+}
 
 fn call(h: &Harness, caller: u64, invocation: u64, args: Value) {
     assert_eq!(
@@ -67,7 +84,14 @@ fn only_a_declaring_plugin_lists_installed_overlays() {
             None,
         )
         .unwrap();
-    let _binding = vosu_overlay_host::bind_overlay_query(h.root.path(), &counters);
+    // Core's own origin source over an overlay listener's state.
+    let origins = Arc::new(Origins::new(String::new(), String::new()).unwrap());
+    let (listener, state) = tokio::sync::watch::channel(bound("127.0.0.1:24050"));
+    origins.observe_listeners(state, tokio::sync::watch::channel(Default::default()).1);
+    let _binding = vosu_overlay_host::bind_overlay_query(h.root.path(), &counters, {
+        let origins = Arc::clone(&origins);
+        Arc::new(move || origins.overlay_listener())
+    });
     let (granted, _) = fixture::load(
         &h,
         783402,
@@ -95,6 +119,7 @@ fn only_a_declaring_plugin_lists_installed_overlays() {
     assert_eq!(
         page,
         json!({
+            "origin": "http://127.0.0.1:24050",
             "overlays": [{"id": "hud", "name": "hud", "entry": "/hud/", "version": null, "settings": {}}],
             "next": null,
         })
@@ -105,10 +130,23 @@ fn only_a_declaring_plugin_lists_installed_overlays() {
             .contains(&*h.root.path().to_string_lossy())
     );
 
+    // Uninstall and a listener rebind both show in the next answer.
     std::fs::remove_dir_all(overlays.join("hud")).unwrap();
+    listener.send_replace(bound("0.0.0.0:24070"));
     call(&h, 783402, 4, json!({}));
     let page: Value = result(&granted, 4).value.unwrap().deserialized().unwrap();
-    assert_eq!(page, json!({"overlays": [], "next": null}));
+    assert_eq!(
+        page,
+        json!({"origin": "http://127.0.0.1:24070", "overlays": [], "next": null})
+    );
+
+    // An unbound overlay listener is reported as `null`.
+    listener.send_replace(ListenerState::default());
+    call(&h, 783402, 5, json!({}));
+    let unbound = result(&granted, 5);
+    assert_eq!(unbound.status, ActionStatus::Ok, "{unbound:?}");
+    let page: Value = unbound.value.unwrap().deserialized().unwrap();
+    assert_eq!(page, json!({"origin": null, "overlays": [], "next": null}));
 
     h.host.action_instance_lost(PluginInstanceId::new(783402));
     h.host.action_instance_lost(PluginInstanceId::new(783403));

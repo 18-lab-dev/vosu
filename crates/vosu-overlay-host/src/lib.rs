@@ -41,7 +41,7 @@ pub use model::{
 };
 pub use names::{OverlayName, OverlayNames};
 pub use plugin::vosu_plugin_vtable;
-pub use query::{OverlayQueryBinding, bind_overlay_query};
+pub use query::{OverlayOrigin, OverlayQueryBinding, bind_overlay_query};
 pub use routes::{COMMANDS, CommandFeeds, OverlayRoutes};
 pub use serve::{OverlayRootView, OverlayStatic};
 pub use service::{

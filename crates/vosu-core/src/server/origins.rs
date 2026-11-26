@@ -61,6 +61,12 @@ impl Origins {
         self.effective(false)
             .unwrap_or_else(|| self.overlay.read().clone())
     }
+    /// The overlay listener's effective origin, as [`Self::overlay`] reports
+    /// it once bound, or `None` while it is not bound (no configured
+    /// fallback): what `vosu.overlayhost.overlays.query` reports.
+    pub fn overlay_listener(&self) -> Option<String> {
+        self.effective(false)
+    }
     pub fn dashboard(&self) -> String {
         self.effective(true)
             .unwrap_or_else(|| self.dashboard.read().clone())
@@ -234,5 +240,50 @@ mod tests {
             assert_eq!(origins.safe_origin(true, &headers, local), expected);
             assert_eq!(origins.authorized(&headers, local), authorized);
         }
+    }
+
+    #[test]
+    fn overlay_listener_reports_only_the_bound_effective_origin() {
+        use crate::server::runtime::{EffectiveListener, ListenTarget, ListenerState};
+        let origins = Origins::new(
+            "http://configured.invalid:1".into(),
+            "http://127.0.0.1:24861".into(),
+        )
+        .unwrap();
+        // No listener observed yet: no configured fallback.
+        assert_eq!(origins.overlay_listener(), None);
+        let bound = |host: &str, address: &str| ListenerState {
+            effective: Some(EffectiveListener {
+                target: ListenTarget::new(
+                    host,
+                    address.parse::<std::net::SocketAddr>().unwrap().port(),
+                ),
+                address: address.parse().unwrap(),
+            }),
+            ..ListenerState::default()
+        };
+        let (overlay, receiver) = tokio::sync::watch::channel(ListenerState::default());
+        let (_dashboard, dashboard) = tokio::sync::watch::channel(ListenerState::default());
+        origins.observe_listeners(receiver, dashboard);
+        assert_eq!(origins.overlay_listener(), None);
+        overlay.send_replace(bound("127.0.0.1", "127.0.0.1:24050"));
+        assert_eq!(
+            origins.overlay_listener().as_deref(),
+            Some("http://127.0.0.1:24050")
+        );
+        // A rebind is reported by the next read; wildcards name loopback.
+        overlay.send_replace(bound("0.0.0.0", "0.0.0.0:24070"));
+        assert_eq!(
+            origins.overlay_listener().as_deref(),
+            Some("http://127.0.0.1:24070")
+        );
+        overlay.send_replace(bound("::", "[::]:24071"));
+        assert_eq!(
+            origins.overlay_listener().as_deref(),
+            Some("http://[::1]:24071")
+        );
+        overlay.send_replace(ListenerState::default());
+        assert_eq!(origins.overlay_listener(), None);
+        assert_eq!(origins.overlay(), "http://configured.invalid:1");
     }
 }

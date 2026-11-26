@@ -216,6 +216,7 @@ impl ProductionRuntime {
             version: bundle.version(),
             catalog: OverlayCatalog::Production,
             shutdown: self.shutdown_token.clone(),
+            origins: Arc::clone(&self.origins),
         });
         *self.overlay.get_mut() = Some(Arc::clone(&overlay));
         {
