@@ -50,7 +50,11 @@ async fn slow_plugin_destruction_preserves_legacy_websocket_going_away() {
             owner
                 .shutdown_with_plugin_destroy(async move {
                     let _ = entered_tx.send(());
-                    let _ = tokio::time::timeout(Duration::from_secs(10), release_rx).await;
+                    // The listener and close-frame probes run before the
+                    // assertion's six-second wait. Do not let a second timed
+                    // wait release this gate while those probes are in flight.
+                    // On failure the sender drops, still allowing cleanup.
+                    let _ = release_rx.await;
                     tokio::task::spawn_blocking(move || plugins.destroy_all(PLUGIN_DESTROY_GRACE))
                         .await
                         .map_err(io::Error::other)
