@@ -168,6 +168,33 @@ class GoldenTestCase(unittest.TestCase):
 
 
 class CandidateLayoutTests(GoldenTestCase):
+    def test_outside_calculation_subtracts_only_the_evidenced_record_parts(self) -> None:
+        case_id = "calculation.absolute-outside-root"
+        target = "/api/calculate/pp?path=" + WIN_ROOT + "probe\\sentinel.osu"
+        success = '{"pp":1}'
+        up = response(text(success), [["Content-Type", "application/json"],
+                                      ["Content-Length", str(len(success))]])
+        rejection = '{"error":"invalid beatmap path: outside declared roots or unsafe spelling"}'
+        rejected = response(text(rejection), [["Content-Type", "application/json"],
+                                               ["Content-Length", str(len(rejection))]],
+                            status="HTTP/1.1 400 Bad Request")
+        probe = case(case_id, request("GET", target), (up, up), vosu=rejected)
+        candidate = self.run_golden(capture([probe]))
+        expected = self.case_file(candidate, case_id)["expected"]
+        self.assertEqual((expected["status"], expected["body"]), (200, text(success)))
+        rules = json.loads((candidate / "divergence-rules.json").read_text())["rules"]
+        self.assertEqual({rule["part"]: rule["vosu_value"] for rule in rules},
+                         {"status": 400, "body": rejection, "headers.content-length": "75"})
+        for rule in rules:
+            self.assertEqual(rule["ledger_id"], "legacy-calculate-declared-roots")
+            self.assertEqual(rule["platforms"], ["windows-lazer"])
+            self.assertEqual(rule["cases"], [case_id])
+        inventory = json.loads((candidate / "inventory.json").read_text())["files"]
+        self.assertIn("divergence-rules.json", {entry["path"] for entry in inventory})
+        near = dict(probe, id="calculation.absolute-inside-root-osu")
+        other = self.run_golden(capture([near]))
+        self.assertFalse((other / "divergence-rules.json").exists())
+
     def test_writes_deterministic_inventoried_candidate(self) -> None:
         value = capture([state_case()])
         first = self.run_golden(value)
@@ -750,7 +777,7 @@ class NormalizationTests(GoldenTestCase):
         png = b"\x89PNG\r\n\x1a\n\x00\xff\xfe" + bytes(range(256))
         ranged = {"b64": base64.b64encode(png[8:40]).decode()}
         self.rejects(capture([files_case("files.background-range", None, ranged)]), "binary body")
-        asset = {"id": "background.png", "slot": "osu!", "relative": "Songs/1 a/bg.png",
+        asset = {"id": "background.png", "slot": "files", "relative": "a/ab/bg.png",
                  "media_type": "image/png", "generator": "vosu test generator",
                  "license": "CC0-1.0", "sha256": hashlib.sha256(png).hexdigest(),
                  "b64": base64.b64encode(png).decode()}

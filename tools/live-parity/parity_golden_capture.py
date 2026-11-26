@@ -598,17 +598,33 @@ class Session(BarrierMixin):
 
     def _assets(self) -> list[dict[str, Any]]:
         root = Path(self.golden_cfg["capture_root"]).resolve(strict=True)
+        assert self.layout is not None
+        slots = {slot: Path(path).resolve()
+                 for slot, path in rs.retained_roots(self.layout, self.cfg["client"].lower()).items()}
         assets = []
         for asset in self.golden_cfg["assets"]:
             path = (root / asset["relative"]).resolve(strict=True)
             if not path.is_relative_to(root) or not path.is_file():
                 raise CaptureError(f"asset {asset['id']} is not a file inside the capture root")
+            placements = [(slot, path.relative_to(base).as_posix()) for slot, base in slots.items()
+                          if path.is_relative_to(base) and path != base]
+            if len(placements) != 1:
+                raise CaptureError(f"asset {asset['id']} is not inside exactly one retained root")
+            slot, relative = placements[0]
             data = path.read_bytes()
-            assets.append({"id": asset["id"], "slot": self.golden_cfg["capture_slot"],
-                           "relative": asset["relative"], "media_type": asset["media_type"],
+            assets.append({"id": asset["id"], "slot": slot,
+                           "relative": relative, "media_type": asset["media_type"],
                            "generator": asset["generator"], "license": asset["license"],
                            "sha256": hashlib.sha256(data).hexdigest(),
                            "b64": base64.b64encode(data).decode("ascii")})
+        fixtures = self.golden_cfg["fixture_values"]
+        if "calc_relative" in fixtures:
+            slot = "files" if self.cfg["client"].lower() == "lazer" else "songs"
+            chart, probe = fixtures.get("songs_file"), fixtures["calc_relative"]
+            digests = {asset["relative"]: asset["sha256"] for asset in assets if asset["slot"] == slot}
+            if chart == probe or chart not in digests or digests.get(probe) != digests[chart]:
+                raise CaptureError("calculation probe and selected chart must be distinct approved "
+                                   "assets with identical bytes")
         return assets
 
     def run(self) -> dict[str, Any]:

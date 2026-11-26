@@ -249,6 +249,79 @@ fn golden_two_assets_of_one_media_type_follow_their_recorded_location() {
 }
 
 #[test]
+fn golden_explicit_calculation_copy_replays_in_both_safe_spellings() {
+    let mut platform = platform().clone();
+    let template = platform
+        .cases
+        .iter()
+        .find(|case| case.id == "state-http.get-json-sc")
+        .unwrap()
+        .clone();
+    let mut copy = platform.asset("synthetic-chart").unwrap().clone();
+    copy.id = "calculate-probe-chart".into();
+    copy.relative = "fixture set/probe.osu".into();
+    platform.assets.push(copy);
+    let (root, chart, sentinel) = if platform.name.starts_with("windows-") {
+        (
+            r"C:\vosu-golden\osu!\",
+            r"client\files\fixture set\probe.osu",
+            r"vosu-route-probe\sentinel.osu",
+        )
+    } else {
+        (
+            "/vosu-golden/osu!/",
+            "client/files/fixture set/probe.osu",
+            "vosu-route-probe/sentinel.osu",
+        )
+    };
+    platform.synthetic_roots.insert("osu!".into(), root.into());
+    platform.cases = [
+        (
+            "calculation.relative-osu-path",
+            "fixture set/probe.osu".into(),
+        ),
+        (
+            "calculation.absolute-inside-root-osu",
+            format!("{root}{chart}"),
+        ),
+        (
+            "calculation.absolute-outside-root",
+            format!("{root}{sentinel}"),
+        ),
+    ]
+    .into_iter()
+    .map(|(id, path)| {
+        let mut case = template.clone();
+        case.id = id.into();
+        case.family = "calculation".into();
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("path", &path)
+            .finish();
+        case.request = format!(
+            "GET /api/calculate/pp?{query} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        );
+        case
+    })
+    .collect();
+    let observed = compare::observe(&platform).unwrap();
+    let [relative, absolute, outside] = observed.as_slice() else {
+        panic!("three probes must replay");
+    };
+    let (relative, absolute, outside) = (
+        relative.as_ref().unwrap(),
+        absolute.as_ref().unwrap(),
+        outside.as_ref().unwrap(),
+    );
+    assert_eq!((relative.status, absolute.status), (200, 200));
+    assert_eq!(relative.body, absolute.body);
+    assert_eq!(outside.status, 400);
+    assert_eq!(
+        outside.body,
+        br#"{"error":"invalid beatmap path: outside declared roots or unsafe spelling"}"#
+    );
+}
+
+#[test]
 fn golden_last_modified_must_equal_the_declared_replay_file_mtime() {
     const ID: &str = "files.get-beatmap-file";
     let case = platform().cases.iter().find(|c| c.id == ID).unwrap();

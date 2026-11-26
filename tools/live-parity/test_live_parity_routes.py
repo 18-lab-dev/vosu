@@ -259,16 +259,28 @@ class RawHttpTests(unittest.TestCase):
         raw = b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found"
         ids = ("state-http.json-v2.post", "state-http.json-v2.budget.query-pairs-129",
                "origin-peer.host.missing", "origin-peer.host.duplicate",
-               "calculation.relative-path", "files.budget.headers-33", "files.songs.dir.get")
-        with serve(responder(raw)) as source, serve(responder(raw)) as vosu:
+               "calculation.relative-osu-path", "files.budget.headers-33", "files.songs.dir.get")
+        with tempfile.TemporaryDirectory() as tmp, \
+                serve(responder(raw)) as source, serve(responder(raw)) as vosu:
+            root = Path(tmp).resolve()
+            files = root / "files"
+            chart = files / CONTEXT_VALUES["calc_relative"]
+            chart.parent.mkdir(parents=True)
+            chart.write_bytes(b"osu file format v14\n")
+            layout = rs.SecurityLayout(rs.host_os(), str(root), "", {}, {},
+                                       str(root / "sentinel"), other_roots={"files": str(files)})
+            ctx = rm.MatrixContext(f"{rs.host_os()}-lazer",
+                                   dict(CONTEXT_VALUES, calc_absolute_inside=str(chart)), layout)
+            expected = []
             for case_id in ids:
-                item = rendered(case_id)
+                item = rendered(case_id, ctx)
+                expected.append(item.request)
                 records = pr.run_identical(item, [source.endpoint(), vosu.endpoint("vosu")],
                                            limits=FAST)
                 self.assertEqual(["source", "vosu"], [record["daemon"] for record in records])
                 self.assertEqual({item.digest}, {record["request_digest"] for record in records})
             self.assertEqual(source.requests, vosu.requests)
-        self.assertEqual([rendered(case_id).request for case_id in ids], source.requests)
+        self.assertEqual(expected, source.requests)
         self.assertNotIn(b"Host:", rendered("origin-peer.host.missing").request)
         self.assertEqual(2, rendered("origin-peer.host.duplicate").request.count(b"\r\nHost: "))
 
@@ -522,13 +534,15 @@ class MatrixTests(unittest.TestCase):
                      "files.conditional.if-range-etag", "calculation.no-query",
                      "calculation.mods-acronyms", "calculation.accuracy", "calculation.combo",
                      "calculation.statistics", "calculation.invalid-accuracy",
-                     "calculation.relative-path", "calculation.absolute-inside-root",
+                     "calculation.relative-osu-path", "calculation.absolute-inside-root-osu",
                      "calculation.absolute-outside-root", "origin-peer.http.none",
                      "origin-peer.http.loopback-ip", "origin-peer.http.foreign",
                      "origin-peer.host.malformed-port", "origin-peer.ws.foreign"):
             self.assertIn(name, ids)
         spellings = {case.security[1] for case in rm.MATRIX if case.security}
         self.assertEqual({spelling.name for spelling in rs.SPELLINGS}, spellings)
+        self.assertNotIn("calculation.relative-path", ids)
+        self.assertNotIn("calculation.absolute-inside-root", ids)
 
     def test_ingame_is_never_probed_and_vosu_only_routes_are_negative_only(self) -> None:
         values = dict(CONTEXT_VALUES)
@@ -802,7 +816,8 @@ class SecurityTests(unittest.TestCase):
                              "/files/skin/": str(self.skins)},
             {"/Songs/": "Probe Set/map.osu", "/files/beatmap/": "Probe Set/map.osu",
              "/files/skin/": "cursor.png"},
-            chart_source=str(self.songs / "Probe Set" / "map.osu"))
+            chart_source=str(self.songs / "Probe Set" / "map.osu"),
+            other_roots={"files": str(self.songs)})
         values = dict(CONTEXT_VALUES, calc_absolute_inside=str(self.songs / "Probe Set" / "map.osu"))
         self.context = rm.MatrixContext(f"{rs.host_os()}-lazer", values, self.layout)
 
@@ -870,7 +885,7 @@ class SecurityTests(unittest.TestCase):
                       dataclasses.replace(self.context, security=outside))
         values = dict(self.context.values, calc_absolute_inside=self.layout.sentinel)
         with self.assertRaises(rs.SecurityAbort):
-            rm.render(rm.CASES["calculation.absolute-inside-root"],
+            rm.render(rm.CASES["calculation.absolute-inside-root-osu"],
                       dataclasses.replace(self.context, values=values))
         Path(self.layout.sentinel_chart).write_text("changed")
         with self.assertRaises(rs.SecurityAbort):
@@ -879,16 +894,16 @@ class SecurityTests(unittest.TestCase):
     def test_non_route_declared_root_admits_inside_paths_and_bounds_sentinels(self) -> None:
         files = self.root / "lazer" / "files"
         files.mkdir(parents=True)
-        chart = files / "ab" / "abcd"
+        chart = files / "a" / "probe.osu"
         chart.parent.mkdir()
         chart.write_text("osu file format v14\n")
         layout = dataclasses.replace(self.layout, other_roots={"files": str(files)})
-        context = rm.MatrixContext(self.context.platform,
-                                   dict(self.context.values, calc_absolute_inside=str(chart)),
-                                   layout)
-        rm.render(rm.CASES["calculation.absolute-inside-root"], context)
+        values = dict(self.context.values, calc_relative="a/probe.osu", calc_absolute_inside=str(chart))
+        context = rm.MatrixContext(self.context.platform, values, layout)
+        case = rm.CASES["calculation.absolute-inside-root-osu"]
+        rm.render(case, context)
         with self.assertRaises(rs.SecurityAbort):
-            rm.render(rm.CASES["calculation.absolute-inside-root"], dataclasses.replace(
+            rm.render(case, dataclasses.replace(
                 context, values=dict(context.values, calc_absolute_inside=str(Path.home()))))
         swallowed = dataclasses.replace(
             layout, other_roots={"files": str(self.root / "vosu-route-probe")})
@@ -898,12 +913,32 @@ class SecurityTests(unittest.TestCase):
 
     def test_calculation_paths_are_validated_and_query_encoded(self) -> None:
         outside = rm.render(rm.CASES["calculation.absolute-outside-root"], self.context)
-        inside = rm.render(rm.CASES["calculation.absolute-inside-root"], self.context)
+        inside = rm.render(rm.CASES["calculation.absolute-inside-root-osu"], self.context)
+        relative = rm.render(rm.CASES["calculation.relative-osu-path"], self.context)
         for item, path in ((outside, self.layout.sentinel_chart),
-                           (inside, self.context.values["calc_absolute_inside"])):
+                           (inside, self.context.values["calc_absolute_inside"]),
+                           (relative, self.context.values["calc_relative"])):
             target = item.request.split(b" ")[1].decode()
             self.assertEqual(path, unquote(target.split("?path=", 1)[1]))
             self.assertNotIn(" ", target)
+        self.assertNotIn("legacy-calculate-declared-roots", inside.case.ledger)
+        self.assertNotIn("legacy-calculate-declared-roots", relative.case.ledger)
+        self.assertIn("legacy-calculate-declared-roots", outside.case.ledger)
+        stable = dataclasses.replace(self.context, platform="windows-stable")
+        self.assertEqual(inside.request, rm.render(inside.case, stable).request)
+
+    def test_both_calculation_probes_refuse_hashes_and_mismatched_spellings(self) -> None:
+        chart = self.songs / "hash"
+        chart.write_bytes(b"osu file format v14\n")
+        for case in ("calculation.relative-osu-path", "calculation.absolute-inside-root-osu"):
+            for relative, absolute, error in (
+                    ("hash", chart, r"ordinary relative \.osu file"),
+                    ("Probe Set/map.osu", chart, "must name the same file")):
+                with self.subTest(case=case, relative=relative), \
+                        self.assertRaisesRegex(rs.SecurityAbort, error):
+                    rm.render(rm.CASES[case], dataclasses.replace(
+                        self.context, values=dict(self.context.values, calc_relative=relative,
+                                                  calc_absolute_inside=str(absolute))))
 
     def test_windows_spellings_are_lexical_only_and_never_sent_from_linux(self) -> None:
         if rs.host_os() == "windows":

@@ -50,7 +50,7 @@ import subprocess
 import tempfile
 from typing import Any, Literal
 from urllib.parse import unquote
-
+from route_security import ASSET_SLOTS
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION, SUPPORTED_MATRIX
 from parity_artifacts import UPSTREAM_LAZER_OFFSETS
 from parity_golden_rules import (
@@ -404,8 +404,7 @@ def _roots(value: Any, windows: bool) -> list[Root]:
     return roots
 
 
-def _assets(value: Any, roots: list[Root]) -> dict[str, dict[str, Any]]:
-    slots = {root.slot for root in roots}
+def _assets(value: Any) -> dict[str, dict[str, Any]]:
     assets: dict[str, dict[str, Any]] = {}
     placements: set[tuple[str, str]] = set()
     for index, item in enumerate(_list(value, "capture.assets")):
@@ -415,8 +414,8 @@ def _assets(value: Any, roots: list[Root]) -> dict[str, dict[str, Any]]:
         asset_id = _str(item["id"], f"{at}.id", _ASSET_ID)
         if len(asset_id) > 120 or _WINDOWS_RESERVED.fullmatch(asset_id) or asset_id in assets:
             raise GoldenError(f"{at}.id: duplicate, reserved or too long")
-        if item["slot"] not in slots:
-            raise GoldenError(f"{at}.slot: not an attested root slot")
+        if _str(item["slot"], f"{at}.slot") not in ASSET_SLOTS:
+            raise GoldenError(f"{at}.slot: not a retained osu! root slot")
         relative = _str(item["relative"], f"{at}.relative")
         segments = relative.split("/")
         if any(segment in ("", ".", "..") or re.search(r'[\\:*?"<>|\0]', segment)
@@ -435,7 +434,6 @@ def _assets(value: Any, roots: list[Root]) -> dict[str, dict[str, Any]]:
                             "license": item["license"], "sha256": item["sha256"],
                             "bytes": len(data), "data": data}
     return dict(sorted(assets.items()))
-
 
 # ---------------------------------------------------------------- cases
 
@@ -735,7 +733,7 @@ def _platform_files(capture: Any, review_receipt: str | None,
                               "expected_cases", "cases"))
     identity = _check_identity(capture)
     roots = _roots(capture["roots"], identity["windows"])
-    state = _Platform(identity, roots, _assets(capture["assets"], roots))
+    state = _Platform(identity, roots, _assets(capture["assets"]))
     cases = [_case(item, index) for index, item in enumerate(_list(capture["cases"], "capture.cases"))]
     ids = [case["id"] for case in cases]
     if not cases or len(set(ids)) != len(ids):
@@ -801,7 +799,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
         "platform": platform, "client": identity["client"], "source": identity["source"],
         "vosu": identity["vosu"], "scenario_set": identity["scenario_set"],
         "authorization": identity["authorization"], "review_receipt": review_receipt,
-        "synthetic_roots": {root.slot: root.synthetic for root in sorted(roots, key=lambda r: r.slot)},
+        "synthetic_roots": {slot: synthetic_root(slot, identity["windows"]) for slot in sorted(
+            {root.slot for root in roots} | {asset["slot"] for asset in state.assets.values()})},
         "case_counts": {family: sum(case["family"] == family for case in cases) for family in FAMILIES},
         "cases": listing,
     })
@@ -848,10 +847,10 @@ def _scan(platform: str, files: dict[str, bytes], state: _Platform) -> dict[str,
                         for slot in rewriter.leftover_slots(data.decode("latin-1"))]
         else:
             text_files += 1
-            # A JSON file adds one escaping level; scan its decoded strings, where roots
-            # keep the spelling they had on the wire. Dump CBOR is scanned decoded below.
-            leaves = _string_leaves(json.loads(text)) if rel.endswith(".json") else [text]
-            findings = [finding for leaf in leaves for finding in privacy_findings(leaf, rewriter)]
+            value = json.loads(text) if rel.endswith(".json") else text
+            if rel == "manifest.json":
+                del value["synthetic_roots"]  # Generated aliases, not captured paths.
+            findings = [finding for leaf in _string_leaves(value) for finding in privacy_findings(leaf, rewriter)]
         if findings:
             raise GoldenError(f"privacy scan: {findings[0]} in {platform}/{rel}")
     # Dump entry values are base64 CBOR, invisible to check-brand.py and to the file scan
@@ -986,6 +985,8 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
         "provenance": provenance, "source_revision": PINNED_SOURCE_REVISION,
         "platforms": sorted(platforms),
     })
+    if provenance == "captured" and (rule := ledger.calculation_outside_rule(files)) is not None:
+        files["divergence-rules.json"] = _dump(rule)
     files["inventory.json"] = _dump({
         "format": INVENTORY_FORMAT, "source_revision": PINNED_SOURCE_REVISION,
         "normalization_version": NORMALIZATION_VERSION, "files": _inventory_entries(files),

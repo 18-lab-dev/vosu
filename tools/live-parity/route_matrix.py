@@ -18,7 +18,7 @@ from typing import Iterable, Mapping
 from urllib.parse import quote
 
 from route_security import (ROUTE_PREFIXES, SPELLINGS, SecurityAbort, SecurityLayout,
-                            encode_relative, inside_absolute, outside_chart, security_target)
+                            calculation_paths, encode_relative, outside_chart, security_target)
 
 MATRIX_FORMAT = "vosu-route-matrix-v1"
 FAMILIES = ("state-http", "ws", "files", "path-security", "calculation", "origin-peer")
@@ -48,8 +48,7 @@ WS_COMPARED_HEADERS = frozenset({
 # Fixture placeholders: path values are plain relative '/'-separated paths
 # encoded per segment; query values are encoded as one form value.
 PATH_VALUES = frozenset({"songs_file", "songs_dir", "beatmap_relative", "skin_file"})
-QUERY_VALUES = frozenset({"calc_relative"})
-LAYOUT_VALUES = frozenset({"calc_absolute_inside", "calc_absolute_outside"})
+CALC_INSIDE_VALUES = frozenset({"calc_relative", "calc_absolute_inside"})
 
 
 @dataclass(frozen=True)
@@ -223,13 +222,14 @@ def requirements_unmet(case: RouteCase, context: MatrixContext) -> list[str]:
             missing.append(f"requires {value} client")
         elif kind == "security" and context.security is None:
             missing.append("requires a run-owned security layout")
-    for name in sorted(Template(case.target).get_identifiers()):
-        if name in LAYOUT_VALUES:
+    names = Template(case.target).get_identifiers()
+    if CALC_INSIDE_VALUES.intersection(names):
+        names = set(names) | CALC_INSIDE_VALUES
+    for name in sorted(names):
+        if name == "calc_absolute_outside":
             if context.security is None:
                 missing.append(f"{name} requires a run-owned security layout")
-            elif name == "calc_absolute_inside" and name not in context.values:
-                missing.append(f"fixture value {name} not provided")
-            elif name == "calc_absolute_outside" and context.security.sentinel_chart is None:
+            elif context.security.sentinel_chart is None:
                 missing.append("no run-owned sentinel chart outside the declared roots")
         elif name not in context.values:
             missing.append(f"fixture value {name} not provided")
@@ -253,12 +253,12 @@ def _target(case: RouteCase, context: MatrixContext) -> tuple[str, bool]:
     for name in Template(case.target).get_identifiers():
         if name in PATH_VALUES:
             values[name] = encode_relative(context.values[name])
-        elif name in QUERY_VALUES:
-            values[name] = quote(context.values[name], safe="")
-        elif name == "calc_absolute_inside":
+        elif name in CALC_INSIDE_VALUES:
             assert context.security is not None
-            path, lexical_only = inside_absolute(context.security, context.values[name])
-            values[name] = quote(path, safe="")
+            lexical_only = calculation_paths(context.security, context.client,
+                                             context.values["calc_relative"],
+                                             context.values["calc_absolute_inside"])
+            values[name] = quote(context.values[name], safe="")
         elif name == "calc_absolute_outside":
             assert context.security is not None
             path, lexical_only = outside_chart(context.security)
@@ -669,11 +669,11 @@ def _calculation_cases() -> list[RouteCase]:
         "attributes": "?mode=0&ar=9.5&cs=4&hp=6&od=8&clockRate=1.5&passedObjects=10",
         "invalid-accuracy": "?acc=abc", "invalid-count": "?combo=-1",
         "invalid-mode": "?mode=9", "invalid-clock-rate": "?clockRate=0",
-        "relative-path": "?path=${calc_relative}",
-        "absolute-inside-root": "?path=${calc_absolute_inside}",
+        "relative-osu-path": "?path=${calc_relative}",
+        "absolute-inside-root-osu": "?path=${calc_absolute_inside}",
     }
-    cases = [_http(f"calculation.{name}", "GET", base + query, ledger=CALC + (
-        ("legacy-calculate-declared-roots",) if "path=" in query else ()))
+    cases = [_http(f"calculation.{name}", "GET", base + query, ledger=CALC,
+                   requires=frozenset({"security"}) if "path=" in query else frozenset())
         for name, query in queries.items()]
     cases += [
         _http("calculation.absolute-outside-root", "GET",

@@ -208,7 +208,7 @@ pub fn observe(platform: &Platform) -> Result<Vec<Result<Observed, String>>, Str
             })
             .collect();
         for index in members {
-            out[index] = Some(case(&replay, &platform.cases[index], &roots));
+            out[index] = Some(case(&replay, &platform.cases[index], platform, &roots));
         }
     }
     Ok(out
@@ -217,9 +217,19 @@ pub fn observe(platform: &Platform) -> Result<Vec<Result<Observed, String>>, Str
         .collect())
 }
 
-fn case(replay: &Replay, case: &Case, roots: &[(String, String)]) -> Result<Observed, String> {
+fn case(
+    replay: &Replay,
+    case: &Case,
+    platform: &Platform,
+    roots: &[(String, String)],
+) -> Result<Observed, String> {
     let mut invariants = Vec::new();
-    let (request, bound) = substitute(replay.address, &case.request, &mut invariants)?;
+    let request = if case.id == "calculation.absolute-inside-root-osu" {
+        std::borrow::Cow::Owned(calculation_request(replay, case, platform)?)
+    } else {
+        std::borrow::Cow::Borrowed(case.request.as_str())
+    };
+    let (request, bound) = substitute(replay.address, &request, &mut invariants)?;
     if case.expected.closed {
         // Upstream closed without a response: vosu must close too, and a
         // response it sends instead is observed in full for the report.
@@ -270,6 +280,62 @@ fn case(replay: &Replay, case: &Case, roots: &[(String, String)]) -> Result<Obse
         bound,
         invariants,
     ))
+}
+
+/// Bind just the positive absolute calculator probe to an approved asset in
+/// the materialized root. The synthetic prefix itself grants no file access.
+fn calculation_request(
+    replay: &Replay,
+    case: &Case,
+    platform: &Platform,
+) -> Result<String, String> {
+    let (query, tail) = case
+        .request
+        .strip_prefix("GET /api/calculate/pp?")
+        .and_then(|rest| rest.split_once(" HTTP/1.1\r\n"))
+        .filter(|(query, _)| query.starts_with("path=") && !query.contains('&'))
+        .ok_or("absolute calculation probe has an unexpected request target")?;
+    let decoded = url::form_urlencoded::parse(query.as_bytes())
+        .next()
+        .expect("checked path query")
+        .1
+        .replace('\\', "/");
+    if !platform
+        .synthetic_roots
+        .values()
+        .any(|root| decoded.starts_with(&root.replace('\\', "/")))
+    {
+        return Err("absolute calculation probe has no declared synthetic root".into());
+    }
+    let slot = if platform.name.ends_with("-lazer") {
+        "files"
+    } else {
+        "songs"
+    };
+    let mut matching = platform.assets.iter().filter(|asset| {
+        asset.slot == slot
+            && asset.relative.ends_with(".osu")
+            && decoded
+                .strip_suffix(&asset.relative)
+                .is_some_and(|prefix| prefix.ends_with('/'))
+    });
+    let asset = matching
+        .next()
+        .filter(|_| matching.next().is_none())
+        .ok_or("absolute calculation probe does not identify one approved .osu asset")?;
+    let (_, root) = replay
+        .roots()
+        .iter()
+        .find(|(name, _)| name == slot)
+        .ok_or("absolute calculation probe has no materialized root")?;
+    let path = root.join(&asset.relative);
+    let path = path
+        .to_str()
+        .ok_or("absolute calculation replay path is not UTF-8")?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("path", path)
+        .finish();
+    Ok(format!("GET /api/calculate/pp?{query} HTTP/1.1\r\n{tail}"))
 }
 
 /// Replaces declared validator placeholders with vosu's own validators for

@@ -18,6 +18,7 @@ forwarded header set mirror `crates/vosu-surface/src/routes.rs`
 """
 from __future__ import annotations
 
+import json
 from typing import Any, NamedTuple
 from urllib.parse import parse_qsl
 
@@ -88,3 +89,25 @@ def check_state_route(case_id: str, path: str, route: dict[str, Any],
     if volatile.payload_view(path, route["body"])[0] != volatile.payload_view(
             path, dump["http"]["body_utf8"].encode("utf-8"))[0]:
         raise GoldenError(f"case {case_id}: vosu route bytes differ from the dump's adapter bytes")
+
+
+def calculation_outside_rule(files: dict[str, bytes]) -> dict[str, Any] | None:
+    """§10: keep the evidenced Windows lazer success; replay exactly vosu's rejection."""
+    platform = "windows-lazer"
+    case = "calculation.absolute-outside-root"
+    data = files.get(f"{platform}/cases/{case}.json")
+    if data is None:
+        return None
+    record = json.loads(data)
+    if not record["request"]["text"].startswith("GET /api/calculate/pp?path=") \
+            or record["expected"].get("status") != 200:
+        return None
+    error = '{"error":"invalid beatmap path: outside declared roots or unsafe spelling"}'
+    parts = [("status", 400), ("body", error)]
+    length = str(len(error.encode("utf-8")))
+    if [value for name, value in record["expected"]["headers"] if name == "content-length"] \
+            != [length]:
+        parts.append(("headers.content-length", length))
+    return {"format": "vosu-golden-divergence-rules-v1", "rules": [
+        {"ledger_id": "legacy-calculate-declared-roots", "platforms": [platform],
+         "cases": [case], "part": part, "vosu_value": value} for part, value in parts]}

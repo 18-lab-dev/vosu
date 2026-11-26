@@ -299,7 +299,7 @@ validator, or a vosu refusal violation as client-dependent; a declared
 | `ws` | Valid upgrades for `/ws`, `/tokens`, `/websocket/v2`, `/websocket/v2/precise`. Invalid upgrades: missing key, wrong version, missing `Upgrade`/`Connection`, POST upgrade, GET without upgrade. Near misses `/websocket/v2/`, `/websocket/v2/precise/`, `/websocket/v2/subscribe`. Filtered frames: no filter, valid nested filters, repeated filter, invalid JSON, oversized message within the existing limit |
 | `files` | `/files/beatmap/{background,audio,file}`, an approved fixture `/files/beatmap/<relative>`, `/Songs/<relative file>`, `/Songs/<relative dir>/`, `/backgroundImage`; stable and lazer `/files/skin/<name>`; exact `/files/skin/`; `GET`/`HEAD`; valid single range, unsatisfiable range, multiple ranges; `If-None-Match`, `If-Modified-Since`, `If-Range` |
 | `path-security` | Encoded parent, double-encoded parent, backslash; absolute drive and UNC spellings, ADS and trailing dot/space (Windows only); a symlink or reparse fixture where the platform permits |
-| `calculation` | `/api/calculate/pp` with no query; mods, accuracy, combo and statistic variants; invalid numbers; relative path; absolute path inside the declared root; absolute sentinel outside it (the `legacy-calculate-declared-roots` security divergence) |
+| `calculation` | `/api/calculate/pp` with no query; mods, accuracy, combo and statistic variants; invalid numbers; `calculation.relative-osu-path` and `calculation.absolute-inside-root-osu` spell the same approved `.osu` copy inside the retained root; `calculation.absolute-outside-root` names a sentinel outside it |
 | `origin-peer` | No Origin, loopback Origin, foreign Origin, malformed Host; the API-key-required configuration only if the approved route matrix includes keys |
 
 `path-security` and outside-root `calculation` targets are only run-owned
@@ -441,10 +441,10 @@ labeled upstream and never count as pilot or full evidence.
   "rules": [
     {
       "ledger_id": "legacy-calculate-declared-roots",
-      "platforms": ["windows-stable", "windows-lazer", "linux-lazer"],
+      "platforms": ["windows-lazer"],
       "cases": ["calculation.absolute-outside-root"],
       "part": "body",
-      "vosu_replacements": [{"pointer": "/error", "value": "..."}]
+      "vosu_value": "{\"error\":\"invalid beatmap path: outside declared roots or unsafe spelling\"}"
     }
   ]
 }
@@ -475,6 +475,13 @@ labeled upstream and never count as pilot or full evidence.
   two rules on one part of one case, fail. `divergence-rules.json` is
   optional: without it nothing is subtracted, and when present it is
   inventoried like every other file.
+
+For the observed Windows-lazer `calculation.absolute-outside-root` response
+with upstream status 200, `golden` inventories the §10 body rule above and
+companion `status` (`400`) and `headers.content-length` (`"75"`, when it
+differs) rules under `legacy-calculate-declared-roots`. The original upstream
+case stays unchanged. These rules do not apply to the positive probes or to
+platforms without evidence, and no other header or record part is subtracted.
 
 ## 11. Pin policy (A4b.10)
 
@@ -540,6 +547,12 @@ Replay inputs follow what the platform's production host records:
   so an absolute or private recorded path matches nothing and the case is
   refused. A reference with no matching asset is refused, and a recorded path
   never falls back to file authority.
+- **Explicit calculation paths.** Capture inventories the selected chart and
+  the byte-identical ordinary `.osu` copy separately, with the actual `files`
+  or `songs` slot and its slot-relative path. A synthetic prefix on
+  `calculation.absolute-inside-root-osu` is bound to that approved file in
+  the materialized slot before replay; it never authorizes a file on the
+  replay host. The outside-root probe is not rebound.
 - **Foreground.** Core has an OS-foreground source only on Windows
   (`docs/v2/plugin-abi.md` §6.2). A `windows-*` case records `true`/`false`
   for every session, and a `linux-*` case records `null`. Any other fact is

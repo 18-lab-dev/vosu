@@ -37,6 +37,8 @@ PATH_SAFE = "!$&'()*+,;=:@"
 
 OUTSIDE, INSIDE, LINK = "outside", "inside", "link"
 
+ASSET_SLOTS = frozenset({"songs", "skins", "files"})
+
 
 @dataclass(frozen=True)
 class Spelling:
@@ -90,6 +92,17 @@ class SecurityLayout:
 
     def declared_roots(self) -> list[tuple[str, str]]:
         return [*self.route_roots.items(), *self.other_roots.items()]
+
+
+def retained_roots(layout: SecurityLayout, client: str) -> dict[str, str]:
+    """Declared osu! root slots rather than aliases for legacy file routes."""
+    if client == "lazer":
+        return {slot: root for slot, root in layout.other_roots.items() if slot == "files"}
+    roots = {slot: layout.route_roots[prefix]
+             for prefix, slot in (("/Songs/", "songs"), ("/files/skin/", "skins"))
+             if prefix in layout.route_roots}
+    return roots | {slot: root for slot, root in layout.other_roots.items()
+                    if slot in ("songs", "skins")}
 
 
 def host_os() -> str:
@@ -307,21 +320,29 @@ def outside_chart(layout: SecurityLayout) -> tuple[str, bool]:
     return chart, lexical_only
 
 
-def inside_absolute(layout: SecurityLayout, value: str) -> tuple[str, bool]:
-    """Validate an absolute calculation path inside a declared root; returns (path, lexical_only)."""
+def calculation_paths(layout: SecurityLayout, client: str, relative: str, absolute: str) -> bool:
+    """The positive probes name the same ordinary chart in the relative calculator slot."""
     _check_capture_root(layout)
     pm = _pm(layout.os_name)
-    if not _absolute(pm, value) or not any(
-            _within(pm, value, root) for _, root in layout.declared_roots()):
-        raise SecurityAbort("absolute calculation path is not inside a declared root")
+    slot = "files" if client == "lazer" else "songs"
+    root = retained_roots(layout, client).get(slot)
+    if root is None:
+        raise SecurityAbort(f"no retained {slot} root for calculation probes")
+    parts = _relative_path(relative)
+    if any(re.search(r'[:*?"<>|\0]', part) or part.endswith((".", " ")) for part in parts) \
+            or pm.splitext(parts[-1])[1].lower() != ".osu":
+        raise SecurityAbort("calculation fixture must be an ordinary relative .osu file")
+    path = pm.join(root, *parts)
+    if not _absolute(pm, absolute) or pm.normcase(absolute) != pm.normcase(path):
+        raise SecurityAbort("relative and absolute calculation fixtures must name the same file")
     lexical_only = layout.os_name != host_os()
     if not lexical_only:
-        real = os.path.realpath(value)
-        if not Path(value).is_file() or not any(
-                _within(os.path, real, os.path.realpath(root))
-                for _, root in layout.declared_roots()):
-            raise SecurityAbort("absolute calculation path does not canonicalize inside a root")
-    return value, lexical_only
+        file, base = Path(path), Path(root).resolve()
+        capture = Path(layout.capture_root).resolve()
+        if base == capture or not base.is_relative_to(capture) or not file.is_file() \
+                or file.resolve() != base.joinpath(*parts):
+            raise SecurityAbort("calculation fixture must be an ordinary .osu file in its root")
+    return lexical_only
 
 
 def prepare_security_layout(capture_root: str, route_roots: Mapping[str, str],

@@ -727,7 +727,7 @@ class PlanTests(unittest.TestCase):
                  "windows-lazer", "windows-lazer"),
                 ("path-security.beatmap.symlink: symlink fixture unavailable: OSError",
                  "linux-lazer"),
-                ("calculation.relative-path: fixture value calc_relative not provided",
+                ("calculation.relative-osu-path: fixture value calc_relative not provided",
                  "linux-lazer")):
             self.assertIsNone(authority(reason, platform), reason)
         self.assertIsNotNone(authority(
@@ -740,6 +740,8 @@ class PlanTests(unittest.TestCase):
             chart = files / "ab" / "abcd"
             chart.parent.mkdir(parents=True)
             chart.write_text("osu file format v14\n")
+            probe = files / "Explicit probe.osu"
+            probe.write_bytes(chart.read_bytes())
             source = Path(tmp) / "sentinel-source.osu"
             source.write_text("osu file format v14\n")
             layout = rs.prepare_security_layout(
@@ -747,17 +749,33 @@ class PlanTests(unittest.TestCase):
                 str(source), {"files": str(files)})
             try:
                 values = {"songs_file": "ab/abcd", "songs_dir": "ab", "beatmap_relative": "abcd",
-                          "skin_file": "skin.ini", "calc_relative": "ab/abcd",
-                          "calc_absolute_inside": str(chart)}
+                          "skin_file": "skin.ini", "calc_relative": probe.name,
+                          "calc_absolute_inside": str(probe)}
                 golden, others, excluded = gc.plan_cases(
                     gc.SCENARIO_SETS["m4b-full-v1"],
                     rm.MatrixContext("linux-lazer", values, layout))
+                assets_cfg = [{"id": f"chart-{i}", "relative": path.relative_to(capture).as_posix(),
+                               "media_type": "text/plain", "generator": "test", "license": "CC0-1.0"}
+                              for i, path in enumerate((chart, probe))]
+                cfg = {"client": "lazer", "golden": {"capture_root": str(capture),
+                       "fixture_values": values, "assets": assets_cfg}}
+                session = gc.Session(cfg, gc.SCENARIO_SETS["m4b-full-v1"], None,
+                                     timeout=1, build=None, client=None, operator=None)
+                session.layout = layout
+                assets = session._assets()
+                self.assertEqual([(a["slot"], a["relative"]) for a in assets],
+                                 [("files", "ab/abcd"), ("files", probe.name)])
+                self.assertEqual(assets[0]["sha256"], assets[1]["sha256"])
+                probe.write_bytes(b"not byte-identical")
+                with self.assertRaisesRegex(gc.CaptureError, "assets with identical bytes"):
+                    session._assets()
             finally:
                 rs.remove_security_layout(layout)
         ids = {item.case.id for item in golden}
         self.assertTrue({"files.beatmap.relative.get", "files.songs.file.get",
                          "path-security.beatmap.symlink", "path-security.songs.encoded-parent",
-                         "files.skin.lazer-file.get"} <= ids)
+                         "files.skin.lazer-file.get", "calculation.relative-osu-path",
+                         "calculation.absolute-inside-root-osu"} <= ids)
         self.assertFalse({item.case.id for item in others} & ids)
         self.assertTrue(all(rm.golden_eligible(item.case) for item in golden))
         # Every remaining exclusion names its contract or ledger authority.

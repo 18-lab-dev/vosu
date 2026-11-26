@@ -244,11 +244,13 @@ schema):
                      "songs_dir": "<relative directory under files>",
                      "beatmap_relative": "<file relative to the current beatmap>",
                      "skin_file": "<legacy skin file name>",
-                     "calc_relative": "<relative chart under files>",
-                     "calc_absolute_inside": "<absolute chart under files>"},
+                     "calc_relative": "m4b-calculate-probe.osu",
+                     "calc_absolute_inside": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files\\m4b-calculate-probe.osu"},
   "sentinel_chart": "<generated vosu-owned .osu to copy outside the roots>",
-  "assets": [{"id": "<asset id>", "relative": "<path under capture_root>",
-              "media_type": "<type>", "generator": "<generator>", "license": "<license>"}]
+  "assets": [{"id": "selected-chart", "relative": "lazer/files/<selected chart storage path>",
+              "media_type": "text/plain", "generator": "<generator>", "license": "<license>"},
+             {"id": "calculate-probe-chart", "relative": "lazer/files/m4b-calculate-probe.osu",
+              "media_type": "text/plain", "generator": "<generator>", "license": "<license>"}]
 }
 ```
 
@@ -257,6 +259,20 @@ task-owned. For lazer, point the task-owned test profile's data directory
 inside it. The upstream daemon serves lazer's legacy `/Songs/` and
 `/files/beatmap/` routes from the files store, so both route roots name the
 files slot (also declared in `other_roots`), and those file and path cases run.
+
+Before probing, copy the selected generated chart byte for byte to an
+ordinary `.osu` file in the retained `files` root (lazer) or `songs` root
+(stable). Stage it after copying the client and importing the generated chart.
+`fixture_values.songs_file` names the selected chart under that root; keep
+the selected chart's original storage file (the extensionless hash on lazer)
+and add the copy to `assets` as a separate ID with the same generator and
+license. Asset paths in the config are capture-root-relative; the inventory
+records each asset's retained slot and slot-relative path for replay. Set
+`calc_relative` and `calc_absolute_inside` to the two spellings of the copy.
+Upstream calculates the selected chart regardless of the supplied path, so
+both spellings must select identical bytes on vosu. Do not change
+`sentinel_chart`: the separate outside-root probe keeps its rejection case.
+
 Every golden case runs except these, each listed in the transcript with its
 authority:
 
@@ -306,9 +322,10 @@ scenario set, or the run is refused before the build.
    upstream exit outside the crash ledger, and writes the 0600 receipt and
    `<out>.transcript.json`. Its config is a Linux run configuration without
    `client_*` fields whose `golden` block has no `authorization`, `assets` or
-   `client_source`, and whose `capture_slot` is the pilot's (`osu!`); the
-   Linux harness build needs
-   `python scripts/prepare-offset-generator.py --rid linux-x64`. Its default
+   `client_source`, and whose `capture_slot` is the pilot's (`osu!`). Stage
+   the ordinary `.osu` copy alongside the hashed chart here too, and set both
+   calculator fixture values; rehearsal does not inventory assets. The
+   Linux harness build needs `python scripts/prepare-offset-generator.py --rid linux-x64`. Its default
    `--timeout` is 7200 s: the feed and filter cases wait out their receive
    windows across three attempts, about 50 minutes in all. Copy the receipt
    into the VM and pass it as `--rehearsal-receipt`.
