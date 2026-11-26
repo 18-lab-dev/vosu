@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 # The same SemVer grammar as scripts/package-release.py validate-tag. Windows
-# version resources hold only the numeric core, so v2.0.0-alpha.1 carries
+# version resources hold only the numeric core, so v2.0.0-alpha.2 carries
 # 2.0.0.0 exactly like v2.0.0; the prerelease stays in `vosu --version`.
 $number = '(?:0|[1-9][0-9]*)'
 $identifier = "(?:$number|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"

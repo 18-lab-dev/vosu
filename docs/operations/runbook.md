@@ -171,7 +171,7 @@ Signing is off until the repository variable `SIGNPATH_ORGANIZATION_ID` exists. 
    </artifact-configuration>
    ```
 
-   `build.rs` sets `ProductName` to `vosu` and `ProductVersion` to the package version's numeric `<major>.<minor>.<patch>.0` (a prerelease such as `2.0.0-alpha.1` carries `2.0.0.0`; `vosu --version` reports the full version), and `scripts/verify-windows-release.ps1` checks both against the tag after signing. A static configuration cannot pin a per-release version, so the version check stays in the workflow.
+   `build.rs` sets `ProductName` to `vosu` and `FileVersion` and `ProductVersion` to the package version's numeric `<major>.<minor>.<patch>.0`. For example, `2.0.0-alpha.2` carries `2.0.0.0`, while `vosu --version` reports `2.0.0-alpha.2`. `scripts/verify-windows-release.ps1` checks the resources against the tag after signing. A static configuration cannot pin a per-release version, so the version check stays in the workflow.
 5. The repository secret `SIGNPATH_API_TOKEN` must belong to a SignPath CI user that can submit to this project, and the variable `SIGNPATH_ORGANIZATION_ID` is added only after everything else here is in place. Once the variable exists, a missing or invalid token fails the tagged release at the signing step rather than publishing an unsigned archive.
 6. Every team member must use MFA for GitHub and SignPath.
 

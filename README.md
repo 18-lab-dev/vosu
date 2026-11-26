@@ -38,11 +38,12 @@ The daemon does not render in-game overlays. Use [vosulay](https://github.com/18
 
 ### 2.0 alpha builds
 
-This branch builds the **2.0.0-alpha.1** application version; the published
-plugin SDK has its own `1.0.0-alpha.N` version. The stable 1.x install below
-is separate. Alpha writes to its own `prerelease/` roots by default and
-imports recognized 1.x settings once, read-only. It does not import your
-overlays, plugins or credentials. Configure spare ports to run both
+This branch builds the **2.0.0-alpha.2** application version; the published
+plugin SDK has its own `1.0.0-alpha.N` version. `vosu --version` reports
+`2.0.0-alpha.2`; the Windows file version is `2.0.0.0`. The stable 1.x
+install below is separate. Alpha writes to its own `prerelease/` roots by
+default and imports recognized 1.x settings once, read-only. It does not
+import your overlays, plugins or credentials. Configure spare ports to run both
 instances at once, and do not point alpha at a live 1.x overlay directory.
 See the [2.0 migration guide](docs/migration/2.0.md) for paths, the stable
 first-start migration, and changes to tools and overlays.

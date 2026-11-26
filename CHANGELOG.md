@@ -26,9 +26,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
   per-artifact approval. This lets plugins such as the replay renderer use
   Chromium's sandbox. The install plan and approval prompt disclose the
   request; other plugins and Windows launch behavior are unchanged.
-  Packaging an opt-in requires the `vosu-plugin-api` `1.0.0-alpha.3`
-  checker or later; older checkers reject the runtime table. The SDK is
-  bumped in-tree only. The native ABI remains v1.
+  Packaging an opt-in requires the published `vosu-plugin-api`
+  `1.0.0-alpha.3` checker or later; older checkers reject the runtime table.
+  The native ABI remains v1. The in-tree application is now `2.0.0-alpha.2`.
+  Plugins using `[runtime.linux]` must declare `host = ">=2.0.0-alpha.2, <3.0.0"`;
+  the published `2.0.0-alpha.1` does not support that table.
 
 - Fixed a process-plugin disconnect when concurrent sends published acknowledgement IDs out of order.
 

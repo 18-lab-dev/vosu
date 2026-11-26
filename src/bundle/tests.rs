@@ -42,18 +42,29 @@ fn root_library_exports_only_the_bundle_and_bundled_array() {
 }
 
 #[test]
-fn executable_bundle_version_matches_the_package_and_its_game_manifest() {
+fn executable_bundle_version_matches_the_package_and_bundled_manifests() {
     assert_eq!(BUNDLE.version, env!("CARGO_PKG_VERSION"));
-    let manifest = PackageManifest::parse(BUNDLED[0].manifest)
-        .unwrap()
-        .into_plugin()
-        .unwrap();
     let host = BUNDLE.version();
-    assert!(
-        semver::VersionReq::parse(&manifest.host)
+    // The harness appends a synthetic plugin with its own fixture version.
+    let production = if cfg!(feature = "test-harness") {
+        BUNDLED.split_last().unwrap().1
+    } else {
+        BUNDLED
+    };
+    for entry in production {
+        let manifest = PackageManifest::parse(entry.manifest)
             .unwrap()
-            .matches(&host)
-    );
+            .into_plugin()
+            .unwrap();
+        assert_eq!(manifest.version, BUNDLE.version, "{}", manifest.id);
+        assert!(
+            semver::VersionReq::parse(&manifest.host)
+                .unwrap()
+                .matches(&host),
+            "{}",
+            manifest.id
+        );
+    }
     assert!(
         !semver::VersionReq::parse(">=1.2.0, <3.0.0")
             .unwrap()

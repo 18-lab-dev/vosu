@@ -4,7 +4,7 @@ Choose a plugin when your extension needs native code, a state provider, or an a
 
 ## Pin the SDK and the host separately
 
-Use the published [`vosu-plugin-api`](https://crates.io/crates/vosu-plugin-api) crate, not a daemon workspace dependency, a Git checkout or `vosu-plugin-internal`. Pin the published version you support exactly, keep the lockfile, and test against the exact vosu builds you support. Versions `1.0.0-alpha.1` and `1.0.0-alpha.2` are on crates.io. For a new Rust library, use this pin once `1.0.0-alpha.3` is published:
+Use the published [`vosu-plugin-api`](https://crates.io/crates/vosu-plugin-api) crate, not a daemon workspace dependency, a Git checkout or `vosu-plugin-internal`. Pin the published version you support exactly, keep the lockfile, and test against the exact vosu builds you support. For a new Rust library, use this pin:
 
 ```toml
 [lib]
@@ -19,7 +19,7 @@ vosu-plugin-api = "=1.0.0-alpha.3"
 | `vosu-plugin-api` `1.0.0-alpha.2` | Rust SDK release; alpha.2 adds job-artifact codecs and host calls that alpha.1 does not have. |
 | `vosu-plugin-api` `1.0.0-alpha.3` | First SDK with package checking for `[runtime.linux]`; older checkers reject the runtime table. It adds no native ABI requirements. |
 | `abi_version = 1` | Native ABI major; the shared library exports `vosu_plugin_entry_v1`. Additive opcodes do not change that symbol. |
-| `host` | Semver requirement on the **vosu application**, not the SDK. Use `>=2.0.0, <3.0.0` for stable-only packages. Explicitly include the prerelease of the host you support when testing alphas; `>=2.0.0` does not admit an alpha. The first host alpha predates job artifacts and `[runtime.linux]`; require a host build that supports the features you use. |
+| `host` | Semver requirement on the **vosu application**, not the SDK. Use `>=2.0.0, <3.0.0` for stable-only packages. Explicitly include the prerelease of the host you support when testing alphas; `>=2.0.0` does not admit an alpha. For packages using `[runtime.linux]`, use `>=2.0.0-alpha.2, <3.0.0`: the first host alpha does not accept the table. |
 | `manifest_version = 1`, `catalog_version = 2` | Package and catalog formats, not ABI or application versions. |
 | Package `version`, capability versions | Independent semver. A field uses its namespace schema version; an action uses the version of that action, not its package version. |
 
