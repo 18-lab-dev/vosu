@@ -30,7 +30,7 @@ import test_live_parity_golden_capture as base
 
 BUDGET = ("state-http.json-v2.budget.query-pairs-128", "state-http.json-v2.budget.query-pairs-129")
 CRASHING = "state-http.json.near.malformed-percent"
-FOREIGN = "path-security.songs.absolute-drive"
+FOREIGN = "path-security.skin.absolute-drive"  # stable only: the skin root is stable's
 SKIN_EXCLUDED = "path-security.skin.absolute-encoded"
 SUBSET = ("state-http.json-v2.get.menu", "state-http.json-sc.get.no-client",
           "state-http.json-v2.head.no-client", *BUDGET, "state-http.negative.api-v1-suffix",
@@ -97,7 +97,7 @@ class RehearsalTests(base.CaptureTestCase):
         self.assertEqual((receipt["vosu_commit"], receipt["tooling_digest"]),
                          (self.commit, rehearsal.tooling_digest()))
         self.assertEqual(receipt["renderings"],
-                         {"linux-lazer": len(SUBSET) - 1, "windows-lazer": 1, "windows-stable": 0})
+                         {"linux-lazer": len(SUBSET) - 1, "windows-lazer": 0, "windows-stable": 1})
         self.assertEqual(receipt["outcomes"], {"complete": 6, "negative": 1, "upstream_crashed": 1})
         self.assertEqual([entry["case"] for entry in transcript["rehearsal"]][-1], CRASHING)
         self.assertEqual(receipt["golden"]["cases"], 5)
@@ -272,6 +272,24 @@ class ClientDependentTests(unittest.TestCase):
             reason = f"{daemon} outcome 'validator-missing' is not allowed (priming status 200)"
             entry = self.classify("files.conditional.if-none-match-etag", reason)
             self.assertEqual(entry, {"failure": "; ".join([reason] * gc.MAX_ATTEMPTS)}, daemon)
+
+    def test_path_echo_cases_are_client_dependent_only_without_an_echo(self) -> None:
+        # Pre-run-3 audit (2026-11-26): client-less, upstream answers 500 "not ready" with no
+        # path to echo; a vosu refusal violation is never client-dependent.
+        echo = [case_id for case_id, (outcome, _) in rm.UPSTREAM_EXPECTED.items()
+                if outcome == "private-path-echo"]
+        self.assertEqual(len(echo), 8)
+        for case_id in echo:
+            missing = (f"case {case_id}: upstream private-path-echo without an echo of the "
+                       "private root (status 500)")
+            self.assertEqual(self.classify(case_id, missing),
+                             {"client_dependent": [missing] * gc.MAX_ATTEMPTS}, case_id)
+            for reason in (f"case {case_id}: vosu must refuse a private-path-echo case with "
+                           "3xx/4xx, not 500",
+                           f"case {case_id}: vosu echoes a private or absolute path (drive path)",
+                           f"case {case_id}: upstream private-path-echo needs a 5xx response, "
+                           "not 404"):
+                self.assertIn("failure", self.classify(case_id, reason), (case_id, reason))
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and UNSHARE, "needs util-linux unshare")

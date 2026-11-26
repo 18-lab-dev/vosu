@@ -289,11 +289,13 @@ class RawHttpTests(unittest.TestCase):
         self.assertIn(b'If-None-Match: W/"b"\r\n', vosu.requests[1])
         self.assertEqual(['"a"', 'W/"b"'], [record["validator"]["value"] for record in records])
         self.assertEqual(source.requests[1].replace(b'"a"', b"${validator}"), item.request)
-        with serve(etag_server(None)) as server:
-            record = pr.run_case(item, server.endpoint(), limits=FAST)
-        self.assertEqual("validator-missing", record["outcome"])
-        self.assertFalse(record["outcome_allowed"])
-        self.assertEqual(1, len(server.requests))
+        # A 2xx prime without the validator is allowed only from upstream on this declared
+        # case (route_matrix.UPSTREAM_EXPECTED); vosu must send its own validator.
+        for daemon, allowed in (("source", True), ("vosu", False)):
+            with serve(etag_server(None)) as server:
+                record = pr.run_case(item, server.endpoint(daemon), limits=FAST)
+            self.assertEqual(("validator-missing", allowed), (record["outcome"], record["outcome_allowed"]))
+            self.assertEqual(1, len(server.requests))
         with self.assertRaises(ValueError):
             item.with_validator('"a"\r\nX-Injected: 1')
 
@@ -603,23 +605,31 @@ class MatrixTests(unittest.TestCase):
             rm._build()
 
     def test_upstream_outcomes_are_declared_per_case_under_a_ledger_row(self) -> None:
-        # Main's decisions (2026-11-26): these eleven, named by ID, never a class rule.
+        # Main's decisions (2026-11-26): these nineteen, named by ID, never a class rule.
         trailing = {f"ws.near.{name}-trailing-slash" for name in ("v2", "v2-precise", "ws", "tokens")}
         conditional = {f"files.conditional.{name}" for name in (
             "if-none-match-etag", "if-modified-since-last-modified", "if-range-etag",
             "if-range-last-modified")}
         timeout = trailing | {"ws.near.v2-subscribe", "files.skin.index.upgrade",
                               "origin-peer.host.malformed-port"}
+        echo = {f"path-security.{route}.{spelling}" for route in ("songs", "beatmap")
+                for spelling in ("absolute-drive", "absolute-drive-slash", "unc-extended",
+                                 "unc-device")}
         self.assertEqual({case_id: outcome for case_id, (outcome, _) in rm.UPSTREAM_EXPECTED.items()},
                          {**dict.fromkeys(timeout, "timeout"),
-                          **dict.fromkeys(conditional, "validator-missing")})
-        # Every case whose validator comes from the daemon's own response is declared.
+                          **dict.fromkeys(conditional, "validator-missing"),
+                          **dict.fromkeys(echo, "private-path-echo")})
+        # Every case whose validator comes from the daemon's own response is declared, and
+        # the echo spellings are Windows only, never the lazer-excluded skin route.
         self.assertEqual({case.id for case in rm.MATRIX if case.validator}, conditional)
+        self.assertEqual({case.id for case in rm.MATRIX if rm.PATH_ECHO_LEDGER in case.ledger}, echo)
+        for case_id in echo:
+            self.assertIn("os:windows", rm.CASES[case_id].requires, case_id)
         rows = dict(re.findall(r"^\| ([a-zA-Z0-9.-]+) \| (security|contract|licensing|temporary) \|",
                                (ROOT / "tests/fixtures/upstream/DIVERGENCES.md").read_text("utf-8"),
                                re.M))
-        self.assertEqual((rows[rm.NEAR_UPGRADE_LEDGER], rows[rm.NO_VALIDATOR_LEDGER]),
-                         ("security", "contract"))
+        self.assertEqual((rows[rm.NEAR_UPGRADE_LEDGER], rows[rm.NO_VALIDATOR_LEDGER],
+                          rows[rm.PATH_ECHO_LEDGER]), ("security", "contract", "security"))
         for case_id, (outcome, ledger_id) in rm.UPSTREAM_EXPECTED.items():
             case = rm.CASES[case_id]
             self.assertEqual(rm.upstream_expected(case_id), (outcome, ledger_id))
@@ -627,8 +637,10 @@ class MatrixTests(unittest.TestCase):
             self.assertIn(rows[ledger_id], ("security", "contract"), case_id)
             self.assertEqual(case.role, rm.GOLDEN, case_id)
             self.assertNotIn(outcome, case.outcomes, case_id)
-            # Upstream must record it; vosu keeps the case's outcomes and must answer.
-            self.assertEqual(rm.allowed_outcomes(case, "source"), frozenset({outcome}))
+            # Upstream must record it (a private-path echo is an ordinary response record);
+            # vosu keeps the case's outcomes and must answer.
+            self.assertEqual(rm.allowed_outcomes(case, "source"),
+                             frozenset({rm.RAW_OUTCOME[outcome]}))
             self.assertEqual(rm.allowed_outcomes(case, "vosu"), case.outcomes)
             if case_id in trailing:
                 self.assertEqual(case.ledger, (rm.NEAR_UPGRADE_LEDGER,))

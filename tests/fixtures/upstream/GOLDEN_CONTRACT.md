@@ -281,13 +281,23 @@ of 2026-11-26, never a class rule) under its reviewed ledger row:
   upstream never sends `ETag` or `Last-Modified`, so a 2xx priming response without the
   validator is the complete observation; vosu must answer its own conditional request,
   which must be upstream's priming request plus the validator line.
+- `private-path-echo`: the eight Windows-only `path-security.{songs,beatmap}` cases with
+  the `absolute-drive`, `absolute-drive-slash`, `unc-extended` and `unc-device` spellings
+  (`upstream-private-path-echo`). Upstream joins the absolute spelling under its songs
+  folder and answers 5xx echoing the joined server-side path, which `root-prefix` cannot
+  normalize (the second root follows a path separator, and the status line encodes it
+  twice). `golden` checks the structure only: a 5xx whose body echoes a path under the
+  attested capture root. It never stores those bytes. vosu must refuse cleanly: 3xx or 4xx
+  (never a 2xx serving the sentinel, never a 5xx), with no absolute path or capture root
+  in its status line, headers or body; any violation fails the run.
 
-Both upstream sandwich records carry the declared outcome (an upstream answer, or a
-non-2xx priming response, fails the attempt), and vosu's dumps must agree. `golden` writes
-no case file and lists the case, its outcome, ledger ID and vosu's status in its summary
-under `upstream_declared`. Any other case with either outcome fails, and
-`golden-rehearsal` counts neither a `timeout` nor a 2xx priming response without a
-validator as client-dependent.
+Both upstream sandwich records carry the declared outcome (any other upstream outcome,
+or a non-2xx priming response, fails the attempt), and vosu's dumps must agree. `golden`
+writes no case file and lists the case, its outcome, ledger ID and vosu's status in its
+summary under `upstream_declared`. Any other case with one of these outcomes fails.
+`golden-rehearsal` counts none of a `timeout`, a 2xx priming response without a
+validator, or a vosu refusal violation as client-dependent; a declared
+`private-path-echo` case whose client-less upstream 5xx echoes no path is.
 
 ### Route matrix families
 

@@ -632,7 +632,8 @@ class Session:
         value = {"id": case.id, "family": case.family, "barrier": case.barrier, "dump_schema": schema,
                  "conditional": validator, "attempts": [*failed, attempt]}
         try:  # The same validators `golden` applies, so a recorded case is accepted unchanged.
-            no_response.check(parity_golden._case(copy.deepcopy(value), 0))
+            no_response.check(parity_golden._case(copy.deepcopy(value), 0),
+                              no_response.rewriter_for(self.golden_cfg, self.cfg["os"]))
         except GoldenError as exc:
             return str(exc)
         finding = rm.handshake_only_finding(case, upstream[0]["outcome"], route["outcome"])
@@ -993,8 +994,7 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
         "upstream_crashed": sum(case["attempts"][-1]["outcome"] == crash.OUTCOME
                                 for case in capture["cases"]),
         "retried_cases": sum(len(case["attempts"]) > 1 for case in capture["cases"]),
-        "findings": session.transcript["findings"],
-        "vosu_sha256": capture["attestation"]["vosu"]["sha256"],
+        "findings": session.transcript["findings"], "vosu_sha256": capture["attestation"]["vosu"]["sha256"],
         "sha256": hashlib.sha256(outputs[0][1]).hexdigest(),
     }, sort_keys=True))
     return 0

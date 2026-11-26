@@ -367,8 +367,14 @@ def upstream_crash_ledger(case: RouteCase) -> str | None:
 # before any response. `validator-missing`: upstream's file routes never send `ETag` or
 # `Last-Modified` (no such code in the pinned source; second full pilot run), so a 2xx
 # priming response without the validator is the complete observation. vosu must answer.
+# `private-path-echo` (pre-run-3 audit): on Windows upstream joins an absolute drive or
+# device spelling under its songs folder and answers 5xx echoing the joined private path
+# in its status line and body. The record is an ordinary response; golden checks the echo
+# structurally, never stores it, and asserts that vosu refuses cleanly (3xx/4xx, no path).
 NEAR_UPGRADE_LEDGER = "upstream-unanswered-near-upgrade"
 NO_VALIDATOR_LEDGER = "upstream-no-file-validators"
+PATH_ECHO_LEDGER = "upstream-private-path-echo"
+PATH_ECHO_SPELLINGS = ("absolute-drive", "absolute-drive-slash", "unc-extended", "unc-device")
 UPSTREAM_EXPECTED = {
     "ws.near.v2-trailing-slash": ("timeout", NEAR_UPGRADE_LEDGER),
     "ws.near.v2-precise-trailing-slash": ("timeout", NEAR_UPGRADE_LEDGER),
@@ -381,7 +387,18 @@ UPSTREAM_EXPECTED = {
     "files.conditional.if-modified-since-last-modified": ("validator-missing", NO_VALIDATOR_LEDGER),
     "files.conditional.if-range-etag": ("validator-missing", NO_VALIDATOR_LEDGER),
     "files.conditional.if-range-last-modified": ("validator-missing", NO_VALIDATOR_LEDGER),
+    "path-security.songs.absolute-drive": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.songs.absolute-drive-slash": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.songs.unc-extended": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.songs.unc-device": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.beatmap.absolute-drive": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.beatmap.absolute-drive-slash": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.beatmap.unc-extended": ("private-path-echo", PATH_ECHO_LEDGER),
+    "path-security.beatmap.unc-device": ("private-path-echo", PATH_ECHO_LEDGER),
 }
+# The raw route-record outcome each declared outcome is observed as.
+RAW_OUTCOME = {"timeout": "timeout", "validator-missing": "validator-missing",
+               "private-path-echo": "response"}
 
 
 def upstream_expected(case_id: str) -> tuple[str, str] | None:
@@ -392,7 +409,8 @@ def upstream_expected(case_id: str) -> tuple[str, str] | None:
 def allowed_outcomes(case: RouteCase, daemon: str) -> frozenset[str]:
     """What `daemon` may record for `case`: upstream must record a declared outcome."""
     expected = UPSTREAM_EXPECTED.get(case.id)
-    return frozenset({expected[0]}) if daemon == "source" and expected else case.outcomes
+    return frozenset({RAW_OUTCOME[expected[0]]}) if daemon == "source" and expected \
+        else case.outcomes
 
 
 def handshake_only_finding(case: RouteCase, source: str, vosu: str) -> dict | None:
@@ -630,10 +648,12 @@ def _security_cases() -> list[RouteCase]:
             requires = {"security"}
             if len(spelling.oses) == 1:
                 requires.add("os:" + next(iter(spelling.oses)))
+            echo = (PATH_ECHO_LEDGER,) if prefix != "/files/skin/" \
+                and spelling.name in PATH_ECHO_SPELLINGS else ()
             cases.append(_http(
                 f"path-security.{slugs[prefix]}.{spelling.name}", "GET", "",
                 requires=frozenset(requires), security=(prefix, spelling.name),
-                ledger=("legacy-game-file-confinement",), outcomes=CLOSED_OK))
+                ledger=("legacy-game-file-confinement", *echo), outcomes=CLOSED_OK))
     return cases
 
 
@@ -718,7 +738,7 @@ def _build() -> tuple[RouteCase, ...]:
         expected = upstream_expected(case.id)
         if expected is not None and (
                 expected[1] not in case.ledger or case.role != GOLDEN or upstream_crash_ledger(case)
-                or (case.validator is None) != (expected[0] == "timeout")):
+                or (case.validator is not None) != (expected[0] == "validator-missing")):
             raise ValueError(f"{case.id}: a declared upstream {expected[0]} is a golden case under "
                              f"its ledger row {expected[1]}, with a validator only for "
                              "validator-missing")

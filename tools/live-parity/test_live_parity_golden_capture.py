@@ -590,6 +590,73 @@ class FakeTraversalTests(CaptureTestCase):
                      scenario, FakeClient(self.state), self.config(scenario))
 
 
+class PathEchoTests(unittest.TestCase):
+    """Pre-run-3 audit (2026-11-26): on Windows upstream echoes the joined private path for
+    the absolute drive and device spellings; golden checks the echo and vosu's refusal."""
+
+    ROOT = "C:\\vosu-capture\\m4b-pilot-test"
+    ECHO = sorted(case_id for case_id, (outcome, _) in rm.UPSTREAM_EXPECTED.items()
+                  if outcome == "private-path-echo")
+
+    def rewriter(self):
+        return no_response.rewriter_for({"capture_root": self.ROOT, "capture_slot": "osu!"},
+                                        "windows")
+
+    def parsed(self, case_id: str, source: dict, vosu: dict) -> dict:
+        record = lambda value: {"request": "GET / HTTP/1.1\r\n\r\n", "outcome": None,
+                                "frames": None, **value}
+        return {"id": case_id, "family": "path-security", "barrier": "menu",
+                "dump_schema": "v2", "conditional": None, "attempts": 1,
+                "source": [record(source), record(source)], "route": record(vosu), "dumps": []}
+
+    def check(self, case_id: str, source: dict | None = None, vosu: dict | None = None) -> dict:
+        joined = f"{self.ROOT}\\client\\files\\C:{self.ROOT[2:]}\\vosu-route-probe\\sentinel.txt"
+        echo = {"status": 500, "status_line": "HTTP/1.1 500 x", "headers": [],
+                "body": json.dumps({"error": f"ENOENT: no such file or directory, stat '{joined}'"})
+                .encode()}
+        refusal = {"status": 404, "status_line": "HTTP/1.1 404 Not Found",
+                   "headers": [["content-type", "text/plain"]], "body": b"Not Found"}
+        case = self.parsed(case_id, {**echo, **(source or {})}, {**refusal, **(vosu or {})})
+        with mock.patch.object(parity_golden, "_check_sandwiches"):  # Covered elsewhere.
+            return no_response.check_case(case, self.rewriter())
+
+    def test_each_declared_case_passes_on_an_echo_and_a_clean_refusal(self) -> None:
+        self.assertEqual(len(self.ECHO), 8)
+        for case_id in self.ECHO:
+            self.assertEqual(self.check(case_id), {
+                "id": case_id, "outcome": "private-path-echo", "ledger_id": rm.PATH_ECHO_LEDGER,
+                "attempts": 1, "vosu_status": 404})
+
+    def test_a_vosu_path_echo_or_wrong_status_fails(self) -> None:
+        case_id = self.ECHO[0]
+        for vosu, pattern in (
+                ({"status": 200, "body": b"sentinel"}, "vosu must refuse .* not 200"),
+                ({"status": 500}, "vosu must refuse .* not 500"),
+                ({"body": f"stat '{self.ROOT}\\x'".encode()}, "vosu echoes a private"),
+                ({"body": b"D:\\other\\path"}, "vosu echoes a private .*drive path"),
+                ({"headers": [["location", "C:/vosu-capture/m4b-pilot-test/x"]]}, "vosu echoes"),
+                ({"status_line": "HTTP/1.1 404 /Songs/C:/x"}, "vosu echoes")):
+            with self.subTest(vosu=vosu), self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                self.check(case_id, vosu=vosu)
+
+    def test_an_upstream_without_the_echo_fails(self) -> None:
+        case_id = self.ECHO[0]
+        for source, pattern in (
+                ({"body": b'{"error":"osu is not ready/running"}'},
+                 r"without an echo of the private root \(status 500\)"),
+                ({"status": 404}, "needs a 5xx response, not 404")):
+            with self.subTest(source=source), \
+                    self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                self.check(case_id, source=source)
+
+    def test_undeclared_cases_are_unaffected(self) -> None:
+        for case_id in ("path-security.songs.encoded-parent", "path-security.skin.absolute-drive",
+                        "state-http.json-v2.get.menu"):
+            self.assertFalse(no_response.applies({"id": case_id}), case_id)
+            with self.assertRaisesRegex(parity_golden.GoldenError, "no declared upstream outcome"):
+                self.check(case_id)
+
+
 class PlanTests(unittest.TestCase):
     def test_incomplete_case_set_and_platform_exclusions(self) -> None:
         context = rm.MatrixContext("linux-lazer", {})
