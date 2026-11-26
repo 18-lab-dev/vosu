@@ -133,7 +133,7 @@ async fn tools(h: &Harness, root: &std::path::Path) -> Arc<vosu::tools::ToolRegi
         root.join("cache"),
         vosu::tools::ExtraRoots { dev: vec![path] },
         "http://127.0.0.1:25050".into(),
-        "http://127.0.0.1:25051".into(),
+        Some("http://127.0.0.1:25051".into()),
     )
     .await
     .unwrap();

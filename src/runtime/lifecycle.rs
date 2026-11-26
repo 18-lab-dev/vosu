@@ -257,7 +257,7 @@ impl ProductionRuntime {
                 dev: self.dev_tools.clone(),
             },
             self.origins.overlay(),
-            self.origins.dashboard(),
+            self.dashboard.then(|| self.origins.dashboard()),
         )
         .await;
         let tools = match tools {

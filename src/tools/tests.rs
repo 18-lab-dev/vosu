@@ -45,7 +45,7 @@ async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolRegistry> {
         root.join("cache"),
         ExtraRoots { dev },
         "http://127.0.0.1:25150".into(),
-        "http://127.0.0.1:25151".into(),
+        Some("http://127.0.0.1:25151".into()),
     ))
     .unwrap();
     host.activate(None);
@@ -486,6 +486,38 @@ async fn tool_host_view_presents_servable_packages_and_revokes_replaced_leases()
         Some(FileError::TargetGone)
     );
     bounded!(host.shutdown());
+}
+
+/// A7.3: with the dashboard off nothing serves its origin, so the bridge's
+/// `dashboardUrl` is `null` rather than a dead configured address.
+#[tokio::test]
+async fn tool_host_view_has_no_dashboard_origin_while_the_dashboard_is_off() {
+    let root = tempfile::tempdir().unwrap();
+    let dev = put(root.path(), "demo", "");
+    let host = bounded!(host(root.path(), vec![dev]));
+    let views = host.tool_host_views();
+    let origins = crate::server::origins::Origins::new(
+        "http://127.0.0.1:25150".into(),
+        "http://127.0.0.1:25151".into(),
+    )
+    .unwrap();
+    host.activate(Some(Arc::new(origins.without_dashboard())));
+    let off = views.borrow().clone();
+    assert_eq!(off.dashboard_origin, None);
+    assert_eq!(off.tools.len(), 1);
+    bounded!(host.shutdown());
+
+    let unset = bounded!(ToolRegistry::new(
+        root.path().join("config"),
+        root.path().join("data"),
+        root.path().join("cache"),
+        ExtraRoots { dev: Vec::new() },
+        "http://127.0.0.1:25150".into(),
+        None,
+    ))
+    .unwrap();
+    assert_eq!(unset.tool_host_views().borrow().dashboard_origin, None);
+    bounded!(unset.shutdown());
 }
 
 #[tokio::test]

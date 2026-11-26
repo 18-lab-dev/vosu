@@ -89,7 +89,7 @@ pub struct ToolRegistry {
     cache: PathBuf,
     roots: Vec<(PathBuf, &'static str)>,
     overlay_url: String,
-    dashboard_url: String,
+    dashboard_url: Option<String>,
     origins: Mutex<Option<Arc<crate::server::origins::Origins>>>,
     view: view::Publisher,
     /// Serializes discovery and every `state.json`/settings write.
@@ -242,7 +242,7 @@ impl ToolRegistry {
         cache: PathBuf,
         extra: ExtraRoots,
         overlay_url: String,
-        dashboard_url: String,
+        dashboard_url: Option<String>,
     ) -> io::Result<Arc<Self>> {
         let ExtraRoots { dev } = extra;
         let user = data.clone();
@@ -282,7 +282,7 @@ impl ToolRegistry {
             data,
             cache,
             roots,
-            view: view::Publisher::new(Some(dashboard_url.clone())),
+            view: view::Publisher::new(dashboard_url.clone()),
             overlay_url,
             dashboard_url,
             origins: Mutex::new(None),
@@ -312,11 +312,13 @@ impl ToolRegistry {
             .as_ref()
             .map_or_else(|| self.overlay_url.clone(), |origins| origins.overlay())
     }
-    fn dashboard_url(&self) -> String {
-        self.origins
-            .lock()
-            .as_ref()
-            .map_or_else(|| self.dashboard_url.clone(), |origins| origins.dashboard())
+    /// The bridge's `dashboardUrl`: `None` while the dashboard is off (A7.3),
+    /// since nothing serves its origin.
+    fn dashboard_url(&self) -> Option<String> {
+        match self.origins.lock().as_ref() {
+            Some(origins) => origins.dashboard_enabled().then(|| origins.dashboard()),
+            None => self.dashboard_url.clone(),
+        }
     }
     fn enabled(&self, entry: &Entry) -> bool {
         !entry.legacy

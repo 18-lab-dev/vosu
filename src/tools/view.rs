@@ -77,7 +77,7 @@ impl ToolRegistry {
                 (entry, key)
             })
             .collect();
-        let dashboard = Some(self.dashboard_url());
+        let dashboard = self.dashboard_url();
         let keys: Vec<&Key> = presented.iter().map(|(_, key)| key).collect();
         if let Some((origin, previous)) = &last.1
             && *origin == dashboard

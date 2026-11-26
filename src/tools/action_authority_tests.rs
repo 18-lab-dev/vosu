@@ -88,7 +88,7 @@ async fn host(root: &Path, paths: Vec<PathBuf>) -> Arc<ToolRegistry> {
         root.join("cache"),
         ExtraRoots { dev: paths },
         "http://127.0.0.1:25150".into(),
-        "http://127.0.0.1:25151".into(),
+        Some("http://127.0.0.1:25151".into()),
     ))
     .unwrap()
 }

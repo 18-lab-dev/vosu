@@ -51,7 +51,7 @@ async fn tool_corpus_uses_real_discovery_and_dashboard() {
                 // A valid legacy manifest must never rescue rejected v2 input.
                 std::fs::write(dir.join("tool.toml"),"manifest_version=1\nid='corpus'\nname='Legacy'\nversion='1.0.0'\n[ui]\nroot='web'\n").unwrap();
                 let host = vosu::tools::ToolRegistry::new(root.path().join("config"),root.path().join("data"),root.path().join("cache"),
-                    vosu::tools::ExtraRoots{dev:vec![]},"http://127.0.0.1:1".into(),"http://127.0.0.1:2".into()).await.unwrap();
+                    vosu::tools::ExtraRoots{dev:vec![]},"http://127.0.0.1:1".into(),Some("http://127.0.0.1:2".into())).await.unwrap();
                 let response = host.dashboard(axum::http::Request::builder().uri("/api/tools").body(axum::body::Body::empty()).unwrap(),bytes::Bytes::new()).await;
                 let body = axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap();
                 let body: Value = serde_json::from_slice(&body).unwrap();

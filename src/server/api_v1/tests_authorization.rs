@@ -16,7 +16,7 @@ async fn broker_credentials_never_bypass_peer_or_origin_and_keys_are_not_actions
             root.path().join("cache"),
             crate::tools::ExtraRoots { dev: vec![] },
             "http://127.0.0.1:25050".into(),
-            "http://127.0.0.1:25051".into(),
+            Some("http://127.0.0.1:25051".into()),
         )
         .await
         .unwrap();
