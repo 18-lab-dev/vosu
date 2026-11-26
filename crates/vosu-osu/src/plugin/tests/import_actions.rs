@@ -501,7 +501,10 @@ fn parity_harness_import_uses_the_production_handoff() {
     );
     imports.cancel(44).unwrap();
     imports.shutdown();
-    let entries: Vec<_> = std::fs::read_dir(&songs).unwrap().map(Result::unwrap).collect();
+    let entries: Vec<_> = std::fs::read_dir(&songs)
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
     assert_eq!(entries.len(), 1);
     let installed = entries[0].path();
     assert_eq!(installed.extension().and_then(|s| s.to_str()), Some("osz"));
