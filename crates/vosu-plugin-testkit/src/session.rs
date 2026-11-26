@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
+use crate::outbox::{Coalesce, Merge, Outbox};
+
 use vosu_plugin_api::{
     FocusChanged, HostServices, Init, Message, Plugin, PluginError, SessionAttached,
     SessionDecline, SessionDetached, SessionIdentify, VtableHostServices,
@@ -106,7 +108,7 @@ pub fn register_with_config(
 
 pub struct SessionPlugin {
     host: VtableHostServices,
-    events: SyncSender<SessionEvent>,
+    events: Outbox<SessionEvent>,
     config: SessionPluginConfig,
 }
 
@@ -136,7 +138,7 @@ impl Plugin for SessionPlugin {
             });
         Ok(Self {
             host,
-            events,
+            events: Outbox::new(events),
             config,
         })
     }
@@ -166,17 +168,31 @@ impl Plugin for SessionPlugin {
                     }
                     OnAttach::Ignore => {}
                 }
-                let _ = self.events.try_send(SessionEvent::Attached(attached));
+                self.events.send(SessionEvent::Attached(attached));
             }
             Message::SessionDetached(detached) => {
-                let _ = self.events.try_send(SessionEvent::Detached(detached));
+                self.events.send(SessionEvent::Detached(detached));
             }
             Message::FocusChanged(focus) => {
-                let _ = self.events.try_send(SessionEvent::Focus(focus));
+                self.events.send(SessionEvent::Focus(focus));
             }
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// Focus is latest-only per session; a full event channel keeps the newest.
+impl Coalesce for SessionEvent {
+    fn merge(&mut self, next: Self) -> Merge<Self> {
+        match (self, next) {
+            (Self::Focus(queued), Self::Focus(focus)) if queued.handle == focus.handle => {
+                *queued = focus;
+                Merge::Merged
+            }
+            (Self::Focus(_), next @ Self::Focus(_)) => Merge::Skip(next),
+            (_, next) => Merge::Stop(next),
+        }
     }
 }
 

@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{TryRecvError, sync_channel};
 use std::time::Duration;
 use vosu_plugin_api::*;
-use vosu_plugin_testkit::{publisher, subscriber};
+use vosu_plugin_testkit::{publisher, session, subscriber};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -141,6 +141,183 @@ fn subscriber_reassembles_parts_and_joins_command_thread() {
     );
     assert_eq!(messages.lock().unwrap().len(), 1);
     let _replacement = subscriber::register(id);
+}
+
+fn scored(pointer: &str, value: u64) -> StateEntry {
+    StateEntry {
+        ns: "vosu.play".into(),
+        pointer: pointer.into(),
+        value: Some(CborValue::from(value)),
+        error: None,
+    }
+}
+
+fn update(plugin: &mut subscriber::SubscriberPlugin, session: u64, values: Vec<StateEntry>) {
+    plugin
+        .on_message(
+            Message::StateUpdate(StateUpdate {
+                session,
+                values,
+                more: false,
+            }),
+            0,
+        )
+        .unwrap();
+}
+
+/// The host delivers every update a subscriber must converge on, but a test
+/// thread descheduled for a while lets the bounded event channel fill. The
+/// update arriving then is the latest state; with no later update to repair
+/// it, the observer must still receive it once it drains (ADR 0002 latest-
+/// state convergence), never lose it to the full channel.
+#[test]
+fn subscriber_keeps_the_latest_update_when_its_event_channel_is_full() {
+    let id = "vosu.kt.full-channel";
+    let (events, _commands) = subscriber::register(id);
+    let messages = Mutex::new(Vec::new());
+    let services = services();
+    // SAFETY: services and messages outlive the plugin and its joined command thread.
+    let host = unsafe {
+        VtableHostServices::new(
+            &services,
+            (&messages as *const Mutex<Vec<Message>>).cast_mut().cast(),
+        )
+    };
+    let mut plugin = subscriber::SubscriberPlugin::create(host, init(id)).unwrap();
+    let capacity = 64;
+    for n in 0..capacity {
+        update(&mut plugin, 71, vec![scored("/score", n)]);
+    }
+    // The channel is full: these wait, and coalesce key by key.
+    update(
+        &mut plugin,
+        71,
+        vec![scored("/score", 100), scored("/combo", 100)],
+    );
+    update(&mut plugin, 72, vec![scored("/score", 7)]);
+    update(&mut plugin, 71, vec![scored("/score", 101)]);
+    for n in 0..capacity {
+        assert_eq!(
+            events.try_recv().unwrap(),
+            subscriber::SubscriberEvent::Update {
+                session: 71,
+                values: vec![scored("/score", n)]
+            }
+        );
+    }
+    // Nothing else arrives to flush them: the plugin delivers them itself.
+    assert_eq!(
+        events.recv_timeout(TIMEOUT).unwrap(),
+        subscriber::SubscriberEvent::Update {
+            session: 71,
+            values: vec![scored("/score", 101), scored("/combo", 100)]
+        }
+    );
+    assert_eq!(
+        events.recv_timeout(TIMEOUT).unwrap(),
+        subscriber::SubscriberEvent::Update {
+            session: 72,
+            values: vec![scored("/score", 7)]
+        }
+    );
+    // Lifecycle order holds: an update after a waiting detach stays after it.
+    for n in 0..capacity {
+        update(&mut plugin, 73, vec![scored("/score", n)]);
+    }
+    update(&mut plugin, 71, vec![scored("/score", 102)]);
+    plugin
+        .on_message(
+            Message::SessionDetached(SessionDetached {
+                handle: 71,
+                reason: DetachReason::Exited,
+            }),
+            0,
+        )
+        .unwrap();
+    update(&mut plugin, 71, vec![scored("/score", 103)]);
+    for n in 0..capacity {
+        assert_eq!(
+            events.try_recv().unwrap(),
+            subscriber::SubscriberEvent::Update {
+                session: 73,
+                values: vec![scored("/score", n)]
+            }
+        );
+    }
+    // A later message flushes what waited, in order, before itself.
+    update(&mut plugin, 74, vec![scored("/score", 1)]);
+    assert_eq!(
+        events.try_iter().collect::<Vec<_>>(),
+        vec![
+            subscriber::SubscriberEvent::Update {
+                session: 71,
+                values: vec![scored("/score", 102)]
+            },
+            subscriber::SubscriberEvent::Detached(SessionDetached {
+                handle: 71,
+                reason: DetachReason::Exited,
+            }),
+            subscriber::SubscriberEvent::Update {
+                session: 71,
+                values: vec![scored("/score", 103)]
+            },
+            subscriber::SubscriberEvent::Update {
+                session: 74,
+                values: vec![scored("/score", 1)]
+            },
+        ]
+    );
+    drop(plugin);
+    assert!(messages.lock().unwrap().is_empty());
+    let _replacement = subscriber::register(id);
+}
+
+#[test]
+fn session_observer_keeps_the_latest_focus_when_its_event_channel_is_full() {
+    let id = "vosu.kt.full-focus";
+    let events = session::register(id);
+    let messages = Mutex::new(Vec::new());
+    let services = services();
+    // SAFETY: services and messages outlive the plugin.
+    let host = unsafe {
+        VtableHostServices::new(
+            &services,
+            (&messages as *const Mutex<Vec<Message>>).cast_mut().cast(),
+        )
+    };
+    let mut plugin = session::SessionPlugin::create(host, init(id)).unwrap();
+    let focus = |handle, focused| FocusChanged {
+        handle,
+        focused,
+        foreground: None,
+    };
+    for _ in 0..64 {
+        plugin
+            .on_message(Message::FocusChanged(focus(10, false)), 0)
+            .unwrap();
+    }
+    // The channel is full: the newest focus per session waits.
+    for (handle, focused) in [(11, true), (10, false), (10, true)] {
+        plugin
+            .on_message(Message::FocusChanged(focus(handle, focused)), 0)
+            .unwrap();
+    }
+    for _ in 0..64 {
+        assert_eq!(
+            events.try_recv().unwrap(),
+            session::SessionEvent::Focus(focus(10, false))
+        );
+    }
+    assert_eq!(
+        events.recv_timeout(TIMEOUT).unwrap(),
+        session::SessionEvent::Focus(focus(11, true))
+    );
+    assert_eq!(
+        events.recv_timeout(TIMEOUT).unwrap(),
+        session::SessionEvent::Focus(focus(10, true))
+    );
+    drop(plugin);
+    assert!(messages.lock().unwrap().is_empty());
 }
 
 #[test]

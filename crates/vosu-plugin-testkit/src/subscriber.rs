@@ -18,6 +18,9 @@
 //! session and reports one combined [`SubscriberEvent::Update`] only once
 //! the matching `more: false` part completes it.
 //!
+//! Its bounded event channel never stalls host dispatch and never loses the
+//! latest update or focus to a full channel (`crate::outbox`).
+//!
 //! Per-instance test state travels through plugin-id-keyed registries set
 //! up before `PluginHost::create_instance`, the same pattern
 //! `read_plan.rs`/`scan.rs` already use.
@@ -29,6 +32,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
+
+use crate::outbox::{Coalesce, Merge, Outbox};
 
 use vosu_plugin_api::{
     FocusChanged, HostServices, Init, Message, Plugin, PluginError, Selector, SessionAttached,
@@ -59,6 +64,42 @@ pub enum SubscriberEvent {
 pub struct SubscribeCommand {
     pub session: Option<u64>,
     pub selectors: Vec<Selector>,
+}
+
+impl Coalesce for SubscriberEvent {
+    fn merge(&mut self, next: Self) -> Merge<Self> {
+        match (self, next) {
+            (
+                Self::Update {
+                    session: queued,
+                    values: queued_values,
+                },
+                Self::Update { session, values },
+            ) => {
+                if *queued != session {
+                    return Merge::Skip(Self::Update { session, values });
+                }
+                for entry in values {
+                    match queued_values
+                        .iter_mut()
+                        .find(|queued| queued.ns == entry.ns && queued.pointer == entry.pointer)
+                    {
+                        Some(queued) => *queued = entry,
+                        None => queued_values.push(entry),
+                    }
+                }
+                Merge::Merged
+            }
+            (Self::Focus(queued), Self::Focus(focus)) => {
+                if queued.handle != focus.handle {
+                    return Merge::Skip(Self::Focus(focus));
+                }
+                *queued = focus;
+                Merge::Merged
+            }
+            (_, next) => Merge::Stop(next),
+        }
+    }
 }
 
 fn events_registry() -> &'static Mutex<HashMap<String, SyncSender<SubscriberEvent>>> {
@@ -114,7 +155,7 @@ pub struct SubscriberPlugin {
     plugin_id: String,
     stopped: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
-    events: SyncSender<SubscriberEvent>,
+    events: Outbox<SubscriberEvent>,
     /// Parts accumulated for an in-progress `more: true` `STATE_UPDATE`
     /// delivery, by session, until the matching `more: false` part
     /// completes it (module doc comment).
@@ -134,6 +175,7 @@ impl Plugin for SubscriberPlugin {
                     init.plugin_id
                 )
             });
+        let events = Outbox::new(events);
         let commands = commands_registry()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -158,7 +200,7 @@ impl Plugin for SubscriberPlugin {
                         }
                         let status =
                             reader_host.subscribe_state(command.session, command.selectors);
-                        let _ = reader_events.try_send(SubscriberEvent::SubscribeStatus(status));
+                        reader_events.send(SubscriberEvent::SubscribeStatus(status));
                     }
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -178,14 +220,14 @@ impl Plugin for SubscriberPlugin {
     fn on_message(&mut self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
         match message {
             Message::SessionAttached(attached) => {
-                let _ = self.events.try_send(SubscriberEvent::Attached(attached));
+                self.events.send(SubscriberEvent::Attached(attached));
             }
             Message::SessionDetached(detached) => {
                 self.pending.remove(&detached.handle);
-                let _ = self.events.try_send(SubscriberEvent::Detached(detached));
+                self.events.send(SubscriberEvent::Detached(detached));
             }
             Message::FocusChanged(focus) => {
-                let _ = self.events.try_send(SubscriberEvent::Focus(focus));
+                self.events.send(SubscriberEvent::Focus(focus));
             }
             Message::StateUpdate(StateUpdate {
                 session,
@@ -195,9 +237,8 @@ impl Plugin for SubscriberPlugin {
                 self.pending.entry(session).or_default().append(&mut values);
                 if !more {
                     let values = self.pending.remove(&session).unwrap_or_default();
-                    let _ = self
-                        .events
-                        .try_send(SubscriberEvent::Update { session, values });
+                    self.events
+                        .send(SubscriberEvent::Update { session, values });
                 }
             }
             _ => {}
@@ -206,9 +247,9 @@ impl Plugin for SubscriberPlugin {
     }
 }
 
-// Event channels are bounded and deliberately lossy when full: tests must
-// drain them or fail on their bounded receive, never stall host dispatch.
-// Shutdown stops command consumption and joins before the borrowed host dies.
+// Event channels are bounded and never stall host dispatch (`Outbox`):
+// tests drain them or fail on their bounded receive. Shutdown stops command
+// consumption and joins before the borrowed host dies.
 impl Drop for SubscriberPlugin {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
