@@ -46,6 +46,8 @@ use super::channel::{ENDPOINT_ARGUMENT, ENDPOINT_FDS};
 /// the exact §7.6 command.
 const ARGV0: &str = "vosu";
 const COMMAND: &str = "plugin-host";
+/// Optional §7.6 argument, sent only for an approved opt-in.
+pub const USER_NAMESPACES_ARGUMENT: &str = "--allow-user-namespaces";
 /// Where the child keeps its error pipe until `execve` closes it.
 const ERROR_FD: RawFd = 7;
 /// Lowest descriptor the parent's temporary copies use, so moving the
@@ -65,6 +67,7 @@ pub struct PluginHostCommand<'a> {
     /// The compile-time build identity passed as the first argument after
     /// `plugin-host`.
     pub build_identity: &'a str,
+    pub allow_user_namespaces: bool,
     pub host_to_plugin: &'a RingObjects,
     pub plugin_to_host: &'a RingObjects,
 }
@@ -224,13 +227,17 @@ impl Prepared {
             .map_err(|_| SpawnError::InvalidCommand("build identity contains NUL"))?;
         // SAFETY: `getpid` has no preconditions.
         let core_pid = unsafe { libc::getpid() };
-        let argv = vec![
+        let mut argv = Vec::with_capacity(5 + usize::from(command.allow_user_namespaces));
+        argv.extend([
             CString::new(ARGV0).expect("constant has no NUL"),
             CString::new(COMMAND).expect("constant has no NUL"),
             identity,
             CString::new(core_pid.to_string()).expect("decimal has no NUL"),
-            CString::new(ENDPOINT_ARGUMENT).expect("constant has no NUL"),
-        ];
+        ]);
+        if command.allow_user_namespaces {
+            argv.push(CString::new(USER_NAMESPACES_ARGUMENT).expect("constant has no NUL"));
+        }
+        argv.push(CString::new(ENDPOINT_ARGUMENT).expect("constant has no NUL"));
         let mut env = Vec::new();
         for (key, value) in std::env::vars_os().chain(
             extra_env

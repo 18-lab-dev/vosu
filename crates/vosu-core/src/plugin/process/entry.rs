@@ -24,6 +24,9 @@
 
 use std::ffi::{OsStr, OsString};
 
+#[cfg(target_os = "linux")]
+use vosu_sys::plugin_process::{NamespacePolicy, USER_NAMESPACES_ARGUMENT};
+
 use super::control::{EXIT_ARGUMENTS, EXIT_GENERATION};
 
 /// The exact `argv[1]` of a plugin host.
@@ -51,11 +54,13 @@ pub(super) struct Arguments<'a> {
     /// The core PID the parent-death check expects (Linux only).
     #[cfg(target_os = "linux")]
     pub parent: u32,
+    #[cfg(target_os = "linux")]
+    pub namespace_policy: NamespacePolicy,
     pub endpoints: &'a OsStr,
 }
 
-/// Linux: `<identity> <core pid> <endpoints>`. Windows: `<identity>
-/// <endpoints>`.
+/// Linux: `<identity> <core pid> [--allow-user-namespaces] <endpoints>`.
+/// Windows: `<identity> <endpoints>`.
 #[cfg(target_os = "linux")]
 const ARGUMENT_COUNT: usize = 5;
 #[cfg(not(target_os = "linux"))]
@@ -64,7 +69,19 @@ const ARGUMENT_COUNT: usize = 4;
 /// Checks the exact argument shape, then the build identity. Returns the
 /// exit status of the stage that refused them.
 pub(super) fn parse<'a>(args: &'a [OsString], build_identity: &str) -> Result<Arguments<'a>, i32> {
-    if args.len() != ARGUMENT_COUNT || !is_plugin_host(args) {
+    #[cfg(target_os = "linux")]
+    let namespace_policy = match args.len() {
+        ARGUMENT_COUNT => NamespacePolicy::DenyUserNamespaces,
+        n if n == ARGUMENT_COUNT + 1 && args[4] == USER_NAMESPACES_ARGUMENT => {
+            NamespacePolicy::AllowUserNamespaces
+        }
+        _ => return Err(EXIT_ARGUMENTS),
+    };
+    #[cfg(not(target_os = "linux"))]
+    if args.len() != ARGUMENT_COUNT {
+        return Err(EXIT_ARGUMENTS);
+    }
+    if !is_plugin_host(args) {
         return Err(EXIT_ARGUMENTS);
     }
     let identity = args[2].to_str().ok_or(EXIT_ARGUMENTS)?;
@@ -73,7 +90,7 @@ pub(super) fn parse<'a>(args: &'a [OsString], build_identity: &str) -> Result<Ar
     }
     #[cfg(target_os = "linux")]
     let parent = canonical_pid(&args[3]).ok_or(EXIT_ARGUMENTS)?;
-    let endpoints = args[ARGUMENT_COUNT - 1].as_os_str();
+    let endpoints = args[args.len() - 1].as_os_str();
     if endpoints.is_empty() {
         return Err(EXIT_ARGUMENTS);
     }
@@ -83,6 +100,8 @@ pub(super) fn parse<'a>(args: &'a [OsString], build_identity: &str) -> Result<Ar
     Ok(Arguments {
         #[cfg(target_os = "linux")]
         parent,
+        #[cfg(target_os = "linux")]
+        namespace_policy,
         endpoints,
     })
 }
@@ -109,7 +128,7 @@ mod platform {
     use super::super::bootstrap;
     use super::super::control::{EXIT_ENDPOINTS, EXIT_PARENT, StartupStage};
     use super::super::linux::adopt_channel;
-    use super::Arguments;
+    use super::{Arguments, NamespacePolicy};
 
     pub(super) fn start(arguments: Arguments<'_>) -> i32 {
         if arm_parent_death(arguments.parent).is_err() {
@@ -119,13 +138,17 @@ mod platform {
             return EXIT_ENDPOINTS;
         };
         // Still the one initial thread: nothing above starts one.
-        if let Err(failure) = drop_privileges() {
+        if let Err(failure) = drop_privileges(arguments.namespace_policy) {
+            let policy = match arguments.namespace_policy {
+                NamespacePolicy::DenyUserNamespaces => "",
+                NamespacePolicy::AllowUserNamespaces => " (allow_user_namespaces)",
+            };
             return bootstrap::report_before_create(
                 &endpoint,
                 StartupStage::Security,
                 failure.code.as_str(),
                 failure.errno,
-                &format!("{}: {failure}", failure.step.as_str()),
+                &format!("{}{policy}: {failure}", failure.step.as_str()),
             );
         }
         bootstrap::run(endpoint)

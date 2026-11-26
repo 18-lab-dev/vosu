@@ -4,6 +4,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M7
 
+- Process plugins can request Linux user namespaces, with explicit
+  per-artifact approval. This lets plugins such as the replay renderer use
+  Chromium's sandbox. The install plan and approval prompt disclose the
+  request; other plugins and Windows launch behavior are unchanged.
+
 - Shutdown closes the overlay command and API v1 subscription WebSockets and
   waits for their workers before destroying plugin instances. Slow plugin
   cleanup no longer leaves these connections open.

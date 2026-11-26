@@ -14,7 +14,7 @@
 // stop name the generation this view showed, so a stale button never acts
 // on a newer generation. vosu never restarts itself or a plugin to finish a
 // revocation: the row says a restart of vosu is needed and leaves it there.
-import { promote, uninstallFlow } from './dashboard-catalog-flow.js';
+import { LINUX_USER_NAMESPACES, promote, uninstallFlow } from './dashboard-catalog-flow.js';
 
 const POLL_MS = 3000;
 
@@ -167,6 +167,9 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
     );
     if (plugin.requires_internal_paths) {
       body.append(el('p', { className: 'plugin-approval__disclosure', text: 'It asks for osu! internal paths: it can see where osu! and its files are installed on this computer.' }));
+    }
+    if (plugin.linux_user_namespaces) {
+      body.append(el('p', { className: 'plugin-approval__disclosure', text: LINUX_USER_NAMESPACES }));
     }
     body.append(el('p', { className: 'field-help', text: 'This approval covers exactly these files. If they change, vosu asks again.' }));
     const cancel = button('Cancel', `Cancel; ${name} stays unloaded`);

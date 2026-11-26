@@ -41,6 +41,7 @@ pub struct CatalogEntry {
     #[serde(default)]
     pub optional: Vec<Capability>,
     pub runtime: Option<Runtime>,
+    pub linux_user_namespaces: Option<bool>,
     pub matcher: Option<MatchTable>,
     pub actions: Option<Vec<ActionDeclaration>>,
     pub resource_kinds: Option<Vec<ResourceKind>>,

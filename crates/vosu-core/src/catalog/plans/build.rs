@@ -52,6 +52,8 @@ pub struct PlanAdd {
     pub runtime: Option<&'static str>,
     pub needs_approval: bool,
     pub requires_internal_paths: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub linux_user_namespaces: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanView {
@@ -147,6 +149,7 @@ pub fn build(
                     version: entry.version.clone(),
                     sha256,
                     runtime,
+                    linux_user_namespaces: entry.linux_user_namespaces.unwrap_or_default(),
                 }),
                 _ => {
                     errors.push("invalid native artifact metadata".into());
@@ -191,6 +194,7 @@ pub fn build(
             }),
             needs_approval: requirement.is_some_and(|r| r.needs_approval),
             requires_internal_paths,
+            linux_user_namespaces: artifact.as_ref().is_some_and(|a| a.linux_user_namespaces),
         });
         adds.push(PinnedAdd {
             entry: Arc::new(entry.clone()),

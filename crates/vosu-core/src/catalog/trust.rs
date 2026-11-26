@@ -77,7 +77,9 @@ impl CurrentPolicy<'_> {
         }
         Ok(Requirement {
             trust,
-            needs_approval: trust == TrustTier::User && artifact.runtime == Runtime::Process,
+            needs_approval: artifact.runtime == Runtime::Process
+                && (trust == TrustTier::User
+                    || (cfg!(target_os = "linux") && artifact.linux_user_namespaces)),
         })
     }
     /// P0 pins this generation and rejects stale plans rather than recomputing.

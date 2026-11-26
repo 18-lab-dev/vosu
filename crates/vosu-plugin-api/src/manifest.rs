@@ -47,51 +47,9 @@ pub use context::{
     ValidationContext,
 };
 pub use package::{OverlayManifest, PackageFields, PackageManifest, ToolManifest, ToolUi};
-pub use plugin::valid_native_target;
+pub use plugin::{LinuxRuntime, PluginManifest, Runtime, valid_native_target};
 pub use requirements::{Requirement, candidate_satisfies};
 pub use shared::{SharedManifest, ValidationError};
-
-/// Plugin-specific typed view of the unified package document.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginManifest {
-    pub kind: String,
-    pub manifest_version: u32,
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub host: String,
-    pub description: Option<String>,
-    pub author: Option<String>,
-    pub homepage: Option<String>,
-    pub icon: Option<String>,
-    pub banner: Option<String>,
-    #[serde(default)]
-    pub replaces: Vec<String>,
-    pub abi_version: u32,
-    pub runtime: Runtime,
-    #[serde(default)]
-    pub concurrent_dispatch: bool,
-    pub settings_schema: Option<String>,
-    #[serde(default)]
-    pub root_slots: Vec<String>,
-    #[serde(default)]
-    pub covers: Vec<String>,
-    #[serde(default)]
-    pub targets: std::collections::BTreeMap<String, Target>,
-    #[serde(rename = "match")]
-    pub matcher: Option<MatchTable>,
-    #[serde(default, rename = "resource_kinds")]
-    pub resource_kinds: Vec<ResourceKind>,
-    #[serde(default)]
-    pub actions: Vec<ActionDeclaration>,
-    #[serde(default)]
-    pub provides: Vec<Capability>,
-    #[serde(default)]
-    pub requires: Vec<Capability>,
-    #[serde(default)]
-    pub optional: Vec<Capability>,
-}
 
 /// One `[[provides]]`/`[[requires]]`/`[[optional]]` entry
 /// (`docs/v2/catalog-v2.md` "Capability fields"): a capability id, its
@@ -105,15 +63,6 @@ pub struct Capability {
     pub version: String,
     #[serde(default)]
     pub schema: Option<String>,
-}
-
-/// `runtime = "in-process" | "process"` (§7.1's request-only field; the
-/// host's trust decision, not validated here, lives in the host's registry).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Runtime {
-    InProcess,
-    Process,
 }
 
 /// `[targets.<host-triple>]`: omitted entirely for bundled plugins.
@@ -174,6 +123,8 @@ pub enum ManifestError {
     Host(String),
     /// `abi_version` must equal `VOSU_PLUGIN_ABI_MAJOR`.
     AbiVersion,
+    /// The `[runtime.linux]` table is reserved for process plugins.
+    LinuxRuntimeRequiresProcess,
     /// `settings_schema` must be a confined relative path.
     SettingsSchema,
     /// A `root_slots` entry failed its grammar.
@@ -235,6 +186,9 @@ impl fmt::Display for ManifestError {
                 f,
                 "abi_version must equal VOSU_PLUGIN_ABI_MAJOR ({VOSU_PLUGIN_ABI_MAJOR})"
             ),
+            Self::LinuxRuntimeRequiresProcess => {
+                write!(f, "runtime.linux.user_namespaces requires process runtime")
+            }
             Self::SettingsSchema => write!(f, "settings_schema must be a confined relative path"),
             Self::RootSlot(s) => write!(f, "root_slots: invalid entry {s:?}"),
             Self::Covers(s) => write!(f, "covers: invalid entry {s:?}"),
@@ -356,6 +310,12 @@ fn valid_covers_entry(cover: &str) -> bool {
 }
 
 impl PluginManifest {
+    /// True only when the manifest explicitly requests this Linux policy.
+    pub fn linux_user_namespaces(&self) -> bool {
+        self.linux_runtime
+            .is_some_and(|linux| linux.user_namespaces)
+    }
+
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.kind != "plugin" {
             return Err(ManifestError::Kind);
@@ -373,6 +333,9 @@ impl PluginManifest {
         semver::VersionReq::parse(&self.host).map_err(|e| ManifestError::Host(e.to_string()))?;
         if self.abi_version != VOSU_PLUGIN_ABI_MAJOR {
             return Err(ManifestError::AbiVersion);
+        }
+        if self.runtime != Runtime::Process && self.linux_runtime.is_some() {
+            return Err(ManifestError::LinuxRuntimeRequiresProcess);
         }
         if let Some(schema) = &self.settings_schema
             && !relative(schema)
@@ -513,7 +476,39 @@ mod tests {
         let manifest = parse(&base()).unwrap();
         assert_eq!(manifest.id, "vosu.osu");
         assert_eq!(manifest.runtime, Runtime::InProcess);
+        assert!(!manifest.linux_user_namespaces());
         assert!(!manifest.concurrent_dispatch);
+    }
+
+    #[test]
+    fn linux_user_namespaces_requires_process_and_a_boolean() {
+        let manifest = |mode: &str, value: &str| {
+            base().replace(
+                "runtime='in-process'",
+                &format!("[runtime]\nmode='{mode}'\n[runtime.linux]\nuser_namespaces={value}"),
+            )
+        };
+        for (value, expected) in [("true", true), ("false", false)] {
+            let parsed = parse(&manifest("process", value)).unwrap();
+            assert_eq!(parsed.runtime, Runtime::Process);
+            assert_eq!(parsed.linux_user_namespaces(), expected);
+            let invalid = manifest("in-process", value);
+            assert_eq!(
+                parse(&invalid).unwrap_err(),
+                ManifestError::LinuxRuntimeRequiresProcess
+            );
+            let diagnostic = PackageManifest::parse(&invalid).unwrap_err();
+            assert_eq!(diagnostic.rule, "manifest.linux-runtime");
+            assert_eq!(diagnostic.pointer, "/runtime/linux/user_namespaces");
+        }
+        assert!(matches!(
+            parse(&manifest("process", "'true'")),
+            Err(ManifestError::Toml(_))
+        ));
+        assert!(matches!(
+            parse(&(manifest("process", "true") + "typo=true\n")),
+            Err(ManifestError::Toml(_))
+        ));
     }
 
     #[test]

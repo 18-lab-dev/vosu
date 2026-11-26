@@ -44,9 +44,26 @@
       "maxItems": 2
     },
     "runtime": {
-      "enum": [
-        "process",
-        "in-process"
+      "oneOf": [
+        { "enum": ["process", "in-process"] },
+        {
+          "type": "object",
+          "properties": {
+            "mode": { "enum": ["process", "in-process"] },
+            "linux": {
+              "type": "object",
+              "properties": {
+                "user_namespaces": { "type": "boolean" }
+              },
+              "required": ["user_namespaces"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["mode"],
+          "additionalProperties": false,
+          "if": { "required": ["linux"] },
+          "then": { "properties": { "mode": { "const": "process" } } }
+        }
       ]
     },
     "capabilityId": {

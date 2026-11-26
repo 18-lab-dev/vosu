@@ -178,6 +178,9 @@ impl ProcessHostLauncher {
         } else {
             self.first_load_deadline
         };
+        #[cfg(target_os = "linux")]
+        let started = self.target.spawn(launch.manifest.linux_user_namespaces())?;
+        #[cfg(not(target_os = "linux"))]
         let started = self.target.spawn()?;
         let deadline = Instant::now() + budget;
         let endpoint = supervision::start(

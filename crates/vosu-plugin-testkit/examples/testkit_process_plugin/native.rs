@@ -59,6 +59,7 @@ mod linux {
     const EPERM: i32 = 1;
 
     unsafe extern "C" {
+        fn setns(fd: i32, flags: i32) -> i32;
         fn raise(signal: i32) -> i32;
         fn fork() -> i32;
         fn unshare(flags: i32) -> i32;
@@ -121,6 +122,15 @@ mod linux {
             fields.push(format!("{}={value}", key.to_ascii_lowercase()));
         }
         fields.push(format!("userns={}", userns_probe()));
+        // SAFETY: an invalid descriptor cannot change namespaces.
+        let setns_errno = unsafe {
+            if setns(-1, CLONE_NEWUSER) == 0 {
+                0
+            } else {
+                *__errno_location()
+            }
+        };
+        fields.push(format!("setns_errno={setns_errno}"));
         fields.join(" ")
     }
 

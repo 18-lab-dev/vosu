@@ -11,6 +11,7 @@ fn artifact(source: &str, runtime: Runtime) -> Artifact {
         version: "2.3.4".into(),
         sha256: [0x41; 32],
         runtime,
+        linux_user_namespaces: false,
     }
 }
 fn record(source: &str, trusted: bool) -> SourceRecord {
@@ -104,6 +105,29 @@ fn process_user_needs_approval_but_trusted_and_official_do_not() {
     assert!(policy(&[]).authorize_load(&approved).is_ok());
     let official = InstalledPolicy::new(artifact_for_official(), None);
     assert!(policy(&[]).authorize_load(&official).is_ok());
+}
+
+#[test]
+fn linux_user_namespaces_needs_exact_approval_even_from_trusted_sources() {
+    for (source, sources) in [
+        ("18-lab-dev/vosu-overlays", vec![]),
+        (USER, vec![record(USER, true)]),
+    ] {
+        let original = artifact(source, Runtime::Process);
+        let changed = Artifact {
+            linux_user_namespaces: true,
+            ..original.clone()
+        };
+        let approval = Approval::grant(&original);
+        assert!(!approval.matches(&changed));
+        let stale = InstalledPolicy::new(changed.clone(), Some(approval));
+        assert_eq!(
+            policy(&sources).authorize_load(&stale).err(),
+            cfg!(target_os = "linux").then_some(PolicyError::ApprovalRequired)
+        );
+        let approved = InstalledPolicy::new(changed.clone(), Some(Approval::grant(&changed)));
+        assert!(policy(&sources).authorize_load(&approved).is_ok());
+    }
 }
 fn artifact_for_official() -> Artifact {
     artifact("18-lab-dev/vosu-overlays", Runtime::Process)

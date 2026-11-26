@@ -142,18 +142,43 @@ fn linux_security_host_readback_before_constructor_and_after_threads() {
 #[test]
 fn linux_security_refused_filter_fails_closed_without_constructor() {
     let mut tree = Tree::launch(CoreKind::Helper, REFUSAL);
+    assert_security_refused(&mut tree, false);
+}
+
+#[test]
+fn linux_security_refused_opt_in_names_its_variant_and_fails_closed() {
+    let mut tree = Tree::launch_with_manifest(
+        CoreKind::Helper,
+        Scenario {
+            name: "refusal_userns",
+            ..REFUSAL
+        },
+        &[(
+            "runtime = 'process'",
+            "[runtime]\nmode = 'process'\n[runtime.linux]\nuser_namespaces = true",
+        )],
+    );
+    assert_security_refused(&mut tree, true);
+}
+
+fn assert_security_refused(tree: &mut Tree, opted_in: bool) {
     let created = super::support::host::wait_until(STARTUP_BOUND, || tree.created().is_some());
     assert!(created, "the core helper's create returned");
     let created = tree.created().unwrap();
     assert_eq!(created["result"], "failed", "{created:?}");
     assert_eq!(created["stage"], "security", "{created:?}");
     assert_eq!(created["code"], "security_unavailable", "{created:?}");
+    assert_eq!(
+        created["message"].contains("allow_user_namespaces"),
+        opted_in,
+        "{created:?}"
+    );
     // Failed and never retried: past the first restart delay.
     let status = tree.status_after_create();
     assert_eq!(status["phase"], "Failed", "{status:?}");
     assert_eq!(status["restarts"], "0", "{status:?}");
     assert_eq!(status["crash_events"], "0", "{status:?}");
-    assert_refused_cleanly(&mut tree);
+    assert_refused_cleanly(tree);
 }
 
 // ---------------------------------------------------------------- packaged

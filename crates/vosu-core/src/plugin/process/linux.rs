@@ -79,7 +79,7 @@ impl HostSpawner {
     /// Creates one instance's rings, starts its plugin host, and attaches
     /// core's end. Returns once the child's `execve` succeeded; the child's
     /// own startup (§7.6 `CREATE`/`READY`) happens over the channel.
-    pub fn spawn(&self) -> Result<SpawnedHost, LaunchError> {
+    pub fn spawn(&self, allow_user_namespaces: bool) -> Result<SpawnedHost, LaunchError> {
         let to_plugin = RingObjects::create(REGION_BYTES).map_err(LaunchError::Objects)?;
         let to_host = RingObjects::create(REGION_BYTES).map_err(LaunchError::Objects)?;
         ring::initialize(to_plugin.region()).map_err(LaunchError::Ring)?;
@@ -89,6 +89,7 @@ impl HostSpawner {
             .spawn(&PluginHostCommand {
                 executable: &self.executable,
                 build_identity: &self.build_identity,
+                allow_user_namespaces,
                 host_to_plugin: &to_plugin,
                 plugin_to_host: &to_host,
             })

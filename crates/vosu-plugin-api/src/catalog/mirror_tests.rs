@@ -62,6 +62,7 @@ version='^1'
         ("/actions", entry.clone()),
         ("/resource_kinds", entry.clone()),
         ("/optional", entry.clone()),
+        ("/linux_user_namespaces", entry.clone()),
         ("/provides/0", entry.clone()),
         ("/id", entry.clone()),
     ] {
@@ -76,6 +77,7 @@ version='^1'
             "/resource_kinds" => {
                 changed.resource_kinds.as_mut().unwrap()[0].families = vec!["image".to_owned()]
             }
+            "/linux_user_namespaces" => changed.linux_user_namespaces = Some(true),
             "/optional" => changed.optional[0].version = "^2".to_owned(),
             "/provides/0" => changed.provides.swap(0, 1),
             "/id" => {

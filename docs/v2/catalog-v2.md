@@ -311,6 +311,13 @@ explicit `ValidationContext` and returns host support separately.
 `ValidationError` carries a stable rule id and document pointer.
 Ordered declaration vectors remain ordered for mirror comparison.
 
+**2026-11-26 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)).**
+Only a process plugin can declare `[runtime.linux] user_namespaces = true`;
+it uses `[runtime] mode = "process"` instead of the scalar runtime key.
+See [plugin ABI §8](plugin-abi.md#8-manifesttoml-runtime-fields-for-kind--plugin)
+for the exact TOML and validation rules. This option does not change the
+manifest or catalog format version.
+
 The SDK namespace compiler accepts caller-supplied bytes, expected namespace
 and provide version, trusted common-definition bytes and explicit schema
 provenance. Its output contains namespace/version, canonical
@@ -854,6 +861,10 @@ game, not any real supported or planned integration.
   version; an entry whose `host` the running version does not satisfy is
   listed as unsupported (installable-never, same surfacing as 1.x `supported`)
   rather than hidden.
+- Plugin entries keep the string `runtime`. The optional boolean
+  `linux_user_namespaces` mirrors `runtime.linux.user_namespaces` (default
+  false); only a `process` plugin entry can carry it. The SDK rejects a
+  disagreement before a package is installed.
 - `provides` is accepted only on `plugins` entries (empty/absent elsewhere) and
   must equal the `provides` declared by the package's own `manifest.toml`; the
   resolver uses the catalog copy to plan an install without downloading every
@@ -1166,6 +1177,15 @@ owns this predicate). It is a disclosure flag the install UI surfaces (the
 grant exposes the attached client's install paths to that plugin), never a
 sandbox decision — it does not gate `needs_approval` or `trust` and carries
 no approval step of its own. `false` for every non-plugin entry.
+
+**2026-11-26 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)).**
+An add with the Linux opt-in includes `"linux_user_namespaces": true` and
+the install review says: “On Linux, this plugin can create user namespaces,
+which Chromium-style sandboxes need.” The flag is omitted for all other
+adds. On Linux, `needs_approval` is true for an opted-in add even from an
+official or trusted source. The plan pins the opt-in with the exact package
+hash and runtime; an approval does not authorize a different declaration.
+Windows keeps its existing approval rules and job object.
 
 A plugin add whose `runtime` is `"in-process"` while its `trust` would be
 `"user"` is never silently downgraded to `"process"` or merely
@@ -1618,6 +1638,15 @@ with stage `approval`.
 
 M6b's install-plan `approve` list (A6b.6) produces records of this same
 shape. There is no second approval store.
+
+**2026-11-26 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)).**
+The native approval disclosure shows the same fixed Linux user-namespace
+wording as the install review. `GET /api/plugins` includes
+`"linux_user_namespaces": true` for an opted-in manifest. The approval
+request still contains only the exact manifest and library SHA-256 digests.
+Even when the library digest stays the same, changing the declaration
+changes the manifest digest and requires new approval on the next load of
+that manifest.
 
 **Management routes.** These follow "API placement":
 

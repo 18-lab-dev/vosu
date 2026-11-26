@@ -84,7 +84,8 @@ def main():
                         overlays=[catalog.overlay('catalog-overlay', 'Catalog overlay fixture')],
                         plugins=[
                             catalog.plugin('acme.paths', 'process', process_library,
-                                           requires=[{'id': 'field:vosu.osu.internal.paths', 'version': '^1'}]),
+                                           requires=[{'id': 'field:vosu.osu.internal.paths', 'version': '^1'}],
+                                           linux_user_namespaces=True),
                             catalog.plugin('acme.echo', 'in-process', library, settings=ECHO_SETTINGS),
                             catalog.plugin('acme.game', 'process', process_library,
                                            provides=[{'id': f'game:{GAME_PROCESS}', 'version': '*'}],
@@ -96,8 +97,9 @@ def main():
         shutil.copy2(process_library, official / 'lib' / process_library.name)
         (official / 'manifest.toml').write_text(manifest({
             'manifest_version': 1, 'kind': 'plugin', 'id': 'vosu.m7fixture', 'name': 'M7 official fixture',
-            'version': '1.0.0', 'host': host_range, 'abi_version': 1, 'runtime': 'process',
-        }, tables=[(f'targets.{triple}', {'library': f'lib/{process_library.name}'})]))
+            'version': '1.0.0', 'host': host_range, 'abi_version': 1,
+        }, tables=[(f'targets.{triple}', {'library': f'lib/{process_library.name}'}),
+                   ('runtime', {'mode': 'process'}), ('runtime.linux', {'user_namespaces': True})]))
         (official / 'lib/testkit-fixture.control').write_text(f'nonce=m7-x0-official\ndir={official}\n', encoding='utf-8')
         # A fixture source is explicit, not inferred from its reserved ID,
         # and it still needs exact digest approval.
@@ -115,6 +117,7 @@ def main():
                 staged = next(p for p in rows if p['id'] == 'vosu.m7fixture')
                 assert staged['trust'] == 'fixture-official' and staged['provenance'] == {'kind': 'fixture-official'}, staged
                 assert staged['runtime'] == 'process' and staged['state'] == 'approval_required' and not staged['approved'], staged
+                assert staged['linux_user_namespaces'] is True, staged
                 assert not list(official.glob('create-*'))
                 status, body = curl('/api/plugins/vosu.m7fixture/approval', dashboard=True,
                                     method='POST', headers=headers, data=staged['approval'])
@@ -122,6 +125,9 @@ def main():
                 wait_for(lambda: any(p['id'] == 'vosu.m7fixture' and p['state'] == 'running' for p in roster()))
                 assert any('nonce=m7-x0-official' in receipt.read_text(encoding='utf-8')
                            for receipt in official.glob('create-*'))
+                status, body = curl('/api/plugins/vosu.m7fixture/approval', dashboard=True,
+                                    method='DELETE', headers=headers)
+                assert status == 200 and json.loads(body)['state'] == 'approval_required', (status, body)
                 evidence.append('M7-X0 fixture-official: explicit official provenance and process runtime; '
                                 'digest approval and native create receipt')
                 view = set_sources(headers, [first, second])
@@ -146,6 +152,7 @@ def main():
                 plan = api('install', headers, 'POST', {'kind': 'plugin', 'id': 'acme.paths', 'source': first})
                 assert plan['errors'] == [] and plan['adds'][0]['requires_internal_paths'] is True, plan
                 assert plan['adds'][0]['needs_approval'] and plan['adds'][0]['runtime'] == 'process'
+                assert plan['adds'][0]['linux_user_namespaces'] is True, plan
                 evidence.append('acme.paths plan: native process plugin, user trust, approval required, D8 requires_internal_paths true')
                 # Write-only credential: 204, presence only.
                 path = f'sources/{first.replace(":", "%3A").replace("/", "%2F")}/credential'
@@ -157,6 +164,7 @@ def main():
                 evidence.append('Credential POST/DELETE 204 with presence-only GET')
                 daemon.browser('tool_catalog_browser.mjs', args.playwright_module, args.evidence.resolve(),
                                first, second, USERNAME, PASSWORD, PLUGIN_SECRET)
+                assert next(p for p in roster() if p['id'] == 'vosu.m7fixture')['state'] == 'approval_required'
                 evidence.append('Browser: trust warning before every grant (cancel keeps untrusted; no remembered bypass), '
                                 'write-only credential, private toggle, plan review with approval + D8, one confirmation, '
                                 'load reports, uninstall preview, game offer, pending-restart banner; plugins and web tools '

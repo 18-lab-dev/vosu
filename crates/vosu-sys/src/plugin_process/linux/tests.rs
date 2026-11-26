@@ -23,8 +23,8 @@ use super::capabilities::seccomp::{self, FilterArch, Syscalls};
 use super::channel::parse_argument;
 use super::spawn::spawn_from_current_thread;
 use super::{
-    ChildStage, EndpointError, PluginHostChild, PluginHostCommand, PluginHostLauncher,
-    ReadbackMismatch, SecurityReadback, SpawnError,
+    ChildStage, EndpointError, NamespacePolicy, PluginHostChild, PluginHostCommand,
+    PluginHostLauncher, ReadbackMismatch, SecurityReadback, SpawnError,
 };
 
 const BOUND: Duration = Duration::from_secs(20);
@@ -75,7 +75,8 @@ fn verified() -> SecurityReadback {
         bounding: 0x1ff_ffff_ffff,
         no_new_privs: 1,
         seccomp: 2,
-        user_namespace_errno: Some(libc::EPERM),
+        namespace_policy: NamespacePolicy::DenyUserNamespaces,
+        namespace_probe_errno: Some(libc::EPERM),
         uids: [1000, 1000, 1000],
         threads: 1,
     }
@@ -141,14 +142,14 @@ fn readback_accepts_only_the_a5_1_postcondition_and_ignores_bounding() {
         ),
         (
             SecurityReadback {
-                user_namespace_errno: None,
+                namespace_probe_errno: None,
                 ..verified()
             },
             ReadbackMismatch::UserNamespace(None),
         ),
         (
             SecurityReadback {
-                user_namespace_errno: Some(libc::EINVAL),
+                namespace_probe_errno: Some(libc::EINVAL),
                 ..verified()
             },
             ReadbackMismatch::UserNamespace(Some(libc::EINVAL)),
@@ -261,7 +262,7 @@ fn seccomp_program_denies_exactly_user_namespace_routes_on_every_syscall_number(
     flag_patterns.push(!(libc::CLONE_NEWUSER as u64));
     for arch in arches {
         for syscalls in tables {
-            let program = seccomp::program(arch, syscalls);
+            let program = seccomp::program(arch, syscalls, NamespacePolicy::DenyUserNamespaces);
             assert!(program.len() < 32);
             let mut numbers: Vec<u32> = (0..1024).collect();
             numbers.extend([0x3fff_ffff, 0x4000_0000, 0x4000_0027, 0x4000_0110, u32::MAX]);
@@ -278,6 +279,25 @@ fn seccomp_program_denies_exactly_user_namespace_routes_on_every_syscall_number(
                     if foreign != arch.audit_arch {
                         assert_eq!(run_filter(&program, nr, foreign, 0), KILL);
                     }
+                }
+            }
+        }
+        for syscalls in tables {
+            let program = seccomp::program(arch, syscalls, NamespacePolicy::AllowUserNamespaces);
+            for nr in [
+                syscalls.clone,
+                syscalls.clone3,
+                syscalls.unshare,
+                syscalls.setns,
+                0,
+            ] {
+                for &flags in &flag_patterns {
+                    let expected = if nr == syscalls.setns { EPERM } else { ALLOW };
+                    assert_eq!(run_filter(&program, nr, arch.audit_arch, flags), expected);
+                }
+                assert_eq!(run_filter(&program, nr, 0, 0), KILL);
+                if let Some(floor) = arch.foreign_nr_floor {
+                    assert_eq!(run_filter(&program, nr | floor, arch.audit_arch, 0), KILL);
                 }
             }
         }
@@ -352,6 +372,7 @@ fn command<'a>(rings: &'a Rings, executable: &'a std::path::Path) -> PluginHostC
     PluginHostCommand {
         executable,
         build_identity: host::IDENTITY,
+        allow_user_namespaces: false,
         host_to_plugin: &rings.to_plugin,
         plugin_to_host: &rings.to_host,
     }
@@ -485,6 +506,27 @@ fn plugin_host_reaches_the_a5_1_postcondition_with_only_its_endpoints() {
         let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
         assert_eq!(flags & libc::FD_CLOEXEC, libc::FD_CLOEXEC);
     }
+}
+
+#[test]
+fn opt_in_readback_reports_its_filter_and_verifies_setns_denial() {
+    let (status, report, _, _) = run("allow-user-namespaces");
+    assert_eq!(status.code(), Some(0), "{report:#?}");
+    assert_eq!(get(&report, "drop"), "ok");
+    assert_eq!(get(&report, "namespace_policy"), "allow_user_namespaces");
+    assert_eq!(
+        get(&report, "namespace_probe_errno"),
+        libc::EPERM.to_string()
+    );
+    let missing_filter = SecurityReadback {
+        namespace_policy: NamespacePolicy::AllowUserNamespaces,
+        namespace_probe_errno: Some(libc::EBADF),
+        ..verified()
+    };
+    assert_eq!(
+        missing_filter.verify(),
+        Err(ReadbackMismatch::Setns(Some(libc::EBADF)))
+    );
 }
 
 #[test]

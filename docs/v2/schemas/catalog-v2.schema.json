@@ -401,6 +401,10 @@
           "runtime": {
             "$ref": "#/$defs/runtime"
           },
+          "linux_user_namespaces": {
+            "type": "boolean",
+            "default": false
+          },
           "actions": {
             "type": "array",
             "items": {
@@ -436,6 +440,8 @@
           "packages",
           "runtime"
         ],
+        "if": { "required": ["linux_user_namespaces"] },
+        "then": { "properties": { "runtime": { "const": "process" } } },
         "additionalProperties": false
       },
       "default": []

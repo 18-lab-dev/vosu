@@ -252,10 +252,20 @@ fn plugin_host(args: &[OsString]) -> i32 {
         _ => {}
     }
 
-    match drop_privileges() {
+    let policy = if scenario == "allow-user-namespaces" {
+        super::super::NamespacePolicy::AllowUserNamespaces
+    } else {
+        super::super::NamespacePolicy::DenyUserNamespaces
+    };
+    match drop_privileges(policy) {
         Ok(readback) => {
             report.put("drop", "ok");
             report.put("readback", format!("{readback:?}"));
+            report.put("namespace_policy", readback.namespace_policy.as_str());
+            report.put(
+                "namespace_probe_errno",
+                readback.namespace_probe_errno.unwrap_or(0),
+            );
         }
         Err(failure) => {
             report.put(
@@ -273,7 +283,9 @@ fn plugin_host(args: &[OsString]) -> i32 {
         }
     }
     report.status("post");
-    probes(&mut report);
+    if policy == super::super::NamespacePolicy::DenyUserNamespaces {
+        probes(&mut report);
+    }
     // Only now would a plugin host open the plugin library.
     report.put("load", "reached");
     report.finish();

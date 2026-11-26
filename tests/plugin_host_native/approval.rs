@@ -263,6 +263,104 @@ fn approval_changed_library_is_refused_on_restart() {
     assert_eq!(scenario.creates(), 1, "the changed library ran");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn approval_linux_user_namespaces_needs_new_manifest_approval_for_the_same_library() {
+    let (executable, _) = daemon::executable();
+    let scenario = Scenario::new();
+    let daemon = scenario.start(&executable);
+    let original = prompt(&scenario, &daemon);
+    assert!(daemon.plugin(ID).get("linux_user_namespaces").is_none());
+    let view = daemon.act(Method::POST, ID, "approval", Some(&original));
+    assert_eq!(view["state"], "running", "{view}");
+    let host = scenario.created(&daemon, &[]);
+    let before = scenario.fixture.receipts("constructor").pop().unwrap();
+    assert_eq!(before.get("userns"), "EPERM");
+    assert_eq!(before.get("setns_errno"), libc::EPERM.to_string());
+    let tracked = Tracked::open(host, None);
+    daemon.kill();
+    assert!(tracked.wait_exit(BOUND).is_some());
+
+    // Keep the library, id, version and provenance identical; replace only
+    // the manifest's runtime declaration.
+    let manifest = scenario.staged.dir.join("manifest.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace("runtime = 'process'", "")
+            + "\n[runtime]\nmode = 'process'\n[runtime.linux]\nuser_namespaces = true\n",
+    )
+    .unwrap();
+    let daemon = scenario.start(&executable);
+    let pending = prompt(&scenario, &daemon);
+    assert_eq!(daemon.plugin(ID)["linux_user_namespaces"], true);
+    assert_eq!(pending["library_sha256"], original["library_sha256"]);
+    assert_ne!(pending["manifest_sha256"], original["manifest_sha256"]);
+    assert!(
+        daemon.plugin(ID)["detail"]
+            .as_str()
+            .unwrap()
+            .contains("approval_changed")
+    );
+    let (status, body) = daemon.request(
+        Method::POST,
+        &format!("/api/plugins/{ID}/approval"),
+        Some(&original),
+        Presented::Dashboard,
+    );
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("approval_stale"), "{body}");
+    assert_eq!(scenario.creates(), 1);
+    assert_eq!(scenario.fixture.receipts("constructor").len(), 1);
+
+    let view = daemon.act(Method::POST, ID, "approval", Some(&pending));
+    assert_eq!(view["state"], "running", "{view}");
+    let approved_host = scenario.created(&daemon, &[host]);
+    for probe in ["constructor", "security"] {
+        let receipt = scenario
+            .fixture
+            .wait_for(probe, BOUND, |receipt| receipt.pid == approved_host)
+            .unwrap();
+        assert_eq!(receipt.get("userns"), "succeeded", "{receipt:?}");
+        assert_eq!(
+            receipt.get("setns_errno"),
+            libc::EPERM.to_string(),
+            "{receipt:?}"
+        );
+        assert_eq!(receipt.get("nonewprivs"), "1");
+        assert_eq!(receipt.get("seccomp"), "2");
+        for key in ["capinh", "capprm", "capeff", "capamb"] {
+            assert_eq!(receipt.get(key), "0000000000000000", "{receipt:?}");
+        }
+    }
+}
+
+#[test]
+fn approval_linux_user_namespaces_is_refused_for_in_process_packages() {
+    let scenario = Scenario::new();
+    let manifest = scenario.staged.dir.join("manifest.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        manifest,
+        text.replace("runtime = 'process'", "")
+            + "\n[runtime]\nmode = 'in-process'\n[runtime.linux]\nuser_namespaces = true\n",
+    )
+    .unwrap();
+    let refused = vosu_core::plugin::load_development(
+        &vosu::BUNDLE.version(),
+        &vosu_core::plugin::ValidationSnapshot::default(),
+        &scenario.staged.dir,
+        true,
+    );
+    assert!(matches!(
+        refused,
+        Err(vosu_core::plugin::HostError::Manifest(error))
+            if error.rule == "manifest.linux-runtime"
+                && error.pointer == "/runtime/linux/user_namespaces"
+    ));
+    assert!(scenario.fixture.receipts("constructor").is_empty());
+}
+
 #[test]
 fn approval_near_miss_management_requests_are_refused() {
     let (executable, _) = daemon::executable();

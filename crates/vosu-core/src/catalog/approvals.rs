@@ -14,6 +14,8 @@ pub struct Artifact {
     pub sha256: [u8; 32],
     #[serde(serialize_with = "serialize_runtime")]
     pub runtime: Runtime,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub linux_user_namespaces: bool,
 }
 
 fn serialize_runtime<S: Serializer>(runtime: &Runtime, serializer: S) -> Result<S::Ok, S::Error> {

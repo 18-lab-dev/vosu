@@ -86,6 +86,7 @@ struct Package {
     name: String,
     version: String,
     runtime: Runtime,
+    linux_user_namespaces: bool,
     provides: Vec<Capability>,
     requires: Vec<Capability>,
     optional: Vec<Capability>,
@@ -115,6 +116,7 @@ impl Package {
             name: manifest.name.clone(),
             version: manifest.version.clone(),
             runtime: manifest.runtime,
+            linux_user_namespaces: manifest.linux_user_namespaces(),
             provides: manifest.provides.clone(),
             requires: manifest.requires.clone(),
             optional: manifest.optional.clone(),
@@ -448,6 +450,9 @@ impl PluginManagement {
         view["requires"] = capabilities(&package.requires);
         view["optional"] = capabilities(&package.optional);
         view["requires_internal_paths"] = json!(requires_internal_paths(package));
+        if package.linux_user_namespaces {
+            view["linux_user_namespaces"] = json!(true);
+        }
         if let Some(reason) = plugin.inactive {
             // Validated and listed, never created: no generation, no actions.
             view["state"] = json!("inactive");

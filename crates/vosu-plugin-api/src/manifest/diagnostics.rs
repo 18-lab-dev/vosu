@@ -42,6 +42,9 @@ impl ManifestError {
             Self::Version(_) => ("manifest.version", "/version"),
             Self::Host(_) => ("manifest.host", "/host"),
             Self::AbiVersion => ("manifest.abi", "/abi_version"),
+            Self::LinuxRuntimeRequiresProcess => {
+                ("manifest.linux-runtime", "/runtime/linux/user_namespaces")
+            }
             Self::SettingsSchema => ("manifest.path", "/settings_schema"),
             Self::RootSlot(_) => ("manifest.root-slot", "/root_slots"),
             Self::Covers(_) => ("manifest.coverage", "/covers"),

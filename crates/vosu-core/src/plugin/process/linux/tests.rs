@@ -78,7 +78,9 @@ fn child(args: &[OsString]) -> i32 {
     else {
         return 73;
     };
-    let (opcode, payload) = match drop_privileges() {
+    let (opcode, payload) = match drop_privileges(
+        vosu_sys::plugin_process::NamespacePolicy::DenyUserNamespaces,
+    ) {
         Ok(readback) => (
             control::READY,
             format!(
@@ -89,7 +91,7 @@ fn child(args: &[OsString]) -> i32 {
                 readback.ambient,
                 readback.no_new_privs,
                 readback.seccomp,
-                readback.user_namespace_errno,
+                readback.namespace_probe_errno,
             ),
         ),
         Err(failure) => (control::FAILED, failure.to_string()),
@@ -113,7 +115,7 @@ fn spawned_plugin_host_drops_privileges_and_speaks_over_its_inherited_rings() {
     let spawner =
         HostSpawner::with_executable(std::env::current_exe().unwrap(), IDENTITY.to_owned())
             .unwrap();
-    let SpawnedHost { child, channel } = spawner.spawn().unwrap();
+    let SpawnedHost { child, channel } = spawner.spawn(false).unwrap();
     let Endpoint {
         sender,
         mut receiver,
@@ -155,7 +157,7 @@ fn a_child_that_cannot_exec_is_a_spawn_failure_with_nothing_left_running() {
     let spawner =
         HostSpawner::with_executable(PathBuf::from("/nonexistent/vosu"), IDENTITY.to_owned())
             .unwrap();
-    let error = spawner.spawn().unwrap_err();
+    let error = spawner.spawn(false).unwrap_err();
     assert!(
         matches!(
             error,

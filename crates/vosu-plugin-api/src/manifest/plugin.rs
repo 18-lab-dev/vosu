@@ -1,9 +1,114 @@
 //! Plugin-only rules shared by the unified package view and existing host entry point.
 use super::{
-    PluginManifest, ValidationError,
+    ActionDeclaration, Capability, MatchTable, ResourceKind, Target, ValidationError,
     shared::{metadata, unique, validate_replaces},
 };
 use crate::capability::{CapabilityId, covers, parse_capability};
+use serde::Deserialize;
+
+/// `runtime = "in-process" | "process"` (§7.1's request-only field; the
+/// host's trust decision, not validated here, lives in the host's registry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Runtime {
+    InProcess,
+    Process,
+}
+
+/// The scalar and table forms share a normalized `PluginManifest` whose
+/// SDK-facing `runtime` field remains a `Runtime`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RuntimeRequest {
+    Mode(Runtime),
+    Options(RuntimeOptions),
+}
+
+/// `[runtime]`: the requested execution mode plus platform-specific options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeOptions {
+    mode: Runtime,
+    linux: Option<LinuxRuntime>,
+}
+
+/// `[runtime.linux]`: accepted only for process plugins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinuxRuntime {
+    pub user_namespaces: bool,
+}
+
+// The two views use one list of common fields so validation and deserialization
+// cannot drift. Only the wire view distinguishes the scalar and table forms.
+macro_rules! plugin_manifest {
+    ($( $(#[$attr:meta])* $name:ident: $ty:ty, )*) => {
+        /// Plugin-specific typed view of the unified package document.
+        #[derive(Debug, Clone, PartialEq, Deserialize)]
+        #[serde(from = "PluginManifestWire")]
+        pub struct PluginManifest {
+            $(pub $name: $ty,)*
+            pub runtime: Runtime,
+            pub linux_runtime: Option<LinuxRuntime>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PluginManifestWire {
+            $($(#[$attr])* $name: $ty,)*
+            runtime: RuntimeRequest,
+        }
+
+        impl From<PluginManifestWire> for PluginManifest {
+            fn from(wire: PluginManifestWire) -> Self {
+                let PluginManifestWire { runtime, $($name,)* } = wire;
+                let (runtime, linux_runtime) = match runtime {
+                    RuntimeRequest::Mode(runtime) => (runtime, None),
+                    RuntimeRequest::Options(options) => (options.mode, options.linux),
+                };
+                Self { runtime, linux_runtime, $($name,)* }
+            }
+        }
+    };
+}
+
+plugin_manifest! {
+    kind: String,
+    manifest_version: u32,
+    id: String,
+    name: String,
+    version: String,
+    host: String,
+    description: Option<String>,
+    author: Option<String>,
+    homepage: Option<String>,
+    icon: Option<String>,
+    banner: Option<String>,
+    #[serde(default)]
+    replaces: Vec<String>,
+    abi_version: u32,
+    #[serde(default)]
+    concurrent_dispatch: bool,
+    settings_schema: Option<String>,
+    #[serde(default)]
+    root_slots: Vec<String>,
+    #[serde(default)]
+    covers: Vec<String>,
+    #[serde(default)]
+    targets: std::collections::BTreeMap<String, Target>,
+    #[serde(rename = "match")]
+    matcher: Option<MatchTable>,
+    #[serde(default, rename = "resource_kinds")]
+    resource_kinds: Vec<ResourceKind>,
+    #[serde(default)]
+    actions: Vec<ActionDeclaration>,
+    #[serde(default)]
+    provides: Vec<Capability>,
+    #[serde(default)]
+    requires: Vec<Capability>,
+    #[serde(default)]
+    optional: Vec<Capability>,
+}
 
 pub(super) fn reserved_kind(kind: &str) -> bool {
     matches!(kind, "file" | "audio" | "background" | "set" | "skin")

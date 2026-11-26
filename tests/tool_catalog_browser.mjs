@@ -121,11 +121,17 @@ try {
   await row.getByText('No credential', { exact: true }).waitFor();
   passed('credential: write-only save/delete, never in DOM or storage; private toggle round-trips');
 
-  // 3. Plan review: process plugin with approval and the D8 disclosure.
+  // 3. Both reviews disclose the Linux opt-in before any confirmation.
   await page.goto(`${DASHBOARD}/tools`);
+  const namespaceNotice = 'On Linux, this plugin can create user namespaces, which Chromium-style sandboxes need.';
+  await page.getByRole('button', { name: 'Review and approve M7 official fixture' }).click();
+  const approval = page.getByRole('dialog', { name: 'Approve M7 official fixture?' });
+  await approval.getByText(namespaceNotice, { exact: true }).waitFor();
+  await approval.getByRole('button', { name: /^Cancel/ }).click();
   const paths = page.locator('.tools-catalog [data-catalog-entry="acme.paths"]');
   dialog = await planDialog(page, paths.getByRole('button', { name: `Install acme.paths from ${first}` }), null);
   const review = await dialog.textContent();
+  await dialog.getByText(namespaceNotice, { exact: true }).waitFor();
   for (const fact of ['Native code', 'Runs as a separate process', 'Untrusted source', 'install paths', 'Approve running acme.paths']) {
     check(review.includes(fact), `plan review lacks "${fact}"`);
   }

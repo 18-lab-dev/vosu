@@ -116,6 +116,7 @@ impl Pkg {
             version: "1.0.0".into(),
             sha256,
             runtime: Runtime::InProcess,
+            linux_user_namespaces: false,
         });
         InstalledRecord {
             kind: self.kind,

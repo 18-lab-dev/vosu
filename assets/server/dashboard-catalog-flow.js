@@ -9,6 +9,7 @@ import { button, node } from './dashboard-catalog.js';
 // false→true grant. Nothing records that it was seen, so the next grant of
 // the same source shows it again.
 export const TRUST_WARNING = 'Plugins from this source can run in-process, with the same memory access as vosu itself. Only trust sources you control or know well.';
+export const LINUX_USER_NAMESPACES = 'On Linux, this plugin can create user namespaces, which Chromium-style sandboxes need.';
 
 const changed = () => window.dispatchEvent(new CustomEvent('vosu:catalog-changed'));
 
@@ -105,6 +106,9 @@ function addRow(add, approvals) {
   if (add.requires_internal_paths) {
     row.append(node('p', 'Can read the attached osu! client’s install paths (vosu.osu internal data). '
       + 'This is a disclosure, not a sandbox.', 'catalog-warning catalog-plan__d8'));
+  }
+  if (add.linux_user_namespaces) {
+    row.append(node('p', LINUX_USER_NAMESPACES, 'catalog-warning'));
   }
   if (add.needs_approval) {
     const label = node('label', undefined, 'catalog-plan__approve');

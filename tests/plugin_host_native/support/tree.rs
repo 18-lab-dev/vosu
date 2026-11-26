@@ -116,18 +116,25 @@ impl Tree {
     /// Stages the testkit for `scenario`, starts core of `kind`, and waits
     /// for the outside control. The plugin host may still be starting.
     pub fn launch(kind: CoreKind, scenario: Scenario) -> Self {
+        Self::launch_with_manifest(kind, scenario, &[])
+    }
+
+    pub fn launch_with_manifest(
+        kind: CoreKind,
+        scenario: Scenario,
+        substitutions: &[(&str, &str)],
+    ) -> Self {
         let root = super::scratch();
         let markers = root.path().join("markers");
         std::fs::create_dir_all(&markers).unwrap();
         let plugin_id = scenario.plugin_id();
         let process_name = format!("vosu-n0-{}", scenario.name);
-        let staged = Artifact::Testkit.stage(
-            &root.path().join("package"),
-            &[
-                ("test.p0.testkit", plugin_id.as_str()),
-                ("vosu-p0-target", process_name.as_str()),
-            ],
-        );
+        let mut replacements = vec![
+            ("test.p0.testkit", plugin_id.as_str()),
+            ("vosu-p0-target", process_name.as_str()),
+        ];
+        replacements.extend_from_slice(substitutions);
+        let staged = Artifact::Testkit.stage(&root.path().join("package"), &replacements);
         let fixture = Fixture::new(&root.path().join("receipts"));
         fixture.control(&staged, scenario.fault, None, None);
         if scenario.descendant {
@@ -433,6 +440,7 @@ fn core(package: &Path, root: &Path) {
             ("result", "failed".to_owned()),
             ("stage", failure.stage.as_str().to_owned()),
             ("code", failure.code.clone()),
+            ("message", failure.message.replace('\n', " ")),
         ],
         Err(other) => vec![
             ("result", "error".to_owned()),

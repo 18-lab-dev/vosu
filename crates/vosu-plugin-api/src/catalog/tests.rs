@@ -51,7 +51,14 @@ fn catalog_ids_unique_per_kind_not_across_kinds() {
 #[test]
 fn catalog_kind_fields_rejected_even_when_null_or_empty() {
     for array in ["tools", "overlays"] {
-        for key in ["actions", "resource_kinds", "covers", "matcher", "runtime"] {
+        for key in [
+            "actions",
+            "resource_kinds",
+            "covers",
+            "matcher",
+            "runtime",
+            "linux_user_namespaces",
+        ] {
             let mut entry = web();
             entry[key] = Value::Null;
             rejects(
@@ -64,6 +71,19 @@ fn catalog_kind_fields_rejected_even_when_null_or_empty() {
     let mut entry = web();
     entry["ui"] = json!({"root":"ui"});
     rejects(&document("tools", vec![entry]), "catalog.shape", "");
+}
+#[test]
+fn catalog_linux_user_namespaces_is_a_process_plugin_boolean() {
+    let mut entry = plugin();
+    entry["linux_user_namespaces"] = json!(true);
+    let parsed = parse(&document("plugins", vec![entry.clone()])).unwrap();
+    assert_eq!(parsed.plugins[0].linux_user_namespaces, Some(true));
+    entry["runtime"] = json!("in-process");
+    rejects(
+        &document("plugins", vec![entry]),
+        "catalog.linux-runtime",
+        "/plugins/0/linux_user_namespaces",
+    );
 }
 #[test]
 fn catalog_packages_url_hash_size_and_target_rules() {

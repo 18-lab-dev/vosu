@@ -9,8 +9,8 @@ mod objects;
 mod spawn;
 
 pub use capabilities::{
-    ParentDeathError, ReadbackMismatch, SecurityCode, SecurityFailure, SecurityReadback,
-    SecurityStep, arm_parent_death, drop_privileges,
+    NamespacePolicy, ParentDeathError, ReadbackMismatch, SecurityCode, SecurityFailure,
+    SecurityReadback, SecurityStep, arm_parent_death, drop_privileges,
 };
 pub use channel::{
     ENDPOINT_ARGUMENT, ENDPOINT_FDS, EndpointError, InheritedDirection, InheritedEndpoints,
@@ -18,7 +18,10 @@ pub use channel::{
 pub use objects::Doorbell;
 pub(super) use objects::Mapping;
 pub(super) use objects::{adopt_mapping, create_mapping};
-pub use spawn::{ChildStage, PluginHostChild, PluginHostCommand, PluginHostLauncher, SpawnError};
+pub use spawn::{
+    ChildStage, PluginHostChild, PluginHostCommand, PluginHostLauncher, SpawnError,
+    USER_NAMESPACES_ARGUMENT,
+};
 
 #[cfg(test)]
 mod tests;

@@ -88,6 +88,9 @@ pub fn compare_package(
             if entry.runtime != Some(plugin.runtime) {
                 return Err(mismatch("/runtime"));
             }
+            if entry.linux_user_namespaces.unwrap_or_default() != plugin.linux_user_namespaces() {
+                return Err(mismatch("/linux_user_namespaces"));
+            }
             if entry.matcher != plugin.matcher {
                 return Err(mismatch("/matcher"));
             }

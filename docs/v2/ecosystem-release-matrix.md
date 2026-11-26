@@ -99,6 +99,14 @@ be invented for an overlay without its source.
 | New plugin namespaces, actions and schema assets | Each starts at `1.0.0` and moves only when its own contract changes; never bulk-rewritten with a package version. |
 | Package `version` | Independent semver per entry, chosen by the component owner and recorded in the candidate receipt. |
 
+**2026-11-26:** The Linux user-namespace opt-in
+([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)) adds an
+optional manifest and catalog field without changing the runtime ABI or
+artifact codecs. The matrix does not require another SDK prerelease number
+for this key; the in-tree crate stays `1.0.0-alpha.2`. Publication still
+requires separate owner approval; publishers adopting the opt-in need a
+package checker and host built from a revision supporting it.
+
 ### vosu-tools: seven plugins, seven web tools
 
 Every plugin requests `runtime = "process"`, ships both native targets

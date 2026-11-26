@@ -88,7 +88,8 @@ class Catalog:
                 'description': description, 'author': '18-LAB', 'resolution': [640, 120],
                 'packages': {'any': package}, **extra}
 
-    def plugin(self, plugin_id, runtime, artifact, requires=(), provides=(), matcher=None, settings=None):
+    def plugin(self, plugin_id, runtime, artifact, requires=(), provides=(), matcher=None, settings=None,
+               *, linux_user_namespaces=False):
         library = f'lib/{artifact.name}'
         fields = {'manifest_version': 1, 'kind': 'plugin', 'id': plugin_id, 'name': plugin_id, 'version': '1.0.0',
                   'host': self.host_range, 'abi_version': 1, 'runtime': runtime}
@@ -97,6 +98,9 @@ class Catalog:
             fields['settings_schema'] = 'settings.schema.json'
             files['settings.schema.json'] = json.dumps(settings)
         tables = [(f'targets.{self.target}', {'library': library})]
+        if linux_user_namespaces:
+            del fields['runtime']
+            tables.extend([('runtime', {'mode': runtime}), ('runtime.linux', {'user_namespaces': True})])
         if matcher is not None:
             tables.append(('match', matcher))
         text = manifest(fields, tables=tables,
@@ -106,6 +110,8 @@ class Catalog:
         package = self.package(f'{plugin_id}-1.0.0', {'manifest.toml': text, **files})
         entry = {'id': plugin_id, 'name': plugin_id, 'version': '1.0.0', 'host': self.host_range, 'runtime': runtime,
                  'requires': list(requires), 'provides': list(provides), 'packages': {self.target: package}}
+        if linux_user_namespaces:
+            entry['linux_user_namespaces'] = True
         if matcher is not None:
             entry['matcher'] = matcher
         return entry

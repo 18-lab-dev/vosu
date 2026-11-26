@@ -551,6 +551,14 @@ Once its capability drop (§7.3) or job-object confinement (§7.4) completes, `v
 
 **Amended by A5.1, owner decision 2026-11-24, option (b).** The earlier requirement to empty the bounding set is withdrawn. Option (a), adding `CAP_SETPCAP` to `vosu --setup`, was rejected because it broadens the daemon executable's authority.
 
+**Amended 2026-11-26 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)).**
+The Linux default filter is unchanged. Only a process plugin whose approved
+manifest declares `runtime.linux.user_namespaces = true` (§8) gets the opt-in
+filter. Core selects it after checking the approval; source trust alone is
+not sufficient. This permits the replay renderer to use Chromium's own
+namespace sandbox without removing `no_new_privs` or starting Chromium
+without its sandbox. Windows is unchanged.
+
 `vosu --setup` grants the `vosu` executable `CAP_SYS_PTRACE` (and, where eBPF process-event backends are available, `CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`) so core itself can read arbitrary same-user process memory. That list is unchanged: plugin hosting gives the daemon no new privilege, and core never runs `setcap`, a privileged helper or an elevation prompt to launch a plugin. `vosu plugin-host` must never hold any of these: every memory read it needs goes through `VOSU_OP_READ_PLAN_SUBMIT` to core, which executes it against only the one process that plugin matched.
 
 **Launch (accepted 2026-11-24 with M5 L0).** Core `execve`s the same file-capability executable, so without further care the kernel would grant the child those file capabilities and clear any parent-death signal set before the exec. Core's launcher therefore runs these steps in the forked child before `execve`, using only async-signal-safe syscalls:
@@ -568,13 +576,17 @@ A failure at any of these steps is startup stage `spawn` (§7.6), reported to co
 
 1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then `getppid()` must equal the core PID named on its command line (§7.6). Re-arming after the exec is required: the plugin host must not depend on how it was launched, and a privileged exec clears any signal set before it.
 2. `prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)`.
-3. `seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, …)` installs a filter that denies creating or entering a user namespace:
+3. `seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, …)` installs the selected filter. The default denies creating or entering a user namespace:
    - `unshare` and `clone` whose flags include `CLONE_NEWUSER` fail with `EPERM`;
    - every `clone3` fails with `ENOSYS`, because its flags live in user memory a filter cannot inspect, and libc then falls back to `clone`;
    - every `setns` fails with `EPERM`, which also blocks joining an existing user namespace the same user owns;
    - any syscall made under a non-native audit architecture, or with the x32 bit set, kills the process (`SECCOMP_RET_KILL_PROCESS`), so the deny-list cannot be bypassed through another syscall table.
 
-   Every other syscall is allowed. The filter is a barrier against regaining privilege, not a sandbox.
+   The opt-in filter allows `unshare`, `clone` and `clone3`, including creation
+   of a user namespace. It still denies every `setns` with `EPERM` and retains
+   the same architecture and x32 kill checks. Both filters allow all other
+   syscalls and neither is a general sandbox. The OS may impose its own
+   restrictions independently of the plugin-host filter.
 4. `prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)`.
 5. `capset(2)` with empty effective, permitted and inheritable sets.
 6. Readback through syscalls:
@@ -582,10 +594,14 @@ A failure at any of these steps is startup stage `spawn` (§7.6), reported to co
    - `PR_CAP_AMBIENT_IS_SET` is 0 for every capability up to the kernel's last capability (`/proc/sys/kernel/cap_last_cap`);
    - `PR_GET_NO_NEW_PRIVS` is 1;
    - `PR_GET_SECCOMP` is 2;
-   - `unshare(CLONE_NEWUSER)` fails with exactly `EPERM`;
+   - the readback records `deny_user_namespaces` or `allow_user_namespaces`;
+     the former requires `unshare(CLONE_NEWUSER)` to fail with exactly `EPERM`,
+     the latter requires `setns(-1, CLONE_NEWUSER)` to fail with exactly `EPERM`
+     (without the filter the invalid descriptor returns `EBADF`). The opt-in
+     host does not create a namespace as part of startup;
    - `getresuid` reports no UID 0.
 
-**Postcondition.** `CapInh = CapPrm = CapEff = CapAmb = 0`, `NoNewPrivs = 1`, the step-3 filter active (`Seccomp: 2`), and no root UID. `CapBnd` is **not** part of the postcondition and normally stays the full default set (for example `000001ffffffffff`). With `no_new_privs` set, `execve` cannot add permitted capabilities from file capabilities or set-user-ID bits. The ambient and inheritable sets are empty, and the remaining route to capabilities, a new or joined user namespace, is denied. Emptying the bounding set would need `CAP_SETPCAP`, which setup deliberately does not grant. Tests assert the five sets as observed and assert `CapBnd` only as recorded data.
+**Postcondition.** `CapInh = CapPrm = CapEff = CapAmb = 0`, `NoNewPrivs = 1`, the step-3 filter active (`Seccomp: 2`), and no root UID. `CapBnd` is **not** part of the postcondition and normally stays the full default set (for example `000001ffffffffff`). With `no_new_privs` set, `execve` cannot add permitted capabilities from file capabilities or set-user-ID bits. The ambient and inheritable sets are empty. Both filters refuse namespace entry; only the opt-in variant permits capabilities scoped to a newly created user namespace, not in the original user namespace. Emptying the bounding set would need `CAP_SETPCAP`, which setup deliberately does not grant. Tests assert the five sets as observed and assert `CapBnd` only as recorded data.
 
 **Fail closed.** A step-1 failure is startup stage `parent` (§7.6). If any of steps 2–6 fails or any readback differs, `vosu plugin-host` reports startup stage `security` with the failing step and `errno`, then exits. It never opens the plugin library, never creates a thread, and has no fallback with partial privilege. It must never ignore `EPERM`, retry a weaker sequence, or continue with only `CapEff` cleared. Core marks that plugin `failed` with the reason and does not retry automatically. The daemon and every other plugin keep running.
 
@@ -599,6 +615,8 @@ The `security` stage's `FAILED` `code` (§7.6) is one of:
 | `readback_mismatch` | Every step succeeded but the step-6 readback differs from the postcondition; the message names the first differing field. |
 
 The failing step is reported as `threads`, `no_new_privs`, `seccomp`, `ambient`, `capset` or `readback`.
+An opt-in failure at this stage also names `allow_user_namespaces` in the
+startup message; there is no retry with either filter.
 
 **Without setup or capabilities.** The same sequence and postcondition apply whether or not setup ran.
 
@@ -619,7 +637,7 @@ N0 accepts an option only if all of these hold:
 
 L0 implements the accepted option. If no option qualifies, X2 records the gap as an accepted residual with N0's receipt, and the gap stays documented rather than open-ended.
 
-The D16 vosulay supervisor child is a different launch policy ([implementation plan D16](implementation-plan.md#10-adopted-decisions-and-risks)). It must keep zero active capabilities and must **not** inherit `no_new_privs` or this filter. Chromium's Linux sandbox needs either the setuid helper, which `no_new_privs` disables, or unprivileged user namespaces, which this filter denies. S1 observed the user-namespace sandbox. Process isolation is not an OS sandbox: a plugin host keeps the user's filesystem and network access.
+The D16 vosulay supervisor child is a different launch policy ([implementation plan D16](implementation-plan.md#10-adopted-decisions-and-risks)). It must keep zero active capabilities and must **not** inherit `no_new_privs` or either filter. Chromium's Linux sandbox needs either the setuid helper, which `no_new_privs` disables, or unprivileged user namespaces, which the default filter denies. S1 observed the user-namespace sandbox. Process isolation is not an OS sandbox: a plugin host keeps the user's filesystem and network access.
 
 ### 7.4 Windows: job objects
 
@@ -746,9 +764,10 @@ This section freezes the private contract between core and one `vosu plugin-host
 - The remaining arguments are exactly these, in order (E0, accepted 2026-11-25):
   - the compile-time build identity of the executable, `vosu/<package version>/plugin-host-1`;
   - on Linux only, the core PID in canonical decimal (no sign, no leading zero, at most `i32::MAX`);
+  - on Linux only, `--allow-user-namespaces` if the approved manifest opts into the §7.3 variant (ADR 0025, 2026-11-26); otherwise this argument is absent;
   - the inherited endpoint values: on Linux exactly `3,4,5,6` (host → plugin mapping and doorbell, then plugin → host), on Windows `h2p=<section>:<event>,p2h=<section>:<event>` (§7.4).
 
-  The full command line is therefore `vosu plugin-host <identity> <core pid> 3,4,5,6` on Linux and `vosu plugin-host <identity> h2p=…,p2h=…` on Windows.
+  The full default command line is therefore `vosu plugin-host <identity> <core pid> 3,4,5,6` on Linux and `vosu plugin-host <identity> h2p=…,p2h=…` on Windows. The opted-in Linux form inserts its flag before `3,4,5,6`; it is a private launch argument, not a daemon configuration switch.
 - The child checks the argument shape first, then the build identity. A missing, extra, duplicate, empty or malformed argument exits with `arguments` (70) even when the identity also differs; a well-formed command line with another build identity exits with `generation` (71). An endpoint that is not an open inherited descriptor or handle of the expected kind and of the fixed trusted size exits with `endpoints` (73). All of these exit before the child maps anything, and none starts a normal daemon, listener, updater, discovery, lock, log or configuration file.
 - **Build identity residual (accepted 2026-11-25).** The identity names the package version. On Linux the child is always the running image because core execs `/proc/self/exe`. On Windows core starts the image path captured at startup, so a replacement image with the *same* version is not detected. This is accepted because the updater always installs a different version, so every in-place update is refused as `generation` (`executable_updated`).
 - Linux core spawns plugin hosts only from a dedicated launcher thread that lives until shutdown has reaped every plugin host. `PR_SET_PDEATHSIG` fires when the *thread* that created the child exits, so spawning from a transient pool thread would kill healthy children.
@@ -971,6 +990,28 @@ families = ["image"]
 ```
 
 A plugin missing a `[targets.<host triple>]` entry for the running host (and not bundled) is simply unavailable there; the install resolver ([ADR 0022](../decisions/0022-install-resolver-and-2-0-transition.md)) surfaces that before installation, and the host otherwise refuses to start it with a named error rather than guessing a fallback binary. `root_slots` entries use the grammar `[a-z0-9][a-z0-9_-]{0,63}`; `[[resource_kinds]].kind` uses one segment `[a-z0-9][a-z0-9-]{0,31}`, bare everywhere in this table and in `RESOURCE_RESOLVE`/`TREE_LIST`/`TREE_LOOKUP`'s `kind` field (`VOSU_OP_ROOT_DECLARE` has no `kind` field; it addresses a root by `name`, not a resource kind) — only a `resource:` capability id adds the plugin's own id, and only when `kind` is not one of the five reserved core names (`docs/v2/catalog-v2.md` owns this grammar). `manifest_version`, `id` grammar, `version` semver, and `abi_version` validity are checked before any library is loaded.
+
+**Amended 2026-11-26 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)).**
+A process plugin can replace the scalar `runtime = "process"` with the
+following tables, after all top-level fields. The scalar and table forms
+cannot appear together in TOML.
+
+```toml
+[runtime]
+mode = "process"
+
+[runtime.linux]
+user_namespaces = true
+```
+
+| Field | Meaning |
+| --- | --- |
+| `runtime.mode` | Required in the table form; same execution-mode request as the scalar `runtime`. |
+| `runtime.linux.user_namespaces` | Boolean, required if `[runtime.linux]` is present; `true` requests the approved §7.3 Linux filter, `false` or omitting the table keeps the default. `[runtime.linux]` on any in-process plugin is `manifest.linux-runtime`. |
+
+The Linux option has no effect on the Windows launcher. Catalog entries
+mirror the scalar mode as `runtime` and the opt-in as `linux_user_namespaces`
+([catalog v2](catalog-v2.md)).
 
 ## 9. Rust SDK sketch
 

@@ -66,8 +66,14 @@ mod imp {
             })
         }
 
-        pub(in super::super) fn spawn(&self) -> Result<Started, StartupFailure> {
-            let SpawnedHost { child, channel } = self.spawner.spawn().map_err(spawn_failure)?;
+        pub(in super::super) fn spawn(
+            &self,
+            allow_user_namespaces: bool,
+        ) -> Result<Started, StartupFailure> {
+            let SpawnedHost { child, channel } = self
+                .spawner
+                .spawn(allow_user_namespaces)
+                .map_err(spawn_failure)?;
             Ok(Started {
                 endpoint: channel,
                 process: Arc::new(Child(child)),

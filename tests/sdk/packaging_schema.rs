@@ -114,6 +114,25 @@ fn manifest_schema_positive_projection_and_defaults() {
 }
 
 #[test]
+fn linux_user_namespaces_is_document_valid_only_for_process_plugins() {
+    let manifest_schema = schema("manifest");
+    let catalog_schema = schema("catalog");
+    for (mode, valid) in [("process", true), ("in-process", false)] {
+        let mut package = manifest("plugin");
+        package["runtime"] = json!({"mode":mode,"linux":{"user_namespaces":true}});
+        assert_eq!(manifest_ok(&package), valid);
+        assert_eq!(manifest_schema.is_valid(&package), valid);
+        let mut candidate = entry("plugins");
+        candidate["runtime"] = json!(mode);
+        candidate["linux_user_namespaces"] = json!(true);
+        let mut doc = catalog();
+        doc["plugins"] = json!([candidate]);
+        assert_eq!(catalog_ok(&doc), valid);
+        assert_eq!(catalog_schema.is_valid(&doc), valid);
+    }
+}
+
+#[test]
 fn manifest_schema_shape_rejections() {
     let schema = schema("manifest");
     for kind in ["plugin", "tool", "overlay"] {

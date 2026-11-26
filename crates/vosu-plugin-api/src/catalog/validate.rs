@@ -1,9 +1,9 @@
 //! Reuse the package validator rather than implement a second capability grammar.
 use super::{Catalog, CatalogEntry};
 use crate::manifest::{
-    Capability, HostSupport, OverlayManifest, PackageKind, PackageManifest, PluginManifest,
-    Registration, SharedManifest, ToolManifest, ToolUi, ValidationContext, ValidationError,
-    valid_native_target,
+    Capability, HostSupport, LinuxRuntime, OverlayManifest, PackageKind, PackageManifest,
+    PluginManifest, Registration, Runtime, SharedManifest, ToolManifest, ToolUi, ValidationContext,
+    ValidationError, valid_native_target,
 };
 use semver::Version;
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,6 +58,7 @@ impl Catalog {
                 for (i, entry) in entries.iter().enumerate() {
                     for key in [
                         "runtime",
+                        "linux_user_namespaces",
                         "matcher",
                         "actions",
                         "resource_kinds",
@@ -223,12 +224,16 @@ impl CatalogEntry {
     pub fn validate(&self, kind: PackageKind) -> Result<(), ValidationError> {
         if kind != PackageKind::Plugin
             && (self.runtime.is_some()
+                || self.linux_user_namespaces.is_some()
                 || self.matcher.is_some()
                 || self.actions.is_some()
                 || self.resource_kinds.is_some()
                 || self.covers.is_some())
         {
             return Err(error("catalog.kind-field", ""));
+        }
+        if self.linux_user_namespaces.is_some() && self.runtime != Some(Runtime::Process) {
+            return Err(error("catalog.linux-runtime", "/linux_user_namespaces"));
         }
         if kind != PackageKind::Overlay && (self.resolution.is_some() || self.preview.is_some()) {
             return Err(error("catalog.kind-field", "/resolution"));
@@ -359,6 +364,9 @@ impl CatalogEntry {
                 runtime: self
                     .runtime
                     .ok_or_else(|| error("catalog.runtime", "/runtime"))?,
+                linux_runtime: self
+                    .linux_user_namespaces
+                    .map(|user_namespaces| LinuxRuntime { user_namespaces }),
                 concurrent_dispatch: false,
                 settings_schema: None,
                 root_slots: Vec::new(),

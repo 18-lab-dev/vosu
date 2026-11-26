@@ -10,9 +10,10 @@
 //! after clearing only the effective set.
 //!
 //! `CapBnd` is recorded but not required to be empty: emptying it needs
-//! `CAP_SETPCAP`, which setup never grants. With `no_new_privs` set, empty
-//! inheritable and ambient sets, and user-namespace creation and entry denied
-//! by the seccomp filter, no route back to a capability remains.
+//! `CAP_SETPCAP`, which setup never grants. `no_new_privs` and the empty
+//! inheritable and ambient sets prevent acquiring capabilities in the
+//! original user namespace. Only the opt-in filter permits gaining
+//! capabilities scoped to a newly created user namespace.
 
 use std::borrow::Cow;
 use std::io;
@@ -180,9 +181,24 @@ impl SecurityFailure {
     }
 }
 
+/// The approved §7.3 seccomp filter variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NamespacePolicy {
+    DenyUserNamespaces,
+    AllowUserNamespaces,
+}
+
+impl NamespacePolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DenyUserNamespaces => "deny_user_namespaces",
+            Self::AllowUserNamespaces => "allow_user_namespaces",
+        }
+    }
+}
+
 /// What the step-6 readback observed. Every field comes from a syscall
-/// except the thread count and the last capability, which only procfs
-/// reports.
+/// except the selected policy, the thread count and the last capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityReadback {
     /// `/proc/sys/kernel/cap_last_cap`.
@@ -198,9 +214,11 @@ pub struct SecurityReadback {
     pub no_new_privs: i32,
     /// `PR_GET_SECCOMP`: 2 is filter mode.
     pub seccomp: i32,
-    /// `unshare(CLONE_NEWUSER)`: the `errno` it failed with, or `None` if
-    /// it succeeded (a broken filter).
-    pub user_namespace_errno: Option<i32>,
+    pub namespace_policy: NamespacePolicy,
+    /// The result of probing `unshare(CLONE_NEWUSER)` for the deny filter
+    /// or `setns(-1, CLONE_NEWUSER)` for the opt-in filter. `None` means
+    /// success (a broken filter).
+    pub namespace_probe_errno: Option<i32>,
     /// `getresuid`: real, effective, saved.
     pub uids: [u32; 3],
     pub threads: u32,
@@ -224,6 +242,8 @@ pub enum ReadbackMismatch {
     Seccomp(i32),
     #[error("user-namespace probe returned {0:?} instead of EPERM")]
     UserNamespace(Option<i32>),
+    #[error("setns probe returned {0:?} instead of EPERM")]
+    Setns(Option<i32>),
     #[error("a UID is root: {0:?}")]
     RootUid([u32; 3]),
     #[error("{0} threads exist")]
@@ -233,8 +253,8 @@ pub enum ReadbackMismatch {
 impl SecurityReadback {
     /// Checks the §7.3 postcondition: empty effective, permitted,
     /// inheritable and ambient sets, `no_new_privs` 1, seccomp filter mode,
-    /// a user-namespace probe failing with exactly `EPERM`, no root UID and
-    /// one thread. `bounding` is not checked (A5.1(b)).
+    /// the selected filter's probe failing with exactly `EPERM`, no root
+    /// UID and one thread. `bounding` is not checked (A5.1(b)).
     pub fn verify(&self) -> Result<(), ReadbackMismatch> {
         if self.effective != 0 {
             return Err(ReadbackMismatch::Effective(self.effective));
@@ -254,8 +274,12 @@ impl SecurityReadback {
         if self.seccomp != libc::SECCOMP_MODE_FILTER as i32 {
             return Err(ReadbackMismatch::Seccomp(self.seccomp));
         }
-        if self.user_namespace_errno != Some(libc::EPERM) {
-            return Err(ReadbackMismatch::UserNamespace(self.user_namespace_errno));
+        if self.namespace_probe_errno != Some(libc::EPERM) {
+            let errno = self.namespace_probe_errno;
+            return Err(match self.namespace_policy {
+                NamespacePolicy::DenyUserNamespaces => ReadbackMismatch::UserNamespace(errno),
+                NamespacePolicy::AllowUserNamespaces => ReadbackMismatch::Setns(errno),
+            });
         }
         if self.uids.contains(&0) {
             return Err(ReadbackMismatch::RootUid(self.uids));
@@ -271,7 +295,7 @@ impl SecurityReadback {
 /// user-namespace filter, ambient clear, empty `capset`, then the readback.
 /// Returns the verified readback, or the first failure. On failure the
 /// process may already be partly confined; the caller reports and exits.
-pub fn drop_privileges() -> Result<SecurityReadback, SecurityFailure> {
+pub fn drop_privileges(policy: NamespacePolicy) -> Result<SecurityReadback, SecurityFailure> {
     let threads = thread_count()?;
     if threads != 1 {
         return Err(SecurityFailure {
@@ -289,7 +313,7 @@ pub fn drop_privileges() -> Result<SecurityReadback, SecurityFailure> {
             "PR_SET_NO_NEW_PRIVS failed",
         ));
     }
-    seccomp::install()?;
+    seccomp::install(policy)?;
     // SAFETY: `PR_CAP_AMBIENT_CLEAR_ALL` takes integer arguments only.
     if unsafe { libc::prctl(libc::PR_CAP_AMBIENT, AMBIENT_CLEAR_ALL, 0, 0, 0) } != 0 {
         return Err(SecurityFailure::os(
@@ -312,7 +336,7 @@ pub fn drop_privileges() -> Result<SecurityReadback, SecurityFailure> {
             "capset with empty sets failed",
         ));
     }
-    let readback = read_back()?;
+    let readback = read_back(policy)?;
     readback.verify().map_err(|mismatch| SecurityFailure {
         step: SecurityStep::Readback,
         code: SecurityCode::ReadbackMismatch,
@@ -324,7 +348,7 @@ pub fn drop_privileges() -> Result<SecurityReadback, SecurityFailure> {
 
 /// Step 6's observations. Does not judge them; see
 /// [`SecurityReadback::verify`].
-fn read_back() -> Result<SecurityReadback, SecurityFailure> {
+fn read_back(policy: NamespacePolicy) -> Result<SecurityReadback, SecurityFailure> {
     let last_cap = last_cap()?;
     let mut header = CapabilityHeader {
         version: CAPABILITY_VERSION_3,
@@ -374,7 +398,7 @@ fn read_back() -> Result<SecurityReadback, SecurityFailure> {
     if seccomp < 0 {
         return Err(readback_os("PR_GET_SECCOMP failed"));
     }
-    let user_namespace_errno = user_namespace_probe();
+    let namespace_probe_errno = namespace_probe(policy);
     let (mut real, mut effective, mut saved) = (0, 0, 0);
     // SAFETY: `getresuid` writes one `uid_t` through each live local.
     if unsafe { libc::getresuid(&mut real, &mut effective, &mut saved) } != 0 {
@@ -389,22 +413,30 @@ fn read_back() -> Result<SecurityReadback, SecurityFailure> {
         bounding,
         no_new_privs,
         seccomp,
-        user_namespace_errno,
+        namespace_policy: policy,
+        namespace_probe_errno,
         uids: [real, effective, saved],
         threads: thread_count()?,
     })
 }
 
-/// `unshare(CLONE_NEWUSER)`: `Some(errno)` when refused. Success would
-/// leave this process in a new user namespace with every capability there;
-/// the readback then fails and the caller exits without loading code.
-fn user_namespace_probe() -> Option<i32> {
-    // SAFETY: `unshare` takes integer flags only.
-    if unsafe { libc::unshare(libc::CLONE_NEWUSER) } == 0 {
-        None
-    } else {
-        Some(errno())
-    }
+/// The default probe is unchanged. The opt-in probe uses an invalid fd:
+/// the kernel would return EBADF without the filter, and the call cannot
+/// change namespaces even if the filter is wrong. Never create a user
+/// namespace in the bootstrap thread on the opt-in path.
+fn namespace_probe(policy: NamespacePolicy) -> Option<i32> {
+    let result = match policy {
+        NamespacePolicy::DenyUserNamespaces => {
+            // SAFETY: `unshare` takes integer flags only. On unexpected
+            // success verification fails and the host exits before loading.
+            unsafe { libc::unshare(libc::CLONE_NEWUSER) }
+        }
+        NamespacePolicy::AllowUserNamespaces => {
+            // SAFETY: integer arguments only; -1 cannot name a live fd.
+            unsafe { libc::setns(-1, libc::CLONE_NEWUSER) }
+        }
+    };
+    (result != 0).then(errno)
 }
 
 fn readback_os(detail: &'static str) -> SecurityFailure {
@@ -461,12 +493,12 @@ fn errno() -> i32 {
 }
 
 pub(super) mod seccomp {
-    //! §7.3 step 3: a classic-BPF seccomp filter that denies creating or
-    //! entering a user namespace and allows everything else.
+    //! §7.3 step 3: classic-BPF seccomp filters; only the default variant
+    //! denies namespace creation. Both deny `setns` and foreign syscall ABIs.
 
     use std::borrow::Cow;
 
-    use super::{SecurityCode, SecurityFailure, SecurityStep};
+    use super::{NamespacePolicy, SecurityCode, SecurityFailure, SecurityStep};
 
     /// `offsetof(struct seccomp_data, nr)`.
     const NR_OFFSET: u32 = 0;
@@ -540,7 +572,13 @@ pub(super) mod seccomp {
     /// 4. `unshare` and `clone` whose flags include `CLONE_NEWUSER` fail
     ///    with `EPERM`;
     /// 5. everything else is allowed.
-    pub(crate) fn program(arch: FilterArch, syscalls: Syscalls) -> Vec<libc::sock_filter> {
+    ///
+    /// The opt-in variant skips 2 and 4; it retains 1, 3 and 5.
+    pub(crate) fn program(
+        arch: FilterArch,
+        syscalls: Syscalls,
+        policy: NamespacePolicy,
+    ) -> Vec<libc::sock_filter> {
         let mut code: Vec<(u16, u32, Target, Target)> = Vec::with_capacity(16);
         let load = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
         let jeq = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
@@ -552,23 +590,30 @@ pub(super) mod seccomp {
         if let Some(floor) = arch.foreign_nr_floor {
             code.push((jge, floor, Target::Kill, Target::Next));
         }
-        code.push((jeq, syscalls.clone3, Target::Enosys, Target::Next));
-        code.push((jeq, syscalls.setns, Target::Eperm, Target::Next));
-        code.push((jeq, syscalls.unshare, Target::CheckFlags, Target::Next));
-        code.push((jeq, syscalls.clone, Target::CheckFlags, Target::Allow));
+        let deny_creation = policy == NamespacePolicy::DenyUserNamespaces;
+        if deny_creation {
+            code.push((jeq, syscalls.clone3, Target::Enosys, Target::Next));
+            code.push((jeq, syscalls.setns, Target::Eperm, Target::Next));
+            code.push((jeq, syscalls.unshare, Target::CheckFlags, Target::Next));
+            code.push((jeq, syscalls.clone, Target::CheckFlags, Target::Allow));
+        } else {
+            code.push((jeq, syscalls.setns, Target::Eperm, Target::Allow));
+        }
         let check_flags = code.len();
-        code.push((load, ARG0_LOW_OFFSET, Target::Next, Target::Next));
-        code.push((
-            jset,
-            libc::CLONE_NEWUSER as u32,
-            Target::Eperm,
-            Target::Allow,
-        ));
+        if deny_creation {
+            code.push((load, ARG0_LOW_OFFSET, Target::Next, Target::Next));
+            code.push((
+                jset,
+                libc::CLONE_NEWUSER as u32,
+                Target::Eperm,
+                Target::Allow,
+            ));
+        }
         let ret = (libc::BPF_RET | libc::BPF_K) as u16;
         let allow = code.len();
         let eperm = allow + 1;
         let enosys = allow + 2;
-        let kill = allow + 3;
+        let kill = enosys + usize::from(deny_creation);
         let resolve = |from: usize, target: Target| -> u8 {
             let to = match target {
                 Target::Next => from + 1,
@@ -590,12 +635,14 @@ pub(super) mod seccomp {
                 k,
             })
             .collect();
-        for k in [
+        let actions = [
             libc::SECCOMP_RET_ALLOW,
             libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
-            libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32,
-            libc::SECCOMP_RET_KILL_PROCESS,
-        ] {
+        ]
+        .into_iter()
+        .chain(deny_creation.then_some(libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32))
+        .chain([libc::SECCOMP_RET_KILL_PROCESS]);
+        for k in actions {
             program.push(libc::sock_filter {
                 code: ret,
                 jt: 0,
@@ -609,7 +656,7 @@ pub(super) mod seccomp {
     /// Installs [`program`] for this architecture on every thread (TSYNC;
     /// the caller has verified there is only one). Requires
     /// `no_new_privs`.
-    pub(super) fn install() -> Result<(), SecurityFailure> {
+    pub(super) fn install(policy: NamespacePolicy) -> Result<(), SecurityFailure> {
         let Some(arch) = NATIVE else {
             return Err(SecurityFailure {
                 step: SecurityStep::Seccomp,
@@ -618,7 +665,7 @@ pub(super) mod seccomp {
                 detail: Cow::Borrowed("no seccomp filter for this architecture"),
             });
         };
-        let mut program = program(arch, SYSCALLS);
+        let mut program = program(arch, SYSCALLS, policy);
         let filter = libc::sock_fprog {
             len: u16::try_from(program.len()).expect("the filter has a few dozen instructions"),
             filter: program.as_mut_ptr(),

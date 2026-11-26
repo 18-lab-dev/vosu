@@ -125,6 +125,22 @@ fn exact_all_field_serialization_and_pinned_approval() {
     assert_eq!(confirmed.plan.adds()[0].package_limit_bytes, 1_048_576);
     assert_eq!(registry.job(&response.job_id).unwrap().status, "running");
 }
+
+#[test]
+fn linux_user_namespace_request_is_disclosed_and_bound_to_the_plan() {
+    let mut entry = plugin(None, None, 123);
+    let baseline = plan(&entry, false);
+    entry.linux_user_namespaces = Some(true);
+    let opted_in = plan(&entry, false);
+    assert_ne!(opted_in.fingerprint(), baseline.fingerprint());
+    assert_eq!(
+        serde_json::to_value(opted_in.view()).unwrap()["adds"][0]["linux_user_namespaces"],
+        true
+    );
+    let artifact = opted_in.adds()[0].artifact.as_ref().unwrap();
+    assert!(artifact.linux_user_namespaces);
+    assert!(opted_in.view().adds[0].needs_approval);
+}
 #[test]
 fn stale_each_prerequisite_rejects_without_dispatch() {
     for field in 0..10 {

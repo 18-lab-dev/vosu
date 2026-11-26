@@ -43,6 +43,26 @@ fn exact_arguments_parse() {
     assert_eq!(parsed.parent, 4242);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn only_the_exact_linux_option_before_the_endpoints_selects_the_opt_in() {
+    let mut opted_in = valid();
+    opted_in.insert(4, USER_NAMESPACES_ARGUMENT);
+    let args = argv(&opted_in);
+    let parsed = parse(&args, IDENTITY).unwrap();
+    assert_eq!(
+        parsed.namespace_policy,
+        NamespacePolicy::AllowUserNamespaces
+    );
+    assert_eq!(parsed.endpoints, args.last().unwrap().as_os_str());
+    assert_eq!(
+        parse(&argv(&valid()), IDENTITY).unwrap().namespace_policy,
+        NamespacePolicy::DenyUserNamespaces
+    );
+    opted_in.swap(4, 5);
+    assert_eq!(parse(&argv(&opted_in), IDENTITY), Err(EXIT_ARGUMENTS));
+}
+
 #[test]
 fn a_missing_extra_or_empty_argument_is_the_arguments_stage() {
     let base = valid();

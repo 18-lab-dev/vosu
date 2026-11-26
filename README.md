@@ -217,6 +217,10 @@ file in the default application.
 
 The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation. The analogous `--plugin <directory>` repeatable argument loads a development plugin (`docs/v2/plugin-abi.md`) from a directory holding its own `manifest.toml` and compiled library. A `runtime = "process"` plugin runs in its own `vosu plugin-host` process, and only after you approve exactly its manifest and library bytes in the dashboard's Plugins section (Tools page); changed bytes need a new approval, and you can revoke, stop or restart it there. Prerelease builds accept only `process` plugins from `--plugin`; debug builds also keep the in-process developer exception; stable release builds refuse `--plugin`. Approval runs native code with your account's rights and is not a sandbox.
 
+On Linux, a process plugin can ask to create user namespaces for a
+Chromium-style sandbox. The dashboard shows this opt-in before approval.
+It does not sandbox the plugin itself or change Windows behavior.
+
 Production startup requires the bundled `vosu.osu` plugin and its discovery
 service. A missing plugin, load/create failure, or absent discovery service
 stops startup rather than serving silently without game discovery. No running

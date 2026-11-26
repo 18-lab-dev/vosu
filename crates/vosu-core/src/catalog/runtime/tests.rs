@@ -177,6 +177,7 @@ fn artifact(id: &str, runtime: Runtime, hash: u8) -> Artifact {
         version: "1.0.0".into(),
         sha256: [hash; 32],
         runtime,
+        linux_user_namespaces: false,
     }
 }
 fn record(artifact: Artifact, approved: bool) -> InstalledRecord {
