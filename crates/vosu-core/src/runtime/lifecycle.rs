@@ -975,8 +975,8 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
     finish_runtime_run(run_result, app.hooks().shutdown()).await
 }
 
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 #[path = "test_daemon.rs"]
 mod test_daemon;
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 pub use test_daemon::{TestAdapters, TestDaemon};

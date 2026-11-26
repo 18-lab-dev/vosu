@@ -95,7 +95,7 @@ impl ApiV1Service {
         self.hub.join().await;
     }
 
-    #[cfg(feature = "test-harness")]
+    #[cfg(feature = "bench-harness")]
     pub(super) fn subscription_hub(&self) -> ApiV1SubscriptionHub {
         self.hub.clone()
     }

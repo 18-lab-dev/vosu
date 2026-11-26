@@ -92,7 +92,7 @@ mod projection;
 mod service;
 mod signals;
 mod startup;
-#[cfg(any(test, feature = "test-harness"))]
+#[cfg(any(test, feature = "bench-harness"))]
 mod test_paths;
 #[cfg(feature = "test-harness")]
 mod test_support;
@@ -107,7 +107,7 @@ pub use catalog::{CatalogComposition, CatalogRoots, catalog_target};
 #[cfg(feature = "test-harness")]
 pub use config::test_updater_handoff;
 pub use lifecycle::{ProductionRuntime, run_cli};
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 pub use lifecycle::{TestAdapters, TestDaemon};
 pub use overlay_root::RuntimeSettingsStorage;
 pub use projection::ReloadableAuthorizer;

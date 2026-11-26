@@ -139,6 +139,12 @@ impl BusStateProvider {
         latest.snapshot = Some(Arc::clone(&snapshot));
         Ok(snapshot)
     }
+
+    /// Observes the existing cache without capturing, decoding or encoding.
+    #[cfg(feature = "bench-harness")]
+    pub(crate) fn cached_generation(&self) -> u64 {
+        self.latest.lock().unwrap().generation
+    }
     /// The exact selection this provider's adapter decoded for one snapshot,
     /// with the production HTTP result of that same snapshot. Derived work is
     /// retained exactly as by a one-shot HTTP read, but never awaited: there is

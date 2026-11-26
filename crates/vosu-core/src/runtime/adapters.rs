@@ -97,7 +97,7 @@ impl Adapters {
             bundle,
         })
     }
-    #[cfg(feature = "test-harness")]
+    #[cfg(feature = "bench-harness")]
     pub(super) fn provider(&self, schema: WebSocketSchema) -> &Arc<BusStateProvider> {
         &self.schemas[schema_index(schema)]
     }

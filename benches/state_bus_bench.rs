@@ -8,6 +8,8 @@ mod adapter_e2e;
 mod adapter_fixture;
 #[path = "support/api_e2e.rs"]
 mod api_e2e;
+#[path = "support/m7_e2e.rs"]
+mod m7_e2e;
 #[path = "support/api_v1.rs"]
 mod support;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
@@ -281,6 +283,7 @@ fn bench(c: &mut Criterion) {
     end.finish();
     api_e2e::bench(c, "end_to_end", "api_frame");
     adapter_e2e::bench(c);
+    m7_e2e::bench(c);
     adapter_cases::bench(c);
 }
 criterion_group!(benches, bench);
