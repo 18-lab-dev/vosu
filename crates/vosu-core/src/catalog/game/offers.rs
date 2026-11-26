@@ -25,6 +25,8 @@ pub struct GameOfferView {
     pub name: String,
     pub version: String,
     pub source: SourceIdentity,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fixture: bool,
     /// The observed executable/`comm` name only.
     pub process: String,
     /// An installed, enabled game plugin already matched this process. The
@@ -169,6 +171,7 @@ impl GameOffers {
                     name: candidate.name.clone(),
                     version: candidate.version.clone(),
                     source: candidate.key.source.clone(),
+                    fixture: candidate.key.source.is_official_fixture(),
                     process: offer.process.clone(),
                     installed_match: offer.claimed,
                 }

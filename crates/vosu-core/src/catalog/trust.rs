@@ -29,8 +29,16 @@ pub struct TrustChange {
 #[serde(rename_all = "lowercase")]
 pub enum TrustTier {
     Official,
+    #[serde(rename = "official-fixture")]
+    OfficialFixture,
     Trusted,
     User,
+}
+
+impl TrustTier {
+    pub(crate) fn is_official(self) -> bool {
+        matches!(self, Self::Official | Self::OfficialFixture)
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Requirement {
@@ -47,6 +55,8 @@ pub enum PolicyError {
     RevocationPendingRestart,
     #[error("source policy changed")]
     StalePolicy,
+    #[error("installed package does not match the current official-fixture source")]
+    FixtureSourceMismatch,
 }
 
 /// Current S0 snapshot, shared by plan/confirm/load. Credential presence, private
@@ -57,8 +67,10 @@ pub struct CurrentPolicy<'a> {
 }
 impl CurrentPolicy<'_> {
     pub fn tier(&self, artifact: &Artifact) -> TrustTier {
-        if artifact.source.is_official() {
+        if artifact.source.is_allowlisted() {
             TrustTier::Official
+        } else if artifact.source.is_official_fixture() {
+            TrustTier::OfficialFixture
         } else if self
             .sources
             .iter()

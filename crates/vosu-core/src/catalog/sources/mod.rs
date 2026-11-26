@@ -14,6 +14,8 @@ pub use parse::{
     Forge, MAX_SOURCE_BYTES, MAX_SOURCES, OFFICIAL_SOURCES, ParsedSource, SourceIdentity,
     SourceLocation, SourceParseError,
 };
+#[cfg(feature = "test-harness")]
+pub(crate) use parse::{HARNESS_HOST, harness_socket};
 pub use store::{
     SourceGeneration, SourceInput, SourceLifecycle, SourceRecord, SourceStore, SourceStoreError,
 };

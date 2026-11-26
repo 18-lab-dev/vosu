@@ -66,6 +66,9 @@ pub struct InstalledRecord {
     pub id: String,
     pub version: String,
     pub source: SourceIdentity,
+    /// Durable evidence, never load authority.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fixture: bool,
     pub target: String,
     pub sha256: String,
     pub artifact: Option<Artifact>,
@@ -104,9 +107,14 @@ impl InstalledRecord {
         self.kind.into()
     }
 
+    pub(crate) fn matches_fixture_source(&self) -> bool {
+        self.fixture == self.source.is_official_fixture()
+    }
+
     pub(crate) fn provenance(&self) -> Option<Provenance> {
         Some(Provenance::Installed {
             source: self.source.as_str().to_owned(),
+            fixture: self.fixture,
             version: self.version.clone(),
             package_sha256: Sha256Digest(self.artifact.as_ref()?.sha256),
         })

@@ -78,6 +78,7 @@ impl PluginManagement {
         let record = runtime.installed()?.plugin(&plugin.package.as_ref()?.id)?;
         Some(match runtime.process_requirement(&record)?.trust {
             TrustTier::Official => "official",
+            TrustTier::OfficialFixture => "official-fixture",
             TrustTier::Trusted => "trusted",
             TrustTier::User => "user",
         })

@@ -91,10 +91,11 @@ function addRow(add, approvals) {
   row.append(head);
   const source = node('p', undefined, 'catalog-plan__source');
   source.append('From ', node('code', add.source));
+  if (add.fixture && !add.native) source.append(' (official fixture)');
   row.append(source);
   if (add.native) {
     const facts = node('p', undefined, 'catalog-plan__facts');
-    const trust = { official: 'Official source', trusted: 'Trusted source', user: 'Untrusted source' }[add.trust] ?? add.trust;
+    const trust = { 'official-fixture': 'Official fixture', official: 'Official source', trusted: 'Trusted source', user: 'Untrusted source' }[add.trust] ?? add.trust;
     facts.append(node('span', 'Native code', 'badge badge-warning'), ' ',
       node('span', add.runtime === 'in-process' ? 'Runs inside vosu' : 'Runs as a separate process', 'badge'), ' ',
       node('span', trust, 'badge'));
@@ -227,6 +228,7 @@ export async function uninstallFlow({ target, name, requestJson, notify, errorTe
     item.dataset.removal = removal.id;
     item.append(node('strong', removal.id), ` ${removal.kind} v${removal.version} `,
       node('span', removal.reason === 'explicit' ? 'Selected' : 'No longer needed', 'badge'));
+    if (removal.fixture) item.append(' ', node('span', 'Official fixture', 'badge'));
     list.append(item);
   }
   const autoremoved = (preview.removals ?? []).filter((removal) => removal.reason !== 'explicit').length;

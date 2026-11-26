@@ -82,19 +82,20 @@ pub(super) fn list(inner: &Inner) -> ApiResult {
         .records
         .iter()
         .map(|record| {
-            json!({
+            let view = json!({
                 "kind": record.kind,
                 "id": record.id,
                 "version": record.version,
                 "source": record.source,
-                "official": record.source.is_official(),
+                "official": record.fixture || record.source.is_allowlisted(),
                 "installed_for": record.installed_for,
                 "runtime": record.artifact.as_ref().map(|artifact| match artifact.runtime {
                     vosu_plugin_api::manifest::Runtime::Process => "process",
                     vosu_plugin_api::manifest::Runtime::InProcess => "in-process",
                 }),
                 "approved": record.approval.is_some(),
-            })
+            });
+            mark_fixture(view, record.fixture)
         })
         .collect();
     Ok(json(

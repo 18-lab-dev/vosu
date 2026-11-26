@@ -39,7 +39,7 @@ pub trait CatalogNetwork: Send + Sync {
 /// names its exact loopback listener.
 pub fn network() -> Arc<dyn CatalogNetwork> {
     #[cfg(feature = "test-harness")]
-    if let Some(socket) = harness::socket() {
+    if let Some(socket) = crate::catalog::sources::harness_socket() {
         return Arc::new(harness::Harness(socket));
     }
     Arc::new(Production)
@@ -90,19 +90,12 @@ mod harness {
     use super::*;
     use crate::catalog::{
         install::{DownloadFuture, PackageTransport, PublicPackageTransport},
-        sources::{FetchedCatalog, SourceFailure, SourceIdentity, SourceLocation},
+        sources::{
+            FetchedCatalog, HARNESS_HOST as HOST, SourceFailure, SourceIdentity, SourceLocation,
+            harness_socket,
+        },
     };
     use std::{net::SocketAddr, path::Path};
-
-    pub(super) const HOST: &str = "catalog.invalid";
-
-    pub(super) fn socket() -> Option<SocketAddr> {
-        std::env::var("VOSU_CATALOG_TEST_SOCKET")
-            .ok()?
-            .parse::<SocketAddr>()
-            .ok()
-            .filter(|socket| socket.ip().is_loopback() && socket.port() != 0)
-    }
 
     fn client(socket: SocketAddr, limits: DownloadLimits) -> StreamingClient {
         struct Resolver(std::net::IpAddr);
@@ -211,7 +204,7 @@ mod harness {
 
     /// Package transport for the harness listener; `None` without it.
     pub fn transport() -> Option<Arc<dyn PackageTransport>> {
-        let socket = socket()?;
+        let socket = harness_socket()?;
         Some(Arc::new(Transport(PublicPackageTransport::new(client(
             socket,
             DownloadLimits::default(),

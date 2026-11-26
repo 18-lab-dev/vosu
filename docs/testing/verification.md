@@ -2355,6 +2355,17 @@ namespaces. The switch fails before root initialization in debug non-harness
 and release daemons, and the root build
 script rejects `test-harness` in release.
 
+**Official catalog fixture (2026-11-26).** For pre-publication catalog-flow
+evidence, launch that same debug `test-harness` daemon with
+`VOSU_CATALOG_TEST_SOCKET=127.0.0.1:<port>` and
+`VOSU_TEST_OFFICIAL_CATALOG=https://catalog.invalid:<port>/<fixture>/catalog-v2.json`.
+Add and refresh that exact source, review and confirm the catalog plan, and
+check the installed package and process. Keep the `official-fixture` trust
+label and `fixture: true` provenance in receipts, including for dependencies;
+these are not production official-source results. Without the selection the
+same loopback source is ordinary user trust. See the
+[catalog contract](../v2/catalog-v2.md#official-catalog-fixtures-x0).
+
 For the native Windows equivalent, point the VM runner at guest Node,
 Playwright and Chromium paths. It stages and builds native artifacts, runs the
 named daemon tests and runs all four Python/Chromium smokes serially. It

@@ -101,6 +101,8 @@ pub enum Provenance {
     /// A catalog-installed package (M6b).
     Installed {
         source: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fixture: bool,
         version: String,
         package_sha256: Sha256Digest,
     },

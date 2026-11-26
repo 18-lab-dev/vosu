@@ -79,6 +79,30 @@ fn explicit_officialness_and_application_prerelease_support_are_distinct() {
 }
 
 #[test]
+fn an_unselected_loopback_catalog_cannot_claim_a_reserved_plugin_identity() {
+    let source = vosu_core::catalog::sources::SourceIdentity::parse(
+        "https://catalog.invalid:44433/unselected/catalog-v2.json",
+    )
+    .unwrap()
+    .identity;
+    assert!(!source.is_official());
+    let mut value = manifest("plugin");
+    value["id"] = json!("vosu.test.catalog-fixture");
+    let package = parse(&value).unwrap();
+    let error = package
+        .validate_context(&ValidationContext {
+            application_version: &vosu::BUNDLE.version(),
+            source: source.as_str(),
+            official: source.is_official(),
+            registrations: &[],
+            namespace_revisions: &[],
+        })
+        .unwrap_err();
+    assert_eq!(error.rule, "manifest.namespace");
+    assert_eq!(error.pointer, "/id");
+}
+
+#[test]
 fn authoritative_foreign_revision_and_source_local_replacements_matrix() {
     use vosu_plugin_api::manifest::{NamespaceRevision, SchemaProvenance};
     let app = &vosu::BUNDLE.version();

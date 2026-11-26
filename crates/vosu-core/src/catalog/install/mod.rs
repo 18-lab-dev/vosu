@@ -498,9 +498,28 @@ async fn hand_off(
     let mut reports = Vec::with_capacity(records.len());
     let mut web = Vec::new();
     for record in records {
+        let matches_fixture = record.matches_fixture_source();
+        if record.fixture {
+            tracing::info!(
+                id = %record.id,
+                source = record.source.as_str(),
+                trust = "official-fixture",
+                fixture = true,
+                selected = matches_fixture,
+                "found installed catalog fixture"
+            );
+        }
         let kind = record.package_kind();
         if kind != PackageKind::Plugin {
             web.push(record);
+            continue;
+        }
+        if !matches_fixture {
+            reports.push(LoadReport {
+                kind: record.kind,
+                id: record.id.clone(),
+                status: LoadStatus::Refused(PolicyError::FixtureSourceMismatch),
+            });
             continue;
         }
         let status = match (

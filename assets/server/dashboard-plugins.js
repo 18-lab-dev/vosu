@@ -156,7 +156,8 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
       facts([
         ['Plugin', el('code', { text: plugin.id })],
         ['Version', plugin.version ? `v${plugin.version}` : 'Not stated'],
-        ['From', el('code', { text: plugin.provenance?.path ?? 'Unknown' })],
+        ['From', el('code', { text: plugin.provenance?.fixture
+          ? `${plugin.provenance.source} (official fixture)` : plugin.provenance?.path ?? 'Unknown' })],
         ['Runtime', RUNTIME[plugin.runtime] ?? plugin.runtime],
         ['Manifest SHA-256', el('code', { className: 'plugin-digest', text: plugin.approval.manifest_sha256 })],
         ['Library SHA-256', el('code', { className: 'plugin-digest', text: plugin.approval.library_sha256 })],
@@ -282,7 +283,7 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
     const shown = pending
       ? { label: 'Revocation pending restart', dot: 'warn' }
       : (STATES[process?.state] ?? LOADS[load?.status] ?? { label: 'Installed', dot: 'idle' });
-    const trust = record.official ? 'Official source'
+    const trust = record.fixture ? 'Official fixture' : record.official ? 'Official source'
       : !source ? 'Source removed'
         : source.trusted ? 'Trusted source' : 'Untrusted source';
     const approval = !process && record.runtime === 'process' ? (record.approved ? 'Approved' : 'Not approved') : null;

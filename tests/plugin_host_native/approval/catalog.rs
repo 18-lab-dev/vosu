@@ -11,6 +11,8 @@ use std::{
 use vosu_sys::platform::BuildChannel;
 
 const ACTION: &str = "test.p0.testkit.echo";
+const OFFICIAL_ID: &str = "vosu.test.catalog-fixture";
+const CONSUMER_ID: &str = "catalog-fixture-overlay";
 type Files = Arc<Mutex<HashMap<String, Bytes>>>;
 
 struct CatalogFixture {
@@ -75,8 +77,7 @@ impl CatalogFixture {
             "provides":provides,"actions":actions,
         }))
         .unwrap();
-        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        for (name, bytes) in [
+        let archive = zip_files([
             ("manifest.toml", manifest.into_bytes()),
             (library.as_str(), std::fs::read(&staged.library).unwrap()),
             (
@@ -85,13 +86,7 @@ impl CatalogFixture {
             ),
             ("args.json", b"true".to_vec()),
             ("result.json", b"true".to_vec()),
-        ] {
-            archive
-                .start_file(name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            archive.write_all(&bytes).unwrap();
-        }
-        let archive = archive.finish().unwrap().into_inner();
+        ]);
         use sha2::{Digest as _, Sha256};
         let sha =
             vosu_core::plugin::approval::Sha256Digest(Sha256::digest(&archive).into()).to_string();
@@ -108,6 +103,77 @@ impl CatalogFixture {
         sha
     }
 
+    fn publish_official(&self) {
+        let staged = Artifact::Testkit.stage(&self.root.path().join("official"), &[]);
+        self.fixture.control(&staged, "none", None, None);
+        let target = vosu_core::runtime::catalog_target();
+        let library = format!(
+            "lib/{}",
+            staged.library.file_name().unwrap().to_str().unwrap()
+        );
+        let host = format!("={}", vosu::BUNDLE.version);
+        let d8 = json!([{"id":"field:vosu.osu.internal.paths.current","version":"*"}]);
+        let capability = format!("field:{OFFICIAL_ID}");
+        let manifest = toml::to_string(&json!({
+            "manifest_version":1,"kind":"plugin","id":OFFICIAL_ID,"name":OFFICIAL_ID,
+            "version":"1.0.0","host":host,"abi_version":1,"runtime":"process",
+            "targets":{target:{"library":library}}, "requires":d8,
+            "provides":[{"id":capability,"version":"1.0.0","schema":"namespace.json"}],
+        }))
+        .unwrap();
+        let schema = json!({"title":OFFICIAL_ID,"version":"1.0.0","type":"object","properties":{
+            "current":{"type":"string","x-sampling-lane":{"lane":"regular","activity":"always"}}
+        }});
+        let archive = zip_files([
+            ("manifest.toml", manifest.into_bytes()),
+            (&library, std::fs::read(&staged.library).unwrap()),
+            (
+                "lib/testkit-fixture.control",
+                std::fs::read(staged.dir.join("lib/testkit-fixture.control")).unwrap(),
+            ),
+            ("namespace.json", schema.to_string().into_bytes()),
+        ]);
+        let plugin = json!({
+            "id":OFFICIAL_ID,"name":OFFICIAL_ID,"version":"1.0.0","host":host,
+            "runtime":"process", "requires":d8,
+            "provides":[{"id":capability,"version":"1.0.0","schema_version":"1.0.0",
+                "lanes":[{"pointer":"/current","lane":"regular","activity":"always"}]}],
+            "packages":{target:self.archive_ref("plugin.zip", &archive)},
+        });
+        let requires = json!([{"id":format!("{capability}.current"),"version":"1.0.0"}]);
+        let manifest = toml::to_string(&json!({
+            "manifest_version":1,"kind":"overlay","id":CONSUMER_ID,"name":CONSUMER_ID,
+            "version":"1.0.0","host":host,"resolution":[640,120],"requires":requires,
+        }))
+        .unwrap();
+        let overlay = zip_files([
+            ("manifest.toml", manifest.into_bytes()),
+            (
+                "index.html",
+                b"<!doctype html><p>catalog fixture consumer</p>".to_vec(),
+            ),
+        ]);
+        let catalog = json!({"catalog_version":2,"name":"Native fixture",
+            "published":"2026-11-26T00:00:00Z","plugins":[plugin],"overlays":[{
+                "id":CONSUMER_ID,"name":CONSUMER_ID,"version":"1.0.0","host":host,
+                "resolution":[640,120],"requires":requires,
+                "packages":{"any":self.archive_ref("overlay.zip", &overlay)},
+            }],
+        });
+        let mut files = self.files.lock().unwrap();
+        let text = catalog.to_string();
+        vosu_plugin_api::catalog::Catalog::parse(&text).unwrap();
+        files.insert("catalog-v2.json".into(), Bytes::from(text));
+        files.insert("plugin.zip".into(), Bytes::from(archive));
+        files.insert("overlay.zip".into(), Bytes::from(overlay));
+    }
+
+    fn archive_ref(&self, name: &str, archive: &[u8]) -> Value {
+        use sha2::{Digest as _, Sha256};
+        let sha = vosu_core::plugin::approval::Sha256Digest(Sha256::digest(archive).into());
+        json!({"url":format!("{}/{name}", self.origin()),"sha256":sha,"size":archive.len()})
+    }
+
     fn origin(&self) -> String {
         format!("https://catalog.invalid:{}", self.socket.port())
     }
@@ -117,12 +183,23 @@ impl CatalogFixture {
     }
 
     fn daemon(&self) -> Daemon {
+        self.daemon_with(None, true)
+    }
+
+    fn daemon_with(&self, official_source: Option<&str>, socket: bool) -> Daemon {
         Daemon::start_with(
             self.root.path(),
             Path::new(env!("CARGO_BIN_EXE_vosu")),
             &[],
             |command| {
-                command.env("VOSU_CATALOG_TEST_SOCKET", self.socket.to_string());
+                command.env_remove("VOSU_CATALOG_TEST_SOCKET");
+                command.env_remove("VOSU_TEST_OFFICIAL_CATALOG");
+                if socket {
+                    command.env("VOSU_CATALOG_TEST_SOCKET", self.socket.to_string());
+                }
+                if let Some(source) = official_source {
+                    command.env("VOSU_TEST_OFFICIAL_CATALOG", source);
+                }
                 command.env("LOCALAPPDATA", self.root.path().join("home/local"));
             },
         )
@@ -192,6 +269,17 @@ impl CatalogFixture {
     }
 }
 
+fn zip_files<'a>(files: impl IntoIterator<Item = (&'a str, Vec<u8>)>) -> Vec<u8> {
+    let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, bytes) in files {
+        archive
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(&bytes).unwrap();
+    }
+    archive.finish().unwrap().into_inner()
+}
+
 async fn serve_file(
     State(files): State<Files>,
     axum::extract::Path(name): axum::extract::Path<String>,
@@ -254,6 +342,128 @@ fn confirm(daemon: &Daemon, plan: &Value) {
 fn load_status(daemon: &Daemon) -> Value {
     let state = request(daemon, Method::GET, "/api/catalog/status", None, 200);
     state["load_reports"][0]["status"].clone()
+}
+
+#[test]
+fn approval_catalog_official_fixture_resolves_d8_dependency_and_runs_in_a_plugin_host() {
+    let fixture = CatalogFixture::new();
+    fixture.publish_official();
+    let source = format!("{}/catalog-v2.json", fixture.origin());
+    let consumer = json!({"kind":"overlay","id":CONSUMER_ID,"source":source});
+    let plugin_target = json!({"kind":"plugin","id":OFFICIAL_ID,"source":source});
+    let source_row = |daemon: &Daemon| {
+        request(daemon, Method::GET, "/api/catalog/sources", None, 200)["sources"][0].clone()
+    };
+    let assert_user_source = |view: Value| {
+        assert_eq!(view["source"], source);
+        assert_eq!(view["official"], false, "{view}");
+        assert_eq!(view["trusted"], false, "{view}");
+        assert!(view.get("fixture").is_none(), "{view}");
+    };
+
+    let daemon = fixture.daemon();
+    fixture.enable(&daemon);
+    request(&daemon, Method::POST, "/api/catalog/refresh", None, 200);
+    let refused = source_row(&daemon);
+    assert_user_source(refused.clone());
+    assert_eq!(refused["message"], "invalid catalog", "{refused}");
+    let refused_plan = request(
+        &daemon,
+        Method::POST,
+        "/api/catalog/install",
+        Some(&plugin_target),
+        200,
+    );
+    assert_eq!(refused_plan["adds"], json!([]), "{refused_plan}");
+    assert!(!refused_plan["errors"].as_array().unwrap().is_empty());
+    assert!(fixture.fixture.receipts("constructor").is_empty());
+    daemon.kill();
+
+    let wrong_port = if fixture.socket.port() == 8111 {
+        8112
+    } else {
+        8111
+    };
+    let wrong_port = format!("https://catalog.invalid:{wrong_port}/catalog-v2.json");
+    let wrong_path = format!("{}/other/catalog-v2.json", fixture.origin());
+    for (selected, socket) in [(&wrong_port, true), (&wrong_path, true), (&source, false)] {
+        let daemon = fixture.daemon_with(Some(selected), socket);
+        assert_user_source(source_row(&daemon));
+        daemon.kill();
+    }
+
+    let daemon = fixture.daemon_with(Some(&source), true);
+    request(&daemon, Method::POST, "/api/catalog/refresh", None, 200);
+    let selected = source_row(&daemon);
+    assert_eq!(selected["status"], "ok", "{selected}\n{}", daemon.log());
+    assert_eq!(selected["official"], true);
+    assert_eq!(selected["trusted"], true);
+    assert_eq!(selected["fixture"], true);
+    let plan = request(
+        &daemon,
+        Method::POST,
+        "/api/catalog/install",
+        Some(&consumer),
+        200,
+    );
+    assert_eq!(plan["errors"], json!([]), "{plan}");
+    let adds = plan["adds"].as_array().unwrap();
+    assert_eq!(adds.len(), 2, "{plan}");
+    assert_eq!(adds[0]["id"], OFFICIAL_ID);
+    assert_eq!(adds[0]["reason"], "dependency");
+    assert_eq!(adds[0]["trust"], "official-fixture");
+    assert_eq!(adds[0]["fixture"], true);
+    assert_eq!(adds[0]["needs_approval"], false);
+    assert_eq!(adds[0]["requires_internal_paths"], true);
+    assert_eq!(adds[1]["id"], CONSUMER_ID);
+    assert_eq!(adds[1]["reason"], "requested");
+    assert_eq!(adds[1]["fixture"], true);
+    let job = request(
+        &daemon,
+        Method::POST,
+        &format!(
+            "/api/catalog/plans/{}/confirm",
+            plan["plan_id"].as_str().unwrap()
+        ),
+        Some(&json!({"approve":[]})),
+        200,
+    );
+    wait_job(&daemon, &job);
+    assert_eq!(load_status(&daemon), "loaded", "{}", daemon.log());
+    let plugin = daemon.plugin(OFFICIAL_ID);
+    assert_eq!(plugin["state"], "running", "{plugin}");
+    assert_eq!(plugin["trust"], "official-fixture");
+    assert_eq!(plugin["requires_internal_paths"], true);
+    assert_eq!(plugin["provenance"]["kind"], "installed");
+    assert_eq!(plugin["provenance"]["source"], source);
+    assert_eq!(plugin["provenance"]["fixture"], true);
+    let receipts = fixture.fixture.receipts("create");
+    assert_eq!(receipts.len(), 1, "{receipts:?}\n{}", daemon.log());
+    assert_eq!(receipts[0].get("plugin"), OFFICIAL_ID);
+    assert_ne!(
+        receipts[0].pid,
+        daemon.pid(),
+        "native code ran inside the daemon"
+    );
+    let installed = request(&daemon, Method::GET, "/api/catalog/installed", None, 200);
+    let packages = installed["packages"].as_array().unwrap();
+    assert_eq!(packages.len(), 2, "{installed}");
+    assert!(
+        packages
+            .iter()
+            .all(|row| row["fixture"] == true && row["source"] == source)
+    );
+    assert!(daemon.log().contains("official-fixture"));
+    daemon.kill();
+
+    // A persisted receipt identifies a fixture but cannot restore authority.
+    let daemon = fixture.daemon();
+    assert_user_source(source_row(&daemon));
+    let installed = request(&daemon, Method::GET, "/api/catalog/installed", None, 200);
+    assert_eq!(installed["packages"][0]["fixture"], true);
+    assert_eq!(load_status(&daemon), "refused", "{}", daemon.log());
+    assert!(!daemon.plugins().iter().any(|row| row["id"] == OFFICIAL_ID));
+    assert_eq!(fixture.fixture.receipts("create").len(), 1);
 }
 
 #[test]

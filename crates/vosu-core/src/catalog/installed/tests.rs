@@ -123,6 +123,7 @@ impl Pkg {
             id: self.id.into(),
             version: "1.0.0".into(),
             source: identity,
+            fixture: false,
             target: TARGET.into(),
             sha256: sha256.iter().map(|b| format!("{b:02x}")).collect(),
             artifact,

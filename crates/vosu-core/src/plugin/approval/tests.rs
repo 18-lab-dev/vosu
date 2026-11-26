@@ -149,6 +149,7 @@ fn the_store_persists_one_record_per_id_and_provenance() {
     let installed = ApprovalRecord {
         provenance: Provenance::Installed {
             source: "https://example.invalid/catalog-v2.json".into(),
+            fixture: false,
             version: "1.0.0".into(),
             package_sha256: Sha256Digest([7; 32]),
         },

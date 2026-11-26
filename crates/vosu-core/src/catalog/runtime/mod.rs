@@ -329,7 +329,8 @@ impl CatalogRuntime {
     ) -> Option<Requirement> {
         let (generation, sources) = self.fetch.as_ref()?.sources().snapshot().ok()?;
         let artifact = record.artifact.as_ref()?;
-        if artifact.runtime != vosu_plugin_api::Runtime::Process {
+        if artifact.runtime != vosu_plugin_api::Runtime::Process || !record.matches_fixture_source()
+        {
             return None;
         }
         CurrentPolicy {
@@ -542,7 +543,10 @@ impl CatalogRuntime {
                 ));
             }
         }
-        for record in records {
+        for record in records
+            .into_iter()
+            .filter(|record| record.matches_fixture_source())
+        {
             let provider = live.providers.iter().find(|provider| {
                 record.package_kind() == PackageKind::Plugin && provider.id == record.id
             });

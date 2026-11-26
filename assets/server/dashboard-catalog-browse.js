@@ -15,7 +15,8 @@ function installable(entry) {
 }
 
 function sourceBadge(entry) {
-  const badge = node('span', entry.official ? 'Official' : entry.source_trusted ? 'Trusted catalog' : 'User catalog', 'badge');
+  const label = entry.fixture ? 'Official fixture' : entry.official ? 'Official' : entry.source_trusted ? 'Trusted catalog' : 'User catalog';
+  const badge = node('span', label, 'badge');
   badge.dataset.source = entry.official ? 'official' : 'user';
   badge.title = entry.source;
   return badge;
@@ -138,6 +139,7 @@ export function mountCatalogBrowser({ anchor, requestJson, notify, errorText, se
       label.append(node('strong', record.id), ` ${KIND_LABELS[record.kind] ?? record.kind} v${record.version} `,
         node('span', record.installed_for === 'dependency' ? 'Dependency' : 'Requested', 'badge'));
       const source = node('p', undefined, 'field-help'); source.append('From ', node('code', record.source));
+      if (record.fixture) source.append(' (official fixture)');
       const actions = node('div', undefined, 'tool-card__actions');
       if (record.installed_for === 'dependency') {
         actions.append(button('Keep', () => promote({ target: record, ...context }), {
@@ -163,6 +165,7 @@ export function mountCatalogBrowser({ anchor, requestJson, notify, errorText, se
       text.append(node('strong', `Add support for ${entry.name}`), ` — ${entry.process} is running.`);
       if (entry.installed_match) text.append(' An installed plugin already handles it; this is an alternative.');
       const source = node('p', undefined, 'field-help'); source.append(`v${entry.version} from `, node('code', entry.source));
+      if (entry.fixture) source.append(' (official fixture)');
       const control = button('Review…', async () => {
         control.disabled = true;
         try {

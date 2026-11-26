@@ -96,6 +96,13 @@ impl Inner {
     }
 }
 
+fn mark_fixture(mut view: serde_json::Value, fixture: bool) -> serde_json::Value {
+    if fixture {
+        view["fixture"] = true.into();
+    }
+    view
+}
+
 /// One exact route; segment payloads are already decoded once.
 #[derive(Debug, PartialEq, Eq)]
 enum Route {

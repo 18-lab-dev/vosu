@@ -26,7 +26,6 @@ use crate::{
         installed::UninstallService,
         resolver::BuiltinProviders,
         runtime::{CatalogHost, CatalogRuntime},
-        trust::TrustTier,
     },
     plugin::{
         DEFAULT_QUEUE_CAPACITY, HostError, LoadedPlugin, PluginInstanceId, WorkerPool,
@@ -218,7 +217,7 @@ impl RootHandoff {
             &snapshot,
             &request.directory,
             request.record.source.as_str(),
-            request.requirement.trust == TrustTier::Official,
+            request.requirement.trust.is_official(),
         ) {
             Ok(plugin) => plugin,
             Err(error) => return LoadStatus::Failed(error.to_string()),

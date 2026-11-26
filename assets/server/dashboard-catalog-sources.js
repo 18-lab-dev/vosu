@@ -188,7 +188,7 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
       entry.priv.checked = Boolean(source.private_network);
       entry.priv.setAttribute('aria-label', `Allow private network for ${label}`);
       entry.credential.setAttribute('aria-label', `Credential for ${label}`);
-      entry.form.textContent = source.official ? 'Official' : (FORMS[source.form] ?? 'New source');
+      entry.form.textContent = source.fixture ? 'Official fixture' : source.official ? 'Official' : (FORMS[source.form] ?? 'New source');
       entry.form.dataset.source = source.official ? 'official' : 'user';
       entry.credentialState.textContent = source.has_credential ? 'Credential saved' : 'No credential';
       entry.credentialState.hidden = source.official || source.order === undefined;

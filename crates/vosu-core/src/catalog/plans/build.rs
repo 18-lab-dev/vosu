@@ -53,6 +53,8 @@ pub struct PlanAdd {
     pub needs_approval: bool,
     pub requires_internal_paths: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fixture: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub linux_user_namespaces: bool,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +71,7 @@ pub struct PinnedAdd {
     pub entry: Arc<CatalogEntry>,
     pub kind: PackageKind,
     pub source: SourceIdentity,
+    pub fixture: bool,
     pub package_target: String,
     pub package_limit_bytes: u64,
     pub artifact: Option<Artifact>,
@@ -180,6 +183,7 @@ pub fn build(
                 .iter()
                 .filter(|edge| edge.consumer == Node::Catalog(i))
                 .any(|edge| InternalGrant::names_internal_path(&edge.requirement.id));
+        let fixture = candidate.source.is_official_fixture();
         views.push(PlanAdd {
             id: entry.id.clone(),
             kind: candidate.kind,
@@ -194,12 +198,14 @@ pub fn build(
             }),
             needs_approval: requirement.is_some_and(|r| r.needs_approval),
             requires_internal_paths,
+            fixture,
             linux_user_namespaces: artifact.as_ref().is_some_and(|a| a.linux_user_namespaces),
         });
         adds.push(PinnedAdd {
             entry: Arc::new(entry.clone()),
             kind: candidate.kind,
             source: candidate.source.clone(),
+            fixture,
             package_target: target.into(),
             package_limit_bytes: snapshot.max_package_bytes,
             artifact,

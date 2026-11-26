@@ -318,9 +318,9 @@ fn load_package_dir(
 /// (catalog I0 runtime handoff). Trust is not decided here: the caller must
 /// have run `catalog::trust::CurrentPolicy::authorize_load` for this exact
 /// installed artifact under the catalog operation gate immediately before.
-/// `official` is that decision's tier (`TrustTier::Official`, i.e. the exact
-/// installed source identity is a fixed official one): it selects the SDK
-/// context and, through [`PackageOrigin::Installed`], `TrustedOfficial`
+/// `official` is whether the exact installed source is official (or an active
+/// official catalog fixture in the test harness): it selects the SDK context
+/// and, through [`PackageOrigin::Installed`], `TrustedOfficial`
 /// schema registration, matching how I0 compiled the staged schemas. A
 /// trusted user source stays `Untrusted`. This entry point accepts only
 /// in-process packages; catalog process packages have a separate loader

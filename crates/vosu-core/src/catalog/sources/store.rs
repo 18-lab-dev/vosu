@@ -155,7 +155,7 @@ impl SourceStore {
                         .identity;
                     let previous = old.iter().find(|record| record.identity == identity);
                     SourceRecord {
-                        trusted: identity.is_official() || previous.is_some_and(|r| r.trusted),
+                        trusted: identity.is_allowlisted() || previous.is_some_and(|r| r.trusted),
                         private_network: previous.is_some_and(|r| r.private_network),
                         identity,
                         enabled: input.enabled,
@@ -193,6 +193,10 @@ impl SourceStore {
                 .ok_or(SourceStoreError::NotFound)?;
             if identity.is_official() && (private && value || !private && !value) {
                 return Err(SourceStoreError::OfficialPolicy);
+            }
+            // Fixture authority is process-local, never persisted as a human grant.
+            if identity.is_official_fixture() && !private {
+                return Ok(records);
             }
             if private {
                 record.private_network = value;
@@ -299,7 +303,7 @@ fn validate_records(records: &[SourceRecord]) -> Result<(), SourceStoreError> {
     validate_input(&input)?;
     for (order, record) in records.iter().enumerate() {
         if record.order != order
-            || record.identity.is_official() && (!record.trusted || record.private_network)
+            || record.identity.is_allowlisted() && (!record.trusted || record.private_network)
         {
             return Err(SourceStoreError::Invalid);
         }

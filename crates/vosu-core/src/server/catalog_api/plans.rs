@@ -175,6 +175,7 @@ fn resolve<T>(
         .graph
         .nodes()
         .iter()
+        .filter(|node| node.record.matches_fixture_source())
         .map(|node| Installed {
             manifest: &node.manifest,
         })

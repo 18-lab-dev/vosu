@@ -1763,6 +1763,22 @@ on two M5 deliverables:
   installed plugins share it, and M6b X0 needs it for real installed
   process-plugin load, restart and approval evidence.
 
+#### Official catalog fixtures (X0)
+
+**2026-11-26.** A debug `test-harness` daemon may set
+`VOSU_TEST_OFFICIAL_CATALOG` to one exact
+`https://catalog.invalid:<port>/…/catalog-v2.json` source URL, with the same
+port in `VOSU_CATALOG_TEST_SOCKET=<loopback IP>:<port>`. Add and refresh that
+source normally. Only that identity gets official catalog authority: reserved
+IDs, D8 eligibility and disclosure, provider resolution, and ordinary catalog
+install and load policy (including any approval required for Linux user
+namespaces). Catalog receipts, installed provenance and logs mark it
+`official-fixture` and/or `fixture: true`, not production official evidence.
+The switch cannot change saved source trust; an installed fixture plugin
+requires the same fixture selection on restart. A non-harness or release
+build never honors the variable. This is separate from the staged
+`VOSU_TEST_OFFICIAL_PLUGIN` fixture and grants no bundled authority.
+
 ## 1.x coexistence
 
 Every official repository (vosu-tools, vosulay, vosu-overlays) publishes both

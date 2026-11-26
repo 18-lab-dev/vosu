@@ -111,6 +111,7 @@ pub(super) async fn prepare(
             id: entry.id.clone(),
             version: entry.version.clone(),
             source: add.source.clone(),
+            fixture: add.fixture,
             target: add.package_target.clone(),
             sha256,
             artifact: add.artifact.clone(),

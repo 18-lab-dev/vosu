@@ -69,12 +69,13 @@ fn view(inner: &Inner) -> Result<Value, ApiError> {
                 None => ("pending", None, 0),
             };
             let form = form(&record.identity);
-            json!({
+            let fixture = record.identity.is_official_fixture();
+            let view = json!({
                 "source": record.identity,
                 "enabled": record.enabled,
                 "order": record.order,
                 "official": record.identity.is_official(),
-                "trusted": record.trusted,
+                "trusted": record.trusted || fixture,
                 "private_network": record.private_network,
                 "has_credential": presence.has_credential,
                 "credential_available":
@@ -84,7 +85,8 @@ fn view(inner: &Inner) -> Result<Value, ApiError> {
                 "status": status,
                 "message": message,
                 "entries": entries,
-            })
+            });
+            super::mark_fixture(view, fixture)
         })
         .collect();
     Ok(json!({
@@ -226,7 +228,8 @@ pub(super) fn entries(inner: &Inner) -> ApiResult {
             let record = installed
                 .iter()
                 .find(|record| record.package_kind() == candidate.kind && record.id == entry.id);
-            json!({
+            let fixture = candidate.source.identity.is_official_fixture();
+            let view = json!({
                 "kind": kind_name(candidate.kind),
                 "id": entry.id,
                 "name": entry.name,
@@ -240,7 +243,7 @@ pub(super) fn entries(inner: &Inner) -> ApiResult {
                 "resolution": entry.resolution,
                 "source": candidate.source.identity,
                 "official": candidate.source.identity.is_official(),
-                "source_trusted": candidate.source.trusted,
+                "source_trusted": candidate.source.trusted || fixture,
                 "runtime": entry.runtime.map(|runtime| match runtime {
                     Runtime::Process => "process",
                     Runtime::InProcess => "in-process",
@@ -253,12 +256,13 @@ pub(super) fn entries(inner: &Inner) -> ApiResult {
                     (Some(size), Some(limit)) => size > limit,
                     _ => true,
                 },
-                "installed": record.map(|record| json!({
+                "installed": record.map(|record| super::mark_fixture(json!({
                     "version": record.version,
                     "source": record.source,
                     "installed_for": record.installed_for,
-                })),
-            })
+                }), record.fixture)),
+            });
+            super::mark_fixture(view, fixture)
         })
         .collect();
     Ok(json(

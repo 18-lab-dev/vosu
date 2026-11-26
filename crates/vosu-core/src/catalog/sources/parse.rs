@@ -21,7 +21,20 @@ impl SourceIdentity {
         &self.0
     }
     pub fn is_official(&self) -> bool {
+        self.is_allowlisted() || self.is_official_fixture()
+    }
+
+    /// Production allowlist only; the fixture switch never changes disk settings.
+    pub(crate) fn is_allowlisted(&self) -> bool {
         OFFICIAL_SOURCES.contains(&self.as_str())
+    }
+
+    pub(crate) fn is_official_fixture(&self) -> bool {
+        #[cfg(all(feature = "test-harness", debug_assertions))]
+        if let Some(fixture) = OFFICIAL_FIXTURE.as_ref() {
+            return self == fixture;
+        }
+        false
     }
 }
 
@@ -138,9 +151,89 @@ fn parse(value: String) -> Result<ParsedSource, SourceParseError> {
     })
 }
 
+#[cfg(any(test, feature = "test-harness"))]
+pub(crate) const HARNESS_HOST: &str = "catalog.invalid";
+
+#[cfg(feature = "test-harness")]
+pub(crate) fn harness_socket() -> Option<std::net::SocketAddr> {
+    std::env::var("VOSU_CATALOG_TEST_SOCKET")
+        .ok()?
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .filter(|socket| socket.ip().is_loopback() && socket.port() != 0)
+}
+
+#[cfg(all(feature = "test-harness", debug_assertions))]
+static OFFICIAL_FIXTURE: std::sync::LazyLock<Option<SourceIdentity>> =
+    std::sync::LazyLock::new(|| {
+        let source = fixture_source(
+            std::env::var("VOSU_TEST_OFFICIAL_CATALOG").ok()?,
+            harness_socket()?,
+            cfg!(debug_assertions),
+        )?;
+        tracing::info!(
+            source = source.as_str(),
+            trust = "official-fixture",
+            fixture = true,
+            "enabled test catalog authority"
+        );
+        Some(source)
+    });
+
+#[cfg(any(test, all(feature = "test-harness", debug_assertions)))]
+fn fixture_source(
+    value: String,
+    socket: std::net::SocketAddr,
+    debug_build: bool,
+) -> Option<SourceIdentity> {
+    if !(debug_build && cfg!(feature = "test-harness") && socket.ip().is_loopback())
+        || socket.port() == 0
+    {
+        return None;
+    }
+    let parsed = SourceIdentity::parse(value).ok()?;
+    // Match the transport's exact scheme and host spelling as well as its port.
+    let authority = format!("https://{HARNESS_HOST}:{}/", socket.port());
+    match parsed.location {
+        SourceLocation::Static { url }
+            if url.port_or_known_default() == Some(socket.port())
+                && parsed.identity.as_str().starts_with(&authority) =>
+        {
+            Some(parsed.identity)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_catalog_switch_requires_debug_harness_and_the_exact_loopback_authority() {
+        let source = "https://catalog.invalid:8111/fixtures/catalog-v2.json";
+        let loopback = "127.0.0.1:8111".parse().unwrap();
+        assert!(fixture_source(source.into(), loopback, false).is_none());
+        let selected = fixture_source(source.into(), loopback, true);
+        if cfg!(feature = "test-harness") {
+            assert_eq!(selected.unwrap().as_str(), source);
+        } else {
+            assert!(selected.is_none());
+        }
+        for bad in [
+            "18-lab-dev/vosu-tools",
+            "https://catalog.invalid:8112/fixtures/catalog-v2.json",
+            "https://CATALOG.INVALID:8111/fixtures/catalog-v2.json",
+            "https://catalog.invalid:8111/fixtures/project",
+            "https://outside.example:8111/fixtures/catalog-v2.json",
+        ] {
+            assert!(
+                fixture_source(bad.into(), loopback, true).is_none(),
+                "{bad}"
+            );
+        }
+        assert!(fixture_source(source.into(), "192.0.2.1:8111".parse().unwrap(), true).is_none());
+    }
     #[test]
     fn sources_parse_all_forms_without_authority_aliases() {
         for source in [

@@ -187,6 +187,7 @@ fn record(artifact: Artifact, approved: bool) -> InstalledRecord {
         id: artifact.id.clone(),
         version: artifact.version.clone(),
         source: artifact.source.clone(),
+        fixture: false,
         target: "x86_64-unknown-linux-gnu".into(),
         sha256: artifact.sha256.iter().map(|b| format!("{b:02x}")).collect(),
         approval: None,

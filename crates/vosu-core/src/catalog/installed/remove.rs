@@ -34,6 +34,8 @@ pub struct Removal {
     pub id: String,
     pub version: String,
     pub source: SourceIdentity,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fixture: bool,
     pub reason: RemovalReason,
 }
 
@@ -109,6 +111,7 @@ pub fn plan_removal(
             id: record.id.clone(),
             version: record.version.clone(),
             source: record.source.clone(),
+            fixture: record.fixture,
             reason,
         }
     };
