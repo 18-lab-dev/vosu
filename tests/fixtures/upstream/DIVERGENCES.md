@@ -2,7 +2,8 @@
 
 ADR 0021 defines four classes: `security` (permanent sandbox and access-policy
 changes), `contract` (permanent differences in separately specified contracts),
-`licensing` (permanent functional compatibility without upstream assets), and
+`licensing` (permanent removal of an upstream surface vosu cannot ship without
+upstream's LGPL assets), and
 `temporary` (pre-release gaps with an explicit closing task; forbidden at day 0).
 Only the entries below authorize compatibility exemptions. A2b's explicit state
 schema contract changes are permanent `contract` differences, not blanket skips.
@@ -55,13 +56,14 @@ identical aggregate whichever stable session is focused.
 | adr0021-sc-extension-removal | contract | `/json/sc`, `/tokens`: `pressHitErrors`, `releaseHitErrors` (Rust source names `press_hit_errors`, `release_hit_errors`), including inside embedded JSON string tokens | vosu 1.x-only extensions are absent; `hitErrors` and the `keyOverlay` JSON string remain | permanent ADR 0021 / A4.6; removed by C0 |
 | adr0021-removed-selected-v2-feed | contract | `/websocket/v2/subscribe`, every method, with or without an upgrade request | vosu 1.x-only route: exact `Not Found` 404, never an upgrade or static/overlay fallthrough; near misses stay 404; attribution records only an installed validated overlay identity (A4.5); API v1 session subscriptions replace it | permanent ADR 0021 / A4.5; N0 |
 | adr0021-removed-legacy-skin-index | contract | `/files/skin/` exact path, every method, with or without an upgrade request | vosu 1.x-only metadata index: exact `Not Found` 404, never an upgrade or listing; attribution as above; retained-root private lookup and API v1 skin trees remain | permanent ADR 0021 / A4.5; N0, R1 |
+| adr0021-removed-ingame-page | licensing | `/api/ingame` exact path, every method, with or without an upgrade request | Upstream serves its LGPL in-game overlay page here; vosu cannot ship it, and the owner dropped the route from 2.0 without a clean-room replacement. Exact `Not Found` 404, never an upgrade, redirect, page, `Deprecation` or `Link` header; attribution as above under `ingame-page`; vosulay is the in-game overlay path | permanent ADR 0021 2026-11-25 amendment / A7.5; N1 |
 | lazer-legacy-skin-404 | contract | `/files/skin/{path}` when the captured session is lazer | The legacy lookup and its lazer delegation are removed and return 404; API v1 lazer skin trees and resources remain functional | permanent ADR 0021 / A4.6; R1 |
 | upstream-malformed-uri-crash | security | Adapter HTTP requests whose target has a malformed percent escape (a `%` not followed by two hex digits, or escapes that are not UTF-8); route-matrix cases `state-http.{json,json-sc,json-v2,json-v2-precise}.near.malformed-percent` and `.near.malformed-percent-hex` | The pinned upstream answers, then its response logger's `decodeURIComponent(req.url)` throws an uncaught `URIError` and the daemon exits; vosu answers and keeps serving. Found by the first M4b pilot; every route-matrix request was then sent to a client-less pinned upstream and only these eight killed it. Captures record them as `upstream_crashed` (upstream's bytes and exit code), run after the no-client barrier with an upstream restart between them; `golden` writes no case file for them (GOLDEN_CONTRACT §6) | permanent; owner amendment and Main's contract decision of 2026-11-25 (M4b O0) |
 
-ADR 0021's clean-room `/api/ingame` replacement is a separately scheduled
-licensing change, not an exemption declaring the present implementation
-complete. Its actual functional differences and implementation evidence must
-be recorded by that work's owner. Likewise this freeze does not claim that
+`adr0021-removed-ingame-page` records the owner's 2026-11-25 decision: 2.0
+serves no `/api/ingame`, and no clean-room replacement is scheduled. M4b never
+captures the route ([golden contract §8](GOLDEN_CONTRACT.md)), so no
+`divergence-rules.json` rule names that row. This freeze does not claim that
 the security contract rows added above have completed R1/X0 native evidence.
 
 ## Fixture-input fact: explicit zero calculation
