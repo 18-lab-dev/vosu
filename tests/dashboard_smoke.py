@@ -4,8 +4,11 @@
 Runs tests/dashboard_browser.mjs with an installed playwright index.mjs:
 text baselines in the header and status strip (within 0.5 px), keyboard
 reachability of every card control on the Overlays, Available and Tools
-grids, and that the dashboard's own previews are not counted as connected
-browser sources. Only test ports 25150/25151 are used.
+grids, that the dashboard's own previews are not counted as connected
+browser sources, the status strip's session join, the update notice (minor,
+major with consent, unsafe release URLs) and Settings filled from
+SettingsView or replaced by an alert when that read fails. Only test ports
+25150/25151 are used.
 """
 import argparse
 import functools

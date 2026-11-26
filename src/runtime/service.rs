@@ -42,12 +42,10 @@ impl SettingsProvider for RuntimeCounterFacade {
 
 #[derive(Clone)]
 pub(super) struct RuntimePages {
-    pub(super) pages: PageService,
     pub(super) counters: Arc<ReloadableCounterService>,
     pub(super) catalog: CatalogService,
     pub(super) config: Arc<ConfigStore>,
     pub(super) shutdown: CancellationToken,
-    pub(super) update: Option<UpdateNotice>,
 }
 
 /// One scan of the overlays folder: readable overlays and the folders that
@@ -127,86 +125,6 @@ impl RuntimePages {
 }
 
 impl PageDataProvider for RuntimePages {
-    fn render(
-        &self,
-        page: DynamicPage,
-        authority: Option<String>,
-    ) -> crate::server::routes::ProviderFuture<'_, Result<EmbeddedResponse, String>> {
-        Box::pin(async move {
-            let config = self.config.current();
-            let authority = authority.unwrap_or_else(|| configured_authority(&config));
-            let scan = self.local_scan().await;
-            let local_count = scan
-                .as_ref()
-                .ok()
-                .map(|scan| scan.counters.len() + scan.broken.len());
-            let (list, available_count) = match page {
-                DynamicPage::Dashboard => (
-                    match scan {
-                        Ok(scan) => {
-                            let html = self.installed_html(scan, None, &authority).await;
-                            if html.is_empty() {
-                                INSTALLED_EMPTY_STATE.to_owned()
-                            } else {
-                                html
-                            }
-                        }
-                        Err(error) => {
-                            render_overlays_unreadable(&self.counters.current_root(), &error)
-                        }
-                    },
-                    None,
-                ),
-                DynamicPage::Settings => (render_runtime_settings(&self.config.current()), None),
-                DynamicPage::OverlaySettings | DynamicPage::ToolSettings => (String::new(), None),
-                DynamicPage::Tools => (
-                    r#"<div id="tools-root" class="tools-root"></div>"#.to_owned(),
-                    None,
-                ),
-                DynamicPage::Available => {
-                    // An unreadable overlays folder leaves the catalog browsable.
-                    let installed = scan
-                        .map(|scan| scan.counters.iter().map(local_overlay).collect::<Vec<_>>())
-                        .unwrap_or_default();
-                    match self.catalog.fetch(&installed, &self.shutdown).await {
-                        Ok(remote) => {
-                            let count = remote.len();
-                            let html = render_catalog_counters(&remote, None, &authority);
-                            (
-                                if html.is_empty() {
-                                    r#"<div class="empty-state"><h2>Everything is installed</h2><a class="button" href="/">View installed overlays</a></div>"#.to_owned()
-                                } else {
-                                    html
-                                },
-                                Some(count),
-                            )
-                        }
-                        Err(error) => (
-                            format!(
-                                r#"<div class="empty-state catalog-unavailable" role="alert"><h2>Couldn't reach the community catalog</h2><p>{}</p><a class="button" href="/available">Retry</a></div>"#,
-                                escape_html(&error.to_string())
-                            ),
-                            None,
-                        ),
-                    }
-                }
-            };
-            Ok(render_homepage(
-                self.pages.dashboard_template(),
-                page,
-                local_count,
-                available_count,
-                if matches!(page, DynamicPage::Available) {
-                    CATALOG_NOTICE
-                } else {
-                    ""
-                },
-                &list,
-                self.update.as_ref(),
-            ))
-        })
-    }
-
     fn search_counters(
         &self,
         query: &str,

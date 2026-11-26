@@ -40,6 +40,9 @@ pub struct ProductionRuntime {
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
     ordinary_role: bool,
+    /// The A7.3 dashboard switch, resolved once by `run_cli`; a live edit of
+    /// `ENABLE_DASHBOARD` is logged as needing a restart and never applied.
+    dashboard: bool,
     tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
     discovery: AsyncMutex<Option<vosu_core::plugin::DiscoveryService>>,
     #[cfg(windows)]
@@ -158,8 +161,9 @@ impl ProductionRuntime {
         let paths = self.paths.clone();
         let logger = self.logger.clone();
         let dev_dirs = std::mem::take(&mut self.dev_plugins);
+        let dashboard = self.dashboard;
         let management = tokio::task::spawn_blocking(move || {
-            dev_plugins::load_all(&host, dev_dirs, &paths, &logger)
+            dev_plugins::load_all(&host, dev_dirs, &paths, &logger, dashboard)
         })
         .await
         .map_err(io::Error::other)
@@ -219,7 +223,8 @@ impl ProductionRuntime {
         .await
         .map_err(io::Error::other)?;
         let (adapters, hubs) =
-            adapters::Adapters::start(&self.plugins, Arc::clone(&self.config)).await?;
+            adapters::Adapters::start(&self.plugins, Arc::clone(&self.config), self.dashboard)
+                .await?;
         *self.adapters.get_mut() = Some(adapters.clone());
         let context_files = adapters.files.clone();
         let context_host = self.plugins.clone();
@@ -252,12 +257,10 @@ impl ProductionRuntime {
         let services = ProductionServices::with_native_report_probe(
             PageService,
             Arc::new(RuntimePages {
-                pages: PageService,
                 counters: Arc::clone(&counters),
                 catalog: CatalogService::production(&current_version().to_string()),
                 config: Arc::clone(&self.config),
                 shutdown: self.shutdown_token.clone(),
-                update: self.update_notice.clone(),
             }),
             Arc::clone(&counters),
             beatmap.clone(),
@@ -276,6 +279,7 @@ impl ProductionRuntime {
                 counters: Arc::clone(&counters),
                 files: adapters.files.clone(),
                 logs: vosu_core::logging::logs_dir(&self.paths),
+                update: self.update_notice.clone(),
             }),
             Arc::new(RuntimeUpdater::production(
                 program,
@@ -368,9 +372,11 @@ impl ProductionRuntime {
                 effective_listener.address.port()
             )
         ));
-        let dashboard_listener =
+        // A7.3: off binds no dashboard listener, and the origins observe an
+        // empty dashboard state.
+        let dashboard_listener = if self.dashboard {
             match ListenerOwner::start(dashboard_providers, dashboard_target).await {
-                Ok(listener) => listener,
+                Ok(listener) => Some(listener),
                 Err(error) => {
                     listener.stop_accepting();
                     hubs.shutdown().await;
@@ -380,22 +386,29 @@ impl ProductionRuntime {
                     counters.shutdown().await;
                     return Err(error);
                 }
-            };
-        let dashboard_effective = dashboard_listener
-            .state()
-            .effective
-            .expect("started dashboard listener has an effective address");
-        self.origins
-            .observe_listeners(listener.state.clone(), dashboard_listener.state.clone());
+            }
+        } else {
+            None
+        };
+        self.origins.observe_listeners(
+            listener.state.clone(),
+            dashboard_listener.as_ref().map_or_else(
+                || tokio::sync::watch::channel(Default::default()).1,
+                |dashboard| dashboard.state.clone(),
+            ),
+        );
         tools.activate(Some(self.origins.clone()));
-        self.logger.info(format!(
-            "Dashboard: {}",
-            vosu_core::desktop::dashboard_url(
-                &dashboard_effective.target.host,
-                dashboard_effective.address.port()
-            )
-        ));
-        *self.dashboard_listener.get_mut() = Some(dashboard_listener);
+        if let Some(dashboard) = &dashboard_listener {
+            let effective = dashboard
+                .state()
+                .effective
+                .expect("started dashboard listener has an effective address");
+            self.logger.info(format!(
+                "Dashboard: {}",
+                vosu_core::desktop::dashboard_url(&effective.target.host, effective.address.port())
+            ));
+        }
+        *self.dashboard_listener.get_mut() = dashboard_listener;
         *self.counters.get_mut() = Some(counters);
         *self.listener.get_mut() = Some(listener);
         *self.hubs.get_mut() = Some(hubs);
@@ -417,13 +430,15 @@ impl ProductionRuntime {
         }
         if self.ordinary_role {
             let origins = Arc::clone(&self.origins);
+            let dashboard_url: vosu_core::desktop::tray::DashboardUrl =
+                Arc::new(move || format!("{}/", origins.dashboard()));
             *self.tray.get_mut() = Some(vosu_core::desktop::tray::start(
-                Arc::new(move || format!("{}/", origins.dashboard())),
+                self.dashboard.then_some(dashboard_url),
                 vosu_core::logging::logs_dir(&self.paths),
                 self.shutdown_token.clone(),
             ));
         }
-        if self.ordinary_role && config.open_dashboard_on_startup {
+        if self.ordinary_role && self.dashboard && config.open_dashboard_on_startup {
             let url = format!("{}/", self.origins.dashboard());
             if let Err(error) =
                 tokio::task::spawn_blocking(move || vosu_sys::process_spawn::open_detached(url))
@@ -602,6 +617,9 @@ impl RuntimeHooks for ProductionRuntime {
                                     }
                                 }
                             }
+                            if change.old.enable_dashboard != change.new.enable_dashboard {
+                                self.logger.warn("ENABLE_DASHBOARD changed in vosu.toml; restart vosu to apply it");
+                            }
                             self.logger.update_debug(effective.debug_log);
                             self.api_v1.reload(&effective);
                             self.authorizer.reload(&effective.allowed_ips, &effective.server_ip);
@@ -723,6 +741,9 @@ pub async fn run_cli() -> io::Result<()> {
     }
     #[cfg(windows)]
     vosu_sys::platform::detach_private_console();
+    // A7.3: an invalid VOSU_DASHBOARD fails startup before any probe or bind.
+    let dashboard_forced_off =
+        super::dashboard::forced_off(env::var_os(super::dashboard::ENV).as_deref())?;
     let args = StartupArgs::parse(raw_args.clone());
     let startup_flags = StartupFlags {
         update: args.get("update").and_then(StartupValue::as_boolean),
@@ -749,7 +770,10 @@ pub async fn run_cli() -> io::Result<()> {
         }
     };
     let config = Arc::new(super::config::initialize_startup_config(&paths, channel).await?);
+    // Read once: a live edit of ENABLE_DASHBOARD needs a restart.
+    let dashboard = !dashboard_forced_off && config.current().enable_dashboard;
     if ordinary_role
+        && dashboard
         && let Ok(target) = dashboard_listen_target(&config.current())
         && let Some(url) = vosu_core::desktop::existing_dashboard(&target.host, target.port).await
     {
@@ -841,13 +865,18 @@ pub async fn run_cli() -> io::Result<()> {
     let dev_plugin_dirs = vosu_core::plugin::development_roots(args.raw())?;
     // Resolve development roots before constructing owned runtime resources.
     let dev_tools = crate::tools::development_roots(args.raw())?;
-    let origins = Arc::new(crate::server::origins::Origins::new(
+    let origins = crate::server::origins::Origins::new(
         vosu_core::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
         vosu_core::desktop::dashboard_url(
             &current.dashboard_ip,
             dashboard_listen_target(&current)?.port,
         ),
-    )?);
+    )?;
+    let origins = Arc::new(if dashboard {
+        origins
+    } else {
+        origins.without_dashboard()
+    });
     let settings_bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
     let settings_storage: Arc<dyn SettingsStorage> = settings_bridge.clone();
     let plugin_settings = Arc::new(PluginSettingsService::new(settings_storage));
@@ -887,6 +916,7 @@ pub async fn run_cli() -> io::Result<()> {
         processor: AsyncMutex::new(None),
         relays: AsyncMutex::new(None),
         ordinary_role,
+        dashboard,
         tray: AsyncMutex::new(None),
         discovery: AsyncMutex::new(None),
         #[cfg(windows)]

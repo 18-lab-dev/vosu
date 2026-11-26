@@ -277,7 +277,14 @@ and vosu's status in its summary.
 `path-security` and outside-root `calculation` targets are only run-owned
 sentinel files inside a temporary capture root. The probe aborts before
 sending if a target canonicalizes outside that root. Real profile, home,
-system, credential or owner files are never probed.
+system, credential or owner files are never probed. The upstream daemon's
+static folder (`STATIC_FOLDER_PATH`) is run-owned too, at
+`<capture root>/vosu-upstream-static`: upstream answers a target its static
+fallback cannot find (a trailing-slash state path, a dot-segment or raw
+backslash spelling the URL parser resolves out of its route) with the absolute
+path it tried, so that path lies under the declared root that `root-prefix`
+rewrites. In a private runtime directory it would fail the privacy scan
+(rehearsal 2026-11-25).
 
 Not upstream goldens: `/api/v1`, dashboard, tool, counter and other vosu-only
 routes, which appear only as negative near-miss cases, and `/api/ingame` (§8).

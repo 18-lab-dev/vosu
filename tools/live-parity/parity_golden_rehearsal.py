@@ -55,6 +55,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import traceback
 from typing import Any, Callable, Iterable, NoReturn
 
@@ -409,14 +410,8 @@ def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
         gc._write_private(state, json.dumps({
             "cfg": cfg, "build": built, "out": str(out_path), "timeout": timeout,
             "cases": [case.id for case in cases]}).encode("utf-8"))
-        with subprocess.Popen([unshare, *ISOLATION, "--", sys.executable,
-                               str(Path(__file__).resolve()), "--isolated", str(state)],
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as phase:
-            assert phase.stdout is not None and phase.stderr is not None
-            for line in phase.stderr:  # Operator progress, as it happens.
-                print(line, end="", file=sys.stderr, flush=True)
-            print(phase.stdout.read(), end="", flush=True)
-        code = phase.returncode
+        code = _relay([unshare, *ISOLATION, "--", sys.executable,
+                       str(Path(__file__).resolve()), "--isolated", str(state)])
     finally:
         state.unlink(missing_ok=True)
         outer = _remove_leftovers(built)
@@ -427,6 +422,24 @@ def rehearse(cfg: dict[str, Any], out: str, *, timeout: float = 3600.0,
         raise gc.CaptureError(f"the isolated rehearsal failed (exit {code}); receipt and "
                               f"transcript next to {out_path.name}")
     return 0
+
+
+def _relay(command: list[str]) -> int:
+    """Run the isolated phase, relaying its stderr (operator progress) as it happens and
+    then its stdout. Both pipes drain at once: its daemons inherit its stdout, so reading
+    stderr to the end first deadlocked once their output filled the stdout pipe
+    (rehearsal 2026-11-25: the phase blocked in write after its receipt)."""
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True) as phase:
+        assert phase.stdout is not None and phase.stderr is not None
+        stdout: list[str] = []
+        drain = threading.Thread(target=lambda: stdout.append(phase.stdout.read()), daemon=True)
+        drain.start()
+        for line in phase.stderr:
+            print(line, end="", file=sys.stderr, flush=True)
+        drain.join()
+    print("".join(stdout), end="", flush=True)
+    return phase.returncode
 
 
 def _remove_leftovers(build: dict[str, Any]) -> dict[str, Any]:

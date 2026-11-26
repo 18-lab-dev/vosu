@@ -506,7 +506,7 @@ class Session:
             env["LOCALAPPDATA"] = str(self.vosu_local)
         vosu_spec["env"] = env
         launch_cfg = {**self.cfg, "daemons": {**self.cfg["daemons"], "vosu": vosu_spec}}
-        processes, evidence = daemon_mod.launch(launch_cfg)
+        processes, evidence = daemon_mod.launch(launch_cfg, source_static=self.layout.upstream_static)
         self.processes = processes
         self.starts = {name: evidence[name]["start_identity"] for name in processes}
         daemons = [Daemon(name, evidence[name]["port"], evidence[name])
@@ -520,7 +520,8 @@ class Session:
         label = f"source-exited-{len(restarts) + 1}"
         self.processes[label] = self.processes.pop("source")
         self.starts[label] = self.starts.pop("source")
-        processes, evidence = daemon_mod.launch(self.cfg, ("source",), after_exit=True)
+        processes, evidence = daemon_mod.launch(self.cfg, ("source",), after_exit=True,
+                                                source_static=self.layout.upstream_static)
         self.processes["source"] = processes["source"]
         self.starts["source"] = evidence["source"]["start_identity"]
         restarts.append(evidence["source"])

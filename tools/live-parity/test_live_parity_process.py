@@ -281,6 +281,27 @@ class ProcessOwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exited before owning port"):
             LIVE_RUN.launch(cfg)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the Linux tosu.env location")
+    def test_source_static_folder_is_written_to_the_upstream_env(self) -> None:
+        # Rehearsal 2026-11-25: tosu's static fallback answers with the absolute path it
+        # tried, so golden-capture places that folder inside its capture root.
+        with tempfile.TemporaryDirectory() as tmp:
+            seen = Path(tmp, "tosu.env")
+            copy = ("import os, shutil; shutil.copy(os.path.join(os.environ['XDG_CONFIG_HOME'], "
+                    f"'tosu', 'tosu.env'), {str(seen)!r})")
+            cfg = {"poll_rate_ms": 150, "daemons": {
+                "source": {"base_url": f"http://127.0.0.1:{self._free_port()}",
+                           "command": [sys.executable, "-c", copy]},
+                "vosu": {"base_url": f"http://127.0.0.1:{self._free_port()}",
+                         "command": [sys.executable, "-c", "import time; time.sleep(10)"]}}}
+            static = str(Path(tmp, "root", "vosu-upstream-static"))
+            with self.assertRaisesRegex(ValueError, "exited before owning port"):
+                LIVE_RUN.launch(cfg, ("source",), source_static=static)
+            self.assertIn(f"\nSTATIC_FOLDER_PATH={static}\n", seen.read_text("utf-8"))
+            for bad in ("relative/static", static + "#x", " " + static):
+                with self.assertRaisesRegex(ValueError, "source_static"):
+                    LIVE_RUN.launch(cfg, ("source",), source_static=bad)
+
     def test_runtime_ownership_evidence_tracks_exact_pid(self) -> None:
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))

@@ -40,6 +40,14 @@ pub fn reserve_core_routes(
                 true,
             ),
         ] {
+            // The dashboard host registers its page shells, `GET /tools` and
+            // its asset names exactly on the dashboard role (A7.1), so core
+            // reserves none of those paths, nor any `/assets` prefix, there.
+            if listener == ListenerRole::Dashboard
+                && matches!(path, "/" | "/settings" | "/available" | "/assets" | "/tools")
+            {
+                continue;
+            }
             for method in methods {
                 descriptors.push(RouteDescriptor {
                     listener,
@@ -167,37 +175,11 @@ impl SurfaceRouter {
         request: &Request<Body>,
         websocket: bool,
     ) -> ResponseFuture<'_, Option<ProviderResponse>> {
-        let selected = (|| {
-            let context = self
-                .requester
-                .capture(vosu_surface::state::SessionTarget::Focused, &[])
-                .ok()?;
-            let query: Vec<_> =
-                url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-                    .take(vosu_surface::routes::MAX_QUERY_PAIRS + 1)
-                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                    .collect();
-            let headers = request
-                .headers()
-                .iter()
-                .filter(|(name, _)| {
-                    matches!(
-                        name.as_str(),
-                        "range" | "if-none-match" | "if-modified-since" | "if-range"
-                    )
-                })
-                .map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_owned())))
-                .collect::<Option<Vec<_>>>()?;
-            Some(SurfaceRequest {
-                method: request.method().to_string(),
-                path: request.uri().path().to_owned(),
-                query,
-                headers,
-                body: Arc::from([]),
-                context: Arc::new(context),
-                management: None,
-            })
-        })();
+        let selected = self
+            .requester
+            .capture(vosu_surface::state::SessionTarget::Focused, &[])
+            .ok()
+            .and_then(|context| surface_request(request, context));
         Box::pin(async move {
             self.host
                 .dispatch_surface_route(
@@ -217,6 +199,70 @@ impl SurfaceRouter {
             }
         })
     }
+    /// A dashboard-listener route of the dashboard host (page shells and
+    /// dashboard assets). Dashboard providers read no state, so the request
+    /// carries an empty selection; `None` when no provider serves the path.
+    pub fn dashboard(&self, request: &Request<Body>) -> ProviderFuture<'_, Option<Response>> {
+        let selected = surface_request(
+            request,
+            vosu_surface::state::CapturedSelection {
+                session: None,
+                focus_revision: 0,
+                roster: vosu_surface::state::IdentifiedRoster {
+                    revision: 0,
+                    sessions: Arc::from([]),
+                },
+                revision: 0,
+                namespace_revisions: Arc::from([]),
+                values: Arc::from([]),
+            },
+        );
+        Box::pin(async move {
+            match self
+                .host
+                .dispatch_surface_route(
+                    vosu_surface::listener::ListenerRole::Dashboard,
+                    false,
+                    selected?,
+                )
+                .await
+            {
+                Some(ProviderResponse::Http(response)) => Some(surface_http_response(response)),
+                _ => None,
+            }
+        })
+    }
+}
+
+fn surface_request(
+    request: &Request<Body>,
+    context: vosu_surface::state::CapturedSelection,
+) -> Option<SurfaceRequest> {
+    let query: Vec<_> =
+        url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+            .take(vosu_surface::routes::MAX_QUERY_PAIRS + 1)
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+    let headers = request
+        .headers()
+        .iter()
+        .filter(|(name, _)| {
+            matches!(
+                name.as_str(),
+                "range" | "if-none-match" | "if-modified-since" | "if-range"
+            )
+        })
+        .map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_owned())))
+        .collect::<Option<Vec<_>>>()?;
+    Some(SurfaceRequest {
+        method: request.method().to_string(),
+        path: request.uri().path().to_owned(),
+        query,
+        headers,
+        body: Arc::from([]),
+        context: Arc::new(context),
+        management: None,
+    })
 }
 impl RouteDelegate for SurfaceRouter {
     fn registered_http<'a>(

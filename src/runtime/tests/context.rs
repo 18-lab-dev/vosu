@@ -163,6 +163,7 @@ fn dashboard_and_report_keep_shape_and_host_lifecycle_without_a_phase_task() {
             root.join("cache"),
         )),
         logs: root.join("logs"),
+        update: None,
     };
     assert_eq!(
         report.dashboard_status()["instances"][0]["state"],

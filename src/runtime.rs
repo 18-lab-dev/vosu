@@ -40,7 +40,7 @@ use crate::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
         catalog::{CatalogOverlay, CatalogService, LocalOverlay},
         commands::{CommandProcessor, SettingsProvider},
-        pages::{DynamicPage, EmbeddedResponse, PageService},
+        pages::PageService,
         routes::{CachedJson, RequestAuthorizer, RouteProviders, StateJsonProvider, StateRoute},
         runtime::{
             AxumListenerFactory, ListenTarget, ListenerRuntime, ListenerState, TokioBinder,
@@ -97,6 +97,7 @@ mod adapters;
 mod catalog;
 mod cli;
 mod config;
+mod dashboard;
 mod dev_plugins;
 mod discovery;
 mod lifecycle;
@@ -146,7 +147,6 @@ mod tests {
     include!("runtime/tests/worker.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/package_limit.rs");
-    include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/version.rs");
     include!("runtime/tests/lifecycle.rs");
 }

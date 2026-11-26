@@ -8,6 +8,8 @@ mod removals;
 #[cfg(feature = "test-harness")]
 #[path = "server_compat/adapter_capture.rs"]
 mod adapter_capture;
+#[path = "server_compat/dashboard_off.rs"]
+mod dashboard_off;
 #[path = "server_compat/declared_roots.rs"]
 mod declared_roots;
 #[path = "server_compat/mounted.rs"]
@@ -629,9 +631,12 @@ fn file_range_mime_and_path_security_matrix_is_strict() {
 #[test]
 fn embedded_pages_and_assets_preserve_status_mime_and_no_cache_contract() {
     let pages = PageService;
-    let dashboard = pages.lookup_get("/", false);
-    assert!(matches!(dashboard, PageLookup::Dynamic(_)));
-    let css = pages.asset("homepage.css");
+    // The dashboard page shells and dashboard set are the dashboard host's
+    // (dashboard listener only); the root keeps the shared design files.
+    assert!(
+        matches!(pages.lookup_get("/assets/homepage.css"), PageLookup::Embedded(page) if page.status == 404)
+    );
+    let css = pages.asset("tokens.css");
     assert_eq!(css.status, 200);
     assert_eq!(css.content_type, "text/css; charset=utf-8");
     assert!(!css.body.is_empty());

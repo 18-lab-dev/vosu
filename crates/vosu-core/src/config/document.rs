@@ -179,6 +179,7 @@ impl ConfigDocument {
     fn set_boolean(&mut self, key: ConfigKey, value: bool) {
         match key {
             ConfigKey::EnableAutoUpdate => self.config.enable_auto_update = value,
+            ConfigKey::EnableDashboard => self.config.enable_dashboard = value,
             ConfigKey::OpenDashboardOnStartup => self.config.open_dashboard_on_startup = value,
             ConfigKey::StartAtLogin => self.config.start_at_login = value,
             ConfigKey::DebugLog => self.config.debug_log = value,
@@ -216,6 +217,7 @@ impl ConfigDocument {
     fn toml_value_for_binding(&self, binding: &str) -> toml::Value {
         match binding {
             "ENABLE_AUTOUPDATE" => toml::Value::Boolean(self.config.enable_auto_update),
+            "ENABLE_DASHBOARD" => toml::Value::Boolean(self.config.enable_dashboard),
             "OPEN_DASHBOARD_ON_STARTUP" => {
                 toml::Value::Boolean(self.config.open_dashboard_on_startup)
             }

@@ -364,7 +364,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     );
     assert!(!config_dir.join("vosu.env").exists());
     assert!(!config_dir.join("tosu.env").exists());
-    let asset = bounded!(client.get(format!("{base}/assets/homepage.css")).send()).unwrap();
+    let asset = bounded!(client.get(format!("{base}/assets/tokens.css")).send()).unwrap();
     assert_eq!(asset.status(), 200);
     assert!(!bounded!(asset.bytes()).unwrap().is_empty());
 

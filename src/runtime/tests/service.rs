@@ -1,149 +1,77 @@
 
 
+
 #[test]
-fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
-    let page = render_homepage(
-        PageService.dashboard_template(),
-        DynamicPage::Dashboard,
-        Some(2),
-        None,
-        "",
-        r#"<article class="counter-card">counter</article>"#,
-        None,
-    );
-    let html = String::from_utf8(page.body.to_vec()).unwrap();
-    assert!(!html.contains("{{"), "every placeholder is substituted");
-    assert!(html.contains(r#"data-count="installed">2</span>"#));
-    // The first paint already carries the page's title, tab and search.
-    assert!(html.contains(r#"<body data-page="installed">"#));
-    assert!(html.contains(r#"<h1 id="page-title" tabindex="-1">Overlays</h1>"#));
-    assert!(html.contains(r#"data-page="installed" href="/" aria-current="page""#));
-    assert!(html.contains(r#"placeholder="Search overlays""#));
-
-    let tools = render_homepage(
-        PageService.dashboard_template(),
-        DynamicPage::Tools,
-        None,
-        None,
-        "",
-        "",
-        None,
-    );
-    let tools = String::from_utf8(tools.body.to_vec()).unwrap();
-    assert!(tools.contains(r#"data-page="tools" href="/tools" aria-current="page""#));
-    assert!(!tools.contains(r#"href="/" aria-current"#));
-    let overlay_settings = render_homepage(
-        PageService.dashboard_template(),
-        DynamicPage::OverlaySettings,
-        None,
-        None,
-        "",
-        "",
-        None,
-    );
-    let overlay_settings = String::from_utf8(overlay_settings.body.to_vec()).unwrap();
-    assert!(!overlay_settings.contains("search-bar"));
-
-    let hostile = render_homepage(
-        PageService.dashboard_template(),
-        DynamicPage::Dashboard,
-        Some(1),
-        None,
-        "",
-        "<p>{{CURRENT_VERSION}} {{LIST}} {{UNKNOWN</p>",
-        None,
-    );
-    let hostile = String::from_utf8(hostile.body.to_vec()).unwrap();
-    assert!(
-        hostile.contains("<p>{{CURRENT_VERSION}} {{LIST}} {{UNKNOWN</p>"),
-        "substituted content must not be rescanned for placeholders"
-    );
-    assert!(html.contains("search-bar"));
-    assert!(html.contains(r#"class="counter-card""#));
-    assert!(html.contains(r#"data-action="show-update" hidden"#));
-
-    let updated = render_homepage(
-        PageService.dashboard_template(),
-        DynamicPage::Dashboard,
-        Some(0),
-        Some(0),
-        "",
-        "",
-        Some(&UpdateNotice::Minor("99.0.0".to_owned())),
-    );
-    let updated = String::from_utf8(updated.body.to_vec()).unwrap();
-    assert!(updated.contains(r#"id="update-notice""#));
-    assert!(!updated.contains(r#"data-action="show-update" hidden"#));
-    assert!(!updated.contains("{{NEW_VERSION}}"));
-    assert!(updated.contains("99.0.0 available"));
-
-    let settings = render_runtime_settings(&Config::default());
-    for binding in [
-        "ENABLE_AUTOUPDATE",
-        "OPEN_DASHBOARD_ON_STARTUP",
-        #[cfg(target_os = "linux")]
-        "START_AT_LOGIN",
-        "CALCULATE_PP",
-        "READ_MANIA_SCROLL_SPEED",
-        "POLL_RATE",
-        "PRECISE_DATA_POLL_RATE",
-        "API_V1_SUBSCRIPTION_DEBOUNCE",
-        "SERVER_IP",
-        "SERVER_PORT",
-        "DASHBOARD_IP",
-        "DASHBOARD_PORT",
-        "ALLOWED_IPS",
-        "DEBUG_LOG",
-        "SHOW_MP_COMMANDS",
-        "STATIC_FOLDER_PATH",
-    ] {
-        assert!(
-            settings.contains(&format!(r#"data-id="{binding}""#)),
-            "{binding}"
-        );
-    }
-    #[cfg(target_os = "linux")]
-    {
-        assert!(settings.contains("Run vosu as a systemd user service when you log in."));
-        assert!(settings.contains(
-            r#"data-id="START_AT_LOGIN" type="checkbox" role="switch" aria-describedby="setting-START_AT_LOGIN-description">"#
-        ));
-        let enabled = render_runtime_settings(&Config {
+fn settings_view_holds_exactly_the_settings_page_keys_and_never_the_dashboard_switch() {
+    let view = settings_view(
+        &Config {
+            api_v1_subscription_debounce: 7.375,
             start_at_login: true,
+            allowed_ips: "127.0.0.1, 100.64.0.0/10".into(),
             ..Config::default()
-        });
-        assert!(enabled.contains(
-            r#"data-id="START_AT_LOGIN" type="checkbox" role="switch" aria-describedby="setting-START_AT_LOGIN-description" checked>"#
-        ));
-    }
-    #[cfg(windows)]
-    assert!(!settings.contains("START_AT_LOGIN"));
-    if vosu_core::desktop::externally_managed() {
-        assert!(settings.contains(
-            r#"data-id="ENABLE_AUTOUPDATE" type="checkbox" role="switch" aria-describedby="setting-ENABLE_AUTOUPDATE-description" checked disabled>"#
-        ));
-        assert!(settings.contains("Updates are managed by your Linux package manager"));
-    }
-    for key in ["ENABLE_KEY_OVERLAY", "ENABLE_MANIA_KEY_HIT_ERRORS", "ENABLE_HIT_OFFSETS", "V2_SUBSCRIPTION_DEBOUNCE"] {
-        assert!(!settings.contains(key), "{key}");
-    }
-    assert!(settings.contains(
-        r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
-    ));
-    assert!(settings.contains(
-        r#"data-id="PRECISE_DATA_POLL_RATE" type="number" value="10" min="1" max="60000" step="any" required"#
-    ));
-    let distinct = render_runtime_settings(&Config {
-        api_v1_subscription_debounce: 7.375,
-        ..Config::default()
-    });
-    assert!(distinct.contains(
-        r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="7.375" min="1" max="60000" step="any" required"#
-    ));
+        },
+        false,
+    );
+    let values = view["values"].as_object().unwrap();
+    let mut keys = values.keys().map(String::as_str).collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "ALLOWED_IPS",
+            "API_V1_SUBSCRIPTION_DEBOUNCE",
+            "CALCULATE_PP",
+            "DASHBOARD_IP",
+            "DASHBOARD_PORT",
+            "DEBUG_LOG",
+            "ENABLE_AUTOUPDATE",
+            "MAX_PACKAGE_MIB",
+            "OPEN_DASHBOARD_ON_STARTUP",
+            "POLL_RATE",
+            "PRECISE_DATA_POLL_RATE",
+            "READ_MANIA_SCROLL_SPEED",
+            "SERVER_IP",
+            "SERVER_PORT",
+            "SHOW_MP_COMMANDS",
+            "START_AT_LOGIN",
+            "STATIC_FOLDER_PATH",
+        ]
+    );
+    assert!(!values.contains_key("ENABLE_DASHBOARD"));
+    assert_eq!(values["API_V1_SUBSCRIPTION_DEBOUNCE"], 7.375);
+    assert_eq!(values["PRECISE_DATA_POLL_RATE"], 10.0);
+    assert_eq!(values["MAX_PACKAGE_MIB"], 512.0);
+    assert_eq!(values["START_AT_LOGIN"], true);
+    assert_eq!(values["ALLOWED_IPS"], "127.0.0.1, 100.64.0.0/10");
+    assert_eq!(view["updates_externally_managed"], false);
+    assert_eq!(
+        settings_view(&Config::default(), true)["updates_externally_managed"],
+        true
+    );
+}
+
+#[test]
+fn dashboard_status_update_is_the_minor_or_major_notice() {
+    assert_eq!(
+        UpdateNotice::Minor("1.9.0".to_owned()).view(),
+        serde_json::json!({"version": "1.9.0", "major": false, "release_url": null})
+    );
+    assert_eq!(
+        UpdateNotice::Major(vosu_core::updater::MajorRelease {
+            version: semver::Version::new(2, 0, 0),
+            release_url: "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0".to_owned(),
+        })
+        .view(),
+        serde_json::json!({
+            "version": "2.0.0",
+            "major": true,
+            "release_url": "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0",
+        })
+    );
 }
 
 #[tokio::test]
-async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails() {
+async fn installed_list_ignores_an_unreachable_catalog() {
     let root = tempfile::tempdir().unwrap();
     let static_root = root.path().join("static");
     for name in ["first", "second"] {
@@ -164,29 +92,16 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
     let shutdown = CancellationToken::new();
     shutdown.cancel();
     let pages = RuntimePages {
-        pages: PageService,
         counters: Arc::clone(&counters),
         catalog: CatalogService::production("test"),
         config: Arc::clone(&config),
         shutdown,
-        update: None,
     };
 
-    let dashboard = bounded!(pages
-        .render(DynamicPage::Dashboard, None))
-        .unwrap();
-    let dashboard = String::from_utf8(dashboard.body.to_vec()).unwrap();
-    assert!(dashboard.contains(r#"data-count="installed">2</span>"#));
-    assert!(!dashboard.contains(r#"class="catalog-notice""#));
-
-    let unavailable = bounded!(pages
-        .render(DynamicPage::Available, None))
-        .unwrap();
-    let unavailable = String::from_utf8(unavailable.body.to_vec()).unwrap();
-    assert!(unavailable.contains(r#"data-count="installed">2</span>"#));
-    assert!(unavailable.contains("<h2>Couldn't reach the community catalog</h2>"));
-    // The third-party disclosure must not depend on a reachable catalog.
-    assert!(unavailable.contains(r#"class="catalog-notice""#));
+    let installed = bounded!(pages.search_counters("", false, None)).unwrap();
+    let installed = String::from_utf8(installed.to_vec()).unwrap();
+    assert_eq!(installed.matches(r#"<article class="counter-card""#).count(), 2);
+    assert!(bounded!(pages.search_counters("", true, None)).is_err());
 
     bounded!(counters.shutdown());
     bounded!(config.shutdown()).unwrap();
@@ -215,20 +130,15 @@ async fn one_unreadable_overlay_is_an_error_card_not_an_empty_page() {
     let shutdown = CancellationToken::new();
     shutdown.cancel();
     let pages = RuntimePages {
-        pages: PageService,
         counters: Arc::clone(&counters),
         catalog: CatalogService::production("test"),
         config: Arc::clone(&config),
         shutdown,
-        update: None,
     };
-    let dashboard = bounded!(pages
-        .render(DynamicPage::Dashboard, None))
-        .unwrap();
-    let dashboard = String::from_utf8(dashboard.body.to_vec()).unwrap();
+    let dashboard = bounded!(pages.search_counters("", false, None)).unwrap();
+    let dashboard = String::from_utf8(dashboard.to_vec()).unwrap();
     // The readable overlay is listed; the broken folder is an error card
-    // naming the file, with the actions that fix it. The count is the cards.
-    assert!(dashboard.contains(r#"data-count="installed">2</span>"#));
+    // naming the file, with the actions that fix it. The page counts cards.
     assert!(dashboard.contains(r#"data-overlay-id="good""#));
     assert!(dashboard.contains(r#"<article class="counter-card is-broken" data-overlay-id="bad &amp;one""#));
     assert!(dashboard.contains("<code>metadata.txt: "));

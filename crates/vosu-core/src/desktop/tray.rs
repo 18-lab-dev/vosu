@@ -19,12 +19,17 @@ pub type DashboardUrl = Arc<dyn Fn() -> String + Send + Sync>;
 struct Actions {
     open: mpsc::Sender<OpenRequest>,
     quit: CancellationToken,
+    /// False when the dashboard is off (A7.3): the menu has no **Open
+    /// dashboard** and activating the icon opens nothing.
+    dashboard: bool,
 }
 
 impl Actions {
     fn open(&self) {
         // Coalesce repeated clicks while a browser launch is pending.
-        let _ = self.open.try_send(OpenRequest::Dashboard);
+        if self.dashboard {
+            let _ = self.open.try_send(OpenRequest::Dashboard);
+        }
     }
 
     fn logs(&self) {
@@ -69,13 +74,15 @@ impl Drop for TrayHandle {
 
 /// Start inside a Tokio runtime, after the listener is ready. No desktop is required.
 ///
-/// `logs_dir` is this daemon's resolved log directory, opened directly when no
-/// terminal can follow it.
+/// `dashboard_url` is `None` when the dashboard is off: the tray then keeps
+/// **Show logs** and **Quit** only. `logs_dir` is this daemon's resolved log
+/// directory, opened directly when no terminal can follow it.
 pub fn start(
-    dashboard_url: DashboardUrl,
+    dashboard_url: Option<DashboardUrl>,
     logs_dir: std::path::PathBuf,
     shutdown: CancellationToken,
 ) -> TrayHandle {
+    let dashboard = dashboard_url.is_some();
     let logs_dir: Arc<std::path::Path> = logs_dir.into();
     let stop = CancellationToken::new();
     let (open, mut requests) = mpsc::channel(1);
@@ -87,7 +94,11 @@ pub fn start(
                 _ = opener_stop.cancelled() => break,
                 request = requests.recv() => {
                     let Some(request) = request else { break; };
-                    let url = matches!(request, OpenRequest::Dashboard).then(|| dashboard_url());
+                    let url = match (request, &dashboard_url) {
+                        (OpenRequest::Dashboard, Some(dashboard_url)) => Some(dashboard_url()),
+                        (OpenRequest::Dashboard, None) => continue,
+                        (OpenRequest::Logs, _) => None,
+                    };
                     let logs_dir = Arc::clone(&logs_dir);
                     // OS launch may block; never run it on a runtime/UI thread.
                     let _ = tokio::task::spawn_blocking(move || {
@@ -106,6 +117,7 @@ pub fn start(
     let actions = Actions {
         open,
         quit: shutdown,
+        dashboard,
     };
     let service = platform::start(actions, stop.clone());
     TrayHandle {
@@ -150,26 +162,34 @@ mod platform {
             self.actions.open();
         }
         fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-            vec![
-                ksni::menu::StandardItem {
-                    label: "Open dashboard".into(),
-                    activate: Box::new(|tray: &mut Self| tray.actions.open()),
-                    ..Default::default()
-                }
-                .into(),
+            let mut menu = Vec::with_capacity(3);
+            if self.actions.dashboard {
+                menu.push(
+                    ksni::menu::StandardItem {
+                        label: "Open dashboard".into(),
+                        activate: Box::new(|tray: &mut Self| tray.actions.open()),
+                        ..Default::default()
+                    }
+                    .into(),
+                );
+            }
+            menu.push(
                 ksni::menu::StandardItem {
                     label: "Show logs".into(),
                     activate: Box::new(|tray: &mut Self| tray.actions.logs()),
                     ..Default::default()
                 }
                 .into(),
+            );
+            menu.push(
                 ksni::menu::StandardItem {
                     label: "Quit".into(),
                     activate: Box::new(|tray: &mut Self| tray.actions.quit()),
                     ..Default::default()
                 }
                 .into(),
-            ]
+            );
+            menu
         }
     }
 
@@ -264,6 +284,7 @@ mod platform {
                 actions: Actions {
                     open,
                     quit: quit.clone(),
+                    dashboard: true,
                 },
                 icon: vec![],
             };
@@ -287,6 +308,39 @@ mod platform {
             assert!(receiver.try_recv().is_err());
             if let ksni::MenuItem::Standard(item) = &menu[2] {
                 assert_eq!(item.label, "Quit");
+                (item.activate)(&mut tray);
+            }
+            assert!(quit.is_cancelled());
+        }
+        #[test]
+        fn dashboard_off_menu_never_opens_a_dead_dashboard() {
+            let (open, mut receiver) = mpsc::channel(1);
+            let quit = CancellationToken::new();
+            let mut tray = LinuxTray {
+                actions: Actions {
+                    open,
+                    quit: quit.clone(),
+                    dashboard: false,
+                },
+                icon: vec![],
+            };
+            let menu = tray.menu();
+            let labels: Vec<_> = menu
+                .iter()
+                .map(|item| match item {
+                    ksni::MenuItem::Standard(item) => item.label.as_str(),
+                    _ => panic!("Expected standard items"),
+                })
+                .collect();
+            assert_eq!(labels, ["Show logs", "Quit"]);
+            // Clicking the icon itself opens nothing either.
+            tray.activate(0, 0);
+            assert!(receiver.try_recv().is_err());
+            if let ksni::MenuItem::Standard(item) = &menu[0] {
+                (item.activate)(&mut tray);
+            }
+            assert_eq!(receiver.try_recv().unwrap(), OpenRequest::Logs);
+            if let ksni::MenuItem::Standard(item) = &menu[1] {
                 (item.activate)(&mut tray);
             }
             assert!(quit.is_cancelled());
@@ -317,6 +371,11 @@ mod platform {
         (LOGS, "Show logs"),
         (QUIT, "Quit"),
     ];
+    /// The popup's items; without the dashboard (A7.3) there is no `OPEN`.
+    fn menu_items(dashboard: bool) -> impl Iterator<Item = (usize, &'static str)> {
+        MENU.into_iter()
+            .filter(move |(id, _)| dashboard || *id != OPEN)
+    }
     struct State {
         actions: Actions,
         stop: CancellationToken,
@@ -460,7 +519,7 @@ mod platform {
                         WM_RBUTTONUP | WM_CONTEXTMENU => {
                             let menu = CreatePopupMenu();
                             if !menu.is_null() {
-                                for (id, label) in MENU {
+                                for (id, label) in menu_items(state.actions.dashboard) {
                                     AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr());
                                 }
                                 let mut point = POINT::default();
@@ -515,6 +574,15 @@ mod platform {
             assert_ne!(LOGS, OPEN);
             assert_ne!(LOGS, QUIT);
         }
+
+        #[test]
+        fn dashboard_off_menu_has_no_open_dashboard() {
+            assert_eq!(menu_items(true).collect::<Vec<_>>(), MENU);
+            assert_eq!(
+                menu_items(false).collect::<Vec<_>>(),
+                [(LOGS, "Show logs"), (QUIT, "Quit")]
+            );
+        }
     }
 }
 
@@ -537,6 +605,7 @@ mod tests {
         let actions = Actions {
             open,
             quit: quit.clone(),
+            dashboard: true,
         };
         actions.open();
         actions.open();
@@ -548,6 +617,20 @@ mod tests {
         assert!(requests.try_recv().is_err());
         actions.quit();
         assert!(quit.is_cancelled());
+    }
+
+    #[test]
+    fn dashboard_off_actions_never_request_the_dashboard() {
+        let (open, mut requests) = mpsc::channel(1);
+        let actions = Actions {
+            open,
+            quit: CancellationToken::new(),
+            dashboard: false,
+        };
+        actions.open();
+        assert!(requests.try_recv().is_err());
+        actions.logs();
+        assert_eq!(requests.try_recv().unwrap(), OpenRequest::Logs);
     }
 
     #[tokio::test]

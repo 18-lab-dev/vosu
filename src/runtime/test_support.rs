@@ -167,7 +167,8 @@ pub async fn start_test_production_composition(
             )
             .map_err(io::Error::other)?;
     }
-    let (adapters, hubs) = adapters::Adapters::start(&plugins, options.config.clone()).await?;
+    let (adapters, hubs) =
+        adapters::Adapters::start(&plugins, options.config.clone(), true).await?;
     let endpoints = options
         .network
         .endpoints()
@@ -186,7 +187,6 @@ pub async fn start_test_production_composition(
     let services = ProductionServices::with_native_report_probe(
         PageService,
         Arc::new(RuntimePages {
-            pages: PageService,
             counters: Arc::clone(&counters),
             catalog: CatalogService::new(
                 test_client,
@@ -195,7 +195,6 @@ pub async fn start_test_production_composition(
             ),
             config: Arc::clone(&options.config),
             shutdown: CancellationToken::new(),
-            update: None,
         }),
         Arc::clone(&counters),
         beatmap.clone(),
@@ -206,6 +205,7 @@ pub async fn start_test_production_composition(
             files: adapters.files.clone(),
             counters: Arc::clone(&counters),
             logs: options.logs_root,
+            update: None,
         }),
         options.updater,
         WebSocketEndpoints {

@@ -28,7 +28,6 @@ use vosu::{
         api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
         bus_provider::BusStateProvider,
         origins::{OriginAuthorizer, Origins},
-        pages::{DynamicPage, EmbeddedResponse},
         service::{
             BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
             PageDataProvider, ProductionRouteDelegate, ProductionServices, ReportInputProvider,
@@ -93,13 +92,6 @@ pub(super) fn schema_of(route: StateRoute) -> Schema {
 
 struct Unused;
 impl PageDataProvider for Unused {
-    fn render(
-        &self,
-        _: DynamicPage,
-        _: Option<String>,
-    ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
-        Box::pin(async { Err("unused".into()) })
-    }
     fn search_counters(
         &self,
         _: &str,
@@ -112,6 +104,9 @@ impl PageDataProvider for Unused {
 impl ConfigUpdateService for Unused {
     fn save(&self, _: Value) -> ProviderFuture<'_, Result<(), String>> {
         Box::pin(async { Err("unused".into()) })
+    }
+    fn view(&self) -> Value {
+        serde_json::json!({})
     }
 }
 impl ReportInputProvider for Unused {

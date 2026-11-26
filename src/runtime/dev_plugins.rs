@@ -51,11 +51,20 @@ pub(super) const REQUIRED: &[&str] = &[
     "vosu.adapter.upstream",
     "vosu.adapter.gosumemory",
     "vosu.adapter.streamcompanion",
+    "vosu.dashboard",
 ];
 
 /// Loads required production plugins first, followed by optional bundled
 /// fixtures. Required-plugin failure aborts composition; optional fixtures keep
 /// warn-and-continue behavior. Array positions remain reserved even on failure.
+///
+/// With `dashboard` false (A7.3), `vosu.dashboard` is validated and keeps its
+/// position, so the registry still equals `BUNDLED`, but it is never created:
+/// the roster lists it `inactive` with reason `dashboard_disabled`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "explicit startup composition inputs; the dashboard switch is resolved once by run_cli"
+)]
 pub(super) fn load_bundled(
     host: &Arc<PluginHost>,
     paths: &Paths,
@@ -64,10 +73,11 @@ pub(super) fn load_bundled(
     bundled: &[plugin::BundledPlugin<'_>],
     development_dirs: &[PathBuf],
     roster: &mut Roster,
+    dashboard: bool,
 ) -> std::io::Result<u64> {
     if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
-            "required bundled plugin set is incomplete: osu and all three adapters are required",
+            "required bundled plugin set is incomplete: osu, all three adapters and the dashboard are required",
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {
@@ -89,6 +99,21 @@ pub(super) fn load_bundled(
             }
         });
         let result = loaded.and_then(|loaded| {
+            if !dashboard && loaded.manifest().id == super::dashboard::ID {
+                roster.inactive(
+                    instance,
+                    Trust::Bundled,
+                    &loaded,
+                    super::dashboard::DISABLED_REASON,
+                );
+                logger.info(format!(
+                    "Dashboard is off: {} is inactive ({}); set ENABLE_DASHBOARD = true in vosu.toml, leave {} unset and restart vosu to turn it on",
+                    super::dashboard::ID,
+                    super::dashboard::DISABLED_REASON,
+                    super::dashboard::ENV,
+                ));
+                return Ok(());
+            }
             let created = host
                 .create_instance(
                     instance,
@@ -203,11 +228,13 @@ pub(super) fn load_development(
 /// plugin, as one combined, uniquely-numbered set registered with `host`
 /// (`lifecycle::ProductionRuntime::plugins`), and returns the dashboard's
 /// management of that set. Approvals live under `paths.config()`.
+/// `dashboard` is the A7.3 switch `run_cli` resolved for this run.
 pub(super) fn load_all(
     host: &Arc<PluginHost>,
     dev_dirs: Vec<PathBuf>,
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
+    dashboard: bool,
 ) -> std::io::Result<PluginManagement> {
     let pool = WorkerPool::new(PLUGIN_CONCURRENT_WORKERS, DEFAULT_QUEUE_CAPACITY);
     let mut roster = Roster::default();
@@ -219,6 +246,7 @@ pub(super) fn load_all(
         crate::plugins::BUNDLED,
         &dev_dirs,
         &mut roster,
+        dashboard,
     )?;
     let store = Arc::new(ApprovalStore::open(paths.config()));
     load_development(host, dev_dirs, offset, logger, &pool, &store, &mut roster);
