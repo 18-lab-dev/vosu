@@ -441,7 +441,8 @@ impl DirectionPolicy {
             | VOSU_OP_LOG_RECORD
             | VOSU_OP_TIMER_SET
             | VOSU_OP_TIMER_CANCEL
-            | VOSU_OP_STATE_SUBSCRIBE => (true, false),
+            | VOSU_OP_STATE_SUBSCRIBE
+            | VOSU_OP_ARTIFACT_DECLARE => (true, false),
             VOSU_OP_DEMAND_CHANGED
             | VOSU_OP_READ_PLAN_RESULT
             | VOSU_OP_SESSION_ATTACHED
@@ -456,7 +457,10 @@ impl DirectionPolicy {
             | VOSU_OP_ACTION_INVOKE
             | VOSU_OP_SETTINGS_CHANGED
             | VOSU_OP_TIMER_FIRED
-            | VOSU_OP_STATE_UPDATE => (false, true),
+            | VOSU_OP_STATE_UPDATE
+            | VOSU_OP_ARTIFACT_DECLARED
+            | VOSU_OP_ARTIFACT_OPEN
+            | VOSU_OP_ARTIFACT_RELEASE => (false, true),
         };
         let allowed = match self.direction {
             Direction::PluginToHost => to_host,

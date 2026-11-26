@@ -19,6 +19,7 @@ mod types;
 
 pub use id::{MAX_RESOURCE_ID_BYTES, ReferenceIdentity, ResourceId};
 pub use index::{TreeIndex, TreeIndexEntry};
+pub use media::artifact_type;
 pub use path::validate as validate_tree_path;
 pub use registry::{PreparedReferenceBindings, ResourceRegistry};
 pub use secret::ResourceSecret;

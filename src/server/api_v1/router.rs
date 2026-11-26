@@ -29,6 +29,7 @@ enum Route<'a> {
     Subscribe(Option<&'a str>),
     Action(Option<&'a str>, &'a str),
     Job(&'a str),
+    Artifact(&'a str, &'a str),
     Resource(&'a str),
     Tree(&'a str, Option<&'a str>),
     Chart(&'a str, &'a str),
@@ -50,6 +51,11 @@ fn classify(path: &str) -> Option<Route<'_>> {
         }
         (Some("jobs"), Some(id), None, None, None) if !id.is_empty() => {
             return Some(Route::Job(id));
+        }
+        (Some("jobs"), Some(id), Some("artifacts"), Some(artifact), None)
+            if !id.is_empty() && !artifact.is_empty() =>
+        {
+            return Some(Route::Artifact(id, artifact));
         }
         (Some("sessions"), Some(id), Some("actions"), Some(action), None)
             if !id.is_empty() && !action.is_empty() =>
@@ -129,8 +135,14 @@ impl ApiV1Router {
                 "Unknown API route",
             );
         };
-        let secured = matches!(route, Route::Resource(_) | Route::Tree(_, _));
-        let head_allowed = matches!(route, Route::Resource(_) | Route::Tree(_, Some(_)));
+        let secured = matches!(
+            route,
+            Route::Resource(_) | Route::Tree(_, _) | Route::Artifact(..)
+        );
+        let head_allowed = matches!(
+            route,
+            Route::Resource(_) | Route::Tree(_, Some(_)) | Route::Artifact(..)
+        );
         let methods = match route {
             Route::Action(..) => "POST",
             Route::Job(_) => "GET, DELETE",
@@ -217,6 +229,27 @@ impl ApiV1Router {
                     "Action credential required",
                 ),
             },
+            Route::Artifact(job, artifact) => {
+                let Some(actions) = &self.actions else {
+                    return super::resource_headers::secure(error(
+                        StatusCode::UNAUTHORIZED,
+                        "unauthorized",
+                        "Action credential required",
+                    ));
+                };
+                match (decode_segment(job), decode_segment(artifact)) {
+                    (Ok(job), Ok(artifact)) => {
+                        actions
+                            .artifact(request, &job, &artifact, self.resources.as_deref())
+                            .await
+                    }
+                    _ => super::resource_headers::secure(error(
+                        StatusCode::NOT_FOUND,
+                        "unknown_job",
+                        "Unknown job",
+                    )),
+                }
+            }
             Route::Resource(token) => {
                 let Some(resources) = &self.resources else {
                     return super::resources::unavailable();

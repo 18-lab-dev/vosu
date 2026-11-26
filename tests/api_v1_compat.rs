@@ -7,6 +7,10 @@
 
 #[path = "api_v1/actions.rs"]
 mod actions;
+#[path = "api_v1/artifact_fixture.rs"]
+mod artifact_fixture;
+#[path = "api_v1/artifacts.rs"]
+mod artifacts;
 #[path = "api_v1/cli.rs"]
 mod cli;
 #[path = "api_v1/import.rs"]

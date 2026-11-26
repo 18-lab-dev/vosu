@@ -16,21 +16,55 @@ pub struct ResourceOwner {
     pub generation: u64,
 }
 
+/// Whose authority a resource request or stream lease runs under: a
+/// session's published reference, or one sessionless artifact download
+/// (AF.12), which names only the declaring instance and no session handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseOwner {
+    Session(ResourceOwner),
+    Artifact(PluginInstanceId),
+}
+
+impl From<ResourceOwner> for LeaseOwner {
+    fn from(owner: ResourceOwner) -> Self {
+        Self::Session(owner)
+    }
+}
+
+impl LeaseOwner {
+    pub fn instance(self) -> PluginInstanceId {
+        match self {
+            Self::Session(owner) => owner.instance,
+            Self::Artifact(instance) => instance,
+        }
+    }
+
+    pub fn handle(self) -> Option<u64> {
+        match self {
+            Self::Session(owner) => Some(owner.handle),
+            Self::Artifact(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ResourceRequest {
     Resolve(vosu_plugin_api::ResourceResolve),
     List(vosu_plugin_api::TreeList),
     Lookup(vosu_plugin_api::TreeLookup),
     Read(vosu_plugin_api::StreamRead),
+    ArtifactOpen(vosu_plugin_api::ArtifactOpen),
 }
 
 impl ResourceRequest {
-    pub(super) fn message(self, owner: ResourceOwner) -> Result<Message, ResourceRequestError> {
+    pub(super) fn message(self, owner: LeaseOwner) -> Result<Message, ResourceRequestError> {
+        let handle = owner.handle();
         Ok(match self {
-            Self::Resolve(r) if r.handle == owner.handle => Message::ResourceResolve(r),
-            Self::List(r) if r.handle == owner.handle => Message::TreeList(r),
-            Self::Lookup(r) if r.handle == owner.handle => Message::TreeLookup(r),
+            Self::Resolve(r) if Some(r.handle) == handle => Message::ResourceResolve(r),
+            Self::List(r) if Some(r.handle) == handle => Message::TreeList(r),
+            Self::Lookup(r) if Some(r.handle) == handle => Message::TreeLookup(r),
             Self::Read(r) => Message::StreamRead(r),
+            Self::ArtifactOpen(r) if handle.is_none() => Message::ArtifactOpen(r),
             _ => return Err(ResourceRequestError::InvalidRequest),
         })
     }
@@ -46,9 +80,10 @@ pub struct ResourceRequests {
 impl ResourceRequests {
     pub async fn request(
         &self,
-        owner: ResourceOwner,
+        owner: impl Into<LeaseOwner>,
         request: ResourceRequest,
     ) -> Result<ResourceReply, ResourceRequestError> {
+        let owner = owner.into();
         let host = self
             .host
             .upgrade()
@@ -100,6 +135,8 @@ enum Expected {
     List,
     Lookup,
     Read(u32),
+    /// `ARTIFACT_OPEN`: a plugin-wide root path, a stream, or an error.
+    Artifact,
 }
 
 impl Expected {
@@ -114,6 +151,7 @@ impl Expected {
             {
                 (Self::Read(r.len), None)
             }
+            Message::ArtifactOpen(_) => (Self::Artifact, None),
             _ => return None,
         })
     }
@@ -124,7 +162,7 @@ impl Expected {
                 !matches!(self, Self::Read(_))
             }
             (
-                Self::Resource,
+                Self::Resource | Self::Artifact,
                 ResourceReply::Resolved(
                     ResourceResolved::Path { .. } | ResourceResolved::Stream { .. },
                 ),
@@ -152,7 +190,7 @@ struct Pending {
     expected: Expected,
     sender: oneshot::Sender<Result<ResourceReply, ResourceRequestError>>,
     stream: Option<(
-        ResourceOwner,
+        LeaseOwner,
         ResourceRequests,
         crate::plugin::outbox::OutboxSlot,
     )>,
@@ -231,7 +269,7 @@ impl Requests {
     pub fn arm_stream(
         &mut self,
         id: u64,
-        owner: ResourceOwner,
+        owner: LeaseOwner,
         requests: ResourceRequests,
         slot: crate::plugin::outbox::OutboxSlot,
     ) {
@@ -240,9 +278,9 @@ impl Requests {
         }
     }
 
-    pub fn read_allowed(&self, owner: ResourceOwner, stream: u64) -> bool {
+    pub fn read_allowed(&self, owner: LeaseOwner, stream: u64) -> bool {
         self.streams
-            .get(&(owner.instance, stream))
+            .get(&(owner.instance(), stream))
             .and_then(Weak::upgrade)
             .is_some_and(|lease| lease.owner == owner && lease.is_current())
     }
@@ -265,7 +303,12 @@ impl Requests {
             .entries
             .get(&id)
             .ok_or(ResourceRequestError::Cancelled)?;
-        if pending.instance != instance || pending.generation != generation {
+        // A root update retires session-scoped resolutions; an artifact
+        // request names no session and answers with a plugin-wide root
+        // looked up when its reply arrives, so it survives one.
+        if pending.instance != instance
+            || (pending.handle.is_some() && pending.generation != generation)
+        {
             return Err(ResourceRequestError::Cancelled);
         }
         // A malformed reply terminates its own request, never an unrelated one.
@@ -323,14 +366,18 @@ impl Requests {
         self.entries.remove(&id);
     }
 
-    pub fn cancel(&mut self, instance: PluginInstanceId, handle: Option<u64>) {
-        self.entries.retain(|_, pending| {
-            !(pending.instance == instance && handle.is_none_or(|h| pending.handle == Some(h)))
-        });
+    pub fn cancel(&mut self, instance: PluginInstanceId, scope: CancelScope) {
+        let matches = |handle: Option<u64>| match scope {
+            CancelScope::Instance => true,
+            CancelScope::Sessions => handle.is_some(),
+            CancelScope::Session(h) => handle == Some(h),
+        };
+        self.entries
+            .retain(|_, pending| !(pending.instance == instance && matches(pending.handle)));
         self.streams.retain(|(owner, _), lease| {
             if *owner == instance
                 && let Some(lease) = lease.upgrade()
-                && handle.is_none_or(|h| lease.owner.handle == h)
+                && matches(lease.owner.handle())
             {
                 lease.close();
                 return false;
@@ -338,6 +385,17 @@ impl Requests {
             lease.strong_count() != 0
         });
     }
+}
+
+/// Which of one instance's requests and stream leases a cancellation ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelScope {
+    /// Every one: the instance is going away.
+    Instance,
+    /// Every session-scoped one (a root update); artifact downloads stay.
+    Sessions,
+    /// Those of one session handle (detach).
+    Session(u64),
 }
 
 #[cfg(test)]

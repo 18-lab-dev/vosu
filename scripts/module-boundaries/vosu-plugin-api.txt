@@ -11,6 +11,8 @@ manifest -> limits
 manifest -> capability
 catalog -> manifest
 cbor -> validate
+# B0 (AF.12): the artifact name rule shares the header's name bound.
+cbor -> limits
 message -> cbor
 message -> flags
 message -> flat

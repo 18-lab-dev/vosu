@@ -34,6 +34,9 @@
 //! Relayed `ACTION_PROGRESS`/`ACTION_RESULT` for the plugin's own
 //! `ACTION_CALL`s write `relay_progress`/`relay_result` receipts; a `call`
 //! drive finishes once every call it issued has its relayed result.
+//!
+//! **Artifacts** (B0): the `make` action and every artifact message and
+//! artifact stream lease belong to `artifacts.rs`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -46,6 +49,7 @@ use vosu_plugin_api::{
     VtableHostServices, vosu_status,
 };
 
+use crate::artifacts::Artifacts;
 use crate::control::Control;
 
 /// The tree's members, relative to the `files` root.
@@ -84,6 +88,7 @@ pub struct Services {
     /// A `call` drive → its calls still waiting for a relayed result.
     drives: HashMap<u64, usize>,
     held: Vec<Held>,
+    artifacts: Artifacts,
 }
 
 impl Services {
@@ -108,6 +113,7 @@ impl Services {
             calls: HashMap::new(),
             drives: HashMap::new(),
             held: Vec::new(),
+            artifacts: Artifacts::new(control),
         }
     }
 
@@ -118,6 +124,9 @@ impl Services {
         correlation: u64,
     ) -> Result<(), PluginError> {
         let control = self.control;
+        let Some(message) = self.artifacts.dispatch(host, message, correlation)? else {
+            return Ok(());
+        };
         match message {
             Message::SessionAttached(attached) => {
                 if control.observer {
@@ -332,6 +341,8 @@ impl Services {
                     self.drive(host, invoke);
                 } else if invoke.action == format!("{}.work", self.plugin_id) {
                     self.work(host, invoke);
+                } else if invoke.action == format!("{}.make", self.plugin_id) {
+                    self.artifacts.make(host, invoke);
                 } else {
                     finish(
                         host,
@@ -729,7 +740,7 @@ fn field(handle: u64, pointer: &str, value: PublishValue) -> PublishField {
     }
 }
 
-fn not_found() -> ResourceResolved {
+pub(crate) fn not_found() -> ResourceResolved {
     ResourceResolved::Error {
         error: ErrorInfo {
             code: "not_found".into(),
@@ -738,7 +749,7 @@ fn not_found() -> ResourceResolved {
     }
 }
 
-fn reply_to(
+pub(crate) fn reply_to(
     host: &VtableHostServices,
     reply: ResourceResolved,
     correlation: u64,
@@ -749,7 +760,7 @@ fn reply_to(
     }
 }
 
-fn finish(
+pub(crate) fn finish(
     host: &VtableHostServices,
     invocation: u64,
     status: ActionStatus,
@@ -772,7 +783,7 @@ fn status_value(status: vosu_status) -> CborValue {
     map(&[("status", CborValue::Integer((status as u32).into()))])
 }
 
-fn map(entries: &[(&str, CborValue)]) -> CborValue {
+pub(crate) fn map(entries: &[(&str, CborValue)]) -> CborValue {
     CborValue::Map(
         entries
             .iter()
@@ -781,7 +792,7 @@ fn map(entries: &[(&str, CborValue)]) -> CborValue {
     )
 }
 
-fn value(args: &CborValue, key: &str) -> Option<CborValue> {
+pub(crate) fn value(args: &CborValue, key: &str) -> Option<CborValue> {
     let CborValue::Map(entries) = args else {
         return None;
     };
@@ -791,11 +802,11 @@ fn value(args: &CborValue, key: &str) -> Option<CborValue> {
         .map(|(_, value)| value.clone())
 }
 
-fn text(args: &CborValue, key: &str) -> Option<String> {
+pub(crate) fn text(args: &CborValue, key: &str) -> Option<String> {
     value(args, key).and_then(|value| value.as_text().map(str::to_owned))
 }
 
-fn integer(args: &CborValue, key: &str) -> Option<i128> {
+pub(crate) fn integer(args: &CborValue, key: &str) -> Option<i128> {
     value(args, key).and_then(|value| value.as_integer().map(i128::from))
 }
 

@@ -22,9 +22,9 @@ use crate::cbor::CborValue;
 use crate::message::Message;
 use crate::message::flat::{PlanBase, PublishValue, ReadPlanSubmit, Stage};
 use crate::{
-    ActionCall, LogLevel, LogRecord, RootDeclare, ScanRequest, Selector, SessionIdentify,
-    StateSubscribe, TimerCancel, TimerSet, vosu_invocation_id, vosu_plan_id, vosu_session_id,
-    vosu_status, vosu_timer_id,
+    ActionCall, ArtifactDeclare, LogLevel, LogRecord, RootDeclare, ScanRequest, Selector,
+    SessionIdentify, StateSubscribe, TimerCancel, TimerSet, is_artifact_name, vosu_invocation_id,
+    vosu_plan_id, vosu_session_id, vosu_status, vosu_timer_id,
 };
 
 pub trait HostServices {
@@ -220,6 +220,19 @@ pub trait HostServices {
             }),
             0,
         )
+    }
+
+    /// `VOSU_OP_ARTIFACT_DECLARE` (§6.13): declares one artifact for the
+    /// still-running `declare.invocation`. The reply,
+    /// `VOSU_OP_ARTIFACT_DECLARED`, arrives through `on_message` carrying
+    /// `correlation_id`, which must be nonzero. A zero `correlation_id` or
+    /// a name [`is_artifact_name`] refuses is rejected with
+    /// `VOSU_ERR_INVALID_ARGUMENT` before anything is sent.
+    fn declare_artifact(&self, correlation_id: u64, declare: ArtifactDeclare) -> vosu_status {
+        if correlation_id == 0 || !is_artifact_name(&declare.name) {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        }
+        self.send(&Message::ArtifactDeclare(declare), correlation_id)
     }
 }
 

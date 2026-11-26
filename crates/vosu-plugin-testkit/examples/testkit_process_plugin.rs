@@ -29,11 +29,14 @@
 //!
 //! Under `mode=services` (M5 I0) every message after the `dispatch`
 //! receipt goes to `testkit_process_plugin/services.rs`, which exercises
-//! core's state, resource and action services instead.
+//! core's state, resource and action services instead, and to
+//! `testkit_process_plugin/artifacts.rs` for B0's job artifacts.
 //!
 //! The library compiles its modules directly and never links the testkit
 //! rlib, which exports the legacy echo plugin's entry symbol.
 
+#[path = "testkit_process_plugin/artifacts.rs"]
+mod artifacts;
 #[path = "testkit_process_plugin/control.rs"]
 mod control;
 #[path = "testkit_process_plugin/native.rs"]

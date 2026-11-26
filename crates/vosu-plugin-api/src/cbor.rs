@@ -30,6 +30,7 @@
 //! crate's M1 report, not in this doc comment.
 
 pub mod action;
+pub mod artifact;
 pub mod codec;
 pub mod common;
 pub mod log;

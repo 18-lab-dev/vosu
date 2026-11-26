@@ -14,7 +14,7 @@ const deferred = () => {
   const promise = new Promise(done => { resolve = done; });
   return {promise, resolve};
 };
-async function client(handler, hash = '#vosu-launch=single-use-secret&theme=light', pendingLaunch) {
+async function client(handler, hash = '#vosu-launch=single-use-secret&theme=light', pendingLaunch, extra = {}) {
   const requests = [];
   const sockets = [];
   const replaced = [];
@@ -52,6 +52,7 @@ async function client(handler, hash = '#vosu-launch=single-use-secret&theme=ligh
       if (request.path === '/tools/_host/v1/session') return pendingLaunch || reply({session: 'private-session-token'});
       return handler(request);
     },
+    ...extra,
   };
   for (const name of ['localStorage', 'sessionStorage', 'indexedDB', 'caches']) {
     Object.defineProperty(globals, name, forbidden(name));
@@ -192,7 +193,7 @@ test('subscription uses the API v1 session route and sends the caller pointers',
 test('the bridge exports exactly the frozen surface: no fetch, no legacy subscription route', options, async () => {
   const c = await client(() => { throw new Error('Unexpected request'); });
   assert.deepEqual(Object.keys(c.vosu).sort(),
-    ['canWrite', 'colorScheme', 'dashboardUrl', 'invoke', 'ready', 'settings', 'start', 'subscribe', 'tool']);
+    ['artifacts', 'canWrite', 'colorScheme', 'dashboardUrl', 'invoke', 'ready', 'settings', 'start', 'subscribe', 'tool']);
   assert.equal(c.vosu.fetch, undefined);
   assert.ok(Object.isFrozen(c.vosu));
   assert.equal(source.includes('/websocket/v2/subscribe'), false);
@@ -385,4 +386,161 @@ test('unsubscribe never reconnects', options, async () => {
     assert.equal(c.sockets.length, 1, phase);
     assert.equal(statuses.at(-1), 'closed', phase);
   }
+});
+
+// B0 (AF.12) job artifacts.
+const listed = [
+  {id: 'art 1', name: 'replay.osr', type: 'application/octet-stream', size: 10, url: 'https://evil.example/steal'},
+  {id: 'art-2', name: 'cover.png', type: 'image/png', size: 4, url: '/api/v1/jobs/other/artifacts/x'},
+];
+const declared = {...succeeded, artifacts: listed};
+const bytes = Uint8Array.from({length: 10}, (_, i) => i * 7);
+const artifactPath = '/api/v1/jobs/job-19/artifacts/art%201';
+// Action POST, job polls and artifact reads of one succeeded job.
+const artifactServer = (job = declared, read = () => new Response(bytes)) => request => {
+  if (request.method === 'POST') return reply(running(), 202);
+  if (request.path.includes('/artifacts/')) return read(request);
+  return reply(job);
+};
+
+test('job artifacts come from the terminal job and are read with the session on their own route only', options, async () => {
+  const c = await client(artifactServer());
+  const handle = await c.vosu.start('org.fixture.export', {}, {session: null});
+  const list = await handle.artifacts();
+  assert.equal(await handle.artifacts(), list, 'one list per handle');
+  const polled = c.requests.length;
+  assert.ok(Object.isFrozen(list) && list.every(Object.isFrozen));
+  assert.deepEqual(list.map(({id, name, type, size}) => ({id, name, type, size})),
+    listed.map(({id, name, type, size}) => ({id, name, type, size})));
+  assert.equal(list[0].url, undefined, 'the listed url is not exposed');
+  const response = await list[0].fetch();
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+  await list[0].fetch({range: {start: 2, end: 5}});
+  await list[0].fetch({range: {start: 3}});
+  await list[1].fetch({method: 'HEAD'});
+  const reads = c.requests.slice(polled);
+  assert.deepEqual(reads.map(r => [r.method, r.path, r.headers.get('Range')]), [
+    ['GET', artifactPath, null],
+    ['GET', artifactPath, 'bytes=2-5'],
+    ['GET', artifactPath, 'bytes=3-'],
+    ['HEAD', '/api/v1/jobs/job-19/artifacts/art-2', null],
+  ]);
+  for (const request of reads) {
+    assert.equal(request.headers.get('X-Vosu-Tool-Session'), 'private-session-token');
+    assert.equal(request.credentials, 'omit');
+    assert.equal(request.cache, 'no-store');
+    assert.equal(request.redirect, 'error');
+  }
+  for (const invalid of [{method: 'POST'}, {method: 'get'}, {range: 'bytes=0-1'}, {range: null},
+    {range: {start: -1}}, {range: {start: 5, end: 2}}, {range: {start: 1.5}}, {range: {end: 3}}]) {
+    await assert.rejects(list[0].fetch(invalid), isTypeError);
+  }
+  assert.equal(c.requests.length, polled + reads.length, 'invalid reads send nothing');
+  // A job id from elsewhere: one job read, then the same artifacts.
+  const byId = await c.vosu.artifacts('job-19');
+  const read = c.requests.at(-1);
+  assert.deepEqual([read.method, read.path], ['GET', '/api/v1/jobs/job-19']);
+  assert.equal(read.headers.get('X-Vosu-Tool-Session'), 'private-session-token');
+  assert.deepEqual(byId.map(artifact => artifact.id), ['art 1', 'art-2']);
+  for (const jobId of ['', '.', '..', 7, null, undefined]) {
+    await assert.rejects(c.vosu.artifacts(jobId), isTypeError);
+  }
+  for (const request of c.requests) {
+    assert.ok(request.path.startsWith('/') && !request.path.startsWith('//'), request.path);
+    assert.equal(request.path.includes('evil.example'), false);
+    assert.equal(request.path.includes('/jobs/other/'), false);
+  }
+});
+
+test('artifact listings, failures and missing authority reject without reading', options, async () => {
+  // A running or failed job lists nothing; a failed handle rejects like done.
+  const running7 = await client(() => reply(running(7)));
+  assert.equal((await running7.vosu.artifacts('job-19')).length, 0);
+  const failed = await client(artifactServer({...running(), state: 'failed', error: {code: 'plugin_crashed', message: 'x'}}));
+  const handle = await failed.vosu.start('org.fixture.export', {});
+  await assert.rejects(handle.artifacts(), error => error.code === 'plugin_crashed');
+  // Server error codes cross; HEAD has no body to read one from.
+  const refused = await client(artifactServer(declared, request => request.method === 'HEAD'
+    ? new Response(null, {status: 404})
+    : reply({error: {code: 'released_artifact', message: 'gone'}}, 410)));
+  const [artifact] = await refused.vosu.artifacts('job-19');
+  await assert.rejects(artifact.fetch(), error => error.code === 'released_artifact');
+  await assert.rejects(artifact.fetch({method: 'HEAD'}), error => error.code === 'http_error' && /404/.test(error.message));
+  // A malformed listing never becomes a URL.
+  for (const artifacts of [{}, [{...listed[0], id: '..'}], [{...listed[0], id: 7}], [{...listed[0], size: -1}],
+    [{...listed[0], name: null}], [null]]) {
+    const c = await client(artifactServer({...succeeded, artifacts}));
+    await assert.rejects((await c.vosu.start('org.fixture.export', {})).artifacts(), error => error.code === 'invalid_job');
+  }
+  // No launch session, or an aborted signal: nothing is sent.
+  const readOnly = await client(() => { throw new Error('Unexpected request'); }, '');
+  await assert.rejects(readOnly.vosu.artifacts('job-19'), error => error.code === 'forbidden');
+  assert.equal(readOnly.requests.length, 0);
+  const c = await client(artifactServer());
+  const [first] = await c.vosu.artifacts('job-19');
+  const sent = c.requests.length;
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(first.fetch({signal: controller.signal}), error => error.code === 'cancelled');
+  await assert.rejects(first.download({signal: controller.signal}), error => error.code === 'cancelled');
+  await assert.rejects(c.vosu.artifacts('job-19', {signal: controller.signal}), error => error.code === 'cancelled');
+  assert.equal(c.requests.length, sent);
+});
+
+test('download streams into the save picker when present, else saves a Blob link', options, async () => {
+  const written = [];
+  const files = [];
+  const picker = async ({suggestedName}) => ({
+    async createWritable() {
+      const file = {name: suggestedName, chunks: [], state: 'open'};
+      files.push(file);
+      return new WritableStream({
+        write(chunk) { file.chunks.push(...chunk); },
+        close() { file.state = 'closed'; },
+        abort() { file.state = 'aborted'; },
+      });
+    },
+  });
+  const c = await client(artifactServer(), undefined, undefined, {showSaveFilePicker: picker});
+  const [artifact] = await c.vosu.artifacts('job-19');
+  await artifact.download();
+  assert.deepEqual(files, [{name: 'replay.osr', chunks: [...bytes], state: 'closed'}]);
+  // A failed read aborts the chosen file; a closed picker reads nothing.
+  const gone = await client(artifactServer(declared, () => reply({error: {code: 'released_artifact', message: 'gone'}}, 410)),
+    undefined, undefined, {showSaveFilePicker: picker});
+  await assert.rejects((await gone.vosu.artifacts('job-19'))[0].download(), error => error.code === 'released_artifact');
+  assert.equal(files.at(-1).state, 'aborted');
+  const closed = await client(artifactServer(), undefined, undefined, {
+    showSaveFilePicker: async () => { throw Object.assign(new Error('closed'), {name: 'AbortError'}); },
+  });
+  const [unsaved] = await closed.vosu.artifacts('job-19');
+  const before = closed.requests.length;
+  await assert.rejects(unsaved.download(), error => error.code === 'cancelled');
+  assert.equal(closed.requests.length, before);
+  // Without the picker: an object URL clicked through <a download>, revoked
+  // by a later timer.
+  const links = [];
+  const timers = [];
+  const urls = [];
+  class ObjectURL extends URL {
+    static createObjectURL(blob) { urls.push(['create', blob]); return 'blob:fixture'; }
+    static revokeObjectURL(url) { urls.push(['revoke', url]); }
+  }
+  const fallback = await client(artifactServer(), undefined, undefined, {
+    URL: ObjectURL,
+    setTimeout: (fn, ms) => { timers.push([fn, ms]); return timers.length; },
+    document: {
+      documentElement: {dataset: {}},
+      createElement(tag) {
+        return {click() { links.push({tag, href: this.href, download: this.download}); }};
+      },
+    },
+  });
+  const [saved] = await fallback.vosu.artifacts('job-19');
+  await saved.download();
+  assert.deepEqual(links, [{tag: 'a', href: 'blob:fixture', download: 'replay.osr'}]);
+  assert.deepEqual(new Uint8Array(await urls[0][1].arrayBuffer()), bytes);
+  assert.deepEqual(timers.map(([, ms]) => ms), [30_000]);
+  timers[0][0]();
+  assert.deepEqual(urls.at(-1), ['revoke', 'blob:fixture']);
 });

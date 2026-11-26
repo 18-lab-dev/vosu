@@ -15,11 +15,11 @@ use crate::flags::VOSU_READ_PLAN_SYNC;
 use crate::opcode::vosu_opcode;
 use crate::validate::{self, ValidationError};
 use crate::{
-    ActionCall, ActionCancel, ActionInvoke, ActionProgress, ActionResult, FocusChanged, LogRecord,
-    ReadPlanCancel, ResourceResolve, ResourceResolved, RootDeclare, ScanRequest, ScanResult,
-    SessionAttached, SessionDecline, SessionDetached, SessionIdentify, SettingsChanged,
-    StateSubscribe, StateUpdate, StreamChunk, StreamClose, StreamRead, TimerCancel, TimerFired,
-    TimerSet, TreeList, TreeLookup,
+    ActionCall, ActionCancel, ActionInvoke, ActionProgress, ActionResult, ArtifactDeclare,
+    ArtifactDeclared, ArtifactOpen, ArtifactRelease, FocusChanged, LogRecord, ReadPlanCancel,
+    ResourceResolve, ResourceResolved, RootDeclare, ScanRequest, ScanResult, SessionAttached,
+    SessionDecline, SessionDetached, SessionIdentify, SettingsChanged, StateSubscribe, StateUpdate,
+    StreamChunk, StreamClose, StreamRead, TimerCancel, TimerFired, TimerSet, TreeList, TreeLookup,
 };
 
 /// Every way decoding or encoding a [`Message`] can fail.
@@ -103,6 +103,10 @@ pub enum Message {
     TimerFired(TimerFired),
     StateSubscribe(StateSubscribe),
     StateUpdate(StateUpdate),
+    ArtifactDeclare(ArtifactDeclare),
+    ArtifactDeclared(ArtifactDeclared),
+    ArtifactOpen(ArtifactOpen),
+    ArtifactRelease(ArtifactRelease),
 }
 
 impl Message {
@@ -142,6 +146,10 @@ impl Message {
             Self::TimerFired(_) => vosu_opcode::VOSU_OP_TIMER_FIRED,
             Self::StateSubscribe(_) => vosu_opcode::VOSU_OP_STATE_SUBSCRIBE,
             Self::StateUpdate(_) => vosu_opcode::VOSU_OP_STATE_UPDATE,
+            Self::ArtifactDeclare(_) => vosu_opcode::VOSU_OP_ARTIFACT_DECLARE,
+            Self::ArtifactDeclared(_) => vosu_opcode::VOSU_OP_ARTIFACT_DECLARED,
+            Self::ArtifactOpen(_) => vosu_opcode::VOSU_OP_ARTIFACT_OPEN,
+            Self::ArtifactRelease(_) => vosu_opcode::VOSU_OP_ARTIFACT_RELEASE,
         }
     }
 
@@ -206,6 +214,12 @@ impl Message {
             vosu_opcode::VOSU_OP_TIMER_FIRED => Self::TimerFired(cbor::decode(payload)?),
             vosu_opcode::VOSU_OP_STATE_SUBSCRIBE => Self::StateSubscribe(cbor::decode(payload)?),
             vosu_opcode::VOSU_OP_STATE_UPDATE => Self::StateUpdate(cbor::decode(payload)?),
+            vosu_opcode::VOSU_OP_ARTIFACT_DECLARE => Self::ArtifactDeclare(cbor::decode(payload)?),
+            vosu_opcode::VOSU_OP_ARTIFACT_DECLARED => {
+                Self::ArtifactDeclared(cbor::decode(payload)?)
+            }
+            vosu_opcode::VOSU_OP_ARTIFACT_OPEN => Self::ArtifactOpen(cbor::decode(payload)?),
+            vosu_opcode::VOSU_OP_ARTIFACT_RELEASE => Self::ArtifactRelease(cbor::decode(payload)?),
         })
     }
 
@@ -246,6 +260,10 @@ impl Message {
             Self::TimerFired(m) => cbor::encode(m)?,
             Self::StateSubscribe(m) => cbor::encode(m)?,
             Self::StateUpdate(m) => cbor::encode(m)?,
+            Self::ArtifactDeclare(m) => cbor::encode(m)?,
+            Self::ArtifactDeclared(m) => cbor::encode(m)?,
+            Self::ArtifactOpen(m) => cbor::encode(m)?,
+            Self::ArtifactRelease(m) => cbor::encode(m)?,
         })
     }
 }

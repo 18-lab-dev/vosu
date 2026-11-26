@@ -1,1 +1,1 @@
-{"type":"object","properties":{"mode":{"type":"string","enum":["run","wait","ignore","wait_progress"]},"sentinel":{"type":"string","maxLength":128}},"additionalProperties":false}
+{"type":"object","properties":{"mode":{"type":"string","enum":["run","wait","ignore","wait_progress","artifact"]},"sentinel":{"type":"string","maxLength":128}},"additionalProperties":false}

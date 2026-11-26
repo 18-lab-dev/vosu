@@ -8,7 +8,8 @@ its files are byte-identical afterwards. `tests/tool_bridge.mjs` first checks
 the one bridge module in isolation. The required browser phase
 (`tests/tool_host_v2_browser.mjs`) drives the `fixture-v2` web tool through the
 dashboard launch, the single-use session exchange and the API v1 bridge, plus
-the bridge's authority, reconnect and removed-route counterexamples.
+the bridge's authority, reconnect and removed-route counterexamples and a
+protected job artifact download (B0) refused to another tab and a revoked tab.
 """
 import argparse
 import hashlib

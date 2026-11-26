@@ -11,9 +11,9 @@
 // module's memory: never in cookies, localStorage, sessionStorage, IndexedDB,
 // a URL or a query string, since every overlay later loaded in this tab shares
 // that storage. A reload or bookmark therefore has read access only. The
-// session is sent as `X-Vosu-Tool-Session` solely on the API v1 action and job
-// routes this module builds itself; reads, settings, subscriptions, artwork
-// and any URL a caller supplies never carry it.
+// session is sent as `X-Vosu-Tool-Session` solely on the API v1 action, job
+// and job-artifact routes this module builds itself; reads, settings,
+// subscriptions, artwork and any URL a caller supplies never carry it.
 const id = decodeURIComponent(location.pathname.split('/')[2] || '');
 const tool = metadata.find(tool => tool.id === id) || {id, name: id, version: ''};
 let session = null;
@@ -64,14 +64,115 @@ async function jobRequest(path, method = 'GET', body) {
   if (!response.ok) throw actionError(value.error?.code || 'http_error', value.error?.message || 'Action request failed');
   return value;
 }
+// The launch session, once the exchange settled; rejects before any request.
+async function authority(signal, what) {
+  if (signal?.aborted) throw cancelled();
+  await ready;
+  if (signal?.aborted) throw cancelled();
+  if (!session) throw actionError('forbidden', `Open the tool from the dashboard to ${what}`);
+}
+// One job or artifact id taken from a job document. The bridge builds every
+// artifact URL from validated ids and never follows the document's `url`.
+function listedSegment(value) {
+  if (typeof value !== 'string' || !value || value === '.' || value === '..') {
+    throw actionError('invalid_job', 'The job listed a malformed artifact');
+  }
+  return encodeURIComponent(value);
+}
+// One inclusive byte range, `{start, end?}`; the server answers 416 for a
+// range outside the artifact.
+function rangeHeader(range) {
+  const {start, end} = range ?? {};
+  if (!range || typeof range !== 'object' || !Number.isSafeInteger(start) || start < 0
+    || (end !== undefined && (!Number.isSafeInteger(end) || end < start))) {
+    throw new TypeError('Artifact range must be {start, end?} with 0 <= start <= end');
+  }
+  return `bytes=${start}-${end ?? ''}`;
+}
+function artifact(jobPath, entry) {
+  const path = jobPath + '/artifacts/' + listedSegment(entry?.id);
+  const {id, name, type, size} = entry;
+  if (typeof name !== 'string' || typeof type !== 'string' || !Number.isSafeInteger(size) || size < 0) {
+    throw actionError('invalid_job', 'The job listed a malformed artifact');
+  }
+  // GET or HEAD of the artifact route with the launch session, optionally
+  // one byte range. Resolves with the 200/206 Response, its body unread.
+  async function read({method = 'GET', range, signal} = {}) {
+    if (method !== 'GET' && method !== 'HEAD') throw new TypeError('Artifact method must be "GET" or "HEAD"');
+    const headers = new Headers();
+    if (range !== undefined) headers.set('Range', rangeHeader(range));
+    await authority(signal, 'read job artifacts');
+    headers.set('X-Vosu-Tool-Session', session);
+    let response;
+    try {
+      response = await fetch(path, {method, headers, signal, credentials: 'omit', cache: 'no-store', redirect: 'error'});
+    } catch (error) {
+      throw signal?.aborted ? cancelled() : error;
+    }
+    if (response.ok) return response;
+    // HEAD has no body; GET errors carry the API v1 `{error}` object.
+    const value = method === 'GET' ? await response.json().catch(() => null) : null;
+    throw actionError(value?.error?.code || 'http_error', value?.error?.message || `Artifact request failed (HTTP ${response.status})`);
+  }
+  return Object.freeze({
+    id, name, type, size, fetch: read,
+    // Saves the artifact as `name`. With the File System Access API the
+    // bytes stream to the chosen file, never held whole in memory; the picker
+    // opens first, while the caller's click still grants user activation.
+    // Otherwise the response becomes a Blob behind a temporary object URL.
+    async download({signal} = {}) {
+      if (typeof showSaveFilePicker === 'function') {
+        let writable;
+        try {
+          writable = await (await showSaveFilePicker({suggestedName: name})).createWritable();
+        } catch (error) {
+          if (error?.name === 'AbortError') throw cancelled();
+          throw error;
+        }
+        let response;
+        try {
+          response = await read({signal});
+        } catch (error) {
+          await writable.abort().catch(() => {});
+          throw error;
+        }
+        // pipeTo closes the file on success and aborts it on any error.
+        try {
+          await response.body.pipeTo(writable, {signal});
+        } catch (error) {
+          throw signal?.aborted ? cancelled() : error;
+        }
+        return;
+      }
+      const response = await read({signal});
+      let blob;
+      try {
+        blob = await response.blob();
+      } catch (error) {
+        throw signal?.aborted ? cancelled() : error;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name;
+      link.click();
+      // The browser reads the object URL after the click returns.
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    },
+  });
+}
+// The artifacts a job document lists (`[]` unless it succeeded with some).
+function artifactsOf(job) {
+  const jobPath = '/api/v1/jobs/' + listedSegment(job.id);
+  const listed = job.artifacts ?? [];
+  if (!Array.isArray(listed)) throw actionError('invalid_job', 'The job listed a malformed artifact');
+  return Object.freeze(listed.map(entry => artifact(jobPath, entry)));
+}
 async function start(actionId, args, {session: target = 'active', signal, onProgress} = {}) {
   if (typeof actionId !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(actionId)) throw new TypeError('Invalid action id');
   const prefix = target === null ? '/api/v1' : '/api/v1/sessions/' + sessionSegment(target, 'Action session');
   if (onProgress !== undefined && typeof onProgress !== 'function') throw new TypeError('Progress listener must be a function');
-  if (signal?.aborted) throw cancelled();
-  await ready;
-  if (signal?.aborted) throw cancelled();
-  if (!session) throw actionError('forbidden', 'Open the tool from the dashboard to invoke actions');
+  await authority(signal, 'invoke actions');
   // Never pass the caller's signal to POST: its response is the only way to
   // discover the job to cancel when abort races creation.
   let job = null;
@@ -125,8 +226,14 @@ async function start(actionId, args, {session: target = 'active', signal, onProg
   })();
   // Background handles need not install their done observer in the same turn.
   done.catch(() => {});
+  let artifacts;
   return Object.freeze({
     id: job.id, done, cancel,
+    // The succeeded job's own artifact list, with no further request.
+    artifacts() {
+      artifacts ??= done.then(() => artifactsOf(job));
+      return artifacts;
+    },
     onProgress(fn) {
       if (typeof fn !== 'function') throw new TypeError('Progress listener must be a function');
       if (!settled) {
@@ -143,6 +250,15 @@ async function start(actionId, args, {session: target = 'active', signal, onProg
 export const vosu = Object.freeze({
   ready, tool, dashboardUrl, colorScheme,
   start,
+  // The artifacts of a job this launch session created; `[]` while it runs or
+  // when it ended other than succeeded.
+  async artifacts(jobId, {signal} = {}) {
+    if (typeof jobId !== 'string' || !jobId || jobId === '.' || jobId === '..') {
+      throw new TypeError('Job id must be a nonempty string');
+    }
+    await authority(signal, 'read job artifacts');
+    return artifactsOf(await jobRequest('/api/v1/jobs/' + encodeURIComponent(jobId)));
+  },
   async invoke(actionId, args, options) {
     const handle = await start(actionId, args, options);
     return handle.done;

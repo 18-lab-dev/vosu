@@ -15,6 +15,8 @@
 mod actions;
 #[path = "plugin_host_native/approval.rs"]
 mod approval;
+#[path = "plugin_host_native/artifacts.rs"]
+mod artifacts;
 #[path = "plugin_host_native/backpressure.rs"]
 mod backpressure;
 #[path = "plugin_host_native/broker.rs"]

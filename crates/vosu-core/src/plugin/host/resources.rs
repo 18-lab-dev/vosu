@@ -13,7 +13,8 @@ use vosu_sys::fs::{SafeChild, SafeRelativePath, SafeRoot};
 
 use super::super::session::SessionHandle;
 use super::resource_requests::{
-    Requests, ResourceOwner, ResourceReply, ResourceRequest, ResourceRequestError, ResourceRequests,
+    CancelScope, LeaseOwner, Requests, ResourceOwner, ResourceReply, ResourceRequest,
+    ResourceRequestError, ResourceRequests,
 };
 use super::{InstanceSlot, PluginHost};
 use crate::identity::PluginInstanceId;
@@ -116,7 +117,7 @@ impl ResourceState {
                 root.current.store(false, Ordering::Release);
             }
         }
-        self.requests.cancel(instance, None);
+        self.requests.cancel(instance, CancelScope::Instance);
     }
 }
 
@@ -221,7 +222,7 @@ impl PluginHost {
                 session_current: None,
             },
         );
-        state.requests.cancel(instance, None);
+        state.requests.cancel(instance, CancelScope::Sessions);
         vosu_status::VOSU_OK
     }
 
@@ -252,6 +253,26 @@ impl PluginHost {
                 .or_insert_with(|| Arc::new(AtomicBool::new(true))),
         ));
         Ok(root)
+    }
+
+    /// A plugin-wide (`handle: null`) declared root of `instance`: the only
+    /// root an artifact open may name (AF.12), since no session is in scope.
+    pub(super) fn plugin_root(
+        &self,
+        instance: PluginInstanceId,
+        name: &str,
+    ) -> Result<RootCapability, ResourceRequestError> {
+        let state = self
+            .resource_authority(instance, None)
+            .map_err(|_| ResourceRequestError::TargetGone)?;
+        state
+            .owners
+            .get(&instance)
+            .ok_or(ResourceRequestError::TargetGone)?
+            .roots
+            .get(&(None, name.to_owned()))
+            .cloned()
+            .ok_or(ResourceRequestError::InvalidReply)
     }
 
     /// Lock order: instances -> reference registry. Release both before checking
@@ -343,19 +364,16 @@ impl PluginHost {
     /// caller owns stream leases; R3 closes them on every HTTP terminal path.
     pub(super) async fn resource_request(
         &self,
-        owner: ResourceOwner,
+        owner: LeaseOwner,
         request: ResourceRequest,
         deadline: Duration,
     ) -> Result<ResourceReply, ResourceRequestError> {
-        let ResourceOwner {
-            instance,
-            handle,
-            generation,
-        } = owner;
+        let instance = owner.instance();
+        let handle = owner.handle();
         let message = request.message(owner)?;
         let close_slot = if matches!(
             message,
-            Message::ResourceResolve(_) | Message::TreeLookup(_)
+            Message::ResourceResolve(_) | Message::TreeLookup(_) | Message::ArtifactOpen(_)
         ) {
             Some(
                 self.reserve_outbox(instance)
@@ -366,14 +384,16 @@ impl PluginHost {
         };
         let (id, receiver) = {
             let mut state = self
-                .resource_authority(instance, Some(handle))
+                .resource_authority(instance, handle)
                 .map_err(|_| ResourceRequestError::TargetGone)?;
             let current = state
                 .owners
                 .get(&instance)
                 .ok_or(ResourceRequestError::TargetGone)?
                 .generation;
-            if current != generation {
+            if let LeaseOwner::Session(owner) = owner
+                && current != owner.generation
+            {
                 return Err(ResourceRequestError::Cancelled);
             }
             if let Message::StreamRead(read) = &message
@@ -381,8 +401,10 @@ impl PluginHost {
             {
                 return Err(ResourceRequestError::Cancelled);
             }
-            let reserved = state.requests.reserve(instance, generation, &message)?;
-            state.requests.scope(reserved.0, handle);
+            let reserved = state.requests.reserve(instance, current, &message)?;
+            if let Some(handle) = handle {
+                state.requests.scope(reserved.0, handle);
+            }
             if let Some(slot) = close_slot {
                 state.requests.arm_stream(
                     reserved.0,
@@ -518,7 +540,7 @@ impl PluginHost {
                     true
                 }
             });
-            requests.cancel(*instance, Some(handle.0));
+            requests.cancel(*instance, CancelScope::Session(handle.0));
         }
     }
 }

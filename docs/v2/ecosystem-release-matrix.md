@@ -92,7 +92,7 @@ be invented for an overlay without its source.
 | Application (`host` ranges match this) | `2.0.0-alpha.N` prereleases, then `2.0.0`. The F landing head (f/alpha with M4a and M4b merged), from which `v2.0.0-alpha.1` is cut, declares `2.0.0-alpha.1`. |
 | Alpha host range | `>=2.0.0-alpha.1, <3.0.0`, or a higher alpha minimum for a package that needs a later alpha's contract (B0 artifacts, P0 header asset). |
 | Stable host range | `>=2.0.0, <3.0.0` unless the owner explicitly asks to keep an alpha-compatible range (A8.5). |
-| SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. The workspace declares `1.0.0-alpha.1`, the first publication; crates.io had no `vosu-plugin-api` crate on 2026-11-25. Publication is a separate owner-approved operation (S1). Consumers pin it exactly (`=1.0.0-alpha.N`). |
+| SDK crate `vosu-plugin-api` | `1.0.0-alpha.N`, then `1.0.0`; major equals ABI major 1. `1.0.0-alpha.1` is the pre-B0 first publication (its approved `v2/main` commit predates the artifact codecs); the workspace now declares `1.0.0-alpha.2`, which adds B0's artifact opcodes and codecs. crates.io had no `vosu-plugin-api` crate on 2026-11-25. Each publication is a separate owner-approved operation (S1). Consumers pin it exactly (`=1.0.0-alpha.N`); a package using artifacts pins `=1.0.0-alpha.2` or later. |
 | ABI / `manifest_version` / `catalog_version` | ABI 1; manifest format 1; catalog 2 for `catalog-v2.json`, 1 for the frozen `catalog.json`. |
 | Core namespace schemas in `2.0.0-alpha.1` | `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin` 1.0.0; `vosu.osu` 1.3.0, including M4a's `keys.overlay` physical keys. A package that requires `vosu.osu` 1.3.0 needs no host minimum above `2.0.0-alpha.1`. |
 | Core action | `vosu.osu.beatmap.import` 1.0.0, `session = "required"`, `cli = true`. |
@@ -422,6 +422,6 @@ M8 E0/G0 consume these receipts inside its candidate evidence manifest
 - Porting the 18 remaining `v0.4.0` overlays to v2 entries (O0; decided 2026-11-25, all ported, none retired; [section 2](#2-repositories-and-frozen-1x-sources)).
 - vosulay settings rows (V1) and the vosulay runtime's minimum compatible
   version (V0).
-- T0's action ledger, T2's timeline point bound, and B0's implementation of
-  the frozen artifact contract.
+- T0's action ledger, T2's timeline point bound, and the owner publication of
+  the host alpha and SDK `1.0.0-alpha.2` carrying B0's artifact contract.
 - The 1.x support-window end (AF.4).

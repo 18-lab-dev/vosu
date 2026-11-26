@@ -29,6 +29,9 @@ pub(crate) enum SlotClass {
     PlanResult,
     /// A `SCAN_RESULT`: the 64-scan admission cap.
     ScanResult,
+    /// An `ARTIFACT_RELEASE`, reserved when its artifact is declared: the
+    /// live-artifact bound (AF.12).
+    ArtifactRelease,
 }
 
 impl SlotClass {
@@ -37,6 +40,7 @@ impl SlotClass {
             Self::Terminal => MAX_OUTBOX_SLOTS,
             Self::PlanResult => super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS,
             Self::ScanResult => super::scan::MAX_OUTSTANDING_SCANS,
+            Self::ArtifactRelease => crate::actions::artifacts::MAX_LIVE_ARTIFACTS,
         }
     }
 
@@ -56,8 +60,9 @@ pub(crate) struct ReservedOutbox {
 struct State {
     /// Reserved [`SlotClass::Terminal`] slots.
     used: usize,
-    /// Reserved [`SlotClass::PlanResult`] and [`SlotClass::ScanResult`] slots.
-    work_used: [usize; 2],
+    /// Reserved [`SlotClass::PlanResult`], [`SlotClass::ScanResult`] and
+    /// [`SlotClass::ArtifactRelease`] slots.
+    work_used: [usize; 3],
     running: bool,
     closed: bool,
     messages: VecDeque<(OwnedMessage, oneshot::Sender<vosu_status>, OutboxSlot)>,
@@ -68,6 +73,7 @@ impl State {
             SlotClass::Terminal => &mut self.used,
             SlotClass::PlanResult => &mut self.work_used[0],
             SlotClass::ScanResult => &mut self.work_used[1],
+            SlotClass::ArtifactRelease => &mut self.work_used[2],
         }
     }
 }

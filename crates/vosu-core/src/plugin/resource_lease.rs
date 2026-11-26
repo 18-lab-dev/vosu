@@ -1,11 +1,11 @@
 //! Request-owned stream authority. Close is idempotent and capacity-reserved.
+use crate::plugin::{LeaseOwner, ResourceRequests};
 use crate::plugin::{OwnedMessage, outbox::OutboxSlot};
-use crate::plugin::{ResourceOwner, ResourceRequests};
 use std::sync::{Arc, Mutex};
 use vosu_plugin_api::{Message, StreamClose};
 
 pub(crate) struct LeaseInner {
-    pub owner: ResourceOwner,
+    pub owner: LeaseOwner,
     pub stream: u64,
     pub size: u64,
     pub requests: ResourceRequests,
@@ -57,7 +57,7 @@ impl PartialEq for StreamLease {
 }
 impl StreamLease {
     pub(crate) fn new(
-        owner: ResourceOwner,
+        owner: LeaseOwner,
         stream: u64,
         size: u64,
         requests: ResourceRequests,

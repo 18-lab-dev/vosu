@@ -144,7 +144,12 @@ pub(crate) fn inspect(header: &FrameHeader, payload: &[u8]) -> Result<Inbound, D
             let invocation = invocation().map_err(|_| malformed())?;
             inbound(Lane::Terminal, None, Release::Call(invocation))
         }
-        VOSU_OP_STREAM_CLOSE => inbound(Lane::Terminal, None, Release::Nothing),
+        // An artifact declaration's reply and its release are terminal
+        // like a lease close: bounded by core's own reservations, and a
+        // release never overtakes the `STREAM_CLOSE`s that precede it.
+        VOSU_OP_STREAM_CLOSE | VOSU_OP_ARTIFACT_DECLARED | VOSU_OP_ARTIFACT_RELEASE => {
+            inbound(Lane::Terminal, None, Release::Nothing)
+        }
         VOSU_OP_DEMAND_CHANGED => {
             let handle = leading_u64(payload).ok_or_else(malformed)?;
             let key = LatestKey::Demand(handle);

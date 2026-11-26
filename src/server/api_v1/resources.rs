@@ -20,6 +20,8 @@ pub struct ResourceHttp {
     pub(super) host: Weak<PluginHost>,
     pub(super) resources: ResourceResolver,
     pub(super) trees: vosu_core::resource_io::TreeResolver,
+    /// Each provider operation's bound (resolve, open, read).
+    pub(super) deadline: Duration,
 }
 impl ResourceHttp {
     pub fn new(host: &Arc<PluginHost>, deadline: Duration) -> Self {
@@ -27,6 +29,7 @@ impl ResourceHttp {
             host: Arc::downgrade(host),
             resources: ResourceResolver::new(host, deadline),
             trees: vosu_core::resource_io::TreeResolver::new(host, deadline),
+            deadline,
         }
     }
     pub(super) async fn resource(
@@ -106,7 +109,7 @@ fn size(source: &ResolvedResource) -> u64 {
         ResolvedResource::Stream(stream) => stream.size(),
     }
 }
-async fn read(
+pub(super) async fn read(
     source: &ResolvedResource,
     offset: u64,
     length: u32,

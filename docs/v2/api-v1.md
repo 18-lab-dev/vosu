@@ -307,6 +307,7 @@ files are resources the state refers to, never "current file" lookups.
 | `GET /api/v1/trees/{id}/` | `{"entries":[{"path","size","type","hash"?}],"truncated":bool,"revision":string}` | `no-cache` (store, revalidate) | strong, revalidated |
 | `GET`/`HEAD /api/v1/trees/{id}/{path}` | one file via the plugin's own lookup rules | `no-cache` | strong, revalidated |
 | `GET /api/v1/sessions/{id\|active}/chart/{file\|audio\|background}`, `/api/v1/sessions/{id\|active}/skin/{path}` | `307` to the current resource URL | `no-store` | none |
+| `GET`/`HEAD /api/v1/jobs/{job}/artifacts/{artifact}` | one [job artifact](#job-artifacts-af12) to the job's own launch session or the broker; a single validated byte range; `attachment` | `no-store` | none |
 
 `If-None-Match` (including weak comparisons, lists, and `*`) takes precedence
 over `If-Modified-Since`; a satisfied condition returns a bodyless 304. HEAD
@@ -578,7 +579,10 @@ credential) never can:
   Both route by `session`: omitted or a string (a session id or `"active"`;
   omitted means `"active"`) uses `POST /api/v1/sessions/{session}/actions/…`,
   and `null` uses `POST /api/v1/actions/…`; the action's declared `session`
-  mode decides which of the two is valid, as Create a job defines.
+  mode decides which of the two is valid, as Create a job defines. A
+  succeeded job's [artifacts](#job-artifacts-af12) come from
+  `handle.artifacts()` or `vosu.artifacts(jobId)`, which read and download
+  them with the same header ([protocol](../tools/protocol.md#browser-bridge)).
 - **The CLI**, through the native loopback broker credential, for an action
   declared `cli = true` (`docs/v2/catalog-v2.md`): `vosux <plugin-id>
   <action> [json-args]` forwards to the same HTTP route under the broker's
@@ -739,7 +743,9 @@ by one job:
   the same credential as `GET /api/v1/jobs/{id}`: the creating launch
   session or the broker. Another launch, an overlay, an API key and a
   cross-origin page cannot read it; a job they cannot read is 404
-  `unknown_job`.
+  `unknown_job`. A readable job that lists no such artifact (it has not
+  succeeded, or the id is fabricated) is 404 `unknown_artifact`. `HEAD`
+  answers from the declaration and never opens the provider.
 - Headers: `Cache-Control: no-store`, `Content-Security-Policy: sandbox`,
   `X-Content-Type-Options: nosniff`, `Accept-Ranges: bytes` and
   `Content-Disposition: attachment` with the declared `name`. The type comes
@@ -747,9 +753,15 @@ by one job:
   `application/octet-stream`. One validated byte range is served as for
   resources (206, or 416 `invalid_range`); there are no conditional requests.
 - An artifact lives while its job is readable: the 5-minute terminal
-  retention or until the job is evicted. Plugin instance loss, package
-  disable or uninstall, or revoked launch authority make it 410
-  `released_artifact` while the job is still listed.
+  retention or until the job is evicted. A one-shot deadline at the end of
+  retention releases it even with no further request, never a periodic
+  sweep. A job that ends other than `succeeded` releases what it declared at
+  once. Plugin instance loss, package disable or uninstall, or revoked launch
+  authority make it 410 `released_artifact` while the job is still listed.
+  Every chunk rechecks the credential, the job's retention and the release,
+  and a release wakes a waiting read: an open download ends with its lease
+  or file handle closed, and only then is the plugin's `ARTIFACT_RELEASE`
+  sent.
 - Bounds: at most 4 artifacts per job and 256 live artifacts in total; at
   most 4 concurrent downloads per artifact and 64 in total (429
   `too_many_downloads`). The declared `size` is exact; a stream ending early
@@ -762,8 +774,9 @@ by one job:
   the 30-second deadline never bounds rendering.
 - UIs fetch artifacts with the bridge's tool-session header and stream them;
   no URL bearer token or public resource reference is minted. The broker
-  may read artifacts of any job; `vosux` prints `artifacts` with the job and
-  has no download option in this contract.
+  may read artifacts of any job; `vosux` prints the job's `result` on
+  stdout and, when present, `artifacts <json>` on stderr, and has no download
+  option in this contract.
 - No new capability id exists: holding the action grant that created the job
   is the authority.
 

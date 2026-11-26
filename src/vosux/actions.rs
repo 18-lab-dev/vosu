@@ -148,6 +148,11 @@ async fn execute_with_interrupt(
         match job["state"].as_str() {
             Some("succeeded") => {
                 println!("{}", job["result"]);
+                // AF.12: the job's artifacts are listed, never downloaded;
+                // stdout stays exactly the result.
+                if let Some(artifacts) = job.get("artifacts") {
+                    eprintln!("artifacts {artifacts}");
+                }
                 return Ok(0);
             }
             Some("failed") => {

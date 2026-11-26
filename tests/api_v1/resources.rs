@@ -9,11 +9,11 @@ use serde_json::Value;
 use vosu_core::api::{ApiPlan, SessionTarget};
 use vosu_plugin_testkit::fixture::{ApiFixturePlugin, STREAM_BYTES};
 
-const FILE: &[u8] = include_bytes!("../fixtures/api-v1-plugin/fixture.osu");
+pub(super) const FILE: &[u8] = include_bytes!("../fixtures/api-v1-plugin/fixture.osu");
 fn vtable() -> vosu_plugin_api::vosu_plugin_vtable {
     vosu_plugin_internal::vtable_for::<ApiFixturePlugin>()
 }
-fn setup(id: &str, pid: u32) -> Harness {
+pub(super) fn setup(id: &str, pid: u32) -> Harness {
     let mut h = Harness::new();
     std::fs::write(h.root.path().join("fixture.osu"), FILE).unwrap();
     let manifest = format!(
@@ -26,7 +26,7 @@ fn setup(id: &str, pid: u32) -> Harness {
     h.host.process_appeared(record(pid, id));
     h
 }
-async fn urls(h: &Harness, id: &str) -> Value {
+pub(super) async fn urls(h: &Harness, id: &str) -> Value {
     bounded(async {
         loop {
             let plan = ApiPlan::new(&[format!("/{id}")]).unwrap();

@@ -9,10 +9,11 @@
 use std::collections::HashMap;
 
 use vosu_plugin_api::{
-    VOSU_FRAME_MAX_BYTES, VOSU_OPCODE_PRIVATE_BIT, VOSU_PLUGIN_ABI_MAJOR,
-    VOSU_PUBLISH_BATCH_MAX_BYTES, VOSU_READ_PLAN_MAX_BYTES, VOSU_READ_PLAN_SYNC,
-    VOSU_STREAM_CHUNK_MAX_BYTES, vosu_opcode, vosu_plan_base_kind, vosu_read_error_code,
-    vosu_read_result_kind, vosu_stage_base_kind, vosu_status, vosu_value_kind,
+    VOSU_ARTIFACT_NAME_MAX_BYTES, VOSU_FRAME_MAX_BYTES, VOSU_OPCODE_PRIVATE_BIT,
+    VOSU_PLUGIN_ABI_MAJOR, VOSU_PUBLISH_BATCH_MAX_BYTES, VOSU_READ_PLAN_MAX_BYTES,
+    VOSU_READ_PLAN_SYNC, VOSU_STREAM_CHUNK_MAX_BYTES, vosu_opcode, vosu_plan_base_kind,
+    vosu_read_error_code, vosu_read_result_kind, vosu_stage_base_kind, vosu_status,
+    vosu_value_kind,
 };
 
 /// Strips every `/* ... */` block comment, replacing it with a single
@@ -273,6 +274,13 @@ fn opcode_values_match_the_header() {
             ("VOSU_OP_TIMER_FIRED", VOSU_OP_TIMER_FIRED as u32),
             ("VOSU_OP_STATE_SUBSCRIBE", VOSU_OP_STATE_SUBSCRIBE as u32),
             ("VOSU_OP_STATE_UPDATE", VOSU_OP_STATE_UPDATE as u32),
+            ("VOSU_OP_ARTIFACT_DECLARE", VOSU_OP_ARTIFACT_DECLARE as u32),
+            (
+                "VOSU_OP_ARTIFACT_DECLARED",
+                VOSU_OP_ARTIFACT_DECLARED as u32,
+            ),
+            ("VOSU_OP_ARTIFACT_OPEN", VOSU_OP_ARTIFACT_OPEN as u32),
+            ("VOSU_OP_ARTIFACT_RELEASE", VOSU_OP_ARTIFACT_RELEASE as u32),
         ],
     );
 }
@@ -401,6 +409,7 @@ fn buffer_size_and_flag_constants_match_the_header() {
         ("VOSU_FRAME_MAX_BYTES", VOSU_FRAME_MAX_BYTES),
         ("VOSU_PUBLISH_BATCH_MAX_BYTES", VOSU_PUBLISH_BATCH_MAX_BYTES),
         ("VOSU_STREAM_CHUNK_MAX_BYTES", VOSU_STREAM_CHUNK_MAX_BYTES),
+        ("VOSU_ARTIFACT_NAME_MAX_BYTES", VOSU_ARTIFACT_NAME_MAX_BYTES),
         ("VOSU_READ_PLAN_SYNC", VOSU_READ_PLAN_SYNC),
         ("VOSU_OPCODE_PRIVATE_BIT", VOSU_OPCODE_PRIVATE_BIT),
     ];

@@ -1,13 +1,18 @@
 //! Immutable job snapshots and first-terminal-wins transitions.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::watch;
+
+use super::artifacts::{ArtifactCell, ArtifactView, DueRelease};
+
+mod artifact_jobs;
 
 pub const MAX_JOBS: usize = 1024;
 pub const TERMINAL_RETENTION: Duration = Duration::from_secs(300);
@@ -81,6 +86,10 @@ pub struct JobSnapshot {
     pub progress: Option<JobProgress>,
     pub result: Option<Value>,
     pub error: Option<JobFailure>,
+    /// Only on a `succeeded` job whose invocation declared artifacts
+    /// (AF.12); the key is absent on every other job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<ArtifactView>>,
 }
 
 #[derive(Debug)]
@@ -120,6 +129,10 @@ pub(super) struct Entry {
     pub waiters: usize,
     pub created_at: Instant,
     pub changes: watch::Sender<Arc<JobSnapshot>>,
+    /// Declared artifacts, in declaration order (AF.12).
+    artifacts: Vec<Arc<ArtifactCell>>,
+    /// The owning launch session was invalidated: no new artifact.
+    revoked: bool,
 }
 
 impl Entry {
@@ -131,34 +144,99 @@ impl Entry {
             _ => false,
         }
     }
+
+    /// Releases every artifact; notices due now are queued on `released`.
+    fn release_artifacts(&self, released: &mut Vec<DueRelease>) {
+        released.extend(self.artifacts.iter().filter_map(|cell| cell.release(true)));
+    }
 }
 
-#[derive(Default)]
 pub(super) struct RegistryState {
     pub entries: HashMap<String, Entry>,
     pub waiters: usize,
+    retention: Duration,
+    /// `ARTIFACT_RELEASE` notices due once the registry lock is released.
+    released: Vec<DueRelease>,
+}
+
+impl Default for RegistryState {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            waiters: 0,
+            retention: TERMINAL_RETENTION,
+            released: Vec::new(),
+        }
+    }
 }
 
 impl RegistryState {
     pub(super) fn cleanup(&mut self, now: Instant) {
+        let retention = self.retention;
+        let released = &mut self.released;
         self.entries.retain(|_, entry| {
-            entry
+            let keep = entry
                 .terminal_at
-                .is_none_or(|at| now.saturating_duration_since(at) < TERMINAL_RETENTION)
+                .is_none_or(|at| now.saturating_duration_since(at) < retention);
+            if !keep {
+                entry.release_artifacts(released);
+            }
+            keep
         });
+    }
+
+    fn remove(&mut self, id: &str) {
+        if let Some(entry) = self.entries.remove(id) {
+            entry.release_artifacts(&mut self.released);
+        }
     }
 }
 
 #[derive(Default)]
 pub(super) struct RegistryInner {
     pub state: Mutex<RegistryState>,
+    /// Active artifact downloads across every job.
+    downloads: Arc<AtomicUsize>,
 }
 
 impl RegistryInner {
-    pub fn lock(&self) -> MutexGuard<'_, RegistryState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+    pub fn lock(&self) -> RegistryGuard<'_> {
+        RegistryGuard(Some(
+            self.state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+        ))
+    }
+}
+
+/// The registry lock. Dropping it releases the lock first, then sends the
+/// artifact releases its holder queued, so no plugin delivery ever runs
+/// under the registry lock.
+pub(super) struct RegistryGuard<'a>(Option<MutexGuard<'a, RegistryState>>);
+
+impl Deref for RegistryGuard<'_> {
+    type Target = RegistryState;
+    fn deref(&self) -> &RegistryState {
+        self.0.as_ref().expect("held until drop")
+    }
+}
+
+impl DerefMut for RegistryGuard<'_> {
+    fn deref_mut(&mut self) -> &mut RegistryState {
+        self.0.as_mut().expect("held until drop")
+    }
+}
+
+impl Drop for RegistryGuard<'_> {
+    fn drop(&mut self) {
+        let Some(mut state) = self.0.take() else {
+            return;
+        };
+        let released = std::mem::take(&mut state.released);
+        drop(state);
+        for due in released {
+            due.send();
+        }
     }
 }
 
@@ -200,7 +278,7 @@ impl JobRegistry {
                 .min_by_key(|(_, at)| *at)
                 .map(|(id, _)| id.clone());
             if let Some(id) = oldest {
-                state.entries.remove(&id);
+                state.remove(&id);
             } else {
                 return Err(JobError::TooManyJobs);
             }
@@ -217,6 +295,7 @@ impl JobRegistry {
             progress: None,
             result: None,
             error: None,
+            artifacts: None,
         });
         let (changes, _) = watch::channel(Arc::clone(&snapshot));
         state.entries.insert(
@@ -230,6 +309,8 @@ impl JobRegistry {
                 created_at: now,
                 waiters: 0,
                 changes,
+                artifacts: Vec::new(),
+                revoked: false,
             },
         );
         Ok(snapshot)
@@ -283,6 +364,7 @@ impl JobRegistry {
     ) -> Result<bool, JobError> {
         let mut state = self.inner.lock();
         state.cleanup(now);
+        let retention = state.retention;
         let entry = state.entries.get_mut(id).ok_or(JobError::UnknownJob)?;
         if entry.snapshot.state.is_terminal() {
             return Ok(false);
@@ -294,6 +376,8 @@ impl JobRegistry {
             return Ok(false);
         };
         snapshot.revision = revision;
+        let mut released = Vec::new();
+        let mut expiry = None;
         if let Some(outcome) = outcome {
             entry.terminal_at = Some(now);
             entry.invocation = None;
@@ -301,6 +385,11 @@ impl JobRegistry {
                 TerminalOutcome::Succeeded(value) => {
                     snapshot.state = JobState::Succeeded;
                     snapshot.result = Some(value);
+                    if !entry.artifacts.is_empty() {
+                        snapshot.artifacts =
+                            Some(entry.artifacts.iter().map(|cell| cell.view()).collect());
+                        expiry = entry.artifacts[0].host();
+                    }
                 }
                 TerminalOutcome::Failed(error) if error.code == "cancelled" => {
                     snapshot.state = JobState::Cancelled;
@@ -311,10 +400,30 @@ impl JobRegistry {
                 }
                 TerminalOutcome::Cancelled => snapshot.state = JobState::Cancelled,
             }
+            // Only a succeeded job lists its artifacts; any other end
+            // releases them at once.
+            if entry.snapshot.state != JobState::Succeeded {
+                entry.release_artifacts(&mut released);
+            }
         } else {
             snapshot.progress = progress;
         }
         entry.changes.send_replace(Arc::clone(&entry.snapshot));
+        state.released.extend(released);
+        drop(state);
+        // A one-shot retention deadline, so an idle registry still releases
+        // what backs the artifacts when the job expires; never a sweep.
+        if let Some(host) = expiry {
+            let registry = Arc::downgrade(&self.inner);
+            host.expire_after(
+                retention,
+                Box::new(move || {
+                    if let Some(inner) = registry.upgrade() {
+                        inner.lock().cleanup(Instant::now());
+                    }
+                }),
+            );
+        }
         Ok(true)
     }
 
@@ -404,22 +513,27 @@ impl JobRegistry {
     /// Advisory cancellation of every running job one launch session created,
     /// when core invalidates that session (API v1 "Tool launch sessions"
     /// item 6). Bound invocations are cancelled after the registry lock is
-    /// released; an unbound one is cancelled when it binds. Returns the ids.
+    /// released; an unbound one is cancelled when it binds. Every artifact
+    /// of that session's jobs, terminal ones included, is released at once
+    /// (AF.12): an open download ends and no later one starts. Returns the
+    /// ids of the running jobs asked to cancel.
     pub fn cancel_owner(&self, owner: &JobOwner) -> Vec<String> {
         let principal = Principal::Tool(owner.clone());
         let mut dispatch = Vec::new();
         let ids = {
             let mut state = self.inner.lock();
             state.cleanup(Instant::now());
-            state
+            let mut released = Vec::new();
+            let ids = state
                 .entries
                 .iter_mut()
                 .filter_map(|(id, entry)| {
-                    if matches!(entry.owner, Principal::Tool(_))
-                        && entry.visible_to(&principal)
-                        && !entry.snapshot.state.is_terminal()
-                        && !entry.cancel_requested
-                    {
+                    if !matches!(entry.owner, Principal::Tool(_)) || !entry.visible_to(&principal) {
+                        return None;
+                    }
+                    entry.revoked = true;
+                    entry.release_artifacts(&mut released);
+                    if !entry.snapshot.state.is_terminal() && !entry.cancel_requested {
                         entry.cancel_requested = true;
                         dispatch.extend(entry.invocation.clone());
                         Some(id.clone())
@@ -427,7 +541,9 @@ impl JobRegistry {
                         None
                     }
                 })
-                .collect()
+                .collect();
+            state.released.extend(released);
+            ids
         };
         for (host, invocation) in dispatch {
             if let Some(host) = host.upgrade() {

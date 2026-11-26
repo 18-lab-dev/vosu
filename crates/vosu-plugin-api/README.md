@@ -20,7 +20,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-vosu-plugin-api = "=1.0.0-alpha.1"
+vosu-plugin-api = "=1.0.0-alpha.2"
 ```
 
 ## A plugin
@@ -72,7 +72,7 @@ compares every entry with the package it describes. The
 its already-extracted packages:
 
 ```sh
-cargo install --locked --version "=1.0.0-alpha.1" vosu-plugin-api \
+cargo install --locked --version "=1.0.0-alpha.2" vosu-plugin-api \
     --example vosu-package-check --root "$PWD/sdk-tools"
 sdk-tools/bin/vosu-package-check --catalog "$PWD/dist/catalog-v2.json" \
     --packages-root "$PWD/dist/extracted" --host-version 2.0.0-alpha.1 \

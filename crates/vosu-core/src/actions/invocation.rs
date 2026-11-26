@@ -50,6 +50,16 @@ pub enum InvocationError {
 pub trait InvocationSink: Send + Sync {
     fn progress(&self, progress: ActionProgress);
     fn finish(&self, result: InvocationResult);
+    /// An `ARTIFACT_DECLARE` for this still-running invocation (AF.12).
+    /// Only a public job owns artifacts: every other sink (a plugin relay,
+    /// an internal invocation) refuses with `caller_not_supported`.
+    fn declare_artifact(
+        &self,
+        declaration: super::ArtifactDeclaration,
+    ) -> Result<String, super::ArtifactRefusal> {
+        drop(declaration);
+        Err(super::ArtifactRefusal::CallerNotSupported)
+    }
 }
 
 /// Host boundary implemented by the plugin runtime. The domain retains only a
@@ -210,5 +220,11 @@ impl InvocationSink for JobSink {
     }
     fn finish(&self, result: InvocationResult) {
         let _ = self.registry.finish(&self.id, result);
+    }
+    fn declare_artifact(
+        &self,
+        declaration: super::ArtifactDeclaration,
+    ) -> Result<String, super::ArtifactRefusal> {
+        self.registry.declare_artifact(&self.id, declaration)
     }
 }

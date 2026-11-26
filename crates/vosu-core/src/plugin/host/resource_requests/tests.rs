@@ -112,9 +112,9 @@ fn resource_requests_real_capacity_and_cleanup() {
     let (other, mut other_receiver) = requests
         .reserve(PluginInstanceId(8105), 1, &request())
         .unwrap();
-    requests.cancel(instance, Some(92));
+    requests.cancel(instance, CancelScope::Session(92));
     assert_eq!(requests.entries.len(), MAX_PENDING_RESOURCE_REQUESTS + 1);
-    requests.cancel(instance, Some(91));
+    requests.cancel(instance, CancelScope::Session(91));
     for mut receiver in receivers {
         assert!(matches!(
             receiver.try_recv(),
@@ -128,7 +128,7 @@ fn resource_requests_real_capacity_and_cleanup() {
         Err(oneshot::error::TryRecvError::Closed)
     ));
     let (_, mut receiver) = requests.reserve(instance, 3, &request()).unwrap();
-    requests.cancel(instance, None);
+    requests.cancel(instance, CancelScope::Instance);
     assert!(matches!(
         receiver.try_recv(),
         Err(oneshot::error::TryRecvError::Closed)
