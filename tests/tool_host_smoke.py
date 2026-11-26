@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
-"""Exercise the real daemon/tool HTTP boundary with isolated XDG roots and curl."""
+"""Exercise the real daemon's web-only tool host with isolated XDG roots and curl.
+
+A 2.0 tool is a static web package served by the bundled `vosu.toolhost`
+(A7.2). The legacy `tests/fixtures/tool-host` `tool.toml` package is listed
+`disabled` with `needs-2.0-update`, never parsed, run, proxied or served, and
+its files are byte-identical afterwards. The required browser phase drives the
+`fixture-v2` web tool through the dashboard launch, the single-use session
+exchange and the API v1 bridge.
+"""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,12 +23,12 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY = 'http://127.0.0.1:25150'
 DASHBOARD = 'http://127.0.0.1:25151'
+NEEDS_UPDATE = 'needs-2.0-update'
 
 def channel_root(binary, normal_root):
     """Select fixtures from the actual executable version, not build mode."""
     version = subprocess.check_output([str(binary), '--version'], text=True, timeout=10).strip().split()[-1]
     return normal_root / 'prerelease' if '-' in version.split('+', 1)[0] else normal_root
-
 
 
 def curl(path, *, dashboard=False, method='GET', headers=None, data=None):
@@ -47,6 +56,18 @@ def wait_for(callback, timeout=20):
             last = error
         time.sleep(0.05)
     raise AssertionError(f'timed out waiting for daemon state: {last}')
+
+
+def receipts(directory):
+    """SHA-256 of every file below `directory`, keyed by relative path."""
+    return {path.relative_to(directory).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(directory.rglob('*')) if path.is_file()}
+
+
+def tool_view(tool_id):
+    status, body = curl(f'/api/tools/{tool_id}', dashboard=True)
+    assert status == 200, (tool_id, status, body)
+    return json.loads(body)
 
 
 def main():
@@ -94,6 +115,7 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 ''')
         tool = root / 'fixture'
         shutil.copytree(ROOT / 'tests/fixtures/tool-host', tool)
+        legacy_receipts = receipts(tool)
         v2_tool = root / 'fixture-v2'
         shutil.copytree(ROOT / 'tests/fixtures/tool-host-v2', v2_tool)
         plugin = root / 'plugin'
@@ -108,66 +130,68 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                                        '--plugin', str(plugin), '--update=false'],
                                       cwd=root, env=environment, stdin=subprocess.DEVNULL,
                                       stdout=log, stderr=subprocess.STDOUT)
-            child_pid = None
             try:
                 wait_for(lambda: curl('/api/tools', dashboard=True)[0] == 200)
                 status, body = curl('/tools')
                 assert status == 302
                 print('curl GET /tools -> 302 (dashboard redirect)')
-                status, body = curl('/tools/fixture/')
-                assert status == 200 and '<h1>Tool fixture</h1>' in body
-                print('curl GET /tools/fixture/ -> 200 (fixture HTML)')
-                status, body = curl('/tools/fixture/api/v1/read?smoke=yes')
-                first = json.loads(body)
-                assert status == 200 and first['caller'] == 'overlay' and first['path'].endswith('?smoke=yes')
-                print(f'curl GET /tools/fixture/api/v1/read?smoke=yes -> {status} {body}')
-                status, body = curl('/tools/fixture/api/v1/write', method='POST', data={})
-                assert status == 403
-                print(f'curl POST /tools/fixture/api/v1/write (no session) -> {status}')
                 status, page = curl('/tools', dashboard=True)
                 assert status == 200 and 'tools-root' in page
                 context = json.loads(re.search(r'<script[^>]*id="vosu-context"[^>]*>(.*?)</script>', page, re.S).group(1))
-                status, launch = curl('/api/tools/fixture/launch', dashboard=True, method='POST',
-                                      headers={'Origin': DASHBOARD, 'X-Vosu-CSRF': context['csrf']}, data={'theme': 'dark'})
+                management = {'Origin': DASHBOARD, 'X-Vosu-CSRF': context['csrf']}
+
+                # Legacy `tool.toml`: listed, diagnosed, never presented or run.
+                view = tool_view('fixture')
+                assert view['status'] == 'disabled' and view['status_detail'] == NEEDS_UPDATE, view
+                assert view['enabled'] is False and view['ui_url'] is None, view
+                print(f'curl GET dashboard /api/tools/fixture -> disabled {NEEDS_UPDATE}')
+                for action in ['enable', 'trust', 'launch']:
+                    status, body = curl(f'/api/tools/fixture/{action}', dashboard=True, method='POST',
+                                        headers=management, data={})
+                    assert status == 400 and json.loads(body)['error'] == NEEDS_UPDATE, (action, status, body)
+                print(f'curl POST dashboard /api/tools/fixture/{{enable,trust,launch}} -> 400 {NEEDS_UPDATE}')
+                for method, path in [('GET', '/tools/fixture/'), ('GET', '/tools/fixture/api/v1/read'),
+                                     ('POST', '/tools/fixture/api/v1/write'),
+                                     ('GET', '/tools/fixture/_settings')]:
+                    status, _ = curl(path, method=method, data={} if method == 'POST' else None)
+                    assert status == 404, (method, path, status)
+                print('curl legacy UI, settings and /api/* proxy paths -> 404 (no service, no proxy)')
+                for path in ['/tools/_host/v1/self', '/tools/_host/v1/settings',
+                             '/tools/_host/v1/context', '/tools/_host/v1/overlays',
+                             '/tools/_host/v1/bridge.js', '/tools/_host/v1/cli']:
+                    status, _ = curl(path)
+                    assert status == 404, (path, status)
+                print('curl deleted /tools/_host/v1/{self,settings,context,overlays,bridge.js,cli} -> 404')
+
+                # The v2 web tool: static UI, explicit api/* 404, 503 when not servable.
+                wait_for(lambda: tool_view('fixture-v2')['status'] == 'running')
+                status, body = curl('/tools/fixture-v2/')
+                assert status == 200 and '<title>M3 browser fixture</title>' in body
+                status, _ = curl('/tools/fixture-v2/api/x')
+                assert status == 404
+                status, bridge = curl('/tools/_host/v2/bridge.js')
+                assert status == 200 and 'export' in bridge
+                print('curl GET /tools/fixture-v2/ -> 200; /tools/fixture-v2/api/x -> 404; v2 bridge -> 200')
+                status, _ = curl('/api/tools/fixture-v2/disable', dashboard=True, method='POST',
+                                 headers=management, data={})
                 assert status == 200
-                code = re.search(r'vosu-launch=([^&]+)', json.loads(launch)['url']).group(1)
-                status, session = curl('/tools/_host/v1/session', method='POST', data={'tool': 'fixture', 'code': code})
+                wait_for(lambda: curl('/tools/fixture-v2/')[0] == 503)
+                status, _ = curl('/api/tools/fixture-v2/enable', dashboard=True, method='POST',
+                                 headers=management, data={})
                 assert status == 200
-                session = json.loads(session)['session']
-                headers = {'X-Vosu-Tool-Session': session}
-                status, body = curl('/tools/fixture/api/v1/write', method='POST', headers=headers, data={})
-                assert status == 200 and json.loads(body)['caller'] == 'ui'
-                print(f'curl POST launch + session exchange -> 200; authenticated write -> {status} {body}')
-                status, body = curl('/api/tools', dashboard=True)
-                view = json.loads(body)['tools'][0]
-                assert status == 200 and view['status'] == 'running'
-                child_pid = view['process']['pid']
-                print(f'curl GET dashboard /api/tools -> {status} {body}')
-                before = time.monotonic()
-                status, _ = curl('/tools/fixture/api/v1/crash', method='POST', headers=headers, data={})
-                assert status == 502
-                def restarted():
-                    _, body = curl('/api/tools/fixture', dashboard=True)
-                    view = json.loads(body)
-                    return view if view['status'] == 'running' and view['process']['pid'] != child_pid else None
-                view = wait_for(restarted)
-                child_pid = view['process']['pid']
-                assert time.monotonic() - before >= 1
-                assert view['process']['restarts'] == 1
-                print(f'crash -> backoff >=1s -> running pid={child_pid}, restarts=1')
-                status, body = curl('/api/tools/fixture/logs?after=0', dashboard=True)
-                assert status == 200 and any('crashed' in line['text'] or 'exited unexpectedly' in line['text'] for line in json.loads(body)['lines'])
-                print(f'curl GET dashboard /api/tools/fixture/logs -> {status} {body}')
+                wait_for(lambda: curl('/tools/fixture-v2/')[0] == 200)
+                print('disable fixture-v2 -> /tools/fixture-v2/ 503; enable -> 200')
+
                 wait_for(lambda: any(s['plugin']['id'] == 'test.api.fixture'
                                      for s in json.loads(curl('/api/v1/sessions')[1])['sessions']))
                 subprocess.run(['node', str(ROOT / 'tests/tool_host_v2_browser.mjs'), str(playwright)],
                                cwd=ROOT, env=environment, check=True, timeout=90)
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=15) == 0
-                assert child_pid is not None and not Path(f'/proc/{child_pid}').exists()
-                marker = channel_root(binary, root / 'data/vosu') / 'tool-data/fixture/stdin-closed'
-                assert marker.read_text() == 'yes'
-                print('vosu SIGTERM -> exit 0; child stdin EOF marker=yes; no orphaned child')
+                tool_data = channel_root(binary, root / 'data/vosu') / 'tool-data/fixture'
+                assert not tool_data.exists(), f'legacy service ran: {sorted(tool_data.rglob("*"))}'
+                assert receipts(tool) == legacy_receipts, 'legacy package files changed'
+                print('vosu SIGTERM -> exit 0; legacy service never ran; legacy files unchanged (SHA-256)')
             except BaseException:
                 log.flush()
                 print((root / 'daemon.log').read_text())
