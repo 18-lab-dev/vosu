@@ -1,9 +1,7 @@
 //! Bounded legacy applyFilters parsing and JavaScript key coercion.
 use super::Filter;
 use serde_json::Value;
-
-const MAX_FILTER_NODES: usize = 256;
-const MAX_FILTER_DEPTH: usize = 8;
+use vosu_surface::filter::{MAX_FILTER_DEPTH, MAX_FILTER_NODES};
 
 pub fn parse_filters(source: &str) -> Option<Vec<Filter>> {
     let value = serde_json::from_str::<Value>(source).ok()?;

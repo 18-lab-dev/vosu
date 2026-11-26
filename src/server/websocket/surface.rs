@@ -16,9 +16,10 @@ impl FeedControl for Control {
         if encoded.len() > MAX_MESSAGE_BYTES {
             return Err("filters exceed message limit".into());
         }
-        let source = std::str::from_utf8(&encoded).map_err(|e| e.to_string())?;
-        let filters =
-            vosu_adapter_support::filtered::parse_filters(source).ok_or("invalid filters")?;
+        let filters = serde_json::from_slice::<Vec<vosu_surface::filter::Filter>>(&encoded)
+            .ok()
+            .filter(|filters| vosu_surface::filter::within_limits(filters))
+            .ok_or("invalid filters")?;
         let demand = lock_unpoisoned(&self.control.client.demand);
         if let Some(demand) = demand.as_ref() {
             demand.replace_filters(&filters)?;

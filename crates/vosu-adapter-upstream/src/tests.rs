@@ -161,7 +161,7 @@ fn inverse_schema_names_and_nested_removal_apply_before_filtering() {
                 .is_none()
         );
     }
-    use vosu_adapter_support::filtered::Filter;
+    use vosu_surface::filter::Filter;
     let filtered = regular::filtered(&projected)
         .encode(&[
             Filter::Field("keys".into()),
@@ -390,8 +390,8 @@ fn lazer_null_skin_path_echoes_the_pinned_empty_string() {
 #[test]
 fn clock_and_play_source_remain_bus_only_in_dto_direct_and_filtered_output() {
     use std::sync::Arc;
-    use vosu_adapter_support::filtered::Filter;
     use vosu_osu_model::memory::{ClientRenderState, PlaybackClock};
+    use vosu_surface::filter::Filter;
     let mut source = fixture::source();
     Arc::make_mut(&mut source.regular).global.render = Some(ClientRenderState {
         spectating: true,

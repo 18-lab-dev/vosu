@@ -10,10 +10,10 @@ use vosu::server::{
     routes::StateRoute,
     websocket::{Schema, StateProvider},
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_core::api::SessionTarget;
 use vosu_osu_state::Delivery;
 use vosu_plugin_api::{Selector, vosu_status};
+use vosu_surface::filter::Filter;
 use vosu_surface::state::SessionTarget as Target;
 
 fn regular(score: f64) -> std::sync::Arc<vosu_osu_state::StateBundleSnapshot> {

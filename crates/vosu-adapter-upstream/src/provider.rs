@@ -1,8 +1,9 @@
 //! Unmounted upstream providers. The hub owns capture/encoding caches and leases.
 use bytes::Bytes;
 use std::sync::Arc;
-use vosu_adapter_support::filtered::{Filter, selects_path};
+use vosu_adapter_support::filtered::selects_path;
 use vosu_plugin_api::Selector;
+use vosu_surface::filter::Filter;
 use vosu_surface::{
     projection::{Projection, ProjectionError, ProjectionView},
     state::CapturedSelection,

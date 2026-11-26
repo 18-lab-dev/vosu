@@ -1,7 +1,8 @@
 //! Legacy filter semantics and per-broadcast-pass shared wire documents.
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{borrow::Cow, io};
+use vosu_surface::filter::Filter;
 
 mod parse;
 pub use parse::parse_filters;
@@ -15,13 +16,6 @@ pub use value::{
     javascript_property_ref, projection_value_from_json, write_projection_json,
 };
 use value::{encode_root, filter_field};
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum Filter {
-    Field(String),
-    Nested { field: String, keys: Vec<Filter> },
-}
 
 /// Whether a legacy plan can observe a wire path. Empty plans mean the whole
 /// document; an explicitly empty nested plan observes no descendants.

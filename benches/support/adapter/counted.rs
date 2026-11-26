@@ -5,8 +5,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_plugin_api::{Selector, StateEntry};
+use vosu_surface::filter::Filter;
 use vosu_surface::{
     projection::{Projection, ProjectionError, ProjectionView},
     state::CapturedSelection,

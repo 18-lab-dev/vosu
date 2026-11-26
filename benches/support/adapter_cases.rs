@@ -10,9 +10,9 @@ use vosu::server::{
     routes::StateRoute,
     websocket::{Schema, StateProvider},
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_state::{Delivery, StateBundleSnapshot};
+use vosu_surface::filter::Filter;
 
 type Group<'a> = BenchmarkGroup<'a, WallTime>;
 const SCHEMAS: [Schema; 4] = [

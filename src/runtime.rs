@@ -31,8 +31,8 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use vosu_adapter_support::filtered::Filter;
 use vosu_osu::capture::poll_duration;
+use vosu_surface::filter::Filter;
 use vosu_sys::platform::{PathResolver, Paths};
 
 use vosu_overlay_host::{

@@ -49,7 +49,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 
 ## Source ownership
 
-- `crates/vosu-adapter-support/`: pure legacy JSON/number/rounding/filter mechanics and shared per-pass encoding; only `vosu-osu-model` is a production workspace dependency.
+- `crates/vosu-adapter-support/`: pure legacy JSON/number/rounding/filter mechanics and shared per-pass encoding; production workspace dependencies are `vosu-osu-model` and `vosu-surface` (only for the shared `filter::Filter` value type and its bounds).
 - `crates/vosu-adapter-{upstream,gosumemory,streamcompanion}/`: adapter-owned typed surface views, wire DTOs and encoders; the root has no adapter snapshot/model modules.
 - `src/server/` and `crates/vosu-net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and hardened outbound streaming/archive extraction.
 - `crates/vosu-osu/`: bundled game classification, session-owned capture/resolution, resource/action ownership, namespace projection and ABI bus publication. `demand.rs` synchronously combines authorized direct and tournament sampling; no root control channel or forwarding task.

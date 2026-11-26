@@ -34,9 +34,9 @@ use std::{
     },
     time::Duration,
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
 use vosu_surface::files::content_type;
+use vosu_surface::filter::Filter;
 
 use axum::{
     body::{Body, Bytes, to_bytes},

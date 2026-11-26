@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use vosu_adapter_support::filtered::Filter;
+use vosu_surface::filter::Filter;
 
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

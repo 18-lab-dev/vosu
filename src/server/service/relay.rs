@@ -1,23 +1,23 @@
 trait RelayControl: Send + Sync {
     fn try_send_text(&self, bytes: Bytes) -> bool;
     fn close(&self);
-    fn apply_filters(&self, filters: Vec<vosu_adapter_support::filtered::Filter>);
+    fn apply_filters(&self, filters: Vec<vosu_surface::filter::Filter>);
 }
 impl RelayControl for websocket::ConnectionControl {
     fn try_send_text(&self, bytes: Bytes) -> bool { self.try_send_text(bytes) }
     fn close(&self) { self.cleanup(); }
-    fn apply_filters(&self, filters: Vec<vosu_adapter_support::filtered::Filter>) { self.set_filters(filters); }
+    fn apply_filters(&self, filters: Vec<vosu_surface::filter::Filter>) { self.set_filters(filters); }
 }
 impl RelayControl for Arc<dyn vosu_surface::routes::FeedControl> {
     fn try_send_text(&self, bytes: Bytes) -> bool { self.as_ref().try_send_text(bytes) }
     fn close(&self) { self.as_ref().close(); }
-    fn apply_filters(&self, filters: Vec<vosu_adapter_support::filtered::Filter>) {
+    fn apply_filters(&self, filters: Vec<vosu_surface::filter::Filter>) {
         if let Ok(bytes) = serde_json::to_vec(&filters) { let _ = self.replace_filters(Bytes::from(bytes)); }
     }
 }
 /// The overlay host's `applyFilters` carries the raw legacy filter source;
 /// the transport owns parsing and limits. `None` keeps the prior plan.
-fn parse_command_filters(source: &[u8]) -> Option<Vec<vosu_adapter_support::filtered::Filter>> {
+fn parse_command_filters(source: &[u8]) -> Option<Vec<vosu_surface::filter::Filter>> {
     vosu_adapter_support::filtered::parse_filters(std::str::from_utf8(source).ok()?)
 }
 struct RelayClient {

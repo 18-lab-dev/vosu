@@ -9,7 +9,7 @@ use std::{
     },
     time::Duration,
 };
-use vosu_adapter_support::filtered::Filter;
+use vosu_surface::filter::Filter;
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;

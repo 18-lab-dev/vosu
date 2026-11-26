@@ -10,7 +10,7 @@ use bytes::Bytes;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu_adapter_support::filtered::Filter;
+use vosu_surface::filter::Filter;
 use vosu_surface::{
     projection::{Projection, ProjectionError, ProjectionView},
     requester::BundledRequester,

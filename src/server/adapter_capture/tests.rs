@@ -11,8 +11,8 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu_adapter_support::filtered::Filter;
 use vosu_plugin_api::{CborValue, Selector, StateEntry};
+use vosu_surface::filter::Filter;
 use vosu_surface::{
     files::{FileError, FilesRequester, OpenedFile, Operation, RootLease},
     projection::{Projection, ProjectionError, ProjectionView},

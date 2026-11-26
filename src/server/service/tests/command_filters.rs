@@ -3,7 +3,8 @@
 // source keeps the prior plan (the overlay host never parses filters).
 mod command_filters {
     use super::*;
-    use vosu_adapter_support::filtered::{Filter, parse_filters};
+    use vosu_adapter_support::filtered::parse_filters;
+    use vosu_surface::filter::Filter;
     use vosu_overlay_host::commands::{CommandClient, CommandProcessor, SettingsProvider};
 
     struct NoSettings;

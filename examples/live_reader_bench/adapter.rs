@@ -26,11 +26,11 @@ use vosu::server::{
     bus_provider::BusStateProvider,
     websocket::{Outbound, Schema, StateProvider, WebSocketHub},
 };
-use vosu_adapter_support::filtered::Filter;
 use vosu_osu::{project::SessionFacts, publish::BusPublisher};
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot};
 use vosu_plugin_api::{HostServices, Message, VtableHostServices, vosu_opcode, vosu_status};
+use vosu_surface::filter::Filter;
 use vosu_surface::{projection::Projection, state::SessionTarget};
 
 /// Forwards every call; the host commits a publish batch synchronously inside

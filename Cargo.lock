@@ -3590,6 +3590,7 @@ dependencies = [
  "serde",
  "serde_json",
  "vosu-osu-model",
+ "vosu-surface",
 ]
 
 [[package]]
@@ -3915,6 +3916,7 @@ name = "vosu-surface"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "serde",
  "tokio",
  "vosu-plugin-api",
 ]
