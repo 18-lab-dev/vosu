@@ -241,7 +241,11 @@ between the two columns only by amending this table.
 | skin-studio | → `vosu.tools.skin-studio` data dir | `stable_skins_dir`, `lazer_skins`, `credits` | `skin-studio-v2`: `start_ruleset` |
 | downloader | → `vosu.tools.downloader` data dir | `concurrency`, `max_file_mb`, `no_video`, `songs_dir`, `sources`, `client_id`, `client_secret` (write-only secret) | `downloader-v2`: `hide_owned`, `follow_current_map` |
 | map-preview | none (no service) | — | `map-preview-v2`: `skin`, `mania_scroll_speed`, `note_speed`, `show_bar`, `show_progress`, `controls_open` |
-| vosulay | → `vosu.vosulay` data dir | the native keys V1 lists here before V2 lands (**pending V1**) | `vosulay-editor`: presentation keys V1 lists (**pending V1**) |
+| vosulay | → `vosu.vosulay` data dir | `backend`: no persisted managed-tool key (1.x used host-provided `VOSU_URL`); `autostart`: no user setting (1.x `tool.toml` set `service.startup = "always"`, preserved by the `true` default) | `vosulay-editor`: none |
+
+In vosulay 1.x, `config.json` has a standalone `settings.vosu_url` key, but
+tool mode overrides it with the host's `VOSU_URL`. The AF.2 data copy can
+preserve that JSON field without promoting it to the supervisor's `backend`.
 
 Rules:
 
@@ -420,8 +424,7 @@ M8 E0/G0 consume these receipts inside its candidate evidence manifest
   publication of `vosu-plugin-api` `1.0.0-alpha.1` (S1) awaits its owner approval.
 - Exact ecosystem tags for vosu-tools and vosu-overlays.
 - Porting the 18 remaining `v0.4.0` overlays to v2 entries (O0; decided 2026-11-25, all ported, none retired; [section 2](#2-repositories-and-frozen-1x-sources)).
-- vosulay settings rows (V1) and the vosulay runtime's minimum compatible
-  version (V0).
+- The vosulay runtime's minimum compatible version (V0).
 - T0's action ledger, T2's timeline point bound, and the owner publication of
   the host alpha and SDK `1.0.0-alpha.2` carrying B0's artifact contract.
 - The 1.x support-window end (AF.4).
