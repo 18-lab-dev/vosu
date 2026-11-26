@@ -107,6 +107,12 @@ def state_case(body: str = '{"ok":true}', case_id: str = "state-http.get-json-v2
     return case(case_id, request(), (up, up_b), dump=envelope(body))
 
 
+def volatile_state_case() -> dict:
+    state = state_case('{"beatmap":{"time":{"live":3300}}}')
+    state["attempts"][0]["source"][1]["body"] = text('{"beatmap":{"time":{"live":3310}}}')
+    return state
+
+
 def capture(cases: list[dict], **overrides) -> dict:
     value = {
         "format": "vosu-golden-capture-v1", "source_revision": PIN, "platform": "windows-lazer",
@@ -144,7 +150,8 @@ class GoldenTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def run_golden(self, *captures: dict, candidate: Path | None = None, **kwargs) -> Path:
+    def run_golden(self, *captures: dict, candidate: Path | None = None,
+                   receipt: io.StringIO | None = None, **kwargs) -> Path:
         paths = []
         for value in captures:
             self.count += 1
@@ -152,7 +159,7 @@ class GoldenTestCase(unittest.TestCase):
             path.write_text(json.dumps(value))
             paths.append(str(path))
         candidate = candidate or self.root / f"candidate-{self.count}"
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(receipt if receipt is not None else io.StringIO()):
             golden_mod.golden(paths, str(candidate), str(self.contract), repo_root=self.repo, **kwargs)
         return candidate
 
@@ -278,6 +285,28 @@ class CandidateLayoutTests(GoldenTestCase):
         with self.assertRaisesRegex(GoldenError, "provenance must be"):
             self.run_golden(value, candidate=self.root / "unlabelled", provenance="upstream")
         self.assertFalse((self.root / "unlabelled").exists())
+
+    def test_only_captured_sandwich_differences_use_the_private_volatility_receipt(self) -> None:
+        state = volatile_state_case()
+        value = capture([state])
+        case_id = state["id"]
+        body = text('{"beatmap":{"time":{"live":3300}}}')
+        with self.assertRaisesRegex(GoldenError, "synthetic sandwich responses differ"):
+            self.run_golden(value, provenance="synthetic")
+        receipt = io.StringIO()
+        captured = self.case_file(self.run_golden(value, receipt=receipt), case_id)
+        self.assertEqual(captured["expected"]["body"], body)
+        self.assertNotIn("volatile", captured)
+        self.assertEqual(json.loads(receipt.getvalue())["platforms"]["windows-lazer"]["volatile"],
+                         {case_id: ["menu-time-v2-live"]})
+
+        state["attempts"][0]["source"][1]["body"] = body
+        for provenance in ("captured", "synthetic"):
+            receipt = io.StringIO()
+            exact = self.case_file(
+                self.run_golden(value, provenance=provenance, receipt=receipt), case_id)
+            self.assertEqual(exact, captured)
+            self.assertNotIn("volatile", json.loads(receipt.getvalue())["platforms"]["windows-lazer"])
 
     def test_contract_table_must_equal_implemented_rules(self) -> None:
         check_approved_rules(CONTRACT)

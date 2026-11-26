@@ -5,7 +5,8 @@ reproduce byte for byte: the menu track clock and upstream's decaying `bassDensi
 entry names its exact scope, its rule and its authority. A sandwich compares a volatile
 field by presence, JSON type and the stated rule, never by value; every other byte is still
 compared exactly. Nothing is normalized in the fixture: the first upstream record keeps its
-raw value, and the case lists the ledger IDs it relied on.
+raw value, and the private candidate receipt lists the IDs checked for sandwiches
+that differed before this comparison.
 
 JSON is parsed losslessly (number spelling, object member order and duplicates are kept),
 so `1` versus `1.0` or a reordered object is still a difference.
@@ -229,6 +230,22 @@ def expected_view(path: str, expected: dict[str, Any]) -> tuple[Any, list[str]]:
                    f["payload"]["text"].encode("utf-8") if "text" in f["payload"]
                    else bytes.fromhex(f["payload"]["hex"])) for f in expected["frames"]]
     return record_view(path, expected["status"], expected["headers"], data, frames)
+
+
+def sandwich(path: str, first: dict[str, Any], second: dict[str, Any], *,
+             synthetic: bool) -> list[str]:
+    """Validate stability and return receipt diagnostics, never fixture metadata."""
+    if synthetic:
+        # Mechanics fixtures replay exact normalized records, not live fields.
+        if first != second:
+            raise VolatileError("synthetic sandwich responses differ after approved normalization")
+        return []
+    first_view, used = expected_view(path, first)
+    second_view, _ = expected_view(path, second)
+    if first_view != second_view:
+        raise VolatileError("upstream sandwich responses differ after approved normalization "
+                            "and the volatile ledger")
+    return used if first != second else []
 
 
 def _entries_view(entries: list[dict[str, Any]], used: list[str]) -> list[Any]:

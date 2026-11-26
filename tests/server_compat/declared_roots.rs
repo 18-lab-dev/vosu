@@ -2,6 +2,7 @@ use super::*;
 #[path = "../../crates/vosu-adapter-upstream/tests/support/mod.rs"]
 mod support;
 use support::Case;
+use vosu_core::runtime::ListenerOwner;
 use vosu_core::server::service::SurfaceRouter;
 use vosu_surface::{requester::BundledRequester, routes::RegistrationLease};
 
@@ -232,6 +233,79 @@ fn declared_root_http_lazer_skin_404_and_calculation_security_divergence() {
     let json: Value = serde_json::from_slice(&body(&case, response)).unwrap();
     assert!(json["error"].as_str().unwrap().contains("declared roots"));
 }
+
+#[test]
+fn mounted_calculation_preserves_number_spelling_mod_inputs_and_client_errors() {
+    let case = Case::new(false);
+    let (providers, _lease) = providers(&case, case.requester.clone());
+    case.run(async {
+        let server = ListenerOwner::start(
+            providers,
+            ListenTarget {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+        )
+        .await
+        .unwrap();
+        let address = server.state().effective.unwrap().address;
+        let base = format!("http://{address}/api/calculate/pp");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let get = |query, expected_status| {
+            let request = client.get(format!("{base}?{query}"));
+            async move {
+                let response = request.send().await.unwrap();
+                assert_eq!(response.status(), expected_status, "{query}");
+                assert_eq!(
+                    response.headers()[header::CONTENT_TYPE],
+                    "application/json",
+                    "{query}"
+                );
+                let length = response.headers()[header::CONTENT_LENGTH].clone();
+                let bytes = response.bytes().await.unwrap();
+                assert_eq!(length, bytes.len().to_string(), "{query}");
+                bytes
+            }
+        };
+        let ok = StatusCode::OK;
+        let attributes = get("ar=9.5", ok).await;
+        let text = std::str::from_utf8(&attributes).unwrap();
+        assert!(text.contains(r#""hp":5,"#), "{text}");
+        assert!(text.contains(r#""ar":9.5,"#), "{text}");
+
+        assert_eq!(get("mods=HDDT", ok).await, get("mods=72", ok).await);
+        let settings = get(
+            "mods=%5B%7B%22acronym%22%3A%22DT%22%2C%22settings%22%3A%7B%22speed_change%22%3A1.25%7D%7D%5D",
+            ok,
+        )
+        .await;
+        assert_eq!(settings, get("mods=64&clockRate=1.25", ok).await);
+        assert_ne!(settings, get("mods=64", ok).await);
+        get("acc=98.5&clockRate=1&combo=2&mode=0", ok).await;
+        for (query, expected) in [
+            ("acc=abc", r#"{"error":"invalid acc"}"#),
+            (
+                "clockRate=0",
+                r#"{"error":"clockRate must be between 0.01 and 100"}"#,
+            ),
+            ("mods=H", r#"{"error":"invalid mods acronyms"}"#),
+            ("combo=-1", r#"{"error":"invalid combo"}"#),
+            ("mode=9", r#"{"error":"mode must be 0, 1, 2, or 3"}"#),
+        ] {
+            assert_eq!(get(query, StatusCode::BAD_REQUEST).await, expected);
+        }
+        let post = client.post(&base).send().await.unwrap();
+        assert_eq!(post.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            post.headers()[header::CONTENT_TYPE],
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(post.text().await.unwrap(), "Not Found");
+        drop(client);
+        server.shutdown().await;
+    });
+}
+
 #[test]
 fn unprovisioned_declared_provider_fails_closed_with_legacy_not_ready_envelope() {
     let case = Case::new(false);

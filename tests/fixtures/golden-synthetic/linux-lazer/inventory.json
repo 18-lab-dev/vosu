@@ -26,8 +26,8 @@
     },
     {
       "path": "cases/calculation.no-query.json",
-      "bytes": 16714,
-      "sha256": "93d7e38eb6fbd7442917343eec0f7d334e610fa6d67add454353e13505cb6ab2"
+      "bytes": 16699,
+      "sha256": "50471dcd41081741f8a81d05e1335c6ab85495148a5eda79b2492c66e14b19f4"
     },
     {
       "path": "cases/files.get-beatmap-file.json",
@@ -62,12 +62,12 @@
     {
       "path": "cases/state-http.get-json-sc-second-chart.json",
       "bytes": 16251,
-      "sha256": "d9994309593e0d7df13fac1e69b5d60a584d663f836a6e7182737c2f1bca2d39"
+      "sha256": "173277eb530df86c775abb7bc8df9810ae3b31286e984427ca725b7491e148b9"
     },
     {
       "path": "cases/state-http.get-json-sc.json",
       "bytes": 16266,
-      "sha256": "88710ee28dbcfcc613d111549b3a38d6eeeb0e47da3ea9a5229c1af2a60ca4c4"
+      "sha256": "b7daf12a96fc8d5f106b2fa5321d961a4cb2ab260c01d99c9bf711d1c92de9b1"
     },
     {
       "path": "cases/state-http.get-json-v2-no-client.json",
@@ -102,7 +102,7 @@
     {
       "path": "manifest.json",
       "bytes": 3982,
-      "sha256": "13f1050ce79628fe947854ec149a1c627cbca7a7af7bac230b86db99dc3a6fb6"
+      "sha256": "2db02d1f94da21e937b11c5f42aadfede734ed40f2a6bf12d9ad31c41686b108"
     }
   ],
   "privacy_scan": {
@@ -124,7 +124,7 @@
     ]
   },
   "budget": {
-    "json_bytes": 201984,
+    "json_bytes": 201969,
     "json_limit": 8388608,
     "asset_bytes": 542,
     "asset_limit": 4194304

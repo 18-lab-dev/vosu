@@ -762,6 +762,7 @@ def _platform_files(capture: Any, review_receipt: str | None,
     platform = identity["platform"]
     files: dict[str, bytes] = {}
     listing = []
+    volatile_cases: dict[str, list[str]] = {}
     for case in cases:
         used: set[str] = set()
         request = state.request(case, used)
@@ -769,12 +770,11 @@ def _platform_files(capture: Any, review_receipt: str | None,
         second = state.expected(case, case["source"][1], set(), get_lengths)
         target = _request_line(case["source"][0]["request"])[1].partition("?")[0]
         try:
-            views = [volatile.expected_view(target, item) for item in (first, second)]
+            ids_used = volatile.sandwich(target, first, second, synthetic=provenance == "synthetic")
         except volatile.VolatileError as exc:
             raise GoldenError(f"case {case['id']}: {exc}") from exc
-        if views[0][0] != views[1][0]:
-            raise GoldenError(f"case {case['id']}: upstream sandwich responses differ after "
-                              "approved normalization and the volatile ledger")
+        if ids_used:
+            volatile_cases[case["id"]] = ids_used
         case_file = {
             "format": CASE_FORMAT, "id": case["id"], "family": case["family"],
             "barrier": case["barrier"], "conditional": case["conditional"],
@@ -782,8 +782,6 @@ def _platform_files(capture: Any, review_receipt: str | None,
             "request": {"text": request}, "expected": first,
             "replay": state.envelope(case["dumps"][0], used),
         }
-        if views[0][1]:
-            case_file["volatile"] = views[0][1]
         files[f"cases/{case['id']}.json"] = _dump(case_file)
         listing.append({"id": case["id"], "family": case["family"], "barrier": case["barrier"],
                         "attempts": case["attempts"], "file": f"cases/{case['id']}.json"})
@@ -823,6 +821,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
     summary = {"cases": len(cases), "families": json.loads(files["manifest.json"])["case_counts"],
                crash.OUTCOME: sorted(crashed, key=lambda case: case["id"]),
                no_response.SUMMARY_KEY: sorted(silent, key=lambda case: case["id"])}
+    if volatile_cases:
+        summary["volatile"] = volatile_cases
     return platform, files, summary
 
 

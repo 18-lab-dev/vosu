@@ -411,6 +411,14 @@ holds the status code, the §6 compared headers plus `date`, the body and the
 frames, all from upstream, or exactly `{"outcome": "closed"}` (§6). An
 `upstream_crashed` or `upstream_declared` case has no case file (§6).
 
+The private JSON receipt printed by `golden` records live sandwich
+volatility diagnostics under `platforms.<platform>.volatile`, keyed by
+case ID, only when the two normalized upstream records differ and pass
+the reviewed live volatile-field comparison. The case files retain the
+first upstream record without volatility metadata or rewrites. Synthetic
+mechanics sandwiches compare exactly after §7; they have no live fields
+to exempt. This receipt does not authorize any replay differences.
+
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so
 `scripts/check-brand.py` and reviewers see upstream names. Text is never

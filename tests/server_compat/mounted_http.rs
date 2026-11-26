@@ -337,8 +337,17 @@ fn mounted_no_client_errors_calculation_and_removed_route_attribution() {
             .unwrap();
         assert_eq!(calculation.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
+            calculation.headers()[header::CONTENT_TYPE],
+            "application/json"
+        );
+        let length = calculation.headers()[header::CONTENT_LENGTH].clone();
+        assert_eq!(
             calculation.text().await.unwrap(),
             r#"{"error":"osu is not ready/running"}"#
+        );
+        assert_eq!(
+            length,
+            r#"{"error":"osu is not ready/running"}"#.len().to_string()
         );
         let invalid = m
             .client
@@ -347,6 +356,7 @@ fn mounted_no_client_errors_calculation_and_removed_route_attribution() {
             .await
             .unwrap();
         assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(invalid.headers()[header::CONTENT_TYPE], "application/json");
         assert!(invalid.text().await.unwrap().starts_with(r#"{"error":"#));
         for path in ["/backgroundImage", "/files/beatmap/file", "/Songs/x/y.osu"] {
             let response = m

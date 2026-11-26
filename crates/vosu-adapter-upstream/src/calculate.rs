@@ -1,9 +1,12 @@
 //! ADR 0004 legacy calculation; only declared roots or published chart bytes.
 use crate::files::Provider;
 use bytes::Bytes;
-use serde_json::Value;
+use serde::Serialize;
+use serde_json::{Serializer, Value};
+use vosu_adapter_support::json::JsFormatter;
 use vosu_osu_calc::engine::{
-    HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyRosuEngine,
+    HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyPerformanceResult,
+    LegacyRosuEngine,
 };
 use vosu_surface::{files::FileError, resources::read_chart};
 
@@ -104,14 +107,21 @@ impl Provider {
             Err(error) => return failure(400, &error),
         };
         match LegacyRosuEngine.calculate(&bytes, &request) {
-            Ok(result) => match serde_json::to_vec(&result) {
-                Ok(body) => ResultBody::Ready(Bytes::from(body)),
+            Ok(result) => match serialize_success(&result) {
+                Ok(body) => ResultBody::Ready(body),
                 Err(error) => failure(500, &error.to_string()),
             },
             Err(error) => failure(400, &error.to_string()),
         }
     }
 }
+
+fn serialize_success(result: &LegacyPerformanceResult) -> serde_json::Result<Bytes> {
+    let mut output = Vec::with_capacity(1024);
+    result.serialize(&mut Serializer::with_formatter(&mut output, JsFormatter))?;
+    Ok(Bytes::from(output))
+}
+
 fn failure(status: u16, message: &str) -> ResultBody {
     ResultBody::Failed {
         status,

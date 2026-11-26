@@ -52,3 +52,30 @@ Outside-root requests are the named `legacy-calculate-declared-roots`
 security divergence; query/mod/result semantics and `LegacyRosuEngine` stay
 unchanged. No-path calculation reads the captured published chart through
 the [surface resource seam](../v2/adapter-surfaces.md#r0-resource-bytes-and-lifetime-budgets).
+
+## M4b legacy HTTP amendment (2026-11-26)
+
+`GET /api/calculate/pp` serves `application/json` and writes successful
+result numbers with ECMAScript `JSON.stringify` spelling without rounding
+the result. It preserves the legacy engine and numeric bitmasks.
+
+The adapter deliberately accepts well-formed acronym pairs (e.g. `HDDT`)
+and valid structured JSON mod inputs including settings. The pinned
+upstream's HTTP bridge coerces those strings to `NaN` and returns 500.
+The `legacy-calculate-mod-inputs` contract row covers exactly the
+`calculation.mods-acronyms` and `calculation.mods-json` golden cases.
+
+Malformed accuracy, out-of-range clock rate (outside `0.01..=100`),
+malformed acronym, invalid unsigned count, and invalid ruleset (outside
+`0..=3`) return 400 with a JSON `{"error": string}` response. The pinned
+upstream may calculate from its coerced argument or emit a WASM-decoder
+500. The `legacy-calculate-client-errors` contract row covers exactly
+`calculation.invalid-accuracy`, `calculation.invalid-clock-rate`,
+`calculation.mods-invalid`, `calculation.invalid-count`, and
+`calculation.invalid-mode`. Valid inputs keep their existing calculation
+semantics.
+
+The [divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md) and
+[golden contract §10](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md#10-divergence-subtraction-a4b11)
+govern replay. Keep captured upstream responses intact and scope any
+alternate vosu expectation to the listed cases and affected record parts.

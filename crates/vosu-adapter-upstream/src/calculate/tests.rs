@@ -1,4 +1,29 @@
 use super::*;
+
+#[test]
+fn pp_success_writes_exact_ecmascript_number_tokens() {
+    let result = LegacyPerformanceResult {
+        difficulty: vosu_osu_calc::engine::LegacyDifficultyAttributes {
+            stars: 5.0,
+            hp: Some(9.5),
+            ..Default::default()
+        },
+        pp: -0.0,
+        pp_aim: Some(1e21),
+        pp_speed: Some(1e-7),
+        ..Default::default()
+    };
+    assert_eq!(
+        serialize_success(&result).unwrap(),
+        concat!(
+            r#"{"difficulty":{"mode":0,"stars":5,"isConvert":false,"hp":9.5,"maxCombo":0},"#,
+            r#""state":{"maxCombo":0,"osuLargeTickHits":0,"osuSmallTickHits":0,"sliderEndHits":0,"#,
+            r#""nGeki":0,"nKatu":0,"n300":0,"n100":0,"n50":0,"misses":0},"#,
+            r#""pp":0,"ppAim":1e+21,"ppSpeed":1e-7}"#
+        )
+    );
+}
+
 #[test]
 fn pp_query_maps_every_documented_knob() {
     let query = PpQuery {

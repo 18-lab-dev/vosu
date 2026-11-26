@@ -739,6 +739,17 @@ class MatrixTests(unittest.TestCase):
         for ledger_id in referenced:
             self.assertIn(rows.get(ledger_id), ("security", "contract", "licensing"), ledger_id)
 
+    def test_calculation_contract_rows_are_scoped_to_exact_cases(self) -> None:
+        for ledger, suffixes in (
+            ("legacy-calculate-mod-inputs", {"mods-acronyms", "mods-json"}),
+            ("legacy-calculate-client-errors", {
+                "invalid-accuracy", "invalid-clock-rate", "mods-invalid", "invalid-count", "invalid-mode",
+            }),
+        ):
+            expected = {f"calculation.{suffix}" for suffix in suffixes}
+            self.assertEqual({case.id for case in rm.MATRIX if ledger in case.ledger}, expected)
+            self.assertTrue(expected.isdisjoint(rm.UPSTREAM_EXPECTED))
+
     def test_select_partitions_every_case_with_a_reason(self) -> None:
         for platform in rm.PLATFORMS:
             selected, excluded = rm.select(rm.MATRIX, rm.MatrixContext(platform, CONTEXT_VALUES))

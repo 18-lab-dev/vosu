@@ -660,6 +660,13 @@ def _security_cases() -> list[RouteCase]:
 def _calculation_cases() -> list[RouteCase]:
     base = "/api/calculate/pp"
     mods_json = quote('[{"acronym":"DT","settings":{"speed_change":1.25}}]', safe="")
+    contracts = {
+        **dict.fromkeys(("mods-acronyms", "mods-json"), ("legacy-calculate-mod-inputs",)),
+        **dict.fromkeys(
+            ("invalid-accuracy", "invalid-clock-rate", "mods-invalid", "invalid-count", "invalid-mode"),
+            ("legacy-calculate-client-errors",),
+        ),
+    }
     queries = {
         "no-query": "", "mods-bits": "?mods=72", "mods-acronyms": "?mods=HDDT",
         "mods-json": "?mods=" + mods_json, "mods-invalid": "?mods=H",
@@ -672,7 +679,7 @@ def _calculation_cases() -> list[RouteCase]:
         "relative-osu-path": "?path=${calc_relative}",
         "absolute-inside-root-osu": "?path=${calc_absolute_inside}",
     }
-    cases = [_http(f"calculation.{name}", "GET", base + query, ledger=CALC,
+    cases = [_http(f"calculation.{name}", "GET", base + query, ledger=CALC + contracts.get(name, ()),
                    requires=frozenset({"security"}) if "path=" in query else frozenset())
         for name, query in queries.items()]
     cases += [
