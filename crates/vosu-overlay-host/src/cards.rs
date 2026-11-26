@@ -19,19 +19,6 @@ pub fn local_overlay(counter: &Counter) -> LocalOverlay {
         version: counter.version.clone(),
     }
 }
-/// Shown when the overlays folder holds no overlays at all; the client
-/// renders the same markup after deleting the last card.
-pub const INSTALLED_EMPTY_STATE: &str = r#"<div class="empty-state"><h2>No overlays yet</h2><p>Install one, or copy an overlay folder into the overlays folder.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#;
-
-/// The overlays folder itself could not be listed. Distinct from the empty
-/// state so a read failure never looks like the overlays are gone.
-pub fn render_overlays_unreadable(root: &std::path::Path, error: &str) -> String {
-    format!(
-        r#"<div class="empty-state" role="alert"><h2>Couldn't read the overlays folder</h2><p><code>{}</code></p><p>{}</p><div class="counter-actions"><a class="button button-primary" href="/">Retry</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#,
-        escape_html(&root.display().to_string()),
-        escape_html(error),
-    )
-}
 
 /// Overlay folders whose files failed to parse, as error cards beside the
 /// readable overlays: the folder, the parse error, Open folder and Delete.
