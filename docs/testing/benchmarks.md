@@ -531,6 +531,11 @@ profile, plus proof of live demand, contention, dispatch hold and delivery
 pressure in the corresponding profiles. Idle must retain the same child,
 with two control receipts and zero capture ticks.
 
+To smoke the four fixture-based cases without timing, build
+`--example brokered_reads_plugin` in release and run
+`cargo bench --locked --bench plan_memory_bench -- 'plan_memory/.*_process$' --test`.
+This still checks the captured digests and prints the nonzero census.
+
 `subscribed_precise` keeps a real surface subscription to `vosu.osu/beatmap/time/live`.
 The same subscription is active in `contention`, `delayed_dispatch` and
 `full_stream`. Contention attaches a second child plugin to its own native

@@ -187,23 +187,23 @@ impl CaseState {
         reader: &mut Reader,
         synchronization: ReaderSynchronization,
         digest: bool,
-    ) -> Option<String> {
+    ) -> Result<Option<String>, String> {
         let finish = |capture: &dyn std::fmt::Debug| digest.then(|| cases::digest(&capture));
-        match (case, reader) {
+        Ok(match (case, reader) {
             (Case::StablePrecise, Reader::Stable(reader)) => {
-                finish(&black_box(cases::stable_precise(reader)))
+                finish(&black_box(cases::stable_precise(reader)?))
             }
             (Case::StableRegularFields, Reader::Stable(reader)) => {
                 finish(&black_box(cases::stable_regular_fields(reader)))
             }
             (Case::LazerPrecise, Reader::Lazer(reader)) => {
-                finish(&black_box(cases::lazer_precise(reader, synchronization)))
+                finish(&black_box(cases::lazer_precise(reader, synchronization)?))
             }
             (Case::LazerRegularFields, Reader::Lazer(reader)) => {
                 finish(&black_box(cases::lazer_regular_fields(reader)))
             }
             _ => unreachable!("each case is built with its own reader kind"),
-        }
+        })
     }
 }
 
@@ -292,8 +292,8 @@ impl X1 {
             pid,
             bitness,
         )))?;
-        let timed_digest = CaseState::capture(case, &mut timed, synchronization, true);
-        let counted_digest = CaseState::capture(case, &mut counted, synchronization, true);
+        let timed_digest = CaseState::capture(case, &mut timed, synchronization, true)?;
+        let counted_digest = CaseState::capture(case, &mut counted, synchronization, true)?;
         if timed_digest != counted_digest {
             return Err(format!(
                 "{}: the counted reader decoded differently",
@@ -326,7 +326,7 @@ impl X1 {
         for _ in 0..captures {
             let before = state.counters.snapshot();
             let cursors = rings.cursors();
-            CaseState::capture(state.case, &mut state.counted, state.synchronization, false);
+            CaseState::capture(state.case, &mut state.counted, state.synchronization, false)?;
             let census = rings.since(cursors)?;
             let after = state.counters.snapshot();
             per_capture.push((
@@ -371,7 +371,7 @@ impl X1 {
         let iterations = command.number("iterations");
         let started = Instant::now();
         for _ in 0..iterations {
-            CaseState::capture(state.case, &mut state.timed, state.synchronization, false);
+            CaseState::capture(state.case, &mut state.timed, state.synchronization, false)?;
         }
         Ok(Fields::new().with("elapsed_ns", started.elapsed().as_nanos()))
     }

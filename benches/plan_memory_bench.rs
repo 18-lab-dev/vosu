@@ -552,11 +552,11 @@ fn bench(c: &mut Criterion) {
     let expected = [
         (
             Case::StablePrecise,
-            cases::digest(&cases::stable_precise(&mut stable)),
+            cases::digest(&cases::stable_precise(&mut stable).unwrap()),
         ),
         (
             Case::LazerPrecise,
-            cases::digest(&cases::lazer_precise(&mut active_plan, plan_sync)),
+            cases::digest(&cases::lazer_precise(&mut active_plan, plan_sync).unwrap()),
         ),
         (
             Case::StableRegularFields,

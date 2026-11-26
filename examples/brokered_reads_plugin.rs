@@ -251,4 +251,6 @@ impl Worker {
     }
 }
 
-vosu_plugin_api::export_plugin!(BenchPlugin);
+// Both P1 and X1 use the workspace-only PlanMemory waiter (§6.3). The
+// intercepting export claims its SYNC results; async still reaches on_message.
+vosu_plugin_internal::export_plugin!(BenchPlugin);

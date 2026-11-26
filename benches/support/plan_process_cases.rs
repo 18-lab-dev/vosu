@@ -48,8 +48,10 @@ impl Case {
 }
 
 /// `stable_precise_*`: one precise global read.
-pub fn stable_precise(reader: &mut StableMemory) -> impl Debug + use<> {
-    reader.global_precise().unwrap()
+pub fn stable_precise(reader: &mut StableMemory) -> Result<impl Debug + use<>, String> {
+    reader
+        .global_precise()
+        .map_err(|error| format!("stable precise global: {error}"))
 }
 
 /// `stable_regular_fields`: the regular global, menu and gameplay fields.
@@ -71,11 +73,17 @@ pub fn lazer_regular_fields(reader: &mut LazerMemory) -> impl Debug + use<> {
 pub fn lazer_precise(
     reader: &mut LazerMemory,
     synchronization: ReaderSynchronization,
-) -> impl Debug + use<> {
+) -> Result<impl Debug + use<>, String> {
     reader.synchronize_precise(synchronization, 3);
-    let global = reader.global_precise().unwrap();
-    let keys = reader.key_overlay(3).unwrap();
-    let errors = reader.hit_errors(0).unwrap();
+    let global = reader
+        .global_precise()
+        .map_err(|error| format!("lazer precise global: {error}"))?;
+    let keys = reader
+        .key_overlay(3)
+        .map_err(|error| format!("lazer precise keys: {error}"))?;
+    let errors = reader
+        .hit_errors(0)
+        .map_err(|error| format!("lazer precise hit errors: {error}"))?;
     match (&global, &keys, &errors) {
         (ReadStatus::Ready(global), ReadStatus::Ready(keys), ReadStatus::Ready(errors)) => {
             assert_eq!(global.time, 322.0);
@@ -84,7 +92,7 @@ pub fn lazer_precise(
         }
         _ => panic!("populated lazer precise fixture must be ready"),
     }
-    (global, keys, errors)
+    Ok((global, keys, errors))
 }
 
 /// The SHA-256 of a capture's `Debug` text: equal digests mean equivalent
