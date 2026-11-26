@@ -26,7 +26,7 @@ mod names;
 mod plugin;
 pub mod presentation;
 pub mod preview_scheme;
-pub mod query;
+mod query;
 pub mod root;
 mod routes;
 mod serve;
