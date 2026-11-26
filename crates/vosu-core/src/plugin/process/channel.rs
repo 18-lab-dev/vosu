@@ -34,7 +34,9 @@ use std::time::{Duration, Instant};
 
 use vosu_sys::plugin_process::{Doorbell, RingObjects, SharedRegion};
 
-use super::frame::{FrameHeader, FramePolicy, HEAD_BYTES, Ledger, MAX_PAYLOAD_BYTES, encode_head};
+use super::frame::{
+    FrameHeader, FramePolicy, HEAD_BYTES, Ledger, MAX_PAYLOAD_BYTES, control, encode_head,
+};
 use super::ring::{PayloadBuffer, RingConsumer, RingError, RingProducer};
 
 /// The longest a legal frame waits for space in a full ring before the
@@ -70,6 +72,14 @@ pub enum SendError {
     Os(io::Error),
     #[error("channel already terminated: {0:?}")]
     Terminated(Termination),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum AcknowledgedSendError<E> {
+    #[error("reservation refused before any frame was written")]
+    Refused(E),
+    #[error("failed to send acknowledged request {request}: {error}")]
+    Send { request: u64, error: SendError },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -246,6 +256,29 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+type EncodedFrame<'a> = ([u8; HEAD_BYTES], &'a [u8]);
+
+fn encode_frame<'a>(
+    header: &FrameHeader,
+    payload: &'a [u8],
+) -> Result<EncodedFrame<'a>, SendError> {
+    let head = encode_head(header, payload.len())
+        .map_err(|_| SendError::Oversize { len: payload.len() })?;
+    Ok((head, payload))
+}
+
+fn encode_control_frame(opcode: u32, request: u64) -> EncodedFrame<'static> {
+    let header = FrameHeader {
+        opcode,
+        flags: 0,
+        correlation: request,
+    };
+    (
+        encode_head(&header, 0).expect("empty control frame fits"),
+        &[],
+    )
+}
+
 /// Sends frames on the outbound ring. Cloneable: every clone shares the one
 /// serialized producer.
 #[derive(Debug, Clone)]
@@ -259,40 +292,57 @@ impl Sender {
         self.send_within(header, payload, FULL_RING_WAIT)
     }
 
-    /// Writes an `ACK_NEXT` frame carrying `request` and then the public
-    /// frame it acknowledges, back to back under the one producer lock, so
-    /// no other sender's frame can come between them (§7.6). The pair
-    /// shares one backpressure window. An oversize payload is refused
-    /// before either frame is written.
+    /// Sends a test request with a caller-supplied id. The real relay
+    /// reserves its ids inside `reserve_and_send_acknowledged`.
+    #[cfg(test)]
     pub fn send_acknowledged(
         &self,
         request: u64,
         header: &FrameHeader,
         payload: &[u8],
     ) -> Result<(), SendError> {
-        let ack = FrameHeader {
-            opcode: super::frame::control::ACK_NEXT,
-            flags: 0,
-            correlation: request,
-        };
-        self.send_frames(&[(&ack, &[]), (header, payload)], FULL_RING_WAIT)
+        let reserve = || Ok::<_, std::convert::Infallible>(request);
+        match self.reserve_and_send_acknowledged(header, payload, reserve) {
+            Ok(_) => Ok(()),
+            Err(AcknowledgedSendError::Send { error, .. }) => Err(error),
+            Err(AcknowledgedSendError::Refused(never)) => match never {},
+        }
     }
 
-    /// Writes a `REPLY_NEXT` frame carrying `request` and then the public
-    /// `READ_PLAN_RESULT` answering that `SYNC` request, back to back under
-    /// the one producer lock, like [`send_acknowledged`](Self::send_acknowledged).
+    /// Reserves the waiter and writes `ACK_NEXT` plus its public frame
+    /// under one hold of the producer lock (§7.6). This makes request id
+    /// order match ring order. Refusal or an oversize payload writes
+    /// neither frame; the pair shares one backpressure window.
+    pub(super) fn reserve_and_send_acknowledged<E>(
+        &self,
+        header: &FrameHeader,
+        payload: &[u8],
+        reserve: impl FnOnce() -> Result<u64, E>,
+    ) -> Result<u64, AcknowledgedSendError<E>> {
+        let deadline = Instant::now().checked_add(FULL_RING_WAIT);
+        let producer = lock(&self.shared.producer);
+        let request = reserve().map_err(AcknowledgedSendError::Refused)?;
+        encode_frame(header, payload)
+            .and_then(|frame| {
+                let ack = encode_control_frame(control::ACK_NEXT, request);
+                self.publish_frames(producer, &[ack, frame], deadline)
+            })
+            .map_err(|error| AcknowledgedSendError::Send { request, error })?;
+        Ok(request)
+    }
+
+    /// Writes a `REPLY_NEXT` frame and its `READ_PLAN_RESULT` back to back
+    /// under the producer lock. Replies echo a child request id and can
+    /// complete out of order.
     pub fn send_reply(
         &self,
         request: u64,
         header: &FrameHeader,
         payload: &[u8],
     ) -> Result<(), SendError> {
-        let reply = FrameHeader {
-            opcode: super::frame::control::REPLY_NEXT,
-            flags: 0,
-            correlation: request,
-        };
-        self.send_frames(&[(&reply, &[]), (header, payload)], FULL_RING_WAIT)
+        let frame = encode_frame(header, payload)?;
+        let reply = encode_control_frame(control::REPLY_NEXT, request);
+        self.send_frames(&[reply, frame], FULL_RING_WAIT)
     }
 
     /// [`send`](Self::send) with an explicit backpressure window.
@@ -302,26 +352,23 @@ impl Sender {
         payload: &[u8],
         window: Duration,
     ) -> Result<(), SendError> {
-        self.send_frames(&[(header, payload)], window)
+        self.send_frames(&[encode_frame(header, payload)?], window)
     }
 
-    /// Writes `frames` (at most two) in order under one hold of the
-    /// producer lock, then rings the peer once if its consumer is parked.
-    fn send_frames(
-        &self,
-        frames: &[(&FrameHeader, &[u8])],
-        window: Duration,
-    ) -> Result<(), SendError> {
-        let mut heads = [[0_u8; HEAD_BYTES]; 2];
-        assert!(frames.len() <= heads.len(), "at most two frames per write");
-        for ((header, payload), head) in frames.iter().zip(heads.iter_mut()) {
-            *head = encode_head(header, payload.len())
-                .map_err(|_| SendError::Oversize { len: payload.len() })?;
-        }
-        let shared = &*self.shared;
+    fn send_frames(&self, frames: &[EncodedFrame<'_>], window: Duration) -> Result<(), SendError> {
         let deadline = Instant::now().checked_add(window);
-        let mut producer = lock(&shared.producer);
-        for ((_, payload), head) in frames.iter().zip(heads.iter()) {
+        self.publish_frames(lock(&self.shared.producer), frames, deadline)
+    }
+
+    /// Writes the frames under one hold of the producer lock, then rings
+    /// the peer once if its consumer is parked.
+    fn publish_frames(
+        &self,
+        mut producer: MutexGuard<'_, RingProducer>,
+        frames: &[EncodedFrame<'_>],
+        deadline: Option<Instant>,
+    ) -> Result<(), SendError> {
+        for (head, payload) in frames {
             self.write_one(&mut producer, head, payload, deadline)?;
         }
         let parked = producer

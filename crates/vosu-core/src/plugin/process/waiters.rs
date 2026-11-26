@@ -1,12 +1,12 @@
 //! The plugin host's status and `SYNC` waiters (`docs/v2/plugin-abi.md`
 //! §7.6 "Acknowledged sends", A5.2).
 //!
-//! A `send` whose status only core can decide reserves one waiter before
-//! anything is written: its request id (allocated here, strictly
-//! increasing and never reused within the generation) is opened in the
-//! channel's [`Ledger`], which caps live waiters at [`MAX_REQUESTS`],
-//! shared by status and `SYNC` requests. The calling thread then writes
-//! `ACK_NEXT` and its frame, releases the producer lock, and blocks here.
+//! A `send` whose status only core can decide holds the producer lock
+//! while reserving its waiter and writing `ACK_NEXT` and its frame. The
+//! request id (allocated here, strictly increasing and never reused within
+//! the generation) is opened in the channel's [`Ledger`], which caps live
+//! waiters at [`MAX_REQUESTS`], shared by status and `SYNC` requests.
+//! The calling thread releases the producer lock before blocking here.
 //!
 //! The ring reader completes a waiter:
 //!
