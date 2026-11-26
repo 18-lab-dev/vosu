@@ -26,7 +26,7 @@ pub(super) struct RuntimeConfig {
     pub(super) config: Arc<ConfigStore>,
     pub(super) login_state: Arc<AsyncMutex<bool>>,
     pub(super) network: Arc<AsyncMutex<Option<NetworkChange>>>,
-    pub(super) origins: Option<Arc<crate::server::origins::Origins>>,
+    pub(super) origins: Option<Arc<vosu_core::server::origins::Origins>>,
 }
 
 #[cfg(any(test, feature = "test-harness"))]
@@ -46,7 +46,7 @@ impl ConfigUpdateService for RuntimeConfig {
     fn save(
         &self,
         values: serde_json::Value,
-    ) -> crate::server::routes::ProviderFuture<'_, Result<(), String>> {
+    ) -> vosu_core::server::routes::ProviderFuture<'_, Result<(), String>> {
         Box::pin(async move {
             let object = values
                 .as_object()
@@ -553,7 +553,7 @@ impl UpdaterHandoff for RuntimeUpdater {
     fn run_update(
         &self,
         major_consent: bool,
-    ) -> crate::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
+    ) -> vosu_core::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         Box::pin(async move {
             if !vosu_core::desktop::directory_writable(&self.program_dir) {
                 return Err(vosu_core::desktop::MANAGED_UPDATE_ERROR.to_owned());

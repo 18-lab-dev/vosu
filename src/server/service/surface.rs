@@ -228,7 +228,7 @@ impl SurfaceRouter {
     pub fn overlay_host(&self, request: &Request<Body>, body: Bytes) -> ProviderFuture<'_, Response> {
         let admission = request
             .extensions()
-            .get::<super::routes::SurfaceAdmission>()
+            .get::<vosu_core::server::routes::SurfaceAdmission>()
             .cloned();
         let listener = admission
             .as_ref()
@@ -402,7 +402,7 @@ impl RouteProvider for RegisteredProvider {
                 Self::File { provider } => {
                     let method =
                         Method::from_bytes(request.method.as_bytes()).expect("validated method");
-                    let endpoint = super::routes::classify(&method, &request.path)
+                    let endpoint = vosu_core::server::routes::classify(&method, &request.path)
                         .expect("registered game file");
                     surface_game_response(provider, endpoint, request).await
                 }

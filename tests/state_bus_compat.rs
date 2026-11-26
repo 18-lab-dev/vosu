@@ -915,7 +915,7 @@ fn missing_tourney_score_uses_only_the_recorded_contract_exemption() {
     publisher
         .publish(Arc::new(snapshot), vosu_osu_state::Delivery::All)
         .unwrap();
-    use vosu::server::websocket::{Schema, StateProvider};
+    use vosu_core::server::websocket::{Schema, StateProvider};
     let state = replay.fixture.providers[2].capture(Schema::V2).unwrap();
     assert!(
         state.encode_unfiltered().is_err(),

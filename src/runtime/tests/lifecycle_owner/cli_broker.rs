@@ -9,15 +9,16 @@ async fn vosux_broker_tracks_live_actions_and_stops_on_listener_shutdown() {
     let (runtime, _) = bounded!(owner(root.path()));
     let host = runtime.plugins.clone();
     let path = root.path().join("private/broker.json");
-    let broker = Arc::new(crate::server::broker::BrokerToken::new(path.clone()).unwrap());
+    let broker = Arc::new(vosu_core::server::broker::BrokerToken::new(path.clone()).unwrap());
     broker.publish("127.0.0.1:24050".parse().unwrap()).unwrap();
     let cancel = CancellationToken::new();
     let task_cancel = cancel.clone();
-    let (desired, _) = tokio::sync::watch::channel(crate::server::runtime::ListenTarget::new(
+    let (desired, _) = tokio::sync::watch::channel(vosu_core::server::runtime::ListenTarget::new(
         "127.0.0.1",
         24050,
     ));
-    let (_, state) = tokio::sync::watch::channel(crate::server::runtime::ListenerState::default());
+    let (_, state) =
+        tokio::sync::watch::channel(vosu_core::server::runtime::ListenerState::default());
     let mut listener = ListenerOwner {
         desired,
         state,

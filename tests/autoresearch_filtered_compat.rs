@@ -6,7 +6,7 @@ const _: fn() = benchmark::benches;
 use benchmark::*;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
-use vosu::server::websocket::{Schema, StateProvider, StateSnapshot, WebSocketHub};
+use vosu_core::server::websocket::{Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_proptest::bounded;
 
 #[test]

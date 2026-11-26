@@ -4,8 +4,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
-use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
 use vosu_core::api::SessionTarget;
+use vosu_core::server::api_v1::subscriptions::ApiV1SubscriptionHub;
 use vosu_osu::{project::SessionFacts, publish::BusPublisher};
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::{Delivery, SnapshotPublisher};
@@ -118,7 +118,7 @@ pub fn bench(c: &mut Criterion, group: &str, case: &str) {
                 let frame = receiver.recv().await.unwrap();
                 assert!(matches!(
                     frame,
-                    vosu::server::subscription_wire::Outbound::Text(_)
+                    vosu_core::server::subscription_wire::Outbound::Text(_)
                 ));
                 std::hint::black_box(frame);
                 connection.write_completed();

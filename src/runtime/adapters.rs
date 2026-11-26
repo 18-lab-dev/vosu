@@ -1,8 +1,8 @@
 //! One requester-bound provider per schema, shared by HTTP and WebSocket consumers.
 use super::*;
 use crate::server::bus_provider::BusStateProvider;
-use crate::server::websocket::StateDemand;
 use vosu_core::plugin::PluginInstanceId;
+use vosu_core::server::websocket::StateDemand;
 
 pub(super) struct Adapters {
     schemas: [Arc<BusStateProvider>; 4],
@@ -99,7 +99,7 @@ impl Adapters {
     ) -> io::Result<()> {
         let groups = crate::server::service::adapter_routes(
             std::array::from_fn(|index| {
-                self.schemas[index].clone() as Arc<dyn crate::server::routes::StateJsonProvider>
+                self.schemas[index].clone() as Arc<dyn vosu_core::server::routes::StateJsonProvider>
             }),
             [
                 hubs.v1.clone(),
@@ -140,7 +140,7 @@ impl StateJsonProvider for Adapters {
     fn cached_json(
         &self,
         route: StateRoute,
-    ) -> crate::server::routes::ProviderFuture<'_, CachedJson> {
+    ) -> vosu_core::server::routes::ProviderFuture<'_, CachedJson> {
         let schema = match route {
             StateRoute::V1 => WebSocketSchema::V1,
             StateRoute::StreamCompanion => WebSocketSchema::StreamCompanion,

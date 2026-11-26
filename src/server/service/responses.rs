@@ -109,7 +109,7 @@ fn is_preview_request(request: &Request<Body>) -> bool {
     request.uri().query().is_some_and(|query| {
         query
             .split('&')
-            .any(|pair| pair == crate::server::pages::OVERLAY_PREVIEW_QUERY)
+            .any(|pair| pair == vosu_core::server::pages::OVERLAY_PREVIEW_QUERY)
     })
 }
 

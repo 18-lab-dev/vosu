@@ -66,7 +66,7 @@
 
     #[tokio::test]
     async fn production_update_flush_precedes_websocket_shutdown_and_listener_drain() {
-        use crate::server::runtime::{
+        use vosu_core::server::runtime::{
             AxumListenerFactory, ListenTarget, ListenerBinder, TokioBinder,
         };
         use tokio::io::AsyncWriteExt as _;
@@ -108,7 +108,7 @@
                 },
             ),
         ));
-        let providers = super::super::routes::RouteProviders {
+        let providers = vosu_core::server::routes::RouteProviders {
             authorization: Arc::new(AllowAll),
             state: Arc::new(NoState { events: tokio::sync::watch::channel(0).1 }),
             calculation: Arc::new(DeclaredCalculateProvider::default()),

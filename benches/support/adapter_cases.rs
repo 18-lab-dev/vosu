@@ -5,7 +5,7 @@ use super::adapter::{self as rig, Client, Rig, input, json_at};
 use crate::adapter_fixture::Fixture;
 use criterion::{BenchmarkGroup, Criterion, Throughput, measurement::WallTime};
 use std::{cell::Cell, sync::Arc, time::Duration};
-use vosu::server::{
+use vosu_core::server::{
     api_v1::subscriptions::ApiV1SubscriptionHub,
     routes::StateRoute,
     websocket::{Schema, StateProvider},

@@ -5,7 +5,8 @@ use super::{Rig, input};
 use bytes::Bytes;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::watch;
-use vosu::server::{bus_provider::BusStateProvider, routes::StateRoute};
+use vosu::server::bus_provider::BusStateProvider;
+use vosu_core::server::routes::StateRoute;
 use vosu_osu_state::StateBundleSnapshot;
 
 const HEADER: &str = "osu file format v14\n\n[General]\nMode:0\n\n[Difficulty]\nHPDrainRate:5\nCircleSize:4\nOverallDifficulty:8\nApproachRate:9\nSliderMultiplier:1.4\nSliderTickRate:1\n\n[TimingPoints]\n0,500,4,2,1,80,1,0\n\n[HitObjects]\n";

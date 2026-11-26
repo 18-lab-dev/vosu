@@ -64,7 +64,7 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
     let (desired, mut desired_rx) = watch::channel(old_target.clone());
     let (state_tx, state) = watch::channel(ListenerState {
         desired: Some(old_target.clone()),
-        effective: Some(crate::server::runtime::EffectiveListener {
+        effective: Some(vosu_core::server::runtime::EffectiveListener {
             target: old_target.clone(),
             address: "127.0.0.1:24050".parse().unwrap(),
         }),
@@ -78,7 +78,7 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
         let requested = desired_rx.borrow().clone();
         state_tx.send_replace(ListenerState {
             desired: Some(requested),
-            effective: Some(crate::server::runtime::EffectiveListener {
+            effective: Some(vosu_core::server::runtime::EffectiveListener {
                 target: retained,
                 address: "127.0.0.1:24050".parse().unwrap(),
             }),
@@ -114,7 +114,7 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
 async fn broker_publication_failure_keeps_effective_rebind_and_disables_writes() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("broker.json");
-    let broker = Arc::new(crate::server::broker::BrokerToken::new(path.clone()).unwrap());
+    let broker = Arc::new(vosu_core::server::broker::BrokerToken::new(path.clone()).unwrap());
     broker.publish("127.0.0.1:24050".parse().unwrap()).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let mut headers = axum::http::HeaderMap::new();
@@ -128,7 +128,7 @@ async fn broker_publication_failure_keeps_effective_rebind_and_disables_writes()
     let (desired, _desired_rx) = watch::channel(ListenTarget::new("127.0.0.1", 24050));
     let (_state_tx, state) = watch::channel(ListenerState {
         desired: Some(target.clone()),
-        effective: Some(crate::server::runtime::EffectiveListener {
+        effective: Some(vosu_core::server::runtime::EffectiveListener {
             target: target.clone(), address: "127.0.0.1:24051".parse().unwrap(),
         }),
         last_error: None,

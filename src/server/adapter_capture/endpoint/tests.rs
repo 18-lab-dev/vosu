@@ -1,6 +1,11 @@
 use super::*;
-use crate::server::{
-    adapter_capture::DerivedStatus,
+use crate::server::adapter_capture::DerivedStatus;
+use axum::{
+    body::to_bytes,
+    extract::{ConnectInfo, State},
+};
+use std::{net::SocketAddr, sync::Mutex};
+use vosu_core::server::{
     auth::AuthorizationPolicy,
     origins::{OriginAuthorizer, Origins},
     routes::{
@@ -8,12 +13,6 @@ use crate::server::{
         StateJsonProvider, StateRoute, dispatch,
     },
 };
-use axum::{
-    body::to_bytes,
-    extract::{ConnectInfo, State},
-};
-use std::{net::SocketAddr, sync::Mutex};
-use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_proptest::bounded;
 use vosu_surface::state::{CapturedSelection, IdentifiedRoster};
 
@@ -63,8 +62,10 @@ struct Delegate {
     handled: Mutex<Vec<Endpoint>>,
 }
 impl RouteDelegate for Delegate {
-    fn adapter_capture(&self) -> Option<&AdapterCaptureEndpoint> {
-        self.endpoint.as_ref()
+    fn adapter_capture(&self) -> Option<&dyn vosu_core::server::routes::HarnessRoute> {
+        self.endpoint
+            .as_ref()
+            .map(|endpoint| endpoint as &dyn vosu_core::server::routes::HarnessRoute)
     }
     fn handle(&self, endpoint: Endpoint, _: Request, _: Bytes) -> ProviderFuture<'_, Response> {
         self.handled.lock().unwrap().push(endpoint);
@@ -83,7 +84,7 @@ impl StateJsonProvider for Unused {
     }
 }
 impl CalculatePpProvider for Unused {
-    fn calculate_pp(&self, _: PpQuery) -> ProviderFuture<'_, CalculateResult> {
+    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
         Box::pin(async { CalculateResult::NotReady })
     }
 }

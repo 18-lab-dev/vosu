@@ -1,8 +1,8 @@
 //! Public API composition owns only a Weak-backed source and an event-driven hub.
-use crate::server::api_v1::{
+use std::{sync::Arc, time::Duration};
+use vosu_core::server::api_v1::{
     resources::ResourceHttp, router::ApiV1Router, subscriptions::ApiV1SubscriptionHub,
 };
-use std::{sync::Arc, time::Duration};
 
 /// Applies independently to resolve/list/lookup and every stream-read reply,
 /// never to the lifetime of a download.
@@ -59,7 +59,7 @@ impl ApiV1Service {
             Arc::new(InstalledProviders(Arc::downgrade(host))),
         );
         tools.set_jobs(self.jobs.clone());
-        let actions = crate::server::api_v1::actions::ActionRoutes::new(
+        let actions = vosu_core::server::api_v1::actions::ActionRoutes::new(
             host.clone(),
             host.invocation_executor(),
             self.jobs.clone(),

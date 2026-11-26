@@ -496,7 +496,7 @@ async fn tool_host_view_has_no_dashboard_origin_while_the_dashboard_is_off() {
     let dev = put(root.path(), "demo", "");
     let host = bounded!(host(root.path(), vec![dev]));
     let views = host.tool_host_views();
-    let origins = crate::server::origins::Origins::new(
+    let origins = vosu_core::server::origins::Origins::new(
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
     )

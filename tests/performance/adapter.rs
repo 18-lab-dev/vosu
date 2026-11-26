@@ -5,12 +5,12 @@ use super::allocations_during;
 use crate::adapter::{Rig, input, json_at};
 use bytes::Bytes;
 use std::time::Duration;
-use vosu::server::{
+use vosu_core::api::SessionTarget;
+use vosu_core::server::{
     api_v1::subscriptions::ApiV1SubscriptionHub,
     routes::StateRoute,
     websocket::{Schema, StateProvider},
 };
-use vosu_core::api::SessionTarget;
 use vosu_osu_state::Delivery;
 use vosu_plugin_api::{Selector, vosu_status};
 use vosu_surface::filter::Filter;

@@ -81,7 +81,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             listener: AsyncMutex::new(None),
             dashboard_listener: AsyncMutex::new(None),
             origins: Arc::new(
-                crate::server::origins::Origins::new(
+                vosu_core::server::origins::Origins::new(
                     "http://127.0.0.1:24050".into(),
                     "http://127.0.0.1:24051".into(),
                 )

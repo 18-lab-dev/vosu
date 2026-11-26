@@ -5,10 +5,8 @@
 //! serves. Only those envelope bytes and the chart file the source served
 //! reach the replay. The corpus input never does.
 use super::{assets::ReplayAssets, envelope::Envelope, oracle, seeds};
-use vosu::server::{
-    adapter_capture::{SCHEMAS, schema_name},
-    routes::CachedJson,
-};
+use vosu::server::adapter_capture::{SCHEMAS, schema_name};
+use vosu_core::server::routes::CachedJson;
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
 use vosu_osu_state::Delivery;
 

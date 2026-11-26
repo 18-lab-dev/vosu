@@ -236,7 +236,7 @@ impl CatalogComposition {
     /// packages from that exact loopback listener instead.
     pub fn production_transport() -> Arc<dyn PackageTransport> {
         #[cfg(feature = "test-harness")]
-        if let Some(transport) = crate::server::catalog_api::harness_transport() {
+        if let Some(transport) = vosu_core::server::catalog_api::harness_transport() {
             return transport;
         }
         Arc::new(PublicPackageTransport::new(
@@ -271,18 +271,20 @@ impl CatalogComposition {
     pub fn api(
         &self,
         package_limit: Arc<dyn Fn() -> Option<u64> + Send + Sync>,
-        network: Arc<dyn crate::server::catalog_api::CatalogNetwork>,
-    ) -> crate::server::catalog_api::CatalogApi {
+        network: Arc<dyn vosu_core::server::catalog_api::CatalogNetwork>,
+    ) -> vosu_core::server::catalog_api::CatalogApi {
         let restart = Arc::clone(&self.restart);
-        crate::server::catalog_api::CatalogApi::new(crate::server::catalog_api::CatalogServices {
-            runtime: Arc::clone(&self.runtime),
-            uninstall: self.uninstall.clone(),
-            builtins: Arc::clone(&self.builtins),
-            restart_required: Arc::new(move || restart.list()),
-            package_limit,
-            network,
-            cancel: self.cancel.clone(),
-        })
+        vosu_core::server::catalog_api::CatalogApi::new(
+            vosu_core::server::catalog_api::CatalogServices {
+                runtime: Arc::clone(&self.runtime),
+                uninstall: self.uninstall.clone(),
+                builtins: Arc::clone(&self.builtins),
+                restart_required: Arc::new(move || restart.list()),
+                package_limit,
+                network,
+                cancel: self.cancel.clone(),
+            },
+        )
     }
 
     /// Route work is cancelled, the uninstall worker joined, then the

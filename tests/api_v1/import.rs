@@ -11,7 +11,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use vosu::server::api_v1::{
+use vosu_core::server::api_v1::{
     actions::{ActionAuthority, ActionRoutes},
     router::ApiV1Router,
     subscriptions::ApiV1SubscriptionHub,

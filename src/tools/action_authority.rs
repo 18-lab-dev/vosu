@@ -246,7 +246,7 @@ impl ToolAuthority for ToolRegistry {
     }
 }
 
-impl crate::server::api_v1::actions::ActionAuthority for ToolRegistry {
+impl vosu_core::server::api_v1::actions::ActionAuthority for ToolRegistry {
     fn authenticate_action_session(&self, token: &str) -> Option<Principal> {
         ToolRegistry::authenticate_action_session(self, token).ok()
     }

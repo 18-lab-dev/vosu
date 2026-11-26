@@ -141,7 +141,9 @@ def check(metadata, rules_path=RULES):
                 errors.append("M4a: vosu-osu -> vosu-surface revives the removed snapshot bridge")
             if dependency.get("kind") == "dev":
                 continue
-            if source == "vosu-adapter-support" and target != "vosu-osu-model":
+            # M7 C0: the one other edge is the shared legacy filter value type
+            # (`vosu_surface::filter::Filter`) core's latest-only transport stores.
+            if source == "vosu-adapter-support" and target not in ("vosu-osu-model", "vosu-surface"):
                 errors.append(f"M4a: wire support cannot depend on {target}")
             elif source.startswith("vosu-adapter-") and target in forbidden:
                 errors.append(f"M4a: production adapter edge {source} -> {target} is forbidden")

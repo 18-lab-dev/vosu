@@ -16,7 +16,7 @@ use axum::{
     response::Response,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
-use vosu::server::{
+use vosu_core::server::{
     auth::AuthorizationPolicy,
     routes::{
         CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture, RouteDelegate,
@@ -24,7 +24,6 @@ use vosu::server::{
     },
     runtime::{AxumListenerFactory, ListenTarget, TcpListenerFactory},
 };
-use vosu_adapter_upstream::calculate::PpQuery;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,
@@ -84,7 +83,7 @@ fn source_snapshot() -> Arc<StateBundleSnapshot> {
 // for any measured production boundary.
 struct UnusedRoutes;
 impl CalculatePpProvider for UnusedRoutes {
-    fn calculate_pp(&self, _: PpQuery) -> ProviderFuture<'_, CalculateResult> {
+    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
         panic!("GET /json/v2 must not call the calculation provider")
     }
 }

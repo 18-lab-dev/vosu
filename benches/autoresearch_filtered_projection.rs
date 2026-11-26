@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu::server::websocket::{
+use vosu_core::server::websocket::{
     Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
 use vosu_osu_model::launch::InstanceSettings;

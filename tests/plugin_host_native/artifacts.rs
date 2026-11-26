@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
-use vosu::server::api_v1::actions::ActionAuthority;
 use vosu_core::actions::{ActionDescriptor, JobOwner, JobRegistry, Principal, ToolAuthority};
+use vosu_core::server::api_v1::actions::ActionAuthority;
 use vosu_plugin_api::VOSU_STREAM_CHUNK_MAX_BYTES;
 
 use super::support::api::{Api, bounded};

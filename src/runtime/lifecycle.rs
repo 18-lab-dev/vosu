@@ -43,7 +43,7 @@ pub struct ProductionRuntime {
     plugin_settings_watch: AsyncMutex<Option<JoinHandle<()>>>,
     listener: AsyncMutex<Option<ListenerOwner>>,
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
-    origins: Arc<crate::server::origins::Origins>,
+    origins: Arc<vosu_core::server::origins::Origins>,
     hubs: AsyncMutex<Option<WebSocketHubs>>,
     adapters: AsyncMutex<Option<Arc<adapters::Adapters>>>,
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
@@ -243,7 +243,7 @@ impl ProductionRuntime {
         // `vosu_sys::platform::read_published`; run it in
         // `spawn_blocking` rather than on this async worker.
         let api_keys = tokio::task::spawn_blocking(move || {
-            crate::server::api_keys::ApiKeys::load(api_keys_path, logger)
+            vosu_core::server::api_keys::ApiKeys::load(api_keys_path, logger)
         })
         .await
         .map_err(io::Error::other)?;
@@ -371,7 +371,7 @@ impl ProductionRuntime {
         let delegate = match self.catalog.get_mut() {
             Some(catalog) => delegate.with_catalog(catalog.api(
                 Arc::new(move || live_config.current().max_package_bytes()),
-                crate::server::catalog_api::network(),
+                vosu_core::server::catalog_api::network(),
             )),
             None => delegate,
         };
@@ -386,7 +386,7 @@ impl ProductionRuntime {
             None => delegate,
         };
         let providers = RouteProviders {
-            authorization: Arc::new(crate::server::origins::OriginAuthorizer {
+            authorization: Arc::new(vosu_core::server::origins::OriginAuthorizer {
                 inner: self.authorizer.clone(),
                 origins: Arc::clone(&self.origins),
                 dashboard: false,
@@ -396,11 +396,12 @@ impl ProductionRuntime {
             delegate: Arc::new(delegate),
         };
         let mut dashboard_providers = providers.clone();
-        dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {
-            inner: self.authorizer.clone(),
-            origins: Arc::clone(&self.origins),
-            dashboard: true,
-        });
+        dashboard_providers.authorization =
+            Arc::new(vosu_core::server::origins::OriginAuthorizer {
+                inner: self.authorizer.clone(),
+                origins: Arc::clone(&self.origins),
+                dashboard: true,
+            });
         let mut listener = match ListenerOwner::start_with_broker(
             providers,
             target,
@@ -896,7 +897,7 @@ pub async fn run_cli() -> io::Result<()> {
     let dev_plugin_dirs = vosu_core::plugin::development_roots(args.raw())?;
     // Resolve development roots before constructing owned runtime resources.
     let dev_tools = crate::tools::development_roots(args.raw())?;
-    let origins = crate::server::origins::Origins::new(
+    let origins = vosu_core::server::origins::Origins::new(
         vosu_core::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
         vosu_core::desktop::dashboard_url(
             &current.dashboard_ip,

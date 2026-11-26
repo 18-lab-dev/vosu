@@ -25,9 +25,7 @@ use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
-use super::files::{MissingKind, ResourceOutcome};
-
-use vosu_adapter_upstream::calculate::PpQuery;
+use vosu_core::server::files::{MissingKind, ResourceOutcome};
 
 use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
 use vosu_overlay_host::ReloadableCounterService;
@@ -35,7 +33,7 @@ use vosu_overlay_host::commands::{
     CommandAction, CommandClient, CommandProcessor, Relay, RelaySink,
 };
 
-use super::{
+use vosu_core::server::{
     files,
     pages::EmbeddedResponse,
     routes::{
@@ -143,13 +141,13 @@ mod tests {
 
     struct AllowAll;
 
-    impl super::super::routes::RequestAuthorizer for AllowAll {
+    impl vosu_core::server::routes::RequestAuthorizer for AllowAll {
         fn authorize(
             &self,
             _: std::net::IpAddr,
-            _: super::super::auth::RequestHeaders<'_>,
-        ) -> super::super::auth::AuthorizationDecision {
-            super::super::auth::AuthorizationDecision {
+            _: vosu_core::server::auth::RequestHeaders<'_>,
+        ) -> vosu_core::server::auth::AuthorizationDecision {
+            vosu_core::server::auth::AuthorizationDecision {
                 peer_ok: true,
                 header_ok: true,
             }

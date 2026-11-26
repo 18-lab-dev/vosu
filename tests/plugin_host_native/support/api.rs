@@ -14,20 +14,19 @@ use axum::response::Response;
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
-use vosu::server::api_v1::actions::{ActionAuthority, ActionRoutes};
-use vosu::server::api_v1::resources::ResourceHttp;
-use vosu::server::api_v1::router::ApiV1Router;
-use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
-use vosu::server::auth::AuthorizationPolicy;
-use vosu::server::origins::{OriginAuthorizer, Origins};
-use vosu::server::routes::{
+use vosu_core::actions::JobRegistry;
+use vosu_core::plugin::PluginHost;
+use vosu_core::server::api_v1::actions::{ActionAuthority, ActionRoutes};
+use vosu_core::server::api_v1::resources::ResourceHttp;
+use vosu_core::server::api_v1::router::ApiV1Router;
+use vosu_core::server::api_v1::subscriptions::ApiV1SubscriptionHub;
+use vosu_core::server::auth::AuthorizationPolicy;
+use vosu_core::server::origins::{OriginAuthorizer, Origins};
+use vosu_core::server::routes::{
     self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, ProviderFuture,
     RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
 };
-use vosu::server::websocket::UpgradeCallbackTracker;
-use vosu_adapter_upstream::calculate::PpQuery;
-use vosu_core::actions::JobRegistry;
-use vosu_core::plugin::PluginHost;
+use vosu_core::server::websocket::UpgradeCallbackTracker;
 
 use super::services::{BOUND, LONG};
 
@@ -50,7 +49,7 @@ impl StateJsonProvider for Legacy {
 }
 
 impl CalculatePpProvider for Legacy {
-    fn calculate_pp(&self, _: PpQuery) -> ProviderFuture<'_, CalculateResult> {
+    fn calculate_pp(&self, _: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
         Box::pin(async { panic!("legacy calculation reached") })
     }
 }

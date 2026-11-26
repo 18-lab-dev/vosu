@@ -11,12 +11,12 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use vosu::server::{
+use vosu::server::service::{RegisteredProvider, SurfaceRouter};
+use vosu_core::plugin::PluginInstanceId;
+use vosu_core::server::{
     routes::StateRoute,
-    service::{RegisteredProvider, SurfaceRouter},
     websocket::{Outbound, Schema, WebSocketHub},
 };
-use vosu_core::plugin::PluginInstanceId;
 use vosu_osu_model::{
     launch::InstanceSettings,
     memory::{ClientRenderState, PlaybackClock},

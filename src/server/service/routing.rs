@@ -24,14 +24,14 @@ pub trait PluginManagementRoutes: Send + Sync {
 #[derive(Clone)]
 pub struct ProductionRouteDelegate {
     services: ProductionServices,
-    api_keys: Option<Arc<super::api_keys::ApiKeys>>,
+    api_keys: Option<Arc<vosu_core::server::api_keys::ApiKeys>>,
     connections: OverlayConnections,
     /// Core's one D20 recorder, owned by the runtime for the process lifetime.
     removed: Arc<vosu_core::removed_routes::RemovedRoutes>,
     tools: Option<Arc<dyn ToolRegistryRoutes>>,
     plugins: Option<Arc<dyn PluginManagementRoutes>>,
-    catalog: Option<crate::server::catalog_api::CatalogApi>,
-    api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
+    catalog: Option<vosu_core::server::catalog_api::CatalogApi>,
+    api_v1: Option<vosu_core::server::api_v1::router::ApiV1Router>,
     surface: Option<SurfaceRouter>,
     /// The overlay host's static provider (A7.1): core keeps the overlay
     /// listener's fallback classification and hands it this request.
@@ -83,7 +83,7 @@ impl ProductionRouteDelegate {
         removed_routes_view(&notices, &names, now)
     }
 
-    pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
+    pub fn with_api_keys(mut self, keys: Arc<vosu_core::server::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
         self
     }
@@ -96,11 +96,11 @@ impl ProductionRouteDelegate {
         self
     }
     /// M6b H0 dashboard-only catalog management facade.
-    pub fn with_catalog(mut self, catalog: crate::server::catalog_api::CatalogApi) -> Self {
+    pub fn with_catalog(mut self, catalog: vosu_core::server::catalog_api::CatalogApi) -> Self {
         self.catalog = Some(catalog);
         self
     }
-    pub fn with_api_v1(mut self, router: crate::server::api_v1::router::ApiV1Router) -> Self {
+    pub fn with_api_v1(mut self, router: vosu_core::server::api_v1::router::ApiV1Router) -> Self {
         self.api_v1 = Some(router);
         self
     }
@@ -133,7 +133,7 @@ impl ProductionRouteDelegate {
             }
             Endpoint::ApiV1 => match &self.api_v1 {
                 Some(router) => router.handle(request).await,
-                None => crate::server::api_v1::error::error(StatusCode::NOT_FOUND, "invalid_request", "Unknown API route"),
+                None => vosu_core::server::api_v1::error::error(StatusCode::NOT_FOUND, "invalid_request", "Unknown API route"),
             },
             Endpoint::ToolSession => match &self.tools {
                 Some(tools) => Arc::clone(tools).session(body).await,
@@ -326,7 +326,7 @@ impl ProductionRouteDelegate {
     async fn page(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
         let listener = request
             .extensions()
-            .get::<crate::server::routes::SurfaceAdmission>()
+            .get::<vosu_core::server::routes::SurfaceAdmission>()
             .map_or(vosu_surface::listener::ListenerRole::Overlay, |admission| {
                 admission.listener
             });
@@ -398,11 +398,11 @@ impl ProductionRouteDelegate {
         let relays = Arc::clone(&self.services.websocket.relays);
         let query = request.uri().query().map(str::to_owned);
         let mut mutation = request.extensions()
-            .get::<super::auth::MutationAuthorization>()
+            .get::<vosu_core::server::auth::MutationAuthorization>()
             .copied()
             .unwrap_or_default();
-        let key_grant = request.extensions().get::<super::api_keys::KeyGrant>().cloned();
-        let key_protocol = request.extensions().get::<super::routes::KeyProtocol>().is_some();
+        let key_grant = request.extensions().get::<vosu_core::server::api_keys::KeyGrant>().cloned();
+        let key_protocol = request.extensions().get::<vosu_core::server::routes::KeyProtocol>().is_some();
         if key_grant.is_none() && endpoint == Endpoint::WsCommands
             && request.headers().get(header::UPGRADE)
                 .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"))
@@ -410,7 +410,7 @@ impl ProductionRouteDelegate {
                 value.to_str().is_ok_and(|value| value.split(',')
                     .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))))
             && let Some(Some(broker)) = request.extensions()
-                .get::<Option<Arc<super::broker::BrokerToken>>>()
+                .get::<Option<Arc<vosu_core::server::broker::BrokerToken>>>()
         {
             let peer = request.extensions().get::<ConnectInfo<PeerAddress>>()
                 .map(|peer| peer.0.0.ip());
@@ -446,9 +446,11 @@ impl ProductionRouteDelegate {
 }
 
 impl RouteDelegate for ProductionRouteDelegate {
-    fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> { self.api_keys.clone() }
+    fn api_keys(&self) -> Option<Arc<vosu_core::server::api_keys::ApiKeys>> { self.api_keys.clone() }
     #[cfg(feature = "test-harness")]
-    fn adapter_capture(&self) -> Option<&crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint> { self.adapter_capture.as_deref() }
+    fn adapter_capture(&self) -> Option<&dyn vosu_core::server::routes::HarnessRoute> {
+        self.adapter_capture.as_deref().map(|endpoint| endpoint as &dyn vosu_core::server::routes::HarnessRoute)
+    }
     fn registered_http<'a>(&'a self, request: &'a Request<Body>) -> Option<ProviderFuture<'a, Response>> {
         self.surface.as_ref().map(|surface| Box::pin(surface.http(request)) as ProviderFuture<'a, Response>)
     }
@@ -458,7 +460,7 @@ impl RouteDelegate for ProductionRouteDelegate {
         request: Request<Body>,
         body: Bytes,
     ) -> ProviderFuture<'_, Response> {
-        let wants_page = crate::server::pages::wants_page(request.method(), request.headers());
+        let wants_page = vosu_core::server::pages::wants_page(request.method(), request.headers());
         Box::pin(async move {
             let response = self.dispatch(endpoint, request, body).await;
             // A missing overlay file or page opened in a browser gets the

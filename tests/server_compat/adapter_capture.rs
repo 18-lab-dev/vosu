@@ -146,7 +146,7 @@ fn harness_listener(m: &Mounted) -> (ListenerOwner, String) {
                 .local_addr()
                 .unwrap()
                 .port();
-            let target = vosu::server::runtime::ListenTarget {
+            let target = vosu_core::server::runtime::ListenTarget {
                 host: "127.0.0.1".into(),
                 port,
             };

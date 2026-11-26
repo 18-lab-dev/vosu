@@ -1,8 +1,5 @@
 use super::*;
-use crate::server::{
-    bus_provider::BusStateProvider,
-    routes::{StateJsonProvider, StateRoute},
-};
+use crate::server::bus_provider::BusStateProvider;
 use bytes::Bytes;
 use serde_json::{Value, json};
 use std::sync::{
@@ -11,6 +8,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::watch;
+use vosu_core::server::routes::{StateJsonProvider, StateRoute};
 use vosu_plugin_api::{CborValue, Selector, StateEntry};
 use vosu_surface::filter::Filter;
 use vosu_surface::{

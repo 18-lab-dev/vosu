@@ -26,9 +26,9 @@ use tokio_util::sync::CancellationToken;
 use vosu::{
     runtime::{TestProductionCompositionOptions, start_test_production_composition},
     server::overlay_folders::{FolderOpener, open_folder},
-    server::runtime::ListenTarget,
     server::service::{DeferredUpdateTrigger, UpdateRouteResult, UpdaterHandoff},
 };
+use vosu_core::server::runtime::ListenTarget;
 use vosu_core::{
     app::{
         App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupFlags, StartupOutcome,
@@ -422,7 +422,7 @@ impl UpdaterHandoff for PreparedUpdate {
     fn run_update(
         &self,
         _: bool,
-    ) -> vosu::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
+    ) -> vosu_core::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         let triggered = self.triggered.clone();
         Box::pin(async move {
             Ok(UpdateRouteResult::Updated(DeferredUpdateTrigger::new(

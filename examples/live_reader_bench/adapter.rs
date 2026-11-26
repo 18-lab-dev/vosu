@@ -22,10 +22,8 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Duration,
 };
-use vosu::server::{
-    bus_provider::BusStateProvider,
-    websocket::{Outbound, Schema, StateProvider, WebSocketHub},
-};
+use vosu::server::bus_provider::BusStateProvider;
+use vosu_core::server::websocket::{Outbound, Schema, StateProvider, WebSocketHub};
 use vosu_osu::{project::SessionFacts, publish::BusPublisher};
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot};
@@ -294,7 +292,7 @@ pub(super) fn measure_ticks<R: SynchronizedMemoryReader + 'static>(
             let _enter = attachment.runtime().enter();
             hub.connect()
         };
-        let frame = |receiver: &mut vosu::server::websocket::OutboundReceiver| match attachment
+        let frame = |receiver: &mut vosu_core::server::websocket::OutboundReceiver| match attachment
             .runtime()
             .block_on(async { tokio::time::timeout(Duration::from_secs(5), receiver.recv()).await })
         {

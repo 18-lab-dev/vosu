@@ -78,8 +78,8 @@
 
     #[test]
     fn names_route_is_post_only() {
-        assert_eq!(crate::server::routes::classify(&axum::http::Method::POST, "/api/counters/names/x"), Some(Endpoint::CounterNames));
-        assert_eq!(crate::server::routes::classify(&axum::http::Method::GET, "/api/counters/names/x"), None);
+        assert_eq!(vosu_core::server::routes::classify(&axum::http::Method::POST, "/api/counters/names/x"), Some(Endpoint::CounterNames));
+        assert_eq!(vosu_core::server::routes::classify(&axum::http::Method::GET, "/api/counters/names/x"), None);
     }
 
 

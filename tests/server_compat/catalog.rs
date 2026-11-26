@@ -10,8 +10,8 @@ mod catalog_fixture {
     use std::{collections::HashMap, sync::Mutex};
     use vosu::{
         runtime::{CatalogComposition, CatalogRoots, catalog_target},
-        server::catalog_api::{CatalogApi, CatalogNetwork},
     };
+    use vosu_core::server::catalog_api::{CatalogApi, CatalogNetwork};
     use vosu_core::{
         catalog::{
             install::{DownloadFuture, InstallLayout, PackageTransport},
@@ -230,7 +230,7 @@ mod catalog_fixture {
         pub api: CatalogApi,
         pub network: Arc<Network>,
         pub packages: Arc<Packages>,
-        pub origins: Arc<vosu::server::origins::Origins>,
+        pub origins: Arc<vosu_core::server::origins::Origins>,
         pub composition: CatalogComposition,
         pub base: TempDir,
         _logs: TempDir,
@@ -276,7 +276,7 @@ mod catalog_fixture {
             let network = Arc::new(Network::default());
             let api = composition.api(Arc::new(|| Some(512 * 1024 * 1024)), network.clone());
             let origins = Arc::new(
-                vosu::server::origins::Origins::new(
+                vosu_core::server::origins::Origins::new(
                     "http://127.0.0.1:24050".into(),
                     "http://127.0.0.1:24051".into(),
                 )
@@ -324,7 +324,7 @@ mod catalog_fixture {
             }
             let mut providers = providers();
             providers.delegate = Arc::new(Delegate(self.api.clone()));
-            providers.authorization = Arc::new(vosu::server::origins::OriginAuthorizer {
+            providers.authorization = Arc::new(vosu_core::server::origins::OriginAuthorizer {
                 inner: providers.authorization,
                 origins: Arc::clone(&self.origins),
                 dashboard,

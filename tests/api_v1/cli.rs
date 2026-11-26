@@ -14,14 +14,14 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use vosu::server::{
+use vosu_core::actions::{JobOwner, JobRegistry};
+use vosu_core::server::{
     api_v1::{
         actions::ActionRoutes, router::ApiV1Router, subscriptions::ApiV1SubscriptionHub,
         test_support::ActionBroker,
     },
     routes::PeerAddress,
 };
-use vosu_core::actions::{JobOwner, JobRegistry};
 
 #[derive(Clone)]
 struct Server {

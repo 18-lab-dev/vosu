@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs};
-use vosu::server::routes::CachedJson;
+use vosu_core::server::routes::CachedJson;
 #[path = "state_api_compat/oracle.rs"]
 mod oracle;
 use oracle::*;

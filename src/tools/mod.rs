@@ -90,7 +90,7 @@ pub struct ToolRegistry {
     roots: Vec<(PathBuf, &'static str)>,
     overlay_url: String,
     dashboard_url: Option<String>,
-    origins: Mutex<Option<Arc<crate::server::origins::Origins>>>,
+    origins: Mutex<Option<Arc<vosu_core::server::origins::Origins>>>,
     view: view::Publisher,
     /// Serializes discovery and every `state.json`/settings write.
     gate: tokio::sync::Mutex<()>,
@@ -311,7 +311,7 @@ impl ToolRegistry {
     fn update_available(&self, id: &str) -> bool {
         self.updates.get().is_some_and(|source| source(id))
     }
-    pub fn activate(self: &Arc<Self>, origins: Option<Arc<crate::server::origins::Origins>>) {
+    pub fn activate(self: &Arc<Self>, origins: Option<Arc<vosu_core::server::origins::Origins>>) {
         *self.origins.lock() = origins;
         self.publish();
         let mut watcher = self.watcher.lock();
@@ -452,7 +452,7 @@ impl ToolRegistry {
     }
     /// U0 removal of the explicit target's durable data (user choice only).
     pub async fn remove_installed_data(&self, id: &str) -> io::Result<()> {
-        if !crate::server::ids::valid_id(id) {
+        if !vosu_core::server::ids::valid_id(id) {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         let paths = [self.tool_data(id), self.cache.join(id)];

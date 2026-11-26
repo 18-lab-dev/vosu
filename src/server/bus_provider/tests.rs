@@ -1,6 +1,6 @@
 use super::*;
-use crate::server::websocket::{Outbound, WebSocketHub};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use vosu_core::server::websocket::{Outbound, WebSocketHub};
 use vosu_plugin_api::Selector;
 use vosu_surface::{files::*, resources::*, routes::*, state::*};
 
@@ -199,7 +199,7 @@ async fn ready(provider: &BusStateProvider) -> Bytes {
         _ => panic!("expected ready production bytes"),
     }
 }
-async fn frame(receiver: &mut crate::server::websocket::OutboundReceiver) -> Bytes {
+async fn frame(receiver: &mut vosu_core::server::websocket::OutboundReceiver) -> Bytes {
     match tokio::time::timeout(Duration::from_secs(2), receiver.recv())
         .await
         .unwrap()

@@ -2,7 +2,11 @@
 #[derive(Clone, Default)]
 pub struct DeclaredCalculateProvider(pub vosu_adapter_upstream::files::Provider);
 impl CalculatePpProvider for DeclaredCalculateProvider {
-    fn calculate_pp(&self, query: PpQuery) -> ProviderFuture<'_, CalculateResult> {
+    fn calculate_pp(&self, query: Option<&str>) -> ProviderFuture<'_, CalculateResult> {
+        let query = match vosu_adapter_upstream::calculate::PpQuery::parse(query) {
+            Ok(query) => query,
+            Err(message) => return Box::pin(async move { CalculateResult::Invalid(message) }),
+        };
         Box::pin(async move {
             match self.0.calculate(query).await {
                 vosu_adapter_upstream::calculate::ResultBody::Ready(body) => CalculateResult::Ready(body),

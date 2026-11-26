@@ -116,7 +116,7 @@ fn is_preview_source(request: &Request<Body>) -> bool {
             .get(header::REFERER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| url::Url::parse(value).ok())
-            .and_then(|url| url.query().map(|query| query.split('&').any(|pair| pair == crate::server::pages::OVERLAY_PREVIEW_QUERY)))
+            .and_then(|url| url.query().map(|query| query.split('&').any(|pair| pair == vosu_core::server::pages::OVERLAY_PREVIEW_QUERY)))
             .unwrap_or(false)
 }
 

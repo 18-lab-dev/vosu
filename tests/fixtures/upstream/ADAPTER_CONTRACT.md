@@ -56,25 +56,9 @@ zero, empty history or logical-key alias is an acceptable producer.
 | O `/tourneyAvailability` | enum `pending`, `ready`, `missingScore`; actual lobby-read readiness / missing-score detection, stable aggregate readiness | R/rg | Early no lobby differs from lobby containing a score-less client; transition invalidates views even when tourney stays null |
 | O `/performance/graph/primary` | ordered `f64[]`; `beatmap.graph.primary`, independent of `series` | R/- | Distinct primary/first series, empty and IEEE boundary histories, primary-only dirty update |
 
-The main-player record has `name: str`, `score: f64`, `combo: i64`,
-`maxCombo: i64`, `mods` (the existing typed CalculateMods value),
-`judgements: {miss,meh,ok,good,great,perfect: i64}`, `team: i64`,
-`position: i64` and `isPassing: bool`, sourced directly from
-`gameplay.leaderboard_player`; `visible` is its independent sibling.
-T0 publishes each spectator's corresponding accurate play facts, independent
-overlay slots and precise all-hit history under its typed tourney client
-record. Stable aggregate records preserve IPC id/order, manager controls,
-team/points/chat, user, settings, beatmap stats and play data. These additions
-follow the same 1.3.0 transaction/version rule; API v1 does not acquire HTTP
-500 semantics. No parsed chart, strain/break/kiai/timing payload enters
-`internal`, which remains paths only.
+vosu_core::server
 
-A4/T0 lane clarification: the aggregate `/tourney` regular parent and nested
-`keysOverlay`, `play.hitErrors`, and `play.preciseUnstableRate` precision leaves
-use `activity: always`. Activity is evaluated on the selected manager, whose
-Tourney state is not Play; gameplay gating there would permanently suppress
-spectator demand. The instance roster unions only established aggregate
-subscriptions and resets its derived inputs on unsubscribe/detach/manager loss.
+vosu_core::server
 
 ## Per-source field fidelity
 
@@ -171,13 +155,7 @@ they cannot resurrect extension data. X0 deletes `strip_vosu_extensions` and
 ad hoc regular-keys normalization. Nonempty extension source values must be
 present in the bus fixture while their raw emitted keys are absent.
 
-State-schema differences (`bestOf`, `roomId`, accurate null rather than whole
-response failure) authorize **no** adapter-wire deviation: restore bestOF /
-roomID and use availability to distinguish omission from failure. The former
-stable-manager temporary exemption is closed: T0 supplied the aggregate and X0
-the distinct manager/spectator evidence, and the
-[divergence ledger](DIVERGENCES.md) records the closure and contains no
-temporary entry. No temporary exemption is approved.
+vosu_core::server
 
 ## R1 declared-root files and calculation
 

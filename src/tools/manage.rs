@@ -198,14 +198,14 @@ impl crate::server::service::ToolRegistryRoutes for ToolRegistry {
     fn session(
         self: Arc<Self>,
         body: Bytes,
-    ) -> crate::server::routes::ProviderFuture<'static, Response> {
+    ) -> vosu_core::server::routes::ProviderFuture<'static, Response> {
         Box::pin(async move { self.exchange_session(&body) })
     }
     fn dashboard(
         self: Arc<Self>,
         request: Request,
         body: Bytes,
-    ) -> crate::server::routes::ProviderFuture<'static, Response> {
+    ) -> vosu_core::server::routes::ProviderFuture<'static, Response> {
         Box::pin(async move { ToolRegistry::dashboard(&self, request, body).await })
     }
 }

@@ -6,7 +6,7 @@
 use super::{Value, json, oracle, ready};
 use oracle::adapter_fixture::Fixture;
 use std::{fs, sync::Arc};
-use vosu::server::routes::CachedJson;
+use vosu_core::server::routes::CachedJson;
 use vosu_osu_model::{enums::ClientType, launch::InstanceSettings, states::TourneyManagerChatItem};
 use vosu_osu_state::{Delivery, StateBundleSnapshot, TourneyManagerState, TourneyUserState};
 
@@ -326,7 +326,7 @@ fn state_schema_contract_entries_do_not_authorize_adapter_wire_differences() {
         String::from_utf8_lossy(&pinned)
     );
     let frame = {
-        use vosu::server::websocket::{Schema, StateProvider};
+        use vosu_core::server::websocket::{Schema, StateProvider};
         fixture.providers[3]
             .capture(Schema::V2Precise)
             .expect("precise feed snapshot")

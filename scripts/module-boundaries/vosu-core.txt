@@ -17,6 +17,19 @@ resource_io -> plugin
 resource_io -> resources
 # B2, deleted in M8
 plugin -> config
+# M7 C0: the generic HTTP/WebSocket mechanics moved from the root crate. The
+# listeners, routes, API v1 and catalog routes serve core's own services.
+server -> actions
+server -> api
+server -> catalog
+server -> config
+server -> desktop
+server -> logging
+server -> plugin
+server -> removed_routes
+server -> resource_io
+server -> resources
+server -> state
 report -> config
 updater -> desktop
 # catalog persistence uses the existing vosu-core -> vosu-sys crate edge

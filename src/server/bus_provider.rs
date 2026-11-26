@@ -2,14 +2,14 @@
 //! wire semantics; this module owns latest-only caches and connection demand.
 mod demand;
 mod identity;
-use super::{
-    routes::{CachedJson, StateJsonProvider, StateRoute},
-    websocket::{Schema, StateDemand, StateProvider, StateSnapshot},
-};
 use bytes::Bytes;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::watch;
+use vosu_core::server::{
+    routes::{CachedJson, StateJsonProvider, StateRoute},
+    websocket::{Schema, StateDemand, StateProvider, StateSnapshot},
+};
 use vosu_surface::filter::Filter;
 use vosu_surface::{
     projection::{Projection, ProjectionError, ProjectionView},
@@ -208,7 +208,10 @@ impl StateProvider for BusStateProvider {
     }
 }
 impl StateJsonProvider for BusStateProvider {
-    fn cached_json(&self, route: StateRoute) -> super::routes::ProviderFuture<'_, CachedJson> {
+    fn cached_json(
+        &self,
+        route: StateRoute,
+    ) -> vosu_core::server::routes::ProviderFuture<'_, CachedJson> {
         Box::pin(async move {
             let _retained = self.adapter.retain(&[]);
             let schema = match route {

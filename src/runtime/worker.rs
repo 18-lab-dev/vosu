@@ -57,7 +57,7 @@ pub struct ListenerOwner {
     pub(super) state: watch::Receiver<ListenerState>,
     pub(super) cancel: CancellationToken,
     pub(super) task: JoinHandle<()>,
-    pub(super) broker: Option<Arc<crate::server::broker::BrokerToken>>,
+    pub(super) broker: Option<Arc<vosu_core::server::broker::BrokerToken>>,
     pub(super) broker_logger: Option<vosu_core::logging::Logger>,
     pub(super) cli_task: Option<JoinHandle<()>>,
 }
@@ -76,7 +76,7 @@ impl ListenerOwner {
         logger: Option<vosu_core::logging::Logger>,
     ) -> io::Result<Self> {
         let broker = match path.and_then(|path| {
-            path.map(crate::server::broker::BrokerToken::new)
+            path.map(vosu_core::server::broker::BrokerToken::new)
                 .transpose()
         }) {
             Ok(token) => token.map(Arc::new),

@@ -12,4 +12,4 @@
 1045 crates/vosu-sys/src/platform/linux/capabilities.rs
 1161 crates/vosu-sys/src/process/linux.rs
 1201 crates/vosu-sys/src/process/linux/tests/mod.rs
-1114 src/server/websocket/tests.rs
+1114 crates/vosu-core/src/server/websocket/tests.rs

@@ -43,8 +43,8 @@ use vosu_core::plugin::{
 use vosu_plugin_api::manifest::settings::SettingsSchema;
 use vosu_plugin_api::{Capability, Runtime};
 
-use crate::server::routes::ProviderFuture;
 use crate::server::service::PluginManagementRoutes;
+use vosu_core::server::routes::ProviderFuture;
 
 /// How a plugin is trusted (`docs/v2/plugin-abi.md` §7.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

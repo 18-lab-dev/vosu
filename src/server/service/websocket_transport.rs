@@ -9,7 +9,7 @@ async fn bridge_socket(
     processor: Arc<CommandProcessor>,
     client_namespace: u64,
     relays: Arc<WebSocketRelaySink>,
-    (query, mutation, key_grant): (Option<&str>, super::auth::MutationAuthorization, Option<super::api_keys::KeyGrant>),
+    (query, mutation, key_grant): (Option<&str>, vosu_core::server::auth::MutationAuthorization, Option<vosu_core::server::api_keys::KeyGrant>),
 ) {
     let vosu_surface::routes::SurfaceFeed { state: connection, receiver: mut outbound } = feed;
     let Some(client_id) = namespaced_client_id(client_namespace, connection.id()) else {
@@ -156,7 +156,7 @@ async fn bridge_socket(
             };
             // All legacy sockets can read settings and adjust their own filters.
             // Same-origin sockets and authenticated local command brokers may write.
-            let authorized = key_grant.as_ref().map_or(mutation.0, super::api_keys::KeyGrant::allowed);
+            let authorized = key_grant.as_ref().map_or(mutation.0, vosu_core::server::api_keys::KeyGrant::allowed);
             if key_grant.is_some() && !authorized {
                 return Some(SocketTerminal::SendClose { code: 1008, reason: "API key revoked" });
             }

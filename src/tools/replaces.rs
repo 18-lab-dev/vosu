@@ -109,8 +109,8 @@ impl ToolRegistry {
             Err(error) => return Err(error.to_string()),
         };
         let tx: Replacement = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-        if !crate::server::ids::valid_id(&tx.old)
-            || !crate::server::ids::valid_id(&tx.new)
+        if !vosu_core::server::ids::valid_id(&tx.old)
+            || !vosu_core::server::ids::valid_id(&tx.new)
             || tx.old == tx.new
             || !tx.state.trusted
             || tx.state.catalog_source.is_none()

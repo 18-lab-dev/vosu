@@ -369,10 +369,10 @@ async fn network_timer_reverts_port_typo_without_a_browser_and_preserves_other_a
 
 #[tokio::test]
 async fn network_confirmation_waits_for_the_new_effective_dashboard_target() {
-    use crate::server::runtime::{EffectiveListener, ListenerState};
+    use vosu_core::server::runtime::{EffectiveListener, ListenerState};
     let root = tempfile::tempdir().unwrap();
     let store = Arc::new(bounded!(ConfigStore::initialize(root.path().join("vosu.toml"))).unwrap());
-    let origins = Arc::new(crate::server::origins::Origins::new("http://127.0.0.1:24050".into(), "http://127.0.0.1:24051".into()).unwrap());
+    let origins = Arc::new(vosu_core::server::origins::Origins::new("http://127.0.0.1:24050".into(), "http://127.0.0.1:24051".into()).unwrap());
     let state = |host: &str, port| ListenerState {
         effective: Some(EffectiveListener { target: ListenTarget::new(host, port), address: format!("{host}:{port}").parse().unwrap() }),
         ..ListenerState::default()
@@ -434,7 +434,7 @@ async fn wildcard_network_apply_retains_the_verified_remote_return_origin() {
     let store = Arc::new(bounded!(ConfigStore::initialize(root.path().join("vosu.toml"))).unwrap());
     store.update(|config| config.dashboard_ip = "0.0.0.0".into());
     bounded!(store.flush()).unwrap();
-    let origins = Arc::new(crate::server::origins::Origins::new(
+    let origins = Arc::new(vosu_core::server::origins::Origins::new(
         "http://127.0.0.1:24050".into(), "http://127.0.0.1:24051".into()).unwrap());
     let mut service = RuntimeConfig::new(store.clone());
     service.origins = Some(origins.clone());

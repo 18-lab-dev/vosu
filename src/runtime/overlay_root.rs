@@ -21,7 +21,7 @@ use vosu_overlay_host::{
 use vosu_plugin_api::{Message, SettingsChanged};
 use vosu_surface::routes::RegistrationLease;
 
-use crate::server::websocket::WebSocketHub;
+use vosu_core::server::websocket::WebSocketHub;
 
 pub(crate) const OVERLAY_HOST_ID: &str = "vosu.overlayhost";
 
