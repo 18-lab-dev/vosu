@@ -259,7 +259,6 @@ impl WebSocketEndpoints {
 
 #[derive(Clone)]
 pub struct ProductionServices {
-    pub pages: PageService,
     pub counters: Arc<ReloadableCounterService>,
     pub beatmap: Arc<dyn CurrentBeatmapProvider>,
     pub config: Arc<dyn ConfigUpdateService>,
@@ -271,7 +270,6 @@ pub struct ProductionServices {
 
 impl ProductionServices {
     pub fn with_native_report_probe(
-        pages: PageService,
         counters: Arc<ReloadableCounterService>,
         beatmap: Arc<dyn CurrentBeatmapProvider>,
         config: Arc<dyn ConfigUpdateService>,
@@ -280,7 +278,6 @@ impl ProductionServices {
         websocket: WebSocketEndpoints,
     ) -> Self {
         Self {
-            pages,
             counters,
             beatmap,
             config,

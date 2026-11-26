@@ -295,38 +295,33 @@ impl ProductionRouteDelegate {
         }
     }
 
+    /// The page shells, `/assets/<name>` and `/favicon.ico` are bundled hosts'
+    /// exact registrations on the listener the request arrived on: the tool
+    /// host's design-system set on both roles, the dashboard host's shells
+    /// and assets on the dashboard role only (A7). Core embeds and serves none
+    /// of them; an unregistered path is a 404.
     async fn page(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
-        if endpoint == Endpoint::Favicon {
-            let mut response = embedded_response(self.services.pages.favicon());
+        let listener = request
+            .extensions()
+            .get::<crate::server::routes::SurfaceAdmission>()
+            .map_or(vosu_surface::listener::ListenerRole::Overlay, |admission| {
+                admission.listener
+            });
+        let Some(surface) = &self.surface else {
+            return not_found();
+        };
+        let Some(mut response) = surface.listener_route(listener, &request).await else {
+            return not_found();
+        };
+        // The second-launch probe (`vosu_core::desktop::existing_dashboard`)
+        // recognises a running vosu by this header on a 200 favicon.
+        if endpoint == Endpoint::Favicon && response.status() == StatusCode::OK {
             response.headers_mut().insert(
                 "x-vosu-identity",
                 axum::http::HeaderValue::from_static("vosu"),
             );
-            return response;
         }
-        // The dashboard host serves the page shells and its own assets on the
-        // dashboard listener only; the root keeps the shared asset files.
-        let dashboard = request
-            .extensions()
-            .get::<crate::server::routes::SurfaceAdmission>()
-            .is_some_and(|admission| {
-                admission.listener == vosu_surface::listener::ListenerRole::Dashboard
-            });
-        if dashboard || endpoint != Endpoint::Asset {
-            if let Some(surface) = &self.surface
-                && let Some(response) = surface.dashboard(&request).await
-            {
-                return response;
-            }
-            if endpoint != Endpoint::Asset {
-                return not_found();
-            }
-        }
-        match self.services.pages.lookup_get(request.uri().path()) {
-            PageLookup::Embedded(page) => embedded_response(page),
-            PageLookup::Static(fallback) => self.static_fallback(fallback, request).await,
-            PageLookup::NotFound => not_found(),
-        }
+        response
     }
 
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
@@ -353,19 +348,6 @@ impl ProductionRouteDelegate {
                 *response.body_mut() = Body::empty();
             }
             response
-        }
-    }
-
-    async fn static_fallback(&self, fallback: StaticFallback, request: Request<Body>) -> Response {
-        match fallback {
-            StaticFallback::RedirectTrailingSlash { location } => {
-                let query = query_pairs(&request);
-                let location = if query_value(&query, "vosuProfile").is_some() {
-                    format!("{location}?{}", request.uri().query().unwrap_or_default())
-                } else { location };
-                redirect(location)
-            },
-            StaticFallback::CounterPath { .. } => self.counter_static(&request).await,
         }
     }
 

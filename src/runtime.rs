@@ -44,7 +44,6 @@ use vosu_overlay_host::{
 
 use crate::server::{
     auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
-    pages::PageService,
     routes::{CachedJson, RequestAuthorizer, RouteProviders, StateJsonProvider, StateRoute},
     runtime::{
         AxumListenerFactory, ListenTarget, ListenerRuntime, ListenerState, TokioBinder,

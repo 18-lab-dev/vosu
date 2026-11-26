@@ -225,7 +225,6 @@ impl Mounted {
                 ));
                 let unused = Arc::new(Unused);
                 let services = ProductionServices::with_native_report_probe(
-                    vosu::server::pages::PageService,
                     counters.clone(),
                     Arc::new(NoBeatmap),
                     unused.clone(),

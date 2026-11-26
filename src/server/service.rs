@@ -37,7 +37,7 @@ use vosu_overlay_host::commands::{
 
 use super::{
     files,
-    pages::{EmbeddedResponse, PageLookup, PageService, StaticFallback},
+    pages::EmbeddedResponse,
     routes::{
         CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
         ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate, StateJsonProvider, StateRoute,

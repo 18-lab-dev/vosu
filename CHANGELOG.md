@@ -64,7 +64,13 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Removed `docs/tools/tool.schema.json`, the 1.x `tool.toml` editor schema.
 - `/tools/_host/v2/bridge.js` is the only tool bridge. `vosu.fetch` and
   `assets/server/tool-bridge-v1.js` (with its `/websocket/v2/subscribe`
-  client) are removed; `/assets/tool-bridge-v1.js` is 404.
+  client) are removed; `/assets/tool-bridge-v1.js` is 404, and so are the
+  `/assets/tool-bridge.js` and `/assets/design.html` copies (use
+  `/tools/_host/v2/bridge.js` and `/tools/_host/v1/design`).
+- The shared design files under `/assets/` and `/favicon.ico` are served by
+  `vosu.toolhost` on both listeners (the overlay listener only while the
+  dashboard is off); `/assets/` names outside the design and dashboard sets
+  are 404.
 - The bridge removes the launch fragment before any asynchronous work, sends
   the session only on the API v1 action and job requests it builds, and
   rejects `.` and `..` as a session target. A reload, bookmark or replayed

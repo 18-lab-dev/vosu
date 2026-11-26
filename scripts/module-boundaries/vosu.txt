@@ -2,5 +2,4 @@ runtime -> plugin_host
 runtime -> plugins
 runtime -> server
 runtime -> tools
-server -> assets
 tools -> server

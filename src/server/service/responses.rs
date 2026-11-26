@@ -98,12 +98,6 @@ fn deferred_update_response(
         .expect("valid deferred update response")
 }
 
-fn query_pairs(request: &Request<Body>) -> Vec<(String, String)> {
-    url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-        .into_owned()
-        .collect()
-}
-
 fn decoded_query_value(query: &str, key: &str) -> Option<String> {
     url::form_urlencoded::parse(query.as_bytes())
         .find_map(|(candidate, value)| (candidate == key).then(|| value.into_owned()))
@@ -121,11 +115,6 @@ fn is_preview_request(request: &Request<Body>) -> bool {
 
 fn namespaced_client_id(namespace: u64, local_id: u64) -> Option<u64> {
     local_id.checked_mul(8)?.checked_add(namespace)
-}
-fn query_value<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    pairs
-        .iter()
-        .find_map(|(candidate, value)| (candidate == key).then_some(value.as_str()))
 }
 fn decoded_capture(request: &Request<Body>, prefix: &str) -> Option<String> {
     percent_decode_once(request.uri().path().strip_prefix(prefix)?).ok()
@@ -157,13 +146,6 @@ fn hex(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
-}
-fn redirect(location: String) -> Response {
-    Response::builder()
-        .status(StatusCode::MOVED_PERMANENTLY)
-        .header(header::LOCATION, location)
-        .body(Body::empty())
-        .expect("valid redirect")
 }
 fn response(status: StatusCode, content_type: &'static str, body: Bytes) -> Response {
     Response::builder()

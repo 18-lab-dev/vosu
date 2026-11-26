@@ -25,7 +25,6 @@
         let unused = Arc::new(UnusedServices);
         let delegate = Arc::new(ProductionRouteDelegate::new(
             ProductionServices::with_native_report_probe(
-                PageService,
                 counters,
                 Arc::new(Current::default()),
                 unused.clone(),
@@ -55,10 +54,6 @@
                 "127.0.0.1:0".parse().unwrap(),
             ))
             .unwrap();
-        assert_eq!(
-            bounded!(vosu_core::desktop::existing_dashboard("127.0.0.1", listener.address().port())),
-            Some(vosu_core::desktop::dashboard_url("127.0.0.1", listener.address().port())),
-        );
 
         let mut client = bounded!(tokio::net::TcpStream::connect(listener.address()))
             .unwrap();

@@ -127,6 +127,14 @@ async fn dashboard_off_binds_no_dashboard_listener_and_keeps_overlays_and_api_v1
             run.status(&format!("{}/api/v1/sessions", run.base())).await,
             200
         );
+        // The tool host keeps the design-system set on the overlay role.
+        for path in ["/assets/tokens.css", "/favicon.ico"] {
+            assert_eq!(
+                run.status(&format!("{}{path}", run.base())).await,
+                200,
+                "{path}"
+            );
+        }
         // The environment override never rewrites the configured key.
         let persisted: toml::Table =
             toml::from_str(&fs::read_to_string(&run.config).unwrap()).unwrap();

@@ -13,7 +13,7 @@
         let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
         let unused = Arc::new(UnusedServices);
         let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-            PageService, counters, Arc::new(Current::default()),
+            counters, Arc::new(Current::default()),
             unused.clone(), unused.clone(), unused,
             WebSocketEndpoints {
                 v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
@@ -48,7 +48,7 @@
         let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
         let unused = Arc::new(UnusedServices);
         let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-            PageService, counters, Arc::new(Current::default()),
+            counters, Arc::new(Current::default()),
             unused.clone(), unused.clone(), unused,
             WebSocketEndpoints {
                 v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
@@ -98,9 +98,6 @@
             percent_decode_once(raw).unwrap(),
             "https://example.com/a%2Fb.zip?x=a%26b",
         );
-        let query = query_pairs(&request);
-        assert_eq!(query_value(&query, "name"), Some("counter"));
-        assert_eq!(query_value(&query, "update"), Some("true"));
     }
 
     #[test]

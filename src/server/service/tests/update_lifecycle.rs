@@ -92,7 +92,6 @@
         let updater = Arc::new(UpdatedServices(update_started.clone()));
         let delegate = Arc::new(ProductionRouteDelegate::new(
             ProductionServices::with_native_report_probe(
-                PageService,
                 counters,
                 Arc::new(Current::default()),
                 unused.clone(),
@@ -374,7 +373,6 @@ Connection: close\r\n\r\n",
         let unused = Arc::new(UnusedServices);
         let updater = Arc::new(ConsentCapturingUpdater);
         let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-            PageService,
             counters,
             Arc::new(Current::default()),
             unused.clone(),

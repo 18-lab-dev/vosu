@@ -280,6 +280,19 @@ impl ProductionRuntime {
                 vosu_tool_host::ToolHost::mount(requester, tools.tool_host_views()).map_err(
                     |error| io::Error::other(format!("tool host registration failed: {error:?}")),
                 )
+            })
+            .and_then(|tool_host| {
+                // A7.3: with the dashboard off nothing registers on its role.
+                use vosu_surface::listener::ListenerRole::{Dashboard, Overlay};
+                let roles: &[_] = if self.dashboard {
+                    &[Overlay, Dashboard]
+                } else {
+                    &[Overlay]
+                };
+                tool_host.mount_design_system(roles).map_err(|error| {
+                    io::Error::other(format!("design-system registration failed: {error:?}"))
+                })?;
+                Ok(tool_host)
             });
         match tool_host {
             Ok(tool_host) => *self.tool_host.get_mut() = Some(tool_host),
@@ -310,7 +323,6 @@ impl ProductionRuntime {
             return Err(error);
         }
         let services = ProductionServices::with_native_report_probe(
-            PageService,
             Arc::clone(&counters),
             beatmap.clone(),
             Arc::new(RuntimeConfig {

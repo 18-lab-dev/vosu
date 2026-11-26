@@ -217,7 +217,6 @@ pub async fn start_test_production_composition(
         return Err(error);
     }
     let services = ProductionServices::with_native_report_probe(
-        PageService,
         Arc::clone(&counters),
         beatmap.clone(),
         Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),

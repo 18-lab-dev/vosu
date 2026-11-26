@@ -262,19 +262,20 @@ impl SurfaceRouter {
         })
     }
 
-    /// A dashboard-listener route of the dashboard host (page shells and
-    /// dashboard assets). Dashboard providers read no state, so the request
-    /// carries an empty selection; `None` when no provider serves the path.
-    pub fn dashboard(&self, request: &Request<Body>) -> ProviderFuture<'_, Option<Response>> {
+    /// A stateless route registered on `listener`: the dashboard host's page
+    /// shells and assets, or the tool host's design-system set. These
+    /// providers read no state, so the request carries an empty selection;
+    /// `None` when no provider serves the path on that listener.
+    pub fn listener_route(
+        &self,
+        listener: vosu_surface::listener::ListenerRole,
+        request: &Request<Body>,
+    ) -> ProviderFuture<'_, Option<Response>> {
         let selected = surface_request(request, Arc::new(empty_selection()));
         Box::pin(async move {
             match self
                 .host
-                .dispatch_surface_route(
-                    vosu_surface::listener::ListenerRole::Dashboard,
-                    false,
-                    selected?,
-                )
+                .dispatch_surface_route(listener, false, selected?)
                 .await
             {
                 Some(ProviderResponse::Http(response)) => Some(surface_http_response(response)),

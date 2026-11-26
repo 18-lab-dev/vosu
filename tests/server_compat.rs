@@ -53,7 +53,6 @@ use vosu::server::{
         trailing_slash_location,
     },
     overlay_folders::{FolderOpener, open_folder},
-    pages::{PageLookup, PageService},
     routes::{
         self, CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress,
         ProviderFuture, RouteDelegate, RouteProviders, StateJsonProvider, StateRoute,
@@ -624,21 +623,6 @@ fn file_range_mime_and_path_security_matrix_is_strict() {
             ResourceOutcome::Missing(MissingKind::NotFound)
         ));
     }
-}
-
-#[test]
-fn embedded_pages_and_assets_preserve_status_mime_and_no_cache_contract() {
-    let pages = PageService;
-    // The dashboard page shells and dashboard set are the dashboard host's
-    // (dashboard listener only); the root keeps the shared design files.
-    assert!(
-        matches!(pages.lookup_get("/assets/homepage.css"), PageLookup::Embedded(page) if page.status == 404)
-    );
-    let css = pages.asset("tokens.css");
-    assert_eq!(css.status, 200);
-    assert_eq!(css.content_type, "text/css; charset=utf-8");
-    assert!(!css.body.is_empty());
-    assert_eq!(pages.asset("../LICENSE").status, 404);
 }
 
 #[derive(Default)]

@@ -1,18 +1,9 @@
-//! Compile-time embedded, source-pinned daemon assets.
+//! Compile-time embedded, source-pinned daemon assets. The root serves no
+//! `assets/server/` file: the dashboard set belongs to `vosu-dashboard`, the
+//! design-system set to `vosu-tool-host` and `report.html` to core's report
+//! generation (A7 asset inventory).
 
 use rust_embed::RustEmbed;
-
-/// The shared `/assets/` files this executable still serves itself on both
-/// listeners. The dashboard set and its page template are embedded once by
-/// `vosu-dashboard` (dashboard listener only), and `report.html` only by
-/// core's report generation (A7 asset inventory).
-#[derive(RustEmbed)]
-#[folder = "assets/server/"]
-#[exclude = "homepage*"]
-#[exclude = "dashboard-*"]
-#[exclude = "update-notice.css"]
-#[exclude = "report.html"]
-pub struct ServerAssets;
 
 /// Source-pinned offsets template used by process-memory tests and the live
 /// reader benchmark. Production offset loading and the embedded generator

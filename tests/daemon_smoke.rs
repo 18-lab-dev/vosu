@@ -46,6 +46,7 @@ async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
 }
 
 include!("daemon_smoke/websocket.rs");
+include!("daemon_smoke/design_system.rs");
 
 fn assert_no_update_artifacts(root: &Path) {
     if !root.exists() {
@@ -271,22 +272,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
     assert!(!config_home.join("vosu/vosu.env").exists());
     assert!(!config_home.join("vosu/tosu.env").exists());
-    // Shared design files stay on both listeners; the dashboard set is the
-    // dashboard host's and is served on the dashboard listener only (A7).
-    let css = bounded!(client.get(format!("{base}/assets/tokens.css")).send()).unwrap();
-    assert_eq!(css.status(), 200);
-    assert!(!bounded!(css.bytes()).unwrap().is_empty());
-    let overlay_dashboard_css =
-        bounded!(client.get(format!("{base}/assets/homepage.css")).send()).unwrap();
-    assert_eq!(overlay_dashboard_css.status(), 404);
-    let css = bounded!(
-        client
-            .get(format!("{management}/assets/homepage.css"))
-            .send()
-    )
-    .unwrap();
-    assert_eq!(css.status(), 200);
-    assert!(!bounded!(css.bytes()).unwrap().is_empty());
+    assert_design_system_routes(&client, &base, &management).await;
 
     let seeded_counter = bounded!(client.get(format!("{base}/seeded-counter/")).send()).unwrap();
     assert_eq!(seeded_counter.status(), 200);
