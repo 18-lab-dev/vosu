@@ -334,10 +334,7 @@ pub(super) fn committed_on_disk(layout: &InstallLayout, id: &str, kind: PackageK
             .is_file()
 }
 impl RuntimeHandoff for Recorder {
-    fn load_in_process<'a>(
-        &'a self,
-        request: LoadRequest<'a>,
-    ) -> HandoffFuture<'a, Result<(), String>> {
+    fn load_plugin(self: Arc<Self>, request: LoadRequest) -> HandoffFuture<'static, LoadStatus> {
         let layout = self.layout.lock().unwrap().clone().unwrap();
         let committed = committed_on_disk(&layout, &request.record.id, PackageKind::Plugin)
             && request.directory
@@ -348,7 +345,7 @@ impl RuntimeHandoff for Recorder {
             .lock()
             .unwrap()
             .push((request.record.id.clone(), committed));
-        Box::pin(async { Ok(()) })
+        Box::pin(async { LoadStatus::Loaded })
     }
     fn rescan_web(&self) -> HandoffFuture<'_, ()> {
         self.web.fetch_add(1, Ordering::SeqCst);
@@ -771,7 +768,7 @@ async fn package_and_art_servers_never_receive_catalog_credentials() {
 }
 
 #[tokio::test]
-async fn process_plugin_commits_with_exact_approval_but_requires_m5_to_run() {
+async fn process_plugin_commits_with_exact_approval_before_handoff() {
     let user = "alice/plugins";
     let fixture = Fixture::new(vec![record(user, false)]).await;
     let mut process = plugin("acme.proc", "1.0.0", "process", json!([]));
@@ -785,17 +782,14 @@ async fn process_plugin_commits_with_exact_approval_but_requires_m5_to_run() {
     let record = fixture.records().records.remove(0);
     let artifact = record.artifact.clone().unwrap();
     assert_eq!(artifact.runtime, Runtime::Process);
-    assert!(
-        record
-            .approval
-            .as_ref()
-            .is_some_and(|a| a.matches(&artifact))
+    assert!(record.matches_approval(record.process_digests.unwrap()));
+    assert_eq!(
+        *fixture.recorder.calls.lock().unwrap(),
+        [("acme.proc".into(), true)]
     );
-    // Never substituted by an in-process load.
-    assert!(fixture.recorder.calls.lock().unwrap().is_empty());
     assert_eq!(
         fixture.executor.load_reports()[0].status,
-        LoadStatus::RequiresM5ProcessRuntime
+        LoadStatus::Loaded
     );
 }
 

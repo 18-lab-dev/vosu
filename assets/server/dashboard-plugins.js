@@ -34,7 +34,7 @@ const RUNTIME = { process: 'Separate process', 'in-process': 'Inside vosu' };
 // A catalog plugin's load outcome (`/api/catalog/status` `load_reports`).
 const LOADS = {
   loaded: { label: 'Running', dot: 'ok' },
-  'requires-process-runtime': { label: 'Installed, not running', dot: 'idle' },
+  approval_required: STATES.approval_required,
   refused: { label: 'Not loaded', dot: 'warn' },
   failed: { label: 'Load failed', dot: 'error' },
 };
@@ -241,7 +241,7 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
       wrap.append(stop);
     }
     if (settings) wrap.append(settings);
-    if (plugin.trust === 'user' && plugin.approved) {
+    if (plugin.approval_revocable ?? (plugin.trust === 'user' && plugin.approved)) {
       const revoke = button('Revoke approval', `Revoke approval for ${name}`, { danger: true });
       revoke.addEventListener('click', async () => {
         if (!await confirmAction(`Revoke approval for ${name}?`, `${name} runs as its own process: revoking stops it now, and it stays unloaded until you approve it again.`, 'Revoke', { danger: true })) return;
@@ -276,22 +276,22 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
   // A catalog-installed plugin: what core recorded at install (exact
   // source, runtime, approval presence), the source's current trust, the
   // last operation's load outcome and the A6b.7 pending-restart marker.
-  function catalogRow({ record, source, load, pending }) {
+  function catalogRow({ record, source, load, pending }, process) {
     const name = record.id;
-    const key = pending ? 'pending_restart' : (load?.status ?? 'installed');
+    const key = pending ? 'pending_restart' : (process?.state ?? load?.status ?? 'installed');
     const shown = pending
       ? { label: 'Revocation pending restart', dot: 'warn' }
-      : (LOADS[load?.status] ?? { label: 'Installed', dot: 'idle' });
+      : (STATES[process?.state] ?? LOADS[load?.status] ?? { label: 'Installed', dot: 'idle' });
     const trust = record.official ? 'Official source'
       : !source ? 'Source removed'
         : source.trusted ? 'Trusted source' : 'Untrusted source';
-    const approval = record.runtime === 'process' ? (record.approved ? 'Approved' : 'Not approved') : null;
+    const approval = !process && record.runtime === 'process' ? (record.approved ? 'Approved' : 'Not approved') : null;
     const meta = [record.id, RUNTIME[record.runtime], trust, approval,
       record.installed_for === 'dependency' ? 'Dependency' : null].filter(Boolean).join(' · ');
     const from = el('p', { className: 'plugin-row__line' }, 'From ', el('code', { text: record.source }));
-    const wrap = el('div', { className: 'plugin-row__actions' });
-    const unloaded = ['requires-process-runtime', 'refused', 'failed'].includes(load?.status);
-    if (!unloaded) {
+    const wrap = process ? actions(process) : el('div', { className: 'plugin-row__actions' });
+    const unloaded = ['approval_required', 'refused', 'failed'].includes(load?.status);
+    if (!process && !unloaded) {
       const settings = settingsButton(record.id, name);
       if (settings) wrap.append(settings);
     }
@@ -312,14 +312,20 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
         el('p', { className: 'plugin-row__meta', text: meta }),
         from,
         pending ? el('p', { className: 'plugin-row__line plugin-row__pending', text: PENDING_RESTART_TEXT }) : null,
-        load?.detail && !pending ? el('p', { className: 'tool-detail', text: load.detail }) : null),
+        process && stateLine(process) ? el('p', { className: 'plugin-row__line', text: stateLine(process) }) : null,
+        !pending && process?.state !== 'running' && (process?.detail ?? load?.detail)
+          ? el('p', { className: 'tool-detail', text: process?.detail ?? load.detail }) : null),
       wrap);
   }
 
   function render() {
-    const external = state.plugins.filter((plugin) => plugin.trust !== 'bundled');
+    const matches = new Map(state.plugins.filter((plugin) => plugin.provenance?.kind === 'installed')
+      .map((plugin) => [plugin.id, plugin]));
+    const ids = new Set(state.catalog.map(({ record }) => record.id));
+    const external = state.plugins.filter((plugin) => plugin.trust !== 'bundled'
+      && !(plugin.provenance?.kind === 'installed' && ids.has(plugin.id)));
     const builtIn = state.plugins.filter((plugin) => plugin.trust === 'bundled');
-    rows.replaceChildren(...external.map(row), ...state.catalog.map(catalogRow));
+    rows.replaceChildren(...external.map(row), ...state.catalog.map((entry) => catalogRow(entry, matches.get(entry.record.id))));
     status.textContent = external.length || state.catalog.length
       ? ''
       : 'No plugins installed. Install one from Available below, or start vosu with --plugin <folder>.';

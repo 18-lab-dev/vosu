@@ -8,7 +8,9 @@ use super::{
     preflight,
 };
 use crate::catalog::plans::{PinnedAdd, Reason};
+use crate::plugin::approval::{Digests, Sha256Digest};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use std::{path::Path, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use vosu_net::streaming::StagedTree;
@@ -71,7 +73,7 @@ pub(super) async fn prepare(
     let official = add.source.is_official();
     let limit = add.package_limit_bytes;
     let verified_entry = Arc::clone(&entry);
-    let staged = tokio::task::spawn_blocking(move || {
+    let (staged, process_digests) = tokio::task::spawn_blocking(move || {
         let mut file = file;
         download::verify(&mut file, package.size, &package.sha256, &cancel)?;
         let staged = preflight::stage(file, &parent, limit, &cancel)?;
@@ -81,7 +83,7 @@ pub(super) async fn prepare(
         } else {
             SchemaProvenance::Untrusted
         };
-        validate(
+        let digests = validate(
             staged.path(),
             kind,
             &verified_entry,
@@ -89,7 +91,7 @@ pub(super) async fn prepare(
             provenance,
             &common_defs,
         )?;
-        Ok::<_, InstallError>(staged)
+        Ok::<_, InstallError>((staged, digests))
     })
     .await
     .map_err(|_| InstallError::Worker)??;
@@ -112,6 +114,7 @@ pub(super) async fn prepare(
             target: add.package_target.clone(),
             sha256,
             artifact: add.artifact.clone(),
+            process_digests,
             approval: None,
             installed_for: InstalledFor::merge(None, add.reason),
         },
@@ -138,7 +141,7 @@ pub(super) fn validate(
     target: &str,
     provenance: SchemaProvenance,
     common_defs: &Value,
-) -> Result<(), InstallError> {
+) -> Result<Option<Digests>, InstallError> {
     let text = preflight::read_asset(root, "manifest.toml", MAX_MANIFEST_BYTES)?;
     let manifest = PackageManifest::parse(&text).map_err(mismatch)?;
     let fields = manifest.fields();
@@ -173,13 +176,20 @@ pub(super) fn validate(
     for art in [fields.icon, fields.banner].into_iter().flatten() {
         preflight::confined(root, art)?;
     }
+    let mut process_digests = None;
     match &manifest {
         PackageManifest::Plugin(plugin) => {
             let library = plugin
                 .targets
                 .get(target)
                 .ok_or(InstallError::MissingTarget)?;
-            preflight::confined(root, &library.library)?;
+            let path = preflight::confined(root, &library.library)?;
+            if plugin.runtime == vosu_plugin_api::manifest::Runtime::Process {
+                process_digests = Some(
+                    Digests::files(Sha256Digest(Sha256::digest(text.as_bytes()).into()), &path)
+                        .map_err(|_| InstallError::InvalidAsset(library.library.clone()))?,
+                );
+            }
             if let Some(path) = &plugin.settings_schema {
                 let settings = preflight::read_asset(root, path, MAX_SETTINGS_SCHEMA_BYTES)?;
                 SettingsSchema::parse(&settings)
@@ -200,5 +210,5 @@ pub(super) fn validate(
             preflight::confined(root, "index.html")?;
         }
     }
-    Ok(())
+    Ok(process_digests)
 }

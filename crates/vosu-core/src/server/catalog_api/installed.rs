@@ -38,10 +38,7 @@ fn load_status(status: &LoadStatus) -> (&'static str, Option<String>) {
     match status {
         LoadStatus::Loaded => ("loaded", None),
         LoadStatus::WebRescanned => ("web-rescanned", None),
-        LoadStatus::RequiresM5ProcessRuntime => (
-            "requires-process-runtime",
-            Some("installed; the process plugin runtime is not available in this build".into()),
-        ),
+        LoadStatus::ApprovalRequired => ("approval_required", None),
         LoadStatus::Refused(error) => ("refused", Some(error.to_string())),
         LoadStatus::Failed(error) => ("failed", Some(error.clone())),
     }

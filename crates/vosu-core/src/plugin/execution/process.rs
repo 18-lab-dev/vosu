@@ -12,6 +12,7 @@ use std::time::Duration;
 use vosu_plugin_api::{PluginManifest, vosu_status};
 
 use crate::identity::PluginInstanceId;
+use crate::plugin::approval::Provenance;
 use crate::plugin::error::HostError;
 use crate::plugin::host_services::{self, PluginHostHandler};
 
@@ -25,15 +26,26 @@ pub struct ProcessPackage {
     root: PathBuf,
     library: PathBuf,
     manifest_sha256: [u8; 32],
+    installed: Option<Provenance>,
 }
 
 impl ProcessPackage {
-    pub(crate) fn new(root: PathBuf, library: PathBuf, manifest_sha256: [u8; 32]) -> Self {
+    pub(crate) fn new(
+        root: PathBuf,
+        library: PathBuf,
+        manifest_sha256: [u8; 32],
+        installed: Option<Provenance>,
+    ) -> Self {
         Self {
             root,
             library,
             manifest_sha256,
+            installed,
         }
+    }
+
+    pub(crate) fn installed_provenance(&self) -> Option<&Provenance> {
+        self.installed.as_ref()
     }
 
     /// The canonical package directory.

@@ -50,7 +50,7 @@ export async function pollJob(requestJson, jobId, onPhase) {
 const LOAD_LABELS = {
   loaded: 'Loaded',
   'web-rescanned': 'Ready',
-  'requires-process-runtime': 'Installed, not running',
+  approval_required: 'Needs approval',
   refused: 'Not loaded',
   failed: 'Load failed',
 };

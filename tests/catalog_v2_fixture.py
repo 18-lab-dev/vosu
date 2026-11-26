@@ -89,11 +89,11 @@ class Catalog:
                 'packages': {'any': package}, **extra}
 
     def plugin(self, plugin_id, runtime, artifact, requires=(), provides=(), matcher=None, settings=None,
-               *, linux_user_namespaces=False):
+               *, linux_user_namespaces=False, extra_files=None):
         library = f'lib/{artifact.name}'
         fields = {'manifest_version': 1, 'kind': 'plugin', 'id': plugin_id, 'name': plugin_id, 'version': '1.0.0',
                   'host': self.host_range, 'abi_version': 1, 'runtime': runtime}
-        files = {library: artifact.read_bytes()}
+        files = {library: artifact.read_bytes(), **(extra_files or {})}
         if settings is not None:
             fields['settings_schema'] = 'settings.schema.json'
             files['settings.schema.json'] = json.dumps(settings)

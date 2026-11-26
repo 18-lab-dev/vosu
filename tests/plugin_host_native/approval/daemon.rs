@@ -124,6 +124,15 @@ impl Daemon {
     /// roots under `root` (reused by a later start under the same root, so
     /// a restart keeps its approvals). Returns once the dashboard answered.
     pub fn start(root: &Path, executable: &Path, plugins: &[&Path]) -> Self {
+        Self::start_with(root, executable, plugins, |_| {})
+    }
+
+    pub fn start_with(
+        root: &Path,
+        executable: &Path,
+        plugins: &[&Path],
+        configure: impl FnOnce(&mut Command),
+    ) -> Self {
         let home = root.join("home");
         // A release daemon owns its program directory (the updater's owner
         // lock), and Windows keeps a portable install's config beside the
@@ -190,6 +199,7 @@ impl Daemon {
             .stdin(Stdio::null())
             .stdout(output.try_clone().unwrap())
             .stderr(output);
+        configure(&mut command);
         let child = spawn_retrying(|| command.spawn());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -356,6 +366,22 @@ impl Daemon {
         );
         assert_eq!(status, 200, "{action}: {text}\n{}", self.log());
         serde_json::from_str(&text).unwrap()
+    }
+
+    pub fn invoke(&self, action: &str, arguments: &Value, broker: &Path) -> Value {
+        let credential: Value = serde_json::from_slice(&std::fs::read(broker).unwrap()).unwrap();
+        let request = self
+            .client
+            .post(format!("{}/api/v1/actions/{action}?wait=2000", self.base))
+            .bearer_auth(credential["token"].as_str().unwrap())
+            .json(&serde_json::json!({"arguments": arguments}));
+        self.runtime.block_on(async {
+            let response = request.send().await.unwrap();
+            let status = response.status();
+            let body = response.text().await.unwrap();
+            assert_eq!(status, 200, "{body}");
+            serde_json::from_str(&body).unwrap()
+        })
     }
 
     /// Kills the daemon (its plugin hosts die with it: parent-death signal

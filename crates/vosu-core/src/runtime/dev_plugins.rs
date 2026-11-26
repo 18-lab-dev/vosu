@@ -11,9 +11,8 @@
 //!   runs only after approval;
 //! - stable release builds refuse every `--plugin` package.
 //!
-//! A `--plugin` process package starts only through the approval gate
-//! (`vosu_core::plugin::approval::ApprovalGate`), the one launcher
-//! production composition installs, and only when such a package exists.
+//! A process package from either origin starts only through the shared
+//! approval gate (`vosu_core::plugin::approval::ApprovalGate`).
 //! Every load and restart checks the package's approval record; without
 //! one it stays unloaded until the dashboard approves it
 //! (`plugin_management`). An optional plugin's failure is logged and never
@@ -29,7 +28,7 @@ use crate::plugin::approval::{ApprovalGate, ApprovalStore};
 use crate::plugin::process::control::StartupStage;
 use crate::plugin::process::launcher::ProcessHostLauncher;
 use crate::plugin::{
-    self, DEFAULT_QUEUE_CAPACITY, Execution, HostError, PluginHost, PluginInstanceId, WorkerPool,
+    self, DEFAULT_QUEUE_CAPACITY, HostError, PluginHost, PluginInstanceId, WorkerPool,
 };
 use vosu_sys::platform::Paths;
 
@@ -241,15 +240,13 @@ pub(super) fn load_bundled(
     Ok(bundled.len() as u64)
 }
 
-/// Installs the approval-gated process launcher once. `false` when this
-/// executable cannot start plugin hosts; process packages then fail to
-/// start, and the daemon keeps running.
+/// Installs the shared approval-gated launcher for both plugin origins.
 fn install_gate(
     host: &PluginHost,
     store: &Arc<ApprovalStore>,
     logger: &crate::logging::Logger,
     identity: &str,
-) -> bool {
+) {
     let installed = ProcessHostLauncher::start(identity)
         .map_err(HostError::Io)
         .and_then(|launcher| {
@@ -258,7 +255,6 @@ fn install_gate(
     if let Err(error) = &installed {
         logger.warn(format!("process plugins are unavailable: {error}"));
     }
-    installed.is_ok()
 }
 
 /// Loads and registers every `--plugin <dir>` directory with `host`, in
@@ -266,10 +262,6 @@ fn install_gate(
 /// [`load_bundled`] already assigned) so the two groups' ids never
 /// collide. A directory that fails to load or start is logged and listed,
 /// never fatal: a development plugin must not take the daemon down.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "explicit startup composition inputs, numbered after the bundled set"
-)]
 pub(super) fn load_development(
     bundle: &Bundle,
     host: &Arc<PluginHost>,
@@ -277,12 +269,10 @@ pub(super) fn load_development(
     id_offset: u64,
     logger: &crate::logging::Logger,
     pool: &Arc<WorkerPool>,
-    store: &Arc<ApprovalStore>,
     roster: &mut Roster,
 ) {
     let debug_build = cfg!(debug_assertions);
     let version = bundle.version();
-    let mut gate = None;
     let dirs = inputs.development;
     for (index, (dir, official)) in dirs
         .iter()
@@ -331,11 +321,6 @@ pub(super) fn load_development(
                 continue;
             }
         };
-        if matches!(loaded.execution(), Execution::Process(_)) {
-            gate.get_or_insert_with(|| {
-                install_gate(host, store, logger, bundle.plugin_host_identity)
-            });
-        }
         let created = host.create_instance(instance, &loaded, dir.clone(), Some(Arc::clone(pool)));
         match &created {
             // The gate already logged that approval needs the dashboard.
@@ -385,16 +370,8 @@ pub(super) fn load_all(
         dashboard,
     )?;
     let store = Arc::new(ApprovalStore::open(paths.config()));
-    load_development(
-        bundle,
-        host,
-        inputs,
-        offset,
-        logger,
-        &pool,
-        &store,
-        &mut roster,
-    );
+    install_gate(host, &store, logger, bundle.plugin_host_identity);
+    load_development(bundle, host, inputs, offset, logger, &pool, &mut roster);
     Ok(PluginManagement::new(Arc::clone(host), store, roster))
 }
 

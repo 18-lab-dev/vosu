@@ -190,7 +190,7 @@ impl ProductionRuntime {
         let logger = self.logger.clone();
         let dev_dirs = std::mem::take(&mut self.dev_plugins);
         let dashboard = self.dashboard;
-        let management = tokio::task::spawn_blocking(move || {
+        let mut management = tokio::task::spawn_blocking(move || {
             dev_plugins::load_all(bundle, &host, dev_dirs, &paths, &logger, dashboard)
         })
         .await
@@ -217,8 +217,11 @@ impl ProductionRuntime {
             super::CatalogRoots::production(&self.paths, static_root.clone()),
             super::CatalogComposition::production_transport(),
             bundle,
+            management.approvals(),
         );
-        *self.catalog.get_mut() = Some(catalog.await?);
+        let catalog = catalog.await?;
+        catalog.attach_management(&mut management);
+        *self.catalog.get_mut() = Some(catalog);
         // Owned from here on: every later failure leaves it to `shutdown`.
         let overlay = bundle.hosts.overlay(OverlayInputs {
             host: Arc::clone(&self.plugins),

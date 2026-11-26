@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
     catalog::{
-        approvals::{Approval, Artifact},
+        approvals::Artifact,
         install::{
             DownloadFuture, HandoffFuture, InstalledDocument, InstalledFor, InstalledKind,
             InstalledRecord, LoadRequest, LoadStatus, RECORDS_FILE,
@@ -65,12 +65,9 @@ impl PackageTransport for NoTransport {
 #[derive(Default)]
 struct Recorder(Mutex<Vec<String>>);
 impl RuntimeHandoff for Recorder {
-    fn load_in_process<'a>(
-        &'a self,
-        request: LoadRequest<'a>,
-    ) -> HandoffFuture<'a, Result<(), String>> {
+    fn load_plugin(self: Arc<Self>, request: LoadRequest) -> HandoffFuture<'static, LoadStatus> {
         self.0.lock().unwrap().push(request.record.id.clone());
-        Box::pin(async { Ok(()) })
+        Box::pin(async { LoadStatus::Loaded })
     }
     fn rescan_web(&self) -> HandoffFuture<'_, ()> {
         Box::pin(async {})
@@ -181,18 +178,40 @@ fn artifact(id: &str, runtime: Runtime, hash: u8) -> Artifact {
     }
 }
 fn record(artifact: Artifact, approved: bool) -> InstalledRecord {
-    InstalledRecord {
+    let digests = Digests {
+        manifest_sha256: crate::plugin::approval::Sha256Digest([1; 32]),
+        library_sha256: crate::plugin::approval::Sha256Digest([2; 32]),
+    };
+    let mut record = InstalledRecord {
         kind: InstalledKind::Plugin,
         id: artifact.id.clone(),
         version: artifact.version.clone(),
         source: artifact.source.clone(),
         target: "x86_64-unknown-linux-gnu".into(),
         sha256: artifact.sha256.iter().map(|b| format!("{b:02x}")).collect(),
-        approval: approved.then(|| Approval::grant(&artifact)),
+        approval: None,
+        process_digests: (artifact.runtime == Runtime::Process).then_some(digests),
         artifact: Some(artifact),
         installed_for: InstalledFor::Requested,
+    };
+    if approved {
+        record.approval = Some(digests.record(&record.id, record.provenance().unwrap()));
     }
+    record
 }
+
+#[test]
+fn legacy_archive_only_approval_is_not_authority_for_installed_bytes() {
+    let record = record(artifact("acme.proc", Runtime::Process, 3), false);
+    let mut old = serde_json::to_value(&record).unwrap();
+    old.as_object_mut().unwrap().remove("process_digests");
+    old["approval"] = serde_json::json!({"artifact": record.artifact});
+    let reopened: InstalledRecord = serde_json::from_value(old).unwrap();
+    assert_eq!(reopened.id, record.id);
+    assert!(reopened.approval.is_none());
+    assert!(reopened.process_digests.is_none());
+}
+
 fn write_records(layout: &InstallLayout, records: Vec<InstalledRecord>) {
     std::fs::create_dir_all(&layout.state).unwrap();
     std::fs::write(
@@ -307,10 +326,7 @@ async fn untrust_clears_approvals_durably_and_pins_running_code_until_restart() 
         status(&reports, "acme.idle"),
         LoadStatus::Refused(PolicyError::InProcessDenied)
     );
-    assert_eq!(
-        status(&reports, "acme.proc"),
-        LoadStatus::RequiresM5ProcessRuntime
-    );
+    assert_eq!(status(&reports, "acme.proc"), LoadStatus::Loaded);
     let observed = runtime.offers().generation();
     runtime.replace_sources(sources_with_user()).await.unwrap();
     assert!(
@@ -324,7 +340,7 @@ async fn untrust_clears_approvals_durably_and_pins_running_code_until_restart() 
     let revoked = runtime.set_trust(user(), false).await.unwrap();
     assert_eq!(revoked.pending_restart, ["acme.live"]);
     assert_eq!(revoked.approvals_cleared, ["acme.proc"]);
-    assert!(revoked.stop_process.is_empty());
+    assert_eq!(revoked.stop_process, ["acme.proc"]);
     assert!(runtime.offers().generation() > observed);
     // Durable before the source change: a restart reads no approval.
     assert_eq!(runtime.installed_generation(), 2);
@@ -348,7 +364,10 @@ async fn untrust_clears_approvals_durably_and_pins_running_code_until_restart() 
         LoadStatus::Refused(PolicyError::RevocationPendingRestart)
     );
     assert_eq!(status(&reports, "acme.idle"), LoadStatus::Loaded);
-    assert_eq!(*fixture.handoff.0.lock().unwrap(), ["acme.idle"]);
+    assert_eq!(
+        *fixture.handoff.0.lock().unwrap(),
+        ["acme.proc", "acme.idle", "acme.proc"]
+    );
 
     // Untrust again: the next load is blocked by current policy.
     runtime.set_trust(user(), false).await.unwrap();

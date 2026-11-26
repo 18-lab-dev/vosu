@@ -12,9 +12,8 @@
 //! 3. journals and commits the dependency-first graph all-or-rollback, with
 //!    provenance, approvals and `installed_for` records (`commit`);
 //! 4. only then hands committed packages to the runtime under the **current**
-//!    T0 policy: in-process plugins through `RuntimeHandoff`, process plugins
-//!    refused as requiring the M5 process runtime (never an in-process
-//!    substitute), web packages through the existing host rescan until M7.
+//!    T0 policy: native plugins through `RuntimeHandoff`, web packages through
+//!    the existing host rescan.
 //!
 //! Cancellation is honoured until publication starts; publication always runs
 //! to commit or rollback, and the operation is finished only afterwards.
@@ -169,6 +168,8 @@ pub enum InstallError {
     Layout,
     #[error("install worker failed")]
     Worker,
+    #[error("installed process plugin did not stop: {0}")]
+    Stop(String),
     #[error("filesystem operation failed: {0}")]
     Io(String),
     #[cfg(test)]
@@ -188,9 +189,7 @@ pub enum LoadStatus {
     Loaded,
     /// Served by the existing web host after its rescan (until M7).
     WebRescanned,
-    /// Committed and authorized, but real child-process execution is M5's;
-    /// it is never loaded in-process instead.
-    RequiresM5ProcessRuntime,
+    ApprovalRequired,
     /// Current source policy/approval refuses execution (T0 §7.1).
     Refused(PolicyError),
     Failed(String),
@@ -202,11 +201,10 @@ pub struct LoadReport {
     pub status: LoadStatus,
 }
 
-/// Exact committed package handed to the in-process loader after
-/// `CurrentPolicy::authorize_load` succeeded at this boundary.
-pub struct LoadRequest<'a> {
-    pub record: &'a InstalledRecord,
-    pub directory: &'a Path,
+/// Exact committed package and its current-policy runtime requirement.
+pub struct LoadRequest {
+    pub record: InstalledRecord,
+    pub directory: PathBuf,
     pub requirement: Requirement,
 }
 
@@ -214,10 +212,14 @@ pub type HandoffFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Root composition seam. Called only after the complete graph committed.
 pub trait RuntimeHandoff: Send + Sync {
-    fn load_in_process<'a>(
-        &'a self,
-        request: LoadRequest<'a>,
-    ) -> HandoffFuture<'a, Result<(), String>>;
+    fn load_plugin(self: Arc<Self>, request: LoadRequest) -> HandoffFuture<'static, LoadStatus>;
+    /// Blocking, called before directories move or on source revocation.
+    /// Returns whether the old generation should resume if publication fails.
+    fn stop_process(&self, _id: &str) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn resume_process(&self, _id: &str) {}
+    fn forget_process(&self, _id: &str) {}
     fn rescan_web(&self) -> HandoffFuture<'_, ()>;
     /// The installed graph durably published a new generation (before any
     /// load). Composition refreshes generation-pinned consumers such as G0
@@ -291,6 +293,30 @@ impl InstallExecutor {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+
+    pub(crate) fn update_plugin_report(&self, id: &str, status: Option<LoadStatus>) {
+        let mut reports = self
+            .shared
+            .reports
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let matching = reports
+            .iter()
+            .position(|report| report.kind == InstalledKind::Plugin && report.id == id);
+        match (matching, status) {
+            (Some(index), Some(status)) => reports[index].status = status,
+            (Some(index), None) => {
+                reports.remove(index);
+            }
+            (None, Some(status)) => reports.push(LoadReport {
+                kind: InstalledKind::Plugin,
+                id: id.to_owned(),
+                status,
+            }),
+            (None, None) => {}
+        }
+    }
+
     /// Startup load of the already committed graph (the store's `open` ran
     /// recovery first) through the same current-policy handoff as a fresh
     /// install, dependency-first in record order. Composition calls it once,
@@ -405,16 +431,51 @@ async fn execute(
     operation.progress("installing", "");
     let store = Arc::clone(&shared.store);
     let faults = *shared.faults.lock().unwrap_or_else(PoisonError::into_inner);
+    let handoff = Arc::clone(&shared.handoff);
     let committed = tokio::task::spawn_blocking(move || {
-        let committed = commit::commit(
+        let current = store.snapshot();
+        let mut stopped = Vec::new();
+        let result = commit::commit(
             store.layout(),
-            &store.snapshot(),
+            &current,
             prepared,
             &approvals,
             faults,
-        )?;
-        store.published(committed.document.clone());
-        Ok::<_, InstallError>(committed.records)
+            |next| {
+                for record in next.iter().rev() {
+                    if current
+                        .record(record.package_kind(), &record.id)
+                        .and_then(|previous| previous.artifact.as_ref())
+                        .is_some_and(|artifact| artifact.runtime == Runtime::Process)
+                    {
+                        let resume = handoff
+                            .stop_process(&record.id)
+                            .map_err(InstallError::Stop)?;
+                        stopped.push((record.id.clone(), resume));
+                    }
+                }
+                Ok(())
+            },
+        );
+        match result {
+            Ok(committed) => {
+                store.published(committed.document);
+                for (id, _) in stopped {
+                    handoff.forget_process(&id);
+                }
+                Ok(committed.records)
+            }
+            Err(error) => {
+                if !matches!(error, InstallError::RecoveryRequired) {
+                    for (id, resume) in stopped.iter().rev() {
+                        if *resume {
+                            handoff.resume_process(id);
+                        }
+                    }
+                }
+                Err(error)
+            }
+        }
     })
     .await
     .map_err(|_| InstallError::Worker)??;
@@ -452,25 +513,27 @@ async fn hand_off(
                     generation: *generation,
                     sources,
                 };
-                let installed = InstalledPolicy::new(artifact.clone(), record.approval.clone())
-                    .with_pending_restart(shared.policy.pending_restart(&record.id));
-                match policy.authorize_load(&installed) {
+                let requirement = if artifact.runtime == Runtime::Process {
+                    // Even an unapproved process package is registered. M5's
+                    // approval gate is the only place it can acquire authority.
+                    policy.requirement(artifact)
+                } else {
+                    policy.authorize_load(
+                        &InstalledPolicy::new(artifact.clone(), None)
+                            .with_pending_restart(shared.policy.pending_restart(&record.id)),
+                    )
+                };
+                match requirement {
                     Err(error) => LoadStatus::Refused(error),
-                    Ok(_) if artifact.runtime == Runtime::Process => {
-                        LoadStatus::RequiresM5ProcessRuntime
+                    Ok(requirement) => {
+                        Arc::clone(&shared.handoff)
+                            .load_plugin(LoadRequest {
+                                record: record.clone(),
+                                directory,
+                                requirement,
+                            })
+                            .await
                     }
-                    Ok(requirement) => match shared
-                        .handoff
-                        .load_in_process(LoadRequest {
-                            record,
-                            directory: &directory,
-                            requirement,
-                        })
-                        .await
-                    {
-                        Ok(()) => LoadStatus::Loaded,
-                        Err(error) => LoadStatus::Failed(error),
-                    },
                 }
             }
             _ => LoadStatus::Refused(PolicyError::StalePolicy),

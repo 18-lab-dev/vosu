@@ -270,6 +270,7 @@ mod catalog_fixture {
                 },
                 packages.clone(),
                 &vosu::BUNDLE,
+                &vosu_core::plugin::approval::ApprovalStore::open(&root.join("config")),
             ))
             .unwrap();
             let network = Arc::new(Network::default());

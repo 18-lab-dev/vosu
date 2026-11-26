@@ -62,7 +62,7 @@ pub struct RevocationReport {
     pub approvals_cleared: Vec<String>,
     /// Running in-process code now "revocation pending restart".
     pub pending_restart: Vec<String>,
-    /// Running process plugins M5 must stop (none run before M5).
+    /// Installed process plugins whose current source authority was revoked.
     pub stop_process: Vec<String>,
 }
 
@@ -124,14 +124,17 @@ pub(super) fn apply(
                 let Some(artifact) = record.artifact else {
                     continue;
                 };
-                let running = live.contains(&record.id);
-                let mut policy = InstalledPolicy::new(artifact, record.approval.clone());
+                // A process can be starting or in backoff without appearing
+                // in the live providers list. Its restart must stop too.
+                let running = artifact.runtime == vosu_plugin_api::Runtime::Process
+                    || live.contains(&record.id);
+                let mut policy = InstalledPolicy::new(artifact, None);
                 match policy.source_changed(&before, &after, running) {
-                    Revocation::None => {}
+                    Revocation::None => continue,
                     Revocation::StopProcess => report.stop_process.push(record.id.clone()),
                     Revocation::PendingRestart => markers.push(record.id.clone()),
                 }
-                if record.approval.is_some() && policy.approval().is_none() {
+                if record.approval.is_some() {
                     report.approvals_cleared.push(record.id);
                 }
             }

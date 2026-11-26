@@ -123,8 +123,8 @@ async fn install_plans_review_native_runtime_and_approval_then_confirm_once() {
         .await;
     assert_eq!(
         status["load_reports"],
-        json!([{"kind":"plugin","id":"acme.proc","status":"requires-process-runtime",
-            "detail":"installed; the process plugin runtime is not available in this build"}])
+        json!([{"kind":"plugin","id":"acme.proc","status":"failed",
+            "detail":"runtime = \"process\" requires the plugin-host launcher, which is not available"}])
     );
     let installed = fixture
         .json(Method::GET, "/api/catalog/installed", Value::Null)

@@ -139,7 +139,7 @@ try {
   check(await install.isDisabled(), 'unapproved native plan can be confirmed');
   await dialog.screenshot({ path: `${evidence}/plan-review-d8.png` });
   await dialog.getByRole('checkbox').check();
-  await confirmPlan(page, dialog, 'Installed, not running', 'plan-outcome-process');
+  await confirmPlan(page, dialog, 'Loaded', 'plan-outcome-process');
 
   // 4. Untrusted in-process: an error plan that cannot be confirmed.
   const echo = page.locator('.tools-catalog [data-catalog-entry="acme.echo"]');
@@ -167,6 +167,7 @@ try {
   const echoText = await echoRow.textContent();
   for (const fact of ['Inside vosu', 'Trusted source', 'Running']) check(echoText.includes(fact), `acme.echo row lacks "${fact}": ${echoText}`);
   check(await plugins.locator('[data-catalog-plugin="acme.paths"]').count() === 1, 'the catalog process plugin is not listed under Plugins');
+  await plugins.locator('[data-catalog-plugin="acme.paths"][data-state="running"]').waitFor();
   check(await plugins.locator('[data-tool-id]').count() === 0, 'a web tool is listed under Plugins');
   check(await page.getByRole('heading', { name: 'Web tools', exact: true }).count() === 1, 'no separate Web tools section');
   await echoRow.getByRole('button', { name: 'Settings for acme.echo', exact: true }).click();

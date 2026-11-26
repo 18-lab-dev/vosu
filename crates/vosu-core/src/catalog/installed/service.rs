@@ -21,6 +21,10 @@ pub trait RemovalRuntime: Send + Sync {
     /// move fail, which rolls the whole closure back. An error aborts with
     /// nothing removed. Errors must be redacted local diagnostics.
     fn stop<'a>(&'a self, plan: &'a RemovalPlan) -> HandoffFuture<'a, Result<(), String>>;
+    /// After a known rollback, resume process plugins stopped by this attempt.
+    fn rolled_back(&self) -> HandoffFuture<'_, ()> {
+        Box::pin(async {})
+    }
     /// After the durable commit: forget the removed packages, rescan web hosts.
     fn removed<'a>(&'a self, plan: &'a RemovalPlan) -> HandoffFuture<'a, ()>;
     /// Only for the explicit target, only when the user chose `remove_data`.
@@ -216,13 +220,22 @@ async fn execute(
         .map(|removal| (removal.kind, removal.id.clone()))
         .collect();
     let faults = *shared.faults.lock().unwrap_or_else(PoisonError::into_inner);
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         let document = commit_removal(store.layout(), &store.snapshot(), &removals, faults)?;
         store.published(document);
         Ok::<_, UninstallError>(())
     })
     .await
-    .map_err(|_| UninstallError::Worker)??;
+    .map_err(|_| UninstallError::Worker)?;
+    if let Err(error) = result {
+        if !matches!(
+            error,
+            UninstallError::Install(crate::catalog::install::InstallError::RecoveryRequired)
+        ) {
+            shared.runtime.rolled_back().await;
+        }
+        return Err(error);
+    }
     shared.runtime.removed(plan).await;
     if request.remove_data {
         operation.progress("removing data", &request.id);

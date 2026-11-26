@@ -1252,12 +1252,21 @@ perform `replaces` data migration: an add whose `replaces` names an installed
 package fails with no change. The installed-records generation is the single
 commit point: recovery rolls forward when it matches the journal's next
 generation, rolls back when it matches the previous one, and otherwise refuses
-rather than guessing. After commit, each plugin is authorized against current
-source policy and approval; a `process` plugin is recorded and reported as
-requiring the M5 process runtime and is never loaded in-process instead.
+rather than guessing.
+
+**2026-11-26 — M5 runtime handoff.** Expose each native package only after
+commit. A `process` package starts in the same supervised `vosu plugin-host`
+as a development package, never inside core. The gate rechecks current
+source policy and the installed manifest and library digests on every start,
+including backoff restarts and daemon startup. `/api/catalog/status` reports
+`loaded` after `READY`, `approval_required` for missing or changed approval,
+and `failed` for other startup failures; `/api/plugins` has the current
+supervisor state. Update and uninstall stop the old host and cancel its
+pending restart before moving its package tree. An update does not carry
+approval across a change to any bound value.
 
 **K0 composition contract (`vosu-core::catalog::runtime`, root
-`src/runtime/catalog.rs`).** One daemon-lifetime `CatalogRuntime` owns the
+`crates/vosu-core/src/runtime/catalog.rs`).** One daemon-lifetime `CatalogRuntime` owns the
 composed services. Startup order: `CatalogFetchService::open` (S0 recovery
 reconciles C0 credential membership first), `InstalledStore::open` (I0 crash
 recovery), one executor and the G0 offer service registered as the plugin
@@ -1272,10 +1281,12 @@ array and a package installed from an exact official identity register
 installed source and the debug `--plugin` override register as third-party.
 Source removal and untrust run under the shared operation gate: T0's cleared
 approvals are durably published (a new installed generation) **before** the
-source change, then running in-process plugins whose authority was removed
-get the daemon-lifetime "revocation pending restart" marker; re-trust never
-clears it, only a daemon restart does. While installed records are unreadable,
-a trust-lowering change is refused rather than risking a resurrected approval.
+source change. Process plugins that lose approval or source trust stop and
+stay unloaded under the new user-trust policy. Running in-process plugins
+whose authority was removed get the daemon-lifetime "revocation pending
+restart" marker; re-trust never clears it, only a daemon restart does. While
+installed records are unreadable, a trust-lowering change is refused rather
+than risking a resurrected approval.
 G0 refreshes after every source
 publication or mutation and every installed change with the installed
 generation P0 pins. Install roots, until M7 replaces the legacy web hosts:
@@ -1622,11 +1633,10 @@ start.
   absolute directory>}`. For M6b it is `{"kind": "installed", "source",
   "version", "package_sha256"}`.
 
-Records live in `plugins/approvals.json` under the configuration root, inside
-the prerelease subdirectory for prerelease builds (D21). The file is replaced
-atomically in the same directory. It holds one record per `(id, provenance)`.
-Only an explicit approval writes it: the approval route below, or M6b's plan
-confirmation.
+Development records live in `plugins/approvals.json` under the configuration
+root, inside the prerelease subdirectory for prerelease builds (D21). The
+file is replaced atomically in the same directory and holds one record per
+`(id, provenance)`. Only the approval route below writes it.
 
 **Checking a record.** Every load and every restart, automatic or manual,
 checks every bound value. Any difference leaves the plugin
@@ -1636,8 +1646,20 @@ The plugin host also re-verifies the library digest from the file it opened
 (plugin-abi.md §7.6), so replacing the file after core's check fails startup
 with stage `approval`.
 
-M6b's install-plan `approve` list (A6b.6) produces records of this same
-shape. There is no second approval store.
+**2026-11-26 — installed approvals.** The installed-record publication
+(`catalog-installed.json` in the channel-specific `<data>/catalog` root)
+owns the sole A5.5 record for an installed plugin. M6b's `approve` list
+consents to the pinned archive; commit derives its manifest and library
+digests from that verified staged tree and writes the approval in the same
+publication as the installed graph. The management routes replace or
+remove that same record; they never mirror it to `plugins/approvals.json`.
+An official or trusted-source process plugin that needs no explicit approval
+must still match both digests from the verified archive. Previously installed
+packages with only an archive-level approval lack those executable digests:
+the install is retained, but those packages need review before they run.
+The approval route revalidates a changed manifest and refuses a changed id,
+version or requested runtime; installing different package metadata through
+the catalog requires a new plan.
 
 **2026-11-26 ([ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md)).**
 The native approval disclosure shows the same fixed Linux user-namespace
@@ -1659,7 +1681,7 @@ that manifest.
 | Route | Effect |
 | --- | --- |
 | `GET /api/plugins` | Lists every plugin with `id`, `runtime`, `trust`, `provenance`, `generation`, `state`, `reason`, crash events in the current window and the next restart delay. A plugin that needs approval also has `approval: {"manifest_sha256", "library_sha256"}`. |
-| `POST /api/plugins/<id>/approval` `{"manifest_sha256", "library_sha256"}` | Both digests must equal the currently pending ones, or the result is 409 `approval_stale`. It persists the record, then starts the plugin. A plugin that is not `user`-trust `process` is 400 `approval_not_applicable`. |
+| `POST /api/plugins/<id>/approval` `{"manifest_sha256", "library_sha256"}` | Both digests must equal the currently pending ones, or the result is 409 `approval_stale`. Persists the record, then starts the plugin. Returns 400 `approval_not_applicable` when the plugin does not need explicit approval. |
 | `DELETE /api/plugins/<id>/approval` | Removes the record and runs the controlled teardown (plugin-abi.md §7.6). The plugin becomes `approval_required`. |
 | `POST /api/plugins/<id>/restart` `{"generation"}` | Manual restart (A5.3) of exactly that generation's plugin. It resets the crash window and the `failed` latch and starts a new generation. |
 | `POST /api/plugins/<id>/stop` `{"generation"}` | Controlled teardown of exactly that generation. The plugin becomes `stopped` and is not restarted until a manual restart. |

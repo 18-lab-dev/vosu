@@ -291,6 +291,13 @@ plugin state, not API-visible fields.
 
 The dashboard's **Tools** page manages installed applications and lists tools and plugins from your catalog sources in **Available**. Official [18-LAB tools and their SDK](https://github.com/18-lab-dev/vosu-tools) live separately; vosu embeds none. Every installation is a catalog v2 **install plan**: vosu resolves the package and its dependencies once, shows each package with its source and, for plugins, native code, runtime, trust, approval and whether it can read the osu! client's install paths, and installs only after you confirm the whole plan once. Packages are downloaded over HTTPS without credentials, checked against catalog SHA-256 and size, and committed together, dependencies first; nothing is installed unless all of them are. The outcome shows each package's load result. **Uninstall…** previews what goes with it (dependencies nothing else needs; their data stays) and refuses while another package still requires it; you choose to keep or remove its data. A running in-process plugin cannot be unloaded safely: after removing it, or untrusting its source, vosu shows **Restart vosu to finish** until you restart.
 
+Catalog process plugins start in their own supervised hosts after install,
+and again when vosu restarts. A plugin from an untrusted source needs
+approval for the exact package in its install plan; changing the installed
+manifest or library needs fresh review before those bytes can run. Use the
+Tools page's **Plugins** section to review, revoke, stop, or restart one.
+Updating or uninstalling a process plugin stops the old host first.
+
 [vosulay](https://github.com/18-lab-dev/vosulay) is available from its official catalog source for in-game overlays: one install plan adds the `vosulay-editor` web tool and the `vosu.vosulay` plugin it requires. Rendering and game integration stay outside the vosu daemon, and standalone vosulay remains supported.
 
 A 2.0 tool is a static web application served on the overlay origin; it runs no process of its own. It reads game state through [API v1](docs/v2/api-v1.md) like an overlay, and anything native is a plugin action it may invoke only when its manifest's `requires`/`optional` lists that action and the action resolves to an installed plugin. Open a tool from the dashboard to give that one tab the session actions need; opening the same URL directly, reloading or bookmarking it is read-only. Tools from a source you have not trusted stay untrusted until you trust them on the Tools page. Installed tools go under `<vosu data directory>/tools/<id>/`; developers can use `vosu --tool <directory>` for a trusted development override. A 1.x tool that ships only `tool.toml` is listed as needing a 2.0 update and is never run.

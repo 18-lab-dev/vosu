@@ -127,6 +127,7 @@ impl Pkg {
             sha256: sha256.iter().map(|b| format!("{b:02x}")).collect(),
             artifact,
             approval: None,
+            process_digests: None,
             installed_for: self.origin,
         }
     }

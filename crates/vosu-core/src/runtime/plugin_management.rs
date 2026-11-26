@@ -1,9 +1,9 @@
 //! The dashboard's plugin management (catalog-v2.md "Process-plugin approval
 //! and management", A5.5; `docs/v2/plugin-abi.md` §7.6).
 //!
-//! [`Roster`] lists every plugin composition tried to load, in instance
-//! order: the bundled array, then each `--plugin <dir>`, including those
-//! that failed to load. [`PluginManagement`] serves the `/api/plugins`
+//! [`Roster`] lists the bundled array and `--plugin <dir>` inputs; the
+//! catalog adds and removes its own entries as packages commit.
+//! [`PluginManagement`] serves the `/api/plugins`
 //! routes over it. Routing has already confined them to the dashboard
 //! listener and checked dashboard-origin provenance and `X-Vosu-CSRF` on
 //! every `POST` and `DELETE` (`server::routes`). Every action names a
@@ -22,11 +22,12 @@
 //! values core's storage, and a valid write reaches every live instance as
 //! one complete `SETTINGS_CHANGED` (plugin-abi.md §6.9).
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
+use super::catalog::RootHandoff;
+use crate::catalog::runtime::CatalogRuntime;
 use crate::plugin::approval::{ApprovalStore, Digests, Provenance, Sha256Digest};
 use crate::plugin::process::supervisor::{FailureReason, ProcessPhase, ProcessStatus};
 use crate::plugin::settings::{SettingsChangeDelivery, SettingsError, SettingsSchemaSource};
@@ -55,6 +56,7 @@ pub(super) enum Trust {
     Development,
     /// Every other `--plugin` package: `process` only, after approval.
     User,
+    Installed,
     /// A debug-only official namespace fixture; still needs process approval.
     #[cfg(feature = "test-harness")]
     FixtureOfficial,
@@ -66,6 +68,7 @@ impl Trust {
             Self::Bundled => "bundled",
             Self::Development => "development",
             Self::User => "user",
+            Self::Installed => "user",
             #[cfg(feature = "test-harness")]
             Self::FixtureOfficial => "fixture-official",
         }
@@ -91,6 +94,7 @@ struct Package {
     requires: Vec<Capability>,
     optional: Vec<Capability>,
     process: Option<ProcessPackage>,
+    library_digest: Mutex<Option<CachedDigest>>,
     settings_schema: Option<SettingsSchema>,
 }
 
@@ -106,6 +110,23 @@ pub(super) struct ManagedPlugin {
     /// Validated but deliberately never created: listed `inactive` with this
     /// reason (A7.3 `dashboard_disabled`).
     inactive: Option<&'static str>,
+}
+
+impl ManagedPlugin {
+    pub(super) fn installed(instance: PluginInstanceId, plugin: &LoadedPlugin) -> Self {
+        Self {
+            instance,
+            trust: Trust::Installed,
+            directory: None,
+            package: Some(Package::of(plugin)),
+            failure: None,
+            inactive: None,
+        }
+    }
+
+    pub(super) fn instance(&self) -> PluginInstanceId {
+        self.instance
+    }
 }
 
 impl Package {
@@ -125,6 +146,7 @@ impl Package {
                 Execution::Local(_) => None,
             },
             settings_schema: plugin.settings_schema().cloned(),
+            library_digest: Mutex::new(None),
         }
     }
 }
@@ -212,19 +234,17 @@ pub(super) struct PluginManagement {
     host: Arc<PluginHost>,
     store: Arc<ApprovalStore>,
     roster: Roster,
+    catalog: Option<(Arc<CatalogRuntime>, Arc<RootHandoff>)>,
     /// One management action at a time.
     actions: Arc<tokio::sync::Mutex<()>>,
-    /// Library digests for listing, keyed by path and invalidated by size
-    /// or modification time. An approval and every start hash afresh.
-    digests: Mutex<HashMap<PathBuf, CachedDigest>>,
     /// Where a saved plugin setting goes: every live instance of the id
     /// (the host in production).
     delivery: Arc<dyn SettingsChangeDelivery>,
 }
 
-/// A library's size and modification time when it was hashed, and its
-/// digest.
-type CachedDigest = (u64, Option<SystemTime>, Sha256Digest);
+/// A listing hash is scoped to this package and generation. Approval and
+/// launch checks never use it.
+type CachedDigest = ((u64, Option<SystemTime>, u64, bool), Sha256Digest);
 
 /// An error response: a stable `code` and a message for people.
 fn refusal(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
@@ -278,6 +298,21 @@ fn decode_segment(raw: &str) -> Option<String> {
 struct ApprovalInput {
     manifest_sha256: String,
     library_sha256: String,
+}
+
+fn approval_input(body: &[u8]) -> Result<Digests, &'static str> {
+    let input: ApprovalInput = serde_json::from_slice(body)
+        .map_err(|_| "expected {\"manifest_sha256\", \"library_sha256\"}")?;
+    let parse =
+        |value| Sha256Digest::parse_hex(value).ok_or("a digest is 64 lowercase hexadecimal digits");
+    Ok(Digests {
+        manifest_sha256: parse(&input.manifest_sha256)?,
+        library_sha256: parse(&input.library_sha256)?,
+    })
+}
+
+fn invalid_approval_request(message: &'static str) -> Response {
+    refusal(StatusCode::BAD_REQUEST, "invalid_request", message)
 }
 
 #[derive(Deserialize)]
@@ -351,9 +386,21 @@ impl PluginManagement {
             host,
             store,
             roster,
+            catalog: None,
             actions: Arc::new(tokio::sync::Mutex::new(())),
-            digests: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(super) fn approvals(&self) -> &ApprovalStore {
+        &self.store
+    }
+
+    pub(super) fn attach_catalog(
+        &mut self,
+        runtime: Arc<CatalogRuntime>,
+        handoff: Arc<RootHandoff>,
+    ) {
+        self.catalog = Some((runtime, handoff));
     }
 
     /// Tests observe settings deliveries instead of a live instance.
@@ -364,40 +411,51 @@ impl PluginManagement {
     }
 
     /// The library digest for listing; `None` when it cannot be read.
-    fn listed_digests(&self, package: &ProcessPackage) -> Option<Digests> {
-        let library = package.library();
+    fn listed_digests(
+        package: &Package,
+        process: &ProcessPackage,
+        generation: u64,
+        approval_failed: bool,
+    ) -> Option<Digests> {
+        let manifest_sha256 = if process.installed_provenance().is_some() {
+            Digests::installed_manifest(process.root()).ok()?
+        } else {
+            Sha256Digest(*process.manifest_sha256())
+        };
+        let library = process.library();
         let metadata = std::fs::metadata(library).ok()?;
-        let key = (metadata.len(), metadata.modified().ok());
-        let cached = self
-            .digests
+        let key = (
+            metadata.len(),
+            metadata.modified().ok(),
+            generation,
+            approval_failed,
+        );
+        let mut cached = package
+            .library_digest
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(library)
-            .filter(|(len, modified, _)| (*len, *modified) == key)
-            .map(|(_, _, digest)| *digest);
-        let library_sha256 = match cached {
+            .unwrap_or_else(PoisonError::into_inner);
+        let reusable = cached
+            .filter(|(stamp, _)| *stamp == key)
+            .map(|(_, digest)| digest);
+        let library_sha256 = match reusable {
             Some(digest) => digest,
             None => {
-                let digest = Digests::of(package).ok()?.library_sha256;
-                self.digests
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(library.to_owned(), (key.0, key.1, digest));
+                let digest = Digests::files(manifest_sha256, library)
+                    .ok()?
+                    .library_sha256;
+                *cached = Some((key, digest));
                 digest
             }
         };
         Some(Digests {
-            manifest_sha256: Sha256Digest(*package.manifest_sha256()),
+            manifest_sha256,
             library_sha256,
         })
     }
 
     /// Whether the store approves `digests` for `id`'s `package`.
     fn approved(&self, id: &str, package: &ProcessPackage, digests: Option<Digests>) -> bool {
-        let provenance = Provenance::of(package);
-        digests.is_some_and(|digests| {
-            self.store.record(id, &provenance) == Ok(Some(digests.record(id, provenance.clone())))
-        })
+        digests.is_some_and(|digests| self.store.check_digests(id, package, digests).is_ok())
     }
 
     fn generation(status: Option<&ProcessStatus>) -> u64 {
@@ -406,7 +464,20 @@ impl PluginManagement {
 
     /// One plugin's list entry.
     fn view(&self, plugin: &ManagedPlugin, fresh: Option<Digests>) -> Value {
+        let reviewed = if plugin.trust == Trust::Installed {
+            self.updated_installed(plugin)
+                .map(|loaded| Package::of(&loaded))
+        } else {
+            None
+        };
         let provenance = match (plugin.trust, &plugin.directory) {
+            (Trust::Installed, _) => json!(
+                plugin
+                    .package
+                    .as_ref()
+                    .and_then(|package| package.process.as_ref())
+                    .and_then(ProcessPackage::installed_provenance)
+            ),
             (Trust::Bundled, _) => json!({"kind": "bundled"}),
             #[cfg(feature = "test-harness")]
             (Trust::FixtureOfficial, _) => json!({"kind": "fixture-official"}),
@@ -422,7 +493,7 @@ impl PluginManagement {
         };
         let mut view = json!({
             "id": null,
-            "trust": plugin.trust.as_str(),
+            "trust": self.installed_trust(plugin).unwrap_or_else(|| plugin.trust.as_str()),
             "provenance": provenance,
             "generation": 0,
             "state": "failed",
@@ -434,7 +505,7 @@ impl PluginManagement {
             "approved": false,
             "approval": null,
         });
-        let Some(package) = &plugin.package else {
+        let Some(package) = reviewed.as_ref().or(plugin.package.as_ref()) else {
             view["reason"] = json!("load");
             view["detail"] = json!(plugin.failure);
             return view;
@@ -472,10 +543,23 @@ impl PluginManagement {
             return view;
         };
         let status = self.host.process_status(plugin.instance);
-        let digests = fresh.or_else(|| self.listed_digests(process));
+        let generation = Self::generation(status.as_ref());
+        let approval_failed = status.as_ref().is_some_and(|status| {
+            matches!(
+                &status.last_failure,
+                Some(FailureReason::Startup(failure))
+                    if failure.stage == crate::plugin::process::control::StartupStage::Approval
+            )
+        });
+        let digests = fresh
+            .or_else(|| Self::listed_digests(package, process, generation, approval_failed))
+            .filter(|digests| digests.manifest_sha256.0 == *process.manifest_sha256());
         let approved = self.approved(&package.id, process, digests);
         view["approved"] = json!(approved);
-        view["generation"] = json!(Self::generation(status.as_ref()));
+        if plugin.trust == Trust::Installed {
+            view["approval_revocable"] = json!(self.installed_approval_revocable(plugin, digests));
+        }
+        view["generation"] = json!(generation);
         let Some(status) = status else {
             view["reason"] = json!("create");
             view["detail"] = json!(plugin.failure);
@@ -516,14 +600,21 @@ impl PluginManagement {
     }
 
     fn list(&self) -> Value {
-        json!({
-            "plugins": self
-                .roster
-                .0
-                .iter()
-                .map(|plugin| self.view(plugin, None))
-                .collect::<Vec<_>>(),
-        })
+        let mut plugins: Vec<_> = self
+            .roster
+            .0
+            .iter()
+            .map(|plugin| self.view(plugin, None))
+            .collect();
+        if let Some((_, handoff)) = &self.catalog {
+            plugins.extend(
+                handoff
+                    .processes()
+                    .iter()
+                    .map(|plugin| self.view(plugin, None)),
+            );
+        }
+        json!({"plugins": plugins})
     }
 
     fn find(&self, id: &str) -> Option<usize> {
@@ -535,9 +626,8 @@ impl PluginManagement {
         })
     }
 
-    /// The process package at `index` which can receive explicit approval.
-    fn user_process(&self, index: usize) -> Option<(&str, &ProcessPackage)> {
-        let plugin = &self.roster.0[index];
+    /// A validated development package that can receive explicit approval.
+    fn user_process(plugin: &ManagedPlugin) -> Option<(&str, &ProcessPackage)> {
         let package = plugin.package.as_ref()?;
         match plugin.trust {
             Trust::User => (),
@@ -554,30 +644,20 @@ impl PluginManagement {
     /// `POST /api/plugins/<id>/approval`: both digests must equal the
     /// package's current ones; then the record is persisted and the plugin
     /// started.
-    fn approve(&self, index: usize, body: &[u8]) -> Response {
-        let Some((id, process)) = self.user_process(index) else {
+    fn approve(&self, plugin: &ManagedPlugin, body: &[u8]) -> Response {
+        if plugin.trust == Trust::Installed {
+            return self.approve_installed(plugin, body);
+        }
+        let Some((id, process)) = Self::user_process(plugin) else {
             return refusal(
                 StatusCode::BAD_REQUEST,
                 "approval_not_applicable",
                 "only a user-trust process plugin needs approval",
             );
         };
-        let Ok(input) = serde_json::from_slice::<ApprovalInput>(body) else {
-            return refusal(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "expected {\"manifest_sha256\", \"library_sha256\"}",
-            );
-        };
-        let (Some(manifest_sha256), Some(library_sha256)) = (
-            Sha256Digest::parse_hex(&input.manifest_sha256),
-            Sha256Digest::parse_hex(&input.library_sha256),
-        ) else {
-            return refusal(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "a digest is 64 lowercase hexadecimal digits",
-            );
+        let requested = match approval_input(body) {
+            Ok(requested) => requested,
+            Err(message) => return invalid_approval_request(message),
         };
         let current = match Digests::of(process) {
             Ok(current) => current,
@@ -585,12 +665,7 @@ impl PluginManagement {
                 return refusal(StatusCode::CONFLICT, "approval_stale", failure.to_string());
             }
         };
-        if current
-            != (Digests {
-                manifest_sha256,
-                library_sha256,
-            })
-        {
+        if current != requested {
             return refusal(
                 StatusCode::CONFLICT,
                 "approval_stale",
@@ -607,7 +682,7 @@ impl PluginManagement {
                 format!("the approval was not saved: {error}"),
             );
         }
-        let instance = self.roster.0[index].instance;
+        let instance = plugin.instance;
         let live = self.host.process_status(instance).is_some_and(|status| {
             matches!(
                 status.phase,
@@ -615,27 +690,28 @@ impl PluginManagement {
             )
         });
         if !(unchanged && live) {
-            self.start(instance, id, None);
+            self.start(plugin, id, None);
         }
-        respond(
-            StatusCode::OK,
-            self.view(&self.roster.0[index], Some(current)),
-        )
+        respond(StatusCode::OK, self.view(plugin, Some(current)))
     }
 
     /// A manual restart (§7.6): its outcome is the plugin's new state.
     /// With `generation`, the host refuses unless it is still current,
     /// under the same lock that begins the next one.
-    fn start(
-        &self,
-        instance: PluginInstanceId,
-        id: &str,
-        generation: Option<u64>,
-    ) -> Option<Response> {
+    fn start(&self, plugin: &ManagedPlugin, id: &str, generation: Option<u64>) -> Option<Response> {
+        let instance = plugin.instance;
         let started = match generation {
             Some(generation) => self.host.restart_process_generation(instance, generation),
             None => self.host.restart_process_instance(instance),
         };
+        if plugin.trust == Trust::Installed
+            && !matches!(
+                started,
+                Err(HostError::GenerationChanged | HostError::State(_))
+            )
+        {
+            self.report_installed_start(id, &started);
+        }
         match started {
             Ok(()) | Err(HostError::ProcessStartupFailed(_) | HostError::InstanceLost) => None,
             Err(HostError::GenerationChanged) => Some(generation_changed()),
@@ -656,8 +732,7 @@ impl PluginManagement {
     /// The controlled teardown of the instance at `index` (§7.6). With
     /// `generation`, the host refuses unless it is still current, under
     /// the same lock that marks it stopped.
-    fn tear_down(&self, index: usize, generation: Option<u64>) -> Option<Response> {
-        let plugin = &self.roster.0[index];
+    fn tear_down(&self, plugin: &ManagedPlugin, generation: Option<u64>) -> Option<Response> {
         let stopped = match generation {
             Some(generation) => self
                 .host
@@ -678,8 +753,11 @@ impl PluginManagement {
 
     /// `DELETE /api/plugins/<id>/approval`: removes the record, then tears
     /// the instance down.
-    fn revoke(&self, index: usize) -> Response {
-        let Some((id, process)) = self.user_process(index) else {
+    fn revoke(&self, plugin: &ManagedPlugin) -> Response {
+        if plugin.trust == Trust::Installed {
+            return self.revoke_installed(plugin);
+        }
+        let Some((id, process)) = Self::user_process(plugin) else {
             return refusal(
                 StatusCode::BAD_REQUEST,
                 "approval_not_applicable",
@@ -693,16 +771,15 @@ impl PluginManagement {
                 format!("the approval was not removed: {error}"),
             );
         }
-        self.tear_down(index, None);
-        respond(StatusCode::OK, self.view(&self.roster.0[index], None))
+        self.tear_down(plugin, None);
+        respond(StatusCode::OK, self.view(plugin, None))
     }
 
     /// `POST /api/plugins/<id>/restart` and `/stop`: exactly the generation
     /// the caller saw, of a process instance. The host compares it under
     /// its own lock, so an automatic restart after this request was sent
     /// refuses it instead of letting it act on the new generation.
-    fn lifecycle(&self, index: usize, body: &[u8], restart: bool) -> Response {
-        let plugin = &self.roster.0[index];
+    fn lifecycle(&self, plugin: &ManagedPlugin, body: &[u8], restart: bool) -> Response {
         let Some(package) = &plugin.package else {
             return refusal(
                 StatusCode::CONFLICT,
@@ -725,9 +802,9 @@ impl PluginManagement {
             );
         };
         let refused = if restart {
-            self.start(plugin.instance, &package.id, Some(input.generation))
+            self.start(plugin, &package.id, Some(input.generation))
         } else {
-            self.tear_down(index, Some(input.generation))
+            self.tear_down(plugin, Some(input.generation))
         };
         if let Some(refused) = refused {
             return refused;
@@ -746,31 +823,64 @@ impl PluginManagement {
         else {
             return refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin");
         };
+        let _catalog_operation = if method != Method::GET
+            && self.find(&id).is_none()
+            && let Some((runtime, _)) = &self.catalog
+            && runtime
+                .installed()
+                .is_some_and(|store| store.plugin(&id).is_some())
+        {
+            match runtime.plans().begin_operation() {
+                Ok(operation) => Some(operation),
+                Err(error) => return refusal(StatusCode::CONFLICT, "busy", error.to_string()),
+            }
+        } else {
+            None
+        };
         if action == "settings" {
             return match self.settings_schema(&id) {
                 Some(schema) => self.settings(&id, schema, method, body),
                 None => refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin"),
             };
         }
-        let Some(index) = self.find(&id) else {
-            return refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin");
+        let installed;
+        let plugin = if let Some(index) = self.find(&id) {
+            &self.roster.0[index]
+        } else {
+            installed = self
+                .catalog
+                .as_ref()
+                .and_then(|(_, handoff)| handoff.process(&id));
+            let Some(plugin) = installed.as_deref() else {
+                return refusal(StatusCode::NOT_FOUND, "unknown_plugin", "no such plugin");
+            };
+            plugin
         };
         match (method, action) {
-            (&Method::POST, "approval") => self.approve(index, body),
-            (&Method::DELETE, "approval") => self.revoke(index),
-            (&Method::POST, "restart") => self.lifecycle(index, body, true),
-            (&Method::POST, "stop") => self.lifecycle(index, body, false),
+            (&Method::POST, "approval") => self.approve(plugin, body),
+            (&Method::DELETE, "approval") => self.revoke(plugin),
+            (&Method::POST, "restart") => self.lifecycle(plugin, body, true),
+            (&Method::POST, "stop") => self.lifecycle(plugin, body, false),
             _ => refusal(StatusCode::NOT_FOUND, "unknown_route", "no such route"),
         }
     }
 
     /// `id`'s validated `settings_schema`: `Some(None)` for a known plugin
     /// that declares none, `None` for an id no listed or loaded plugin has.
-    /// A catalog-installed plugin is not in the roster; the host resolves
-    /// it while an instance of it is registered.
+    /// Live catalog in-process plugins have no lifecycle roster entry.
     fn settings_schema(&self, id: &str) -> Option<Option<SettingsSchema>> {
         if let Some(index) = self.find(id) {
             return self.roster.0[index]
+                .package
+                .as_ref()
+                .map(|package| package.settings_schema.clone());
+        }
+        if let Some(plugin) = self
+            .catalog
+            .as_ref()
+            .and_then(|(_, handoff)| handoff.process(id))
+        {
+            return plugin
                 .package
                 .as_ref()
                 .map(|package| package.settings_schema.clone());
@@ -861,6 +971,9 @@ impl PluginManagementRoutes for PluginManagement {
         })
     }
 }
+
+#[path = "plugin_management_catalog.rs"]
+mod catalog;
 
 #[cfg(all(test, feature = "test-harness"))]
 #[path = "tests/plugin_management.rs"]

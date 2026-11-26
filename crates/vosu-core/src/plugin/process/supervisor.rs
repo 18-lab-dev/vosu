@@ -127,6 +127,7 @@ struct Entry {
     last_failure: Option<FailureReason>,
     restarts: u64,
     generation: u64,
+    starting: usize,
 }
 
 #[derive(Default)]
@@ -135,6 +136,7 @@ struct Inner {
     shut_down: bool,
     /// Starts in progress outside the lock (initial, automatic, manual).
     starting: usize,
+    installed_generation: u64,
 }
 
 /// What the host does after a crash event or a failed start.
@@ -171,6 +173,7 @@ pub enum RestartRefused {
 /// every one of them to drop.
 pub(crate) struct StartGuard {
     supervisor: Arc<Supervisor>,
+    id: PluginInstanceId,
     pub epoch: u64,
 }
 
@@ -178,6 +181,9 @@ impl Drop for StartGuard {
     fn drop(&mut self) {
         let mut inner = self.supervisor.lock();
         inner.starting -= 1;
+        if let Some(entry) = inner.entries.get_mut(&self.id) {
+            entry.starting -= 1;
+        }
         drop(inner);
         self.supervisor.idle.notify_all();
     }
@@ -189,15 +195,33 @@ pub(crate) struct Supervisor {
     idle: Condvar,
 }
 
+fn next_generation(plugin: &LoadedPlugin, previous: u64, installed_generation: &mut u64) -> u64 {
+    if matches!(
+        plugin.origin(),
+        crate::plugin::PackageOrigin::Installed { .. }
+    ) {
+        *installed_generation += 1;
+        *installed_generation
+    } else {
+        previous + 1
+    }
+}
+
 impl Supervisor {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn guard(self: &Arc<Self>, inner: &mut Inner, epoch: u64) -> StartGuard {
+    fn guard(self: &Arc<Self>, inner: &mut Inner, id: PluginInstanceId, epoch: u64) -> StartGuard {
         inner.starting += 1;
+        inner
+            .entries
+            .get_mut(&id)
+            .expect("registered start")
+            .starting += 1;
         StartGuard {
             supervisor: Arc::clone(self),
+            id,
             epoch,
         }
     }
@@ -220,8 +244,14 @@ impl Supervisor {
             return Err(RestartRefused::Busy);
         }
         let previous = inner.entries.get(&id);
-        let epoch = previous.map_or(1, |entry| entry.epoch + 1);
-        let generation = previous.map_or(1, |entry| entry.generation + 1);
+        let (epoch, previous_generation, starting) = previous.map_or((1, 0, 0), |entry| {
+            (entry.epoch + 1, entry.generation, entry.starting)
+        });
+        let generation = next_generation(
+            &template.plugin,
+            previous_generation,
+            &mut inner.installed_generation,
+        );
         inner.entries.insert(
             id,
             Entry {
@@ -233,9 +263,10 @@ impl Supervisor {
                 last_failure: None,
                 restarts: 0,
                 generation,
+                starting,
             },
         );
-        Ok(self.guard(&mut inner, epoch))
+        Ok(self.guard(&mut inner, id, epoch))
     }
 
     /// The start under `epoch` published its generation.
@@ -350,7 +381,12 @@ impl Supervisor {
         if inner.shut_down {
             return None;
         }
-        let entry = inner.entries.get_mut(&id)?;
+        let Inner {
+            entries,
+            installed_generation,
+            ..
+        } = &mut *inner;
+        let entry = entries.get_mut(&id)?;
         if entry.epoch != epoch || !matches!(entry.phase, ProcessPhase::Backoff { .. }) {
             return None;
         }
@@ -359,9 +395,13 @@ impl Supervisor {
         }
         entry.phase = ProcessPhase::Starting;
         entry.restarts += 1;
-        entry.generation += 1;
+        entry.generation = next_generation(
+            &entry.template.plugin,
+            entry.generation,
+            installed_generation,
+        );
         let template = entry.template.clone();
-        Some((template, self.guard(&mut inner, epoch)))
+        Some((template, self.guard(&mut inner, id, epoch)))
     }
 
     /// A manual restart: resets the window and the latch, cancels any
@@ -377,7 +417,12 @@ impl Supervisor {
         if inner.shut_down {
             return Err(RestartRefused::ShuttingDown);
         }
-        let entry = inner.entries.get_mut(&id).ok_or(RestartRefused::Unknown)?;
+        let Inner {
+            entries,
+            installed_generation,
+            ..
+        } = &mut *inner;
+        let entry = entries.get_mut(&id).ok_or(RestartRefused::Unknown)?;
         if expected.is_some_and(|expected| expected != entry.generation) {
             return Err(RestartRefused::GenerationChanged);
         }
@@ -389,9 +434,13 @@ impl Supervisor {
         entry.epoch += 1;
         entry.phase = ProcessPhase::Starting;
         entry.restarts += 1;
-        entry.generation += 1;
+        entry.generation = next_generation(
+            &entry.template.plugin,
+            entry.generation,
+            installed_generation,
+        );
         let (template, epoch) = (entry.template.clone(), entry.epoch);
-        Ok((template, self.guard(&mut inner, epoch)))
+        Ok((template, self.guard(&mut inner, id, epoch)))
     }
 
     /// The user stopped `id`: `Stopped`, any delay cancelled, any start in
@@ -414,6 +463,41 @@ impl Supervisor {
         entry.timer = None;
         entry.phase = ProcessPhase::Stopped;
         Ok(true)
+    }
+
+    pub fn forget_stopped(&self, id: PluginInstanceId) {
+        let mut inner = self.lock();
+        if inner
+            .entries
+            .get(&id)
+            .is_some_and(|entry| entry.phase == ProcessPhase::Stopped && entry.starting == 0)
+        {
+            inner.entries.remove(&id);
+        }
+    }
+
+    /// A stop must also join a restart that acquired its guard but has not
+    /// yet reserved an instance slot or opened the plugin's files.
+    pub fn wait_starts(&self, id: PluginInstanceId, bound: Duration) -> bool {
+        let (_inner, timeout) = self
+            .idle
+            .wait_timeout_while(self.lock(), bound, |inner| {
+                inner
+                    .entries
+                    .get(&id)
+                    .is_some_and(|entry| entry.starting != 0)
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        !timeout.timed_out()
+    }
+
+    pub fn has_development(&self, plugin: &str) -> bool {
+        self.lock().entries.values().any(|entry| {
+            !matches!(
+                entry.template.plugin.origin(),
+                crate::plugin::PackageOrigin::Installed { .. }
+            ) && entry.template.plugin.manifest().id == plugin
+        })
     }
 
     /// Daemon shutdown: no start begins and no delay survives. Every entry

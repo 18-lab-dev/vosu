@@ -18,6 +18,7 @@ use vosu_plugin_api::manifest::action_schema::{self, CompiledActionSchema};
 use vosu_plugin_api::manifest::settings::SettingsSchema;
 use vosu_plugin_api::{PluginManifest, Runtime, vosu_plugin_vtable};
 
+use super::approval::Provenance;
 use super::error::HostError;
 use super::execution::{Execution, LocalCode, PackageOrigin, ProcessPackage, descriptor};
 
@@ -310,7 +311,7 @@ fn load_package_dir(
             reason: "a release build runs `--plugin` packages as user trust, which never grants in-process; request `runtime = \"process\"`",
         });
     }
-    load_package(manifest, &text, dir, origin)
+    load_package(manifest, &text, dir, origin, None)
 }
 
 /// Loads one catalog-installed plugin from its committed package directory
@@ -321,10 +322,9 @@ fn load_package_dir(
 /// installed source identity is a fixed official one): it selects the SDK
 /// context and, through [`PackageOrigin::Installed`], `TrustedOfficial`
 /// schema registration, matching how I0 compiled the staged schemas. A
-/// trusted user source stays `Untrusted`. A `runtime = "process"` package is
-/// refused with `ProcessRuntimeUnavailable` until catalog X0 hands installed
-/// process packages to the plugin-host launcher; the daemon never `dlopen`s
-/// it as an in-process substitute.
+/// trusted user source stays `Untrusted`. This entry point accepts only
+/// in-process packages; catalog process packages have a separate loader
+/// that cannot map the library in core.
 pub fn load_installed(
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
@@ -332,34 +332,77 @@ pub fn load_installed(
     source: &str,
     official: bool,
 ) -> Result<LoadedPlugin, HostError> {
-    use std::io::Read as _;
-    use vosu_plugin_api::manifest::files::MAX_MANIFEST_BYTES;
-    let mut text = String::new();
-    std::fs::File::open(dir.join("manifest.toml"))?
-        .take(MAX_MANIFEST_BYTES as u64 + 1)
-        .read_to_string(&mut text)?;
-    if text.len() > MAX_MANIFEST_BYTES {
-        return Err(HostError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "manifest byte budget exceeded",
-        )));
-    }
+    let text = read_bounded_asset(
+        &dir.canonicalize()?,
+        "manifest.toml",
+        vosu_plugin_api::manifest::files::MAX_MANIFEST_BYTES,
+        "manifest byte budget exceeded",
+    )?;
     let manifest = parse_plugin(&text, application_version, snapshot, source, official)?;
     if manifest.runtime != Runtime::InProcess {
         return Err(HostError::ProcessRuntimeUnavailable);
     }
-    load_package(manifest, &text, dir, PackageOrigin::Installed { official })
+    load_package(
+        manifest,
+        &text,
+        dir,
+        PackageOrigin::Installed { official },
+        None,
+    )
+}
+
+/// Validates a committed process package without opening it as executable
+/// code. Its installed identity comes from the record, not the directory
+/// name or manifest. Launch authority is checked separately.
+pub(crate) fn load_installed_process(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    expected_id: &str,
+    provenance: Provenance,
+    official: bool,
+) -> Result<LoadedPlugin, HostError> {
+    let Provenance::Installed {
+        source, version, ..
+    } = &provenance
+    else {
+        return Err(HostError::State(
+            "expected installed plugin provenance".into(),
+        ));
+    };
+    let text = read_bounded_asset(
+        &dir.canonicalize()?,
+        "manifest.toml",
+        vosu_plugin_api::manifest::files::MAX_MANIFEST_BYTES,
+        "manifest byte budget exceeded",
+    )?;
+    let manifest = parse_plugin(&text, application_version, snapshot, source, official)?;
+    if manifest.id != expected_id
+        || manifest.version != *version
+        || manifest.runtime != Runtime::Process
+    {
+        return Err(HostError::State(
+            "installed process plugin differs from its recorded identity or runtime".into(),
+        ));
+    }
+    load_package(
+        manifest,
+        &text,
+        dir,
+        PackageOrigin::Installed { official },
+        Some(provenance),
+    )
 }
 
 /// Reads one validated external package's confined assets and attaches its
 /// granted execution: a development or policy-authorized installed
-/// in-process library is mapped here, a development process package only
-/// recorded.
+/// in-process library is mapped here; a process library is only recorded.
 fn load_package(
     manifest: PluginManifest,
     manifest_text: &str,
     dir: &Path,
     origin: PackageOrigin,
+    installed: Option<Provenance>,
 ) -> Result<LoadedPlugin, HostError> {
     let root = dir.canonicalize()?;
     let settings_schema = manifest
@@ -411,7 +454,12 @@ fn load_package(
         Runtime::InProcess => Execution::Local(unsafe { descriptor::load_library(&library_path) }?),
         Runtime::Process => {
             let manifest_sha256: [u8; 32] = sha2::Sha256::digest(manifest_text.as_bytes()).into();
-            Execution::Process(ProcessPackage::new(root, library_path, manifest_sha256))
+            Execution::Process(ProcessPackage::new(
+                root,
+                library_path,
+                manifest_sha256,
+                installed,
+            ))
         }
     };
     Ok(LoadedPlugin {

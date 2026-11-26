@@ -2120,15 +2120,13 @@ removal and preserves data/settings. M8 may reuse recovery/import operations
 and no-overwrite replacement intents; it owns the one-time migration marker,
 not source scanning or credential reads.
 
-**M5 dependency, explicitly not implemented by M6b:** T0 hands validated
-package location/manifest, target library, exact source/hash/runtime approval
-binding and current-policy generation to the registry execution-backend seam.
-Process grant must produce a real M5 endpoint without parent `dlopen` or
-in-process fallback. Missing runtime/security prerequisite is an honest load
-refusal; it cannot count as native user-plugin exit. Stop/revoke invalidates
-instance generations and uses M5 cleanup; running in-process revocation
-remains pending user restart. A5.1's owner-pending Linux privilege policy and
-M5/S1 native gates remain external blockers, not permission to weaken §7.3.
+**M5 dependency (integrated 2026-11-26):** I0 supplies the verified installed
+package and its archive-bound executable digests to the M5 registry. The
+catalog is the single durable source of installed A5.5 records; a start of
+any generation rechecks that authority and current source trust. Stop,
+uninstall, update and revocation use M5 cleanup before a package move;
+running in-process revocation remains pending user restart. No parent
+`dlopen`, in-process fallback or weaker §7.3 policy is permitted.
 
 W2's pure `catalog::trust::CurrentPolicy` consumes a fresh S0 generation and
 records at plan/confirm/load. `catalog::approvals::{Artifact,Approval}` bind

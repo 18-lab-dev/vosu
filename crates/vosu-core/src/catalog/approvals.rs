@@ -1,4 +1,4 @@
-//! Immutable installed provenance and explicit approval of one native artifact.
+//! Immutable installed provenance and the consent bound to a reviewed plan.
 use super::sources::SourceIdentity;
 use serde::{Deserialize, Serialize, Serializer};
 use vosu_plugin_api::manifest::Runtime;
@@ -25,9 +25,8 @@ fn serialize_runtime<S: Serializer>(runtime: &Runtime, serializer: S) -> Result<
     })
 }
 
-/// A user confirmation, never inferred from source trust or package integrity.
-/// Installed-record publication must persist its removal on revocation before
-/// another load/restart can observe the record (I0's operation/journal authority).
+/// Explicit consent to one exact plan add, not a stored execution approval.
+/// Commit produces the A5.5 record from the corresponding verified archive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Approval {

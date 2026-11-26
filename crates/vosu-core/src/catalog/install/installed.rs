@@ -3,11 +3,8 @@
 //! credential or saved trust tier: load authority is recomputed from current
 //! source policy (T0) every time.
 use super::{InstallError, InstallLayout};
-use crate::catalog::{
-    approvals::{Approval, Artifact},
-    plans::Reason,
-    sources::SourceIdentity,
-};
+use crate::catalog::{approvals::Artifact, plans::Reason, sources::SourceIdentity};
+use crate::plugin::approval::{ApprovalRecord, Digests, Provenance, Sha256Digest};
 use serde::{Deserialize, Serialize};
 use std::{io::Write as _, path::Path};
 use vosu_plugin_api::manifest::{PackageKind, PackageManifest};
@@ -72,12 +69,54 @@ pub struct InstalledRecord {
     pub target: String,
     pub sha256: String,
     pub artifact: Option<Artifact>,
-    pub approval: Option<Approval>,
+    /// Original executable digests from the verified archive, even when the
+    /// current source policy does not require explicit approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_digests: Option<Digests>,
+    #[serde(default, deserialize_with = "read_approval")]
+    pub approval: Option<ApprovalRecord>,
     pub installed_for: InstalledFor,
 }
+
+fn read_approval<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<ApprovalRecord>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged, deny_unknown_fields)]
+    enum DiskApproval {
+        Current(ApprovalRecord),
+        Legacy {
+            #[serde(rename = "artifact")]
+            _artifact: Artifact,
+        },
+    }
+    // Early prerelease records never contained the installed manifest/library
+    // digests. Keep the package installed, but never promote that record to
+    // authority for the bytes now on disk.
+    Ok(match Option::<DiskApproval>::deserialize(decoder)? {
+        Some(DiskApproval::Current(record)) => Some(record),
+        _ => None,
+    })
+}
+
 impl InstalledRecord {
     pub fn package_kind(&self) -> PackageKind {
         self.kind.into()
+    }
+
+    pub(crate) fn provenance(&self) -> Option<Provenance> {
+        Some(Provenance::Installed {
+            source: self.source.as_str().to_owned(),
+            version: self.version.clone(),
+            package_sha256: Sha256Digest(self.artifact.as_ref()?.sha256),
+        })
+    }
+
+    pub(crate) fn matches_approval(&self, digests: Digests) -> bool {
+        self.approval.as_ref().is_some_and(|approval| {
+            self.provenance()
+                .is_some_and(|provenance| *approval == digests.record(&self.id, provenance))
+        })
     }
 }
 
@@ -110,7 +149,9 @@ impl InstalledDocument {
                         && artifact.version == record.version
                         && hex(&artifact.sha256) == record.sha256
                 }
-                (None, InstalledKind::Tool | InstalledKind::Overlay) => record.approval.is_none(),
+                (None, InstalledKind::Tool | InstalledKind::Overlay) => {
+                    record.approval.is_none() && record.process_digests.is_none()
+                }
                 _ => false,
             };
             if duplicate
@@ -237,6 +278,29 @@ impl InstalledStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+    pub(crate) fn plugin(&self, id: &str) -> Option<InstalledRecord> {
+        self.document
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record(PackageKind::Plugin, id)
+            .cloned()
+    }
+
+    /// The caller holds the catalog operation gate, as with `clear_approvals`.
+    pub(crate) fn approve_process(&self, id: &str, digests: Digests) -> Result<(), InstallError> {
+        let mut document = self.snapshot();
+        let record = document
+            .records
+            .iter_mut()
+            .find(|record| record.kind == InstalledKind::Plugin && record.id == id)
+            .ok_or(InstallError::RecordsInvalid)?;
+        let provenance = record.provenance().ok_or(InstallError::RecordsInvalid)?;
+        if !record.matches_approval(digests) {
+            record.approval = Some(digests.record(id, provenance));
+            self.publish_approvals(document)?;
+        }
+        Ok(())
+    }
     pub fn generation(&self) -> u64 {
         self.document
             .lock()
@@ -270,6 +334,10 @@ impl InstalledStore {
         if !changed {
             return Ok(document.generation);
         }
+        self.publish_approvals(document)
+    }
+
+    fn publish_approvals(&self, mut document: InstalledDocument) -> Result<u64, InstallError> {
         document.generation = document
             .generation
             .checked_add(1)

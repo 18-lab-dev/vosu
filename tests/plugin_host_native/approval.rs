@@ -11,6 +11,8 @@
 //! prerelease release-binary evidence; the two `#[ignore]` tests need a
 //! release daemon and run only with it (`-- --ignored approval_`).
 
+#[path = "approval/catalog.rs"]
+mod catalog;
 #[path = "approval/daemon.rs"]
 mod daemon;
 

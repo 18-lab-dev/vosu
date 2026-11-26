@@ -525,13 +525,12 @@ requires approval under its new user-trust tier. Running in-process code is
 disabled for next load and reported as **revocation pending restart**; vosu
 does not automatically restart or claim unsafe unloading erases native access.
 
-The [M6b registry seam](implementation-plan.md#m6b-frozen-service-interfaces)
-passes validated package location, target library and exact artifact approval
-to M5's execution backend. A process request must never be validated by
-parent-side `dlopen` or replaced by in-process execution. Until real M5 runtime
-and its security prerequisites exist, source/solver work may land but native
-user-plugin execution evidence remains pending. M5's A5.1 Linux privilege
-bootstrap decision remains owner-pending; M6b does not amend §7.3.
+**2026-11-26:** The [M6b registry seam](implementation-plan.md#m6b-frozen-service-interfaces)
+validates the installed package without mapping its runtime library and
+hands it to the same approval-gated M5 supervisor as a `--plugin` package.
+The gate checks both executable digests, exact catalog provenance and
+current source policy before each child launch. No in-process fallback is
+allowed, including when a security prerequisite fails.
 
 ### 7.2 The `vosu plugin-host` process protocol
 

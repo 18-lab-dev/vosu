@@ -75,6 +75,7 @@ pub(super) fn commit(
     prepared: Vec<Prepared>,
     approvals: &[Approval],
     faults: Faults,
+    before_publish: impl FnOnce(&[InstalledRecord]) -> Result<(), InstallError>,
 ) -> Result<Committed, InstallError> {
     let next_generation = current
         .generation
@@ -111,16 +112,19 @@ pub(super) fn commit(
         }
         let mut record = item.record.clone();
         record.installed_for = InstalledFor::merge(previous.map(|r| r.installed_for), item.reason);
-        record.approval = record.artifact.as_ref().and_then(|artifact| {
-            approvals
-                .iter()
-                .find(|a| a.matches(artifact))
-                .or_else(|| {
-                    previous
-                        .and_then(|r| r.approval.as_ref())
-                        .filter(|a| a.matches(artifact))
-                })
-                .cloned()
+        record.approval = record.process_digests.and_then(|digests| {
+            let artifact = record.artifact.as_ref()?;
+            let provenance = record.provenance()?;
+            if approvals.iter().any(|approval| approval.matches(artifact)) {
+                Some(digests.record(&record.id, provenance))
+            } else {
+                previous
+                    .filter(|stored| {
+                        stored.artifact.as_ref() == Some(artifact)
+                            && stored.matches_approval(digests)
+                    })
+                    .and_then(|stored| stored.approval.clone())
+            }
         });
         let backup = destination.exists().then(|| {
             layout
@@ -144,6 +148,7 @@ pub(super) fn commit(
     if document.records.len() > super::installed::MAX_RECORDS {
         return Err(InstallError::RecordsInvalid);
     }
+    before_publish(&committed)?;
     // Pass 2: the journal owns every kept staging tree once it is durable.
     let operations: Vec<_> = planned
         .into_iter()

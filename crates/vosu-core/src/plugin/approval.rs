@@ -5,9 +5,9 @@
 //! run native code under `runtime = "process"`. An [`ApprovalRecord`] binds
 //! the plugin id, the runtime, the SHA-256 of the exact `manifest.toml`
 //! bytes, the SHA-256 of the host target's library and the package's
-//! [`Provenance`]. Records live in [`APPROVALS_FILE`] under the
-//! configuration root, one per `(id, provenance)`, and only an explicit
-//! approval writes one.
+//! [`Provenance`]. Development records live in [`APPROVALS_FILE`]; a catalog
+//! record is published with its installed graph. Neither store grants approval
+//! for the other provenance.
 //!
 //! [`ApprovalGate`] is the only launcher production composition installs.
 //! Every load and every restart, automatic or manual, passes through it: it
@@ -107,14 +107,13 @@ pub enum Provenance {
 }
 
 impl Provenance {
-    /// The provenance of a process package. Every M5 process package is a
-    /// `--plugin` development package (`registry::load_development`; a
-    /// bundled manifest is refused unless it requests `in-process`), so its
-    /// provenance is its canonical directory.
     pub fn of(package: &ProcessPackage) -> Self {
-        Self::Development {
-            path: package.root().to_owned(),
-        }
+        package
+            .installed_provenance()
+            .cloned()
+            .unwrap_or_else(|| Self::Development {
+                path: package.root().to_owned(),
+            })
     }
 }
 
@@ -137,19 +136,41 @@ pub struct ApprovalRecord {
 }
 
 /// The digests a package would be approved under right now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Digests {
     pub manifest_sha256: Sha256Digest,
     pub library_sha256: Sha256Digest,
 }
 
 impl Digests {
-    /// Hashes `package`'s library now; the manifest digest is the one its
-    /// validated bytes had.
+    /// Hashes the library now, and rereads the manifest for installed
+    /// packages. Development packages use their loaded manifest snapshot.
     pub fn of(package: &ProcessPackage) -> Result<Self, StartupFailure> {
+        let manifest_sha256 = if package.installed_provenance().is_some() {
+            Self::installed_manifest(package.root())?
+        } else {
+            Sha256Digest(*package.manifest_sha256())
+        };
+        Self::files(manifest_sha256, package.library())
+    }
+
+    pub(crate) fn installed_manifest(root: &Path) -> Result<Sha256Digest, StartupFailure> {
+        use sha2::{Digest as _, Sha256};
+        use vosu_plugin_api::manifest::files::{MAX_MANIFEST_BYTES, read_file};
+
+        let text = read_file(root, "manifest.toml", MAX_MANIFEST_BYTES)
+            .map_err(|error| approval_failure("approval_changed", error.to_string()))?;
+        Ok(Sha256Digest(Sha256::digest(text.as_bytes()).into()))
+    }
+
+    pub(crate) fn files(
+        manifest_sha256: Sha256Digest,
+        library: &Path,
+    ) -> Result<Self, StartupFailure> {
         Ok(Self {
-            manifest_sha256: Sha256Digest(*package.manifest_sha256()),
-            library_sha256: Sha256Digest(library_digest(package.library())?),
+            manifest_sha256,
+            library_sha256: Sha256Digest(library_digest(library)?),
         })
     }
 
@@ -172,12 +193,26 @@ struct ApprovalsFile {
     approvals: Vec<ApprovalRecord>,
 }
 
-/// The approval store, [`APPROVALS_FILE`]. A file that cannot be read or
-/// parsed fails closed: every check refuses and nothing is written over
-/// it until it is fixed or removed and vosu restarts.
+pub(crate) trait InstalledApprovals: Send + Sync {
+    fn check(
+        &self,
+        id: &str,
+        provenance: &Provenance,
+        digests: Digests,
+    ) -> Result<(), StartupFailure>;
+}
+
+pub(crate) fn approval_failure(code: &str, message: impl Into<String>) -> StartupFailure {
+    StartupFailure::new(StartupStage::Approval, code, message)
+}
+
+/// The development approval store, [`APPROVALS_FILE`]. An unreadable file
+/// refuses development approvals and is not overwritten. Installed checks
+/// are delegated to the catalog's own transaction authority.
 pub struct ApprovalStore {
     path: PathBuf,
     records: Mutex<Result<Vec<ApprovalRecord>, String>>,
+    installed: std::sync::OnceLock<std::sync::Weak<dyn InstalledApprovals>>,
 }
 
 impl fmt::Debug for ApprovalStore {
@@ -196,12 +231,60 @@ impl ApprovalStore {
         let path = config_root.join(APPROVALS_FILE);
         let records = read(&path).map_err(|error| {
             let message = format!("{} is unreadable: {error}", path.display());
-            tracing::warn!("{message}; every process plugin needing approval stays unloaded");
+            tracing::warn!("{message}; development process plugins stay unloaded");
             message
         });
         Self {
             path,
             records: Mutex::new(records),
+            installed: std::sync::OnceLock::new(),
+        }
+    }
+
+    pub(crate) fn attach_catalog(&self, installed: std::sync::Weak<dyn InstalledApprovals>) {
+        assert!(
+            self.installed.set(installed).is_ok(),
+            "catalog approval authority already attached"
+        );
+    }
+
+    pub(crate) fn check_digests(
+        &self,
+        id: &str,
+        package: &ProcessPackage,
+        digests: Digests,
+    ) -> Result<(), StartupFailure> {
+        if digests.manifest_sha256.0 != *package.manifest_sha256() {
+            return Err(approval_failure(
+                "approval_changed",
+                "the installed manifest changed since it was validated",
+            ));
+        }
+        if let Some(provenance) = package.installed_provenance() {
+            return self
+                .installed
+                .get()
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or_else(|| {
+                    approval_failure(
+                        "approvals_unreadable",
+                        "catalog approval authority is unavailable",
+                    )
+                })?
+                .check(id, provenance, digests);
+        }
+        let provenance = Provenance::of(package);
+        match self.record(id, &provenance) {
+            Err(error) => Err(approval_failure("approvals_unreadable", error)),
+            Ok(None) => Err(approval_failure(
+                "approval_required",
+                format!("{id} has no approval for this package"),
+            )),
+            Ok(Some(record)) if record == digests.record(id, provenance) => Ok(()),
+            Ok(Some(_)) => Err(approval_failure(
+                "approval_changed",
+                format!("{id}'s manifest or library changed since it was approved"),
+            )),
         }
     }
 
@@ -278,24 +361,8 @@ impl ApprovalStore {
         package: &ProcessPackage,
     ) -> Result<Sha256Digest, StartupFailure> {
         let digests = Digests::of(package)?;
-        let provenance = Provenance::of(package);
-        let refused = |code: &str, message: String| {
-            Err(StartupFailure::new(StartupStage::Approval, code, message))
-        };
-        match self.record(id, &provenance) {
-            Err(error) => refused("approvals_unreadable", error),
-            Ok(None) => refused(
-                "approval_required",
-                format!("{id} has no approval for this package"),
-            ),
-            Ok(Some(record)) if record == digests.record(id, provenance) => {
-                Ok(digests.library_sha256)
-            }
-            Ok(Some(_)) => refused(
-                "approval_changed",
-                format!("{id}'s manifest or library changed since it was approved"),
-            ),
-        }
+        self.check_digests(id, package, digests)?;
+        Ok(digests.library_sha256)
     }
 }
 

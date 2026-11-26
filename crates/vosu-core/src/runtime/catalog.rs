@@ -1,6 +1,6 @@
 //! M6b K0 root composition: the single daemon-lifetime owner of the core
 //! catalog services (`vosu_core::catalog::runtime::CatalogRuntime`), its
-//! install roots and the in-process/web runtime handoff.
+//! install roots and the native plugin/web runtime handoff.
 //!
 //! Install roots (`docs/v2/catalog-v2.md` "K0 composition contract"):
 //! - state: `<data>/catalog` (`catalog-installed.json`, install journal);
@@ -15,22 +15,31 @@
 //!
 //! I0 never overwrites a directory it did not install, and its transaction
 //! names (`.stage-*`, `.vosu-backup-*`) differ from the legacy installers'.
+use super::plugin_management::ManagedPlugin;
 use super::*;
 use crate::{
     catalog::{
         install::{
-            HandoffFuture, InstallError, InstallLayout, LoadRequest, LoadStatus, PackageTransport,
-            PublicPackageTransport, RuntimeHandoff,
+            HandoffFuture, InstallError, InstallLayout, InstalledRecord, LoadRequest, LoadStatus,
+            PackageTransport, PublicPackageTransport, RuntimeHandoff,
         },
         installed::UninstallService,
         resolver::BuiltinProviders,
         runtime::{CatalogHost, CatalogRuntime},
         trust::TrustTier,
     },
-    plugin::{DEFAULT_QUEUE_CAPACITY, PluginInstanceId, WorkerPool},
+    plugin::{
+        DEFAULT_QUEUE_CAPACITY, HostError, LoadedPlugin, PluginInstanceId, WorkerPool,
+        approval::{ApprovalStore, InstalledApprovals},
+        process::{control::StartupStage, supervisor::ProcessPhase},
+    },
 };
-use std::sync::{OnceLock, atomic::AtomicU64};
-use vosu_plugin_api::manifest::{HostSupport, PackageKind};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{OnceLock, atomic::AtomicU64},
+};
+use vosu_plugin_api::manifest::{HostSupport, PackageKind, Runtime};
 
 /// Catalog-loaded instance ids start far above bundled and `--plugin` ones.
 const FIRST_CATALOG_INSTANCE: u64 = 1 << 32;
@@ -70,60 +79,57 @@ impl CatalogRoots {
     }
 }
 
-/// In-process load through the plugin host; web packages through the
-/// existing tool/overlay hosts until M7.
-struct RootHandoff {
+/// Native load through the plugin host; web packages through their hosts.
+pub(super) struct RootHandoff {
     host: Arc<PluginHost>,
     plugin_data: PathBuf,
     overlays: Option<PathBuf>,
     pool: Arc<WorkerPool>,
     next_instance: AtomicU64,
     version: semver::Version,
+    processes: parking_lot::RwLock<BTreeMap<String, Arc<ManagedPlugin>>>,
     tools: OnceLock<Arc<crate::tools::ToolRegistry>>,
     overlay: OnceLock<Arc<dyn OverlayComposition>>,
 }
 impl RuntimeHandoff for RootHandoff {
-    fn load_in_process<'a>(
-        &'a self,
-        request: LoadRequest<'a>,
-    ) -> HandoffFuture<'a, Result<(), String>> {
-        let host = Arc::clone(&self.host);
-        let pool = Arc::clone(&self.pool);
-        let version = self.version.clone();
-        let directory = request.directory.to_path_buf();
-        let id = request.record.id.clone();
-        let source = request.record.source.as_str().to_owned();
-        // Current-policy tier from `authorize_load`: the exact installed
-        // source identity is official. Selects the SDK context and
-        // `TrustedOfficial` schema registration, exactly as I0 compiled it.
-        let official = request.requirement.trust == TrustTier::Official;
-        let data = self.plugin_data.join(&id);
-        let instance = PluginInstanceId::new(self.next_instance.fetch_add(1, Ordering::Relaxed));
+    fn load_plugin(self: Arc<Self>, request: LoadRequest) -> HandoffFuture<'static, LoadStatus> {
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let snapshot = host.validation_snapshot();
-                if snapshot.providers.iter().any(|provider| provider.id == id) {
-                    // Loaded native code cannot be unloaded safely.
-                    return Err(
-                        "an instance of this plugin is already loaded; restart vosu to load the installed version"
-                            .to_owned(),
-                    );
-                }
-                let loaded = crate::plugin::load_installed(
-                    &version,
-                    &snapshot,
-                    &directory,
-                    &source,
-                    official,
-                )
-                .map_err(|error| error.to_string())?;
-                host.create_instance(instance, &loaded, data, Some(pool))
-                    .map_err(|error| error.to_string())
-            })
-            .await
-            .map_err(|error| error.to_string())?
+            tokio::task::spawn_blocking(move || self.load(request))
+                .await
+                .unwrap_or_else(|error| LoadStatus::Failed(error.to_string()))
         })
     }
+
+    fn stop_process(&self, id: &str) -> Result<bool, String> {
+        let Some(plugin) = self.process(id) else {
+            return Ok(false);
+        };
+        let active = self
+            .host
+            .process_status(plugin.instance())
+            .is_some_and(|status| {
+                matches!(
+                    status.phase,
+                    ProcessPhase::Starting | ProcessPhase::Running | ProcessPhase::Backoff { .. }
+                )
+            });
+        match self.host.teardown_instance(plugin.instance()) {
+            Ok(()) | Err(HostError::DestroyTimedOut | HostError::UnknownInstance) => Ok(active),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn resume_process(&self, id: &str) {
+        if let Some(plugin) = self.process(id)
+            && let Err(error) = self.host.restart_process_instance(plugin.instance())
+        {
+            tracing::warn!(plugin = id, %error, "could not resume the installed plugin after rollback");
+        }
+    }
+    fn forget_process(&self, id: &str) {
+        self.remove_process(id);
+    }
+
     fn rescan_web(&self) -> HandoffFuture<'_, ()> {
         Box::pin(async move {
             if let Some(tools) = self.tools.get() {
@@ -138,6 +144,115 @@ impl RuntimeHandoff for RootHandoff {
                 );
             }
         })
+    }
+}
+
+impl RootHandoff {
+    pub(super) fn process(&self, id: &str) -> Option<Arc<ManagedPlugin>> {
+        self.processes.read().get(id).cloned()
+    }
+
+    pub(super) fn processes(&self) -> Vec<Arc<ManagedPlugin>> {
+        self.processes.read().values().cloned().collect()
+    }
+
+    pub(super) fn remove_process(&self, id: &str) {
+        if let Some(plugin) = self.processes.write().remove(id) {
+            self.host.forget_stopped_process(plugin.instance());
+        }
+    }
+
+    pub(super) fn validate_process(
+        &self,
+        record: &InstalledRecord,
+        directory: &Path,
+    ) -> Result<LoadedPlugin, HostError> {
+        let provenance = record
+            .provenance()
+            .ok_or_else(|| HostError::State("missing installed provenance".into()))?;
+        // The old generation being replaced may still be registered during
+        // approval review. That is this exact installed id, not a new provider.
+        let mut snapshot = self.host.validation_snapshot();
+        if self.process(&record.id).is_some() {
+            snapshot.providers.retain(|p| p.id != record.id);
+        }
+        crate::plugin::load_installed_process(
+            &self.version,
+            &snapshot,
+            directory,
+            &record.id,
+            provenance,
+            record.source.is_official(),
+        )
+    }
+
+    fn load(&self, request: LoadRequest) -> LoadStatus {
+        let id = &request.record.id;
+        if let Some(plugin) = self.process(id)
+            && let Some(status) = self.host.process_status(plugin.instance())
+        {
+            return match status.phase {
+                ProcessPhase::Running => LoadStatus::Loaded,
+                _ => {
+                    LoadStatus::Failed("the installed process plugin is already registered".into())
+                }
+            };
+        }
+        let snapshot = self.host.validation_snapshot();
+        if snapshot.providers.iter().any(|p| p.id == *id) || self.host.has_development_process(id) {
+            return LoadStatus::Failed("an instance of this plugin is already registered".into());
+        }
+        if request
+            .record
+            .artifact
+            .as_ref()
+            .is_some_and(|artifact| artifact.runtime == Runtime::Process)
+        {
+            return match self.validate_process(&request.record, &request.directory) {
+                Ok(plugin) => self.start_process(&plugin).1,
+                Err(error) => LoadStatus::Failed(error.to_string()),
+            };
+        }
+        let loaded = match crate::plugin::load_installed(
+            &self.version,
+            &snapshot,
+            &request.directory,
+            request.record.source.as_str(),
+            request.requirement.trust == TrustTier::Official,
+        ) {
+            Ok(plugin) => plugin,
+            Err(error) => return LoadStatus::Failed(error.to_string()),
+        };
+        self.create(&loaded).1
+    }
+
+    pub(super) fn start_process(&self, loaded: &LoadedPlugin) -> (Arc<ManagedPlugin>, LoadStatus) {
+        let (instance, status) = self.create(loaded);
+        let plugin = Arc::new(ManagedPlugin::installed(instance, loaded));
+        self.processes
+            .write()
+            .insert(loaded.manifest().id.clone(), Arc::clone(&plugin));
+        (plugin, status)
+    }
+
+    fn create(&self, loaded: &LoadedPlugin) -> (PluginInstanceId, LoadStatus) {
+        let id = &loaded.manifest().id;
+        let instance = PluginInstanceId::new(self.next_instance.fetch_add(1, Ordering::Relaxed));
+        let status = match self.host.create_instance(
+            instance,
+            loaded,
+            self.plugin_data.join(id),
+            Some(Arc::clone(&self.pool)),
+        ) {
+            Ok(()) => LoadStatus::Loaded,
+            Err(HostError::ProcessStartupFailed(error))
+                if error.stage == StartupStage::Approval =>
+            {
+                LoadStatus::ApprovalRequired
+            }
+            Err(error) => LoadStatus::Failed(error.to_string()),
+        };
+        (instance, status)
     }
 }
 
@@ -166,6 +281,7 @@ impl CatalogComposition {
         roots: CatalogRoots,
         transport: Arc<dyn PackageTransport>,
         bundle: &Bundle,
+        approvals: &ApprovalStore,
     ) -> io::Result<Self> {
         let overlays = roots
             .layout
@@ -179,6 +295,7 @@ impl CatalogComposition {
             pool: WorkerPool::new(CATALOG_CONCURRENT_WORKERS, DEFAULT_QUEUE_CAPACITY),
             next_instance: AtomicU64::new(FIRST_CATALOG_INSTANCE),
             version: bundle.version(),
+            processes: parking_lot::RwLock::default(),
             tools: OnceLock::new(),
             overlay: OnceLock::new(),
         });
@@ -201,6 +318,9 @@ impl CatalogComposition {
         })
         .await
         .map_err(io::Error::other)?;
+        let runtime = Arc::new(runtime);
+        let authority: Arc<dyn InstalledApprovals> = runtime.clone();
+        approvals.attach_catalog(Arc::downgrade(&authority));
         for report in runtime.load_installed().await {
             if !matches!(report.status, LoadStatus::Loaded | LoadStatus::WebRescanned) {
                 tracing::warn!(
@@ -210,13 +330,13 @@ impl CatalogComposition {
                 );
             }
         }
-        let runtime = Arc::new(runtime);
         let builtins = Arc::new(builtin_providers(bundle)?);
         let restart = Arc::new(removal::RestartRequired::default());
         let removal = Arc::new(removal::RootRemoval {
             handoff: Arc::clone(&handoff),
             runtime: OnceLock::new(),
             restart: Arc::clone(&restart),
+            suspended: parking_lot::Mutex::default(),
         });
         let _ = removal.runtime.set(Arc::downgrade(&runtime));
         let uninstall = runtime.installed().map(|store| {
@@ -268,6 +388,13 @@ impl CatalogComposition {
     /// Core service handles for H0's routes.
     pub fn services(&self) -> &Arc<CatalogRuntime> {
         &self.runtime
+    }
+
+    pub(super) fn attach_management(
+        &self,
+        management: &mut super::plugin_management::PluginManagement,
+    ) {
+        management.attach_catalog(Arc::clone(&self.runtime), Arc::clone(&self.handoff));
     }
 
     /// H0's dashboard-only `/api/catalog/*` facade over these services.

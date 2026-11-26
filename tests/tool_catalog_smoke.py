@@ -85,7 +85,8 @@ def main():
                         plugins=[
                             catalog.plugin('acme.paths', 'process', process_library,
                                            requires=[{'id': 'field:vosu.osu.internal.paths', 'version': '^1'}],
-                                           linux_user_namespaces=True),
+                                           linux_user_namespaces=True,
+                                           extra_files={'lib/testkit-fixture.control': f'nonce=m7-catalog-paths\ndir={root}\n'}),
                             catalog.plugin('acme.echo', 'in-process', library, settings=ECHO_SETTINGS),
                             catalog.plugin('acme.game', 'process', process_library,
                                            provides=[{'id': f'game:{GAME_PROCESS}', 'version': '*'}],
@@ -165,6 +166,10 @@ def main():
                 daemon.browser('tool_catalog_browser.mjs', args.playwright_module, args.evidence.resolve(),
                                first, second, USERNAME, PASSWORD, PLUGIN_SECRET)
                 assert next(p for p in roster() if p['id'] == 'vosu.m7fixture')['state'] == 'approval_required'
+                paths = next(p for p in roster() if p['id'] == 'acme.paths')
+                assert paths['state'] == 'approval_required' and paths['provenance']['kind'] == 'installed', paths
+                assert any('nonce=m7-catalog-paths' in receipt.read_text(encoding='utf-8')
+                           for receipt in root.glob('create-*'))
                 evidence.append('Browser: trust warning before every grant (cancel keeps untrusted; no remembered bypass), '
                                 'write-only credential, private toggle, plan review with approval + D8, one confirmation, '
                                 'load reports, uninstall preview, game offer, pending-restart banner; plugins and web tools '

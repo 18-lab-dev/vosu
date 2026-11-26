@@ -64,10 +64,7 @@ pub(crate) struct Handoff {
     pub(crate) loads: Mutex<Vec<(String, bool)>>,
 }
 impl RuntimeHandoff for Handoff {
-    fn load_in_process<'a>(
-        &'a self,
-        request: LoadRequest<'a>,
-    ) -> HandoffFuture<'a, Result<(), String>> {
+    fn load_plugin(self: Arc<Self>, request: LoadRequest) -> HandoffFuture<'static, LoadStatus> {
         let records =
             std::fs::read_to_string(self.state.join("catalog-installed.json")).unwrap_or_default();
         let committed = !self.state.join("catalog-install-journal.json").exists()
@@ -77,7 +74,7 @@ impl RuntimeHandoff for Handoff {
             .lock()
             .unwrap()
             .push((request.record.id.clone(), committed));
-        Box::pin(async { Ok(()) })
+        Box::pin(async { LoadStatus::Loaded })
     }
     fn rescan_web(&self) -> HandoffFuture<'_, ()> {
         Box::pin(async {})
@@ -403,7 +400,7 @@ async fn install_refuses_mirror_mismatch_and_windows_collisions() {
 }
 
 #[tokio::test]
-async fn install_process_plugin_commits_with_approval_but_requires_m5() {
+async fn install_process_plugin_commits_with_approval_before_handoff() {
     let user = source("alice/plugins", false);
     let fixture = Fixture::new(user.clone());
     let mut process = package("acme.proc", "1.0.0", "process", json!([]));
@@ -412,17 +409,26 @@ async fn install_process_plugin_commits_with_approval_but_requires_m5() {
         .confirm(plan(&[&process], &user, "acme.proc"), &["acme.proc"])
         .await;
     assert_eq!(job.status, "completed", "{:?}", job.error);
-    assert!(fixture.handoff.loads.lock().unwrap().is_empty());
+    assert_eq!(
+        *fixture.handoff.loads.lock().unwrap(),
+        [("acme.proc".into(), true)]
+    );
     let reports = fixture.executor.load_reports();
-    assert_eq!(reports[0].status, LoadStatus::RequiresM5ProcessRuntime);
+    assert_eq!(reports[0].status, LoadStatus::Loaded);
     let document = InstalledStore::open(fixture.layout.clone())
         .unwrap()
         .snapshot();
     let record = &document.records[0];
-    assert!(
-        record
-            .approval
-            .as_ref()
-            .is_some_and(|approval| approval.matches(record.artifact.as_ref().unwrap()))
+    let approval = record.approval.as_ref().expect("plan approval");
+    let digests = record.process_digests.expect("verified package digests");
+    assert_eq!(approval.id, record.id);
+    assert_eq!(approval.manifest_sha256, digests.manifest_sha256);
+    assert_eq!(approval.library_sha256, digests.library_sha256);
+    assert_eq!(
+        serde_json::to_value(&approval.provenance).unwrap(),
+        json!({
+            "kind": "installed", "source": "alice/plugins", "version": "1.0.0",
+            "package_sha256": record.sha256,
+        })
     );
 }

@@ -4,6 +4,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M7
 
+- Catalog-installed process plugins now start in supervised plugin hosts
+  after approval, including after vosu restarts. Manage their approval and
+  lifecycle from the Plugins section. Updates and uninstalls stop the old
+  host before moving its files; changed bytes require new approval.
+
 - Process plugins can request Linux user namespaces, with explicit
   per-artifact approval. This lets plugins such as the replay renderer use
   Chromium's sandbox. The install plan and approval prompt disclose the
@@ -284,8 +289,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
   (manifest, schemas, lanes, target library/UI) before anything is published.
   The dependency-first graph and its provenance/approval/`installed_for` records
   commit through a journal with all-or-rollback recovery before discovery/load.
-  Committed plugins load only under current trust policy; process plugins
-  report "requires M5 process runtime". Native Windows rename/reparse/locked-file
+  The initial handoff deferred process plugins until the M5 runtime was
+  wired in. Native Windows rename/reparse/locked-file
   and crash-recovery evidence remains pending; root composition, routes and the
   legacy catalog-v1 install cutover are not part of this change.
 - Uninstall catalog packages through a core uninstall service. The installed

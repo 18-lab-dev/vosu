@@ -1,13 +1,9 @@
 //! U0 removal effects for the root composition (M6b H0).
 //!
-//! `stop` runs before anything moves: legacy-hosted catalog tools stop their
-//! processes. Overlays are static files with nothing to stop. In-process
-//! plugin code cannot be unloaded safely (A6b.7): the host has no per-plugin
-//! teardown, so a live plugin keeps running until vosu restarts. After the
-//! durable commit `removed` records every such plugin, and every live
-//! consumer that lost a resolved optional grant, as "restart required",
-//! rescans the web hosts and republishes G0 offers. A plugin that is still
-//! loaded never receives a new load: its package directory is gone.
+//! `stop` runs before anything moves: catalog process plugins and tools are
+//! stopped. In-process native code keeps running until vosu restarts (A6b.7).
+//! After commit `removed` forgets the stopped processes, records the native
+//! restart requirements, rescans the web hosts and republishes offers.
 use super::*;
 use crate::catalog::{
     install::{HandoffFuture, InstalledKind},
@@ -38,6 +34,7 @@ pub(super) struct RootRemoval {
     pub(super) handoff: Arc<RootHandoff>,
     pub(super) runtime: OnceLock<Weak<CatalogRuntime>>,
     pub(super) restart: Arc<RestartRequired>,
+    pub(super) suspended: parking_lot::Mutex<Vec<String>>,
 }
 
 impl RootRemoval {
@@ -48,7 +45,7 @@ impl RootRemoval {
             .validation_snapshot()
             .providers
             .into_iter()
-            .filter(|provider| !provider.builtin)
+            .filter(|provider| !provider.builtin && self.handoff.process(&provider.id).is_none())
             .map(|provider| provider.id)
             .collect()
     }
@@ -57,6 +54,32 @@ impl RootRemoval {
 impl RemovalRuntime for RootRemoval {
     fn stop<'a>(&'a self, plan: &'a RemovalPlan) -> HandoffFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            let ids: Vec<_> = plan
+                .removals
+                .iter()
+                .filter(|removal| removal.kind == InstalledKind::Plugin)
+                .map(|removal| removal.id.clone())
+                .collect();
+            let handoff = Arc::clone(&self.handoff);
+            let suspended = tokio::task::spawn_blocking(move || {
+                let mut suspended = Vec::new();
+                for id in ids {
+                    match handoff.stop_process(&id) {
+                        Ok(true) => suspended.push(id),
+                        Ok(false) => {}
+                        Err(error) => {
+                            for id in suspended.iter().rev() {
+                                handoff.resume_process(id);
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+                Ok(suspended)
+            })
+            .await
+            .map_err(|_| "plugin teardown worker failed".to_owned())??;
+            *self.suspended.lock() = suspended;
             // Consumers first, exactly in the closure's order.
             for removal in &plan.removals {
                 if removal.kind == InstalledKind::Tool
@@ -69,8 +92,30 @@ impl RemovalRuntime for RootRemoval {
         })
     }
 
+    fn rolled_back(&self) -> HandoffFuture<'_, ()> {
+        let suspended = std::mem::take(&mut *self.suspended.lock());
+        let handoff = Arc::clone(&self.handoff);
+        Box::pin(async move {
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                for id in suspended.iter().rev() {
+                    handoff.resume_process(id);
+                }
+            })
+            .await
+            {
+                tracing::warn!(%error, "could not resume installed process plugins after rollback");
+            }
+        })
+    }
+
     fn removed<'a>(&'a self, plan: &'a RemovalPlan) -> HandoffFuture<'a, ()> {
         Box::pin(async move {
+            self.suspended.lock().clear();
+            for removal in &plan.removals {
+                if removal.kind == InstalledKind::Plugin {
+                    self.handoff.remove_process(&removal.id);
+                }
+            }
             let live = self.live();
             self.restart.extend(
                 plan.removals
@@ -82,6 +127,13 @@ impl RemovalRuntime for RootRemoval {
             );
             self.handoff.rescan_web().await;
             if let Some(runtime) = self.runtime.get().and_then(Weak::upgrade) {
+                if let Some(executor) = runtime.executor() {
+                    for removal in &plan.removals {
+                        if removal.kind == InstalledKind::Plugin {
+                            executor.update_plugin_report(&removal.id, None);
+                        }
+                    }
+                }
                 runtime.refresh_offers();
             }
         })

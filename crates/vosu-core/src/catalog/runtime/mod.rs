@@ -31,6 +31,7 @@ mod tests;
 
 pub use policy::{PendingRestart, RevocationReport};
 
+use super::trust::{CurrentPolicy, Requirement};
 use super::{
     credentials::{CredentialError, CredentialInput},
     forges::{CatalogFetchService, FetchContext},
@@ -46,6 +47,10 @@ use super::{
     },
 };
 use crate::plugin::{PluginHost, host_platform};
+use crate::plugin::{
+    approval::{Digests, InstalledApprovals, Provenance, approval_failure},
+    process::control::StartupFailure,
+};
 use policy::PolicyChange;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -96,6 +101,7 @@ pub struct CatalogRuntime {
     offers: Arc<OfferRefresh>,
     pending: Arc<PendingRestart>,
     status: CatalogStatus,
+    handoff: Arc<dyn RuntimeHandoff>,
 }
 
 /// Current S0 records plus the daemon-lifetime marker, read at every load.
@@ -183,11 +189,20 @@ struct NotifyingHandoff {
     offers: Arc<OfferRefresh>,
 }
 impl RuntimeHandoff for NotifyingHandoff {
-    fn load_in_process<'a>(
-        &'a self,
-        request: super::install::LoadRequest<'a>,
-    ) -> super::install::HandoffFuture<'a, Result<(), String>> {
-        self.inner.load_in_process(request)
+    fn load_plugin(
+        self: Arc<Self>,
+        request: super::install::LoadRequest,
+    ) -> super::install::HandoffFuture<'static, super::install::LoadStatus> {
+        Arc::clone(&self.inner).load_plugin(request)
+    }
+    fn stop_process(&self, id: &str) -> Result<bool, String> {
+        self.inner.stop_process(id)
+    }
+    fn resume_process(&self, id: &str) {
+        self.inner.resume_process(id);
+    }
+    fn forget_process(&self, id: &str) {
+        self.inner.forget_process(id);
     }
     fn rescan_web(&self) -> super::install::HandoffFuture<'_, ()> {
         self.inner.rescan_web()
@@ -240,7 +255,7 @@ impl CatalogRuntime {
                 Arc::clone(store),
                 transport,
                 Arc::new(NotifyingHandoff {
-                    inner: handoff,
+                    inner: Arc::clone(&handoff),
                     offers: Arc::clone(&offers),
                 }),
                 Arc::new(CurrentPolicySource {
@@ -264,6 +279,7 @@ impl CatalogRuntime {
             offers,
             pending,
             status,
+            handoff,
         }
     }
 
@@ -305,6 +321,23 @@ impl CatalogRuntime {
     }
     pub fn installed(&self) -> Option<&Arc<InstalledStore>> {
         self.installed.as_ref()
+    }
+
+    pub(crate) fn process_requirement(
+        &self,
+        record: &super::install::InstalledRecord,
+    ) -> Option<Requirement> {
+        let (generation, sources) = self.fetch.as_ref()?.sources().snapshot().ok()?;
+        let artifact = record.artifact.as_ref()?;
+        if artifact.runtime != vosu_plugin_api::Runtime::Process {
+            return None;
+        }
+        CurrentPolicy {
+            generation,
+            sources: &sources,
+        }
+        .requirement(artifact)
+        .ok()
     }
     /// The installed generation P0 `Prerequisites` and G0 both pin.
     pub fn installed_generation(&self) -> u64 {
@@ -366,15 +399,29 @@ impl CatalogRuntime {
             .collect();
         let installed = self.installed.clone();
         let pending = Arc::clone(&self.pending);
-        let result = tokio::task::spawn_blocking(move || {
-            policy::apply(&fetch, installed.as_deref(), &pending, &live, change)
+        let handoff = Arc::clone(&self.handoff);
+        let executor = self.executor.clone();
+        let offers = Arc::clone(&self.offers);
+        tokio::task::spawn_blocking(move || {
+            let result = policy::apply(&fetch, installed.as_deref(), &pending, &live, change)
+                .inspect(|report| {
+                    for id in &report.stop_process {
+                        let status = match handoff.stop_process(id) {
+                            Ok(_) => super::install::LoadStatus::ApprovalRequired,
+                            Err(error) => super::install::LoadStatus::Failed(error),
+                        };
+                        if let Some(executor) = &executor {
+                            executor.update_plugin_report(id, Some(status));
+                        }
+                    }
+                });
+            operation.finish(result.as_ref().map(|_| ()).map_err(ToString::to_string));
+            offers.refresh();
+            result
         })
         .await
         .map_err(|_| CatalogError::Worker)
-        .and_then(|result| result);
-        operation.finish(result.as_ref().map(|_| ()).map_err(ToString::to_string));
-        self.offers.refresh();
-        result
+        .and_then(|result| result)
     }
 
     pub async fn set_private_network(
@@ -526,6 +573,47 @@ impl CatalogRuntime {
                 .map(|(namespace, version)| (namespace, version, SchemaProvenance::TrustedBundled)),
         );
         inputs
+    }
+}
+
+impl InstalledApprovals for CatalogRuntime {
+    fn check(
+        &self,
+        id: &str,
+        provenance: &Provenance,
+        digests: Digests,
+    ) -> Result<(), StartupFailure> {
+        let record = self
+            .installed
+            .as_ref()
+            .and_then(|store| store.plugin(id))
+            .filter(|record| record.provenance().as_ref() == Some(provenance))
+            .ok_or_else(|| approval_failure("approval_changed", "the installed plugin changed"))?;
+        let requirement = self.process_requirement(&record).ok_or_else(|| {
+            approval_failure(
+                "approvals_unreadable",
+                "catalog source policy is unavailable",
+            )
+        })?;
+        if record.matches_approval(digests)
+            || (!requirement.needs_approval && record.process_digests == Some(digests))
+        {
+            return Ok(());
+        }
+        if record.approval.is_some()
+            || record
+                .process_digests
+                .is_some_and(|verified| verified != digests)
+        {
+            return Err(approval_failure(
+                "approval_changed",
+                "the installed plugin bytes changed",
+            ));
+        }
+        Err(approval_failure(
+            "approval_required",
+            "the installed plugin needs approval",
+        ))
     }
 }
 

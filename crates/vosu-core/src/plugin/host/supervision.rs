@@ -214,7 +214,14 @@ impl PluginHost {
             .supervisor
             .stop(id, expected)
             .map_err(|refused| restart_refused(id, refused))?;
-        if let Some(result) = self.stop_live(id) {
+        let result = self.stop_live(id);
+        if supervised && !self.supervisor.wait_starts(id, SHUTDOWN_START_BOUND) {
+            return Err(HostError::State(format!(
+                "instance {} did not finish starting",
+                id.0
+            )));
+        }
+        if let Some(result) = result {
             return result;
         }
         let registered = self
@@ -287,6 +294,15 @@ impl PluginHost {
     /// surface; `None` for an id that never ran a process package.
     pub fn process_status(&self, id: PluginInstanceId) -> Option<ProcessStatus> {
         self.supervisor.status(id)
+    }
+
+    /// Drops an uninstalled process package's restart template after teardown.
+    pub(crate) fn forget_stopped_process(&self, id: PluginInstanceId) {
+        self.supervisor.forget_stopped(id);
+    }
+
+    pub(crate) fn has_development_process(&self, plugin: &str) -> bool {
+        self.supervisor.has_development(plugin)
     }
 
     /// Shutdown's first step: no restart starts and no delay survives.

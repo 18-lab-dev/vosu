@@ -329,6 +329,7 @@ async fn k0_official_x_visibility_plugin_installs_registers_and_user_source_is_r
         roots(base.path()),
         memory.clone(),
         &vosu::BUNDLE,
+        &vosu_core::plugin::approval::ApprovalStore::open(&roots(base.path()).config),
     )
     .await
     .unwrap();
@@ -375,6 +376,7 @@ async fn k0_untrust_blocks_the_next_load_until_restart_then_retrust_loads() {
         roots(base.path()),
         memory.clone(),
         &vosu::BUNDLE,
+        &vosu_core::plugin::approval::ApprovalStore::open(&roots(base.path()).config),
     )
     .await
     .unwrap();
@@ -407,6 +409,7 @@ async fn k0_untrust_blocks_the_next_load_until_restart_then_retrust_loads() {
         roots(base.path()),
         memory.clone(),
         &vosu::BUNDLE,
+        &vosu_core::plugin::approval::ApprovalStore::open(&roots(base.path()).config),
     )
     .await
     .unwrap();
@@ -480,6 +483,7 @@ async fn k0_recovers_before_discovery_offers_observe_discovery_and_shutdown_join
         roots(base.path()),
         memory.clone(),
         &vosu::BUNDLE,
+        &vosu_core::plugin::approval::ApprovalStore::open(&roots(base.path()).config),
     )
     .await
     .unwrap();
