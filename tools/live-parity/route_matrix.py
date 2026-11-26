@@ -342,6 +342,11 @@ LISTENER = ("adapter-listener-policy",)
 FILE_SANDBOX = ("legacy-game-file-sandbox",)
 CALC = ("legacy-calculation-engine",)
 UPGRADED = frozenset({"upgraded"})
+# With no client a feed may send no state frame inside its Recv window (the pinned
+# upstream sends none, rehearsal 2026-11-25): a `no-client` upgrade case is a
+# handshake-only golden either way (GOLDEN_CONTRACT §6), and golden-capture lists a
+# daemon pair that disagrees on the frame as a finding (`handshake_only_finding`).
+HANDSHAKE_ONLY = UPGRADED | {"upgraded-timeout"}
 # The pinned upstream answers a request target with a malformed percent escape, then its
 # response logger throws and the daemon exits (parity_golden_crash). These cases run after
 # the no-client barrier and record the `upstream_crashed` outcome.
@@ -351,6 +356,18 @@ UPSTREAM_CRASH_LEDGER = "upstream-malformed-uri-crash"
 def upstream_crash_ledger(case: RouteCase) -> str | None:
     """The ledger row recording that this case's request kills the pinned upstream daemon."""
     return UPSTREAM_CRASH_LEDGER if UPSTREAM_CRASH_LEDGER in case.ledger else None
+
+
+def handshake_only_finding(case: RouteCase, source: str, vosu: str) -> dict | None:
+    """A completed handshake-only golden (`HANDSHAKE_ONLY`) whose upstream and vosu
+    outcomes disagree on a state frame inside the window. Both records stay in the capture
+    as observed; the disagreement is a finding for review, never normalized away."""
+    if case.role != GOLDEN or "upgraded-timeout" not in case.outcomes:
+        return None
+    frame = {"upgraded": "state frame", "upgraded-timeout": "no frame"}
+    if frame[source] == frame[vosu]:
+        return None
+    return {"case": case.id, "rule": "handshake-only", "source": frame[source], "vosu": frame[vosu]}
 
 
 FILTER_V2 = b'["menu",{"field":"play","keys":["playerName",{"field":"hits","keys":["0","100","300"]}]}]'
@@ -435,7 +452,8 @@ def _ws_cases() -> list[RouteCase]:
     for slug, path in WS_ROUTES:
         base = f"ws.{slug}"
         for barrier in ("no-client", *PAYLOAD_BARRIERS):
-            cases.append(_ws(f"{base}.upgrade.{barrier}", path, first, barrier=barrier))
+            cases.append(_ws(f"{base}.upgrade.{barrier}", path, first, barrier=barrier,
+                             outcomes=HANDSHAKE_ONLY if barrier == "no-client" else UPGRADED))
         drop = lambda name: tuple(item for item in UPGRADE if item[0] != name)
         invalid = {
             "missing-key": drop("Sec-WebSocket-Key"),

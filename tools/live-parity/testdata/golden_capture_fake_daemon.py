@@ -20,6 +20,7 @@ import socketserver
 import subprocess
 import sys
 import threading
+import urllib.parse
 
 MODE = sys.argv[1]
 PORT = int(os.environ["SERVER_PORT"])
@@ -140,6 +141,11 @@ class Handler(socketserver.BaseRequestHandler):
         path, _, query = target.partition("?")
         if path in OPTIONS.get("close_paths", ()):
             return True
+        if MODE == "vosu" and OPTIONS.get("request_budget") and len(
+                urllib.parse.parse_qsl(query, keep_blank_values=True)) > 128:
+            # adapter-surface-request-budget: the request never reaches a provider.
+            sock.sendall(response(404, b"Not Found", head=method == "HEAD"))
+            return
         if MODE == "vosu" and path == ENDPOINT and not OPTIONS.get("no_harness"):
             if values("x-vosu-test-capture") == [CAPABILITY]:
                 if method != "GET":
@@ -159,7 +165,8 @@ class Handler(socketserver.BaseRequestHandler):
             sock.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                           f"Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").encode())
             _status, body = state_body(WS_ROUTES[path])
-            sock.sendall(frame(1, body))
+            if not OPTIONS.get("silent_ws"):  # silent_ws: no game data, so no state frame.
+                sock.sendall(frame(1, body))
             try:
                 while sock.recv(65536):
                     sock.sendall(frame(8, (1000).to_bytes(2, "big")))

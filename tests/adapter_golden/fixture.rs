@@ -28,8 +28,8 @@ pub const FAMILIES: [&str; 6] = [
     "calculation",
     "origin-peer",
 ];
-pub const NORMALIZATION_VERSION: u64 = 1;
-/// `GOLDEN_CONTRACT.md` §7, first column. Version 1 approves no
+pub const NORMALIZATION_VERSION: u64 = 2;
+/// `GOLDEN_CONTRACT.md` §7, first column. Version 2 approves no
 /// `client-timestamp-pointer` instance, and `raw-capability-redaction` only
 /// ever applies to private raw evidence.
 pub const RULE_IDS: [&str; 7] = [
@@ -487,6 +487,10 @@ fn platform(
     let assets = assets(&dir, name, &files, &synthetic_roots)?;
     brand(&dir, name, pin, provenance, &files)?;
     let cases = cases(&dir, name, manifest, &files, &assets)?;
+    for case in &cases {
+        super::case_file::request_roots(&case.request, &synthetic_roots, &case.normalized)
+            .map_err(|e| format!("{name}/cases/{}.json: {e}", case.id))?;
+    }
     Ok(Platform {
         name: name.to_owned(),
         synthetic_roots,

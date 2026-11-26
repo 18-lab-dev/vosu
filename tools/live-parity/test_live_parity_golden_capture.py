@@ -35,6 +35,7 @@ import parity_golden_crash as crash
 from parity_golden_config import validate_golden_config
 from parity_golden_rules import NON_GOLDEN_SEGMENTS
 import parity_golden_client as golden_client
+import parity_golden_rehearsal as rehearsal
 import route_matrix as rm
 import route_security as rs
 
@@ -71,6 +72,8 @@ def free_port() -> int:
 
 
 HARNESS_BUILD_ENV = "VOSU_GOLDEN_HARNESS_BUILD"
+# The built daemon (path, commit, features) handed to the test's own namespaced re-run.
+ISOLATED_HARNESS_ENV = "VOSU_GOLDEN_HARNESS_ISOLATED"
 
 
 def head_harness_binary() -> tuple[Path, str, list[str]]:
@@ -200,10 +203,21 @@ class CaptureTestCase(unittest.TestCase):
                     "owned_paths": []}
         return build
 
+    def receipt(self, **changes) -> Path:
+        """A passing rehearsal receipt for this commit and tooling, with `changes` applied."""
+        receipt = {"format": rehearsal.RECEIPT_FORMAT, "result": "pass",
+                   "vosu_commit": self.commit, "tooling_digest": rehearsal.tooling_digest(),
+                   "source_revision": PINNED_SOURCE_REVISION, "completed_utc": "2026-11-25T00:00:00Z",
+                   **changes}
+        path = self.tmp / f"receipt-{len(list(self.tmp.glob('receipt-*')))}.json"
+        path.write_text(json.dumps(receipt))
+        return path
+
     def capture(self, scenario: gc.ScenarioSet, client: FakeClient, cfg: dict, *,
-                build=None, timeout: float = 120.0) -> dict:
+                build=None, timeout: float = 120.0, receipt: Path | None = None) -> dict:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             gc.golden_capture(cfg, scenario, str(self.out), timeout=timeout,
+                              rehearsal_receipt=str(receipt or self.receipt()),
                               build=build or self.stub_build(), client=client,
                               operator=client.operator)
         return json.loads(self.out.read_text("utf-8"))
@@ -346,7 +360,9 @@ class FakeTraversalTests(CaptureTestCase):
         self.out.with_name("capture.json.transcript.json").unlink()
         cfg = self.config(scenario)
         cfg["golden"]["authorization"]["vosu_commit"] = "0" * 40
-        self.refuses("authorization.vosu_commit", scenario, FakeClient(self.state), cfg)
+        # The receipt matches the authorization; the build's commit does not.
+        self.refuses("authorization.vosu_commit", scenario, FakeClient(self.state), cfg,
+                     receipt=self.receipt(vosu_commit="0" * 40))
 
     def test_orphan_processes_are_killed_and_survivors_fail_the_run(self) -> None:
         scenario = gc.ScenarioSet("test-orphan", ("menu",), ("state-http.json-v2.get.menu",))
@@ -671,10 +687,35 @@ class OperatorFindingTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the local end-to-end runs on Linux")
 class RealHarnessDaemonTests(CaptureTestCase):
-    """HEAD's `cargo build --locked --features test-harness` vosu daemon, built by the test."""
+    """HEAD's `cargo build --locked --features test-harness` vosu daemon, built by the test.
+
+    As in the rehearsal, the build runs here, where the protected-tool checks see the real
+    owners of git and cargo; the daemons then run in a private PID namespace (the test
+    re-enters itself through `unshare`), since both discover osu! processes and would
+    read a game the host runs."""
 
     def test_end_to_end_with_the_real_harness_daemon(self) -> None:
-        binary, commit, features = head_harness_binary()
+        isolated = os.environ.get(ISOLATED_HARNESS_ENV)
+        if isolated is None:
+            binary, commit, features = head_harness_binary()
+            self.assertEqual(commit, self.commit)
+            unshare = shutil.which("unshare")
+            if unshare is None:
+                self.fail("the real daemons run in a private PID namespace: install util-linux unshare")
+            spec = json.dumps({"binary": str(binary), "commit": commit, "features": features})
+            inner = subprocess.run(
+                [unshare, *rehearsal.ISOLATION, "--", sys.executable, "-m", "unittest", "-v",
+                 f"{Path(__file__).stem}.{type(self).__name__}"],
+                cwd=Path(__file__).parent, env={**os.environ, ISOLATED_HARNESS_ENV: spec},
+                text=True, capture_output=True, timeout=1800)
+            self.assertEqual((inner.returncode, inner.stderr.count(" ... ok")), (0, 1),
+                             inner.stderr[-6000:])
+            return
+        self.assertEqual(os.getpid(), 1, f"{ISOLATED_HARNESS_ENV} is set only by this test")
+        running = sorted(gc.daemon_mod._running_osu_processes())
+        self.assertEqual(running, [], "an osu! client is visible inside the namespace")
+        spec = json.loads(isolated)
+        binary, commit, features = Path(spec["binary"]), spec["commit"], spec["features"]
         self.assertEqual(commit, self.commit)
         scenario = gc.ScenarioSet("test-real-daemon", ("no-client",), NO_CLIENT_CASES)
         cfg = self.config(scenario, vosu_command=[str(binary)])

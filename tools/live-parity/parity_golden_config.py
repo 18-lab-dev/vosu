@@ -21,6 +21,9 @@ ASSET_KEYS = ("id", "relative", "media_type", "generator", "license")
 REQUIRED = ("authorization", "capture_root", "capture_slot", "route_roots", "other_roots",
             "inside_files", "fixture_values", "assets")
 OPTIONAL = ("sentinel_chart", "client_source")
+# A client-less rehearsal (parity_golden_rehearsal) needs no authorization, records no
+# assets and copies no client.
+REHEARSAL_ABSENT = ("authorization", "assets", "client_source")
 _SLOT = r"^[A-Za-z0-9!_-][A-Za-z0-9!._-]{0,63}$"
 _NAME = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 
@@ -64,18 +67,22 @@ def _strings(value: Any, where: str, keys: tuple[str, ...] | None, errors: list[
             errors.append(f"{where}.{key} must be a non-empty string")
 
 
-def validate_golden_config(value: Any, os_name: str) -> list[str]:
+def validate_golden_config(value: Any, os_name: str, *, rehearsal: bool = False) -> list[str]:
     """Shape errors of a `golden` block; empty when valid. Paths are checked again,
-    against the filesystem, when golden-capture prepares the layout."""
+    against the filesystem, when golden-capture prepares the layout. A client-less
+    rehearsal block has no authorization, assets or client copy."""
     if not isinstance(value, dict):
         return ["golden must be an object"]
-    errors = [f"golden.{key} is required" for key in REQUIRED if key not in value]
+    absent = REHEARSAL_ABSENT if rehearsal else ()
+    errors = [f"golden.{key} is required" for key in REQUIRED
+              if key not in value and key not in absent]
     errors += [f"golden has unknown field {key!r}" for key in value
-               if key not in REQUIRED + OPTIONAL]
+               if key not in REQUIRED + OPTIONAL or key in absent]
     pm = ntpath if os_name == "windows" else posixpath
     authorization = value.get("authorization")
-    _strings(authorization, "golden.authorization", AUTHORIZATION_KEYS, errors)
-    if isinstance(authorization, dict):
+    if not rehearsal:
+        _strings(authorization, "golden.authorization", AUTHORIZATION_KEYS, errors)
+    if isinstance(authorization, dict) and not rehearsal:
         errors += [f"golden.authorization.{key} is required"
                    for key in AUTHORIZATION_KEYS if key not in authorization]
     root = value.get("capture_root")
@@ -100,7 +107,7 @@ def validate_golden_config(value: Any, os_name: str) -> list[str]:
     if source is not None and (not isinstance(source, str) or not pm.isabs(source)
                                or pm.normpath(source) != source):
         errors.append("golden.client_source must be an absolute normalized path")
-    assets = value.get("assets")
+    assets = [] if rehearsal else value.get("assets")  # A rehearsal records no assets.
     if not isinstance(assets, list):
         errors.append("golden.assets must be an array")
     else:

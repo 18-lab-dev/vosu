@@ -17,7 +17,8 @@ from pathlib import Path
 import re
 import shutil
 import sys
-from typing import Any
+import time
+from typing import Any, Callable
 
 from parity_process import sha256_file
 
@@ -87,6 +88,9 @@ def golden_client_copy(cfg: dict[str, Any]) -> int:
 
 
 SHARED_LOG = re.compile(r"[0-9]+\.nauth\.log")
+# Bound on waiting for the client to exit and release its shared log (pilot 2 WinError 32).
+RELEASE_TIMEOUT_S = 15.0
+RELEASE_POLL_S = 0.25
 
 
 def shared_profile_logs(cfg: dict[str, Any]) -> Path | None:
@@ -101,16 +105,34 @@ def log_names(directory: Path | None) -> set[str]:
     return {p.name for p in directory.iterdir()} if directory and directory.is_dir() else set()
 
 
-def remove_new_shared_logs(directory: Path | None, before: set[str]) -> dict[str, Any]:
+def remove_new_shared_logs(directory: Path | None, before: set[str], *,
+                           exited: Callable[[], bool] = lambda: True) -> dict[str, Any]:
     """Remove the `.nauth.log` files that appeared since `before`, recording name, size and
-    digest (never content); any other new entry is only recorded."""
-    removed, other = [], []
+    digest (never content); any other new entry is only recorded.
+
+    The client holds its log open until it has exited, so the removal first waits for
+    `exited()`, then retries a file that is still open (a Windows sharing violation) until
+    `RELEASE_TIMEOUT_S` has passed since the call. A file still locked then is listed under
+    `locked` and stays; the caller reports it as a cleanup error."""
+    deadline = time.monotonic() + RELEASE_TIMEOUT_S
+    while not exited() and time.monotonic() < deadline:
+        time.sleep(RELEASE_POLL_S)
+    removed, other, locked = [], [], []
     for name in sorted(log_names(directory) - before):
         path = directory / name
         if not SHARED_LOG.fullmatch(name) or not path.is_file() or path.is_symlink():
             other.append(name)
             continue
-        removed.append({"name": name, "bytes": path.stat().st_size, "sha256": sha256_file(path)})
-        path.unlink()
+        while True:
+            try:
+                entry = {"name": name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
+                path.unlink()
+                removed.append(entry)
+                break
+            except PermissionError as exc:
+                if time.monotonic() >= deadline:
+                    locked.append({"name": name, "error": str(exc)})
+                    break
+                time.sleep(RELEASE_POLL_S)
     return {"directory": None if directory is None else str(directory), "removed": removed,
-            "other_new_entries": other}
+            "locked": locked, "other_new_entries": other}

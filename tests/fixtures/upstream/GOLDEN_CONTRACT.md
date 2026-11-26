@@ -200,8 +200,13 @@ A case is recorded as:
    call the dump endpoint again. Both dumps must agree on provider generation,
    selected-entry digest, focus and roster revisions and derived-input state,
    and a state route's `GET` response must equal the dump's adapter status and
-   bytes. Status and headers come from the route record, so a `HEAD` status is
-   not compared with the dump. For the `sc` schema only, `provider_generation`
+   bytes. The dump holds the adapter's answer, so this applies only to a request
+   that reaches the adapter: a request over the `adapter-surface-request-budget`
+   limits ([DIVERGENCES.md](DIVERGENCES.md)) never does, and its vosu route must
+   instead be that row's ordinary 404; a budget case within the limits is
+   compared with the dump as usual. Status and headers come from the route
+   record, so a `HEAD` status is not compared with the dump. For the `sc`
+   schema only, `provider_generation`
    and `derived.revision` are exempt: every `sc` read releases the
    streamCompanion chart-work handle, so both advance on each read (main
    decision, 2026-11-24). An `sc` sandwich still compares the whole selection
@@ -219,6 +224,15 @@ the actual handshake and the first relevant text frame in the stable window;
 filtered-feed cases send exact legacy filter messages and record the
 resulting frame. Full feed sequences, normal close and slow-reader behavior
 are raw diagnostics, not payload goldens.
+
+A `no-client` feed upgrade (`ws.*.upgrade.no-client`) is a **handshake-only
+golden** (main decision, 2026-11-25: with no client the pinned upstream sends
+no state frame): both daemons record the upgrade handshake and whether any
+frame arrived within the case's bounded receive window, and the record keeps
+exactly the frames observed (with none, only the close exchange). Its upstream
+sandwich must agree as for any case. When vosu sends a state frame there and
+upstream sends none, or the reverse, the case is still recorded as observed
+and `golden-capture` lists it as a finding for review; it is never normalized.
 
 Raw HTTP records keep request bytes, status line, ordered raw headers and body
 bytes. Raw WS records keep opcode, fin, mask, length and payload bytes. A
@@ -296,17 +310,27 @@ is a string; a number, boolean, null or absent member at a scoped location is
 never touched. `golden` checks that its implemented rule IDs equal the first
 column of this table exactly.
 
-Normalization version: 1
+Normalization version: 2
+
+Version 2 (1 → 2) widens `root-prefix`: in a request target the closing `/`
+of a route prefix ends a token, so an absolute root spelled right after it is
+rewritten, while a root inside a path segment is still never rewritten and
+fails the privacy scan. The counterexamples are `golden`'s
+`test_absolute_root_right_after_a_route_prefix_is_replaced` and
+`adapter_golden`'s `golden_gates_take_a_request_root_only_at_a_token_boundary`:
+`adapter_golden` refuses a fixture whose request target carries a synthetic
+root anywhere `root-prefix` cannot put one, or carries one without listing
+`root-prefix` in the case's `normalized` rules.
 
 | Rule ID | Scope | Replacement | Retained local invariant |
 |---|---|---|---|
 | `header-date` | Response and WebSocket handshake header `date` | `<golden:date>` | Value is an IMF-fixdate; presence is compared |
 | `header-last-modified` | Response header `last-modified` in the `files` family, and the same value echoed in that case's request `If-Modified-Since`/`If-Range` (§6) | `<golden:last-modified>` | IMF-fixdate, present and equal in both upstream sandwich responses; in replay, equal to the declared replay file's mtime |
 | `header-etag` | Response header `etag` in the `files` family, and the same tag echoed in that case's request `If-None-Match`/`If-Range` (§6) | `"<golden:etag:N>"`, one ordinal per distinct value, weak `W/` prefix kept | Valid entity-tag, present and equal in both upstream sandwich responses; distinct tags stay distinct |
-| `root-prefix` | Exact token-bounded occurrences of an attested private absolute root prefix: raw, JSON-escaped (one and two levels, including nested JSON strings), percent-encoded and Windows forward-slash spellings, in bodies, frames, headers and dump CBOR text strings | The synthetic root assigned to that attested root (below) | The path below the root is kept verbatim; only the changed body's `content-length` or frame length is recomputed (§6); any remaining private prefix fails the privacy scan |
+| `root-prefix` | Exact token-bounded occurrences of an attested private absolute root prefix: raw, JSON-escaped (one and two levels, including nested JSON strings), percent-encoded and Windows forward-slash spellings, in request lines, bodies, frames, headers and dump CBOR text strings. In a request target the closing `/` of a route prefix (`/Songs/`, `/files/beatmap/`, `/files/skin/`) ends a token, so an absolute path spelled right after it (`/Songs//root/…`, `/Songs/C%3A%5C…`) starts at a token boundary | The synthetic root assigned to that attested root (below) | The path below the root is kept verbatim; only the changed body's `content-length` or frame length is recomputed (§6); any remaining private prefix fails the privacy scan |
 | `envelope-identity-ordinal` | Session, roster, resource and process identity fields of vosu dump envelopes only; ordinalized by the capture endpoint, verified by `golden` | Stable ordinals | Equal inputs map to equal ordinals and distinct inputs to distinct ordinals; selected session, roster order and foreground/generation relations preserved |
 | `raw-capability-redaction` | Request header `X-Vosu-Test-Capture` in private raw evidence, redacted by `golden-capture` | `<redacted>` | `golden` rejects any occurrence of the header or its value in a capture or candidate; dump calls are not route records |
-| `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 1: none.** |
+| `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 2: none.** |
 
 Synthetic roots: one distinct root per attested root, named after its
 declared slot as `C:\vosu-golden\<name>\` on Windows or `/vosu-golden/<name>/`
@@ -356,7 +380,7 @@ tests/fixtures/upstream/<pin>/
 
 `<pin>` is the full 40-hex Cargo `source-commit`. Platform directories are
 exactly the `SUPPORTED_MATRIX` pairs. A platform manifest records its format,
-`normalization_version` (initially 1), `provenance` (`captured` or
+`normalization_version` (currently 2, §7), `provenance` (`captured` or
 `synthetic`), pin, platform and client variant/version, vosu commit, harness
 build attestation hash, scenario set, slot-to-synthetic-root mapping, case
 counts by family and the review receipt reference. It contains no private

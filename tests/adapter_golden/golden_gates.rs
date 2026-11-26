@@ -10,7 +10,7 @@ use super::{
     golden_cases::{pin, synthetic_dir},
     json,
 };
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 use tempfile::TempDir;
 
 const PLATFORM: &str = "windows-stable";
@@ -417,5 +417,117 @@ fn golden_case_files_take_the_closed_outcome_and_refuse_non_golden_roles() {
         write(&case_path(dir.path(), id), &value);
         let error = case_file::case(&platform, PLATFORM, id, &[]).err().unwrap();
         assert!(error.contains("never goldens"), "{error}");
+    }
+}
+
+/// `root-prefix` version 2 (`GOLDEN_CONTRACT.md` §7): in a request target the
+/// closing `/` of a route prefix ends a token, so a synthetic root spelled
+/// right after it is a normalized root and loads. A root inside a path
+/// segment never came from an attested root and is refused, as is a root
+/// whose case does not list `root-prefix`.
+#[test]
+fn golden_gates_take_a_request_root_only_at_a_token_boundary() {
+    let id = "path-security.encoded-parent-files-beatmap";
+    let set = |platform: &'static str, target: &'static str, listed: bool| {
+        move |root: &Path| {
+            let path = root.join(platform).join("cases").join(format!("{id}.json"));
+            edit_json(&path, |case| {
+                case["request"]["text"] = json!(format!(
+                    "GET {target} HTTP/1.1\r\nHost: 127.0.0.1:24050\r\nConnection: close\r\n\r\n"
+                ));
+                if listed {
+                    let normalized = case["normalized"].as_array_mut().unwrap();
+                    normalized.push(json!("root-prefix"));
+                }
+            });
+        }
+    };
+    // Right after a route prefix, on both platforms, a root loads.
+    for (platform, target) in [
+        (
+            PLATFORM,
+            "/Songs/C%3A%5Cvosu-golden%5Csongs%5Cvosu-route-probe%5Csentinel.txt",
+        ),
+        (
+            "linux-lazer",
+            "/Songs//vosu-golden/files/vosu-route-probe/sentinel.txt",
+        ),
+    ] {
+        let dir = copy();
+        set(platform, target, true)(dir.path());
+        reseal(dir.path());
+        load(dir.path(), Provenance::Synthetic)
+            .unwrap_or_else(|e| panic!("{platform} {target}: {e}"));
+    }
+    // Inside a path segment it is refused, and a root needs its rule.
+    for (platform, target) in [
+        (
+            PLATFORM,
+            "/Songs/aC%3A%5Cvosu-golden%5Csongs%5Csentinel.txt",
+        ),
+        ("linux-lazer", "/Songs/a/vosu-golden/files/sentinel.txt"),
+    ] {
+        refused(set(platform, target, true), true, "inside a path segment");
+    }
+    refused(
+        set(
+            PLATFORM,
+            "/Songs/C%3A%5Cvosu-golden%5Csongs%5Csentinel.txt",
+            false,
+        ),
+        true,
+        "root-prefix is not listed",
+    );
+
+    // Every spelling root-prefix writes, against the same boundary.
+    let windows = BTreeMap::from([("songs".to_owned(), r"C:\vosu-golden\songs\".to_owned())]);
+    let linux = BTreeMap::from([("files".to_owned(), "/vosu-golden/files/".to_owned())]);
+    let listed = ["root-prefix".to_owned()];
+    let check = |roots: &BTreeMap<String, String>, target: &str, normalized: &[String]| {
+        case_file::request_roots(&format!("GET {target} HTTP/1.1\r\n\r\n"), roots, normalized)
+    };
+    for (roots, target) in [
+        (&windows, "/Songs/C%3A%5Cvosu-golden%5Csongs%5Cx.osu"),
+        (&windows, r"/Songs/C:\vosu-golden\songs\x.osu"),
+        (&windows, "/files/beatmap/C:/vosu-golden/songs/x.osu"),
+        (
+            &windows,
+            "/files/skin/%5C%5C%3F%5CC%3A%5Cvosu-golden%5Csongs%5Cx.png",
+        ),
+        (
+            &windows,
+            "/Songs/%5C%5Clocalhost%5CC%24%5Cvosu-golden%5Csongs%5Cx.osu",
+        ),
+        (
+            &windows,
+            "/api/calculate/pp?path=C%3A%5Cvosu-golden%5Csongs%5Cx.osu",
+        ),
+        (&windows, "/Songs/C%3A%5Cvosu-golden%5Csongs"),
+        (&linux, "/Songs//vosu-golden/files/x.osu"),
+        (&linux, "/files/skin/%2Fvosu-golden%2Ffiles%2Fx.png"),
+        (
+            &linux,
+            "/api/calculate/pp?path=%2Fvosu-golden%2Ffiles%2Fx.osu",
+        ),
+    ] {
+        assert!(check(roots, target, &listed).is_ok(), "{target}");
+    }
+    for (roots, target) in [
+        (&windows, "/Songs/aC%3A%5Cvosu-golden%5Csongs%5Cx.osu"),
+        (&windows, "/Songs/x/C:/vosu-golden/songs/x.osu"),
+        (&windows, "/Songs/x%2FC%3A%5Cvosu-golden%5Csongs%5Cx.osu"),
+        (&linux, "/Songs/a/vosu-golden/files/x.osu"),
+        (&linux, "/Songs/x//vosu-golden/files/x.osu"),
+        (&linux, "/files/beatmap/%2E/vosu-golden/files/x.osu"),
+    ] {
+        let error = check(roots, target, &listed).unwrap_err();
+        assert!(error.contains("inside a path segment"), "{target}: {error}");
+    }
+    // A relative path below the route, or another slot, is no root at all.
+    for target in [
+        "/Songs/vosu-golden/files/x.osu",
+        "/Songs//vosu-golden/filesx/x.osu",
+    ] {
+        assert!(check(&linux, target, &[]).is_ok(), "{target}");
     }
 }
