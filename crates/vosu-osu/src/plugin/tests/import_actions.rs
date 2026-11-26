@@ -448,3 +448,66 @@ fn action_reentering_public_identify_already_has_a_registered_session() {
     plugin.imports.shutdown();
     assert!(!rx.try_iter().any(|m| matches!(m, Message::ActionResult(_))));
 }
+
+#[cfg(all(feature = "test-harness", debug_assertions))]
+#[test]
+fn parity_harness_import_uses_the_production_handoff() {
+    let root = tempfile::tempdir().unwrap();
+    let (tx, rx) = mpsc::sync_channel(256);
+    let host = Arc::new(Host {
+        messages: tx,
+        gate: Arc::default(),
+    });
+    let imports = crate::actions::ImportActions::default();
+    let songs = root.path().join("Songs");
+    std::fs::create_dir(&songs).unwrap();
+    let source = source(root.path());
+    let malformed = root.path().join("malformed.osz");
+    std::fs::write(&malformed, b"not an archive").unwrap();
+    let lifecycle = tokio_util::sync::CancellationToken::new();
+    let call = |id, path: &Path, staged| {
+        let Message::ActionInvoke(action) = invoke(id, path) else {
+            unreachable!()
+        };
+        imports.invoke_fixture(&host, action, staged).unwrap();
+    };
+    let staged = Some((&lifecycle, songs.as_path()));
+    call(41, &source, None);
+    assert_eq!(receive(&rx).code.as_deref(), Some("target_gone"));
+    call(42, &malformed, staged);
+    assert_eq!(receive(&rx).code.as_deref(), Some("invalid_archive"));
+    assert_eq!(std::fs::read_dir(&songs).unwrap().count(), 0);
+
+    let (entered, preparing) = mpsc::sync_channel(1);
+    let (release, continue_work) = mpsc::sync_channel(1);
+    *host.gate.lock().unwrap() = Some((entered, continue_work));
+    call(43, &source, staged);
+    preparing.recv_timeout(WAIT).unwrap();
+    imports.cancel(43).unwrap();
+    release.send(()).unwrap();
+    assert_eq!(receive(&rx).code.as_deref(), Some("cancelled"));
+    assert_eq!(std::fs::read_dir(&songs).unwrap().count(), 0);
+
+    call(44, &source, staged);
+    let result = receive(&rx);
+    assert_eq!(result.status, ActionStatus::Ok);
+    assert_eq!(
+        result
+            .value
+            .unwrap()
+            .deserialized::<serde_json::Value>()
+            .unwrap(),
+        serde_json::json!({"client":"stable","disposition":"queued","refreshRequired":true})
+    );
+    imports.cancel(44).unwrap();
+    imports.shutdown();
+    let entries: Vec<_> = std::fs::read_dir(&songs).unwrap().map(Result::unwrap).collect();
+    assert_eq!(entries.len(), 1);
+    let installed = entries[0].path();
+    assert_eq!(installed.extension().and_then(|s| s.to_str()), Some("osz"));
+    assert_eq!(
+        std::fs::read(installed).unwrap(),
+        std::fs::read(source).unwrap()
+    );
+    assert!(!rx.try_iter().any(|m| matches!(m, Message::ActionResult(_))));
+}
