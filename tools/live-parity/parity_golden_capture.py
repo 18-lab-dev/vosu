@@ -38,7 +38,7 @@ import sys
 import time
 from typing import Any, Callable, Protocol
 
-from live_parity import PINNED_SOURCE_REVISION, Sample, barrier_of
+from live_parity import PINNED_SOURCE_REVISION, Sample, barrier_of, beatmap_time
 import parity_daemon as daemon_mod
 import parity_golden
 from parity_golden import CAPTURE_FORMAT, ENVELOPE_FORMAT, GoldenError
@@ -530,11 +530,13 @@ class Session:
 
     # -- barriers
 
-    def _observe(self, source: Daemon, dump: HarnessDump) -> tuple[dict[str, str | None], Any]:
-        """Both daemons' barriers, and the non-volatile view of their v2 state."""
+    def _observe(self, source: Daemon, dump: HarnessDump) -> tuple[dict[str, str | None], Any, float | None]:
+        """Both daemons' barriers, the non-volatile view of their v2 state, and the
+        source's live beatmap clock (None when the payload carries none)."""
         with HttpProbe(f"http://127.0.0.1:{source.port}", "source", "v2", source.evidence) as probe:
             sample = probe.fetch()
         upstream = barrier_of(sample)
+        clock = beatmap_time(sample.payload)
         envelope = dump.fetch("v2")
         if envelope["http"]["kind"] == "not_ready":
             vosu = "process-exit"
@@ -550,7 +552,7 @@ class Session:
                     volatile.dump_view(envelope)[0])
         except volatile.VolatileError:
             view = None  # never stable: a volatile field broke its rule
-        return {"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)}, view
+        return {"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)}, view, clock
 
     def _holds(self, barrier: str, seen: dict[str, str | None]) -> bool:
         """Both daemons report the barrier, and the attested client is alive in a client
@@ -563,15 +565,34 @@ class Session:
         index = TRAVERSAL.index(barrier)
         self.operator(barrier, f"waiting for barrier {barrier}: {OPERATOR_STEPS[barrier]}")
         stable, previous = 0, None
+        # The player loader reports `play` with a clock that has not advanced yet, and
+        # upstream's own rule (`game.paused = playTime == previousPlayTime`) reports that
+        # as `paused` before gameplay starts (GOLDEN_CONTRACT.md "Volatile ledger and
+        # stable barriers"). Tolerate only that one case: an upstream `paused` observed
+        # while waiting for `play`, before its clock has ever advanced since this wait
+        # began. "Gameplay started" is defined purely from that observed clock, so once
+        # it has advanced even once, a later `paused` is a real out-of-order observation
+        # again, like a vosu-side `paused` at any time: both still abort.
+        last_clock: float | None = None
+        gameplay_started = False
+        pregame_pauses = 0
         while stable < STABLE_OBSERVATIONS:
             if time.monotonic() > self.deadline:
                 raise CaptureError(f"barrier {barrier} was not reached before the timeout")
-            seen, view = self._observe(source, dump)
+            seen, view, clock = self._observe(source, dump)
+            if barrier == "play" and clock is not None:
+                if last_clock is not None and clock != last_clock:
+                    gameplay_started = True
+                last_clock = clock
             for daemon, value in seen.items():
                 if value not in TRAVERSAL or TRAVERSAL.index(value) <= index:
                     continue
                 if value == "no-client" and not reached:
                     continue  # The client is still starting.
+                if (barrier == "play" and value == "paused" and daemon == "source"
+                        and not gameplay_started):
+                    pregame_pauses += 1
+                    continue  # The player loader's frozen clock, not a real pause.
                 raise CaptureError(f"barrier out of order: {daemon} reached {value} while "
                                    f"waiting for {barrier} after {reached or ['launch']}")
             if not self._holds(barrier, seen) or (identical_views and view is None):
@@ -586,7 +607,8 @@ class Session:
         reached.append(barrier)
         self.transcript["barriers"].append({"barrier": barrier, "monotonic_ns": time.monotonic_ns(),
                                             "stable_observations": STABLE_OBSERVATIONS,
-                                            "identical_views": identical_views})
+                                            "identical_views": identical_views,
+                                            "pregame_pauses_tolerated": pregame_pauses})
 
     # -- cases
 

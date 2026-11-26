@@ -115,23 +115,30 @@ def head_harness_binary() -> tuple[Path, str, list[str]]:
 class FakeClient:
     """The scripted operator and client: each requested barrier becomes the fake state."""
 
-    def __init__(self, state: Path, script: dict[str, str] | None = None,
+    def __init__(self, state: Path, script: dict[str, str | tuple[str, str]] | None = None,
                  exits: bool = True) -> None:
         self.state, self.script, self.exits = state, script or {}, exits
         self.gone = False
         self.requests: list[str] = []
         self.write("no-client")
 
-    def write(self, barrier: str) -> None:
+    def write(self, barrier: str, *, vosu_barrier: str | None = None) -> None:
         temporary = self.state.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"barrier": barrier}))
+        payload = {"barrier": barrier}
+        if vosu_barrier is not None:
+            payload["vosu_barrier"] = vosu_barrier
+        temporary.write_text(json.dumps(payload))
         os.replace(temporary, self.state)
 
     def operator(self, barrier: str, message: str) -> None:
         if not message.startswith("waiting"):
             return
         self.requests.append(barrier)
-        self.write(self.script.get(barrier, barrier))
+        target = self.script.get(barrier, barrier)
+        if isinstance(target, tuple):
+            self.write(target[0], vosu_barrier=target[1])
+        else:
+            self.write(target)
         if barrier == "no-client" and self.exits:
             self.gone = True
 
@@ -329,11 +336,63 @@ class FakeTraversalTests(CaptureTestCase):
 
     def test_barrier_out_of_order_is_refused(self) -> None:
         scenario = gc.ScenarioSet("test-order", gc.TRAVERSAL, TRAVERSAL_CASES)
-        client = FakeClient(self.state, script={"play": "paused"})
-        self.refuses("barrier out of order", scenario, client, self.config(scenario))
+        # Skipping straight to `paused` is still out of order at any barrier but `play`.
+        client = FakeClient(self.state, script={"menu": "paused"})
+        self.refuses("barrier out of order: source reached paused while waiting for menu",
+                     scenario, client, self.config(scenario))
+        self.out.with_name("capture.json.transcript.json").unlink()
+        # Skipping past `paused` into `result` while waiting for `play` still aborts.
+        skip_ahead = FakeClient(self.state, script={"play": "result"})
+        self.refuses("barrier out of order: source reached result while waiting for play",
+                     scenario, skip_ahead, self.config(scenario))
+        self.out.with_name("capture.json.transcript.json").unlink()
+        # The pre-gameplay tolerance is upstream-only: a vosu-side `paused` still aborts.
+        vosu_only = FakeClient(self.state, script={"play": ("play", "paused")})
+        self.refuses("barrier out of order: vosu reached paused while waiting for play",
+                     scenario, vosu_only, self.config(scenario))
         self.out.with_name("capture.json.transcript.json").unlink()
         early_exit = FakeClient(self.state, script={"paused": "no-client"})
         self.refuses("barrier out of order", scenario, early_exit, self.config(scenario))
+
+    def test_play_barrier_tolerates_upstream_paused_before_gameplay(self) -> None:
+        # PlayerLoader reports `play` with a clock that has not moved yet, which
+        # upstream's own rule (`game.paused = playTime == previousPlayTime`) reports as
+        # `paused`; the barrier must tolerate that and still reach `play` (owner
+        # amendment 2026-11-26, after the first full pilot's run 3).
+        scenario = gc.ScenarioSet("test-pregame-pause", ("menu", "play", "paused"),
+                                  ("state-http.json-v2.get.menu", "state-http.json-v2.get.paused"))
+        profile = {"player_loader_profile": [{"paused": True, "clock": 0},
+                                             {"paused": False, "clock": 100}]}
+        capture = self.capture(scenario, FakeClient(self.state),
+                               self.config(scenario, source_options=profile))
+        self.assertEqual([case["id"] for case in capture["cases"]], list(scenario.cases))
+        play_barrier = next(b for b in self.transcript()["barriers"] if b["barrier"] == "play")
+        self.assertGreaterEqual(play_barrier["pregame_pauses_tolerated"], 1)
+
+    def test_play_barrier_aborts_on_paused_once_gameplay_started(self) -> None:
+        # "Gameplay started" is defined from the observed clock: once it has advanced
+        # even once, a later upstream `paused` is a real out-of-order observation again.
+        scenario = gc.ScenarioSet("test-real-pause-in-play", ("menu", "play", "paused"),
+                                  ("state-http.json-v2.get.menu", "state-http.json-v2.get.paused"))
+        profile = {"player_loader_profile": [{"paused": True, "clock": 0},
+                                             {"paused": False, "clock": 100},
+                                             {"paused": True, "clock": 100}]}
+        self.refuses("barrier out of order: source reached paused while waiting for play",
+                     scenario, FakeClient(self.state), self.config(scenario, source_options=profile))
+
+    def test_paused_barrier_after_gameplay_is_recorded_normally(self) -> None:
+        # Once gameplay has genuinely started and `play` held, a later upstream `paused`
+        # is the real `paused` barrier transition and is captured exactly as before.
+        scenario = gc.ScenarioSet("test-post-gameplay-pause", ("menu", "play", "paused"),
+                                  ("state-http.json-v2.get.paused",))
+        profile = {"player_loader_profile": [{"paused": True, "clock": 0},
+                                             {"paused": False, "clock": 100}]}
+        capture = self.capture(scenario, FakeClient(self.state),
+                               self.config(scenario, source_options=profile))
+        self.assertEqual([case["id"] for case in capture["cases"]], list(scenario.cases))
+        self.assertEqual(capture["cases"][0]["barrier"], "paused")
+        self.assertEqual([b["barrier"] for b in self.transcript()["barriers"]],
+                         ["menu", "play", "paused"])
 
     def test_process_exit_must_be_observed(self) -> None:
         scenario = gc.ScenarioSet("test-exit", ("menu", "no-client"),
