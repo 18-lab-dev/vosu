@@ -263,20 +263,41 @@ the case as a documented divergence (upstream crashes, vosu answers): with no
 upstream answer to replay, it writes no case file and lists the case, its ledger ID
 and vosu's status in its summary.
 
-A case the pinned upstream never answers has the expected upstream outcome `timeout`
-only when the route matrix names it by ID (`UPSTREAM_TIMEOUT`, Main's decision of
-2026-11-26, never a class rule) under its reviewed ledger row: the four
-`ws.near.*-trailing-slash` upgrades (`upstream-unanswered-near-upgrade`),
-`ws.near.v2-subscribe` (`adr0021-removed-selected-v2-feed`), `files.skin.index.upgrade`
-(`adr0021-removed-legacy-skin-index`) and `origin-peer.host.malformed-port`
-(`adapter-listener-policy`). Upstream's `upgrade` handler leaves an upgrade to a path it
-does not own unanswered, and its router throws on a `Host` with a non-numeric port
-before responding. For these cases a recorded no-response within the case deadline is
-a complete observation: both upstream sandwich records are `{"outcome": "timeout"}`
-(an upstream answer fails the attempt), vosu must answer rather than copy the hang, and
-its dumps must agree. `golden` writes no case file and lists the case, its ledger ID and
-vosu's status in its summary under `upstream_timeout`. Any other case that times out
-fails, and `golden-rehearsal` never counts a `timeout` as client-dependent.
+A case the pinned upstream cannot answer in full has a declared expected upstream
+outcome only when the route matrix names it by ID (`UPSTREAM_EXPECTED`, Main's decisions
+of 2026-11-26, never a class rule) under its reviewed ledger row:
+
+- `timeout`: the four `ws.near.*-trailing-slash` upgrades
+  (`upstream-unanswered-near-upgrade`), `ws.near.v2-subscribe`
+  (`adr0021-removed-selected-v2-feed`), `files.skin.index.upgrade`
+  (`adr0021-removed-legacy-skin-index`) and `origin-peer.host.malformed-port`
+  (`adapter-listener-policy`). Upstream's `upgrade` handler leaves an upgrade to a path
+  it does not own unanswered, and its router throws on a `Host` with a non-numeric port
+  before responding. A recorded no-response within the case deadline is the complete
+  observation; vosu must answer rather than copy the hang.
+- `validator-missing`: the four `files.conditional.*` cases whose validator comes from the
+  daemon's own priming response (`if-none-match-etag`, `if-modified-since-last-modified`,
+  `if-range-etag`, `if-range-last-modified`; `upstream-no-file-validators`). The pinned
+  upstream never sends `ETag` or `Last-Modified`, so a 2xx priming response without the
+  validator is the complete observation; vosu must answer its own conditional request,
+  which must be upstream's priming request plus the validator line.
+- `private-path-echo`: the eight Windows-only `path-security.{songs,beatmap}` cases with
+  the `absolute-drive`, `absolute-drive-slash`, `unc-extended` and `unc-device` spellings
+  (`upstream-private-path-echo`). Upstream joins the absolute spelling under its songs
+  folder and answers 5xx echoing the joined server-side path, which `root-prefix` cannot
+  normalize (the second root follows a path separator, and the status line encodes it
+  twice). `golden` checks the structure only: a 5xx whose body echoes a path under the
+  attested capture root. It never stores those bytes. vosu must refuse cleanly: 3xx or 4xx
+  (never a 2xx serving the sentinel, never a 5xx), with no absolute path or capture root
+  in its status line, headers or body; any violation fails the run.
+
+Both upstream sandwich records carry the declared outcome (any other upstream outcome,
+or a non-2xx priming response, fails the attempt), and vosu's dumps must agree. `golden`
+writes no case file and lists the case, its outcome, ledger ID and vosu's status in its
+summary under `upstream_declared`. Any other case with one of these outcomes fails.
+`golden-rehearsal` counts none of a `timeout`, a 2xx priming response without a
+validator, or a vosu refusal violation as client-dependent; a declared
+`private-path-echo` case whose client-less upstream 5xx echoes no path is.
 
 ### Route matrix families
 
@@ -409,7 +430,7 @@ path, account, capability or credential. The platform `inventory.json`
 carries the privacy-scan result as `privacy_scan`. A case's `expected` record
 holds the status code, the §6 compared headers plus `date`, the body and the
 frames, all from upstream, or exactly `{"outcome": "closed"}` (§6). An
-`upstream_crashed` or `upstream_timeout` case has no case file (§6).
+`upstream_crashed` or `upstream_declared` case has no case file (§6).
 
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so

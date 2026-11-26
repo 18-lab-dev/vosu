@@ -33,7 +33,7 @@ Capture shape (written by `golden-capture`; every object is closed):
            | {"attempt", "request": bytes, "outcome": "closed", "frames": [] (ws only)}
              (the connection closed without a response byte; expected {"outcome": "closed"})
     A final attempt may be `upstream_crashed` instead (parity_golden_crash): no case file.
-    Upstream records may be `timeout` on a declared case (parity_golden_timeout): no case file.
+    Upstream records may carry a declared outcome (parity_golden_expected): no case file.
     frame  = {"from": "client"|"server", "fin", "opcode", "masked", "mask_key": hex|null,
               "length", "payload": bytes}
     dump   = {"attempt", "envelope": vosu-adapter-capture-v1}
@@ -51,7 +51,7 @@ from pathlib import Path
 import re
 import parity_golden_crash as crash
 import parity_golden_ledger as ledger
-import parity_golden_timeout as no_response
+import parity_golden_expected as no_response
 import parity_volatile as volatile
 import shutil
 import subprocess
@@ -232,7 +232,8 @@ def _record(value: Any, where: str, attempt: int, ws: bool,
     frames = [_frame(frame, f"{where}.frames[{index}]")
               for index, frame in enumerate(_list(value["frames"], f"{where}.frames"))] if ws else None
     return {"request": request, "outcome": None, "status": int(status.group(1)),
-            "headers": headers, "body": _bytes(value["body"], f"{where}.body"), "frames": frames}
+            "status_line": value["status_line"], "headers": headers,
+            "body": _bytes(value["body"], f"{where}.body"), "frames": frames}
 
 
 def _frame(value: Any, where: str) -> dict[str, Any]:
@@ -745,7 +746,7 @@ def _platform_files(capture: Any, review_receipt: str | None,
             or sorted(expected_ids) != sorted(ids) or len(set(expected_ids)) != len(expected_ids)):
         raise GoldenError("capture is incomplete: recorded cases differ from expected_cases")
     crashed = [crash.check_case(case) for case in cases if crash.OUTCOME in case]
-    silent = [no_response.check_case(case) for case in cases if no_response.applies(case)]
+    silent = [no_response.check_case(case, state.rewriter) for case in cases if no_response.applies(case)]
     cases = [case for case in cases if crash.OUTCOME not in case and not no_response.applies(case)]
     cases.sort(key=lambda case: case["id"])
     for case in cases:
@@ -819,9 +820,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
     files["inventory.json"] = _dump(inventory)
     json_bytes += len(files["inventory.json"])
     if json_bytes > JSON_BUDGET or asset_bytes > ASSET_BUDGET:
-        raise GoldenError(f"{platform}: over budget ({json_bytes} JSON bytes of {JSON_BUDGET}, "
-                          f"{asset_bytes} asset bytes of {ASSET_BUDGET}); reduce the scenario "
-                          "or get owner approval")
+        raise GoldenError(f"{platform}: over budget ({json_bytes} JSON bytes of {JSON_BUDGET}, {asset_bytes} "
+                          f"asset bytes of {ASSET_BUDGET}); reduce the scenario or get owner approval")
     summary = {"cases": len(cases), "families": json.loads(files["manifest.json"])["case_counts"],
                crash.OUTCOME: sorted(crashed, key=lambda case: case["id"]),
                no_response.SUMMARY_KEY: sorted(silent, key=lambda case: case["id"])}

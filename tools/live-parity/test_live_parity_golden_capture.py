@@ -37,7 +37,7 @@ from parity_golden_config import validate_golden_config
 from parity_golden_rules import NON_GOLDEN_SEGMENTS
 import parity_golden_client as golden_client
 import parity_golden_rehearsal as rehearsal
-import parity_golden_timeout as no_response
+import parity_golden_expected as no_response
 import parity_routes as pr
 import route_matrix as rm
 import route_security as rs
@@ -506,10 +506,10 @@ class FakeTraversalTests(CaptureTestCase):
             self.assertTrue(attempt["vosu"]["route"]["status_line"].startswith("HTTP/1.1 404"))
         _platform, files, summary = parity_golden._platform_files(capture, None, "captured")
         self.assertEqual(summary[no_response.SUMMARY_KEY], [
-            {"id": "files.skin.index.upgrade", "ledger_id": "adr0021-removed-legacy-skin-index",
-             "attempts": 1, "vosu_status": 404},
-            {"id": "ws.near.v2-trailing-slash", "ledger_id": rm.NEAR_UPGRADE_LEDGER,
-             "attempts": 1, "vosu_status": 404}])
+            {"id": "files.skin.index.upgrade", "outcome": "timeout",
+             "ledger_id": "adr0021-removed-legacy-skin-index", "attempts": 1, "vosu_status": 404},
+            {"id": "ws.near.v2-trailing-slash", "outcome": "timeout",
+             "ledger_id": rm.NEAR_UPGRADE_LEDGER, "attempts": 1, "vosu_status": 404}])
         self.assertEqual(summary["cases"], 1)
         for case_id in self.SILENT:
             self.assertNotIn(f"cases/{case_id}.json", files)
@@ -524,7 +524,7 @@ class FakeTraversalTests(CaptureTestCase):
         timeout = lambda attempt: attempt["source"][0]
         refused("vosu must answer", self.SILENT[0], lambda a: a["vosu"].update(route={
             "attempt": 1, "request": timeout(a)["request"], "outcome": "closed", "frames": []}))
-        refused("both upstream sandwich records must time out", self.SILENT[0],
+        refused("both upstream sandwich records must be timeout", self.SILENT[0],
                 lambda a: a["source"][1].update(outcome="closed"))
         # Only a declared case may record upstream's timeout, and only from upstream.
         refused(r"outcome: expected one of \['closed'\]", self.SILENT[0],
@@ -535,7 +535,7 @@ class FakeTraversalTests(CaptureTestCase):
 
     def test_upstream_timeout_on_an_undeclared_case_fails_the_run(self) -> None:
         case_id = "state-http.json-v2.near.trailing-slash"
-        self.assertIsNone(rm.upstream_timeout_ledger(case_id))
+        self.assertIsNone(rm.upstream_expected(case_id))
         scenario = gc.ScenarioSet("test-undeclared", ("menu",), (case_id,))
         with self.short_deadline():
             self.refuses(r"failed 3 whole-case attempts: source outcome 'timeout' is not allowed",
@@ -546,6 +546,115 @@ class FakeTraversalTests(CaptureTestCase):
         scenario = gc.ScenarioSet("test-answered", ("menu",), (self.SILENT[0],))
         self.refuses(r"source outcome 'rejected' is not allowed", scenario,
                      FakeClient(self.state), self.config(scenario))
+
+    VALIDATED = ("files.conditional.if-none-match-etag",
+                 "files.conditional.if-modified-since-last-modified")
+
+    def test_declared_missing_upstream_validator_is_a_complete_case_golden_lists(self) -> None:
+        scenario = gc.ScenarioSet("test-validator", ("menu",), self.VALIDATED)
+        files = {"file_paths": ["/files/beatmap/file"]}
+        capture = self.capture(scenario, FakeClient(self.state),
+                               self.config(scenario, source_options=files, vosu_options=files))
+        for case in capture["cases"]:
+            (attempt,) = case["attempts"]
+            # Upstream got only the priming request: no validator to send.
+            for record in attempt["source"]:
+                self.assertEqual(record, {"attempt": 1, "request": record["request"],
+                                          "outcome": "validator-missing"})
+                self.assertEqual(record["request"]["text"].split("\r\n")[0],
+                                 "GET /files/beatmap/file HTTP/1.1")
+            self.assertTrue(attempt["vosu"]["route"]["status_line"].startswith("HTTP/1.1 304"))
+        _platform, written, summary = parity_golden._platform_files(capture, None, "captured")
+        self.assertEqual(summary[no_response.SUMMARY_KEY], [
+            {"id": case_id, "outcome": "validator-missing", "ledger_id": rm.NO_VALIDATOR_LEDGER,
+             "attempts": 1, "vosu_status": 304} for case_id in sorted(self.VALIDATED)])
+        self.assertEqual((summary["cases"], [name for name in written if name.startswith("cases/")]),
+                         (0, []))
+
+        def refused(pattern: str, edit) -> None:
+            changed = json.loads(self.out.read_text("utf-8"))
+            edit(changed["cases"][0]["attempts"][-1])
+            with self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                parity_golden._platform_files(changed, None, "captured")
+
+        route = lambda attempt: attempt["vosu"]["route"]
+        refused("vosu and upstream request bytes differ", lambda a: route(a).update(request={
+            "text": route(a)["request"]["text"].replace("Connection: close", "Connection: x", 1)}))
+        refused("both upstream sandwich records must be validator-missing",
+                lambda a: a["source"][0].update(outcome="closed"))
+
+    def test_missing_validator_fails_when_upstream_prime_is_not_2xx(self) -> None:
+        # No file route on either fake: both primes answer 404, so nothing is declared complete.
+        scenario = gc.ScenarioSet("test-no-file", ("menu",), self.VALIDATED[:1])
+        self.refuses(r"source outcome 'validator-missing' is not allowed \(priming status 404\)",
+                     scenario, FakeClient(self.state), self.config(scenario))
+
+
+class PathEchoTests(unittest.TestCase):
+    """Pre-run-3 audit (2026-11-26): on Windows upstream echoes the joined private path for
+    the absolute drive and device spellings; golden checks the echo and vosu's refusal."""
+
+    ROOT = "C:\\vosu-capture\\m4b-pilot-test"
+    ECHO = sorted(case_id for case_id, (outcome, _) in rm.UPSTREAM_EXPECTED.items()
+                  if outcome == "private-path-echo")
+
+    def rewriter(self):
+        return no_response.rewriter_for({"capture_root": self.ROOT, "capture_slot": "osu!"},
+                                        "windows")
+
+    def parsed(self, case_id: str, source: dict, vosu: dict) -> dict:
+        record = lambda value: {"request": "GET / HTTP/1.1\r\n\r\n", "outcome": None,
+                                "frames": None, **value}
+        return {"id": case_id, "family": "path-security", "barrier": "menu",
+                "dump_schema": "v2", "conditional": None, "attempts": 1,
+                "source": [record(source), record(source)], "route": record(vosu), "dumps": []}
+
+    def check(self, case_id: str, source: dict | None = None, vosu: dict | None = None) -> dict:
+        joined = f"{self.ROOT}\\client\\files\\C:{self.ROOT[2:]}\\vosu-route-probe\\sentinel.txt"
+        echo = {"status": 500, "status_line": "HTTP/1.1 500 x", "headers": [],
+                "body": json.dumps({"error": f"ENOENT: no such file or directory, stat '{joined}'"})
+                .encode()}
+        refusal = {"status": 404, "status_line": "HTTP/1.1 404 Not Found",
+                   "headers": [["content-type", "text/plain"]], "body": b"Not Found"}
+        case = self.parsed(case_id, {**echo, **(source or {})}, {**refusal, **(vosu or {})})
+        with mock.patch.object(parity_golden, "_check_sandwiches"):  # Covered elsewhere.
+            return no_response.check_case(case, self.rewriter())
+
+    def test_each_declared_case_passes_on_an_echo_and_a_clean_refusal(self) -> None:
+        self.assertEqual(len(self.ECHO), 8)
+        for case_id in self.ECHO:
+            self.assertEqual(self.check(case_id), {
+                "id": case_id, "outcome": "private-path-echo", "ledger_id": rm.PATH_ECHO_LEDGER,
+                "attempts": 1, "vosu_status": 404})
+
+    def test_a_vosu_path_echo_or_wrong_status_fails(self) -> None:
+        case_id = self.ECHO[0]
+        for vosu, pattern in (
+                ({"status": 200, "body": b"sentinel"}, "vosu must refuse .* not 200"),
+                ({"status": 500}, "vosu must refuse .* not 500"),
+                ({"body": f"stat '{self.ROOT}\\x'".encode()}, "vosu echoes a private"),
+                ({"body": b"D:\\other\\path"}, "vosu echoes a private .*drive path"),
+                ({"headers": [["location", "C:/vosu-capture/m4b-pilot-test/x"]]}, "vosu echoes"),
+                ({"status_line": "HTTP/1.1 404 /Songs/C:/x"}, "vosu echoes")):
+            with self.subTest(vosu=vosu), self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                self.check(case_id, vosu=vosu)
+
+    def test_an_upstream_without_the_echo_fails(self) -> None:
+        case_id = self.ECHO[0]
+        for source, pattern in (
+                ({"body": b'{"error":"osu is not ready/running"}'},
+                 r"without an echo of the private root \(status 500\)"),
+                ({"status": 404}, "needs a 5xx response, not 404")):
+            with self.subTest(source=source), \
+                    self.assertRaisesRegex(parity_golden.GoldenError, pattern):
+                self.check(case_id, source=source)
+
+    def test_undeclared_cases_are_unaffected(self) -> None:
+        for case_id in ("path-security.songs.encoded-parent", "path-security.skin.absolute-drive",
+                        "state-http.json-v2.get.menu"):
+            self.assertFalse(no_response.applies({"id": case_id}), case_id)
+            with self.assertRaisesRegex(parity_golden.GoldenError, "no declared upstream outcome"):
+                self.check(case_id)
 
 
 class PlanTests(unittest.TestCase):

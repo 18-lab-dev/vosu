@@ -143,11 +143,20 @@ class Handler(socketserver.BaseRequestHandler):
             return True
         if path in OPTIONS.get("silent_paths", ()):
             # The pinned upstream's `upgrade` handler leaves a path it does not own
-            # unanswered (parity_golden_timeout): hold the connection until the client goes.
+            # unanswered (parity_golden_expected): hold the connection until the client goes.
             sock.settimeout(None)
             while sock.recv(65536):
                 pass
             return True
+        if path in OPTIONS.get("file_paths", ()):
+            # The pinned upstream sends no file validators; vosu adds them and honours them.
+            tag, stamp = '"fake-etag"', "Thu, 01 Jan 2026 00:00:00 GMT"
+            extra = [f"ETag: {tag}", f"Last-Modified: {stamp}"] if MODE == "vosu" else []
+            if extra and (values("if-none-match") == [tag] or values("if-modified-since") == [stamp]):
+                sock.sendall(response(304, b"", head=True, extra=extra))
+            else:
+                sock.sendall(response(200, b"chart", head=method == "HEAD", extra=extra))
+            return
         if MODE == "vosu" and OPTIONS.get("request_budget") and len(
                 urllib.parse.parse_qsl(query, keep_blank_values=True)) > 128:
             # adapter-surface-request-budget: the request never reaches a provider.

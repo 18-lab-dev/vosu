@@ -536,25 +536,26 @@ class NormalizationTests(GoldenTestCase):
 
     def test_absolute_root_right_after_a_route_prefix_is_replaced(self) -> None:
         # Rehearsal 2026-11-25: a path-security target spells the absolute sentinel path
-        # right after its route prefix, so the prefix's `/` precedes the root.
+        # right after its route prefix, so the prefix's `/` precedes the root. (The songs and
+        # beatmap spellings are declared `private-path-echo` and write no case file.)
         from urllib.parse import quote
         sentinel = WIN_ROOT + "vosu-route-probe\\sentinel.txt"
-        spellings = {"path-security.songs.absolute-drive": "/Songs/" + quote(sentinel, safe=""),
-                     "path-security.beatmap.absolute-drive-slash": "/files/beatmap/"
+        spellings = {"path-security.skin.absolute-drive": "/files/skin/" + quote(sentinel, safe=""),
+                     "path-security.skin.absolute-drive-slash": "/files/skin/"
                      + quote(sentinel.replace("\\", "/"), safe="/:")}
         missing = response(text("{}"), status="HTTP/1.1 404 Not Found")
         cases = [case(case_id, request(target=target), (missing, missing))
                  for case_id, target in spellings.items()]
         candidate = self.run_golden(capture(cases))
         self.assertEqual(
-            self.case_file(candidate, "path-security.songs.absolute-drive")["request"]["text"]
-            .split(" ")[1], "/Songs/C%3A%5Cvosu-golden%5Cosu!%5Cvosu-route-probe%5Csentinel.txt")
+            self.case_file(candidate, "path-security.skin.absolute-drive")["request"]["text"]
+            .split(" ")[1], "/files/skin/C%3A%5Cvosu-golden%5Cosu!%5Cvosu-route-probe%5Csentinel.txt")
         self.assertEqual(
-            self.case_file(candidate, "path-security.beatmap.absolute-drive-slash")["request"]
-            ["text"].split(" ")[1], "/files/beatmap/C:/vosu-golden/osu!/vosu-route-probe/sentinel.txt")
+            self.case_file(candidate, "path-security.skin.absolute-drive-slash")["request"]
+            ["text"].split(" ")[1], "/files/skin/C:/vosu-golden/osu!/vosu-route-probe/sentinel.txt")
         # Only the route prefix ends a token: a root inside a path segment stays private.
-        inside = case("path-security.songs.absolute-drive",
-                      request(target="/Songs/a" + quote(sentinel, safe="")), (missing, missing))
+        inside = case("path-security.skin.absolute-drive",
+                      request(target="/files/skin/a" + quote(sentinel, safe="")), (missing, missing))
         self.rejects(capture([inside]), "unnormalized private root 'osu!'")
 
     def test_upstream_static_fallback_path_is_replaced_only_inside_the_root(self) -> None:
