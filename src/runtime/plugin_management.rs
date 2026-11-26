@@ -88,6 +88,28 @@ pub(super) struct ManagedPlugin {
     /// Why it never became a supervised instance: a load refusal, or an
     /// in-process `create` failure.
     failure: Option<String>,
+    /// Validated but deliberately never created: listed `inactive` with this
+    /// reason (A7.3 `dashboard_disabled`).
+    inactive: Option<&'static str>,
+}
+
+impl Package {
+    fn of(plugin: &LoadedPlugin) -> Self {
+        let manifest = plugin.manifest();
+        Self {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            runtime: manifest.runtime,
+            provides: manifest.provides.clone(),
+            requires: manifest.requires.clone(),
+            optional: manifest.optional.clone(),
+            process: match plugin.execution() {
+                Execution::Process(package) => Some(package.clone()),
+                Execution::Local(_) => None,
+            },
+        }
+    }
 }
 
 /// Every plugin composition tried to load, in instance order.
@@ -106,12 +128,8 @@ impl Roster {
         plugin: &LoadedPlugin,
         created: Result<(), String>,
     ) {
-        let manifest = plugin.manifest();
-        let process = match plugin.execution() {
-            Execution::Process(package) => Some(package.clone()),
-            Execution::Local(_) => None,
-        };
-        let failure = match (&process, created) {
+        let package = Package::of(plugin);
+        let failure = match (&package.process, created) {
             (None, Err(error)) => Some(error),
             _ => None,
         };
@@ -119,17 +137,27 @@ impl Roster {
             instance,
             trust,
             directory,
-            package: Some(Package {
-                id: manifest.id.clone(),
-                name: manifest.name.clone(),
-                version: manifest.version.clone(),
-                runtime: manifest.runtime,
-                provides: manifest.provides.clone(),
-                requires: manifest.requires.clone(),
-                optional: manifest.optional.clone(),
-                process,
-            }),
+            package: Some(package),
             failure,
+            inactive: None,
+        });
+    }
+
+    /// A validated package that is deliberately not created this run.
+    pub(super) fn inactive(
+        &mut self,
+        instance: PluginInstanceId,
+        trust: Trust,
+        plugin: &LoadedPlugin,
+        reason: &'static str,
+    ) {
+        self.0.push(ManagedPlugin {
+            instance,
+            trust,
+            directory: None,
+            package: Some(Package::of(plugin)),
+            failure: None,
+            inactive: Some(reason),
         });
     }
 
@@ -147,6 +175,7 @@ impl Roster {
             directory,
             package: None,
             failure: Some(error),
+            inactive: None,
         });
     }
 
@@ -362,6 +391,12 @@ impl PluginManagement {
         view["requires"] = capabilities(&package.requires);
         view["optional"] = capabilities(&package.optional);
         view["requires_internal_paths"] = json!(requires_internal_paths(package));
+        if let Some(reason) = plugin.inactive {
+            // Validated and listed, never created: no generation, no actions.
+            view["state"] = json!("inactive");
+            view["reason"] = json!(reason);
+            return view;
+        }
         let Some(process) = &package.process else {
             // In-process: running from startup until the daemon exits.
             view["generation"] = json!(1);

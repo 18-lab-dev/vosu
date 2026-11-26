@@ -50,8 +50,8 @@ crates/vosu-core/src/config/prerelease.rs 2 migration read-only legacy settings 
 crates/vosu-core/src/config/prerelease/tests.rs 2 fixture read-only legacy input remains unchanged after alpha import
 crates/vosu-osu-reader/src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths
 crates/vosu-osu-model/src/root.rs 2 upstream doc comment mapping the moved calculation helpers to their upstream tosu source paths
-src/runtime/render.rs 2 upstream page copy naming the upstream tosu.app catalog host
-src/runtime/render/settings.rs 2 upstream settings copy naming the upstream tosu project and its legacy allowlist default
+crates/vosu-dashboard/src/page.rs 2 upstream Available-page disclosure naming the upstream tosu.app catalog host
+crates/vosu-dashboard/src/settings.rs 2 upstream settings copy naming the upstream tosu project and its legacy allowlist default
 crates/vosu-overlay-host/src/catalog.rs 6 upstream overlay catalog client for the upstream tosu.app catalog endpoint
 crates/vosu-overlay-host/src/cards.rs 1 upstream catalog search empty state naming tosu as a client overlays declare compatibility with
 crates/vosu-overlay-host/src/commands.rs 1 parity counter-command compatibility test named for tosu-style counter frame paths

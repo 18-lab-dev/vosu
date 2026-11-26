@@ -27,6 +27,11 @@ SENTINEL_DIR = "vosu-route-probe"
 SENTINEL_FILE = "sentinel.txt"
 SENTINEL_CHART = "sentinel.osu"
 LINK_NAME = "vosu-route-probe-link"
+# The upstream daemon's static folder, run-owned inside the capture root: its static
+# fallback answers a missing file with the absolute path it tried (`ENOENT: ... stat
+# '<static>/json/index.html'`), so that path must sit under the declared root that
+# `root-prefix` rewrites, never in a private runtime directory.
+UPSTREAM_STATIC_DIR = "vosu-upstream-static"
 ROUTE_PREFIXES = ("/Songs/", "/files/beatmap/", "/files/skin/")
 PATH_SAFE = "!$&'()*+,;=:@"
 
@@ -81,6 +86,7 @@ class SecurityLayout:
     # Declared roots without a legacy file route (e.g. the lazer files slot used by
     # calculation), keyed by slot name.
     other_roots: Mapping[str, str] = field(default_factory=dict)
+    upstream_static: str | None = None
 
     def declared_roots(self) -> list[tuple[str, str]]:
         return [*self.route_roots.items(), *self.other_roots.items()]
@@ -337,6 +343,8 @@ def prepare_security_layout(capture_root: str, route_roots: Mapping[str, str],
     with open(os.path.join(capture_root, MARKER_NAME), "x", encoding="utf-8") as handle:
         handle.write(token)
     os.mkdir(sentinel_dir)
+    upstream_static = os.path.join(capture_root, UPSTREAM_STATIC_DIR)
+    os.mkdir(upstream_static)
     with open(sentinel, "x", encoding="utf-8") as handle:
         handle.write(sentinel_content(token))
     chart_sha = None
@@ -360,7 +368,7 @@ def prepare_security_layout(capture_root: str, route_roots: Mapping[str, str],
             continue
         links[prefix] = created[root_key] = LINK_NAME
     return dataclasses.replace(layout, sentinel_chart_sha256=chart_sha, links=links,
-                               link_errors=errors)
+                               link_errors=errors, upstream_static=upstream_static)
 
 
 def remove_security_layout(layout: SecurityLayout) -> None:
@@ -373,6 +381,8 @@ def remove_security_layout(layout: SecurityLayout) -> None:
     marker = Path(layout.capture_root, MARKER_NAME)
     if marker.is_file() and marker.read_text(encoding="utf-8") == layout.token:
         shutil.rmtree(sentinel_dir, ignore_errors=True)
+        if layout.upstream_static is not None:
+            shutil.rmtree(layout.upstream_static, ignore_errors=True)
         marker.unlink()
 
 

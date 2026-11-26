@@ -27,8 +27,8 @@
 //! package's approval record on every load and restart (catalog-v2.md A5.5)
 //! and passes the *approved* library digest to [`ProcessHostLauncher::launch_approved`].
 //! The direct [`ProcessLauncher`] implementation, which hashes the library
-//! at launch, exists only for tests and fixtures
-//! (`PluginHost::install_process_launcher`).
+//! at launch, exists only for tests, fixtures and the `bench-harness`
+//! production benches (`PluginHost::install_process_launcher`).
 //!
 //! **`SYNC` execution (M5 B0).** A broker worker runs the host's own
 //! synchronous read-plan path through `PluginIngress::deliver`, exactly as
@@ -49,7 +49,7 @@ use vosu_plugin_api::{Init, decode};
 
 use super::control::{Create, StartupFailure, StartupStage};
 use crate::plugin::error::HostError;
-#[cfg(any(test, feature = "test-harness"))]
+#[cfg(any(test, feature = "bench-harness"))]
 use crate::plugin::execution::ProcessLauncher;
 use crate::plugin::execution::{ProcessEndpoint, ProcessLaunch};
 
@@ -101,8 +101,9 @@ impl ProcessHostLauncher {
     }
 
     /// A launcher for `executable` instead of this one: tests start the
-    /// real `vosu` binary from a test process.
-    #[cfg(feature = "test-harness")]
+    /// real `vosu` binary from a test process, and the M5 P1/X1 production
+    /// benches (`bench-harness`) start it from a bench process.
+    #[cfg(feature = "bench-harness")]
     pub fn with_executable(executable: &Path, build_identity: &str) -> std::io::Result<Self> {
         Ok(Self::new(LaunchTarget::executable(
             executable,
@@ -196,9 +197,10 @@ impl ProcessHostLauncher {
     }
 }
 
-/// Tests and fixtures start children without an approval record: the
-/// digest is the library's bytes at launch.
-#[cfg(any(test, feature = "test-harness"))]
+/// Tests, fixtures and the `bench-harness` production benches start
+/// children without an approval record: the digest is the library's bytes
+/// at launch.
+#[cfg(any(test, feature = "bench-harness"))]
 impl ProcessLauncher for ProcessHostLauncher {
     fn launch(&self, launch: ProcessLaunch<'_>) -> Result<Arc<dyn ProcessEndpoint>, HostError> {
         let digest =

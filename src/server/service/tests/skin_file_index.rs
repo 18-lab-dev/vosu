@@ -7,7 +7,7 @@ fn skin_index_delegate(root: &Path, files: BeatmapFiles) -> ProductionRouteDeleg
     let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
     let unused = Arc::new(UnusedServices);
     ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-        PageService, unused.clone(), counters, Arc::new(Current { files: Some(files) }),
+        PageService, counters, Arc::new(Current { files: Some(files) }),
         unused.clone(), unused.clone(), unused,
         WebSocketEndpoints {
             v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),

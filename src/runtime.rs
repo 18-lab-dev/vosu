@@ -21,6 +21,7 @@ use std::{
 use std::fs;
 
 use arc_swap::ArcSwap;
+#[cfg(test)]
 use bytes::Bytes;
 #[cfg(test)]
 use std::path::Path;
@@ -43,7 +44,7 @@ use vosu_overlay_host::{
 
 use crate::server::{
     auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
-    pages::{DynamicPage, EmbeddedResponse, PageService},
+    pages::PageService,
     routes::{CachedJson, RequestAuthorizer, RouteProviders, StateJsonProvider, StateRoute},
     runtime::{
         AxumListenerFactory, ListenTarget, ListenerRuntime, ListenerState, TokioBinder,
@@ -51,8 +52,8 @@ use crate::server::{
     },
     service::{
         BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-        PageDataProvider, ProductionRouteDelegate, ProductionServices, ReportInputProvider,
-        UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
+        ProductionRouteDelegate, ProductionServices, ReportInputProvider, UpdateRouteResult,
+        UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
     },
     websocket::{
         Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
@@ -99,15 +100,16 @@ mod adapters;
 mod catalog;
 mod cli;
 mod config;
+mod dashboard;
 mod dev_plugins;
 mod discovery;
 mod lifecycle;
 mod overlay_root;
 mod plugin_management;
 mod projection;
-mod render;
 mod service;
 mod signals;
+mod startup;
 #[cfg(feature = "test-harness")]
 mod test_support;
 mod tracing_log;
@@ -116,8 +118,9 @@ mod worker;
 pub use catalog::{CatalogComposition, CatalogRoots, catalog_target};
 #[cfg(feature = "test-harness")]
 pub use config::test_updater_handoff;
-pub use lifecycle::{ProductionRuntime, is_startup_owner_conflict, run_cli};
+pub use lifecycle::{ProductionRuntime, run_cli};
 pub use projection::ReloadableAuthorizer;
+pub use startup::is_startup_owner_conflict;
 #[cfg(feature = "test-harness")]
 pub use test_support::{
     TestGame, TestProductionComposition, TestProductionCompositionOptions,
@@ -126,13 +129,11 @@ pub use test_support::{
 pub use worker::{ListenerOwner, WebSocketHubs};
 
 use config::*;
-#[cfg(test)]
-use lifecycle::*;
 use projection::*;
-use render::*;
 use service::*;
 #[cfg(test)]
 use signals::cancel_on_signal;
+use startup::*;
 
 #[cfg(test)]
 mod tests {
@@ -147,7 +148,6 @@ mod tests {
     include!("runtime/tests/worker.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/package_limit.rs");
-    include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/version.rs");
     include!("runtime/tests/lifecycle.rs");
 }

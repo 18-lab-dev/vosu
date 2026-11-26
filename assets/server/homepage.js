@@ -1,6 +1,8 @@
 import { createSettingsEditor, createActionDialog, createOverflow, showModal } from './homepage-settings.js';
 import { mountCatalogSources, mountCatalogOverlays, mountCatalogStatus } from './dashboard-catalog.js';
 import { createAppUpdater } from './dashboard-update.js';
+import { mountDashboardStatus } from './dashboard-status.js';
+import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashboard-pages.js';
 
 (() => {
   'use strict';
@@ -349,7 +351,7 @@ import { createAppUpdater } from './dashboard-update.js';
     return Array.from(results?.querySelectorAll(':scope > .counter-card[data-overlay-id]') ?? []);
   }
 
-  // Same markup as the server's empty state (render.rs INSTALLED_EMPTY_STATE).
+  // Same markup as the overlay host's empty state (INSTALLED_EMPTY_STATE).
   function createInstalledEmptyState() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
@@ -1179,74 +1181,6 @@ import { createAppUpdater } from './dashboard-update.js';
     try { await refresh(); } catch (error) { status.textContent = errorText(error); }
   }
 
-  function initializeDashboardStatus() {
-    const header = document.querySelector('#attachment-status');
-    if (!header) return;
-    const clientCell = document.querySelector('[data-status-cell="client"]');
-    const pollCell = document.querySelector('[data-status-cell="poll"]');
-    // Rewriting identical text would make some screen readers re-announce the
-    // live region every two seconds.
-    function setText(element, text, title = text) {
-      if (!element) return;
-      if (element.textContent !== text) element.textContent = text;
-      if (element.title !== title) element.title = title;
-    }
-    function setCell(cell, text) {
-      if (!cell) return;
-      cell.hidden = !text;
-      setText(cell.querySelector('.status-value'), text);
-    }
-    function showAttachment(state, text, detail = text) {
-      header.dataset.state = state;
-      setText(header, text, detail);
-    }
-    async function refresh() {
-      try {
-        const status = await requestJson('/api/dashboard/status');
-        const instances = status.instances ?? [];
-        if (status.available === false) {
-          showAttachment('error', 'Attachment status unavailable');
-          setCell(clientCell, '');
-          setCell(pollCell, '');
-        } else if (instances.length === 0) {
-          showAttachment('idle', 'Not detected · waiting for a game');
-          setCell(clientCell, '');
-          setCell(pollCell, '');
-        } else {
-          const detail = instances.map((instance) => `osu! ${instance.client} · PID ${instance.pid} · ${instance.version || 'version unknown'} · ${instance.state} · polling ${instance.pollIntervalMs} ms / precise ${instance.precisePollIntervalMs} ms`).join(' | ');
-          const reading = instances.filter((instance) => instance.state === 'reading').length;
-          const lead = instances[0];
-          showAttachment(
-            reading > 0 ? 'reading' : 'starting',
-            instances.length > 1 ? `${instances.length} instances · ${reading} reading` : lead.state,
-            detail,
-          );
-          setCell(clientCell, instances.map((instance) => `${instance.client} ${instance.version || 'version unknown'} · PID ${instance.pid}`).join(' | '));
-          setCell(pollCell, `${lead.pollIntervalMs} ms / precise ${lead.precisePollIntervalMs} ms`);
-        }
-        for (const card of installedCards()) {
-          const chip = card.querySelector('.connected-chip');
-          if (!chip) continue;
-          // The server leaves out this dashboard's own preview frames.
-          const count = status.connections?.[card.dataset.overlayId];
-          const hidden = !Number.isInteger(count) || count < 1;
-          const text = hidden ? '' : `${count} connected`;
-          if (chip.hidden !== hidden) chip.hidden = hidden;
-          if (chip.textContent !== text) chip.textContent = text;
-          chip.title = 'Identified WebSocket connections, not unique users';
-        }
-      } catch (_error) {
-        showAttachment('error', 'Attachment status unavailable');
-        setCell(clientCell, '');
-        setCell(pollCell, '');
-        document.querySelectorAll('.connected-chip').forEach((chip) => { chip.hidden = true; });
-      } finally {
-        window.setTimeout(refresh, 2000);
-      }
-    }
-    refresh();
-  }
-
   function cidrMayIncludePublic(entry) {
     const parts = entry.split('/');
     if (parts.length !== 2 || !/^\d+$/.test(parts[1])) return false;
@@ -1301,10 +1235,6 @@ import { createAppUpdater } from './dashboard-update.js';
       (document.querySelector('.page-head') ?? banner.parentElement).append(about);
       show(storageGet(key) !== '1');
     }
-    // "Later" hides the update notice for this version only; the status
-    // strip keeps a way back to it.
-    const notice = document.querySelector('#update-notice');
-    if (notice && !notice.hidden && storageGet(UPDATE_DISMISSED_KEY) === notice.dataset.version) notice.hidden = true;
     const allowlist = document.querySelector('[data-id="ALLOWED_IPS"]');
     const warning = document.querySelector('#allowlist-warning');
     function updateWarning() {
@@ -2087,31 +2017,39 @@ import { createAppUpdater } from './dashboard-update.js';
   }
 
   initializeCounts();
-  initializePins({ sanitize: pageKey() === 'installed' && !window.location.search });
-  if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
-  observePreviews();
-  initializeRuntimeSettings();
-  initializeApiKeys();
-  if (pageKey() === 'settings' && !requestedOverlay && !requestedTool) {
-    mountCatalogSources({ root: document.querySelector('#runtime-settings'), requestJson, notify, errorText, setBusy });
-  }
-  initializeSettingsIndex();
-  initializePresentation();
-  initializePinDrag();
-  initializeDashboardStatus();
+  mountDashboardStatus({
+    requestJson, overlayOrigin: context.overlayOrigin, installedCards,
+    onStatus: (status) => applyUpdateNotice(status.update, storageGet(UPDATE_DISMISSED_KEY)),
+  });
   refreshToolCount(); mountCatalogStatus({ requestJson });
-  if ((pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay) {
-    state.roving = rovingGrid(results, '.counter-card');
-  }
-  refreshCounterUpdates();
-
-  if (pageKey() === 'available') {
-    state.placeSourceOverlays = mountCatalogOverlays({
-      root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay,
-      setCount: (value) => setCount('available', value),
-      initialTokens: queryTokens(searchInput?.value ?? ''),
-    });
-  }
+  const listed = (pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay;
+  // The shell carries no list or settings values: they arrive from the
+  // overlay host's search fragment and core's SettingsView first.
+  const content = listed
+    ? loadOverlayList({ results, source: pageKey(), csrf, overlayOrigin: context.overlayOrigin, emptyState: createInstalledEmptyState })
+      .then((count) => { if (count !== null) setCount(pageKey(), count); state.originalResults = results?.innerHTML ?? ''; })
+    : loadRuntimeSettings({ form: pageKey() === 'settings' ? document.querySelector('#runtime-settings') : null, requestJson, errorText });
+  content.then(() => {
+    initializePins({ sanitize: pageKey() === 'installed' && !window.location.search });
+    if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
+    observePreviews();
+    initializeRuntimeSettings();
+    initializeApiKeys();
+    const runtime = document.querySelector('#runtime-settings');
+    if (runtime && !requestedOverlay && !requestedTool) mountCatalogSources({ root: runtime, requestJson, notify, errorText, setBusy });
+    initializeSettingsIndex();
+    initializePresentation();
+    initializePinDrag();
+    if (listed) state.roving = rovingGrid(results, '.counter-card');
+    refreshCounterUpdates();
+    if (pageKey() === 'available') {
+      state.placeSourceOverlays = mountCatalogOverlays({
+        root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay,
+        setCount: (value) => setCount('available', value),
+        initialTokens: queryTokens(searchInput?.value ?? ''),
+      });
+    }
+  });
 
   if (requestedOverlay) {
     loadCounterSettings(requestedOverlay, { inline: true });

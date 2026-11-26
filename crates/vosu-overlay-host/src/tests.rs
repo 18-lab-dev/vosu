@@ -1,5 +1,6 @@
 mod cards;
 mod manifest;
+mod presentation;
 mod settings;
 use std::path::PathBuf;
 use std::pin::Pin;

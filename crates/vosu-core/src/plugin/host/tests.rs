@@ -17,6 +17,10 @@ mod focus;
 /// unregistering its matcher, and the identification-timeout sweep.
 mod sessions;
 
+/// Lifecycle terminals are reserved (§7.6): `SESSION_DETACHED` behind a
+/// full dispatch queue reaches the owner and watchers in order, once.
+mod lifecycle_terminals;
+
 /// The two P2 shutdown/timer races: a `TIMER_SET` made during `create`
 /// queued and replayed once `create` returns, and `destroy_all` not
 /// leaking an instance still racing `create_instance`.

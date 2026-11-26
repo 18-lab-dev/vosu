@@ -23,18 +23,12 @@ pub trait CurrentBeatmapProvider: Send + Sync {
     fn files(&self) -> BeatmapFiles;
 }
 
-
-pub trait PageDataProvider: Send + Sync {
-    fn render(
-        &self,
-        page: DynamicPage,
-        authority: Option<String>,
-    ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>>;
-}
-
-/// Config update facade for `/api/settingsSave`.
+/// Config facade for `/api/settingsSave` and `GET /api/settings`.
 pub trait ConfigUpdateService: Send + Sync {
     fn save(&self, values: Value) -> ProviderFuture<'_, Result<(), String>>;
+    /// `SettingsView` (A7.1): the Settings page's values, never
+    /// `ENABLE_DASHBOARD`, a secret or a credential.
+    fn view(&self) -> Value;
 }
 
 /// Runtime report input facade; report rendering remains in `report.rs`.

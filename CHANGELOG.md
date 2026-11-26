@@ -2,8 +2,24 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## Unreleased — 2.0 M7 O0 (overlay host)
+## Unreleased — 2.0 M7
 
+- vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
+  that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
+  request gets the ordinary 404 that other removed routes return, as in 1.x
+  since the in-game overlay was removed. Use vosulay, installed as the
+  official `vosulay-editor` tool, for in-game overlays. M7's removed-route
+  notice will report `/api/ingame` requests on the dashboard and offer to
+  install vosulay through the normal install plan, and the daemon will log
+  one warning per run.
+- The dashboard can be turned off: set `ENABLE_DASHBOARD = false` in
+  `vosu.toml` or start vosu with `VOSU_DASHBOARD=off` (any other value of
+  that variable stops startup). Off, vosu binds no dashboard listener, opens
+  no browser, skips the second-launch dashboard check and shows only **Show
+  logs** and **Quit** in the tray; `GET /api/dashboard` and the overlay
+  listener's dashboard redirects return 404, while overlays, API v1 and tool
+  hosting keep running. `/api/settingsSave` rejects `ENABLE_DASHBOARD`, and
+  a live edit of the key takes effect only after a restart.
 - Overlays are hosted by the bundled `vosu.overlayhost` plugin: discovery,
   the community catalog and its cards, download, update and delete, names
   and aliases, settings and profiles, `/websocket/commands` and overlay
@@ -18,23 +34,6 @@ All notable user-visible changes to vosu are documented here. Older sections are
   instead of a `{"error":"no folder name"}` body.
 - An overlay HTML page larger than 64 MiB that needs the injected
   `COUNTER_PATH` script returns 500 instead of streaming without it.
-
-## Unreleased — 2.0 M7 T1 (one tool bridge)
-
-- `/tools/_host/v2/bridge.js` is the only tool bridge. `vosu.fetch` and
-  `assets/server/tool-bridge-v1.js` (with its `/websocket/v2/subscribe`
-  client) are removed; `/assets/tool-bridge-v1.js` is 404.
-- The bridge removes the launch fragment before any asynchronous work, sends
-  the session only on the API v1 action and job requests it builds, and
-  rejects `.` and `..` as a session target. A reload, bookmark or replayed
-  launch URL stays read-only.
-- The tool protocol, authoring reference, tutorial, design guide and README
-  describe 2.0 web tools only: package, frozen routes, launch sessions, API
-  v1 pointers, resources and actions. `examples/tools/hello-python` is
-  replaced by the build-free web example `examples/tools/hello-web`.
-
-## Unreleased — 2.0 M7 T0 (web-only tools)
-
 - Tools are web-only 2.0 packages (`manifest.toml`, `kind = "tool"`). The
   bundled `vosu.toolhost` plugin serves each tool's static UI, icon, banner
   and password-filtered `_settings`, the v2 bridge and the theme and design
@@ -63,6 +62,17 @@ All notable user-visible changes to vosu are documented here. Older sections are
   (`vosux <plugin-id> <action> …`). The tool form and its `--list`, `--json`,
   `--open` and `--autostart` options exit with usage status 2.
 - Removed `docs/tools/tool.schema.json`, the 1.x `tool.toml` editor schema.
+- `/tools/_host/v2/bridge.js` is the only tool bridge. `vosu.fetch` and
+  `assets/server/tool-bridge-v1.js` (with its `/websocket/v2/subscribe`
+  client) are removed; `/assets/tool-bridge-v1.js` is 404.
+- The bridge removes the launch fragment before any asynchronous work, sends
+  the session only on the API v1 action and job requests it builds, and
+  rejects `.` and `..` as a session target. A reload, bookmark or replayed
+  launch URL stays read-only.
+- The tool protocol, authoring reference, tutorial, design guide and README
+  describe 2.0 web tools only: package, frozen routes, launch sessions, API
+  v1 pointers, resources and actions. `examples/tools/hello-python` is
+  replaced by the build-free web example `examples/tools/hello-web`.
 
 ## Unreleased — 2.0 F (SDK packaging)
 
@@ -222,6 +232,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Child processes the daemon starts now go through one creation path, so a
   plugin host's inherited channel handles never leak into other children on
   Windows.
+- A plugin now always learns that a game session ended, even when its
+  message queue was full at that moment or it was being stopped or
+  restarted (2026-11-25). Previously the session-ended message could be
+  lost in that case. Plugins that follow sessions of other plugins get the
+  same guarantee.
 
 ## 2.0.0-alpha.1 — prerelease
 

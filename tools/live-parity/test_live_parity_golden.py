@@ -557,6 +557,25 @@ class NormalizationTests(GoldenTestCase):
                       request(target="/Songs/a" + quote(sentinel, safe="")), (missing, missing))
         self.rejects(capture([inside]), "unnormalized private root 'osu!'")
 
+    def test_upstream_static_fallback_path_is_replaced_only_inside_the_root(self) -> None:
+        # Rehearsal 2026-11-25: tosu's static fallback answers a missing file with the
+        # absolute path it tried; golden-capture gives it a static folder in the root.
+        def enoent(static: str) -> dict:
+            body = f"ENOENT: no such file or directory, stat '{static}vosu-route-probe\\sentinel.txt'"
+            return response(text(body), status="HTTP/1.1 404 Not Found")
+
+        def dot_segment(answer: dict) -> dict:
+            return case("path-security.songs.dot-segment",
+                        request(target="/Songs/../../vosu-route-probe/sentinel.txt"), (answer, answer))
+
+        candidate = self.run_golden(capture([dot_segment(enoent(WIN_ROOT + "vosu-upstream-static\\"))]))
+        self.assertEqual(
+            {"text": "ENOENT: no such file or directory, stat "
+                     "'C:\\vosu-golden\\osu!\\vosu-upstream-static\\vosu-route-probe\\sentinel.txt'"},
+            self.case_file(candidate, "path-security.songs.dot-segment")["expected"]["body"])
+        runtime = "V:\\bt\\run\\la\\vosu-live-parity\\vosu-live-parity-source-0pxap40n\\static\\"
+        self.rejects(capture([dot_segment(enoent(runtime))]), r"private path \(drive path\)")
+
     def test_linux_root_and_private_home_paths(self) -> None:
         root = "/home/vosu/.local/share/osu/"
         linux = {"platform": "linux-lazer", "roots": [{"slot": "osu", "private": root}]}

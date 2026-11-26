@@ -184,7 +184,8 @@ pub async fn start_test_production_composition(
         Arc::clone(&counters),
     ));
     overlay_root.apply(&static_root);
-    let (adapters, hubs) = adapters::Adapters::start(&plugins, options.config.clone()).await?;
+    let (adapters, hubs) =
+        adapters::Adapters::start(&plugins, options.config.clone(), true).await?;
     let endpoints = options
         .network
         .endpoints()
@@ -205,9 +206,8 @@ pub async fn start_test_production_composition(
         endpoints.catalog,
         &current_version().to_string(),
     );
-    let shutdown = CancellationToken::new();
     if let Err(error) = overlay_root.mount_routes(
-        OverlayPresenter::new(Arc::clone(&counters), catalog.clone(), shutdown.clone()),
+        OverlayPresenter::new(Arc::clone(&counters), catalog, CancellationToken::new()),
         processor.clone(),
         hubs.v1.clone(),
     ) {
@@ -218,14 +218,6 @@ pub async fn start_test_production_composition(
     }
     let services = ProductionServices::with_native_report_probe(
         PageService,
-        Arc::new(RuntimePages {
-            pages: PageService,
-            counters: Arc::clone(&counters),
-            catalog,
-            config: Arc::clone(&options.config),
-            shutdown,
-            update: None,
-        }),
         Arc::clone(&counters),
         beatmap.clone(),
         Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
@@ -235,6 +227,7 @@ pub async fn start_test_production_composition(
             files: adapters.files.clone(),
             counters: Arc::clone(&counters),
             logs: options.logs_root,
+            update: None,
         }),
         options.updater,
         WebSocketEndpoints {

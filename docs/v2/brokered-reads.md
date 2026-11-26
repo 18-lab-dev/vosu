@@ -473,18 +473,37 @@ variants.
    on Windows; see Method); and Criterion storage selected
    through `output_directory`.
 
+## Production arm (M5 P1, exploratory)
+
+`production_sync` and `production_async` now run the real transport and
+executor: a real `vosu plugin-host` child loads
+`examples/brokered_reads_plugin.rs`, whose plans cross the real relay, ring,
+ingress and broker against the same target. The first exploratory,
+contended Linux run gave a `production_sync` p50 of 2.70× (precise) and
+2.26× (regular) the same run's `shm`, above the 2.0 bar. The broker
+performance work after it took exploratory same-session ratios to
+1.46–1.59× (precise) and 1.71–1.81× (regular). That work batched each
+dependency level into one native read, removed the per-request `SYNC`
+budget-timer wake and two allocations, and validated `SYNC` plans flat in
+the relay. The rest of the gap is the four thread hand-offs that ABI §7.6
+requires. These figures come from a loaded, shared host. No D17 result is
+claimed, and the official run is pending. The benchmark guide has the
+method, gates and numbers, the 25-ABI-stage precise mapping, the per-hop
+breakdown, each change's A/B, the bundled `plan_memory` comparison and the
+official command sequence:
+[M5 P1 production arm](../testing/benchmarks.md#m5-p1-production-arm-and-x1-process-runtime-data-exploratory)
+and [broker performance work](../testing/benchmarks.md#broker-performance-work-exploratory-same-session-ab).
+
 ## Open questions
 
 - **Windows transport** is decided (unnamed section and events, approved
   2026-11-25); see the [Windows transport
   candidates](#windows-transport-candidates-m5-p1-candidate-result) section
   above.
-- **Only two plan shapes were measured.** `capture_regular`'s round-trip count
-  is a structural estimate (see Method), not instrumented; if the real
-  `process`-runtime read path ends up issuing fields across many more
-  independent decoder stages than modeled here (e.g. uncoalesced tourney or
-  leaderboard reads), its round-trip count could exceed this benchmark's
-  5-stage regular estimate. Recommendation: once a game plugin exists on the
-  `process` runtime, extend `memory_reader_bench`'s `CountingMemory` pattern
-  to the regular capture path and confirm the real stage count stays close to
-  this estimate.
+- **Real captures are many round trips.** X1 counted actual process-runtime
+  captures over the bench fixtures: a lazer precise capture is 21
+  submissions (26 stages, 60 reads, 912 bytes) and a stable regular-fields
+  capture 13 (15 stages, 56 reads, 4,324 bytes), not the one round trip of
+  the 5-stage regular estimate above
+  ([counts](../testing/benchmarks.md#m5-p1-production-arm-and-x1-process-runtime-data-exploratory)).
+  Whether cross-decoder coalescing is needed is open.

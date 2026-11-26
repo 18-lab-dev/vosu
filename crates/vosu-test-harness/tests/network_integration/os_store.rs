@@ -81,8 +81,8 @@ impl Probe {
             .await
     }
 
-    fn tls_failure(&self, host: &str, alert: &str) {
-        let handshakes = self.recorder.handshakes();
+    async fn tls_failure(&self, host: &str, alert: &str) {
+        let handshakes = self.recorder.handshakes().await;
         assert!(
             !handshakes.is_empty()
                 && handshakes.iter().all(|handshake| {
@@ -118,7 +118,7 @@ mod trusted {
             assert_eq!(response.status, 200);
             assert_eq!(response.body.as_ref(), b"vosu-x1 os store ok");
             assert_eq!(
-                probe.recorder.handshakes(),
+                probe.recorder.handshakes().await,
                 [Handshake {
                     port: probe.port,
                     sni: Some(fixture.forge_host.clone()),
@@ -128,7 +128,9 @@ mod trusted {
 
             probe.recorder.clear();
             assert_certificate_error(probe.get(&fixture.wrong_host).await, WRONG_NAME);
-            probe.tls_failure(&fixture.wrong_host, "BadCertificate");
+            probe
+                .tls_failure(&fixture.wrong_host, "BadCertificate")
+                .await;
             probe.recorder.shutdown().await;
         });
     }
@@ -144,7 +146,7 @@ mod untrusted {
             assert_os_store(&fixture, false);
             let probe = start(&fixture).await;
             assert_certificate_error(probe.get(&fixture.forge_host).await, UNKNOWN_ISSUER);
-            probe.tls_failure(&fixture.forge_host, "UnknownCA");
+            probe.tls_failure(&fixture.forge_host, "UnknownCA").await;
             probe.recorder.shutdown().await;
         });
     }

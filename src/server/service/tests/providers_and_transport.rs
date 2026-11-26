@@ -13,7 +13,7 @@
         let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
         let unused = Arc::new(UnusedServices);
         let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-            PageService, unused.clone(), counters, Arc::new(Current::default()),
+            PageService, counters, Arc::new(Current::default()),
             unused.clone(), unused.clone(), unused,
             WebSocketEndpoints {
                 v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
@@ -31,6 +31,47 @@
         let status: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(status.into_body(), 16384)).unwrap()).unwrap();
         assert_eq!(status["connections"]["counter"], 2);
         assert_eq!(status["instances"], json!([]));
+        bounded!(processor.shutdown());
+        bounded!(relays.shutdown());
+    }
+
+    /// A7.3: nothing the dashboard serves can turn the dashboard off.
+    #[tokio::test]
+    async fn settings_save_rejects_the_dashboard_switch_before_saving() {
+        let root = tempfile::tempdir().unwrap();
+        let counters = Arc::new(ReloadableCounterService::production(
+            root.path().join("static"), root.path().join("settings"), root.path().join("cache"),
+        ));
+        let (_, events) = tokio::sync::watch::channel(0);
+        let state = Arc::new(NoState { events });
+        let relays = Arc::new(WebSocketRelaySink::new());
+        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
+        let unused = Arc::new(UnusedServices);
+        let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
+            PageService, counters, Arc::new(Current::default()),
+            unused.clone(), unused.clone(), unused,
+            WebSocketEndpoints {
+                v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                sc: WebSocketHub::new(websocket::Schema::StreamCompanion, state.clone()),
+                v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
+                precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
+                commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                processor: processor.clone(), relays: relays.clone(),
+            },
+        ));
+        let save = |body: &'static str| delegate.dispatch(
+            Endpoint::SettingsSave,
+            Request::builder().method("POST").uri("/api/settingsSave").body(Body::empty()).unwrap(),
+            Bytes::from_static(body.as_bytes()),
+        );
+        // The fixture's save always succeeds, so a 400 means it never ran.
+        assert_eq!(bounded!(save(r#"{"DEBUG_LOG":true}"#)).status(), StatusCode::OK);
+        for body in [r#"{"ENABLE_DASHBOARD":false}"#, r#"{"ENABLE_DASHBOARD":true}"#, r#"{"DEBUG_LOG":true,"ENABLE_DASHBOARD":null}"#] {
+            let response = bounded!(save(body));
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+            let error: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(response.into_body(), 1024)).unwrap()).unwrap();
+            assert_eq!(error, json!({"error": "ENABLE_DASHBOARD can only be changed in vosu.toml"}));
+        }
         bounded!(processor.shutdown());
         bounded!(relays.shutdown());
     }

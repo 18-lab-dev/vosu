@@ -1,8 +1,8 @@
-//! Embedded dashboard/page primitives shared by the HTTP router.
+//! Embedded page primitives shared by the HTTP router.
 //!
-//! This module deliberately does not know about counters, settings persistence,
-//! reports, or updates.  It classifies the retained routes and returns either
-//! immutable embedded bytes or a typed delegation request for those services.
+//! The dashboard's page shells and assets belong to `vosu-dashboard`; this
+//! module keeps the styled 404 page, the shared `/assets/` files this
+//! executable still embeds, and the overlay static-path rules.
 
 use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
@@ -72,18 +72,6 @@ impl EmbeddedResponse {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DynamicPage {
-    Dashboard,
-    Settings,
-    /// `/settings?overlay=…`: one overlay's settings, rendered by the client.
-    OverlaySettings,
-    /// `/settings?tool=…`: one tool's settings, rendered by the client.
-    ToolSettings,
-    Available,
-    Tools,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StaticFallback {
     /// The source redirects extensionless (and one-character-extension) paths.
@@ -118,7 +106,6 @@ impl StaticFallback {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PageLookup {
     Embedded(EmbeddedResponse),
-    Dynamic(DynamicPage),
     Static(StaticFallback),
     NotFound,
 }
@@ -193,10 +180,6 @@ impl EffectiveListener {
 pub struct PageService;
 
 impl PageService {
-    pub fn dashboard_template(&self) -> EmbeddedResponse {
-        embedded_named("homepage.html").unwrap_or_else(EmbeddedResponse::not_found)
-    }
-
     pub fn asset(&self, requested: &str) -> EmbeddedResponse {
         let Some(name) = safe_asset_name(requested) else {
             return EmbeddedResponse::not_found();
@@ -208,8 +191,9 @@ impl PageService {
         embedded_named("favicon.ico").unwrap_or_else(EmbeddedResponse::not_found)
     }
 
-    /// Classify retained GET pages.
-    pub fn lookup_get(&self, path: &str, settings_overlay_query_present: bool) -> PageLookup {
+    /// Classify a root-served GET: the favicon, a shared asset, or an
+    /// overlay static path.
+    pub fn lookup_get(&self, path: &str) -> PageLookup {
         if path == "/favicon.ico" {
             return PageLookup::Embedded(self.favicon());
         }
@@ -217,13 +201,6 @@ impl PageService {
             return PageLookup::Embedded(self.asset(name));
         }
         match path {
-            "/" => PageLookup::Dynamic(DynamicPage::Dashboard),
-            "/settings" if settings_overlay_query_present => {
-                PageLookup::Dynamic(DynamicPage::OverlaySettings)
-            }
-            "/settings" => PageLookup::Dynamic(DynamicPage::Settings),
-            "/available" => PageLookup::Dynamic(DynamicPage::Available),
-            "/tools" => PageLookup::Dynamic(DynamicPage::Tools),
             path if path.starts_with("/.well-know") => PageLookup::NotFound,
             path => PageLookup::Static(static_fallback(path)),
         }
@@ -361,10 +338,18 @@ mod tests {
     #[test]
     fn pages_assets_missing_and_special_routes_are_classified() {
         let pages = PageService;
-        assert_eq!(
-            pages.dashboard_template().body.as_ref(),
-            include_bytes!("../../assets/server/homepage.html")
-        );
+        // The dashboard set moved to `vosu-dashboard`; the root no longer
+        // embeds or serves it, nor the report template (A7 assets).
+        for moved in [
+            "homepage.html",
+            "homepage.js",
+            "dashboard-status.js",
+            "update-notice.css",
+            "report.html",
+        ] {
+            assert_eq!(pages.asset(moved).status, 404, "{moved}");
+        }
+        assert_eq!(pages.asset("tokens.css").status, 200);
         assert_eq!(
             pages.favicon().content_type,
             "image/vnd.microsoft.icon; charset=utf-8"
@@ -372,16 +357,9 @@ mod tests {
         assert_eq!(pages.asset("missing.js").status, 404);
         assert_eq!(pages.asset("../homepage.html").status, 404);
         assert_eq!(pages.asset("missing.js").content_type, "text/html");
+        assert_eq!(pages.lookup_get("/.well-known/x"), PageLookup::NotFound);
         assert_eq!(
-            pages.lookup_get("/.well-known/x", false),
-            PageLookup::NotFound
-        );
-        assert_eq!(
-            pages.lookup_get("/settings", true),
-            PageLookup::Dynamic(DynamicPage::OverlaySettings)
-        );
-        assert_eq!(
-            pages.lookup_get("/local-overlays", false),
+            pages.lookup_get("/local-overlays"),
             PageLookup::Static(static_fallback("/local-overlays")),
             "the removed local-overlays guide must fall through to counter paths"
         );

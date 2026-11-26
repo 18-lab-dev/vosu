@@ -26,7 +26,6 @@
         let delegate = Arc::new(ProductionRouteDelegate::new(
             ProductionServices::with_native_report_probe(
                 PageService,
-                unused.clone(),
                 counters,
                 Arc::new(Current::default()),
                 unused.clone(),

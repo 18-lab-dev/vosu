@@ -39,67 +39,6 @@ impl SettingsProvider for RuntimeCounterFacade {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct RuntimePages {
-    pub(super) pages: PageService,
-    pub(super) counters: Arc<ReloadableCounterService>,
-    pub(super) catalog: CatalogService,
-    pub(super) config: Arc<ConfigStore>,
-    pub(super) shutdown: CancellationToken,
-    pub(super) update: Option<UpdateNotice>,
-}
-
-impl RuntimePages {
-    /// The overlay host's presentation of the installed and community lists.
-    fn overlays(&self) -> OverlayPresenter {
-        OverlayPresenter::new(
-            Arc::clone(&self.counters),
-            self.catalog.clone(),
-            self.shutdown.clone(),
-        )
-    }
-}
-
-impl PageDataProvider for RuntimePages {
-    fn render(
-        &self,
-        page: DynamicPage,
-        _authority: Option<String>,
-    ) -> crate::server::routes::ProviderFuture<'_, Result<EmbeddedResponse, String>> {
-        Box::pin(async move {
-            let overlays = self.overlays();
-            let scan = overlays.local_scan().await;
-            let local_count = scan
-                .as_ref()
-                .ok()
-                .map(|scan| scan.counters.len() + scan.broken.len());
-            let (list, available_count) = match page {
-                DynamicPage::Dashboard => (overlays.installed_list(scan).await, None),
-                DynamicPage::Settings => (render_runtime_settings(&self.config.current()), None),
-                DynamicPage::OverlaySettings | DynamicPage::ToolSettings => (String::new(), None),
-                DynamicPage::Tools => (
-                    r#"<div id="tools-root" class="tools-root"></div>"#.to_owned(),
-                    None,
-                ),
-                DynamicPage::Available => overlays.available_list(scan).await,
-            };
-            Ok(render_homepage(
-                self.pages.dashboard_template(),
-                page,
-                local_count,
-                available_count,
-                if matches!(page, DynamicPage::Available) {
-                    CATALOG_NOTICE
-                } else {
-                    ""
-                },
-                &list,
-                self.update.as_ref(),
-            ))
-        })
-    }
-}
-
 /// The M6b installed-graph input to overlay manifest validation. Core keeps
 /// the plugin host; the overlay host receives only per-manifest results.
 pub(super) struct InstalledOverlayValidation(pub(super) std::sync::Weak<PluginHost>);

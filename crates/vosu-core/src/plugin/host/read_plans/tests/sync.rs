@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use vosu_plugin_api::memory::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
-use vosu_plugin_api::{PlanBase, ReadResult, vosu_status};
+use vosu_plugin_api::{PlanBase, PlanOp, ReadResult, Stage, StageBase, vosu_status};
 use vosu_plugin_internal::PlanMemoryError;
 use vosu_plugin_testkit::read_plan::{ReadPlanCommand, ReadPlanEvent, ReadPlanPluginConfig};
 
@@ -134,11 +134,22 @@ fn sync_deadline_times_out() {
             plan: 1,
             handle,
             root: PlanBase::Absolute(0),
-            // Two stages: the deadline is only checked once per stage, so
-            // a single slow stage alone would still finish and return Ok.
+            // Two levels: the deadline is only checked once per level (the
+            // dependent stage waits for the pointer it reads through), so a
+            // single slow level alone would still finish and return Ok.
             stages: vec![
-                super::helpers::one_op_stage(1),
-                super::helpers::one_op_stage(1),
+                super::helpers::one_op_stage(8),
+                Stage {
+                    base: StageBase::Dependent {
+                        ref_stage: 0,
+                        ref_op: 0,
+                    },
+                    base_offset: 0,
+                    ops: vec![PlanOp {
+                        offset: 0,
+                        length: 1,
+                    }],
+                },
             ],
         })
         .expect("sending the sync submit command");

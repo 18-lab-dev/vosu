@@ -1,6 +1,6 @@
 #![expect(
     clippy::disallowed_methods,
-    reason = "benchmark harness: spawns its own target and P1 transport helper children; no plugin host exists in this process"
+    reason = "benchmark harness: spawns its own target and P1 transport helper children, and polls the production plugin's reply files"
 )]
 //! Brokered memory-read cost measurement for ADR 0019 (`process`-runtime plugins).
 //!
@@ -67,8 +67,22 @@
 //!   - `pipe` (Windows): the measurement-only named pipe
 //!     (`support/brokered/pipe_windows.rs`).
 //!
-//! The production broker variants (`production_sync`, `production_async`)
-//! belong to M5's production arm (B0/E0) and are not implemented here.
+//! - Production (`support/brokered/production.rs`, M5 P1's production arm):
+//!   `production_sync` and `production_async`. This process is core, a real
+//!   `PluginHost` with the real process launcher; the submitting side is
+//!   the bench plugin (`examples/brokered_reads_plugin.rs`) in a real
+//!   `vosu plugin-host` child of the `vosu` executable Cargo built for this
+//!   bench, sending the same plans through the real SDK, relay, ring,
+//!   ingress, broker and executor (`support/production`). `production_sync`
+//!   submits `VOSU_READ_PLAN_SYNC`; `production_async` submits without it,
+//!   gets core's `STATUS`, and has the result dispatched on the instance's
+//!   dispatch thread. An ABI stage has one base, so the precise plan's
+//!   per-key stage (18 bases) is 18 ABI stages (`abi_stages`); reads, bytes,
+//!   order and the one submission are unchanged. They run after every
+//!   forking prototype, in one core.
+//! - `executor` (diagnostic, not a D17 variant): core's real executor
+//!   (`execute_sync_into`, what a broker worker runs per `SYNC` plan) on the
+//!   same ABI plan and target in this process, with no transport.
 //!
 //! ## Metrics
 //!
@@ -76,20 +90,33 @@
 //! `p50_ns`, `p99_ns`, `mean_ns` (fixed samples timed by the submitting side),
 //! `core_cpu_ns`, `plugin_cpu_ns`, `round_trips` (logical submissions per
 //! sample), `reads`, `bytes`, `wire_frames`, `control_frames` and
-//! `result_sha256`. `direct` and the candidates also print Criterion's median
-//! with its 95% interval (`criterion_median_ns`,
-//! `criterion_median_ci95_{low,high}_ns`), `wakeups` (context switches;
-//! see `support/brokered/os.rs`), `allocations`, `copies` and `clock_reads`
-//! (transport-internal), split by side where both sides work. Candidates are
-//! measured per side over measured loops only (timed samples and Criterion
-//! batches, never warm-up or Criterion's analysis); core over the whole
-//! session between `READY` and `DESTROYED`. `load_other_busy_cpus` is the
-//! busy CPU time of the run's CPUs (Linux: those in this process's affinity;
-//! Windows: the whole machine) not explained by core and helper, divided by
-//! wall time. Cold startup is `cold_{variant}_startup_{p50,p99}_ns`: helper
-//! spawn to core receiving its `READY`. `run_affinity` is checked equal in
-//! the target and every helper, and on Linux each helper's descriptors must
-//! be exactly stdio plus its endpoint.
+//! `result_sha256`. `direct`, the candidates and the production variants
+//! also print Criterion's median with its 95% interval
+//! (`criterion_median_ns`, `criterion_median_ci95_{low,high}_ns`), `wakeups`
+//! (context switches; see `support/brokered/os.rs`) and `allocations`,
+//! split by side where both sides work; `direct` and the candidates also
+//! print `copies` and `clock_reads` (transport-internal), which production
+//! code does not count (`unmeasured`). Candidates and production variants
+//! are measured on the plugin side over measured loops only (timed samples
+//! and Criterion batches, never warm-up or Criterion's analysis); candidate
+//! core over the whole session between `READY` and `DESTROYED`, production
+//! core over the sample command (reference response, warm-up and samples).
+//! Production frames are counted from the plugin host's own rings:
+//! `wire_frames` (both directions), `{plugin_to_host,host_to_plugin}_frames`
+//! and `control_frames` (private A5.2 frames); `round_trips` is plan frames
+//! per sample. Each production variant also prints the D17 ratio
+//! `p50_over_reference` (its p50 over the same run's `ratio_reference`
+//! p50: `shm` on Linux, `section` on Windows) and the reported, never
+//! gating, `historical_reference_ns`. `load_other_busy_cpus` is the busy
+//! CPU time of the run's CPUs (Linux: those in this process's affinity;
+//! Windows: the whole machine) not explained by core and helper or plugin
+//! host, divided by wall time. Cold startup is
+//! `cold_{variant}_startup_{p50,p99}_ns`: helper spawn to core receiving
+//! its `READY`, or for `production` the whole
+//! `create_instance` (spawn to `READY`). `run_affinity` is checked equal in
+//! the target, every helper and every plugin host (its own report and
+//! core's read of its pid), and on Linux each helper's descriptors must be
+//! exactly stdio plus its endpoint.
 //!
 //! ## Arguments
 //!
@@ -102,27 +129,38 @@
 //!   (defaults 200, 5,000 and 50).
 //! - `--criterion-ms N`: Criterion measurement time per case (default 3,000;
 //!   `0` disables Criterion).
-//! - `--round N`: a paired-round label; even rounds run the candidates in
-//!   reverse order.
+//! - `--round N`: a paired-round label; even rounds run the candidates and
+//!   the production variants in reverse order.
 //!
 //! Anything else is an error. `--p1-child ...` is internal.
 //!
 //! ## Reproduce
 //!
-//! Build the target first (`cargo bench` does not build examples):
+//! Build the target and the production plugin first (`cargo bench` does
+//! not build examples), in the bench profile:
 //!
 //! ```sh
-//! cargo build --locked --release --example brokered_reads_target
+//! cargo build --locked --release --example brokered_reads_target --example brokered_reads_plugin
 //! taskset -c 0-7,16-23 cargo bench --locked --bench brokered_reads_bench
 //! ```
 //!
 //! On Windows run the built executable directly under an explicit affinity
 //! launcher (children inherit it), e.g.
 //! `cmd /c start /b /wait /affinity FFFF target\release\deps\brokered_reads_bench-HASH.exe --bench`.
+//! The production variants start `target\release\vosu.exe` (Cargo's
+//! `CARGO_BIN_EXE_vosu` for this bench), which must stay in place.
 
 #[cfg(any(target_os = "linux", windows))]
 #[path = "support/brokered/mod.rs"]
 mod brokered;
+
+#[cfg(any(target_os = "linux", windows))]
+#[path = "support/production/mod.rs"]
+#[expect(
+    dead_code,
+    reason = "shared with plan_memory_bench, whose `_process` cases also hook fixture memory"
+)]
+mod production;
 
 #[cfg(any(target_os = "linux", windows))]
 #[global_allocator]
@@ -136,6 +174,7 @@ mod runner {
     use super::brokered::candidate::{self, Candidate, Settings};
     use super::brokered::os::{self, Usage};
     use super::brokered::plans::{Plan, shapes};
+    use super::brokered::production::{self as production_arm, Production};
     use super::brokered::stats::{self, metric, percentiles};
     use super::brokered::target::Target;
     use super::brokered::wire::{execute_plan, sha256_hex};
@@ -264,6 +303,8 @@ mod runner {
         }
     }
 
+    /// Runs the Linux prototypes; returns `shm`'s p50, the Linux D17
+    /// denominator.
     #[cfg(target_os = "linux")]
     fn run_prototypes(
         target: &Target,
@@ -271,7 +312,7 @@ mod runner {
         plan: &Plan,
         settings: &Settings,
         direct: &str,
-    ) {
+    ) -> Option<f64> {
         use super::brokered::prototype_linux::{run_naive, run_shm, run_uds};
         use super::brokered::wire::encode_plan;
 
@@ -286,7 +327,11 @@ mod runner {
                 run_naive(target, plan, warmup, samples),
             ),
         ];
+        let mut shm = None;
         for (variant, round_trips, outcome) in outcomes {
+            if variant == "shm" {
+                shm = Some(outcome.timing.p50_ns);
+            }
             let prefix = format!("{shape}_{variant}");
             let sha = sha256_hex(&outcome.first_response);
             assert_eq!(
@@ -311,10 +356,13 @@ mod runner {
             metric(&prefix, "control_frames", 0);
             metric(&prefix, "result_sha256", sha);
         }
+        shm
     }
 
     #[cfg(windows)]
-    fn run_prototypes(_: &Target, _: &str, _: &Plan, _: &Settings, _: &str) {}
+    fn run_prototypes(_: &Target, _: &str, _: &Plan, _: &Settings, _: &str) -> Option<f64> {
+        None
+    }
 
     pub fn run(args: &[String]) {
         let options = parse(args);
@@ -356,6 +404,14 @@ mod runner {
                 .collect::<Vec<_>>()
                 .join(",")
         );
+        println!(
+            "METRIC run_production_order={}",
+            Production::all(reverse)
+                .iter()
+                .map(|variant| variant.name())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
 
         let target = Target::spawn();
         assert_eq!(
@@ -363,6 +419,7 @@ mod runner {
             own_cpus,
             "target affinity differs from the runner's"
         );
+        let mut measured = Vec::new();
         for (shape, plan) in shapes() {
             let frozen = FROZEN
                 .iter()
@@ -374,14 +431,52 @@ mod runner {
                 "{shape} plan shape is frozen by the D17 contract"
             );
             let direct = run_direct(&target, shape, &plan, &settings);
-            run_prototypes(&target, shape, &plan, &settings, &direct);
+            let shm = run_prototypes(&target, shape, &plan, &settings, &direct);
+            let mut section = None;
             for candidate in Candidate::all(reverse) {
-                candidate::run_session(candidate, shape, &plan, &target, &settings, &direct);
+                let p50 =
+                    candidate::run_session(candidate, shape, &plan, &target, &settings, &direct);
+                if cfg!(windows) && candidate == Candidate::Ring {
+                    section = Some(p50);
+                }
+            }
+            // The D17 denominator: Linux `shm`, Windows `section`, same run.
+            let reference = shm
+                .map(|p50| ("shm", p50))
+                .or(section.map(|p50| ("section", p50)))
+                .expect("a same-run prototype reference");
+            measured.push((shape, plan, direct, reference));
+        }
+        // Core's plugin host starts threads, so it exists only after every
+        // forking prototype finished.
+        let host = super::production::ProductionHost::new();
+        for (shape, plan, direct, reference) in &measured {
+            production_arm::run_executor(shape, plan, &target, &settings, direct);
+            let baseline = production_arm::Baseline {
+                direct_sha: direct,
+                reference: *reference,
+            };
+            for variant in Production::all(reverse) {
+                production_arm::run_session(
+                    &host, variant, shape, plan, &target, &settings, &baseline,
+                );
             }
         }
-        for candidate in Candidate::all(reverse) {
-            let startup = candidate::run_startup(candidate, settings.startup_samples);
-            let prefix = format!("cold_{}", candidate.name());
+        let startups = Candidate::all(reverse)
+            .into_iter()
+            .map(|candidate| {
+                (
+                    candidate.name(),
+                    candidate::run_startup(candidate, settings.startup_samples),
+                )
+            })
+            .chain([(
+                "production",
+                production_arm::run_startup(&host, settings.startup_samples),
+            )])
+            .collect::<Vec<_>>();
+        for (name, startup) in startups {
+            let prefix = format!("cold_{name}");
             metric(
                 &prefix,
                 "startup_p50_ns",
@@ -394,6 +489,7 @@ mod runner {
             );
             metric(&prefix, "startup_samples", settings.startup_samples);
         }
+        drop(host);
         if let Some(measurement) = settings.criterion {
             criterion_direct(&target, output.path(), measurement);
         }

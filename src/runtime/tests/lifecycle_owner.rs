@@ -11,6 +11,9 @@ mod shutdown_close;
 #[path = "lifecycle_owner/cli_broker.rs"]
 mod cli_broker;
 
+#[path = "lifecycle_owner/dashboard_off.rs"]
+mod dashboard_off;
+
 #[derive(Default)]
 struct Console(Mutex<String>);
 impl ConsoleSink for Console {
@@ -87,6 +90,7 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             processor: AsyncMutex::new(None),
             relays: AsyncMutex::new(None),
             ordinary_role: false,
+            dashboard: true,
             tray: AsyncMutex::new(None),
             discovery: AsyncMutex::new(None),
             #[cfg(windows)]
@@ -162,6 +166,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 std::slice::from_ref(&broken),
                 &[],
                 &mut plugin_management::Roster::default(),
+                true,
             )
             .is_err()
         );
@@ -177,19 +182,17 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &entries,
                 &[],
                 &mut plugin_management::Roster::default(),
+                true,
             )
             .unwrap(),
-            7
+            dev_plugins::REQUIRED.len() as u64 + 1
         );
         assert!(owner.plugins.has_enabled_matchers());
         owner.shutdown().await.unwrap();
-        assert!(
-            console
-                .0
-                .lock()
-                .unwrap()
-                .contains("optional bundled plugin at index 6 failed")
-        );
+        assert!(console.0.lock().unwrap().contains(&format!(
+            "optional bundled plugin at index {} failed",
+            dev_plugins::REQUIRED.len()
+        )));
     })
     .await
     .unwrap();
@@ -224,7 +227,7 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
         let root = tempfile::tempdir().unwrap();
         let (mut owner, console) = owner(root.path()).await;
         let stopped = Arc::new(AtomicBool::new(false));
-        dev_plugins::load_all(&owner.plugins, vec![], &owner.paths, &owner.logger).unwrap();
+        dev_plugins::load_all(&owner.plugins, vec![], &owner.paths, &owner.logger, true).unwrap();
         let source = Arc::new(super::super::discovery::operational::LoggedSource::new(
             Arc::new(Source(stopped.clone())),
             owner.logger.clone(),
@@ -289,11 +292,13 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
             crate::plugins::BUNDLED,
             &[],
             &mut plugin_management::Roster::default(),
+            true,
         )
         .unwrap();
-        let (adapters, hubs) = adapters::Adapters::start(&owner.plugins, owner.config.clone())
-            .await
-            .unwrap();
+        let (adapters, hubs) =
+            adapters::Adapters::start(&owner.plugins, owner.config.clone(), true)
+                .await
+                .unwrap();
         let router = adapters.router(owner.plugins.clone());
         for path in [
             "/json",
@@ -381,6 +386,7 @@ async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
                     &entries,
                     &[],
                     &mut plugin_management::Roster::default(),
+                    true,
                 )
                 .is_err(),
                 "required slot {omitted}"

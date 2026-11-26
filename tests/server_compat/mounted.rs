@@ -28,12 +28,11 @@ use vosu::{
         api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
         bus_provider::BusStateProvider,
         origins::{OriginAuthorizer, Origins},
-        pages::{DynamicPage, EmbeddedResponse},
         service::{
             BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-            PageDataProvider, ProductionRouteDelegate, ProductionServices, ReportInputProvider,
-            SurfaceRouter, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
-            WebSocketRelaySink, adapter_routes, reserve_core_routes,
+            ProductionRouteDelegate, ProductionServices, ReportInputProvider, SurfaceRouter,
+            UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
+            adapter_routes, reserve_core_routes,
         },
         websocket::StateDemand,
     },
@@ -92,18 +91,12 @@ pub(super) fn schema_of(route: StateRoute) -> Schema {
 }
 
 struct Unused;
-impl PageDataProvider for Unused {
-    fn render(
-        &self,
-        _: DynamicPage,
-        _: Option<String>,
-    ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
-        Box::pin(async { Err("unused".into()) })
-    }
-}
 impl ConfigUpdateService for Unused {
     fn save(&self, _: Value) -> ProviderFuture<'_, Result<(), String>> {
         Box::pin(async { Err("unused".into()) })
+    }
+    fn view(&self) -> Value {
+        serde_json::json!({})
     }
 }
 impl ReportInputProvider for Unused {
@@ -233,7 +226,6 @@ impl Mounted {
                 let unused = Arc::new(Unused);
                 let services = ProductionServices::with_native_report_probe(
                     vosu::server::pages::PageService,
-                    unused.clone(),
                     counters.clone(),
                     Arc::new(NoBeatmap),
                     unused.clone(),

@@ -44,7 +44,12 @@ impl Default for DeliveryState {
 
 #[derive(Default)]
 struct Slot {
+    /// A job is queued, running or waiting to retry admission.
     queued: bool,
+    /// `queued`, but its admission was refused: a retry timer resubmits
+    /// it. Taken by whichever of that timer and an arriving detach claims
+    /// the resubmission first, so the slot never has two jobs.
+    retrying: bool,
     dead: bool,
     known: bool,
     lifecycle: bool,
@@ -379,7 +384,7 @@ impl PluginHost {
                     reason: vosu_plugin_api::DetachReason::Lost,
                 });
                 drop(pending);
-                self.schedule_state_slot(who, key, slot);
+                self.schedule_terminal(who, key, slot);
             } else {
                 pending.dead = true;
                 pending.pending.clear();
@@ -713,7 +718,7 @@ impl PluginHost {
                     }
                 }
             }
-            self.schedule_state_slot(who, key, slot);
+            self.schedule_terminal(who, key, slot);
         }
         drop(_demand);
         for who in overflow {
@@ -780,7 +785,31 @@ impl PluginHost {
         self.submit_state_slot(who, key, slot);
     }
 
+    /// Schedules a slot that now carries `SESSION_DETACHED`. A job already
+    /// queued or running delivers it; one waiting to retry admission is
+    /// resubmitted at once through the instance's lifecycle lane, which a
+    /// full dispatch queue never refuses. Waiting for the retry instead
+    /// could find the instance already out of service (a teardown detaches
+    /// its sessions, then unpublishes it at once) and lose the detach.
+    fn schedule_terminal(&self, who: PluginInstanceId, key: SessionKey, slot: Arc<Mutex<Slot>>) {
+        let retrying = std::mem::take(&mut slot.lock().unwrap_or_else(|p| p.into_inner()).retrying);
+        if retrying {
+            self.submit_state_slot(who, key, slot);
+        } else {
+            self.schedule_state_slot(who, key, slot);
+        }
+    }
+
+    /// Submits the slot's one job. A slot carrying `SESSION_DETACHED` goes
+    /// through the lifecycle lane (§7.6 "Lifecycle terminals are reserved"),
+    /// keeping its FIFO place behind the session's earlier deliveries;
+    /// anything else is ordinary work, retried while the queue is full.
     fn submit_state_slot(&self, who: PluginInstanceId, key: SessionKey, slot: Arc<Mutex<Slot>>) {
+        let terminal = slot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .detached
+            .is_some();
         let weak = self.self_ref.clone();
         let job_slot = slot.clone();
         let task = Box::new(move |target: &DispatchTarget| {
@@ -791,6 +820,9 @@ impl PluginHost {
         let result = {
             let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
             match instances.get(&who) {
+                Some(InstanceSlot::Live(entry)) if terminal => {
+                    entry.instance.dispatch_lifecycle(key.0, task)
+                }
                 Some(InstanceSlot::Live(entry)) => entry.instance.dispatch_task(task),
                 _ => {
                     slot.lock().unwrap_or_else(|p| p.into_inner()).dead = true;
@@ -803,19 +835,35 @@ impl PluginHost {
                 }
             }
         };
-        if result.is_err() {
-            let weak = self.self_ref.clone();
-            let slot = Arc::downgrade(&slot);
-            self.state_runtime.spawn(async move {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                if let (Some(host), Some(slot)) = (weak.upgrade(), slot.upgrade()) {
-                    let dead = slot.lock().unwrap_or_else(|p| p.into_inner()).dead;
-                    if !dead {
-                        host.submit_state_slot(who, key, slot);
-                    }
-                }
-            });
+        if result.is_ok() {
+            return;
         }
+        let detach_arrived = {
+            let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+            // A detach that arrived since `terminal` was read saw this slot
+            // queued and left the delivery to this job, which was refused.
+            let arrived = !terminal && pending.detached.is_some();
+            pending.retrying = !arrived;
+            arrived
+        };
+        if detach_arrived {
+            self.submit_state_slot(who, key, slot);
+            return;
+        }
+        let weak = self.self_ref.clone();
+        let slot = Arc::downgrade(&slot);
+        self.state_runtime.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if let (Some(host), Some(slot)) = (weak.upgrade(), slot.upgrade()) {
+                let retry = {
+                    let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+                    !pending.dead && std::mem::take(&mut pending.retrying)
+                };
+                if retry {
+                    host.submit_state_slot(who, key, slot);
+                }
+            }
+        });
     }
 
     fn drain_state_slot(

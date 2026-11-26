@@ -26,7 +26,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     server::Acceptor,
 };
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 use tokio_rustls::{LazyConfigAcceptor, server::TlsStream};
 use tokio_util::sync::CancellationToken;
 use vosu_net::{AddressResolver, ResolverFuture, SystemResolver};
@@ -143,6 +143,23 @@ struct TlsListener {
     forge: Arc<ServerConfig>,
     mirror: Arc<ServerConfig>,
     log: Arc<Mutex<Log>>,
+    handshaking: watch::Sender<usize>,
+}
+
+/// One accepted connection whose handshake outcome is not logged yet.
+struct Pending<'a>(&'a watch::Sender<usize>);
+
+impl<'a> Pending<'a> {
+    fn enter(count: &'a watch::Sender<usize>) -> Self {
+        count.send_modify(|count| *count += 1);
+        Self(count)
+    }
+}
+
+impl Drop for Pending<'_> {
+    fn drop(&mut self) {
+        self.0.send_modify(|count| *count -= 1);
+    }
 }
 
 impl TlsListener {
@@ -182,6 +199,10 @@ impl axum::serve::Listener for TlsListener {
                 tokio::task::yield_now().await;
                 continue;
             };
+            // Counted before this side can present a certificate, so a client
+            // that has seen it finds the count non-zero until the outcome is
+            // logged.
+            let _pending = Pending::enter(&self.handshaking);
             let bounded = tokio::time::timeout(Duration::from_secs(5), self.handshake(tcp));
             if let Ok(Some(stream)) = bounded.await {
                 return (stream, address);
@@ -305,6 +326,7 @@ async fn proxy(
 
 pub struct TlsRecorder {
     log: Arc<Mutex<Log>>,
+    handshaking: watch::Sender<usize>,
     addresses: Vec<SocketAddr>,
     stop: CancellationToken,
     servers: Vec<JoinHandle<io::Result<()>>>,
@@ -317,6 +339,7 @@ impl TlsRecorder {
         listeners: &[(SocketAddr, Role)],
     ) -> Self {
         let log = Arc::new(Mutex::new(Log::default()));
+        let (handshaking, _) = watch::channel(0);
         let sentinels = Arc::new(sentinels);
         let forge = load_config(&fixture.forge_leaf);
         let mirror = load_config(&fixture.mirror_leaf);
@@ -350,6 +373,7 @@ impl TlsRecorder {
                 forge: forge.clone(),
                 mirror: mirror.clone(),
                 log: log.clone(),
+                handshaking: handshaking.clone(),
             };
             let app = Router::new().fallback(handle).with_state(route);
             let shutdown = stop.clone();
@@ -361,6 +385,7 @@ impl TlsRecorder {
         }
         Self {
             log,
+            handshaking,
             addresses,
             stop,
             servers,
@@ -379,7 +404,15 @@ impl TlsRecorder {
             .clone()
     }
 
-    pub fn handshakes(&self) -> Vec<Handshake> {
+    /// Every logged handshake once no accepted connection is mid-handshake. A
+    /// client that rejects the certificate returns as soon as it sends its
+    /// alert, before this side reads it and logs the failure.
+    pub async fn handshakes(&self) -> Vec<Handshake> {
+        self.handshaking
+            .subscribe()
+            .wait_for(|count| *count == 0)
+            .await
+            .expect("the recorder keeps a sender");
         self.log
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

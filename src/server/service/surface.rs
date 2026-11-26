@@ -30,6 +30,14 @@ pub fn reserve_core_routes(
                 true,
             ),
         ] {
+            // The dashboard host registers its page shells, `GET /tools` and
+            // its asset names exactly on the dashboard role (A7.1), so core
+            // reserves none of those paths, nor any `/assets` prefix, there.
+            if listener == ListenerRole::Dashboard
+                && matches!(path, "/" | "/settings" | "/available" | "/assets" | "/tools")
+            {
+                continue;
+            }
             for method in methods {
                 descriptors.push(RouteDescriptor {
                     listener,
@@ -259,6 +267,27 @@ impl SurfaceRouter {
             {
                 Some(ProviderResponse::Http(response)) => surface_http_response(response),
                 _ => not_found(),
+            }
+        })
+    }
+
+    /// A dashboard-listener route of the dashboard host (page shells and
+    /// dashboard assets). Dashboard providers read no state, so the request
+    /// carries an empty selection; `None` when no provider serves the path.
+    pub fn dashboard(&self, request: &Request<Body>) -> ProviderFuture<'_, Option<Response>> {
+        let selected = surface_request(request, Arc::new(empty_selection()));
+        Box::pin(async move {
+            match self
+                .host
+                .dispatch_surface_route(
+                    vosu_surface::listener::ListenerRole::Dashboard,
+                    false,
+                    selected?,
+                )
+                .await
+            {
+                Some(ProviderResponse::Http(response)) => Some(surface_http_response(response)),
+                _ => None,
             }
         })
     }

@@ -37,7 +37,7 @@ use vosu_overlay_host::commands::{
 
 use super::{
     files,
-    pages::{DynamicPage, EmbeddedResponse, PageLookup, PageService, StaticFallback},
+    pages::{EmbeddedResponse, PageLookup, PageService, StaticFallback},
     routes::{
         CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,
         ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate, StateJsonProvider, StateRoute,
@@ -107,19 +107,12 @@ mod tests {
 
     struct UnusedServices;
 
-    impl PageDataProvider for UnusedServices {
-        fn render(
-            &self,
-            _: DynamicPage,
-            _: Option<String>,
-        ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
-            Box::pin(async { Err("unused".into()) })
-        }
-    }
-
     impl ConfigUpdateService for UnusedServices {
         fn save(&self, _: Value) -> ProviderFuture<'_, Result<(), String>> {
             Box::pin(async { Ok(()) })
+        }
+        fn view(&self) -> Value {
+            json!({})
         }
     }
 

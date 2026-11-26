@@ -3525,6 +3525,7 @@ dependencies = [
  "vosu-adapter-support",
  "vosu-adapter-upstream",
  "vosu-core",
+ "vosu-dashboard",
  "vosu-net",
  "vosu-osu",
  "vosu-osu-calc",
@@ -3659,6 +3660,16 @@ dependencies = [
  "wmi",
  "zip",
  "zmij",
+]
+
+[[package]]
+name = "vosu-dashboard"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "vosu-plugin-api",
+ "vosu-plugin-internal",
+ "vosu-surface",
 ]
 
 [[package]]

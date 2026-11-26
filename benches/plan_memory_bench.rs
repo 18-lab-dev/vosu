@@ -1,5 +1,7 @@
 //! D17: reader decoding through PlanProcessMemory, public core executor and SDK interception.
-//! Includes native, flat executor+SDK, and Windows full-PluginHost routing.
+//! Includes native, flat executor+SDK, Windows full-PluginHost routing, and the M5 X1
+//! `_process` cases: the same captures from a real `vosu plugin-host` child
+//! (`support/plan_process.rs`; build `--example brokered_reads_plugin` first).
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::{
     ffi::c_void,
@@ -26,8 +28,22 @@ mod lazer_fixture;
 mod plan_costs;
 #[path = "support/plan_floor.rs"]
 mod plan_floor;
+#[path = "support/plan_process.rs"]
+mod plan_process;
+#[path = "support/plan_process_cases.rs"]
+#[expect(
+    dead_code,
+    reason = "shared with the production bench plugin, which parses case names"
+)]
+mod plan_process_cases;
 #[path = "support/plan_trace.rs"]
 mod plan_trace;
+#[path = "support/production/mod.rs"]
+#[expect(
+    dead_code,
+    reason = "shared with brokered_reads_bench, whose sessions stop and detach per variant"
+)]
+mod production;
 #[cfg(windows)]
 #[path = "../examples/live_reader_bench/plan.rs"]
 #[expect(
@@ -360,8 +376,11 @@ fn bench(c: &mut Criterion) {
     );
     lazer.set_resolved_state(0x1000, 0x2000);
     // Assert successful, non-default decoding before measuring either transport.
+    // Like the plan handles' `FixtureScan`, native handles scan through core's
+    // region walk over their own memory (M5 R1: a reader handle never scans
+    // on its own), so a zero-fixture capture fails identically in both.
     let native = |bitness| {
-        ProcessHandle::new(
+        region_walk_scans::scanning_handle(
             Arc::new(SliceMemory(if bitness == ProcessBitness::X86 {
                 stable_fixture::bytes()
             } else {
@@ -527,6 +546,34 @@ fn bench(c: &mut Criterion) {
             let _ = black_box(lazer.gameplay(0.0, None));
         })
     });
+    // X1: the same four captures through the process runtime. Digests come
+    // from the `_plan` readers after their own cases ran.
+    use plan_process_cases::{self as cases, Case};
+    let expected = [
+        (
+            Case::StablePrecise,
+            cases::digest(&cases::stable_precise(&mut stable)),
+        ),
+        (
+            Case::LazerPrecise,
+            cases::digest(&cases::lazer_precise(&mut active_plan, plan_sync)),
+        ),
+        (
+            Case::StableRegularFields,
+            cases::digest(&cases::stable_regular_fields(&mut stable)),
+        ),
+        (
+            Case::LazerRegularFields,
+            cases::digest(&cases::lazer_regular_fields(&mut lazer)),
+        ),
+    ];
+    let process_host = production::ProductionHost::new();
+    let process = plan_process::ProcessCases::start(&process_host, &expected);
+    for case in Case::ALL {
+        group.bench_function(format!("{}_process", case.name()), |b| {
+            b.iter_custom(|iterations| process.batch(case, iterations))
+        });
+    }
     group.finish();
 }
 criterion_group!(benches, bench, plan_costs::bench, plan_floor::bench);

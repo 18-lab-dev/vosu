@@ -163,10 +163,19 @@ pub(super) fn register(
         "vosu.adapter.upstream"
             | "vosu.adapter.gosumemory"
             | "vosu.adapter.streamcompanion"
+            | "vosu.dashboard"
             | "vosu.overlayhost"
             | "vosu.toolhost"
     ) {
         return Err(RegistrationError::UnknownRequester);
+    }
+    // The dashboard host serves only the dashboard listener (A7.1).
+    if reader == "vosu.dashboard"
+        && routes
+            .iter()
+            .any(|(route, _)| route.listener != ListenerRole::Dashboard)
+    {
+        return Err(RegistrationError::InvalidDescriptor);
     }
     let result = install(
         &host,

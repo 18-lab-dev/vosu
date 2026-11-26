@@ -79,7 +79,7 @@ mod scan;
 pub use resource_lease::StreamLease;
 mod session;
 pub mod settings;
-#[cfg(any(test, feature = "test-harness"))]
+#[cfg(any(test, feature = "bench-harness"))]
 pub mod test_support;
 pub mod timers;
 pub use crate::identity::PluginInstanceId;

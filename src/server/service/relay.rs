@@ -260,7 +260,6 @@ impl WebSocketEndpoints {
 #[derive(Clone)]
 pub struct ProductionServices {
     pub pages: PageService,
-    pub page_data: Arc<dyn PageDataProvider>,
     pub counters: Arc<ReloadableCounterService>,
     pub beatmap: Arc<dyn CurrentBeatmapProvider>,
     pub config: Arc<dyn ConfigUpdateService>,
@@ -271,13 +270,8 @@ pub struct ProductionServices {
 }
 
 impl ProductionServices {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "this public constructor intentionally exposes each required service dependency"
-    )]
     pub fn with_native_report_probe(
         pages: PageService,
-        page_data: Arc<dyn PageDataProvider>,
         counters: Arc<ReloadableCounterService>,
         beatmap: Arc<dyn CurrentBeatmapProvider>,
         config: Arc<dyn ConfigUpdateService>,
@@ -287,7 +281,6 @@ impl ProductionServices {
     ) -> Self {
         Self {
             pages,
-            page_data,
             counters,
             beatmap,
             config,

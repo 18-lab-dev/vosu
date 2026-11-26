@@ -176,6 +176,7 @@ impl ProductionRouteDelegate {
                 }
             }
             Endpoint::SettingsSave => self.settings_save(request.headers(), body).await,
+            Endpoint::SettingsView => json_response(StatusCode::OK, self.services.config.view()),
             Endpoint::RunUpdates => self.run_updates(body, response_flush_barrier(&request)).await,
             Endpoint::GenerateReport => self.generate_report().await,
             Endpoint::Asset
@@ -234,6 +235,14 @@ impl ProductionRouteDelegate {
                 );
             }
         };
+        // A7.3: the dashboard switch lives only in vosu.toml. Nothing the
+        // dashboard serves may turn it off, so the save publishes nothing.
+        if values.get("ENABLE_DASHBOARD").is_some() {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "ENABLE_DASHBOARD can only be changed in vosu.toml" }),
+            );
+        }
         if let Some(object) = values.as_object_mut() {
             object.insert("_request_origin".into(), headers.get(header::HOST).and_then(|v| v.to_str().ok()).map_or(Value::Null, |host| Value::String(format!("http://{host}"))));
         }
@@ -287,57 +296,34 @@ impl ProductionRouteDelegate {
     }
 
     async fn page(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
-        let lookup = {
-            let path = request.uri().path();
-            match endpoint {
-                Endpoint::Asset => PageLookup::Embedded(
-                    self.services
-                        .pages
-                        .asset(path.strip_prefix("/assets/").unwrap_or_default()),
-                ),
-                Endpoint::Favicon => {
-                    let mut response = embedded_response(self.services.pages.favicon());
-                    response.headers_mut().insert(
-                        "x-vosu-identity",
-                        axum::http::HeaderValue::from_static("vosu"),
-                    );
-                    return response;
-                }
-                Endpoint::Root
-                | Endpoint::Settings
-                | Endpoint::Tools
-                | Endpoint::Available => {
-                    let query = request.uri().query();
-                    let named = |key| {
-                        query
-                            .and_then(|query| decoded_query_value(query, key))
-                            .is_some_and(|value| !value.is_empty())
-                    };
-                    let overlay = named("overlay");
-                    match self.services.pages.lookup_get(path, overlay || named("tool")) {
-                        // Overlay settings win when both are named, as on the client.
-                        PageLookup::Dynamic(DynamicPage::OverlaySettings) if !overlay => {
-                            PageLookup::Dynamic(DynamicPage::ToolSettings)
-                        }
-                        lookup => lookup,
-                    }
-                }
-                _ => unreachable!(),
+        if endpoint == Endpoint::Favicon {
+            let mut response = embedded_response(self.services.pages.favicon());
+            response.headers_mut().insert(
+                "x-vosu-identity",
+                axum::http::HeaderValue::from_static("vosu"),
+            );
+            return response;
+        }
+        // The dashboard host serves the page shells and its own assets on the
+        // dashboard listener only; the root keeps the shared asset files.
+        let dashboard = request
+            .extensions()
+            .get::<crate::server::routes::SurfaceAdmission>()
+            .is_some_and(|admission| {
+                admission.listener == vosu_surface::listener::ListenerRole::Dashboard
+            });
+        if dashboard || endpoint != Endpoint::Asset {
+            if let Some(surface) = &self.surface
+                && let Some(response) = surface.dashboard(&request).await
+            {
+                return response;
             }
-        };
-        match lookup {
+            if endpoint != Endpoint::Asset {
+                return not_found();
+            }
+        }
+        match self.services.pages.lookup_get(request.uri().path()) {
             PageLookup::Embedded(page) => embedded_response(page),
-            PageLookup::Dynamic(page) => {
-                let authority = request
-                    .headers()
-                    .get(header::HOST)
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned);
-                match self.services.page_data.render(page, authority).await {
-                    Ok(page) => embedded_response(page),
-                    Err(error) => internal_error(error),
-                }
-            }
             PageLookup::Static(fallback) => self.static_fallback(fallback, request).await,
             PageLookup::NotFound => not_found(),
         }

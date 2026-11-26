@@ -71,6 +71,7 @@ async fn wait_for_value(
 const DEFAULT_TOML: &str = "\
 DEBUG_LOG = false
 ENABLE_AUTOUPDATE = true
+ENABLE_DASHBOARD = true
 OPEN_DASHBOARD_ON_STARTUP = true
 START_AT_LOGIN = false
 
@@ -105,6 +106,7 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             .collect::<Vec<_>>(),
         [
             "ENABLE_AUTOUPDATE",
+            "ENABLE_DASHBOARD",
             "OPEN_DASHBOARD_ON_STARTUP",
             "START_AT_LOGIN",
             "DEBUG_LOG",
@@ -123,6 +125,22 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "MAX_PACKAGE_MIB",
         ]
     );
+}
+
+#[test]
+fn enable_dashboard_is_a_validated_boolean_defaulting_to_true() {
+    assert!(Config::default().enable_dashboard);
+    let off = ConfigDocument::parse("ENABLE_DASHBOARD = false\n").unwrap();
+    assert!(!off.config().enable_dashboard);
+    assert!(off.serialize().contains("\nENABLE_DASHBOARD = false\n"));
+    // A wrong type falls back to the schema default, like every boolean key.
+    for invalid in ["\"false\"", "0", "\"off\""] {
+        let document = ConfigDocument::parse(&format!("ENABLE_DASHBOARD = {invalid}\n")).unwrap();
+        assert!(document.config().enable_dashboard, "{invalid}");
+    }
+    let mut live = ConfigDocument::default();
+    live.refresh("ENABLE_DASHBOARD = false\n").unwrap();
+    assert!(!live.config().enable_dashboard);
 }
 
 #[test]

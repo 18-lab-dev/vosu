@@ -131,6 +131,12 @@ pub fn child_affinity(child: &std::process::Child) -> Vec<usize> {
     platform::child_affinity(child)
 }
 
+/// The CPU affinity of process `pid`, which core did not spawn itself (the
+/// plugin host its launcher started), as sorted CPU indices.
+pub fn pid_affinity(pid: u32) -> Vec<usize> {
+    platform::pid_affinity(pid)
+}
+
 /// Formats sorted CPU indices as a range list, e.g. `0-7,16-23`.
 pub fn cpu_list(cpus: &[usize]) -> String {
     let mut parts = Vec::new();
@@ -227,6 +233,10 @@ mod platform {
 
     pub fn child_affinity(child: &std::process::Child) -> Vec<usize> {
         affinity_of(child.id() as libc::pid_t)
+    }
+
+    pub fn pid_affinity(pid: u32) -> Vec<usize> {
+        affinity_of(pid as libc::pid_t)
     }
 }
 
@@ -379,5 +389,19 @@ mod platform {
 
     pub fn child_affinity(child: &std::process::Child) -> Vec<usize> {
         affinity_of(child.as_raw_handle() as HANDLE)
+    }
+
+    pub fn pid_affinity(pid: u32) -> Vec<usize> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // SAFETY: no pointer arguments; a failure returns null, checked.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        assert!(!process.is_null(), "OpenProcess({pid})");
+        let cpus = affinity_of(process);
+        // SAFETY: `process` is the handle opened above, closed once.
+        unsafe { CloseHandle(process) };
+        cpus
     }
 }
