@@ -16,8 +16,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use framing::{error_value, reply};
-use vosu_adapter_support::filtered::Filter;
-use vosu_adapter_support::filtered::parse_filters;
 
 pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
@@ -59,7 +57,11 @@ impl CommandClient {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CommandAction {
     Reply(Bytes),
-    ApplyFilters(Vec<Filter>),
+    /// The raw legacy filter source (JSON text) of an `applyFilters`
+    /// command. The connection's feed owns filter parsing and limits
+    /// (`FeedControl::replace_filters`); a rejected source keeps the prior
+    /// plan, exactly as an unparseable command did.
+    ApplyFilters(Bytes),
     NoAck,
 }
 
@@ -83,7 +85,7 @@ pub struct CommandProcessor {
     relays: Arc<dyn RelaySink>,
     save: Mutex<SaveCoordinator>,
     save_cancellation: CancellationToken,
-    profile_store: Mutex<Option<crate::counters::SettingsStore>>,
+    profile_store: Mutex<Option<crate::SettingsStore>>,
 }
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -108,7 +110,7 @@ impl CommandProcessor {
         }
     }
 
-    pub fn bind_profiles(&self, store: crate::counters::SettingsStore) {
+    pub fn bind_profiles(&self, store: crate::SettingsStore) {
         *lock_unpoisoned(&self.profile_store) = Some(store);
     }
     pub fn process(&self, client: &CommandClient, data: &str) -> CommandAction {
@@ -146,11 +148,11 @@ impl CommandProcessor {
                     return CommandAction::NoAck;
                 };
                 let target = if let Some(store) = lock_unpoisoned(&self.profile_store).as_ref() {
-                    let (name, profile) = crate::counters::split_counter(&client.overlay);
+                    let (name, profile) = crate::split_counter(&client.overlay);
                     let Ok(profile) = store.resolve_profile(profile) else {
                         return CommandAction::NoAck;
                     };
-                    crate::counters::qualified_counter(name, &profile)
+                    crate::qualified_counter(name, &profile)
                 } else {
                     client.overlay.clone()
                 };
@@ -169,9 +171,7 @@ impl CommandProcessor {
                 } else {
                     legacy_payload
                 };
-                parse_filters(source)
-                    .map(CommandAction::ApplyFilters)
-                    .unwrap_or(CommandAction::NoAck)
+                CommandAction::ApplyFilters(Bytes::copy_from_slice(source.as_bytes()))
             }
             _ => reply(command, None),
         }
@@ -199,7 +199,7 @@ impl CommandProcessor {
         }
         if relay.command == "getSettings" && relay.overlay == "/@vosu-active" {
             return (!client.overlay.is_empty()
-                && crate::counters::split_counter(&client.overlay).1.is_none())
+                && crate::split_counter(&client.overlay).1.is_none())
             .then(|| format!("getSettings:{}:", client.overlay));
         }
         if matches!(relay.command.as_str(), "getSettings" | "updateSettings")
@@ -279,7 +279,7 @@ async fn save_worker(
     mut receiver: watch::Receiver<Option<SaveRequest>>,
     cancellation: CancellationToken,
     relays: Arc<dyn RelaySink>,
-    profiles: Option<crate::counters::SettingsStore>,
+    profiles: Option<crate::SettingsStore>,
 ) {
     loop {
         tokio::select! {
@@ -322,7 +322,7 @@ async fn save_worker(
                     if settings.save(&request.overlay, request.value).is_ok()
                         && let Some(store) = profiles.as_ref()
                     {
-                        let (name, profile) = crate::counters::split_counter(&request.overlay);
+                        let (name, profile) = crate::split_counter(&request.overlay);
                         let mut targets = vec![request.overlay.clone()];
                         if profile.is_some_and(|p| store.resolve_profile(None).is_ok_and(|active| active == p)) {
                             targets.push(name.to_owned());
@@ -463,7 +463,7 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
-    struct StoredSettings(crate::counters::SettingsStore);
+    struct StoredSettings(crate::SettingsStore);
     impl SettingsProvider for StoredSettings {
         fn get(&self, overlay: &str) -> Result<Value, String> {
             self.0
@@ -472,7 +472,7 @@ mod tests {
                 .map_err(|e| e.to_string())
         }
         fn save(&self, overlay: &str, body: Value) -> Result<(), String> {
-            let values = serde_json::from_value::<Vec<crate::counters::SettingInput>>(body)
+            let values = serde_json::from_value::<Vec<crate::SettingInput>>(body)
                 .map_err(|e| e.to_string())?;
             self.0
                 .save_user_values(overlay, &values)
@@ -491,7 +491,7 @@ mod tests {
             br#"[{"uniqueID":"color","type":"text","value":"default"}]"#,
         )
         .unwrap();
-        let store = crate::counters::SettingsStore::new(
+        let store = crate::SettingsStore::new(
             root.path().join("static"),
             root.path().join("settings"),
         );
@@ -561,140 +561,20 @@ mod tests {
             processor.process(&client, "updateSettings:any:{"),
             CommandAction::NoAck
         );
+        // The feed parses and bounds the filter source; the processor only
+        // selects which part of the frame is that source.
         assert_eq!(
-            processor.process(
-                &client,
-                "applyFilters:any:[\"play\",42,{\"unknown\":true},{\"field\":\"menu\",\"keys\":[\"state\",false,{\"field\":\"beatmap\",\"keys\":[\"title\",null]}]}]"
-            ),
-            CommandAction::ApplyFilters(vec![
-                Filter::Field("play".into()),
-                Filter::Nested {
-                    field: "menu".into(),
-                    keys: vec![
-                        Filter::Field("state".into()),
-                        Filter::Nested {
-                            field: "beatmap".into(),
-                            keys: vec![Filter::Field("title".into())],
-                        },
-                    ],
-                },
-            ])
+            processor.process(&client, "applyFilters:any:[\"play\"]"),
+            CommandAction::ApplyFilters(Bytes::from_static(b"[\"play\"]"))
         );
         assert_eq!(
             processor.process(&client, "applyFilters:[\"legacy\"]"),
-            CommandAction::ApplyFilters(vec![Filter::Field("legacy".into())])
+            CommandAction::ApplyFilters(Bytes::from_static(b"[\"legacy\"]"))
         );
         assert_eq!(
             processor.process(&client, "applyFilters:any:{}"),
-            CommandAction::NoAck
+            CommandAction::ApplyFilters(Bytes::from_static(b"any:{}"))
         );
-    }
-
-    #[test]
-    fn excessive_filters_are_bounded() {
-        let excessive = format!("[{}]", vec!["\"field\""; 257].join(","));
-        assert_eq!(parse_filters(&excessive), None);
-        let too_deep = format!(
-            "{}{}{}",
-            "[{\"field\":\"a\",\"keys\":".repeat(9),
-            "[\"leaf\"]",
-            "}]".repeat(9)
-        );
-        assert_eq!(parse_filters(&too_deep), None);
-    }
-    #[test]
-    fn nested_filter_fields_use_javascript_truthiness_and_property_keys() {
-        let keys = |field: &str| Filter::Nested {
-            field: field.into(),
-            keys: vec![Filter::Field("value".into())],
-        };
-        assert_eq!(
-            parse_filters(
-                r#"[{"field":1.0,"keys":["value"]},{"field":true,"keys":["value"]},{"field":[],"keys":["value"]},{"field":[1,null,"x"],"keys":["value"]},{"field":{},"keys":["value"]},{"field":0,"keys":["value"]},{"field":false,"keys":["value"]},{"field":"","keys":["value"]},{"field":null,"keys":["value"]}]"#
-            ),
-            Some(vec![
-                keys("1"),
-                keys("true"),
-                keys(""),
-                keys("1,,x"),
-                keys("[object Object]"),
-            ])
-        );
-    }
-
-    #[tokio::test]
-    async fn mixed_filter_command_reaches_projection_with_valid_entries_only() {
-        use crate::server::websocket::{
-            Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
-        };
-
-        struct ProjectionSnapshot;
-        impl StateSnapshot for ProjectionSnapshot {
-            fn generation(&self) -> u64 {
-                1
-            }
-
-            fn encode_unfiltered(&self) -> Result<Bytes, String> {
-                Ok(Bytes::from_static(b"unfiltered"))
-            }
-
-            fn encode_filtered(&self, filters: &[Filter]) -> Result<Bytes, String> {
-                serde_json::to_vec(filters)
-                    .map(Bytes::from)
-                    .map_err(|error| error.to_string())
-            }
-        }
-
-        struct ProjectionProvider {
-            events: tokio::sync::watch::Sender<u64>,
-        }
-        impl StateProvider for ProjectionProvider {
-            fn poll_rate(&self, _: Schema) -> Duration {
-                Duration::from_millis(10)
-            }
-
-            fn subscribe(&self, _: Schema) -> tokio::sync::watch::Receiver<u64> {
-                self.events.subscribe()
-            }
-
-            fn capture(&self, _: Schema) -> Option<Arc<dyn StateSnapshot>> {
-                Some(Arc::new(ProjectionSnapshot))
-            }
-        }
-
-        let (_, processor, client) = setup("overlay");
-        let CommandAction::ApplyFilters(filters) = processor.process(
-            &client,
-            "applyFilters:overlay:[\"play\",42,{\"field\":\"menu\",\"keys\":[\"state\",null]},{\"other\":true}]",
-        ) else {
-            panic!("mixed array must apply its supported filters");
-        };
-        let expected = vec![
-            Filter::Field("play".into()),
-            Filter::Nested {
-                field: "menu".into(),
-                keys: vec![Filter::Field("state".into())],
-            },
-        ];
-        assert_eq!(filters, expected);
-
-        let (events, _) = tokio::sync::watch::channel(0);
-        let hub = WebSocketHub::new(Schema::V2, Arc::new(ProjectionProvider { events }));
-        let (connection, mut frames) = hub.connect();
-        connection.set_filters(filters);
-        let runner = tokio::spawn({
-            let hub = hub.clone();
-            async move { vosu_proptest::bounded!(hub.run()) }
-        });
-        assert_eq!(
-            vosu_proptest::bounded!(frames.recv()),
-            Some(Outbound::Text(Bytes::from(
-                serde_json::to_vec(&expected).unwrap()
-            )))
-        );
-        connection.cleanup();
-        hub.shutdown();
-        vosu_proptest::bounded!(runner).unwrap();
     }
 
     #[tokio::test]

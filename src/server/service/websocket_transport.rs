@@ -171,8 +171,10 @@ async fn bridge_socket(
                         break;
                     }
                 }
-                CommandAction::ApplyFilters(filters) => {
-                    if let Ok(bytes) = serde_json::to_vec(&filters) {
+                CommandAction::ApplyFilters(source) => {
+                    if let Some(filters) = parse_command_filters(&source)
+                        && let Ok(bytes) = serde_json::to_vec(&filters)
+                    {
                         let _ = reader_connection.replace_filters(Bytes::from(bytes));
                     }
                 }

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-internal", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-adapter-gosumemory", "crates/vosu-adapter-streamcompanion", "crates/vosu-adapter-support", "crates/vosu-adapter-upstream", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-overlay-host", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-internal", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -75,7 +75,7 @@ lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb7
 [features]
 default = ["linux-process-events"]
 linux-process-events = ["vosu-sys/linux-process-events", "vosu-core/linux-process-events"]
-test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/test-harness", "vosu-osu-state/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness", "dep:base64"]
+test-harness = ["vosu-core/test-harness", "vosu-net/test-harness", "vosu-osu/test-harness", "vosu-osu-state/test-harness", "vosu-overlay-host/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness", "dep:base64"]
 # Diagnostic-only; never included in packaged release feature sets.
 read-plan-profile = ["vosu-plugin-internal/read-plan-profile"]
 [dependencies]
@@ -119,6 +119,7 @@ vosu-osu-calc = { path = "crates/vosu-osu-calc" }
 vosu-osu-model = { path = "crates/vosu-osu-model" }
 vosu-osu-reader = { path = "crates/vosu-osu-reader" }
 vosu-osu-state = { path = "crates/vosu-osu-state" }
+vosu-overlay-host = { path = "crates/vosu-overlay-host" }
 vosu-net = { path = "crates/vosu-net" }
 vosu-surface = { path = "crates/vosu-surface" }
 vosu-sys = { path = "crates/vosu-sys" }

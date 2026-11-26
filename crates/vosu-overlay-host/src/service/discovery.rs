@@ -21,20 +21,22 @@ impl CounterService {
                 (path, package)
             })
             .collect();
-        let mut snapshot = self
-            .validation_host
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .upgrade()
-            .map_or_else(Default::default, |host| host.validation_snapshot());
-        snapshot
-            .packages
-            .extend(manifests.iter().filter_map(|(_, package)| {
-                package
-                    .as_ref()
-                    .ok()
-                    .map(|package| vosu_core::plugin::PackageRegistration::new(package, "overlays"))
-            }));
+        let installed = Arc::clone(&self.installed.read().unwrap_or_else(|p| p.into_inner()));
+        let supports = {
+            let parsed: Vec<_> = manifests
+                .iter()
+                .filter_map(|(_, package)| package.as_ref().ok())
+                .collect();
+            let supports = installed.validate_all(&parsed);
+            if supports.len() != parsed.len() {
+                return Err(CounterError::Io(io::Error::other(
+                    "installed-package validation returned a mismatched result count",
+                )));
+            }
+            supports
+        };
+        // One result per successfully parsed manifest, consumed in order below.
+        let mut supports = supports.into_iter();
         let metadata_dirs: std::collections::HashSet<_> = metadata
             .iter()
             .filter_map(|path| path.parent())
@@ -68,7 +70,8 @@ impl CounterService {
         for (path, package) in manifests {
             let directory = path.parent().expect("manifest has parent");
             match package.and_then(|package| {
-                manifest::counter(&self.static_root, &path, &self.settings, &snapshot, package)
+                let support = supports.next().expect("one result per parsed manifest");
+                manifest::counter(&self.static_root, &path, &self.settings, support, package)
             }) {
                 Ok(counter) => found.push(Discovered {
                     counter,

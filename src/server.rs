@@ -7,16 +7,15 @@ pub mod api_v1;
 pub mod auth;
 pub(crate) mod broker;
 pub mod bus_provider;
-pub mod catalog;
 pub mod catalog_api;
 pub mod files;
 pub mod ids;
 pub mod origins;
+pub mod overlay_folders;
 pub mod pages;
 pub mod routes;
 pub mod runtime;
 pub mod service;
 
-pub mod commands;
 pub mod subscription_wire;
 pub mod websocket;

@@ -13,7 +13,7 @@ mod replaces;
 #[cfg(test)]
 mod tests;
 
-use crate::counters::{CounterSetting, SettingInput};
+use vosu_overlay_host::{CounterSetting, SettingInput};
 use manifest::Manifest;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -148,7 +148,7 @@ pub struct ToolHost {
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
     context: Arc<dyn Fn() -> Value + Send + Sync>,
     /// Installed overlays: the catalog install root and `GET /tools/_host/v1/overlays`.
-    counters: Mutex<Option<Arc<crate::counters::ReloadableCounterService>>>,
+    counters: Mutex<Option<Arc<vosu_overlay_host::ReloadableCounterService>>>,
 }
 pub fn secret() -> io::Result<String> {
     use std::fmt::Write as _;
@@ -330,7 +330,7 @@ impl ToolHost {
     fn settings(&self, entry: &Entry) -> Result<serde_json::Map<String, Value>, String> {
         let mut values = serde_json::Map::new();
         for setting in &entry.schema {
-            if setting.kind != crate::counters::SettingType::Header {
+            if setting.kind != vosu_overlay_host::SettingType::Header {
                 values.insert(setting.unique_id.clone(), setting.value.clone());
             }
         }
@@ -654,7 +654,7 @@ impl ToolHost {
     }
     /// The overlay host whose installed overlays `GET /tools/_host/v1/overlays`
     /// lists.
-    pub fn set_counters(&self, counters: Arc<crate::counters::ReloadableCounterService>) {
+    pub fn set_counters(&self, counters: Arc<vosu_overlay_host::ReloadableCounterService>) {
         *self.counters.lock() = Some(counters);
     }
     /// U0 removal (M6b H0): stop a catalog-installed tool's process and end
@@ -784,7 +784,7 @@ impl ToolHost {
                 } else {
                     Vec::new()
                 };
-                crate::counters::normalize_settings(&mut schema);
+                vosu_overlay_host::normalize_settings(&mut schema);
                 let mut fingerprint = text.unwrap_or_default().into_bytes();
                 fingerprint.extend_from_slice(schema_bytes.as_deref().unwrap_or_default());
                 if let Some(error) = &error {

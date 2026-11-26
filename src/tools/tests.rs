@@ -214,7 +214,7 @@ async fn overlays_route_needs_a_token_and_the_context_permission() {
     )
     .unwrap();
     host.set_counters(Arc::new(
-        crate::counters::ReloadableCounterService::production(
+        vosu_overlay_host::ReloadableCounterService::production(
             static_root.clone(),
             root.path().join("settings"),
             root.path().join("counter-cache"),

@@ -2,7 +2,7 @@ use super::*;
 
 fn manifest(host: &str) -> String {
     let host = if host == "*" {
-        format!("={}", crate::application_version())
+        format!("={}", crate::host_version())
     } else {
         host.to_owned()
     };
@@ -13,7 +13,7 @@ fn manifest(host: &str) -> String {
 
 #[test]
 fn manifest_only_and_both_files_are_discovered_once_without_writes() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     for folder in ["manifest-only", "both"] {
         let directory = root.path().join("static").join(folder);
         std::fs::create_dir(&directory).unwrap();
@@ -47,7 +47,7 @@ fn manifest_only_and_both_files_are_discovered_once_without_writes() {
 
 #[test]
 fn malformed_unsupported_and_unreadable_manifests_never_fall_back() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     for (folder, text) in [
         ("malformed", "broken TOML".into()),
         ("unsupported", manifest("<1.0.0")),
@@ -79,7 +79,7 @@ fn malformed_unsupported_and_unreadable_manifests_never_fall_back() {
 #[cfg(unix)]
 #[test]
 fn dangling_manifest_symlink_dominates_valid_legacy_metadata() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let directory = root.path().join("static/symlink");
     std::fs::create_dir(&directory).unwrap();
     std::os::unix::fs::symlink("missing", directory.join("manifest.toml")).unwrap();

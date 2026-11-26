@@ -1,0 +1,11 @@
+kind = "plugin"
+manifest_version = 1
+id = "vosu.overlayhost"
+name = "Overlay hosting and commands"
+version = "2.0.0-alpha.1"
+host = ">=2.0.0-alpha.1, <3.0.0"
+abi_version = 1
+runtime = "in-process"
+# A7.1-OR: the overlay root arrives only as this ABI setting, which core
+# seeds from STATIC_FOLDER_PATH until M8 migrates the key.
+settings_schema = "settings.schema.json"

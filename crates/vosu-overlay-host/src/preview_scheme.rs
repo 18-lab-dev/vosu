@@ -24,7 +24,7 @@ const MAX_FILE_BYTES: u64 = 512 * 1024;
 const MAX_STYLESHEETS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum PreviewScheme {
+pub enum PreviewScheme {
     /// No declaration, `normal`, or a list that includes `light`. A
     /// `light dark` overlay follows its frame, so a light frame matches it.
     #[default]
@@ -35,7 +35,7 @@ pub(super) enum PreviewScheme {
 
 /// Reads the scheme of the overlay whose `index.html` lives in `directory`.
 /// Unreadable or missing files leave the light default.
-pub(super) fn overlay_preview_scheme(directory: &Path) -> PreviewScheme {
+pub fn overlay_preview_scheme(directory: &Path) -> PreviewScheme {
     let Some(html) = read_bounded(&directory.join("index.html")) else {
         return PreviewScheme::Light;
     };

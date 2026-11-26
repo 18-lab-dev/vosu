@@ -26,13 +26,13 @@ use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
 use vosu_adapter_upstream::calculate::PpQuery;
 
-use crate::counters::{
+use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
+use vosu_overlay_host::commands::{CommandAction, CommandClient, CommandProcessor, Relay, RelaySink};
+use vosu_overlay_host::{
     CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
 };
-use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
 
 use super::{
-    commands::{CommandAction, CommandClient, CommandProcessor, Relay, RelaySink},
     files::{self, MissingKind, ResourceOutcome},
     pages::{DynamicPage, EmbeddedResponse, PageLookup, PageService, StaticFallback},
     routes::{
@@ -93,7 +93,7 @@ mod tests {
     }
     struct CommandProviders;
 
-    impl super::super::commands::SettingsProvider for CommandProviders {
+    impl vosu_overlay_host::commands::SettingsProvider for CommandProviders {
         fn get(&self, _: &str) -> Result<Value, String> {
             Ok(json!({}))
         }
@@ -112,12 +112,7 @@ mod tests {
         ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
             Box::pin(async { Err("unused".into()) })
         }
-        fn search_counters(
-            &self,
-            _: &str,
-            _: bool,
-            _: Option<String>,
-        ) -> ProviderFuture<'_, Result<Bytes, String>> {
+        fn search_counters(&self, _: &str, _: bool) -> ProviderFuture<'_, Result<Bytes, String>> {
             Box::pin(async { Err("unused".into()) })
         }
     }
@@ -172,4 +167,5 @@ mod tests {
     include!("service/tests/update_lifecycle.rs");
     include!("service/tests/listener_and_files.rs");
     include!("service/tests/skin_file_index.rs");
+    include!("service/tests/command_filters.rs");
 }

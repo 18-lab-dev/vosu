@@ -18,24 +18,15 @@ use super::settings::{SettingsError, SettingsStore, validate_component};
 mod discovery;
 mod manifest;
 pub use discovery::parse_metadata;
+pub use manifest::InstalledPackages;
 
-const USER_AGENT: &str = concat!(
-    "vosu/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/18-lab-dev/vosu)"
-);
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
-pub trait CounterOpener: Send + Sync {
-    fn open(&self, path: &Path) -> io::Result<()>;
-}
-
-#[derive(Debug, Default)]
-pub struct SystemOpener;
-impl CounterOpener for SystemOpener {
-    fn open(&self, path: &Path) -> io::Result<()> {
-        vosu_sys::process_spawn::open_detached(path)
-    }
+fn user_agent() -> String {
+    format!(
+        "vosu/{} (+https://github.com/18-lab-dev/vosu)",
+        crate::host_version()
+    )
 }
 
 pub trait CounterDownloader: Send + Sync {
@@ -47,6 +38,8 @@ pub trait CounterDownloader: Send + Sync {
     ) -> BoxFuture<Result<(), CounterError>>;
 }
 
+/// Public counter downloads: HTTPS-only production policy, no source
+/// credential or private-network exception (ADR 0023), hardened extraction.
 #[derive(Clone)]
 pub struct HardenedCounterDownloader {
     client: vosu_net::streaming::StreamingClient,
@@ -77,14 +70,16 @@ impl CounterDownloader for HardenedCounterDownloader {
         let client = self.client.clone();
         let cache_root = self.cache_root.clone();
         Box::pin(async move {
-            fs::create_dir_all(&cache_root)?;
+            vosu_net::publish::create_directories(&cache_root)?;
+            // Scratch archive in the download cache, never under the overlay
+            // root; removed when `archive` drops on every path.
             let archive = tempfile::Builder::new()
                 .prefix("counter-")
                 .suffix(".zip")
                 .tempfile_in(&cache_root)?;
             let archive_path = archive.path().to_path_buf();
             client
-                .download_atomic(&request.url, USER_AGENT, &archive_path, &cancel)
+                .download_atomic(&request.url, &user_agent(), &archive_path, &cancel)
                 .await
                 .map_err(|error| attribute_to_host(error, &request.url))?;
             // Same-task read of this own just-downloaded archive after our
@@ -225,13 +220,28 @@ impl ReloadableCounterService {
         &self.names
     }
 
-    pub fn set_validation_host(&self, host: &Arc<vosu_core::plugin::PluginHost>) {
+    /// Composition's M6b installed-graph validation input (no core handle).
+    pub fn set_installed_packages(&self, packages: Arc<dyn InstalledPackages>) {
         *self
             .current
             .load()
-            .validation_host
+            .installed
             .write()
-            .unwrap_or_else(|p| p.into_inner()) = Arc::downgrade(host);
+            .unwrap_or_else(|p| p.into_inner()) = packages;
+    }
+
+    /// Applies a complete effective settings object (A7.1-OR): the
+    /// `static_folder_path` setting selects the root for later operations.
+    /// Operations already in flight, including downloads, keep the root they
+    /// started with. The schema default (no root yet) keeps the current one.
+    pub fn apply_settings(
+        &self,
+        settings: &vosu_plugin_api::CborValue,
+    ) -> Result<(), crate::root::RootSettingError> {
+        if let Some(root) = crate::root::from_cbor(settings)? {
+            self.reload_static_root(root);
+        }
+        Ok(())
     }
 
     /// Points a nickname/alias change at the current static root.
@@ -359,14 +369,6 @@ impl ReloadableCounterService {
         self.current.load_full().download(request).await
     }
 
-    pub fn open_root(&self) -> Result<(), CounterError> {
-        self.current.load_full().open_root()
-    }
-
-    pub fn open(&self, name: &str) -> Result<(), CounterError> {
-        self.current.load_full().open(name)
-    }
-
     pub fn delete(&self, name: &str) -> Result<(), CounterError> {
         self.current.load_full().delete(name)?;
         if let Err(error) = self.names.remove(name) {
@@ -454,7 +456,6 @@ impl ReloadableCounterService {
 pub struct CounterService {
     static_root: PathBuf,
     settings: SettingsStore,
-    opener: Arc<dyn CounterOpener>,
     downloader: Arc<dyn CounterDownloader>,
     pending: Arc<tokio::sync::Mutex<HashMap<String, u64>>>,
     cancel: CancellationToken,
@@ -463,7 +464,7 @@ pub struct CounterService {
     active_installs: Arc<AtomicUsize>,
     install_done: Arc<tokio::sync::Notify>,
     install_slots: Arc<tokio::sync::Semaphore>,
-    validation_host: Arc<std::sync::RwLock<std::sync::Weak<vosu_core::plugin::PluginHost>>>,
+    installed: Arc<std::sync::RwLock<Arc<dyn InstalledPackages>>>,
 }
 
 impl CounterService {
@@ -471,7 +472,6 @@ impl CounterService {
         Self::new(
             static_root,
             settings_root,
-            Arc::new(SystemOpener),
             Arc::new(HardenedCounterDownloader::production(cache_root)),
         )
     }
@@ -479,13 +479,11 @@ impl CounterService {
     pub fn new(
         static_root: PathBuf,
         settings_root: PathBuf,
-        opener: Arc<dyn CounterOpener>,
         downloader: Arc<dyn CounterDownloader>,
     ) -> Self {
         Self {
             settings: SettingsStore::new(static_root.clone(), settings_root),
             static_root,
-            opener,
             downloader,
             pending: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             cancel: CancellationToken::new(),
@@ -494,7 +492,9 @@ impl CounterService {
             active_installs: Arc::new(AtomicUsize::new(0)),
             install_done: Arc::new(tokio::sync::Notify::new()),
             install_slots: Arc::new(tokio::sync::Semaphore::new(4)),
-            validation_host: Arc::default(),
+            installed: Arc::new(std::sync::RwLock::new(Arc::new(
+                manifest::OverlaysOnly,
+            ))),
         }
     }
 
@@ -593,17 +593,6 @@ impl CounterService {
         }
     }
 
-    pub fn open_root(&self) -> Result<(), CounterError> {
-        self.opener.open(&self.static_root)?;
-        Ok(())
-    }
-
-    pub fn open(&self, name: &str) -> Result<(), CounterError> {
-        let path = self.openable_counter_path(name)?;
-        self.opener.open(&path)?;
-        Ok(())
-    }
-
     /// Bounded metadata-only scan. Links are never followed, including a linked root.
     pub fn details(&self, name: &str) -> Result<Value, CounterError> {
         validate_component(name).map_err(|_| CounterError::InvalidName)?;
@@ -631,15 +620,11 @@ impl CounterService {
         if let Ok(metadata) = fs::symlink_metadata(&candidate)
             && metadata.file_type().is_symlink()
         {
-            remove_counter_symlink(&candidate, &metadata.file_type())?;
+            // A linked folder is a separately confined mount: unlink only.
+            vosu_net::publish::remove_tree(&candidate)?;
             return Ok(());
         }
-        let path = self.safe_counter_path(name, true)?;
-        if path.is_dir() {
-            fs::remove_dir_all(path)?;
-        } else {
-            fs::remove_file(path)?;
-        }
+        vosu_net::publish::remove_tree(&self.safe_counter_path(name, true)?)?;
         Ok(())
     }
 
@@ -693,26 +678,6 @@ impl CounterService {
         Ok(true)
     }
 
-    fn openable_counter_path(&self, name: &str) -> Result<PathBuf, CounterError> {
-        validate_component(name).map_err(|_| CounterError::InvalidName)?;
-        let path = self.static_root.join(name);
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Err(CounterError::Missing);
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if metadata.file_type().is_symlink() {
-            return if fs::metadata(&path).is_ok_and(|target| target.is_dir()) {
-                Ok(path)
-            } else {
-                Err(CounterError::Symlink)
-            };
-        }
-        self.safe_counter_path(name, true)
-    }
-
     fn safe_counter_path(&self, name: &str, must_exist: bool) -> Result<PathBuf, CounterError> {
         validate_component(name).map_err(|_| CounterError::InvalidName)?;
         let path = self.static_root.join(name);
@@ -736,22 +701,6 @@ impl CounterService {
             return Err(CounterError::InvalidName);
         }
         Ok(path)
-    }
-}
-
-#[cfg(not(windows))]
-fn remove_counter_symlink(path: &Path, _file_type: &fs::FileType) -> io::Result<()> {
-    fs::remove_file(path)
-}
-
-#[cfg(windows)]
-fn remove_counter_symlink(path: &Path, file_type: &fs::FileType) -> io::Result<()> {
-    use std::os::windows::fs::FileTypeExt;
-
-    if file_type.is_symlink_dir() {
-        fs::remove_dir(path)
-    } else {
-        fs::remove_file(path)
     }
 }
 

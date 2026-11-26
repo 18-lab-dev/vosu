@@ -687,10 +687,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             .then(|| origins.page_context(request.headers(), local_ip))
         });
     if let Some((origins, true)) = providers.authorization.origins()
-        && matches!(
-            endpoint,
-            Endpoint::Root | Endpoint::Available | Endpoint::CounterSearch
-        )
+        && matches!(endpoint, Endpoint::Root | Endpoint::Available)
     {
         let origin = origins.safe_origin(false, request.headers(), local_ip);
         if let Ok(host) = HeaderValue::from_str(origin.trim_start_matches("http://")) {

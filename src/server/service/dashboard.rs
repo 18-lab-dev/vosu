@@ -88,7 +88,7 @@ fn socket_overlay(request: &Request<Body>) -> Option<String> {
     }
     if let Some(raw) = request.uri().query().and_then(|query| decoded_query_value(query, "l")) {
         let client = CommandClient::from_query(0, Some(&raw)).ok()?;
-        let (overlay, _) = crate::counters::split_counter(&client.overlay);
+        let (overlay, _) = vosu_overlay_host::split_counter(&client.overlay);
         if valid_overlay_component(overlay) { return Some(overlay.to_owned()); }
     }
     // WebSocket Origin contains no path. It cannot distinguish overlays on one origin.

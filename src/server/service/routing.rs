@@ -36,6 +36,7 @@ pub struct ProductionRouteDelegate {
     catalog: Option<crate::server::catalog_api::CatalogApi>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
     surface: Option<SurfaceRouter>,
+    opener: Arc<dyn super::overlay_folders::FolderOpener>,
     #[cfg(feature = "test-harness")]
     adapter_capture: Option<Arc<crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint>>,
 }
@@ -47,7 +48,12 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, #[cfg(feature = "test-harness")] adapter_capture: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, opener: Arc::new(super::overlay_folders::SystemOpener), #[cfg(feature = "test-harness")] adapter_capture: None }
+    }
+    /// Core desktop integration for the open-root/open routes.
+    pub fn with_opener(mut self, opener: Arc<dyn super::overlay_folders::FolderOpener>) -> Self {
+        self.opener = opener;
+        self
     }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
     pub fn removed_notices(&self) -> Vec<RemovedNotice> {
@@ -190,17 +196,7 @@ impl ProductionRouteDelegate {
                 Bytes::from_static(b"Error: unknown search source"),
             );
         };
-        let authority = request
-            .headers()
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        counter_search_response(
-            self.services
-                .page_data
-                .search_counters(&query, external, authority)
-                .await,
-        )
+        counter_search_response(self.services.page_data.search_counters(&query, external).await)
     }
 
     async fn counter_download(&self, request: Request<Body>) -> Response {
@@ -230,7 +226,7 @@ impl ProductionRouteDelegate {
 
     }
     fn counter_open_root(&self) -> Response {
-        match self.services.counters.open_root() {
+        match super::overlay_folders::open_root(self.opener.as_ref(), &self.services.counters.current_root()) {
             Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
             Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
         }
@@ -242,7 +238,11 @@ impl ProductionRouteDelegate {
             .filter(|name| !name.is_empty())
         {
             None => json_response(StatusCode::OK, json!({ "error": "no folder name" })),
-            Some(name) => match self.services.counters.open(name) {
+            Some(name) => match super::overlay_folders::open_folder(
+                self.opener.as_ref(),
+                &self.services.counters.current_root(),
+                name,
+            ) {
                 Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
@@ -333,7 +333,7 @@ impl ProductionRouteDelegate {
         let query = query_pairs(&request);
         let overlay = decoded_capture(&request, "/api/counters/settings/").unwrap_or_default();
         let name = match query_value(&query, "profile") {
-            Some(profile) => crate::counters::qualified_counter(&overlay, profile),
+            Some(profile) => vosu_overlay_host::qualified_counter(&overlay, profile),
             None => overlay.clone(),
         };
         if overlay.is_empty() {
@@ -368,7 +368,7 @@ impl ProductionRouteDelegate {
             Ok(profile) => profile,
             Err(error) => return json_response(StatusCode::OK, json!({ "error": error.to_string() })),
         };
-        let name = crate::counters::qualified_counter(&overlay, &resolved_profile);
+        let name = vosu_overlay_host::qualified_counter(&overlay, &resolved_profile);
         match serde_json::from_slice::<Vec<SettingInput>>(&body) {
             Ok(values) => match self
                 .services
@@ -390,7 +390,7 @@ impl ProductionRouteDelegate {
 
     fn counter_profiles(&self, request: &Request<Body>, body: &[u8]) -> Response {
         let store = self.services.counters.settings_store();
-        let result = (|| -> Result<crate::counters::Profiles, String> {
+        let result = (|| -> Result<vosu_overlay_host::Profiles, String> {
             if request.method() == axum::http::Method::GET {
                 return store.profiles().map_err(|e| e.to_string());
             }
@@ -420,7 +420,7 @@ impl ProductionRouteDelegate {
     }
 
     fn refresh_profile(&self, overlay: &str, profile: &str) {
-        self.services.websocket.processor.refresh_settings(crate::counters::qualified_counter(overlay, profile));
+        self.services.websocket.processor.refresh_settings(vosu_overlay_host::qualified_counter(overlay, profile));
         if self.services.counters.settings_store().resolve_profile(None).is_ok_and(|p| p == profile) {
             self.services.websocket.processor.refresh_settings(overlay);
         }

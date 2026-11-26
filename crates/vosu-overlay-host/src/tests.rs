@@ -1,6 +1,5 @@
 mod manifest;
 mod settings;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,15 +14,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-#[derive(Default)]
-struct RecordingOpener(Mutex<Vec<PathBuf>>);
-impl CounterOpener for RecordingOpener {
-    fn open(&self, path: &Path) -> io::Result<()> {
-        lock(&self.0).push(path.to_owned());
-        Ok(())
     }
 }
 
@@ -45,24 +35,13 @@ impl CounterDownloader for RecordingDownloader {
     }
 }
 
-fn fixture() -> (
-    tempfile::TempDir,
-    CounterService,
-    Arc<RecordingOpener>,
-    Arc<RecordingDownloader>,
-) {
+fn fixture() -> (tempfile::TempDir, CounterService, Arc<RecordingDownloader>) {
     let root = tempfile::tempdir().unwrap();
     let static_root = root.path().join("static");
     std::fs::create_dir(&static_root).unwrap();
-    let opener = Arc::new(RecordingOpener::default());
     let downloader = Arc::new(RecordingDownloader::default());
-    let service = CounterService::new(
-        static_root,
-        root.path().join("settings"),
-        opener.clone(),
-        downloader.clone(),
-    );
-    (root, service, opener, downloader)
+    let service = CounterService::new(static_root, root.path().join("settings"), downloader.clone());
+    (root, service, downloader)
 }
 
 fn all_settings() -> Vec<CounterSetting> {
@@ -93,7 +72,7 @@ fn all_settings() -> Vec<CounterSetting> {
 
 #[test]
 fn oversized_metadata_is_rejected_before_parsing() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let counter = root.path().join("static/counter");
     std::fs::create_dir(&counter).unwrap();
     std::fs::write(counter.join("metadata.txt"), vec![b'x'; 64 * 1024 + 1]).unwrap();
@@ -120,7 +99,7 @@ fn oversized_metadata_is_rejected_before_parsing() {
 
 #[test]
 fn discovers_metadata_html_order_and_immediate_ignore_scope() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let static_root = root.path().join("static");
     let ignored = static_root.join("ignored");
     let nested_ignored = static_root.join("parent/deep");
@@ -168,7 +147,7 @@ fn discovers_metadata_html_order_and_immediate_ignore_scope() {
 
 #[test]
 fn discovery_skips_counters_nested_under_node_modules() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let overlay = root.path().join("static/overlay");
     let dependency = overlay.join("node_modules/dependency");
     std::fs::create_dir_all(&dependency).unwrap();
@@ -190,7 +169,7 @@ fn discovery_skips_counters_nested_under_node_modules() {
 fn discovery_follows_outside_directory_symlink_under_alias_name() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("index.html"), "").unwrap();
     symlink(outside.path(), root.path().join("static/alias")).unwrap();
@@ -210,7 +189,7 @@ fn discovery_follows_outside_directory_symlink_under_alias_name() {
 fn discovery_mounted_alias_skips_descendant_directory_symlink_that_escapes_target() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let alias_target = tempfile::tempdir().unwrap();
     let escaped = tempfile::tempdir().unwrap();
     std::fs::write(alias_target.path().join("index.html"), "").unwrap();
@@ -233,7 +212,7 @@ fn discovery_mounted_alias_skips_descendant_directory_symlink_that_escapes_targe
 fn discovery_does_not_promote_directory_alias_nested_under_ordinary_counter() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let ordinary = root.path().join("static/ordinary");
     let nested_target = tempfile::tempdir().unwrap();
     std::fs::create_dir(&ordinary).unwrap();
@@ -256,7 +235,7 @@ fn discovery_does_not_promote_directory_alias_nested_under_ordinary_counter() {
 fn discovery_stops_top_level_directory_symlink_cycles() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let overlay = root.path().join("static/overlay");
     std::fs::create_dir(&overlay).unwrap();
     std::fs::write(overlay.join("index.html"), "").unwrap();
@@ -277,7 +256,7 @@ fn discovery_stops_top_level_directory_symlink_cycles() {
 fn discovery_skips_unresolvable_and_file_symlinks() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let static_root = root.path().join("static");
     let overlay = static_root.join("overlay");
     let linked_file = static_root.join("linked-file");
@@ -306,7 +285,7 @@ fn discovery_skips_unresolvable_and_file_symlinks() {
 
 #[tokio::test]
 async fn debounce_commits_only_latest_payload() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     std::fs::create_dir_all(root.path().join("static/counter")).unwrap();
     service
         .settings()
@@ -342,7 +321,7 @@ async fn debounce_commits_only_latest_payload() {
 
 #[tokio::test]
 async fn parses_raw_download_input_once_and_honors_update_lifecycle() {
-    let (root, service, _, downloader) = fixture();
+    let (root, service, downloader) = fixture();
     let request = CounterService::parse_download_request(
         "https%3A%2F%2Fexample.com%2Fa%252Fb.zip%3Fx%3Da%2526b",
         Some("counter"),
@@ -381,18 +360,12 @@ async fn parses_raw_download_input_once_and_honors_update_lifecycle() {
 }
 
 #[test]
-fn open_follows_directory_symlink_and_delete_unlinks_symlinks() {
-    let (root, service, opener, _) = fixture();
+fn delete_unlinks_symlinks_and_rejects_traversal() {
+    let (root, service, _) = fixture();
     let counter = root.path().join("static/counter");
     std::fs::create_dir(&counter).unwrap();
-    service.open_root().unwrap();
-    assert!(service.open("../outside").is_err());
     assert!(service.delete("a/b").is_err());
-    service.open("counter").unwrap();
-    assert_eq!(
-        lock(&opener.0).as_slice(),
-        &[root.path().join("static"), counter.clone()]
-    );
+    assert!(service.delete("../outside").is_err());
     service.delete("counter").unwrap();
     assert!(!counter.exists());
 
@@ -402,21 +375,12 @@ fn open_follows_directory_symlink_and_delete_unlinks_symlinks() {
         let outside = root.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         symlink(&outside, root.path().join("static/link")).unwrap();
-        service.open("link").unwrap();
-        assert_eq!(
-            lock(&opener.0).last(),
-            Some(&root.path().join("static/link"))
-        );
         service.delete("link").unwrap();
         assert!(std::fs::symlink_metadata(root.path().join("static/link")).is_err());
         assert!(outside.exists());
         let outside_file = root.path().join("outside-file");
         std::fs::write(&outside_file, "").unwrap();
         symlink(&outside_file, root.path().join("static/file-link")).unwrap();
-        assert!(matches!(
-            service.open("file-link"),
-            Err(CounterError::Symlink)
-        ));
         service.delete("file-link").unwrap();
         assert!(std::fs::symlink_metadata(root.path().join("static/file-link")).is_err());
         assert!(outside_file.exists());
@@ -425,10 +389,6 @@ fn open_follows_directory_symlink_and_delete_unlinks_symlinks() {
             root.path().join("static/dangling"),
         )
         .unwrap();
-        assert!(matches!(
-            service.open("dangling"),
-            Err(CounterError::Symlink)
-        ));
         service.delete("dangling").unwrap();
         assert!(std::fs::symlink_metadata(root.path().join("static/dangling")).is_err());
     }
@@ -436,8 +396,6 @@ fn open_follows_directory_symlink_and_delete_unlinks_symlinks() {
 
 #[tokio::test]
 async fn reloadable_service_switches_assets_counters_settings_and_mutations_atomically() {
-    use std::io::Read as _;
-
     let root = tempfile::tempdir().unwrap();
     let root_a = root.path().join("static-a");
     let root_b = root.path().join("static-b");
@@ -451,59 +409,24 @@ async fn reloadable_service_switches_assets_counters_settings_and_mutations_atom
         serde_json::to_vec(&all_settings()).unwrap(),
     )
     .unwrap();
-    let opener = Arc::new(RecordingOpener::default());
     let downloader = Arc::new(RecordingDownloader::default());
     let service = ReloadableCounterService::from_service(CounterService::new(
         root_a.clone(),
         settings_root.clone(),
-        opener.clone(),
         downloader.clone(),
     ));
+    let asset = |path: &str| std::fs::read_to_string(service.current_root().join(path));
 
     assert_eq!(service.discover().unwrap()[0].folder_name, "alpha");
-    let crate::server::files::ResourceOutcome::File(mut asset_a) =
-        crate::server::files::resolve_resource(
-            Some(&service.current_root()),
-            "alpha/index.html",
-            "/alpha/index.html",
-            crate::server::files::MissingKind::NotFound,
-        )
-        .unwrap()
-    else {
-        panic!("root A asset was not resolved");
-    };
-    let mut body = String::new();
-    asset_a.file.read_to_string(&mut body).unwrap();
+    let body = asset("alpha/index.html").unwrap();
     assert_eq!(body, "asset-a");
 
     service.reload_static_root(root_b.clone());
     let counters = service.discover().unwrap();
     assert_eq!(counters.len(), 1);
     assert_eq!(counters[0].folder_name, "beta");
-    assert!(matches!(
-        crate::server::files::resolve_resource(
-            Some(&service.current_root()),
-            "alpha/index.html",
-            "/alpha/index.html",
-            crate::server::files::MissingKind::NotFound,
-        ),
-        Ok(crate::server::files::ResourceOutcome::Missing(
-            crate::server::files::MissingKind::NotFound
-        ))
-    ));
-    let crate::server::files::ResourceOutcome::File(mut asset_b) =
-        crate::server::files::resolve_resource(
-            Some(&service.current_root()),
-            "beta/index.html",
-            "/beta/index.html",
-            crate::server::files::MissingKind::NotFound,
-        )
-        .unwrap()
-    else {
-        panic!("root B asset was not resolved");
-    };
-    body.clear();
-    asset_b.file.read_to_string(&mut body).unwrap();
+    assert!(asset("alpha/index.html").is_err());
+    let body = asset("beta/index.html").unwrap();
     assert_eq!(body, "asset-b");
 
     service
@@ -520,12 +443,7 @@ async fn reloadable_service_switches_assets_counters_settings_and_mutations_atom
         "root-b"
     );
     assert!(settings_root.join("beta.settings.values.toml").exists());
-    service.open_root().unwrap();
-    service.open("beta").unwrap();
-    assert_eq!(
-        lock(&opener.0).as_slice(),
-        &[root_b.clone(), root_b.join("beta")]
-    );
+    // Opening folders is core's desktop integration (A7.1), not this host's.
 
     bounded!(service.download(&DownloadRequest {
         url: "https://example.com/new.zip".into(),
@@ -562,7 +480,6 @@ async fn reloadable_service_keeps_one_debounce_generation_across_root_changes() 
     let service = Arc::new(ReloadableCounterService::from_service(CounterService::new(
         root_a,
         root.path().join("settings"),
-        Arc::new(RecordingOpener::default()),
         Arc::new(RecordingDownloader::default()),
     )));
     let first_service = Arc::clone(&service);
@@ -600,7 +517,7 @@ async fn reloadable_service_keeps_one_debounce_generation_across_root_changes() 
 #[test]
 fn discovery_rejects_symlinked_settings_file() {
     use std::os::unix::fs::symlink;
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let counter = root.path().join("static/counter");
     std::fs::create_dir(&counter).unwrap();
     std::fs::write(counter.join("index.html"), "").unwrap();
@@ -653,7 +570,6 @@ async fn install_admission_rejects_when_four_jobs_are_active() {
     let service = Arc::new(ReloadableCounterService::from_service(CounterService::new(
         static_root,
         root.path().join("settings"),
-        Arc::new(RecordingOpener::default()),
         downloader.clone(),
     )));
     let mut jobs = Vec::new();
@@ -695,12 +611,7 @@ async fn shutdown_cancels_and_joins_active_installs() {
         started: Arc::new(tokio::sync::Semaphore::new(0)),
         finished: Arc::new(AtomicBool::new(false)),
     });
-    let service = CounterService::new(
-        static_root,
-        root.path().join("settings"),
-        Arc::new(RecordingOpener::default()),
-        downloader.clone(),
-    );
+    let service = CounterService::new(static_root, root.path().join("settings"), downloader.clone());
     let request = DownloadRequest {
         url: "https://example.com/a.zip".into(),
         name: "counter".into(),
@@ -744,7 +655,7 @@ fn canonical(path: &Path) -> String {
 
 #[test]
 fn local_overlays_list_loadable_folders_with_metadata_and_names() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let static_root = root.path().join("static");
     write_overlay(
         &static_root.join("beta"),
@@ -835,7 +746,7 @@ fn local_overlays_list_loadable_folders_with_metadata_and_names() {
 fn local_overlays_follow_the_catalog_symlink_rules() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let static_root = root.path().join("static");
     let mounted = tempfile::tempdir().unwrap();
     let escaped = tempfile::tempdir().unwrap();

@@ -100,12 +100,7 @@ impl PageDataProvider for Unused {
     ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
         Box::pin(async { Err("unused".into()) })
     }
-    fn search_counters(
-        &self,
-        _: &str,
-        _: bool,
-        _: Option<String>,
-    ) -> ProviderFuture<'_, Result<Bytes, String>> {
+    fn search_counters(&self, _: &str, _: bool) -> ProviderFuture<'_, Result<Bytes, String>> {
         Box::pin(async { Err("unused".into()) })
     }
 }

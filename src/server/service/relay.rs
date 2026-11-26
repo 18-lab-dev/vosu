@@ -15,6 +15,11 @@ impl RelayControl for Arc<dyn vosu_surface::routes::FeedControl> {
         if let Ok(bytes) = serde_json::to_vec(&filters) { let _ = self.replace_filters(Bytes::from(bytes)); }
     }
 }
+/// The overlay host's `applyFilters` carries the raw legacy filter source;
+/// the transport owns parsing and limits. `None` keeps the prior plan.
+fn parse_command_filters(source: &[u8]) -> Option<Vec<vosu_adapter_support::filtered::Filter>> {
+    vosu_adapter_support::filtered::parse_filters(std::str::from_utf8(source).ok()?)
+}
 struct RelayClient {
     channel: u64,
     client: CommandClient,
@@ -210,8 +215,10 @@ async fn run_relay_worker(
                         control.close();
                     }
                 }
-                CommandAction::ApplyFilters(filters) => {
-                    control.apply_filters(filters);
+                CommandAction::ApplyFilters(source) => {
+                    if let Some(filters) = parse_command_filters(&source) {
+                        control.apply_filters(filters);
+                    }
                 }
                 CommandAction::NoAck => {}
             }

@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -167,7 +167,7 @@ impl SettingsStore {
         let _guard = PROFILE_MUTATIONS
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        fs::create_dir_all(&self.settings_root)?;
+        vosu_net::publish::create_directories(&self.settings_root)?;
         validate_profile(name)?;
         let mut registry = self.profiles_locked()?;
         match action {
@@ -193,8 +193,8 @@ impl SettingsStore {
                         self.resolve_profile_locked(Some(source))?;
                         let source_root = self.profile_root(source)?;
                         let destination = self.profile_root(new_name)?;
-                        fs::create_dir_all(&source_root)?;
-                        fs::create_dir_all(&destination)?;
+                        vosu_net::publish::create_directories(&source_root)?;
+                        vosu_net::publish::create_directories(&destination)?;
                         for entry in fs::read_dir(source_root)? {
                             let entry = entry?;
                             if entry
@@ -223,7 +223,10 @@ impl SettingsStore {
                         .ok_or_else(|| SettingsError::Profile("unknown profile".into()))?;
                     let source = self.profile_root(name)?;
                     if source.exists() {
-                        fs::rename(source, self.profile_root(new_name)?)?;
+                        vosu_net::publish::rename_directory_no_replace(
+                            &source,
+                            &self.profile_root(new_name)?,
+                        )?;
                     }
                     registry.profiles[index] = new_name.into();
                     if registry.active == name {
@@ -238,7 +241,7 @@ impl SettingsStore {
                 }
                 let root = self.profile_root(name)?;
                 if root.exists() {
-                    fs::remove_dir_all(root)?;
+                    vosu_net::publish::remove_tree(&root)?;
                 }
                 registry.profiles.retain(|p| p != name);
                 if registry.active == name {
@@ -272,7 +275,7 @@ impl SettingsStore {
         self.resolve_profile_locked(Some(target))?;
         let (_, values) = self.load_locked(&qualified_counter(name, source))?;
         let root = self.profile_root(target)?;
-        fs::create_dir_all(&root)?;
+        vosu_net::publish::create_directories(&root)?;
         write_values_toml(&root.join(format!("{name}.settings.values.toml")), &values)?;
         Ok(())
     }
@@ -292,7 +295,7 @@ impl SettingsStore {
         validate_component(name)?;
         let profile = self.resolve_profile_locked(profile)?;
         let counter_dir = self.require_counter_directory(name)?;
-        fs::create_dir_all(&self.settings_root)?;
+        vosu_net::publish::create_directories(&self.settings_root)?;
         let settings = self.load_or_migrate_schema(name, &counter_dir)?;
         let values = if profile == "default" {
             self.load_or_migrate_values(name, &counter_dir, &settings)?
@@ -373,7 +376,7 @@ impl SettingsStore {
         let (name, profile) = split_counter(name);
         let profile = self.resolve_profile_locked(profile)?;
         let root = self.profile_root(&profile)?;
-        fs::create_dir_all(&root)?;
+        vosu_net::publish::create_directories(&root)?;
         write_values_toml(&root.join(format!("{name}.settings.values.toml")), &values)
     }
 
@@ -520,8 +523,15 @@ impl SettingsStore {
     }
 }
 
+/// One normal folder name under the overlay root, validated with the SDK's
+/// shared portable path rule (A7.1-OR) before any read or write uses it:
+/// no separator, drive, stream (`:`), NUL, `.`/`..`, Windows device name or
+/// trailing dot/space, and never the reserved `tools` prefix.
 pub fn validate_component(name: &str) -> Result<(), SettingsError> {
-    if name.eq_ignore_ascii_case("tools") {
+    if name.eq_ignore_ascii_case("tools")
+        || name.contains(['/', '\\', ':', '\0'])
+        || !vosu_plugin_api::manifest::files::portable_component(name)
+    {
         return Err(SettingsError::InvalidName);
     }
     let mut components = Path::new(name).components();
@@ -542,7 +552,7 @@ fn sanitize_id(id: &str) -> String {
     id.chars().filter(|ch| ch.is_ascii_alphanumeric()).collect()
 }
 
-pub(crate) fn coerce_number(value: Value) -> Value {
+pub fn coerce_number(value: Value) -> Value {
     match value {
         Value::Number(_) => value,
         Value::String(text) => text
@@ -557,14 +567,14 @@ pub(crate) fn coerce_number(value: Value) -> Value {
     }
 }
 
-pub(crate) fn coerce_checkbox(value: Value) -> Value {
+pub fn coerce_checkbox(value: Value) -> Value {
     match value {
         Value::String(text) => Value::Bool(text == "true"),
         other => other,
     }
 }
 
-pub(crate) fn normalize_settings(settings: &mut [CounterSetting]) {
+pub fn normalize_settings(settings: &mut [CounterSetting]) {
     for setting in settings {
         setting.value = match setting.kind {
             SettingType::Number => coerce_number(setting.value.clone()),
@@ -582,7 +592,7 @@ fn defaults_from_schema(settings: &[CounterSetting]) -> CompactValues {
         .collect()
 }
 
-/// Reads and decodes JSON. Goes through `vosu_sys::platform::read_published`
+/// Reads and decodes JSON. Goes through `vosu_net::publish::read_published`
 /// so authoritative targets written via `atomic_bytes(..., true)` (schema,
 /// values, `profiles.json`) absorb the measured transient Windows
 /// missing-name window; legacy migration-source candidates read through the
@@ -592,13 +602,13 @@ where
     T: serde::de::DeserializeOwned,
 {
     Ok(serde_json::from_slice(
-        &vosu_sys::platform::read_published(path)?,
+        &vosu_net::publish::read_published(path)?,
     )?)
 }
 
 /// See [`read_json`]: same retrying-read rationale.
 fn read_toml(path: &Path) -> Result<toml::Value, SettingsError> {
-    Ok(toml::from_slice(&vosu_sys::platform::read_published(
+    Ok(toml::from_slice(&vosu_net::publish::read_published(
         path,
     )?)?)
 }
@@ -883,8 +893,8 @@ fn checked_exists(path: &Path) -> Result<bool, SettingsError> {
 }
 
 /// Existence/symlink probe for files this store republishes through
-/// `atomic_bytes(..., true)` -> `vosu_sys::platform::atomic_replace`.
-/// Unlike `vosu_sys::platform::read_published`, this has no retry: every
+/// `atomic_bytes(..., true)` -> `vosu_net::publish::publish_file`.
+/// Unlike `vosu_net::publish::read_published`, this has no retry: every
 /// call site runs under `PROFILE_MUTATIONS`, which `atomic_bytes`
 /// publishers of these same files also hold, so a concurrent in-process
 /// publish can never be mid-replace while this runs. Legacy
@@ -898,102 +908,21 @@ fn reject_symlink(path: &Path) -> Result<(), SettingsError> {
     checked_exists(path).map(|_| ())
 }
 
-#[cfg(not(windows))]
-fn persist_noclobber(temp: tempfile::NamedTempFile, path: &Path) -> Result<bool, SettingsError> {
-    match temp.persist_noclobber(path) {
-        Ok(file) => {
-            drop(file);
-            Ok(true)
-        }
-        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error.error.into()),
-    }
-}
-
-#[cfg(windows)]
-fn persist_noclobber(temp: tempfile::NamedTempFile, path: &Path) -> Result<bool, SettingsError> {
-    use std::os::windows::ffi::OsStrExt as _;
-    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
-    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
-
-    let (file, temp_path) = temp.keep().map_err(|error| error.error)?;
-    drop(file);
-    let temp_wide = temp_path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let path_wide = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    // SAFETY: `temp_wide` and `path_wide` are NUL-terminated UTF-16 strings
-    // held alive for the call, the only precondition `MoveFileExW`
-    // documents for its pointer arguments.
-    let moved = unsafe {
-        MoveFileExW(
-            temp_wide.as_ptr(),
-            path_wide.as_ptr(),
-            MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if moved != 0 {
-        return Ok(true);
-    }
-
-    let error = io::Error::last_os_error();
-    let _ = fs::remove_file(&temp_path);
-    match error.raw_os_error().map(|code| code as u32) {
-        Some(ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => Ok(false),
-        _ => Err(error.into()),
-    }
-}
-
+/// Same-directory atomic publish through `vosu_net::publish` (A7.1-OR):
+/// `replace_existing = false` creates the file only if no complete file is
+/// there yet. Returns whether this call published.
 fn atomic_bytes(path: &Path, value: &[u8], replace_existing: bool) -> Result<bool, SettingsError> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "settings path has no parent")
-    })?;
     reject_symlink(path)?;
-    fs::create_dir_all(parent)?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".settings-")
-        .suffix(".tmp")
-        .tempfile_in(parent)?;
-    temp.write_all(value)?;
-    temp.flush()?;
-    temp.as_file().sync_all()?;
-
-    if !replace_existing {
-        let created = persist_noclobber(temp, path)?;
-        if !created {
-            // A developer write or another migration won the race. Treat its
-            // complete file as authoritative and never replace it.
-            reject_symlink(path)?;
-            return Ok(false);
-        }
-        sync_parent(parent)?;
-        return Ok(true);
+    let mode = if replace_existing {
+        vosu_net::publish::Publish::Replace
+    } else {
+        vosu_net::publish::Publish::CreateNew
+    };
+    let created = vosu_net::publish::publish_file(path, value, ".settings-", mode)?;
+    if !created {
+        // A developer write or another migration won the race. Treat its
+        // complete file as authoritative and never replace it.
+        reject_symlink(path)?;
     }
-
-    let (file, temp_path) = temp.keep().map_err(|error| error.error)?;
-    // Windows does not allow replacing a file while this process still owns a
-    // non-shareable handle to it. Close the temporary file before the rename,
-    // matching the ownership boundary used by the other atomic writers.
-    drop(file);
-    if let Err(error) = vosu_sys::platform::atomic_replace(&temp_path, path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(error.into());
-    }
-    sync_parent(parent)?;
-    Ok(true)
-}
-
-#[cfg(unix)]
-fn sync_parent(path: &Path) -> io::Result<()> {
-    fs::File::open(path)?.sync_all()
-}
-#[cfg(not(unix))]
-fn sync_parent(_: &Path) -> io::Result<()> {
-    Ok(())
+    Ok(created)
 }

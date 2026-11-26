@@ -11,7 +11,6 @@
 extern crate self as vosu;
 
 pub mod assets;
-pub mod counters;
 pub mod plugin_host;
 pub mod plugins;
 pub mod runtime;

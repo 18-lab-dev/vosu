@@ -154,7 +154,7 @@ impl ToolHost {
                         serde_json::to_value(&entry.schema).map_err(|e| e.to_string())?;
                     let mut secrets = serde_json::Map::new();
                     for (index, setting) in entry.schema.iter().enumerate() {
-                        if setting.kind != crate::counters::SettingType::Password {
+                        if setting.kind != vosu_overlay_host::SettingType::Password {
                             continue;
                         }
                         let configured = values.get(&setting.unique_id).is_some_and(|value| {
@@ -274,14 +274,14 @@ impl ToolHost {
                         entry.schema.iter().find(|s| s.unique_id == item.unique_id)
                     {
                         let value = match setting.kind {
-                            crate::counters::SettingType::Number => {
-                                crate::counters::coerce_number(item.value)
+                            vosu_overlay_host::SettingType::Number => {
+                                vosu_overlay_host::coerce_number(item.value)
                             }
-                            crate::counters::SettingType::Checkbox => {
-                                crate::counters::coerce_checkbox(item.value)
+                            vosu_overlay_host::SettingType::Checkbox => {
+                                vosu_overlay_host::coerce_checkbox(item.value)
                             }
                             // A blank password keeps the stored secret; null clears it.
-                            crate::counters::SettingType::Password => match item.value {
+                            vosu_overlay_host::SettingType::Password => match item.value {
                                 Value::Null => json!(""),
                                 Value::String(text) if text.is_empty() => continue,
                                 value => value,
@@ -354,7 +354,7 @@ impl ToolHost {
             return match self.settings(&entry) {
                 Ok(mut values) => {
                     for setting in &entry.schema {
-                        if setting.kind == crate::counters::SettingType::Password {
+                        if setting.kind == vosu_overlay_host::SettingType::Password {
                             values.remove(&setting.unique_id);
                         }
                     }

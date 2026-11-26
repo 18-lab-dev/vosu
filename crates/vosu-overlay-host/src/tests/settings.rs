@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn profile_values_are_isolated_and_default_keeps_legacy_storage() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
@@ -81,7 +81,7 @@ fn profile_values_are_isolated_and_default_keeps_legacy_storage() {
 
 #[test]
 fn profile_names_and_counts_are_rejected() {
-    let (_root, service, _, _) = fixture();
+    let (_root, service, _) = fixture();
     let store = service.settings();
     for name in [
         "",
@@ -112,7 +112,7 @@ fn profile_names_and_counts_are_rejected() {
 #[cfg(unix)]
 #[test]
 fn profile_directory_symlinks_cannot_redirect_values() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
@@ -135,7 +135,7 @@ fn profile_directory_symlinks_cannot_redirect_values() {
 
 #[test]
 fn legacy_root_json_creates_authoritative_schema_without_modifying_root_sources() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let legacy_schema = serde_json::to_vec_pretty(&all_settings()).unwrap();
@@ -200,7 +200,7 @@ fn legacy_root_json_creates_authoritative_schema_without_modifying_root_sources(
 
 #[test]
 fn root_json_defines_schema_while_root_toml_seeds_values() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let json_settings = vec![CounterSetting {
@@ -243,7 +243,7 @@ fn root_json_defines_schema_while_root_toml_seeds_values() {
 
 #[test]
 fn root_toml_infers_scalar_schema_and_seeds_values() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let root_toml = b"text = \"hello\"\ninteger = 7\nfraction = 2.5\nenabled = true\n";
@@ -290,7 +290,7 @@ fn root_toml_infers_scalar_schema_and_seeds_values() {
 
 #[test]
 fn root_toml_inference_rejects_composites_and_datetime_without_writing_schema() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     for (name, source) in [
         ("array", "value = [1, 2]\n"),
         ("table", "value = { nested = 1 }\n"),
@@ -313,7 +313,7 @@ fn root_toml_inference_rejects_composites_and_datetime_without_writing_schema() 
 
 #[test]
 fn prior_xdg_toml_schema_migrates_to_root_without_modifying_sources() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let settings_root = service.settings().settings_root().to_owned();
@@ -346,7 +346,7 @@ value = 3
 
 #[test]
 fn authoritative_root_schema_wins_and_seeds_coerced_defaults() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let native_schema = br#"[[settings]]
@@ -421,7 +421,7 @@ type = "number"
 
 #[test]
 fn paired_native_values_toml_precedes_json_values_without_mutating_sources() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let native_schema = br#"[[settings]]
@@ -461,7 +461,7 @@ value = 1
 
 #[test]
 fn internal_legacy_json_fallback_migrates_without_modifying_sources() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let settings_root = service.settings().settings_root();
@@ -486,7 +486,7 @@ fn internal_legacy_json_fallback_migrates_without_modifying_sources() {
 
 #[test]
 fn missing_schema_migration_preserves_existing_authoritative_values() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
@@ -515,7 +515,7 @@ fn missing_schema_migration_preserves_existing_authoritative_values() {
 
 #[test]
 fn root_schema_and_config_values_ignore_every_obsolete_source() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     service
@@ -568,7 +568,7 @@ fn root_schema_and_config_values_ignore_every_obsolete_source() {
 
 #[test]
 fn schema_shaped_root_toml_never_seeds_compact_values() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     service
@@ -608,7 +608,7 @@ value = "wrong"
 fn settings_rejects_symlinked_root_and_unmigrated_xdg_schema() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let external = root.path().join("external-settings.schema.toml");
     std::fs::write(
         &external,
@@ -646,7 +646,7 @@ fn settings_rejects_symlinked_root_and_unmigrated_xdg_schema() {
 
 #[test]
 fn toml_round_trips_schema_values_and_coercion_without_encoding_null() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     std::fs::create_dir_all(root.path().join("static/counter")).unwrap();
     let mut settings = all_settings();
     settings[0].options = Some(json!({"labels": ["a", "b"], "enabled": true}));
@@ -738,7 +738,7 @@ fn toml_round_trips_schema_values_and_coercion_without_encoding_null() {
 
 #[test]
 fn developer_update_requires_yes_and_writes_only_root_schema() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let folder = root.path().join("static/counter");
     std::fs::create_dir_all(&folder).unwrap();
     let legacy_schema = br#"[
@@ -779,7 +779,7 @@ fn developer_update_requires_yes_and_writes_only_root_schema() {
 
 #[test]
 fn settings_reject_missing_and_non_directory_aliases_without_creating_files() {
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     assert!(matches!(
         service.get_settings("missing"),
         Err(CounterError::Settings(SettingsError::MissingCounter))
@@ -830,7 +830,7 @@ fn settings_reject_missing_and_non_directory_aliases_without_creating_files() {
 fn settings_support_top_level_symlinked_overlay_directories() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let outside = root.path().join("outside-overlay");
     std::fs::create_dir(&outside).unwrap();
     // The alias itself is the mount declaration; no index marker is required.
@@ -851,7 +851,7 @@ fn settings_support_top_level_symlinked_overlay_directories() {
 fn settings_keep_alias_values_separate_and_prioritize_authoritative_toml() {
     use std::os::unix::fs::symlink;
 
-    let (root, service, _, _) = fixture();
+    let (root, service, _) = fixture();
     let outside = root.path().join("outside-overlay");
     std::fs::create_dir(&outside).unwrap();
     // Settings authorization follows the same top-level alias contract as serving.

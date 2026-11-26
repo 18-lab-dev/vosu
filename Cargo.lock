@@ -3531,6 +3531,7 @@ dependencies = [
  "vosu-osu-model",
  "vosu-osu-reader",
  "vosu-osu-state",
+ "vosu-overlay-host",
  "vosu-plugin-api",
  "vosu-plugin-internal",
  "vosu-plugin-testkit",
@@ -3787,6 +3788,34 @@ dependencies = [
  "vosu-pp",
  "vosu-proptest",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vosu-overlay-host"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "indexmap",
+ "libc",
+ "parking_lot",
+ "proptest",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "url",
+ "vosu-net",
+ "vosu-plugin-api",
+ "vosu-plugin-internal",
+ "vosu-proptest",
+ "vosu-surface",
+ "zip",
 ]
 
 [[package]]

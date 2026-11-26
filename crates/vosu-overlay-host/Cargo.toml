@@ -1,0 +1,47 @@
+[package]
+name = "vosu-overlay-host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Development-only download client injection; forwarded by the root's
+# `test-harness` feature and rejected in release builds there.
+test-harness = ["vosu-net/test-harness"]
+
+[dependencies]
+arc-swap = "1.8.2"
+bytes = "=1.12.1"
+indexmap = { version = "2.13.0", features = ["serde"] }
+parking_lot = "0.12.5"
+semver = "=1.0.28"
+serde = { version = "=1.0.228", features = ["derive", "rc"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+# Scratch download archives in the cache directory (never under the overlay root).
+tempfile = "3.26.0"
+thiserror = "2.0.18"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+toml = "=1.1.2"
+tracing = "=0.1.44"
+url = "2.5.8"
+vosu-net = { path = "../vosu-net" }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
+# Bundled registration (`export_plugin!(bundled ...)`, AF.9).
+vosu-plugin-internal = { path = "../vosu-plugin-internal" }
+vosu-surface = { path = "../vosu-surface" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.186"
+
+[dev-dependencies]
+proptest = "1.12"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+vosu-proptest = { path = "../vosu-proptest" }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

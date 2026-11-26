@@ -34,12 +34,16 @@ use vosu_adapter_support::filtered::Filter;
 use vosu_osu::capture::poll_duration;
 use vosu_sys::platform::{PathResolver, Paths};
 
+use vosu_overlay_host::{
+    ReloadableCounterService,
+    catalog::CatalogService,
+    commands::{CommandProcessor, SettingsProvider},
+    presentation::OverlayPresenter,
+};
+
 use crate::{
-    counters::ReloadableCounterService,
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
-        catalog::{CatalogOverlay, CatalogService, LocalOverlay},
-        commands::{CommandProcessor, SettingsProvider},
         pages::{DynamicPage, EmbeddedResponse, PageService},
         routes::{CachedJson, RequestAuthorizer, RouteProviders, StateJsonProvider, StateRoute},
         runtime::{
@@ -101,7 +105,6 @@ mod dev_plugins;
 mod discovery;
 mod lifecycle;
 mod plugin_management;
-mod preview_scheme;
 mod projection;
 mod render;
 mod service;

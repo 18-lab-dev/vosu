@@ -12,8 +12,7 @@
 
 use std::{
     collections::BTreeMap,
-    fs,
-    io::{self, Write as _},
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -58,7 +57,8 @@ impl OverlayNames {
     /// file is kept on disk untouched and treated as empty until it is fixed or
     /// replaced by the next successful save.
     pub fn load(path: PathBuf) -> Self {
-        let entries = fs::read(&path)
+        // Published only by `persist` below, under this store's write lock.
+        let entries = vosu_net::publish::read_published(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
@@ -95,7 +95,7 @@ impl OverlayNames {
         nickname: Option<&str>,
         alias: Option<&str>,
     ) -> Result<OverlayName, String> {
-        if folder.is_empty() || !static_root.join(folder).is_dir() {
+        if !valid_folder(folder) || !static_root.join(folder).is_dir() {
             return Err("overlay folder not found".into());
         }
         let nickname = nickname.map(str::trim).filter(|value| !value.is_empty());
@@ -213,18 +213,26 @@ fn top_level_entries(static_root: &Path) -> Vec<String> {
 }
 
 fn persist(path: &Path, entries: &BTreeMap<String, OverlayName>) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("overlay names path has no parent"))?;
-    fs::create_dir_all(parent)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    serde_json::to_writer_pretty(&mut temp, entries)?;
-    temp.write_all(b"\n")?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|error| error.error)?;
-    #[cfg(unix)]
-    fs::File::open(parent)?.sync_all()?;
+    let mut bytes = serde_json::to_vec_pretty(entries)?;
+    bytes.push(b'\n');
+    vosu_net::publish::publish_file(
+        path,
+        &bytes,
+        ".overlay-names-",
+        vosu_net::publish::Publish::Replace,
+    )?;
     Ok(())
+}
+
+/// A `/`-separated folder path relative to the overlay root whose every
+/// segment passes the SDK portable rule ([`crate::validate_component`]); a
+/// nested segment may be named `tools`.
+fn valid_folder(folder: &str) -> bool {
+    !folder.is_empty()
+        && folder.split('/').enumerate().all(|(index, part)| {
+            (index > 0 && part.eq_ignore_ascii_case("tools"))
+                || crate::validate_component(part).is_ok()
+        })
 }
 
 #[cfg(test)]

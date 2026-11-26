@@ -209,7 +209,7 @@ fn counter_path_script(encoded_html_path: &str) -> Option<Bytes> {
     let mut script = String::with_capacity(counter_path.len() + 48);
     script.push_str("<script>window.COUNTER_PATH=");
     if let Some(profile) = profile {
-        push_javascript_string(&mut script, &crate::counters::qualified_counter(counter_path, profile));
+        push_javascript_string(&mut script, &vosu_overlay_host::qualified_counter(counter_path, profile));
         script.push_str(";window.VOSU_PROFILE=");
         push_javascript_string(&mut script, profile);
     } else {
