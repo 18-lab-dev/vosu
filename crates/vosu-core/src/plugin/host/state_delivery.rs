@@ -43,6 +43,12 @@ impl Default for DeliveryState {
     }
 }
 
+pub(super) enum StateHandleUse {
+    Subscribe,
+    Publish,
+    Demand,
+}
+
 #[derive(Default)]
 struct Slot {
     /// A job is queued, running or waiting to retry admission.
@@ -183,7 +189,7 @@ impl PluginHost {
         let owns = sessions
             .owner_and_pid(handle)
             .is_some_and(|(owner, _)| owner == &plugin);
-        if !owns && !self.state_handle_named(who, key, false) {
+        if !owns && !self.state_handle_named(who, key, StateHandleUse::Subscribe) {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
         let state = self.state.store.current(key);
@@ -311,7 +317,7 @@ impl PluginHost {
                 if &entry.plugin_id == owner {
                     found = found.or(Some(*id));
                 } else if entry.publisher.grant.provides_own_namespace()
-                    && self.state_handle_named(*id, key, true)
+                    && self.state_handle_named(*id, key, StateHandleUse::Demand)
                 {
                     guests.push((*id, entry.plugin_id.clone()));
                 }
@@ -346,14 +352,14 @@ impl PluginHost {
         self.schedule_state_slot(who, key, slot);
     }
 
-    /// A watcher's live slot for `key` once `SESSION_ATTACHED` named the handle
-    /// to it, or is still pending when `queued` is true. An action alone does
-    /// not grant the publication and demand access of a `vosu.sessions` watch.
+    /// Actions and watches share `known`/`attached` for read subscriptions.
+    /// Only a `vosu.sessions` watch sets `lifecycle`, granting a non-owner
+    /// publication and demand access.
     fn named_state_slot(
         &self,
         who: PluginInstanceId,
         key: SessionKey,
-        queued: bool,
+        usage: StateHandleUse,
     ) -> Option<Arc<Mutex<Slot>>> {
         let delivery = self
             .state_delivery
@@ -361,20 +367,26 @@ impl PluginHost {
             .unwrap_or_else(|p| p.into_inner());
         let slot = delivery.slots.get(&(who, key))?;
         let pending = slot.lock().unwrap_or_else(|p| p.into_inner());
-        (pending.lifecycle
-            && !delivery.ending.contains(&who)
-            && !pending.dead
-            && (pending.known || (queued && pending.attached.is_some())))
-        .then(|| slot.clone())
+        let attachment_queued = pending.attached.is_some();
+        let live_watch = pending.lifecycle && !delivery.ending.contains(&who);
+        let allowed = match usage {
+            StateHandleUse::Subscribe => {
+                (!pending.lifecycle || live_watch)
+                    && (pending.known || (attachment_queued && !pending.actions.is_empty()))
+            }
+            StateHandleUse::Publish => live_watch && pending.known,
+            StateHandleUse::Demand => live_watch && (pending.known || attachment_queued),
+        };
+        (!pending.dead && allowed).then(|| slot.clone())
     }
 
     pub(super) fn state_handle_named(
         &self,
         who: PluginInstanceId,
         key: SessionKey,
-        queued: bool,
+        usage: StateHandleUse,
     ) -> bool {
-        self.named_state_slot(who, key, queued).is_some()
+        self.named_state_slot(who, key, usage).is_some()
     }
 
     pub(super) fn offer_guest_demand(
@@ -383,7 +395,7 @@ impl PluginHost {
         key: SessionKey,
         demand: DemandSnapshot,
     ) {
-        if let Some(slot) = self.named_state_slot(who, key, true) {
+        if let Some(slot) = self.named_state_slot(who, key, StateHandleUse::Demand) {
             self.offer_state_demand(who, key, slot, demand);
         }
     }

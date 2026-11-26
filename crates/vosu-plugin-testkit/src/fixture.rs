@@ -28,7 +28,10 @@ pub fn artifact_byte(offset: u64) -> u8 {
     ((offset * 31 + 7) % 251) as u8
 }
 
-pub struct ApiFixturePlugin {
+pub type ApiFixturePlugin = ApiFixture<true>;
+
+/// The action-only fixture keeps guest handles without identifying them.
+pub struct ApiFixture<const IDENTIFIES_SESSIONS: bool> {
     host: VtableHostServices,
     id: String,
     actions: ActionFixture,
@@ -45,7 +48,7 @@ pub struct ApiFixturePlugin {
     root: String,
 }
 
-impl ApiFixturePlugin {
+impl<const IDENTIFIES_SESSIONS: bool> ApiFixture<IDENTIFIES_SESSIONS> {
     fn send(&self, message: Message, correlation: u64) -> Result<(), PluginError> {
         let status = self.host.send(&message, correlation);
         if status == vosu_status::VOSU_OK {
@@ -136,7 +139,7 @@ impl ApiFixturePlugin {
     }
 }
 
-impl Plugin for ApiFixturePlugin {
+impl<const IDENTIFIES_SESSIONS: bool> Plugin for ApiFixture<IDENTIFIES_SESSIONS> {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
         let (actions, events) = ActionFixture::new();
         let root = init
@@ -163,8 +166,8 @@ impl Plugin for ApiFixturePlugin {
         match message {
             Message::SessionAttached(session) => {
                 self.sessions.insert(session.handle);
-                if session.name.is_none() {
-                    return Ok(()); // Guest attachments have no private process facts.
+                if !IDENTIFIES_SESSIONS {
+                    return Ok(());
                 }
                 self.send(
                     Message::SessionIdentify(SessionIdentify {

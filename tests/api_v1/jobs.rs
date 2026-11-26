@@ -85,7 +85,7 @@ fn http_can_invoke_a_guest_action_and_detach_cancels_it() {
         ),
         &[],
         &[("args.json", "{}"), ("result.json", "{}")],
-        super::support::f5::vosu_plugin_vtable,
+        super::support::f5::guest::vosu_plugin_vtable,
     );
     h.runtime.block_on(bounded(async {
         let (api, hub) = router(&h, JobRegistry::new(), InvocationPolicy::default().deadline);

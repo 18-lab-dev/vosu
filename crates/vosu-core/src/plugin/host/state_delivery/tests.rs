@@ -66,3 +66,41 @@ fn out_of_order_notifications_keep_newest_per_selected_key() {
     slot.merge_at(3, vec![entry("/combo", 3)]);
     assert!(slot.pending.is_empty());
 }
+
+#[test]
+fn action_attachment_names_only_a_readable_handle() {
+    use crate::plugin::host::tests::test_host;
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let (_dir, host) = test_host(runtime.handle().clone());
+    let who = PluginInstanceId(1);
+    let key = SessionKey(2);
+    let slot = host.delivery_slot(who, key);
+    {
+        let mut pending = slot.lock().unwrap();
+        pending.attached = Some(SessionAttached {
+            session: "session-2".into(),
+            handle: key.0,
+            generation: 1,
+            pid: 3,
+            bitness: vosu_plugin_api::Bitness::X64,
+            name: None,
+            path: None,
+            command_line: None,
+            argv: None,
+        });
+        pending.actions.push(4);
+    }
+    for delivered in [false, true] {
+        if delivered {
+            let mut pending = slot.lock().unwrap();
+            pending.attached = None;
+            pending.actions.clear();
+            pending.known = true;
+        }
+        assert!(host.state_handle_named(who, key, StateHandleUse::Subscribe));
+        assert!(!host.state_handle_named(who, key, StateHandleUse::Publish));
+        assert!(!host.state_handle_named(who, key, StateHandleUse::Demand));
+    }
+}

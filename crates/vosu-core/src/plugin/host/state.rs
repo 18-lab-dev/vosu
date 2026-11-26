@@ -1,7 +1,7 @@
 //! Host lock order: focus -> instances -> sessions -> matcher -> store/registry.
 //! Publication snapshots authority and releases both global mutexes before
 //! committing. No plugin callback runs under these locks.
-use super::{InstanceSlot, PluginHost};
+use super::{InstanceSlot, PluginHost, state_delivery::StateHandleUse};
 use crate::plugin::{PluginInstanceId, session::SessionHandle};
 use crate::state::{ClientFacts, SessionKey};
 use vosu_plugin_api::{
@@ -61,7 +61,7 @@ impl PluginHost {
             // this instance was sent through `SESSION_ATTACHED`.
             if !publisher.grant.provides_own_namespace()
                 || sessions.identify_of(handle).is_none()
-                || !self.state_handle_named(instance, SessionKey(raw), false)
+                || !self.state_handle_named(instance, SessionKey(raw), StateHandleUse::Publish)
             {
                 return vosu_status::VOSU_ERR_PERMISSION_DENIED;
             }

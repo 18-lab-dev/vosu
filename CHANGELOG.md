@@ -6,6 +6,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Session-bound actions can now run against sessions owned by another plugin.
   The provider learns the session handle before the action is invoked.
+  The provider can subscribe to that session's state from the action handler.
 
 - Shutdown closes the overlay command and API v1 subscription WebSockets and
   waits for their workers before destroying plugin instances. Slow plugin

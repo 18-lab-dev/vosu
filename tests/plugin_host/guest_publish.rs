@@ -426,3 +426,207 @@ mod action_relay {
         host.destroy_all(WAIT);
     }
 }
+
+mod action_subscribe {
+    use super::*;
+    use std::sync::Mutex;
+    use std::sync::mpsc::{SyncSender, sync_channel};
+    use vosu_plugin_api::{
+        ActionCall, Init, Plugin, PluginError, StateEntry, TimerFired, VtableHostServices,
+    };
+
+    const GAME: &str = "test.guest-action-read.game";
+    const CALLEE: &str = "test.guest-action-read.callee";
+    const ACTION: &str = "test.guest-action-read.callee.run";
+
+    type Event = (Message, Option<vosu_status>);
+
+    struct Hooks {
+        events: SyncSender<Event>,
+        release_baseline: Receiver<()>,
+    }
+    static HOOKS: Mutex<Option<Hooks>> = Mutex::new(None);
+
+    fn subscribe(session: u64) -> Message {
+        Message::StateSubscribe(StateSubscribe {
+            session: Some(session),
+            selectors: vec![Selector {
+                ns: "vosu.play".into(),
+                pointer: "/combo".into(),
+            }],
+        })
+    }
+
+    struct Callee {
+        host: VtableHostServices,
+        events: SyncSender<Event>,
+        release_baseline: Option<Receiver<()>>,
+    }
+
+    impl Plugin for Callee {
+        fn create(host: VtableHostServices, _: Init) -> Result<Self, PluginError> {
+            let hooks = HOOKS.lock().unwrap().take().unwrap();
+            Ok(Self {
+                host,
+                events: hooks.events,
+                release_baseline: Some(hooks.release_baseline),
+            })
+        }
+
+        fn on_message(&mut self, message: Message, _: u64) -> Result<(), PluginError> {
+            let status = match &message {
+                Message::ActionInvoke(invoke) => {
+                    Some(self.host.send(&subscribe(invoke.session.unwrap()), 0))
+                }
+                Message::SessionDetached(detached) => {
+                    Some(self.host.send(&subscribe(detached.handle), 0))
+                }
+                Message::SessionAttached(_) | Message::StateUpdate(_) | Message::TimerFired(_) => {
+                    None
+                }
+                _ => return Ok(()),
+            };
+            let update = matches!(message, Message::StateUpdate(_));
+            self.events.try_send((message, status)).unwrap();
+            if update && let Some(release) = self.release_baseline.take() {
+                release.recv_timeout(WAIT).unwrap();
+            }
+            Ok(())
+        }
+    }
+    vosu_plugin_internal::export_plugin!(bundled Callee);
+
+    fn assert_update(event: Event, handle: u64, combo: u64) {
+        let (Message::StateUpdate(update), None) = event else {
+            panic!("expected STATE_UPDATE, got {event:?}");
+        };
+        assert_eq!(update.session, handle);
+        assert!(!update.more);
+        assert_eq!(
+            update.values,
+            [StateEntry {
+                ns: "vosu.play".into(),
+                pointer: "/combo".into(),
+                value: Some(combo.into()),
+                error: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn action_provider_can_subscribe_only_to_its_announced_session_until_detach() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _enter = runtime.enter();
+        let logs = tempfile::tempdir().unwrap();
+        let host = test_host(&runtime, logs.path());
+        let (events, received) = sync_channel(8);
+        let (release, release_baseline) = sync_channel(1);
+        *HOOKS.lock().unwrap() = Some(Hooks {
+            events,
+            release_baseline,
+        });
+        let callee = PluginInstanceId::new(2);
+        let loaded = plugin::load_bundled(
+            &semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            &host.validation_snapshot(),
+            &[plugin::BundledPlugin {
+                manifest: &manifest(
+                    CALLEE,
+                    &format!(
+                        "[[actions]]\nname='run'\nversion='1.0.0'\ntitle='Guest'\nargs_schema='args.json'\nresult_schema='result.json'\nsession='required'\n[[provides]]\nid='action:{ACTION}'\nversion='1.0.0'\n"
+                    ),
+                )
+                .replace("concurrent_dispatch=true", "concurrent_dispatch=false"),
+                settings_schema: None,
+                namespace_schemas: &[],
+                action_schemas: &[("args.json", "{}"), ("result.json", "{}")],
+                vtable: vosu_plugin_vtable,
+            }],
+        )
+        .unwrap();
+        host.create_instance(callee, &loaded[0], logs.path().into(), None)
+            .unwrap();
+        let game = load(
+            &host,
+            1,
+            GAME,
+            &manifest(
+                GAME,
+                &format!(
+                    "covers=['field:vosu.play.combo']\n[match]\nprocess_names=['{GAME}']\n[[provides]]\nid='game:fixture'\nversion='*'\n[[requires]]\nid='action:{ACTION}'\nversion='^1.0'\n"
+                ),
+            ),
+            &[],
+        );
+        let attach = |pid| {
+            host.process_appeared(plugin::ProcessRecord {
+                pid,
+                name: GAME.into(),
+                path: format!("/games/{GAME}"),
+                command_line: GAME.into(),
+                argv: None,
+                bitness: vosu_plugin_api::Bitness::X64,
+                start_time: 1,
+            });
+            until(&game, |event| match event {
+                PublisherEvent::Attached { handle } => Some(handle),
+                _ => None,
+            })
+        };
+        let (handle, other) = (attach(4803), attach(4804));
+        assert_ne!(handle, other);
+        assert_eq!(
+            publish(GAME, handle, "vosu.play", "/combo", 12),
+            vosu_status::VOSU_OK
+        );
+        assert_eq!(
+            host.handle(callee, subscribe(handle), 0),
+            vosu_status::VOSU_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            publisher::host_services(GAME).send(
+                &Message::ActionCall(ActionCall {
+                    invocation: 42,
+                    action: ACTION.into(),
+                    session: Some(handle),
+                    args: vosu_plugin_api::CborValue::Text("read combo".into()),
+                }),
+                0
+            ),
+            vosu_status::VOSU_OK
+        );
+        let next = || received.recv_timeout(WAIT).unwrap();
+        assert!(
+            matches!(next(), (Message::SessionAttached(attached), None) if attached.handle == handle)
+        );
+        assert!(
+            matches!(next(), (Message::ActionInvoke(invoke), Some(vosu_status::VOSU_OK)) if invoke.session == Some(handle))
+        );
+        assert_update(next(), handle, 12);
+        assert_eq!(
+            host.handle(callee, subscribe(other), 0),
+            vosu_status::VOSU_ERR_INVALID_ARGUMENT
+        );
+
+        // The worker is still in the baseline callback, so the last update
+        // and the terminal must both wait in the same session's delivery slot.
+        assert_eq!(
+            publish(GAME, handle, "vosu.play", "/combo", 13),
+            vosu_status::VOSU_OK
+        );
+        host.process_exited(4803);
+        release.send(()).unwrap();
+        assert_update(next(), handle, 13);
+        assert!(
+            matches!(next(), (Message::SessionDetached(detached), Some(vosu_status::VOSU_ERR_INVALID_ARGUMENT)) if detached.handle == handle)
+        );
+        let probe = Message::TimerFired(TimerFired { timer: 7 });
+        host.dispatch_to_instance(callee, &probe, 0).unwrap();
+        assert_eq!(next(), (probe, None));
+        host.destroy_all(WAIT);
+        assert!(matches!(
+            received.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+}
