@@ -18,14 +18,15 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION
 import parity_golden as golden_mod
+import parity_golden_ledger as golden_ledger
 from parity_golden_rules import (
-    RULE_IDS, GoldenError, Root, RootRewriter, apply_timestamp_pointers, check_approved_rules,
-    rewrite_cbor_text,
+    NORMALIZATION_VERSION, RULE_IDS, GoldenError, Root, RootRewriter, apply_timestamp_pointers,
+    check_approved_rules, rewrite_cbor_text,
 )
 
 PIN = PINNED_SOURCE_REVISION
-CONTRACT = "Normalization version: 1\n\n| Rule ID | Scope |\n|---|---|\n" + "".join(
-    f"| `{rule}` | exact |\n" for rule in RULE_IDS)
+CONTRACT = (f"Normalization version: {NORMALIZATION_VERSION}\n\n| Rule ID | Scope |\n|---|---|\n"
+            + "".join(f"| `{rule}` | exact |\n" for rule in RULE_IDS))
 WIN_ROOT = "C:\\Users\\vosu\\AppData\\Local\\osulazer\\"
 SYN_ROOT = "C:\\vosu-golden\\osu!\\"
 DATE_A = "Mon, 24 Nov 2026 10:00:00 GMT"
@@ -258,8 +259,11 @@ class CandidateLayoutTests(GoldenTestCase):
             check_approved_rules(missing)
         with self.assertRaisesRegex(GoldenError, "unimplemented"):
             check_approved_rules(CONTRACT + "| `any-time-key` | every time key |\n")
-        with self.assertRaisesRegex(GoldenError, "version 2"):
-            check_approved_rules(CONTRACT.replace("version: 1", "version: 2"))
+        # A contract still at the previous version is refused.
+        stale = NORMALIZATION_VERSION - 1
+        with self.assertRaisesRegex(GoldenError, f"version {stale} differs"):
+            check_approved_rules(CONTRACT.replace(
+                f"version: {NORMALIZATION_VERSION}", f"version: {stale}"))
 
     def test_cli_writes_candidate_outside_repository(self) -> None:
         path = self.root / "cli-capture.json"
@@ -429,6 +433,44 @@ class CaptureValidationTests(GoldenTestCase):
                    vosu=response(text(not_ready), [], status="HTTP/1.1 404 Not Found"), dump=dump)
         self.rejects(capture([get]), "route status differs")
 
+    def test_request_budget_ledger_decides_the_route_not_the_dump(self) -> None:
+        # Pilot 2: an over-budget request never reaches the adapter, so vosu answers the
+        # ledger's 404 while the dump still records the adapter's 200.
+        pairs = lambda count: "/json/v2?" + "&".join(f"p{index}=0" for index in range(count))
+        up = response(text('{"ok":true}'), [["Content-Type", "application/json"]])
+        not_found = response(text("Not Found"), [], status="HTTP/1.1 404 Not Found")
+        over = case("state-http.json-v2.budget.query-pairs-129", request(target=pairs(129)),
+                    (up, up), vosu=not_found)
+        self.run_golden(capture([over]))
+        self.rejects(capture([case("state-http.json-v2.budget.query-pairs-129",
+                                   request(target=pairs(129)), (up, up))]),
+                     "ledger adapter-surface-request-budget .*must answer 404, not 200")
+        # Within the budget the case stays strict, and no other case gets the rule.
+        self.rejects(capture([case("state-http.json-v2.budget.query-pairs-128",
+                                   request(target=pairs(128)), (up, up), vosu=not_found)]),
+                     "route status differs")
+        self.run_golden(capture([case("state-http.json-v2.budget.query-pairs-128",
+                                      request(target=pairs(128)), (up, up))]))
+        self.rejects(capture([case("state-http.json-v2.near.query", request(target=pairs(129)),
+                                   (up, up), vosu=not_found)]), "route status differs")
+
+    def test_request_budget_mirrors_the_surface_limits(self) -> None:
+        excess = golden_ledger.request_budget_excess
+        query = lambda total: request(target="/json/v2?q=" + "x" * (total - 1))
+        tags = lambda count: [f'If-None-Match: "t{index}"' for index in range(count)]
+        self.assertIsNone(excess(query(16_384)))
+        self.assertRegex(excess(query(16_385)), "16385 metadata bytes")
+        self.assertIsNone(excess(request("GET", "/json/v2", *tags(32))))
+        self.assertRegex(excess(request("GET", "/json/v2", *tags(33))), "33 forwarded headers")
+        self.assertIsNone(excess(request("GET", "/json/v2", "X-Other: \x01")))
+        self.assertRegex(excess(request("GET", "/json/v2", "Range: bytes=0-1\x7f")),
+                         "forwarded range value")
+        # Decoded like form_urlencoded: empty sequences are skipped, a bare key is a pair.
+        self.assertIsNone(excess(request(target="/json/v2?" + "&" * 300 + "a")))
+        self.assertRegex(excess(request(target="/json/v2?" + "&".join("k" * 129))), "129 query")
+        self.assertIsNone(golden_ledger.route_rule("state-http.json-v2.get.menu",
+                                                   request(target="/json/v2?" + "&".join("k" * 129))))
+
     def test_identity_ordinals_are_verified(self) -> None:
         dump = envelope()
         dump["roster"]["sessions"][0]["ordinal"] = 1
@@ -491,6 +533,29 @@ class NormalizationTests(GoldenTestCase):
         normalized = line.split(" ")[1]
         self.assertTrue(normalized.startswith("/api/calculate/pp?path=C%3A%5Cvosu-golden%5Cosu"))
         self.assertEqual("/api/calculate/pp?path=" + SYN_ROOT + "Songs\\a.osu", unquote(normalized))
+
+    def test_absolute_root_right_after_a_route_prefix_is_replaced(self) -> None:
+        # Rehearsal 2026-11-25: a path-security target spells the absolute sentinel path
+        # right after its route prefix, so the prefix's `/` precedes the root.
+        from urllib.parse import quote
+        sentinel = WIN_ROOT + "vosu-route-probe\\sentinel.txt"
+        spellings = {"path-security.songs.absolute-drive": "/Songs/" + quote(sentinel, safe=""),
+                     "path-security.beatmap.absolute-drive-slash": "/files/beatmap/"
+                     + quote(sentinel.replace("\\", "/"), safe="/:")}
+        missing = response(text("{}"), status="HTTP/1.1 404 Not Found")
+        cases = [case(case_id, request(target=target), (missing, missing))
+                 for case_id, target in spellings.items()]
+        candidate = self.run_golden(capture(cases))
+        self.assertEqual(
+            self.case_file(candidate, "path-security.songs.absolute-drive")["request"]["text"]
+            .split(" ")[1], "/Songs/C%3A%5Cvosu-golden%5Cosu!%5Cvosu-route-probe%5Csentinel.txt")
+        self.assertEqual(
+            self.case_file(candidate, "path-security.beatmap.absolute-drive-slash")["request"]
+            ["text"].split(" ")[1], "/files/beatmap/C:/vosu-golden/osu!/vosu-route-probe/sentinel.txt")
+        # Only the route prefix ends a token: a root inside a path segment stays private.
+        inside = case("path-security.songs.absolute-drive",
+                      request(target="/Songs/a" + quote(sentinel, safe="")), (missing, missing))
+        self.rejects(capture([inside]), "unnormalized private root 'osu!'")
 
     def test_linux_root_and_private_home_paths(self) -> None:
         root = "/home/vosu/.local/share/osu/"

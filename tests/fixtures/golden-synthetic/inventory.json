@@ -1,7 +1,7 @@
 {
   "format": "vosu-golden-inventory-v1",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
-  "normalization_version": 1,
+  "normalization_version": 2,
   "files": [
     {
       "path": "linux-lazer/assets.json",
@@ -101,17 +101,17 @@
     {
       "path": "linux-lazer/inventory.json",
       "bytes": 4223,
-      "sha256": "96125726f804cb89308afd81368065d1b327f6529bc8a8aeae092463a66e9694"
+      "sha256": "14e99dde27877976f887b55e975fed84efcd774910c09735daa1bab7d1302aca"
     },
     {
       "path": "linux-lazer/manifest.json",
       "bytes": 3982,
-      "sha256": "8a974a460c6173fc2e4a621f1c5ffcf76654dc6bc2aca68d0e91dc7a51ee565c"
+      "sha256": "13f1050ce79628fe947854ec149a1c627cbca7a7af7bac230b86db99dc3a6fb6"
     },
     {
       "path": "manifest.json",
       "bytes": 227,
-      "sha256": "d09505f9ab5b1d3c52f7512f0a49ae0a0d4f078e11f1d6602947a3633b03ea90"
+      "sha256": "ebcb904973be1ab3aff574e0e6c80cb205b2b835b6ad6020aab9eb9703ed88d5"
     },
     {
       "path": "windows-stable/assets.json",
@@ -211,12 +211,12 @@
     {
       "path": "windows-stable/inventory.json",
       "bytes": 4226,
-      "sha256": "74bb43226d2d09977f3947aa36869cc77a64d4a3b8e49320dff6ca92160e76d9"
+      "sha256": "6b0a73b03f07c4d5927ee7ade6ba4053489db46185d87d7024a7aac6d2ce74de"
     },
     {
       "path": "windows-stable/manifest.json",
       "bytes": 3991,
-      "sha256": "cea29b7136d5a747d9402c7c62b861fe474edc63b34f19acbe5d0ebc3233d103"
+      "sha256": "f478bf2c3f9f866ab3cfb399f7af9bfefb46801df5257f368ec0081d7d622d6b"
     }
   ]
 }

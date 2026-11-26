@@ -203,7 +203,7 @@ class BuildAndCleanupTests(unittest.TestCase):
         with mock.patch.object(gc, "_elevated", return_value=True), \
                 self.assertRaisesRegex(gc.CaptureError, "elevated"):
             gc.golden_capture({"golden": {}}, gc.SCENARIO_SETS["m4b-dry-run-v1"],
-                              str(self.tmp / "capture.json"), build=build)
+                              str(self.tmp / "capture.json"), rehearsal_receipt=None, build=build)
         build.assert_not_called()
 
     def test_run_owned_worktree_and_registration_are_removed(self) -> None:

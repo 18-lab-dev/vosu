@@ -10,7 +10,8 @@ identical bytes, then vosu dump -> route -> dump. A failed sandwich retries the 
 case, at most three attempts, and every attempt is recorded; attempts are never
 mixed. Upstream records are the only expected values; vosu dumps are replay input.
 Cases whose request kills upstream run last, after the no-client barrier, and record
-the `upstream_crashed` outcome (`parity_golden_crash`).
+the `upstream_crashed` outcome (`parity_golden_crash`). A run starts only with a passing
+client-less rehearsal receipt for its authorized commit and tooling (`parity_golden_rehearsal`).
 
 Outputs, both private and never published: the capture `--out`, exactly the shape
 `golden` reads, and `<out>.transcript.json` with the raw records, attestations,
@@ -66,8 +67,10 @@ POLL_S = 0.1
 # the vosu v2 dump to stay identical across them; a case-less one (play: its clock and
 # the provider generation advance on every read) needs only the reported state.
 STABLE_OBSERVATIONS = 3
-# A record must carry an HTTP response to be a golden record.
-RESPONSE_OUTCOMES = frozenset({"response", "rejected", "upgraded", "server-closed"})
+# A record must carry an HTTP response to be a golden record. `upgraded-timeout` is the
+# handshake of a feed that sent no frame in its window (route_matrix.HANDSHAKE_ONLY).
+RESPONSE_OUTCOMES = frozenset({"response", "rejected", "upgraded", "upgraded-timeout",
+                               "server-closed"})
 _SCHEMA_OF_PATH = {"/json": "v1", "/json/sc": "sc", "/json/v2": "v2",
                    "/json/v2/precise": "v2-precise", "/ws": "v1", "/tokens": "sc",
                    "/websocket/v2": "v2", "/websocket/v2/precise": "v2-precise"}
@@ -148,8 +151,18 @@ class LiveClient:
             daemon_mod._terminate_client_descendants(self.artifact, hard=True)
             if not daemon_mod._wait_for_client_descendants(self.artifact, 1):
                 errors.append("attested osu client descendants survived cleanup")
-        self.shared_profile = remove_new_shared_logs(self.shared_logs, self.shared_before)
+        self.shared_profile = remove_new_shared_logs(self.shared_logs, self.shared_before,
+                                                     exited=self._released)
+        errors += [f"shared lazer log {entry['name']} is still open after the client exited: "
+                   f"{entry['error']}" for entry in self.shared_profile["locked"]]
         return errors
+
+    def _released(self) -> bool:
+        """The attested client has exited (an unapproved process keeps the wait going)."""
+        try:
+            return self.exited()
+        except ValueError:
+            return False
 
 
 def stderr_operator(barrier: str, message: str) -> None:
@@ -454,7 +467,7 @@ class Session:
         self.ledger = rm.RequestLedger()
         self.transcript: dict[str, Any] = {
             "format": TRANSCRIPT_FORMAT, "scenario_set": scenario.id, "barriers": [],
-            "cases": [], "diagnostics": [], "excluded": [], "cleanup": None}
+            "cases": [], "diagnostics": [], "excluded": [], "findings": [], "cleanup": None}
         self.client_started = False
 
     # -- setup
@@ -619,6 +632,9 @@ class Session:
             parity_golden._check_sandwiches(parity_golden._case(copy.deepcopy(value), 0))
         except GoldenError as exc:
             return str(exc)
+        finding = rm.handshake_only_finding(case, upstream[0]["outcome"], route["outcome"])
+        if finding is not None:
+            self.transcript["findings"].append({**finding, "attempt": number})
         return value
 
     def _run_case(self, item: rm.RenderedCase, source: Daemon, vosu: Daemon,
@@ -646,10 +662,12 @@ class Session:
         else:
             source_record = {"revision": PINNED_SOURCE_REVISION, "kind": "native",
                              "sha256": source["sha256"]}
+        return {"source": source_record, "vosu": build["vosu"], "client": self._client_attestation()}
+
+    def _client_attestation(self) -> dict[str, Any]:
         client = self.cfg["_artifact_identity"]["client"]
-        return {"source": source_record, "vosu": build["vosu"],
-                "client": {"variant": self.cfg["client"].lower(), "version": client["version"],
-                           "sha256": client["sha256"]}}
+        return {"variant": self.cfg["client"].lower(), "version": client["version"],
+                "sha256": client["sha256"]}
 
     def _assets(self) -> list[dict[str, Any]]:
         root = Path(self.golden_cfg["capture_root"]).resolve(strict=True)
@@ -915,7 +933,7 @@ def _serialize(value: Any) -> bytes:
 
 
 def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
-                   timeout: float = 3600.0,
+                   rehearsal_receipt: str | None, timeout: float = 3600.0,
                    build: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
                    client: Client | None = None,
                    operator: Callable[[str, str], None] = stderr_operator) -> int:
@@ -933,11 +951,14 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
             raise CaptureError(f"{path.name} exists; golden-capture never replaces evidence")
     if not out_path.parent.is_dir():
         raise CaptureError("the private capture directory does not exist")
+    from parity_golden_rehearsal import check_receipt  # It builds on this module.
+    receipt = check_receipt(rehearsal_receipt, cfg)
     if build is None:
         from parity_build import build_harness_artifacts
         build = build_harness_artifacts
     session = Session(cfg, scenario, out_path, timeout=timeout, build=build,
                       client=client or LiveClient(cfg), operator=operator)
+    session.transcript["rehearsal_receipt"] = receipt
     capture: dict[str, Any] | None = None
     failure: BaseException | None = None
     try:
@@ -971,6 +992,7 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
         "upstream_crashed": sum(case["attempts"][-1]["outcome"] == crash.OUTCOME
                                 for case in capture["cases"]),
         "retried_cases": sum(len(case["attempts"]) > 1 for case in capture["cases"]),
+        "findings": session.transcript["findings"],
         "vosu_sha256": capture["attestation"]["vosu"]["sha256"],
         "sha256": hashlib.sha256(outputs[0][1]).hexdigest(),
     }, sort_keys=True))

@@ -13,7 +13,9 @@ import re
 from typing import Any, Callable
 from urllib.parse import quote, unquote
 
-NORMALIZATION_VERSION = 1
+from route_security import ROUTE_PREFIXES
+
+NORMALIZATION_VERSION = 2
 
 RULE_IDS = (
     "header-date",
@@ -26,7 +28,7 @@ RULE_IDS = (
 )
 
 # (case family, record part, JSON Pointer) scopes approved for
-# client-timestamp-pointer. Version 1 approves none.
+# client-timestamp-pointer. Version 2 approves none.
 CLIENT_TIMESTAMP_POINTERS: tuple[tuple[str, str, str], ...] = ()
 
 DATE_PLACEHOLDER = "<golden:date>"
@@ -284,6 +286,18 @@ class RootRewriter:
         if self._pattern is None:
             return value, 0
         return self._pattern.subn(lambda match: self._lookup[match.group(0)], value)
+
+    def request_line(self, value: str) -> tuple[str, int]:
+        """`text` for a request line. A path-security target spells an absolute path right
+        after its route prefix (`/Songs//root/...`, `/files/beatmap/C%3A%5C...`): that
+        prefix's closing `/` ends a token, so the root starts at a token boundary."""
+        method, _, rest = value.partition(" ")
+        target, _, version = rest.rpartition(" ")
+        prefix = next((prefix for prefix in ROUTE_PREFIXES if target.startswith(prefix)), None)
+        if prefix is None:
+            return self.text(value)
+        spelled, count = self.text(target[len(prefix):])
+        return f"{method} {prefix}{spelled} {version}", count
 
     def without_synthetic(self, value: str) -> str:
         for form in self._synthetic:
