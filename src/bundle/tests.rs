@@ -62,6 +62,21 @@ fn executable_bundle_version_matches_the_package_and_its_game_manifest() {
 }
 
 #[test]
+fn bundled_manifests_match_the_exact_executable_inventory() {
+    let ids: Vec<_> = BUNDLED
+        .iter()
+        .map(|entry| {
+            PackageManifest::parse(entry.manifest)
+                .unwrap()
+                .into_plugin()
+                .unwrap()
+                .id
+        })
+        .collect();
+    assert_eq!(ids, BUNDLE.plugin_ids);
+}
+
+#[test]
 fn dashboard_instance_is_the_bundled_manifests_position() {
     let manifests = BUNDLED.iter().map(|entry| {
         PackageManifest::parse(entry.manifest)

@@ -18,7 +18,7 @@ pub static BUNDLE: Bundle = Bundle {
     // A child started from a replaced executable refuses to mix generations.
     plugin_host_identity: concat!("vosu/", env!("CARGO_PKG_VERSION"), "/plugin-host-1"),
     plugins: BUNDLED,
-    required: &[
+    plugin_ids: &[
         "vosu.osu",
         "vosu.adapter.upstream",
         "vosu.adapter.gosumemory",
@@ -26,6 +26,8 @@ pub static BUNDLE: Bundle = Bundle {
         "vosu.dashboard",
         "vosu.overlayhost",
         "vosu.toolhost",
+        #[cfg(feature = "test-harness")]
+        "vosu.testkit.echo",
     ],
     dashboard: "vosu.dashboard",
     tool_host: "vosu.toolhost",
@@ -39,7 +41,7 @@ pub static BUNDLE: Bundle = Bundle {
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
 
-/// Required game/provider entries precede optional test fixtures.
+/// Production entries in instance order, followed by the harness-only echo.
 pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
     vosu_core::plugin::BundledPlugin {
         manifest: vosu_osu::MANIFEST,
@@ -76,7 +78,7 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         action_schemas: &[],
         vtable: vosu_dashboard::vosu_plugin_vtable,
     },
-    // The overlay host's instance id is its position in BUNDLE.required.
+    // The overlay host's instance id is its position in BUNDLE.plugin_ids.
     vosu_core::plugin::BundledPlugin {
         manifest: vosu_overlay_host::MANIFEST,
         settings_schema: Some(vosu_overlay_host::SETTINGS_SCHEMA),

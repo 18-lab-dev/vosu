@@ -90,31 +90,43 @@ async fn required_plugin_failure_aborts_composition_and_shuts_down_owned_service
 }
 
 #[tokio::test]
-async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not() {
+async fn bundled_registry_refuses_extra_duplicate_unexpected_and_invalid_entries() {
     tokio::time::timeout(WAIT, async {
         let root = tempfile::tempdir().unwrap();
         let owner = TestDaemon::new(root.path(), &BUNDLE).await;
-        let broken = vosu_core::plugin::BundledPlugin {
-            manifest: "not a manifest",
-            settings_schema: None,
-            namespace_schemas: &[],
-            action_schemas: &[],
-            vtable: vosu_osu::vosu_plugin_vtable,
+        let last = BUNDLED.len() - 1;
+        let fixture = BUNDLED[last];
+        let extra_manifest = fixture
+            .manifest
+            .replace("vosu.testkit.echo", "fixture.extra");
+        let extra = vosu_core::plugin::BundledPlugin {
+            manifest: &extra_manifest,
+            ..fixture
         };
-        assert!(owner.load_bundled(std::slice::from_ref(&broken)).is_err());
+        let invalid = vosu_core::plugin::BundledPlugin {
+            manifest: "not a manifest",
+            ..fixture
+        };
+        let mut entries = BUNDLED.to_vec();
+        entries.push(extra);
+        let error = owner.load_bundled(&entries).unwrap_err();
+        assert!(error.to_string().contains("bundled registry has"));
         assert!(!owner.plugins().has_enabled_matchers());
-        let mut entries = BUNDLED[..BUNDLE.required.len()].to_vec();
-        entries.push(broken);
-        assert_eq!(
-            owner.load_bundled(&entries).unwrap(),
-            BUNDLE.required.len() as u64 + 1
-        );
+        entries.pop();
+
+        for (replacement, message) in [
+            (BUNDLED[0], "duplicate bundled plugin vosu.osu"),
+            (extra, "fixture.extra; expected vosu.testkit.echo"),
+            (invalid, "required bundled plugin vosu.testkit.echo failed"),
+        ] {
+            entries[last] = replacement;
+            let error = owner.load_bundled(&entries).unwrap_err();
+            assert!(error.to_string().contains(message), "{error}");
+            assert!(!owner.plugins().has_enabled_matchers());
+        }
+        assert_eq!(owner.load_bundled(BUNDLED).unwrap(), BUNDLED.len() as u64);
         assert!(owner.plugins().has_enabled_matchers());
         owner.shutdown().await.unwrap();
-        assert!(owner.output().contains(&format!(
-            "optional bundled plugin at index {} failed",
-            BUNDLE.required.len()
-        )));
     })
     .await
     .unwrap();
@@ -265,20 +277,56 @@ async fn bundled_adapter_registration_owns_routes_and_tears_down_feeds() {
 }
 
 #[tokio::test]
-async fn every_required_adapter_is_mandatory_before_any_plugin_is_created() {
+async fn every_bundled_entry_is_mandatory_before_any_plugin_is_created() {
     tokio::time::timeout(WAIT, async {
-        for omitted in 0..BUNDLE.required.len() {
+        for omitted in 0..BUNDLED.len() {
             let root = tempfile::tempdir().unwrap();
             let owner = TestDaemon::new(root.path(), &BUNDLE).await;
-            let mut entries = BUNDLED[..BUNDLE.required.len()].to_vec();
+            let mut entries = BUNDLED.to_vec();
             entries.remove(omitted);
             assert!(
                 owner.load_bundled(&entries).is_err(),
-                "required slot {omitted}"
+                "bundled slot {omitted}"
             );
             assert!(!owner.plugins().has_enabled_matchers());
             owner.shutdown().await.unwrap();
         }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn route_collision_aborts_daemon_composition_before_discovery() {
+    use vosu_surface::{
+        listener::ListenerRole,
+        routes::{RouteDescriptor, RoutePath},
+    };
+    tokio::time::timeout(WAIT, async {
+        let root = tempfile::tempdir().unwrap();
+        let mut owner = TestDaemon::new(root.path(), &BUNDLE).await;
+        let _lease = owner
+            .plugins()
+            .register_core_surface_routes(vec![(
+                RouteDescriptor {
+                    listener: ListenerRole::Overlay,
+                    method: "GET".into(),
+                    path: RoutePath::Exact("/json".into()),
+                    websocket: false,
+                },
+                Arc::new(UnreachableRoute),
+            )])
+            .unwrap();
+        let error = owner.compose(Arc::new(NoProcesses)).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("adapter registration failed: Collision"),
+            "{error}"
+        );
+        assert!(!owner.discovery_running().await);
+        assert!(owner.finish_run(Err(error)).await.is_err());
+        assert!(owner.shutdown_token().is_cancelled());
     })
     .await
     .unwrap();

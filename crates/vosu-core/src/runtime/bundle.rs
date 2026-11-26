@@ -1,6 +1,6 @@
 //! The bundled composition a daemon executable injects (M7 C0): its version
-//! and plugin-host identity, the explicit `BUNDLED` array with its required
-//! identities, and [`BundledHosts`], the one object through which core's
+//! and plugin-host identity, the explicit `BUNDLED` array with its exact
+//! inventory, and [`BundledHosts`], the one object through which core's
 //! runtime reaches the bundled hosts' in-process pieces. Core names no
 //! bundled crate; `src/main.rs` passes `&vosu::BUNDLE` to [`super::run_cli`].
 use std::{ffi::OsString, io, path::PathBuf, sync::Arc, time::Duration};
@@ -26,9 +26,8 @@ use crate::{
     },
 };
 
-/// One executable's bundled set. `required` lists the production plugin ids
-/// in `plugins` order (each required entry's instance id is its position);
-/// optional fixtures follow them.
+/// One executable's bundled set. `plugin_ids` names every entry in `plugins`
+/// in instance order, including any test-harness fixture.
 pub struct Bundle {
     /// The executable's package version (`CARGO_PKG_VERSION`): the updater,
     /// dashboard, catalog, package validation and log prefix all report it.
@@ -36,7 +35,7 @@ pub struct Bundle {
     /// `vosu plugin-host`'s build identity (`docs/v2/plugin-abi.md` §7.6).
     pub plugin_host_identity: &'static str,
     pub plugins: &'static [BundledPlugin<'static>],
-    pub required: &'static [&'static str],
+    pub plugin_ids: &'static [&'static str],
     /// The bundled dashboard host's id (A7.3 switch).
     pub dashboard: &'static str,
     /// The bundled web tool host's id.
@@ -59,11 +58,11 @@ impl Bundle {
         semver::Version::parse(self.version).expect("bundle version is valid semver")
     }
 
-    /// A required bundled plugin's instance id: its `plugins` position.
+    /// A bundled plugin's instance id: its `plugins` position.
     pub fn instance(&self, id: &str) -> Option<PluginInstanceId> {
-        self.required
+        self.plugin_ids
             .iter()
-            .position(|required| *required == id)
+            .position(|expected| *expected == id)
             .map(|index| PluginInstanceId::new(index as u64))
     }
 }

@@ -37,7 +37,7 @@ async fn dashboard_off_lists_the_dashboard_inactive_and_never_creates_or_mounts_
             .iter()
             .map(|plugin| plugin["id"].as_str().unwrap())
             .collect();
-        assert_eq!(&ids[..BUNDLE.required.len()], BUNDLE.required);
+        assert_eq!(ids, BUNDLE.plugin_ids);
         let dashboard = plugins
             .iter()
             .find(|plugin| plugin["id"] == BUNDLE.dashboard)

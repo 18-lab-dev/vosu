@@ -23,7 +23,7 @@ pub(crate) struct Asset {
 }
 
 /// Served as `GET /assets/<name>` on the dashboard listener, nowhere else.
-pub(crate) const ASSETS: &[Asset] = &[
+pub(crate) static ASSETS: &[Asset] = &[
     asset!("homepage.css", CSS),
     asset!("homepage-controls.css", CSS),
     asset!("homepage.js", JS),

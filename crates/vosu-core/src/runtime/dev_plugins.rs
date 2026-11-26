@@ -46,11 +46,48 @@ pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 /// it across instances is the whole point of `concurrent_dispatch`.
 const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
-/// Loads required production plugins first, followed by optional bundled
-/// fixtures. Required-plugin failure aborts composition; optional fixtures keep
-/// warn-and-continue behavior. Array positions remain reserved even on failure.
-/// `bundled` is `bundle.plugins` in production; `bundle` names the required
-/// identities, the dashboard and the version.
+/// Checks the complete ordered inventory before creating any instance.
+/// Array positions are stable even for the inactive dashboard.
+fn validate_bundled_ids(
+    bundle: &Bundle,
+    bundled: &[plugin::BundledPlugin<'_>],
+) -> std::io::Result<()> {
+    use vosu_plugin_api::manifest::PackageManifest;
+
+    if bundled.len() != bundle.plugin_ids.len() {
+        return Err(std::io::Error::other(format!(
+            "bundled registry has {} entries; expected {} ({})",
+            bundled.len(),
+            bundle.plugin_ids.len(),
+            bundle.plugin_ids.join(", ")
+        )));
+    }
+    for (index, (entry, &expected)) in bundled.iter().zip(bundle.plugin_ids).enumerate() {
+        let package = PackageManifest::parse(entry.manifest)
+            .and_then(PackageManifest::into_plugin)
+            .map_err(|error| {
+                std::io::Error::other(format!(
+                    "required bundled plugin {expected} failed: {error}"
+                ))
+            })?;
+        let id = package.id;
+        if bundle.plugin_ids[..index].contains(&id.as_str()) {
+            return Err(std::io::Error::other(format!(
+                "duplicate bundled plugin {id}"
+            )));
+        }
+        if id != expected {
+            return Err(std::io::Error::other(format!(
+                "bundled plugin at index {index} is {id}; expected {expected}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Loads exactly the executable's bundled inventory. A malformed manifest,
+/// unexpected identity or load/create failure aborts startup, including for the
+/// echo fixture when the executable includes it.
 ///
 /// With `dashboard` false (A7.3), the dashboard host is validated and keeps
 /// its position, so the registry still equals `BUNDLED`, but it is never
@@ -70,72 +107,45 @@ pub(super) fn load_bundled(
     roster: &mut Roster,
     dashboard: bool,
 ) -> std::io::Result<u64> {
-    if bundled.len() < bundle.required.len() {
-        return Err(std::io::Error::other(format!(
-            "required bundled plugin set is incomplete: {} are required",
-            bundle.required.join(", ")
-        )));
-    }
+    validate_bundled_ids(bundle, bundled)?;
     let version = bundle.version();
-    for (index, entry) in bundled.iter().enumerate() {
+    for (index, (entry, &expected)) in bundled.iter().zip(bundle.plugin_ids).enumerate() {
         let instance = PluginInstanceId::new(index as u64);
-        // Required identities and positions are explicit, not linker inventory.
+        let required_error = |error| {
+            std::io::Error::other(format!(
+                "required bundled plugin {expected} failed: {error}"
+            ))
+        };
         let loaded = plugin::load_bundled(
             &version,
             &source_snapshot(host, bundled, development_dirs),
             std::slice::from_ref(entry),
         )
-        .map_err(std::io::Error::other)
-        .and_then(|mut loaded| {
-            let loaded = loaded.remove(0);
-            match bundle.required.get(index) {
-                Some(required) if loaded.manifest().id != *required => Err(std::io::Error::other(
-                    format!("required bundled plugin {required} is missing"),
-                )),
-                _ => Ok(loaded),
-            }
-        });
-        let result = loaded.and_then(|loaded| {
-            if !dashboard && loaded.manifest().id == bundle.dashboard {
-                roster.inactive(
-                    instance,
-                    Trust::Bundled,
-                    &loaded,
-                    super::dashboard::DISABLED_REASON,
-                );
-                logger.info(format!(
-                    "Dashboard is off: {} is inactive ({}); set ENABLE_DASHBOARD = true in vosu.toml, leave {} unset and restart vosu to turn it on",
-                    bundle.dashboard,
-                    super::dashboard::DISABLED_REASON,
-                    super::dashboard::ENV,
-                ));
-                return Ok(());
-            }
-            let created = host
-                .create_instance(
-                    instance,
-                    &loaded,
-                    paths.bundled_plugin_data_dir(&loaded.manifest().id),
-                    Some(Arc::clone(pool)),
-                )
-                .map_err(std::io::Error::other);
-            let reported = created.as_ref().map(|_| ()).map_err(ToString::to_string);
-            roster.loaded(instance, Trust::Bundled, None, &loaded, reported);
-            created
-        });
-        if let Err(error) = result {
-            if let Some(required) = bundle.required.get(index) {
-                return Err(std::io::Error::other(format!(
-                    "required bundled plugin {required} failed: {error}"
-                )));
-            }
-            logger.warn(format!(
-                "optional bundled plugin at index {index} failed: {error}"
+        .map_err(required_error)?
+        .remove(0);
+        if !dashboard && expected == bundle.dashboard {
+            roster.inactive(
+                instance,
+                Trust::Bundled,
+                &loaded,
+                super::dashboard::DISABLED_REASON,
+            );
+            logger.info(format!(
+                "Dashboard is off: {} is inactive ({}); set ENABLE_DASHBOARD = true in vosu.toml, leave {} unset and restart vosu to turn it on",
+                bundle.dashboard,
+                super::dashboard::DISABLED_REASON,
+                super::dashboard::ENV,
             ));
-            if !roster.has_instance(instance) {
-                roster.refused(instance, Trust::Bundled, None, error.to_string());
-            }
+            continue;
         }
+        host.create_instance(
+            instance,
+            &loaded,
+            paths.bundled_plugin_data_dir(expected),
+            Some(Arc::clone(pool)),
+        )
+        .map_err(required_error)?;
+        roster.loaded(instance, Trust::Bundled, None, &loaded, Ok(()));
     }
     Ok(bundled.len() as u64)
 }

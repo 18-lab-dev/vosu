@@ -19,7 +19,7 @@ static VERSION_FIXTURE: Bundle = Bundle {
     version: "23.0.0-beta.5",
     plugin_host_identity: "fixture-host",
     plugins: &[],
-    required: &[],
+    plugin_ids: &[],
     dashboard: "fixture.dashboard",
     tool_host: "fixture.toolhost",
     overlay_root: OverlayRootSetting { plugin: "fixture.overlayhost", key: "fixture.root" },

@@ -198,11 +198,6 @@ impl Roster {
                 .is_some_and(|package| package.id == id)
         })
     }
-
-    /// Whether `instance` is already listed.
-    pub(super) fn has_instance(&self, instance: PluginInstanceId) -> bool {
-        self.0.iter().any(|plugin| plugin.instance == instance)
-    }
 }
 
 /// The `/api/plugins` routes.
