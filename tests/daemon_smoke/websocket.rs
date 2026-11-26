@@ -134,6 +134,9 @@ async fn read_server_frame(
 /// A dashboard card preview's socket is not a browser source: with one stock
 /// command socket open, the overlay still counts one connection. The
 /// preview's own reply proves its connection is live before the status read.
+// Only the Linux production-binary smoke calls this; a Windows harness build
+// compiles the rest of this file without it.
+#[cfg(target_os = "linux")]
 async fn assert_preview_socket_not_counted(port: u16, client: &reqwest::Client, management: &str) {
     let (mut preview, mut buffer) = websocket_connect(
         port,
