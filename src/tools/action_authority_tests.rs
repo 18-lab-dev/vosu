@@ -147,10 +147,7 @@ fn v2_manifest_rejects_wrong_kind_legacy_fields_internal_and_duplicates() {
         text.replace(&format!("={}", env!("CARGO_PKG_VERSION")), "=0.0.0"),
         format!("{text}\n[[provides]]\nid='field:fixture.game'\nversion='1.0.0'"),
     ] {
-        assert!(
-            manifest::ToolPackage::parse(&invalid).is_err(),
-            "{invalid}"
-        );
+        assert!(manifest::ToolPackage::parse(&invalid).is_err(), "{invalid}");
     }
 }
 
@@ -199,7 +196,7 @@ async fn live_versions_exact_ids_optional_grants_and_exact_launch_job_ownership(
     let registry = Arc::new(Registry::default());
     registry.insert(ACTION, "1.4.2");
     host.set_action_providers(registry.clone(), registry.clone());
-    let view = host.view(&host.entry("action-web").unwrap());
+    let view = host.tool_view(&host.entry("action-web").unwrap());
     assert_eq!(view["requires"][0]["id"], format!("action:{ACTION}"));
     assert_eq!(view["requires"][0]["satisfied"], true);
     assert_eq!(view["optional"][0]["satisfied"], false);
@@ -232,7 +229,7 @@ async fn live_versions_exact_ids_optional_grants_and_exact_launch_job_ownership(
     assert!(host.authorize_action_session(&first, OPTIONAL).is_err());
     registry.insert(OPTIONAL, "2.1.0");
     assert_eq!(
-        host.view(&host.entry("action-web").unwrap())["optional"][0]["satisfied"],
+        host.tool_view(&host.entry("action-web").unwrap())["optional"][0]["satisfied"],
         true
     );
     assert!(host.authorize_action_session(&first, OPTIONAL).is_ok());
@@ -381,8 +378,7 @@ async fn launch_sessions_are_bounded_and_revocation_releases_capacity() {
             expires: Instant::now() + Duration::from_secs(60),
         },
     );
-    let response =
-        host.exchange_session(b"{\"tool\":\"action-web\",\"code\":\"capacity-code\"}");
+    let response = host.exchange_session(b"{\"tool\":\"action-web\",\"code\":\"capacity-code\"}");
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(host.sessions.lock().len(), 1024);
     host.revoke_action_session("0");

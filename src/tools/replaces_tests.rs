@@ -1,30 +1,30 @@
 use super::*;
+use serde_json::{Value, json};
 use vosu_proptest::bounded;
 
-fn put(root: &Path, id: &str, requires: &str) {
+/// A 1.x package: listed as `needs-2.0-update`, never parsed or run.
+fn put(root: &Path, id: &str) {
     fs::create_dir_all(root.join("web")).unwrap();
-    fs::write(root.join("tool.toml"), format!("manifest_version=1\nid='{id}'\nname='{id}'\nversion='1.0.0'\n[ui]\nroot='web'\n{requires}")).unwrap();
+    fs::write(
+        root.join("tool.toml"),
+        format!("manifest_version=1\nid='{id}'\nname='{id}'\nversion='1.0.0'\n[ui]\nroot='web'\n"),
+    )
+    .unwrap();
     fs::write(root.join("web/index.html"), id).unwrap();
 }
-async fn host(root: &Path) -> Arc<ToolHost> {
-    bounded!(ToolHost::new(
+async fn host(root: &Path) -> Arc<ToolRegistry> {
+    bounded!(ToolRegistry::new(
         root.join("config"),
         root.join("tools"),
         root.join("cache"),
         ExtraRoots { dev: Vec::new() },
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
-        Arc::new(|| json!({})),
     ))
     .unwrap()
 }
-async fn fixture(root: &Path) -> Arc<ToolHost> {
-    put(&root.join("tools/old"), "old", "");
-    put(
-        &root.join("tools/consumer"),
-        "consumer",
-        "[[requires]]\nid='old'\nversion='^1'\n",
-    );
+async fn fixture(root: &Path) -> Arc<ToolRegistry> {
+    put(&root.join("tools/old"), "old");
     let state = Saved {
         enabled: Some(false),
         trusted: true,
@@ -51,7 +51,7 @@ async fn fixture(root: &Path) -> Arc<ToolHost> {
 }
 
 /// The durable intent a 1.x catalog rename published before moving anything.
-fn journal(host: &ToolHost) {
+fn journal(host: &ToolRegistry) {
     let mut state = host.saved.lock().get("old").cloned().unwrap();
     state.replaces.push("old".into());
     atomic_json(
@@ -69,11 +69,11 @@ fn journal(host: &ToolHost) {
 }
 
 #[tokio::test]
-async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idempotently() {
+async fn every_crash_boundary_recovers_data_settings_and_state_idempotently() {
     for cut in 0..8 {
         let root = tempfile::tempdir().unwrap();
         let original = bounded!(fixture(root.path()));
-        put(&original.replacement_stage(), "new", "");
+        put(&original.replacement_stage(), "new");
         journal(&original);
         let paths = [
             (original.replacement_stage(), original.data.join("new")),
@@ -131,31 +131,12 @@ async fn every_crash_boundary_recovers_data_settings_state_and_dependencies_idem
         assert!(state.trusted);
         assert_eq!(state.catalog_source.as_deref(), Some("fixture/source"));
         assert!(recovered.saved.lock().get("old").is_none());
-        let consumer = recovered.entry("consumer").unwrap();
-        assert_eq!(recovered.view(&consumer)["requires"][0]["satisfied"], true);
-        assert!(
-            recovered
-                .blocked(&consumer)
-                .unwrap()
-                .contains("unavailable dependency")
-        );
-        recovered.saved.lock().get_mut("new").unwrap().enabled = Some(true);
-        assert!(recovered.blocked(&consumer).is_none());
-        assert_eq!(recovered.dependency("old").unwrap().id, "new");
-        let mut order = Vec::new();
-        recovered
-            .visit(
-                "consumer",
-                &mut HashSet::new(),
-                &mut HashSet::new(),
-                &mut order,
-            )
-            .unwrap();
-        assert_eq!(order, ["new", "consumer"]);
-        assert_eq!(
-            recovered.view(&recovered.entry("new").unwrap())["required_by"],
-            json!(["consumer"])
-        );
+        // The recovered 1.x package is still a legacy entry: listed with its
+        // retained trust, never presented or launchable.
+        let view = recovered.tool_view(&recovered.entry("new").unwrap());
+        assert_eq!(view["status_detail"], NEEDS_UPDATE);
+        assert_eq!(view["trusted"], true);
+        assert!(recovered.tool_host_views().borrow().tools.is_empty());
         bounded!(recovered.shutdown());
     }
 }

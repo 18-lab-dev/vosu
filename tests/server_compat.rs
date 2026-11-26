@@ -32,6 +32,7 @@ use std::{
 };
 use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
+use vosu_surface::files::content_type;
 
 use axum::{
     body::{Body, Bytes, to_bytes},
@@ -55,7 +56,7 @@ use vosu::{
             CommandAction, CommandClient, CommandProcessor, Relay, RelaySink, SettingsProvider,
         },
         files::{
-            ByteRange, MissingKind, RangeError, ResourceOutcome, content_type, parse_range,
+            ByteRange, MissingKind, RangeError, ResourceOutcome, parse_range,
             resolve_encoded_resource, trailing_slash_location,
         },
         pages::{PageLookup, PageService},

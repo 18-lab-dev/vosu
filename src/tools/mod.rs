@@ -181,7 +181,11 @@ fn inspect(path: &Path) -> Found {
                 legacy,
                 error: (!legacy).then(|| "manifest.toml: not found".into()),
                 settings: None,
-                fingerprint: if legacy { b"legacy".to_vec() } else { Vec::new() },
+                fingerprint: if legacy {
+                    b"legacy".to_vec()
+                } else {
+                    Vec::new()
+                },
             };
         }
         Err(error) => {
@@ -337,7 +341,10 @@ impl ToolRegistry {
         self.config.join("settings").join(format!("{id}.json"))
     }
     /// Effective values (defaults plus stored); empty without a schema.
-    fn settings(&self, entry: &Entry) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    fn settings(
+        &self,
+        entry: &Entry,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
         let stored = match fs::read(self.tool_settings(&entry.id)) {
             Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|e| e.to_string())?),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,

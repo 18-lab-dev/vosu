@@ -61,13 +61,20 @@ fn request(method: Method, path: &str) -> Request {
         .body(Body::empty())
         .unwrap()
 }
-async fn post(host: &Arc<ToolRegistry>, path: &str, body: &'static [u8]) -> axum::response::Response {
+async fn post(
+    host: &Arc<ToolRegistry>,
+    path: &str,
+    body: &'static [u8],
+) -> axum::response::Response {
     bounded!(host.dashboard(request(Method::POST, path), Bytes::from_static(body)))
 }
 async fn code(host: &Arc<ToolRegistry>, id: &str) -> String {
     let response = post(host, &format!("/api/tools/{id}/launch"), b"").await;
     assert_eq!(response.status(), StatusCode::OK);
-    let url = bounded!(value(response))["url"].as_str().unwrap().to_owned();
+    let url = bounded!(value(response))["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     url.split("vosu-launch=")
         .nth(1)
         .unwrap()
@@ -92,7 +99,11 @@ async fn legacy_tool_toml_is_listed_disabled_and_never_parsed_run_or_served() {
     let state = json!({"legacy": {"enabled": true, "trusted": true, "autostart": true,
         "catalog_source": "owner/tools", "replaces": []}});
     atomic_json(&config.join("state.json"), &state).unwrap();
-    atomic_json(&config.join("settings/legacy.json"), &json!({"key": "kept"})).unwrap();
+    atomic_json(
+        &config.join("settings/legacy.json"),
+        &json!({"key": "kept"}),
+    )
+    .unwrap();
     let tool_data = root.path().join("tool-data/legacy");
     fs::create_dir_all(&tool_data).unwrap();
     fs::write(tool_data.join("save"), "untouched").unwrap();
@@ -105,7 +116,10 @@ async fn legacy_tool_toml_is_listed_disabled_and_never_parsed_run_or_served() {
         assert_eq!(view["ui_url"], Value::Null);
         assert_eq!(view["icon_url"], Value::Null);
     }
-    assert_eq!(host.tool_view(&host.entry("legacy").unwrap())["trusted"], true);
+    assert_eq!(
+        host.tool_view(&host.entry("legacy").unwrap())["trusted"],
+        true
+    );
     for action in ["enable", "trust", "launch"] {
         let response = post(&host, &format!("/api/tools/legacy/{action}"), b"{}").await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{action}");
@@ -127,7 +141,10 @@ async fn legacy_tool_toml_is_listed_disabled_and_never_parsed_run_or_served() {
         fs::read_to_string(config.join("settings/legacy.json")).unwrap(),
         "{\n  \"key\": \"kept\"\n}\n"
     );
-    assert_eq!(fs::read_to_string(tool_data.join("save")).unwrap(), "untouched");
+    assert_eq!(
+        fs::read_to_string(tool_data.join("save")).unwrap(),
+        "untouched"
+    );
     assert!(legacy.join("tool.toml").is_file());
 }
 
@@ -189,7 +206,11 @@ async fn tool_view_has_exactly_the_2_0_fields() {
     assert_eq!(view["icon_url"], "http://127.0.0.1:25150/tools/demo/_icon");
     assert_eq!(view["banner_url"], Value::Null);
     // No path, process, data, service, CLI or permission field remains.
-    assert!(!view.to_string().contains(&root.path().display().to_string()));
+    assert!(
+        !view
+            .to_string()
+            .contains(&root.path().display().to_string())
+    );
     for (method, path) in [
         (Method::GET, "/api/tools/demo/logs"),
         (Method::POST, "/api/tools/demo/start"),
@@ -252,8 +273,14 @@ async fn launch_codes_are_bound_single_use_and_expiring() {
     assert_eq!(code.len(), 64);
     // Another tool's code is consumed and refused.
     let theirs = bounded!(super::tests::code(&host, "other"));
-    assert_eq!(exchange(&host, "demo", &theirs).status(), StatusCode::FORBIDDEN);
-    assert_eq!(exchange(&host, "other", &theirs).status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        exchange(&host, "demo", &theirs).status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        exchange(&host, "other", &theirs).status(),
+        StatusCode::FORBIDDEN
+    );
     let response = exchange(&host, "demo", code);
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
@@ -264,7 +291,10 @@ async fn launch_codes_are_bound_single_use_and_expiring() {
         .to_owned();
     assert!(host.sessions.lock().contains_key(&session));
     // Counterexample: the same launch code replayed.
-    assert_eq!(exchange(&host, "demo", code).status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        exchange(&host, "demo", code).status(),
+        StatusCode::FORBIDDEN
+    );
     host.codes.lock().insert(
         "expired".into(),
         Code {
@@ -272,8 +302,15 @@ async fn launch_codes_are_bound_single_use_and_expiring() {
             expires: Instant::now() - Duration::from_secs(1),
         },
     );
-    assert_eq!(exchange(&host, "demo", "expired").status(), StatusCode::FORBIDDEN);
-    for body in [&b"not json"[..], b"{\"tool\":\"demo\"}", b"{\"code\":\"x\"}"] {
+    assert_eq!(
+        exchange(&host, "demo", "expired").status(),
+        StatusCode::FORBIDDEN
+    );
+    for body in [
+        &b"not json"[..],
+        b"{\"tool\":\"demo\"}",
+        b"{\"code\":\"x\"}",
+    ] {
         assert_eq!(
             host.exchange_session(body).status(),
             StatusCode::BAD_REQUEST
@@ -285,7 +322,10 @@ async fn launch_codes_are_bound_single_use_and_expiring() {
         post(&host, "/api/tools/demo/disable", b"").await.status(),
         StatusCode::OK
     );
-    assert_eq!(exchange(&host, "demo", &pending).status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        exchange(&host, "demo", &pending).status(),
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         post(&host, "/api/tools/demo/launch", b"").await.status(),
         StatusCode::BAD_REQUEST
@@ -367,8 +407,14 @@ async fn disable_uninstall_and_replacement_invalidate_sessions_and_cancel_their_
                 bounded!(host.rescan());
             }
         }
-        assert!(host.authenticate_action_session(&token).is_err(), "{invalidate}");
-        assert!(host.authenticate_action_session(&kept).is_err(), "{invalidate}");
+        assert!(
+            host.authenticate_action_session(&token).is_err(),
+            "{invalidate}"
+        );
+        assert!(
+            host.authenticate_action_session(&kept).is_err(),
+            "{invalidate}"
+        );
         assert_eq!(
             exchange(&host, "demo", &pending).status(),
             StatusCode::FORBIDDEN,
@@ -395,14 +441,24 @@ async fn tool_host_view_presents_servable_packages_and_revokes_replaced_leases()
     let host = bounded!(host(root.path(), vec![dev.clone(), legacy]));
     let views = host.tool_host_views();
     let first = views.borrow().clone();
-    assert_eq!(first.dashboard_origin.as_deref(), Some("http://127.0.0.1:25151"));
+    assert_eq!(
+        first.dashboard_origin.as_deref(),
+        Some("http://127.0.0.1:25151")
+    );
     assert_eq!(first.tools.len(), 1);
     let tool = first.tools[0].clone();
     assert_eq!((tool.id.as_str(), tool.servable), ("demo", true));
-    assert_eq!((tool.ui_root.as_str(), tool.ui_entry.as_str()), ("web", "index.html"));
+    assert_eq!(
+        (tool.ui_root.as_str(), tool.ui_entry.as_str()),
+        ("web", "index.html")
+    );
     assert_eq!(tool.icon.as_deref(), Some("art/icon.svg"));
     assert_eq!(tool.settings.as_deref(), Some(&b"{}"[..]));
-    let file = bounded!(tool.root.open(&RelativeChild::parse("web/index.html").unwrap())).unwrap();
+    let file = bounded!(
+        tool.root
+            .open(&RelativeChild::parse("web/index.html").unwrap())
+    )
+    .unwrap();
     assert_eq!(bounded!(file.read(0, 64)).unwrap(), b"tool-ui");
     // An unchanged registry is not republished.
     bounded!(host.rescan());
@@ -413,12 +469,20 @@ async fn tool_host_view_presents_servable_packages_and_revokes_replaced_leases()
     assert!(!disabled.tools[0].servable);
     post(&host, "/api/tools/demo/enable", b"").await;
     assert!(views.borrow().tools[0].servable);
-    fs::write(dev.join("manifest.toml"), manifest("demo", "").replace("1.0.0", "1.1.0")).unwrap();
+    fs::write(
+        dev.join("manifest.toml"),
+        manifest("demo", "").replace("1.0.0", "1.1.0"),
+    )
+    .unwrap();
     bounded!(host.rescan());
     assert_eq!(views.borrow().tools[0].version, "1.1.0");
     // The replaced package's lease stops opening files.
     assert_eq!(
-        bounded!(tool.root.open(&RelativeChild::parse("web/index.html").unwrap())).err(),
+        bounded!(
+            tool.root
+                .open(&RelativeChild::parse("web/index.html").unwrap())
+        )
+        .err(),
         Some(FileError::TargetGone)
     );
     bounded!(host.shutdown());
@@ -439,7 +503,13 @@ async fn package_lease_is_confined_to_the_package() {
         "directories are not files"
     );
     #[cfg(unix)]
-    assert!(bounded!(tool.root.open(&RelativeChild::parse("web/link.txt").unwrap())).is_err());
+    assert!(
+        bounded!(
+            tool.root
+                .open(&RelativeChild::parse("web/link.txt").unwrap())
+        )
+        .is_err()
+    );
     bounded!(host.shutdown());
 }
 
@@ -626,7 +696,10 @@ async fn password_settings_never_reach_the_dashboard_or_the_tool_host() {
     assert_eq!(effective(), "hunter2");
     assert!(!bounded!(read()).to_string().contains("hunter2"));
     // The tool host's `_settings` values omit password settings entirely.
-    let presented = host.tool_host_views().borrow().tools[0].settings.clone().unwrap();
+    let presented = host.tool_host_views().borrow().tools[0]
+        .settings
+        .clone()
+        .unwrap();
     assert_eq!(
         serde_json::from_slice::<Value>(&presented).unwrap(),
         json!({"name": "z"})

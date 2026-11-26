@@ -91,7 +91,11 @@ impl Routes {
                 );
             }
             path if get && let Some(body) = assets::design_system(path) => {
-                return bytes(200, vosu_surface::files::content_type(Path::new(path)), body);
+                return bytes(
+                    200,
+                    vosu_surface::files::content_type(Path::new(path)),
+                    body,
+                );
             }
             _ => {}
         }
@@ -163,8 +167,8 @@ impl Routes {
         } else {
             decoded.clone()
         };
-        let directory = (!decoded.is_empty() && !decoded.ends_with('/'))
-            .then(|| format!("{}/", request.path));
+        let directory =
+            (!decoded.is_empty() && !decoded.ends_with('/')).then(|| format!("{}/", request.path));
         serve(&tool, &ui_path(&tool, &relative), get, None, directory).await
     }
 
@@ -183,11 +187,7 @@ impl Routes {
             serde_json::json!(view.dashboard_origin),
             assets::BRIDGE
         );
-        bytes(
-            200,
-            "text/javascript; charset=utf-8",
-            Bytes::from(source),
-        )
+        bytes(200, "text/javascript; charset=utf-8", Bytes::from(source))
     }
 }
 

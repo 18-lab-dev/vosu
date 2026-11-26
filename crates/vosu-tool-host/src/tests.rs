@@ -184,7 +184,10 @@ async fn static_ui_art_settings_and_deleted_proxy_paths() {
         (200, &br#"{"values":{"label":"hi"}}"#[..])
     );
     assert_eq!(
-        respond(&routes, "HEAD", "/tools/demo/_settings").await.0.status,
+        respond(&routes, "HEAD", "/tools/demo/_settings")
+            .await
+            .0
+            .status,
         404
     );
     // Not servable: art still identifies the tool; UI and settings are 503.
@@ -225,7 +228,10 @@ async fn bridge_theme_design_and_design_system_bytes_are_exact() {
         )
     );
     let (_, body) = respond(&routes, "GET", routes::DESIGN).await;
-    assert_eq!(&body[..], include_bytes!("../../../assets/server/design.html"));
+    assert_eq!(
+        &body[..],
+        include_bytes!("../../../assets/server/design.html")
+    );
     for (path, bytes) in assets::DESIGN_SYSTEM {
         let (response, body) = respond(&routes, "GET", path).await;
         assert_eq!((response.status, &body[..]), (200, *bytes), "{path}");
@@ -233,15 +239,19 @@ async fn bridge_theme_design_and_design_system_bytes_are_exact() {
     // The latest view replaces the metadata; a dashboard that is off is null.
     publish(&sender, 2, Vec::new());
     let (_, body) = respond(&routes, "GET", routes::BRIDGE).await;
-    assert!(std::str::from_utf8(&body)
-        .unwrap()
-        .starts_with("const metadata = [];\n"));
+    assert!(
+        std::str::from_utf8(&body)
+            .unwrap()
+            .starts_with("const metadata = [];\n")
+    );
     let (off_sender, off_views) = tool_view::channel(None);
     drop(off_sender);
     let (_, body) = respond(&routes::Routes { views: off_views }, "GET", routes::BRIDGE).await;
-    assert!(std::str::from_utf8(&body)
-        .unwrap()
-        .contains("const dashboardUrl = null;\n"));
+    assert!(
+        std::str::from_utf8(&body)
+            .unwrap()
+            .contains("const dashboardUrl = null;\n")
+    );
     // Exact methods only.
     for method in ["HEAD", "POST"] {
         assert_eq!(respond(&routes, method, routes::BRIDGE).await.0.status, 404);

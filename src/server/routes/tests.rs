@@ -4,6 +4,8 @@ use vosu_adapter_upstream::calculate::ModsInput;
 use vosu_proptest::bounded;
 #[path = "api_v1_tests.rs"]
 mod api_v1;
+#[path = "tools_tests.rs"]
+mod tools;
 
 #[test]
 fn exact_methods_never_add_head_or_options() {
@@ -48,56 +50,6 @@ fn counter_root_open_is_an_exact_post_route() {
         classify(&Method::POST, "/api/counters/open/counter"),
         Some(Endpoint::CounterOpen)
     );
-}
-
-#[tokio::test]
-async fn tool_autostart_put_is_exact_and_requires_dashboard_csrf() {
-    let path = "/api/tools/fixture/autostart";
-    assert_eq!(classify(&Method::PUT, path), Some(Endpoint::ToolManagement));
-    for path in [
-        "/api/tools/fixture/autostart/",
-        "/api/tools/fixture/settings",
-        "/api/tools/fixture/extra/autostart",
-        "/api/tools//autostart",
-    ] {
-        assert_eq!(classify(&Method::PUT, path), None, "{path}");
-    }
-    for dashboard in [false, true] {
-        for csrf in [false, true] {
-            for origin in ["http://localhost:24860", "http://localhost:24861"] {
-                let (providers, origins) = split_providers(dashboard);
-                let mut request =
-                    make_request(Method::PUT, path, Body::from(r#"{"autostart":true}"#));
-                request.headers_mut().insert(
-                    header::HOST,
-                    HeaderValue::from_static(if dashboard {
-                        "localhost:24861"
-                    } else {
-                        "localhost:24860"
-                    }),
-                );
-                request
-                    .headers_mut()
-                    .insert(header::ORIGIN, HeaderValue::from_static(origin));
-                if csrf {
-                    request
-                        .headers_mut()
-                        .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
-                }
-                let status = bounded!(dispatch(State(providers), request)).status();
-                assert_eq!(
-                    status,
-                    if !dashboard {
-                        StatusCode::NOT_FOUND
-                    } else if csrf && origin == "http://localhost:24861" {
-                        StatusCode::OK
-                    } else {
-                        StatusCode::FORBIDDEN
-                    }
-                );
-            }
-        }
-    }
 }
 
 #[tokio::test]

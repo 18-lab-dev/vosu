@@ -285,14 +285,13 @@ async fn listed_art_is_proxied_typed_cached_per_snapshot_and_inert() {
 #[tokio::test]
 async fn removed_immediate_install_routes_never_install_or_start_a_job() {
     let root = tempfile::tempdir().unwrap();
-    let host = bounded!(vosu::tools::ToolHost::new(
+    let host = bounded!(vosu::tools::ToolRegistry::new(
         root.path().join("config"),
         root.path().join("tools"),
         root.path().join("cache"),
         vosu::tools::ExtraRoots { dev: Vec::new() },
         "http://127.0.0.1:24050".into(),
         "http://127.0.0.1:24051".into(),
-        Arc::new(|| json!({})),
     ))
     .unwrap();
     for (method, path) in [

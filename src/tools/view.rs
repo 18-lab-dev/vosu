@@ -25,9 +25,13 @@ impl PartialEq for Key {
     }
 }
 
+/// The dashboard origin and per-tool keys of the last published view.
+type Presented = (Option<String>, Vec<Key>);
+
 pub(super) struct Publisher {
     sender: ToolHostViewSender,
-    last: Mutex<(u64, Option<(Option<String>, Vec<Key>)>)>,
+    /// The last generation and what it presented.
+    last: Mutex<(u64, Option<Presented>)>,
 }
 impl Publisher {
     pub(super) fn new(dashboard: Option<String>) -> Self {

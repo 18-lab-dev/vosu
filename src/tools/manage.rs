@@ -41,7 +41,9 @@ impl ToolRegistry {
             .trim_start_matches('/');
         if path.is_empty() && request.method() == Method::GET {
             let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
-            return Ok(json!({"tools": entries.iter().map(|e| self.tool_view(e)).collect::<Vec<_>>()}));
+            return Ok(
+                json!({"tools": entries.iter().map(|e| self.tool_view(e)).collect::<Vec<_>>()}),
+            );
         }
         let (id, action) = path.split_once('/').unwrap_or((path, ""));
         let entry = self.entry(id)?;
