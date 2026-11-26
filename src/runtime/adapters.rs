@@ -109,12 +109,11 @@ impl Adapters {
             ],
             &self.files,
         );
-        let mut leases =
-            vec![
-                crate::server::service::reserve_core_routes(host).map_err(|error| {
-                    io::Error::other(format!("core route reservation failed: {error:?}"))
-                })?,
-            ];
+        let mut leases = vec![
+            crate::server::service::reserve_core_routes(host, dashboard).map_err(|error| {
+                io::Error::other(format!("core route reservation failed: {error:?}"))
+            })?,
+        ];
         for (requester, group) in self.requesters.iter().zip(groups) {
             leases.push(requester.register_routes(group).map_err(|error| {
                 io::Error::other(format!("adapter registration failed: {error:?}"))

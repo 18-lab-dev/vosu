@@ -3,101 +3,92 @@ use vosu_surface::routes::{
     ProviderResponse, ResponseBody, ResponseFuture, RouteProvider, SurfaceRequest, SurfaceResponse,
 };
 
+/// Core's own routes (A7 route inventory), reserved so no bundled host can
+/// register them. Every row is exact, a template or a `Children` matcher
+/// except `/api/v1` on the overlay role, which core's API-v1 router serves.
+/// The page shells, every `/assets/<name>` and `/favicon.ico` are host
+/// registrations (the dashboard host's set on the dashboard role, the tool
+/// host's design-system set on both), so core reserves none of them.
+///
+/// With `dashboard` off (A7.3) core reserves nothing on the dashboard role:
+/// no dashboard listener binds, so no route of its own may exist there.
 pub fn reserve_core_routes(
     host: &Arc<vosu_core::plugin::PluginHost>,
+    dashboard: bool,
 ) -> Result<vosu_surface::routes::RegistrationLease, vosu_surface::routes::RegistrationError> {
     use vosu_surface::{
-        listener::ListenerRole,
+        listener::ListenerRole::{self, Dashboard, Overlay},
         routes::{RouteDescriptor, RoutePath},
     };
     let mut descriptors = Vec::new();
-    for listener in [ListenerRole::Overlay, ListenerRole::Dashboard] {
-        for (path, methods, prefix) in [
-            ("/", &["GET"][..], false),
-            ("/settings", &["GET"][..], false),
-            ("/available", &["GET"][..], false),
-            ("/favicon.ico", &["GET"][..], false),
-            ("/assets", &["GET"][..], true),
-            ("/api/dashboard", &["GET"][..], true),
-            ("/api/keys", &["GET", "POST"][..], false),
-            ("/api/settingsSave", &["POST"][..], false),
-            ("/api/runUpdates", &["POST"][..], false),
-            ("/api/generateReport", &["POST"][..], false),
-            ("/tools", &["GET"][..], false),
-            (
-                "/api/v1",
-                &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"][..],
-                true,
-            ),
+    let mut reserve = |listener: ListenerRole, method: &str, path: RoutePath| {
+        descriptors.push(RouteDescriptor {
+            listener,
+            method: method.into(),
+            path,
+            websocket: false,
+        });
+    };
+    let roles: &[ListenerRole] = if dashboard {
+        &[Overlay, Dashboard]
+    } else {
+        &[Overlay]
+    };
+    // The O→D page redirects (404 while the dashboard is off).
+    for path in ["/", "/settings", "/available", "/tools"] {
+        reserve(Overlay, "GET", RoutePath::Exact(path.into()));
+    }
+    for &listener in roles {
+        for (method, path) in [
+            ("GET", "/api/dashboard"),
+            ("GET", "/api/dashboard/status"),
+            ("GET", "/api/keys"),
+            ("POST", "/api/keys"),
+            ("POST", "/api/settingsSave"),
+            ("POST", "/api/runUpdates"),
+            ("POST", "/api/generateReport"),
         ] {
-            // The dashboard host registers its page shells, `GET /tools` and
-            // its asset names exactly on the dashboard role (A7.1), so core
-            // reserves none of those paths, nor any `/assets` prefix, there.
-            if listener == ListenerRole::Dashboard
-                && matches!(path, "/" | "/settings" | "/available" | "/assets" | "/tools")
-            {
-                continue;
-            }
-            for method in methods {
-                descriptors.push(RouteDescriptor {
-                    listener,
-                    method: (*method).into(),
-                    path: if prefix {
-                        RoutePath::Prefix(path.into())
-                    } else {
-                        RoutePath::Exact(path.into())
-                    },
-                    websocket: false,
-                });
-            }
+            reserve(listener, method, RoutePath::Exact(path.into()));
         }
+    }
+    for method in ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+        reserve(Overlay, method, RoutePath::Prefix("/api/v1".into()));
     }
     // Core's exact tool routes (A7.2); no `/tools` or `/api/tools` prefix
     // reservation survives, so a deleted route has no owner at all.
-    let tool = |listener, method: &str, path: RoutePath| RouteDescriptor {
-        listener,
-        method: method.into(),
-        path,
-        websocket: false,
-    };
-    descriptors.push(tool(
-        ListenerRole::Overlay,
+    reserve(
+        Overlay,
         "POST",
         RoutePath::Exact("/tools/_host/v1/session".into()),
-    ));
-    descriptors.push(tool(
-        ListenerRole::Dashboard,
-        "GET",
-        RoutePath::Exact("/api/tools".into()),
-    ));
-    for (method, path) in [
-        ("GET", "/api/tools/{id}"),
-        ("GET", "/api/tools/{id}/settings"),
-        ("POST", "/api/tools/{id}/settings"),
-        ("POST", "/api/tools/{id}/enable"),
-        ("POST", "/api/tools/{id}/disable"),
-        ("POST", "/api/tools/{id}/trust"),
-        ("POST", "/api/tools/{id}/launch"),
-    ] {
-        descriptors.push(tool(
-            ListenerRole::Dashboard,
-            method,
-            RoutePath::Template(path.into()),
-        ));
+    );
+    if dashboard {
+        reserve(Dashboard, "GET", RoutePath::Exact("/api/settings".into()));
+        reserve(Dashboard, "GET", RoutePath::Exact("/api/tools".into()));
+        for (method, path) in [
+            ("GET", "/api/tools/{id}"),
+            ("GET", "/api/tools/{id}/settings"),
+            ("POST", "/api/tools/{id}/settings"),
+            ("POST", "/api/tools/{id}/enable"),
+            ("POST", "/api/tools/{id}/disable"),
+            ("POST", "/api/tools/{id}/trust"),
+            ("POST", "/api/tools/{id}/launch"),
+        ] {
+            reserve(Dashboard, method, RoutePath::Template(path.into()));
+        }
+        // Desktop integration stays in core (A7 route inventory): opening the
+        // overlay root or one folder, dashboard only. Every other counter
+        // route and the `/websocket/commands` feed are `vosu.overlayhost`'s.
+        reserve(
+            Dashboard,
+            "POST",
+            RoutePath::Exact("/api/counters/open-root".into()),
+        );
+        reserve(
+            Dashboard,
+            "POST",
+            RoutePath::Children("/api/counters/open".into()),
+        );
     }
-    // Desktop integration stays in core (A7 route inventory): opening the
-    // overlay root or one folder, dashboard only. Every other counter route
-    // and the `/websocket/commands` feed are `vosu.overlayhost`'s.
-    descriptors.push(tool(
-        ListenerRole::Dashboard,
-        "POST",
-        RoutePath::Exact("/api/counters/open-root".into()),
-    ));
-    descriptors.push(tool(
-        ListenerRole::Dashboard,
-        "POST",
-        RoutePath::Children("/api/counters/open".into()),
-    ));
     host.reserve_core_surface_routes(descriptors)
 }
 

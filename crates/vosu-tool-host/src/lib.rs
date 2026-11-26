@@ -96,15 +96,16 @@ impl ToolHost {
     }
 
     /// Takes over the design-system set (`/assets/<name>` and `/favicon.ico`)
-    /// on both listener roles. Composition calls this once core no longer
-    /// reserves or serves those exact paths itself.
-    pub fn mount_design_system(&self) -> Result<(), RegistrationError> {
+    /// on the given listener roles: both, or only the overlay role while the
+    /// dashboard is off (A7.3). Core reserves and serves none of these paths.
+    pub fn mount_design_system(&self, listeners: &[ListenerRole]) -> Result<(), RegistrationError> {
         let mut leases = self.shared.leases.lock().unwrap();
         if leases.design_system.is_some() {
             return Ok(());
         }
-        let routes = [ListenerRole::Overlay, ListenerRole::Dashboard]
-            .into_iter()
+        let routes = listeners
+            .iter()
+            .copied()
             .flat_map(|listener| {
                 assets::DESIGN_SYSTEM.iter().map(move |(path, _)| {
                     descriptor(listener, "GET", RoutePath::Exact((*path).into()))

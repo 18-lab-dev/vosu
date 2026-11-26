@@ -134,7 +134,7 @@ fn mount(
         ],
         files,
     );
-    let mut leases = vec![reserve_core_routes(host).unwrap()];
+    let mut leases = vec![reserve_core_routes(host, true).unwrap()];
     for (index, group) in groups.into_iter().enumerate() {
         let requester = host
             .surface_requester(PluginInstanceId::new(index as u64 + 2))

@@ -382,8 +382,9 @@ async fn registrations_are_exact_and_follow_the_latest_view() {
     publish(&sender, 4, vec![tool("_host", true), tool("a/b", true)]);
     settled(&requester, &[]).await;
     assert!(host.last_refusal().is_none());
-    host.mount_design_system().unwrap();
-    host.mount_design_system().unwrap();
+    let both = [ListenerRole::Overlay, ListenerRole::Dashboard];
+    host.mount_design_system(&both).unwrap();
+    host.mount_design_system(&both).unwrap();
     let design = requester
         .paths()
         .into_iter()
@@ -392,4 +393,28 @@ async fn registrations_are_exact_and_follow_the_latest_view() {
     assert_eq!(design, 2 * assets::DESIGN_SYSTEM.len());
     drop(host);
     assert!(requester.paths().is_empty());
+}
+
+/// A7.3: with the dashboard off the design-system set is registered on the
+/// overlay role only.
+#[tokio::test]
+async fn design_system_follows_the_requested_listener_roles() {
+    let requester = Arc::new(Requester::default());
+    let (_sender, views) = tool_view::channel(None);
+    let host = ToolHost::mount(requester.clone(), views).unwrap();
+    host.mount_design_system(&[ListenerRole::Overlay]).unwrap();
+    let design: Vec<ListenerRole> = requester
+        .routes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, route)| {
+            matches!(&route.path, RoutePath::Exact(path)
+                if path.starts_with("/assets/") || path == "/favicon.ico")
+        })
+        .map(|(_, route)| route.listener)
+        .collect();
+    assert_eq!(design.len(), assets::DESIGN_SYSTEM.len());
+    assert!(design.iter().all(|role| *role == ListenerRole::Overlay));
+    drop(host);
 }
