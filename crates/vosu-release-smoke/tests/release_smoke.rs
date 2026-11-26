@@ -403,12 +403,12 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     if prerelease {
         // An explicit path in the prerelease's own config stays user-controlled.
         fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
-        bounded!(wait_for_seeded_counter(&client, &base));
+        bounded!(wait_for_seeded_counter(&client, &management));
     }
 
     let counters = bounded!(
         client
-            .get(format!("{base}/api/counters/search/seeded"))
+            .get(format!("{management}/api/counters/search/seeded"))
             .send()
     )
     .unwrap();

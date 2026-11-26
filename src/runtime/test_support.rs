@@ -200,18 +200,30 @@ pub async fn start_test_production_composition(
         vosu_net::streaming::Deadlines::default(),
         vosu_net::streaming::DownloadLimits::default(),
     );
+    let catalog = CatalogService::new(
+        test_client,
+        endpoints.catalog,
+        &current_version().to_string(),
+    );
+    let shutdown = CancellationToken::new();
+    if let Err(error) = overlay_root.mount_routes(
+        OverlayPresenter::new(Arc::clone(&counters), catalog.clone(), shutdown.clone()),
+        processor.clone(),
+        hubs.v1.clone(),
+    ) {
+        hubs.shutdown().await;
+        processor.shutdown().await;
+        relays.shutdown().await;
+        return Err(error);
+    }
     let services = ProductionServices::with_native_report_probe(
         PageService,
         Arc::new(RuntimePages {
             pages: PageService,
             counters: Arc::clone(&counters),
-            catalog: CatalogService::new(
-                test_client,
-                endpoints.catalog,
-                &current_version().to_string(),
-            ),
+            catalog,
             config: Arc::clone(&options.config),
-            shutdown: CancellationToken::new(),
+            shutdown,
             update: None,
         }),
         Arc::clone(&counters),

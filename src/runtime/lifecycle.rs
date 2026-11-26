@@ -290,12 +290,27 @@ impl ProductionRuntime {
         *self.tools.get_mut() = Some(tools.clone());
         let relays = Arc::new(WebSocketRelaySink::new());
         let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
+        let catalog_service = CatalogService::production(&current_version().to_string());
+        if let Err(error) = overlay_root.mount_routes(
+            OverlayPresenter::new(
+                Arc::clone(&counters),
+                catalog_service.clone(),
+                self.shutdown_token.clone(),
+            ),
+            processor.clone(),
+            hubs.v1.clone(),
+        ) {
+            hubs.shutdown().await;
+            processor.shutdown().await;
+            relays.shutdown().await;
+            return Err(error);
+        }
         let services = ProductionServices::with_native_report_probe(
             PageService,
             Arc::new(RuntimePages {
                 pages: PageService,
                 counters: Arc::clone(&counters),
-                catalog: CatalogService::production(&current_version().to_string()),
+                catalog: catalog_service,
                 config: Arc::clone(&self.config),
                 shutdown: self.shutdown_token.clone(),
                 update: self.update_notice.clone(),

@@ -145,23 +145,25 @@ impl ProductionRouteDelegate {
             Endpoint::State(_) | Endpoint::CalculatePp => {
                 internal_error("route provider dispatch invariant violated")
             }
-            Endpoint::CounterSearch => self.counter_search(request).await,
-            Endpoint::CounterDownload => self.counter_download(request).await,
+            // `vosu.overlayhost`'s registrations (A7); core already applied
+            // the listener, key, broker and dashboard rules above.
+            Endpoint::CounterSearch
+            | Endpoint::CounterDownload
+            | Endpoint::CounterDelete
+            | Endpoint::CounterDetails
+            | Endpoint::CounterNames
+            | Endpoint::CounterUpdates
+            | Endpoint::CounterSettings => match &self.surface {
+                Some(surface) => surface.overlay_host(&request, body).await,
+                None => not_found(),
+            },
             Endpoint::CounterOpen => self.counter_open(&request),
             Endpoint::CounterOpenRoot => self.counter_open_root(),
-            Endpoint::CounterDelete => self.counter_delete(&request),
-            Endpoint::CounterDetails => self.counter_details(request).await,
-            Endpoint::CounterNames => self.counter_names(&request, &body),
-            Endpoint::CounterUpdates => match self.services.page_data.counter_updates().await {
-                Ok(updates) => json_response(StatusCode::OK, updates),
-                Err(error) => json_response(StatusCode::BAD_GATEWAY, json!({"error": error})),
-            },
             Endpoint::DashboardStatus => {
                 let mut status = self.services.report_input.dashboard_status();
                 status["connections"] = json!(self.connections.counts());
                 json_response(StatusCode::OK, status)
             }
-            Endpoint::CounterSettings => self.counter_settings(request, body).await,
             Endpoint::ApiKeys => {
                 let Some(keys) = &self.api_keys else { return internal_error("API key store unavailable"); };
                 if request.method() == axum::http::Method::GET {
@@ -198,49 +200,6 @@ impl ProductionRouteDelegate {
         }
     }
 
-    async fn counter_search(&self, request: Request<Body>) -> Response {
-        let raw = request
-            .uri()
-            .path()
-            .strip_prefix("/api/counters/search/")
-            .unwrap_or_default();
-        let query = percent_decode_once(raw).unwrap_or_default();
-        let Some(external) = counter_search_source(request.uri().query()) else {
-            return response(
-                StatusCode::BAD_REQUEST,
-                "text/html; charset=utf-8",
-                Bytes::from_static(b"Error: unknown search source"),
-            );
-        };
-        counter_search_response(self.services.page_data.search_counters(&query, external).await)
-    }
-
-    async fn counter_download(&self, request: Request<Body>) -> Response {
-        let raw = request
-            .uri()
-            .path()
-            .strip_prefix("/api/counters/download/")
-            .unwrap_or_default()
-            .to_owned();
-        let query = query_pairs(&request);
-        let parsed = CounterService::parse_download_request(
-            &raw,
-            query_value(&query, "name"),
-            query_value(&query, "update"),
-        );
-        match parsed {
-            Ok(download) => match self.services.counters.download(&download).await {
-                Ok(()) => json_response(StatusCode::OK, json!({ "status": "Finished" })),
-                Err(CounterError::InstallBusy) => json_response(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    json!({ "error": "counter install capacity is full" }),
-                ),
-                Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-            },
-            Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-        }
-
-    }
     fn counter_open_root(&self) -> Response {
         match super::overlay_folders::open_root(self.opener.as_ref(), &self.services.counters.current_root()) {
             Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
@@ -262,152 +221,6 @@ impl ProductionRouteDelegate {
                 Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
-        }
-    }
-
-    /// `POST /api/counters/names/<folder>` with `{"nickname","alias"}`;
-    /// null or blank clears a value.
-    fn counter_names(&self, request: &Request<Body>, body: &[u8]) -> Response {
-        #[derive(serde::Deserialize)]
-        struct Names {
-            nickname: Option<String>,
-            alias: Option<String>,
-        }
-        let Some(folder) = decoded_capture(request, "/api/counters/names/").filter(|name| !name.is_empty()) else {
-            return json_response(StatusCode::BAD_REQUEST, json!({ "error": "no folder name" }));
-        };
-        let Ok(names) = serde_json::from_slice::<Names>(body) else {
-            return json_response(StatusCode::BAD_REQUEST, json!({ "error": "invalid JSON" }));
-        };
-        match self.services.counters.set_name(&folder, names.nickname.as_deref(), names.alias.as_deref()) {
-            Ok(saved) => json_response(StatusCode::OK, json!(saved)),
-            Err(error) => json_response(StatusCode::BAD_REQUEST, json!({ "error": error })),
-        }
-    }
-
-
-    fn counter_delete(&self, request: &Request<Body>) -> Response {
-        match decoded_capture(request, "/api/counters/delete/")
-            .as_deref()
-            .filter(|name| !name.is_empty())
-        {
-            None => json_response(StatusCode::OK, json!({ "error": "no folder name" })),
-            Some(name) => match self.services.counters.delete(name) {
-                Ok(()) => json_response(StatusCode::OK, json!({ "status": "deleted" })),
-                Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-            },
-        }
-    }
-
-    async fn counter_details(&self, request: Request<Body>) -> Response {
-        let Some(name) = decoded_capture(&request, "/api/counters/details/") else {
-            return json_response(StatusCode::BAD_REQUEST, json!({"error": "invalid folder name"}));
-        };
-        let counters = Arc::clone(&self.services.counters);
-        match tokio::task::spawn_blocking(move || counters.details(&name)).await {
-            Ok(Ok(details)) => json_response(StatusCode::OK, details),
-            Ok(Err(error)) => json_response(StatusCode::BAD_REQUEST, json!({"error": error.to_string()})),
-            Err(_) => internal_error("overlay size worker failed"),
-        }
-    }
-
-    async fn counter_settings(&self, request: Request<Body>, body: Bytes) -> Response {
-        if request.uri().path() == "/api/counters/profiles" {
-            return self.counter_profiles(&request, &body);
-        }
-        let query = query_pairs(&request);
-        let overlay = decoded_capture(&request, "/api/counters/settings/").unwrap_or_default();
-        let name = match query_value(&query, "profile") {
-            Some(profile) => vosu_overlay_host::qualified_counter(&overlay, profile),
-            None => overlay.clone(),
-        };
-        if overlay.is_empty() {
-            return json_response(StatusCode::OK, json!({ "error": "no folder name" }));
-        }
-        if request.method() == axum::http::Method::GET {
-            return match self.services.counters.get_settings(&name) {
-                Ok((settings, values)) => json_response(
-                    StatusCode::OK,
-                    json!({ "settings": settings, "values": values }),
-                ),
-                Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-            };
-        }
-        if query_value(&query, "update") == Some("yes") {
-            let parsed = serde_json::from_slice::<Vec<CounterSetting>>(&body);
-            return match parsed {
-                Ok(settings) => match self.services.counters.save_developer_settings(
-                    &name,
-                    settings,
-                    Some("yes"),
-                ) {
-                    Ok(_) => json_response(StatusCode::OK, json!({ "result": "success" })),
-                    Err(error) => {
-                        json_response(StatusCode::OK, json!({ "error": error.to_string() }))
-                    }
-                },
-                Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-            };
-        }
-        let resolved_profile = match self.services.counters.settings_store().resolve_profile(query_value(&query, "profile")) {
-            Ok(profile) => profile,
-            Err(error) => return json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-        };
-        let name = vosu_overlay_host::qualified_counter(&overlay, &resolved_profile);
-        match serde_json::from_slice::<Vec<SettingInput>>(&body) {
-            Ok(values) => match self
-                .services
-                .counters
-                .save_user_settings_debounced(name, values)
-                .await
-            {
-                Ok(saved) => {
-                    if saved {
-                        self.refresh_profile(&overlay, &resolved_profile);
-                    }
-                    json_response(StatusCode::OK, json!({ "result": "success" }))
-                }
-                Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-            },
-            Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
-        }
-    }
-
-    fn counter_profiles(&self, request: &Request<Body>, body: &[u8]) -> Response {
-        let store = self.services.counters.settings_store();
-        let result = (|| -> Result<vosu_overlay_host::Profiles, String> {
-            if request.method() == axum::http::Method::GET {
-                return store.profiles().map_err(|e| e.to_string());
-            }
-            let value: Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
-            let field = |key| value.get(key).and_then(Value::as_str);
-            let action = field("action").ok_or("missing action")?;
-            let name = field("name").ok_or("missing name")?;
-            let before = store.profiles().map_err(|e| e.to_string())?;
-            let registry = if action == "copyOverlay" {
-                store.copy_overlay(name, field("source").ok_or("missing source")?,
-                    field("target").ok_or("missing target")?).map_err(|e| e.to_string())?;
-                self.refresh_profile(name, field("target").unwrap_or_default());
-                store.profiles().map_err(|e| e.to_string())?
-            } else {
-                store.manage_profile(action, name, field(if action == "create" { "copyFrom" } else { "target" }))
-                    .map_err(|e| e.to_string())?
-            };
-            if before.active != registry.active {
-                self.services.websocket.processor.refresh_active_settings();
-            }
-            Ok(registry)
-        })();
-        match result {
-            Ok(registry) => json_response(StatusCode::OK, json!(registry)),
-            Err(error) => json_response(StatusCode::OK, json!({ "error": error })),
-        }
-    }
-
-    fn refresh_profile(&self, overlay: &str, profile: &str) {
-        self.services.websocket.processor.refresh_settings(vosu_overlay_host::qualified_counter(overlay, profile));
-        if self.services.counters.settings_store().resolve_profile(None).is_ok_and(|p| p == profile) {
-            self.services.websocket.processor.refresh_settings(overlay);
         }
     }
 
@@ -581,12 +394,15 @@ impl ProductionRouteDelegate {
         let connections = self.connections.clone();
         let overlay = socket_overlay(&request);
         let (hub, commands, client_namespace) = self.services.websocket.hub(endpoint);
-        let feed = if !commands && let Some(surface) = &self.surface {
-            match surface.dispatch(&request, true).await {
+        // Every feed, `/websocket/commands` included, is a bundled host's
+        // registration; the commands hub only frames the overlay host's feed.
+        let feed = match &self.surface {
+            Some(surface) => match surface.dispatch(&request, true).await {
                 Some(ProviderResponse::Feed(feed)) => feed,
                 _ => return not_found(),
-            }
-        } else { hub.surface_feed(commands) };
+            },
+            None => hub.surface_feed(commands),
+        };
         let processor = Arc::clone(&self.services.websocket.processor);
         let relays = Arc::clone(&self.services.websocket.relays);
         let query = request.uri().query().map(str::to_owned);

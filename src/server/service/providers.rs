@@ -30,16 +30,6 @@ pub trait PageDataProvider: Send + Sync {
         page: DynamicPage,
         authority: Option<String>,
     ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>>;
-    /// `GET /api/counters/search/<query>`: the overlay host's card HTML,
-    /// with origin-relative card URLs (A7).
-    fn search_counters(&self, query: &str, external: bool)
-    -> ProviderFuture<'_, Result<Bytes, String>>;
-    /// `GET /api/counters/updates`: catalog updates for installed overlays as
-    /// `{"updates":[{"folder","download_url"}]}`. The Overlays page renders
-    /// without waiting for the catalog and applies these afterwards.
-    fn counter_updates(&self) -> ProviderFuture<'_, Result<Value, String>> {
-        Box::pin(async { Ok(json!({ "updates": [] })) })
-    }
 }
 
 /// Config update facade for `/api/settingsSave`.

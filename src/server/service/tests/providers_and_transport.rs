@@ -1,5 +1,5 @@
     #[tokio::test]
-    async fn dashboard_read_apis_report_counts_and_safe_folder_details() {
+    async fn dashboard_status_reports_overlay_connection_counts() {
         let root = tempfile::tempdir().unwrap();
         let folder = root.path().join("static/counter");
         std::fs::create_dir_all(&folder).unwrap();
@@ -31,63 +31,14 @@
         let status: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(status.into_body(), 16384)).unwrap()).unwrap();
         assert_eq!(status["connections"]["counter"], 2);
         assert_eq!(status["instances"], json!([]));
-        for (path, expected) in [("/api/counters/details/counter", StatusCode::OK), ("/api/counters/details/%2E%2E", StatusCode::BAD_REQUEST)] {
-            let response = bounded!(delegate.dispatch(Endpoint::CounterDetails, Request::builder().uri(path).body(Body::empty()).unwrap(), Bytes::new()));
-            assert_eq!(response.status(), expected);
-            if expected == StatusCode::OK {
-                let details: Value = serde_json::from_slice(&bounded!(axum::body::to_bytes(response.into_body(), 16384)).unwrap()).unwrap();
-                assert_eq!(details["bytes"], 5);
-                assert_eq!(details["complete"], true);
-                // Compare canonical forms: the reported path is canonical, while `folder` may
-                // contain an 8.3 short name (hosted Windows TEMP is `C:\Users\RUNNER~1\...`).
-                let reported = details["path"].as_str().unwrap();
-                assert!(!reported.starts_with(r"\\?\"), "verbatim prefix leaked: {reported}");
-                assert_eq!(
-                    std::fs::canonicalize(reported).unwrap(),
-                    std::fs::canonicalize(&folder).unwrap()
-                );
-            }
-        }
         bounded!(processor.shutdown());
         bounded!(relays.shutdown());
     }
 
-    #[tokio::test]
-    async fn overlay_names_route_saves_nickname_and_alias_beside_the_settings() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("static/accuracy by sxlvia")).unwrap();
-        let counters = Arc::new(ReloadableCounterService::production(
-            root.path().join("static"), root.path().join("config/settings"), root.path().join("cache"),
-        ));
-        let (_, events) = tokio::sync::watch::channel(0);
-        let state = Arc::new(NoState { events });
-        let relays = Arc::new(WebSocketRelaySink::new());
-        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
-        let unused = Arc::new(UnusedServices);
-        let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
-            PageService, unused.clone(), counters, Arc::new(Current::default()),
-            unused.clone(), unused.clone(), unused,
-            WebSocketEndpoints {
-                v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                sc: WebSocketHub::new(websocket::Schema::StreamCompanion, state.clone()),
-                v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
-                precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
-                commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
-                processor: processor.clone(), relays: relays.clone(),
-            },
-        ));
+    #[test]
+    fn names_route_is_post_only() {
         assert_eq!(crate::server::routes::classify(&axum::http::Method::POST, "/api/counters/names/x"), Some(Endpoint::CounterNames));
         assert_eq!(crate::server::routes::classify(&axum::http::Method::GET, "/api/counters/names/x"), None);
-        let set = |body: &'static str| delegate.dispatch(
-            Endpoint::CounterNames,
-            Request::builder().method("POST").uri("/api/counters/names/accuracy%20by%20sxlvia").body(Body::empty()).unwrap(),
-            Bytes::from_static(body.as_bytes()),
-        );
-        assert_eq!(bounded!(set(r#"{"nickname":"Acc","alias":"tools"}"#)).status(), StatusCode::BAD_REQUEST);
-        assert_eq!(bounded!(set(r#"{"nickname":"Acc","alias":"acc"}"#)).status(), StatusCode::OK);
-        assert!(root.path().join("config/overlay-names.json").is_file());
-        bounded!(processor.shutdown());
-        bounded!(relays.shutdown());
     }
 
 
@@ -126,28 +77,6 @@
         assert!(
             decoded_query_value("x=overlay%3Dcounter", "overlay")
                 .is_none_or(|value| value.is_empty())
-        );
-    }
-
-    #[tokio::test]
-    async fn counter_search_source_is_explicit_and_errors_are_escaped_non_200() {
-        assert_eq!(counter_search_source(None), Some(false));
-        assert_eq!(counter_search_source(Some("source=installed")), Some(false));
-        assert_eq!(counter_search_source(Some("x=1&source=available")), Some(true));
-        assert_eq!(counter_search_source(Some("source=Available")), None);
-        assert_eq!(counter_search_source(Some("source=")), None);
-
-        let failed = counter_search_response(Err(r#"<img src=x onerror="alert(1)">"#.into()));
-        assert_eq!(failed.status(), StatusCode::BAD_GATEWAY);
-        let body = bounded!(axum::body::to_bytes(failed.into_body(), usize::MAX))
-            .unwrap();
-        assert_eq!(
-            &body[..],
-            b"Error: &lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
-        );
-        assert_eq!(
-            counter_search_response(Ok(Bytes::from_static(b"<article></article>"))).status(),
-            StatusCode::OK
         );
     }
 

@@ -1,8 +1,9 @@
-//! The overlay root's core side (A7.1-OR): core seeds `vosu.overlayhost`'s
+//! The overlay host's core side. A7.1-OR: core seeds `vosu.overlayhost`'s
 //! `static_folder_path` setting from the resolved `STATIC_FOLDER_PATH` until
 //! M8 migrates the key, delivers every effective change as one
 //! `SETTINGS_CHANGED`, and mints the read-only `OverlayRootView` lease the
-//! host serves through, retiring the previous generation's lease.
+//! host serves through, retiring the previous generation's lease. A7 route
+//! inventory: the host's counter API and command feed registrations.
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -13,8 +14,14 @@ use vosu_core::plugin::settings::{
     SettingsSchemaSource, SettingsStorage,
 };
 use vosu_core::plugin::{OverlayRootRetirement, PluginHost, PluginInstanceId};
-use vosu_overlay_host::{OverlayRootView, OverlayStatic, ReloadableCounterService};
+use vosu_overlay_host::{
+    OverlayRootView, OverlayRoutes, OverlayStatic, ReloadableCounterService,
+    commands::CommandProcessor, presentation::OverlayPresenter,
+};
 use vosu_plugin_api::{Message, SettingsChanged};
+use vosu_surface::routes::RegistrationLease;
+
+use crate::server::websocket::WebSocketHub;
 
 pub(crate) const OVERLAY_HOST_ID: &str = "vosu.overlayhost";
 
@@ -63,7 +70,8 @@ impl SettingsStorage for RuntimeSettingsStorage {
     }
 }
 
-/// Owns the overlay root's generations for one composition.
+/// Owns the overlay root's generations and the overlay host's route
+/// registrations for one composition.
 pub struct OverlayRootComposition {
     host: Arc<PluginHost>,
     instance: PluginInstanceId,
@@ -72,6 +80,7 @@ pub struct OverlayRootComposition {
     counters: Arc<ReloadableCounterService>,
     serving: Arc<OverlayStatic>,
     generation: Mutex<(u64, Option<OverlayRootRetirement>)>,
+    routes: Mutex<Option<RegistrationLease>>,
 }
 
 impl OverlayRootComposition {
@@ -91,11 +100,40 @@ impl OverlayRootComposition {
             counters,
             serving,
             generation: Mutex::new((0, None)),
+            routes: Mutex::new(None),
         }
     }
 
     pub fn serving(&self) -> Arc<OverlayStatic> {
         Arc::clone(&self.serving)
+    }
+
+    /// Registers `vosu.overlayhost`'s counter API and `/websocket/commands`
+    /// feed (A7 route inventory) for its bundled requester. The commands
+    /// hub frames each connection; `processor` handles its frames.
+    pub fn mount_routes(
+        &self,
+        presenter: OverlayPresenter,
+        processor: Arc<CommandProcessor>,
+        commands: WebSocketHub,
+    ) -> std::io::Result<()> {
+        let routes = OverlayRoutes::new(
+            Arc::clone(&self.counters),
+            presenter,
+            processor,
+            Arc::new(move || commands.surface_feed(true)),
+        );
+        let lease = self
+            .host
+            .surface_requester(self.instance)
+            .map_err(std::io::Error::other)
+            .and_then(|requester| {
+                routes.register(requester.as_ref()).map_err(|error| {
+                    std::io::Error::other(format!("overlay host registration failed: {error:?}"))
+                })
+            })?;
+        *self.routes.lock().unwrap_or_else(|p| p.into_inner()) = Some(lease);
+        Ok(())
     }
 
     /// Applies one resolved overlay root: seeds and delivers the complete
@@ -135,9 +173,12 @@ impl OverlayRootComposition {
         }
     }
 
-    /// Retires the current lease (shutdown).
+    /// Retires the current lease and unregisters the routes (shutdown).
     pub fn retire(&self) {
         self.serving.clear_view();
         self.generation.lock().unwrap_or_else(|p| p.into_inner()).1 = None;
+        // Unregistration re-enters the plugin host; never under this lock.
+        let routes = self.routes.lock().unwrap_or_else(|p| p.into_inner()).take();
+        drop(routes);
     }
 }

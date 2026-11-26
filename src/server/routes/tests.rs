@@ -681,6 +681,8 @@ async fn dashboard_ux_reads_are_not_overlay_management_routes() {
     for path in [
         "/api/dashboard/status",
         "/api/counters/details/sample",
+        "/api/counters/search/sample",
+        "/api/counters/updates",
         "/api/tools",
     ] {
         let (providers, _) = split_providers(false);

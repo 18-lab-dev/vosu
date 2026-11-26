@@ -648,7 +648,7 @@ fn load_discovered_settings(
     }
 }
 
-fn percent_decode_once(raw: &str) -> Result<String, CounterError> {
+pub(crate) fn percent_decode_once(raw: &str) -> Result<String, CounterError> {
     let bytes = raw.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;

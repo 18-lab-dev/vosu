@@ -2,6 +2,23 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M7 O0 (overlay host)
+
+- Overlays are hosted by the bundled `vosu.overlayhost` plugin: discovery,
+  the community catalog and its cards, download, update and delete, names
+  and aliases, settings and profiles, `/websocket/commands` and overlay
+  static serving. Core still checks API keys, the native broker, dashboard
+  origin and `X-Vosu-CSRF` before any of these runs, and keeps opening the
+  overlay folder or root. Routes, methods, payloads and key scopes are
+  unchanged except as listed below.
+- `GET /api/counters/search/<query>` is served on the dashboard listener
+  only, like the other dashboard reads; the overlay listener answers 404.
+- A counter route whose folder, query or URL is empty (for example
+  `POST /api/counters/delete/` or `GET /api/counters/settings/`) is 404
+  instead of a `{"error":"no folder name"}` body.
+- An overlay HTML page larger than 64 MiB that needs the injected
+  `COUNTER_PATH` script returns 500 instead of streaming without it.
+
 ## Unreleased — 2.0 M7 T0 (web-only tools)
 
 - Tools are web-only 2.0 packages (`manifest.toml`, `kind = "tool"`). The

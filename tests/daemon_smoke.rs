@@ -375,7 +375,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
 
     let catalog = bounded!(
         client
-            .get(format!("{base}/api/counters/search/seeded"))
+            .get(format!("{management}/api/counters/search/seeded"))
             .send()
     )
     .unwrap();
@@ -505,7 +505,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     fs::write(&legacy_schema_json_path, changed_legacy_schema).unwrap();
     let rediscovered = bounded!(
         client
-            .get(format!("{base}/api/counters/search/seeded"))
+            .get(format!("{management}/api/counters/search/seeded"))
             .send()
     )
     .unwrap();
@@ -732,7 +732,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     {
         let alias_catalog = bounded!(
             client
-                .get(format!("{base}/api/counters/search/alias"))
+                .get(format!("{management}/api/counters/search/alias"))
                 .send()
         )
         .unwrap();

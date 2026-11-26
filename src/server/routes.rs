@@ -29,6 +29,15 @@ use responses::*;
 pub const MAX_POST_BODY: usize = 1024 * 1024;
 #[derive(Clone, Copy)]
 pub(crate) struct KeyProtocol;
+/// Transport admission a bundled-host dispatch needs: the listener the
+/// request arrived on and, only for a dashboard request that passed exact
+/// dashboard provenance and `X-Vosu-CSRF`, the expected token core's
+/// `ManagementAuthority` re-checks when it mints the provider's witness.
+#[derive(Clone)]
+pub(crate) struct SurfaceAdmission {
+    pub(crate) listener: vosu_surface::listener::ListenerRole,
+    pub(crate) csrf: Option<Arc<str>>,
+}
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -504,6 +513,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             && matches!(
                 endpoint,
                 Endpoint::DashboardStatus
+                    | Endpoint::CounterSearch
                     | Endpoint::CounterDetails
                     | Endpoint::CounterNames
                     | Endpoint::CounterUpdates
@@ -673,6 +683,16 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     }
     if key_protocol {
         request.extensions_mut().insert(KeyProtocol);
+    }
+    if let Some((origins, dashboard)) = providers.authorization.origins() {
+        request.extensions_mut().insert(SurfaceAdmission {
+            listener: if dashboard {
+                vosu_surface::listener::ListenerRole::Dashboard
+            } else {
+                vosu_surface::listener::ListenerRole::Overlay
+            },
+            csrf: (dashboard && trusted_management).then(|| Arc::from(origins.csrf.as_str())),
+        });
     }
     let page_script = providers
         .authorization

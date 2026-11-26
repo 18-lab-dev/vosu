@@ -10,6 +10,12 @@ presentation -> catalog
 presentation -> model
 presentation -> preview_scheme
 presentation -> service
+routes -> cards
+routes -> commands
+routes -> model
+routes -> presentation
+routes -> service
+routes -> settings
 serve -> cards
 serve -> service
 serve -> settings

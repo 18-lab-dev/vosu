@@ -20,7 +20,6 @@ pub fn reserve_core_routes(
             ("/assets", &["GET"][..], true),
             ("/api/dashboard", &["GET"][..], true),
             ("/api/keys", &["GET", "POST"][..], false),
-            ("/api/counters", &["GET", "POST"][..], true),
             ("/api/settingsSave", &["POST"][..], false),
             ("/api/runUpdates", &["POST"][..], false),
             ("/api/generateReport", &["POST"][..], false),
@@ -78,12 +77,19 @@ pub fn reserve_core_routes(
             RoutePath::Template(path.into()),
         ));
     }
-    descriptors.push(RouteDescriptor {
-        listener: ListenerRole::Overlay,
-        method: "GET".into(),
-        path: RoutePath::Exact("/websocket/commands".into()),
-        websocket: true,
-    });
+    // Desktop integration stays in core (A7 route inventory): opening the
+    // overlay root or one folder, dashboard only. Every other counter route
+    // and the `/websocket/commands` feed are `vosu.overlayhost`'s.
+    descriptors.push(tool(
+        ListenerRole::Dashboard,
+        "POST",
+        RoutePath::Exact("/api/counters/open-root".into()),
+    ));
+    descriptors.push(tool(
+        ListenerRole::Dashboard,
+        "POST",
+        RoutePath::Children("/api/counters/open".into()),
+    ));
     host.reserve_core_surface_routes(descriptors)
 }
 
@@ -215,11 +221,54 @@ impl SurfaceRouter {
             }
         })
     }
+
+    /// One admitted counter API request for the overlay host's registrations
+    /// on the listener it arrived on (A7), with its bounded body and, for an
+    /// admitted dashboard mutation, core's management witness. Counter
+    /// routes read no game state.
+    pub fn overlay_host(&self, request: &Request<Body>, body: Bytes) -> ProviderFuture<'_, Response> {
+        let admission = request
+            .extensions()
+            .get::<super::routes::SurfaceAdmission>()
+            .cloned();
+        let listener = admission
+            .as_ref()
+            .map_or(vosu_surface::listener::ListenerRole::Overlay, |admission| admission.listener);
+        let management = admission.and_then(|admission| {
+            let expected = admission.csrf?;
+            let supplied = request
+                .headers()
+                .get("x-vosu-csrf")
+                .and_then(|value| value.to_str().ok());
+            self.host
+                .surface_management_provenance(listener, supplied, &expected)
+        });
+        let surface = surface_request(request, Arc::new(empty_selection())).map(|mut surface| {
+            surface.body = Arc::from(&body[..]);
+            surface.management = management;
+            surface
+        });
+        Box::pin(async move {
+            let Some(surface) = surface else {
+                return not_found();
+            };
+            match self
+                .host
+                .dispatch_surface_route(listener, false, surface)
+                .await
+            {
+                Some(ProviderResponse::Http(response)) => surface_http_response(response),
+                _ => not_found(),
+            }
+        })
+    }
 }
 
 /// The admitted request as a surface provider sees it: decoded query pairs,
-/// only the conditional and range headers, no body and no credentials.
-/// `None` when a forwarded header is not text or metadata exceeds its bounds.
+/// only the conditional and range headers and no credentials. Only
+/// [`SurfaceRouter::overlay_host`] adds the bounded body and core's management
+/// witness. `None` when a forwarded header is not text or metadata exceeds
+/// its bounds.
 pub(super) fn surface_request(
     request: &Request<Body>,
     context: Arc<vosu_surface::state::CapturedSelection>,

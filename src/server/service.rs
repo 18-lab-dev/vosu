@@ -30,11 +30,9 @@ use super::files::{MissingKind, ResourceOutcome};
 use vosu_adapter_upstream::calculate::PpQuery;
 
 use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
+use vosu_overlay_host::ReloadableCounterService;
 use vosu_overlay_host::commands::{
     CommandAction, CommandClient, CommandProcessor, Relay, RelaySink,
-};
-use vosu_overlay_host::{
-    CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
 };
 
 use super::{
@@ -115,9 +113,6 @@ mod tests {
             _: DynamicPage,
             _: Option<String>,
         ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
-            Box::pin(async { Err("unused".into()) })
-        }
-        fn search_counters(&self, _: &str, _: bool) -> ProviderFuture<'_, Result<Bytes, String>> {
             Box::pin(async { Err("unused".into()) })
         }
     }

@@ -98,21 +98,6 @@ impl PageDataProvider for RuntimePages {
             ))
         })
     }
-
-    fn search_counters(
-        &self,
-        query: &str,
-        external: bool,
-    ) -> crate::server::routes::ProviderFuture<'_, Result<Bytes, String>> {
-        let query = query.to_owned();
-        Box::pin(async move { self.overlays().search(&query, external).await })
-    }
-
-    fn counter_updates(
-        &self,
-    ) -> crate::server::routes::ProviderFuture<'_, Result<serde_json::Value, String>> {
-        Box::pin(async move { self.overlays().updates().await })
-    }
 }
 
 /// The M6b installed-graph input to overlay manifest validation. Core keeps
