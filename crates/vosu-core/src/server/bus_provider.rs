@@ -1,15 +1,16 @@
 //! Production bus-backed provider. The adapter owns selectors, typed decoding and
 //! wire semantics; this module owns latest-only caches and connection demand.
+//! Adapter-backed behavior is pinned by the root `tests/bus_provider.rs`.
 mod demand;
-mod identity;
+pub mod identity;
+use crate::server::{
+    routes::{CachedJson, StateJsonProvider, StateRoute},
+    websocket::{Schema, StateDemand, StateProvider, StateSnapshot},
+};
 use bytes::Bytes;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu_core::server::{
-    routes::{CachedJson, StateJsonProvider, StateRoute},
-    websocket::{Schema, StateDemand, StateProvider, StateSnapshot},
-};
 use vosu_surface::filter::Filter;
 use vosu_surface::{
     projection::{Projection, ProjectionError, ProjectionView},
@@ -211,7 +212,7 @@ impl StateJsonProvider for BusStateProvider {
     fn cached_json(
         &self,
         route: StateRoute,
-    ) -> vosu_core::server::routes::ProviderFuture<'_, CachedJson> {
+    ) -> crate::server::routes::ProviderFuture<'_, CachedJson> {
         Box::pin(async move {
             let _retained = self.adapter.retain(&[]);
             let schema = match route {
@@ -263,6 +264,3 @@ fn failed(error: String) -> CachedJson {
         ),
     }
 }
-
-#[cfg(test)]
-mod tests;

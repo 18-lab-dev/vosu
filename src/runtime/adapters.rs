@@ -1,7 +1,7 @@
 //! One requester-bound provider per schema, shared by HTTP and WebSocket consumers.
 use super::*;
-use crate::server::bus_provider::BusStateProvider;
 use vosu_core::plugin::PluginInstanceId;
+use vosu_core::server::bus_provider::BusStateProvider;
 use vosu_core::server::websocket::StateDemand;
 
 pub(super) struct Adapters {
@@ -174,11 +174,11 @@ impl WebSocketStateProvider for Adapters {
     }
 }
 #[cfg(feature = "test-harness")]
-impl crate::server::adapter_capture::endpoint::CaptureSource for Adapters {
+impl vosu_core::server::adapter_capture::endpoint::CaptureSource for Adapters {
     fn capture(
         &self,
         schema: WebSocketSchema,
-    ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
+    ) -> Result<vosu_core::server::adapter_capture::AdapterCaptureSample, String> {
         self.provider(schema).capture_for_harness()
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::server::bus_provider::BusStateProvider;
+use crate::server::routes::{StateJsonProvider, StateRoute};
 use bytes::Bytes;
 use serde_json::{Value, json};
 use std::sync::{
@@ -8,7 +9,6 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::watch;
-use vosu_core::server::routes::{StateJsonProvider, StateRoute};
 use vosu_plugin_api::{CborValue, Selector, StateEntry};
 use vosu_surface::filter::Filter;
 use vosu_surface::{
@@ -731,7 +731,7 @@ fn fake_vosu_envelopes() -> Value {
     }
     json!({
         "format": "vosu-golden-capture-fake-envelopes-v1",
-        "generator": "src/server/adapter_capture/tests.rs export_golden_capture_fake_envelopes",
+        "generator": "crates/vosu-core/src/server/adapter_capture/tests.rs export_golden_capture_fake_envelopes",
         "reads_per_schema": FAKE_READS,
         "barriers": barriers,
     })
@@ -779,19 +779,26 @@ fn adapter_capture_fake_envelopes_follow_the_provider_generation_rules() {
 
 #[test]
 fn adapter_capture_fake_envelopes_are_current() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FAKE_ENVELOPES);
+    let path = fake_envelopes_path();
     let committed = std::fs::read_to_string(&path).unwrap();
     assert!(
         committed == fake_envelopes_text(),
-        "{FAKE_ENVELOPES} is stale; regenerate it with `cargo test --locked --features \
-         test-harness -p vosu --lib export_golden_capture_fake_envelopes -- --ignored`"
+        "{FAKE_ENVELOPES} is stale; regenerate it with `cargo test --locked -p vosu-core \
+         --features test-harness --lib export_golden_capture_fake_envelopes -- --ignored`"
     );
 }
 
 #[test]
 #[ignore = "writes the committed golden-capture fake envelopes"]
 fn export_golden_capture_fake_envelopes() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FAKE_ENVELOPES);
+    let path = fake_envelopes_path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, fake_envelopes_text()).unwrap();
+}
+
+fn fake_envelopes_path() -> std::path::PathBuf {
+    // Workspace-relative: the golden-capture tooling reads the same file.
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(FAKE_ENVELOPES)
 }

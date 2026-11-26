@@ -34,11 +34,9 @@ use vosu::{
         TestGame, TestProductionComposition, TestProductionCompositionOptions,
         start_test_production_composition,
     },
-    server::{
-        adapter_capture::DerivedStatus,
-        service::{UpdateRouteResult, UpdaterHandoff},
-    },
+    server::service::{UpdateRouteResult, UpdaterHandoff},
 };
+use vosu_core::server::adapter_capture::DerivedStatus;
 use vosu_core::server::{routes::ProviderFuture, runtime::ListenTarget, websocket::Schema};
 use vosu_core::{
     config::ConfigStore,

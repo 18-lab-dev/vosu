@@ -190,7 +190,7 @@ impl ProductionRuntime {
         let target = listen_target(&config)?;
         let program = env::current_exe()?;
         #[cfg(feature = "test-harness")]
-        let adapter_capture = crate::server::adapter_capture::endpoint::Capability::from_env()?;
+        let adapter_capture = vosu_core::server::adapter_capture::endpoint::Capability::from_env()?;
         let static_root = resolved_static_root(&self.paths, &config)?;
         // K0: catalog recovery and committed-graph load precede the tool
         // host's first scan, discovery and every route.
@@ -378,7 +378,7 @@ impl ProductionRuntime {
         #[cfg(feature = "test-harness")]
         let delegate = match adapter_capture {
             Some(capability) => delegate.with_adapter_capture(
-                crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint::new(
+                vosu_core::server::adapter_capture::endpoint::AdapterCaptureEndpoint::new(
                     capability,
                     adapters.clone(),
                 ),

@@ -11,6 +11,7 @@
 //! never echo an internal error. Each request takes one provider-retained
 //! sample: no demand, subscription or history.
 use super::{AdapterCaptureSample, schema_from_query};
+use crate::server::{routes::ProviderFuture, websocket::Schema};
 use axum::{
     body::{Body, Bytes},
     extract::Request,
@@ -18,7 +19,6 @@ use axum::{
     response::Response,
 };
 use std::{fmt, io, net::IpAddr, sync::Arc};
-use vosu_core::server::{routes::ProviderFuture, websocket::Schema};
 
 pub const PATH: &str = "/__vosu_test/v1/adapter-capture";
 pub const CAPABILITY_HEADER: HeaderName = HeaderName::from_static("x-vosu-test-capture");
@@ -105,7 +105,7 @@ pub struct AdapterCaptureEndpoint {
     capability: Capability,
     source: Arc<dyn CaptureSource>,
 }
-impl vosu_core::server::routes::HarnessRoute for AdapterCaptureEndpoint {
+impl crate::server::routes::HarnessRoute for AdapterCaptureEndpoint {
     fn route(
         &self,
         peer: Option<IpAddr>,

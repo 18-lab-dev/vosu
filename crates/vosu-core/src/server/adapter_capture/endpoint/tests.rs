@@ -1,11 +1,6 @@
 use super::*;
 use crate::server::adapter_capture::DerivedStatus;
-use axum::{
-    body::to_bytes,
-    extract::{ConnectInfo, State},
-};
-use std::{net::SocketAddr, sync::Mutex};
-use vosu_core::server::{
+use crate::server::{
     auth::AuthorizationPolicy,
     origins::{OriginAuthorizer, Origins},
     routes::{
@@ -13,6 +8,11 @@ use vosu_core::server::{
         StateJsonProvider, StateRoute, dispatch,
     },
 };
+use axum::{
+    body::to_bytes,
+    extract::{ConnectInfo, State},
+};
+use std::{net::SocketAddr, sync::Mutex};
 use vosu_proptest::bounded;
 use vosu_surface::state::{CapturedSelection, IdentifiedRoster};
 
@@ -62,10 +62,10 @@ struct Delegate {
     handled: Mutex<Vec<Endpoint>>,
 }
 impl RouteDelegate for Delegate {
-    fn adapter_capture(&self) -> Option<&dyn vosu_core::server::routes::HarnessRoute> {
+    fn adapter_capture(&self) -> Option<&dyn crate::server::routes::HarnessRoute> {
         self.endpoint
             .as_ref()
-            .map(|endpoint| endpoint as &dyn vosu_core::server::routes::HarnessRoute)
+            .map(|endpoint| endpoint as &dyn crate::server::routes::HarnessRoute)
     }
     fn handle(&self, endpoint: Endpoint, _: Request, _: Bytes) -> ProviderFuture<'_, Response> {
         self.handled.lock().unwrap().push(endpoint);

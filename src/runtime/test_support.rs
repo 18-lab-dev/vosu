@@ -65,7 +65,7 @@ impl TestProductionComposition {
     pub fn adapter_capture(
         &self,
         schema: WebSocketSchema,
-    ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
+    ) -> Result<vosu_core::server::adapter_capture::AdapterCaptureSample, String> {
         self.adapters.provider(schema).capture_for_harness()
     }
 

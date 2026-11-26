@@ -24,17 +24,15 @@ use oracle::adapter_fixture::Fixture;
 pub(super) use oracle::adapter_fixture::host::WAIT;
 use vosu::{
     runtime::{ListenerOwner, WebSocketHubs},
-    server::{
-        bus_provider::BusStateProvider,
-        service::{
-            BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
-            ProductionRouteDelegate, ProductionServices, ReportInputProvider, SurfaceRouter,
-            UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink,
-            adapter_routes, reserve_core_routes,
-        },
+    server::service::{
+        BeatmapFiles, ConfigUpdateService, CurrentBeatmapProvider, DeclaredCalculateProvider,
+        ProductionRouteDelegate, ProductionServices, ReportInputProvider, SurfaceRouter,
+        UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints, WebSocketRelaySink, adapter_routes,
+        reserve_core_routes,
     },
 };
 use vosu_core::plugin::{PluginHost, PluginInstanceId};
+use vosu_core::server::bus_provider::BusStateProvider;
 use vosu_core::server::{
     api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub},
     origins::{OriginAuthorizer, Origins},

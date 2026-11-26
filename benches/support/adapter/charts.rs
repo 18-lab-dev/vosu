@@ -5,7 +5,7 @@ use super::{Rig, input};
 use bytes::Bytes;
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::watch;
-use vosu::server::bus_provider::BusStateProvider;
+use vosu_core::server::bus_provider::BusStateProvider;
 use vosu_core::server::routes::StateRoute;
 use vosu_osu_state::StateBundleSnapshot;
 

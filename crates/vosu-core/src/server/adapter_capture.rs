@@ -11,11 +11,11 @@
 //! equal identities share an ordinal and distinct identities never do.
 pub mod endpoint;
 
+use crate::server::{routes::CachedJson, websocket::Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, hash::Hash};
-use vosu_core::server::{routes::CachedJson, websocket::Schema};
 use vosu_plugin_api::ErrorInfo;
 use vosu_surface::state::{CapturedSelection, IdentifiedSession};
 

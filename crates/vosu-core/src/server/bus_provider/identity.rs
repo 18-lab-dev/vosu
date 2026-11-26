@@ -1,8 +1,10 @@
+//! The selected-image identity behind each provider's latest-only cache.
 use vosu_plugin_api::{CborValue, StateEntry};
 
+/// Whether two selected images are equal for every field `observes` admits.
 /// CBOR preserves signed zero and non-finite source numbers. Rust's derived
 /// float equality would miss -0 changes and invalidate unchanged NaNs forever.
-pub(super) fn same_entries(
+pub fn same_entries(
     left: &[StateEntry],
     right: &[StateEntry],
     observes: impl Fn(&StateEntry, &str) -> bool,

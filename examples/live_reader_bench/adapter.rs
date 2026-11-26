@@ -22,7 +22,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Duration,
 };
-use vosu::server::bus_provider::BusStateProvider;
+use vosu_core::server::bus_provider::BusStateProvider;
 use vosu_core::server::websocket::{Outbound, Schema, StateProvider, WebSocketHub};
 use vosu_osu::{project::SessionFacts, publish::BusPublisher};
 use vosu_osu_model::launch::InstanceSettings;

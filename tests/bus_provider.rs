@@ -1,11 +1,44 @@
-use super::*;
+//! `vosu_core::server::bus_provider::BusStateProvider` with the real bundled
+//! adapters: one shared latest-only encoding per schema across HTTP and
+//! WebSocket, connection-owned demand and adapter-owned derived work. Lives in
+//! the root because core never depends on a bundled adapter.
+use bytes::Bytes;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use vosu_core::server::websocket::{Outbound, WebSocketHub};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::watch;
+use vosu_core::server::bus_provider::{BusStateProvider, identity};
+use vosu_core::server::routes::{CachedJson, StateJsonProvider, StateRoute};
+use vosu_core::server::websocket::{Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub};
 use vosu_plugin_api::Selector;
+use vosu_surface::filter::Filter;
+use vosu_surface::projection::{Projection, ProjectionError, ProjectionView};
+use vosu_surface::requester::BundledRequester;
 use vosu_surface::{files::*, resources::*, routes::*, state::*};
 
-#[path = "../../../crates/vosu-adapter-upstream/src/tests/fixture.rs"]
+#[path = "../crates/vosu-adapter-upstream/src/tests/fixture.rs"]
 mod fixture;
+
+type Adapter = dyn Projection<Filter, Bytes>;
+type View = dyn ProjectionView<Filter, Bytes>;
+
+/// The provider's current snapshot through its public transport contract
+/// (`StateProvider::capture` answers only its own schema).
+trait CurrentSnapshot {
+    fn snapshot(&self) -> Option<Arc<dyn StateSnapshot>>;
+}
+impl CurrentSnapshot for BusStateProvider {
+    fn snapshot(&self) -> Option<Arc<dyn StateSnapshot>> {
+        [
+            Schema::V1,
+            Schema::V2,
+            Schema::V2Precise,
+            Schema::StreamCompanion,
+        ]
+        .into_iter()
+        .find_map(|schema| self.capture(schema))
+    }
+}
 
 struct Requester {
     image: Mutex<CapturedSelection>,

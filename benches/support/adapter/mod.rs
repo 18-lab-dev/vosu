@@ -11,7 +11,7 @@ use bytes::Bytes;
 pub use charts::Charts;
 use counted::{Counted, Counts};
 use std::{sync::Arc, time::Duration};
-use vosu::server::bus_provider::BusStateProvider;
+use vosu_core::server::bus_provider::BusStateProvider;
 use vosu_core::server::{
     routes::{CachedJson, StateJsonProvider, StateRoute},
     websocket::{Connection, Outbound, OutboundReceiver, Schema, WebSocketHub},

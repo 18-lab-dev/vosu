@@ -38,7 +38,7 @@ pub struct ProductionRouteDelegate {
     overlay_static: Option<Arc<vosu_overlay_host::OverlayStatic>>,
     opener: Arc<dyn super::overlay_folders::FolderOpener>,
     #[cfg(feature = "test-harness")]
-    adapter_capture: Option<Arc<crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint>>,
+    adapter_capture: Option<Arc<vosu_core::server::adapter_capture::endpoint::AdapterCaptureEndpoint>>,
 }
 
 impl ProductionRouteDelegate {
@@ -110,7 +110,7 @@ impl ProductionRouteDelegate {
     }
     /// Mounts the test-harness adapter capture endpoint for this launch.
     #[cfg(feature = "test-harness")]
-    pub fn with_adapter_capture(mut self, endpoint: crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint) -> Self {
+    pub fn with_adapter_capture(mut self, endpoint: vosu_core::server::adapter_capture::endpoint::AdapterCaptureEndpoint) -> Self {
         self.adapter_capture = Some(Arc::new(endpoint));
         self
     }
