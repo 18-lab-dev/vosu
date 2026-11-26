@@ -3,7 +3,6 @@
 use std::{
     collections::HashMap,
     convert::Infallible,
-    io::SeekFrom,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex, PoisonError, Weak},
@@ -21,8 +20,12 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio_util::{io::ReaderStream, sync::CancellationToken};
+#[cfg(test)]
+use tokio::io::AsyncReadExt;
+use tokio_util::sync::CancellationToken;
+
+#[cfg(test)]
+use super::files::{MissingKind, ResourceOutcome};
 
 use vosu_adapter_upstream::calculate::PpQuery;
 
@@ -35,7 +38,7 @@ use vosu_overlay_host::{
 };
 
 use super::{
-    files::{self, MissingKind, ResourceOutcome},
+    files,
     pages::{DynamicPage, EmbeddedResponse, PageLookup, PageService, StaticFallback},
     routes::{
         CachedJson, CalculatePpProvider, CalculateResult, Endpoint, PeerAddress, ProviderFuture,

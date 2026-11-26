@@ -60,8 +60,11 @@ impl RootCapability {
     }
 }
 
+mod overlay_root;
 mod surface;
 mod surface_files;
+
+pub use overlay_root::OverlayRootRetirement;
 
 struct Owner {
     slots: HashSet<String>,

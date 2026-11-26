@@ -102,6 +102,7 @@ mod config;
 mod dev_plugins;
 mod discovery;
 mod lifecycle;
+mod overlay_root;
 mod plugin_management;
 mod projection;
 mod render;

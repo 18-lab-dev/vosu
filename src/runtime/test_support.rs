@@ -42,6 +42,7 @@ pub struct TestProductionComposition {
     processor: Option<Arc<CommandProcessor>>,
     relays: Option<Arc<WebSocketRelaySink>>,
     counters: Option<Arc<ReloadableCounterService>>,
+    overlay_root: Option<Arc<super::overlay_root::OverlayRootComposition>>,
     adapters: Arc<adapters::Adapters>,
     plugins: Arc<PluginHost>,
     logger: Logger,
@@ -86,6 +87,9 @@ impl TestProductionComposition {
             if let Some(relays) = self.relays.take() {
                 relays.shutdown().await;
             }
+            if let Some(overlay_root) = self.overlay_root.take() {
+                overlay_root.retire();
+            }
             if let Some(counters) = self.counters.take() {
                 counters.shutdown().await;
             }
@@ -112,9 +116,10 @@ pub async fn start_test_production_composition(
 ) -> io::Result<TestProductionComposition> {
     let config = options.config.current();
     fs::create_dir_all(&options.static_root)?;
+    let static_root = std::path::absolute(&options.static_root)?;
     let plugin_data = options.settings_root.join("plugins");
     let counters = Arc::new(ReloadableCounterService::production(
-        options.static_root,
+        static_root.clone(),
         options.settings_root,
         options.cache_root.clone(),
     ));
@@ -131,20 +136,24 @@ pub async fn start_test_production_composition(
         LoggerOptions::default(),
         Arc::new(StdoutConsole),
     )?;
-    let settings = Arc::new(PluginSettingsService::new(Arc::new(
+    let storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(Arc::new(
         ConfigSettingsBridgeB2::new(options.config.clone()),
     )));
+    storage.seed_overlay_root(&static_root);
+    let settings = Arc::new(PluginSettingsService::new(
+        storage.clone() as Arc<dyn SettingsStorage>
+    ));
     let plugins = match &options.game {
         Some(game) => {
             fs::create_dir_all(&plugin_data)?;
             PluginHost::new_with_foreground(
                 logger.clone(),
-                settings,
+                settings.clone(),
                 Handle::current(),
                 game.foreground.clone(),
             )
         }
-        None => api_v1::resource_host(logger.clone(), settings, &plugin_data).await?,
+        None => api_v1::resource_host(logger.clone(), settings.clone(), &plugin_data).await?,
     };
     let mut bundled = crate::plugins::BUNDLED.to_vec();
     if let Some(game) = &options.game {
@@ -167,6 +176,14 @@ pub async fn start_test_production_composition(
             )
             .map_err(io::Error::other)?;
     }
+    let overlay_root = Arc::new(super::overlay_root::OverlayRootComposition::new(
+        Arc::clone(&plugins),
+        vosu_core::plugin::PluginInstanceId::new(dev_plugins::OVERLAY_HOST_INDEX),
+        storage,
+        settings,
+        Arc::clone(&counters),
+    ));
+    overlay_root.apply(&static_root);
     let (adapters, hubs) = adapters::Adapters::start(&plugins, options.config.clone()).await?;
     let endpoints = options
         .network
@@ -226,7 +243,9 @@ pub async fn start_test_production_composition(
         state: adapters.clone(),
         calculation: Arc::new(DeclaredCalculateProvider(adapters.files.clone())),
         delegate: Arc::new(
-            ProductionRouteDelegate::new(services).with_surface(adapters.router(plugins.clone())),
+            ProductionRouteDelegate::new(services)
+                .with_surface(adapters.router(plugins.clone()))
+                .with_overlay_static(overlay_root.serving()),
         ),
     };
     let listener = match ListenerOwner::start(providers, options.target).await {
@@ -252,6 +271,7 @@ pub async fn start_test_production_composition(
         processor: Some(processor),
         relays: Some(relays),
         counters: Some(counters),
+        overlay_root: Some(overlay_root),
         adapters,
         plugins,
         logger,

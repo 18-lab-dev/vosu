@@ -18,6 +18,11 @@ pub struct ProductionRuntime {
     update_handed_off: AtomicBool,
     update_notice: Option<UpdateNotice>,
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
+    /// A7.1-OR: the overlay root seed, its `SETTINGS_CHANGED` delivery and
+    /// the read-only lease generations `vosu.overlayhost` serves through.
+    overlay_root: AsyncMutex<Option<Arc<super::overlay_root::OverlayRootComposition>>>,
+    settings_storage: Arc<super::overlay_root::RuntimeSettingsStorage>,
+    plugin_settings: Arc<PluginSettingsService>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     /// K0 catalog owner: started before tools/discovery/routes, stopped first.
     catalog: AsyncMutex<Option<super::CatalogComposition>>,
@@ -134,6 +139,9 @@ impl ProductionRuntime {
         if let Some(relays) = self.relays.lock().await.take() {
             relays.shutdown().await;
         }
+        if let Some(overlay_root) = self.overlay_root.lock().await.take() {
+            overlay_root.retire();
+        }
         if let Some(counters) = self.counters.lock().await.take() {
             counters.shutdown().await;
         }
@@ -191,15 +199,25 @@ impl ProductionRuntime {
         counters.set_installed_packages(Arc::new(InstalledOverlayValidation(Arc::downgrade(
             &self.plugins,
         ))));
+        let overlay_root = Arc::new(super::overlay_root::OverlayRootComposition::new(
+            Arc::clone(&self.plugins),
+            vosu_core::plugin::PluginInstanceId::new(dev_plugins::OVERLAY_HOST_INDEX),
+            Arc::clone(&self.settings_storage),
+            Arc::clone(&self.plugin_settings),
+            Arc::clone(&counters),
+        ));
+        overlay_root.apply(&counters.current_root());
         {
             let counters = Arc::clone(&counters);
+            let overlay_root = Arc::clone(&overlay_root);
             let paths = self.paths.clone();
             let logger = self.logger.clone();
             self.config.register_before_publish(move |next| {
-                if let Err(error) = reload_counter_static_root(&paths, next, &counters) {
-                    logger.warn(format!(
+                match reload_counter_static_root(&paths, next, &counters) {
+                    Ok(()) => overlay_root.apply(&counters.current_root()),
+                    Err(error) => logger.warn(format!(
                         "Failed to resolve or create requested static root; retaining previous counter root: {error}"
-                    ));
+                    )),
                 }
             });
         }
@@ -296,6 +314,7 @@ impl ProductionRuntime {
         );
         let delegate = ProductionRouteDelegate::new(services)
             .with_surface(adapters.router(self.plugins.clone()))
+            .with_overlay_static(overlay_root.serving())
             .with_api_keys(Arc::new(api_keys))
             .with_tools(tools.clone())
             .with_plugins(Arc::new(management))
@@ -399,6 +418,7 @@ impl ProductionRuntime {
         ));
         *self.dashboard_listener.get_mut() = Some(dashboard_listener);
         *self.counters.get_mut() = Some(counters);
+        *self.overlay_root.get_mut() = Some(overlay_root);
         *self.listener.get_mut() = Some(listener);
         *self.hubs.get_mut() = Some(hubs);
         *self.processor.get_mut() = Some(processor);
@@ -851,9 +871,18 @@ pub async fn run_cli() -> io::Result<()> {
         ),
     )?);
     let settings_bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
-    let settings_storage: Arc<dyn SettingsStorage> = settings_bridge.clone();
-    let plugin_settings = Arc::new(PluginSettingsService::new(settings_storage));
-    let plugin_host = api_v1::resource_host(logger.clone(), plugin_settings, paths.data()).await?;
+    let settings_storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(
+        settings_bridge.clone(),
+    ));
+    // `vosu.overlayhost` is created with the effective root already seeded.
+    if let Ok(root) = resolved_static_root(&paths, &current) {
+        settings_storage.seed_overlay_root(&root);
+    }
+    let plugin_settings = Arc::new(PluginSettingsService::new(
+        settings_storage.clone() as Arc<dyn SettingsStorage>
+    ));
+    let plugin_host =
+        api_v1::resource_host(logger.clone(), plugin_settings.clone(), paths.data()).await?;
     let state_host = vosu_surface::state::install_state_host(plugin_host.surface_host())
         .map_err(io::Error::other)?;
     let plugin_settings_watch = plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
@@ -873,6 +902,9 @@ pub async fn run_cli() -> io::Result<()> {
         update_handed_off: AtomicBool::new(false),
         update_notice: None,
         counters: AsyncMutex::new(None),
+        overlay_root: AsyncMutex::new(None),
+        settings_storage,
+        plugin_settings,
         tools: AsyncMutex::new(None),
         catalog: AsyncMutex::new(None),
         dev_tools,

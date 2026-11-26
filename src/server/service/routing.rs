@@ -36,6 +36,9 @@ pub struct ProductionRouteDelegate {
     catalog: Option<crate::server::catalog_api::CatalogApi>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
     surface: Option<SurfaceRouter>,
+    /// The overlay host's static provider (A7.1): core keeps the overlay
+    /// listener's fallback classification and hands it this request.
+    overlay_static: Option<Arc<vosu_overlay_host::OverlayStatic>>,
     opener: Arc<dyn super::overlay_folders::FolderOpener>,
     #[cfg(feature = "test-harness")]
     adapter_capture: Option<Arc<crate::server::adapter_capture::endpoint::AdapterCaptureEndpoint>>,
@@ -48,7 +51,11 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, opener: Arc::new(super::overlay_folders::SystemOpener), #[cfg(feature = "test-harness")] adapter_capture: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, plugins: None, catalog: None, api_v1: None, surface: None, overlay_static: None, opener: Arc::new(super::overlay_folders::SystemOpener), #[cfg(feature = "test-harness")] adapter_capture: None }
+    }
+    pub fn with_overlay_static(mut self, serving: Arc<vosu_overlay_host::OverlayStatic>) -> Self {
+        self.overlay_static = Some(serving);
+        self
     }
     /// Core desktop integration for the open-root/open routes.
     pub fn with_opener(mut self, opener: Arc<dyn super::overlay_folders::FolderOpener>) -> Self {
@@ -269,37 +276,6 @@ impl ProductionRouteDelegate {
         }
     }
 
-    /// An overlay URL alias (`/acc/…`) redirects to its folder (`/accuracy%20by%20sxlvia/…`)
-    /// so relative assets, `COUNTER_PATH` and settings identity stay on the
-    /// real folder. A real folder of the same name always wins. 302, because
-    /// the alias can be changed or removed later.
-    fn alias_redirect(&self, request: &Request<Body>) -> Option<Response> {
-        let path = request.uri().path().strip_prefix('/')?;
-        let (alias, rest) = path.split_once('/').unwrap_or((path, ""));
-        if alias.is_empty() || self.services.counters.current_root().join(alias).exists() {
-            return None;
-        }
-        let folder = self.services.counters.names().folder_for_alias(alias)?;
-        let mut url = url::Url::parse("http://localhost/").expect("static base URL is valid");
-        url.path_segments_mut()
-            .expect("HTTP URLs have path segments")
-            .pop_if_empty()
-            .extend(folder.split('/'))
-            .push("");
-        let mut location = format!("{}{rest}", url.path());
-        if let Some(query) = request.uri().query() {
-            location.push('?');
-            location.push_str(query);
-        }
-        Some(
-            Response::builder()
-                .status(StatusCode::FOUND)
-                .header(header::LOCATION, location)
-                .header(header::CACHE_CONTROL, "no-store")
-                .body(Body::empty())
-                .unwrap(),
-        )
-    }
 
     fn counter_delete(&self, request: &Request<Body>) -> Response {
         match decoded_capture(request, "/api/counters/delete/")
@@ -545,64 +521,30 @@ impl ProductionRouteDelegate {
         }
     }
 
-
-    fn profile_html_path(&self, path: &str, request: &Request<Body>) -> String {
-        let query = query_pairs(request);
-        if let Some(requested) = query_value(&query, "vosuProfile") {
-            let store = self.services.counters.settings_store();
-            if let Ok(profile) = store.resolve_profile(Some(requested)).or_else(|_| store.resolve_profile(None)) {
-                return format!("{path}?vosuProfile={profile}");
-            }
-        }
-        path.to_owned()
-    }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
-        if endpoint != Endpoint::CounterStatic && let Some(surface) = &self.surface {
-            return surface.http(&request).await;
+        if endpoint == Endpoint::CounterStatic {
+            return self.counter_static(&request).await;
         }
-        if endpoint != Endpoint::CounterStatic {
-            return surface_http_response(surface_not_ready());
+        match &self.surface {
+            Some(surface) => surface.http(&request).await,
+            None => surface_http_response(surface_not_ready()),
         }
-        if endpoint == Endpoint::CounterStatic
-            && let Some(redirect) = self.alias_redirect(&request)
-        {
-            return redirect;
-        }
-        let current = self.services.beatmap.files();
-        let path = request.uri().path();
-        let counter_html_path = (endpoint == Endpoint::CounterStatic).then(|| {
-            let relative = path.trim_start_matches('/');
-            if path.ends_with('/') {
-                format!("{relative}index.html")
-            } else {
-                relative.to_owned()
+    }
+
+    /// Overlay static serving, alias redirects and `COUNTER_PATH` belong to
+    /// the overlay host and read only through its `OverlayRootView` lease.
+    fn counter_static(&self, request: &Request<Body>) -> impl Future<Output = Response> + Send + '_ {
+        let surface = self.overlay_static.as_ref().zip(surface_request(request, Arc::new(empty_selection())));
+        let head = request.method() == Method::HEAD;
+        async move {
+            let Some((serving, surface)) = surface else {
+                return not_found();
+            };
+            let mut response = surface_http_response(serving.serve(&surface).await);
+            if head {
+                *response.body_mut() = Body::empty();
             }
-        });
-        let target = request.uri().to_string();
-        let resolved = resolve_counter_endpoint(current.static_root.as_deref(), path, &target);
-        let outcome = match resolved {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                let mut response = file_route_error_response(error);
-                if request.method() == Method::HEAD { *response.body_mut() = Body::empty(); }
-                return response;
-            }
-        };
-        let range = request
-            .headers()
-            .get(header::RANGE)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        if let Some(encoded_html_path) = counter_html_path {
-            counter_resource_response(
-                outcome,
-                range,
-                &self.profile_html_path(&encoded_html_path, &request),
-                is_preview_request(&request),
-            )
-            .await
-        } else {
-            unreachable!("game files were dispatched through the declared requester")
+            response
         }
     }
 
@@ -615,31 +557,7 @@ impl ProductionRouteDelegate {
                 } else { location };
                 redirect(location)
             },
-            StaticFallback::CounterPath { index_path, .. } => {
-                let current = self.services.beatmap.files();
-                let target = request.uri().to_string();
-                let outcome = files::resolve_encoded_counter_resource(
-                    current.static_root.as_deref(),
-                    index_path.trim_start_matches('/'),
-                    &target,
-                    MissingKind::NotFound,
-                );
-                let range = request
-                    .headers()
-                    .get(header::RANGE)
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned);
-                match outcome {
-                    Ok(value) => counter_resource_response(
-                        value,
-                        range,
-                        &self.profile_html_path(&index_path, &request),
-                        is_preview_request(&request),
-                    )
-                    .await,
-                    Err(_) => not_found(),
-                }
-            }
+            StaticFallback::CounterPath { .. } => self.counter_static(&request).await,
         }
     }
 

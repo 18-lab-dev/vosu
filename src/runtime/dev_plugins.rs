@@ -51,7 +51,11 @@ pub(super) const REQUIRED: &[&str] = &[
     "vosu.adapter.upstream",
     "vosu.adapter.gosumemory",
     "vosu.adapter.streamcompanion",
+    "vosu.overlayhost",
 ];
+
+/// `vosu.overlayhost`'s fixed `BUNDLED` position and instance id.
+pub(super) const OVERLAY_HOST_INDEX: u64 = 4;
 
 /// Loads required production plugins first, followed by optional bundled
 /// fixtures. Required-plugin failure aborts composition; optional fixtures keep
@@ -67,7 +71,7 @@ pub(super) fn load_bundled(
 ) -> std::io::Result<u64> {
     if bundled.len() < REQUIRED.len() {
         return Err(std::io::Error::other(
-            "required bundled plugin set is incomplete: osu and all three adapters are required",
+            "required bundled plugin set is incomplete: osu, all three adapters and the overlay host are required",
         ));
     }
     for (index, entry) in bundled.iter().enumerate() {

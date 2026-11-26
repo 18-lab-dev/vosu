@@ -108,7 +108,7 @@ pub use host::resource_requests::{
     MAX_PENDING_RESOURCE_REQUESTS, ResourceOwner, ResourceReply, ResourceRequest,
     ResourceRequestError, ResourceRequests,
 };
-pub use host::resources::RootCapability;
+pub use host::resources::{OverlayRootRetirement, RootCapability};
 pub use host::{
     DiagnosticSession, DiscoveryObserver, PackageRegistration, PluginHost, ProcessRecord,
     ProviderRegistration, ValidationSnapshot,

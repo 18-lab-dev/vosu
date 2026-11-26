@@ -1,7 +1,3 @@
-    fn resolve_exact(root: Option<&Path>, relative: Option<&Path>, missing: MissingKind) -> Result<ResourceOutcome, vosu_sys::fs::SafePathError> {
-        let Some(relative) = relative.and_then(Path::to_str) else { return Ok(ResourceOutcome::Missing(missing)); };
-        files::resolve_resource(root, relative, relative, missing)
-    }
     #[tokio::test]
     async fn dashboard_read_apis_report_counts_and_safe_folder_details() {
         let root = tempfile::tempdir().unwrap();
@@ -57,7 +53,7 @@
     }
 
     #[tokio::test]
-    async fn overlay_aliases_redirect_to_their_folder_until_a_real_folder_takes_the_name() {
+    async fn overlay_names_route_saves_nickname_and_alias_beside_the_settings() {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("static/accuracy by sxlvia")).unwrap();
         let counters = Arc::new(ReloadableCounterService::production(
@@ -90,31 +86,8 @@
         assert_eq!(bounded!(set(r#"{"nickname":"Acc","alias":"tools"}"#)).status(), StatusCode::BAD_REQUEST);
         assert_eq!(bounded!(set(r#"{"nickname":"Acc","alias":"acc"}"#)).status(), StatusCode::OK);
         assert!(root.path().join("config/overlay-names.json").is_file());
-        let get = |uri: &'static str| delegate.dispatch(
-            Endpoint::CounterStatic, Request::builder().uri(uri).body(Body::empty()).unwrap(), Bytes::new(),
-        );
-        for (uri, location) in [
-            ("/acc", "/accuracy%20by%20sxlvia/"),
-            ("/ACC/assets/a.css?x=1", "/accuracy%20by%20sxlvia/assets/a.css?x=1"),
-        ] {
-            let response = bounded!(get(uri));
-            assert_eq!(response.status(), StatusCode::FOUND, "{uri}");
-            assert_eq!(response.headers()[header::LOCATION], location, "{uri}");
-        }
-        assert_ne!(bounded!(get("/other/")).status(), StatusCode::FOUND);
-        // A folder created later under the alias's name takes precedence.
-        std::fs::create_dir_all(root.path().join("static/acc")).unwrap();
-        assert_ne!(bounded!(get("/acc/")).status(), StatusCode::FOUND);
         bounded!(processor.shutdown());
         bounded!(relays.shutdown());
-    }
-
-    #[test]
-    fn profile_injection_qualifies_only_explicit_overrides() {
-        let legacy = counter_path_script("counter/index.html").unwrap();
-        assert_eq!(legacy, Bytes::from_static(br#"<script>window.COUNTER_PATH="counter";</script>"#));
-        let pinned = counter_path_script("counter/index.html?vosuProfile=stream").unwrap();
-        assert_eq!(pinned, Bytes::from_static(br#"<script>window.COUNTER_PATH="/@vosu-profile/stream/counter";window.VOSU_PROFILE="stream";</script>"#));
     }
 
 
@@ -383,155 +356,6 @@
         assert!(!sink.is_shutdown());
         bounded!(sink.shutdown());
         assert!(sink.is_shutdown());
-    }
-
-    #[tokio::test]
-    async fn file_response_emits_partial_and_unsatisfiable_ranges() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("data.mp3");
-        std::fs::write(&path, b"abcdef").unwrap();
-        let partial_target = resolve_exact(
-            Some(directory.path()),
-            Some(Path::new("data.mp3")),
-            MissingKind::NotFound,
-        )
-        .unwrap();
-        let response = bounded!(resource_response(partial_target, Some("bytes=1-3".into())));
-        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 1-3/6");
-
-        let invalid_target = resolve_exact(
-            Some(directory.path()),
-            Some(Path::new("data.mp3")),
-            MissingKind::NotFound,
-        )
-        .unwrap();
-        let response = bounded!(resource_response(invalid_target, Some("bytes=8-9".into())));
-        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
-        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */6");
-    }
-
-    #[tokio::test]
-    async fn full_counter_html_appends_decoded_logical_parent_without_changing_original_body() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("index.html");
-        let original = b"<main>original counter</main>";
-        std::fs::write(&path, original).unwrap();
-        let outcome = resolve_exact(
-            Some(directory.path()),
-            Some(Path::new("index.html")),
-            MissingKind::NotFound,
-        )
-        .unwrap();
-
-        let response =
-            bounded!(counter_resource_response(outcome, None, "nested%20counter/index.html", false));
-        assert_eq!(response.status(), StatusCode::OK);
-        let declared_length = response.headers()[header::CONTENT_LENGTH]
-            .to_str()
-            .unwrap()
-            .parse::<usize>()
-            .unwrap();
-        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
-            .unwrap();
-        assert_eq!(declared_length, body.len());
-        assert!(body.starts_with(original));
-        let appended = std::str::from_utf8(&body[original.len()..]).unwrap();
-        assert!(appended.contains(r#"window.COUNTER_PATH="nested counter""#));
-        assert!(!body.windows(12).any(|window| window == b"vosu-preview"), "only previews are marked");
-    }
-
-    #[tokio::test]
-    async fn preview_pages_mark_their_sockets_before_any_overlay_script() {
-        let directory = tempfile::tempdir().unwrap();
-        let page = "<!doctype html><html><head><title>t</title><script>new WebSocket('ws://x')</script></head><body><header>h</header></body></html>";
-        std::fs::write(directory.path().join("index.html"), page).unwrap();
-        let outcome = resolve_exact(
-            Some(directory.path()),
-            Some(Path::new("index.html")),
-            MissingKind::NotFound,
-        )
-        .unwrap();
-        let response = bounded!(counter_resource_response(outcome, None, "counter/index.html", true));
-        assert_eq!(response.status(), StatusCode::OK);
-        let declared = response.headers()[header::CONTENT_LENGTH].to_str().unwrap().parse::<usize>().unwrap();
-        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX)).unwrap();
-        assert_eq!(declared, body.len());
-        let body = std::str::from_utf8(&body).unwrap();
-        // The marker is the first script, right after <head>, and the
-        // logical path is still appended.
-        assert!(body.starts_with(&format!("<!doctype html><html><head>{PREVIEW_SOCKET_SCRIPT}<title>")));
-        assert!(body.ends_with(r#"<script>window.COUNTER_PATH="counter";</script>"#));
-        // `<header>` is not mistaken for `<head>`.
-        assert_eq!(
-            String::from_utf8(with_preview_socket_marker(b"<body><header>x</header>")).unwrap(),
-            format!("{PREVIEW_SOCKET_SCRIPT}<body><header>x</header>")
-        );
-    }
-
-    #[tokio::test]
-    async fn counter_path_script_escapes_html_terminators_and_javascript_line_separators() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("index.html");
-        let original = b"<!doctype html><title>counter</title>";
-        std::fs::write(&path, original).unwrap();
-        let outcome = resolve_exact(
-            Some(directory.path()),
-            Some(Path::new("index.html")),
-            MissingKind::NotFound,
-        )
-        .unwrap();
-
-        let response = bounded!(counter_resource_response(
-            outcome,
-            None,
-            "evil%3C%2Fscript%3E%26%E2%80%A8%E2%80%A9/index.html",
-            false,
-        ));
-        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
-            .unwrap();
-        assert!(body.starts_with(original));
-        let appended = std::str::from_utf8(&body[original.len()..]).unwrap();
-        assert!(appended.contains(
-            r#"window.COUNTER_PATH="evil\u003C/script\u003E\u0026\u2028\u2029""#
-        ));
-        assert_eq!(appended.matches("</script>").count(), 1);
-    }
-
-    #[tokio::test]
-    async fn partial_counter_html_preserves_range_body_and_headers_without_metadata() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("index.html");
-        std::fs::write(&path, b"abcdef").unwrap();
-        let outcome = resolve_exact(
-            Some(directory.path()),
-            Some(Path::new("index.html")),
-            MissingKind::NotFound,
-        )
-        .unwrap();
-
-        let response =
-            bounded!(counter_resource_response(outcome, Some("bytes=1-3".into()), "counter/index.html", true));
-        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.headers()[header::CONTENT_LENGTH], "3");
-        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 1-3/6");
-        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
-            .unwrap();
-        assert_eq!(body, Bytes::from_static(b"bcd"));
-    }
-
-    #[tokio::test]
-    async fn unavailable_current_file_uses_exact_not_ready_envelope() {
-        let response =
-            bounded!(resource_response(ResourceOutcome::Missing(MissingKind::NotReady), None));
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], JSON);
-        let body = bounded!(axum::body::to_bytes(response.into_body(), usize::MAX))
-            .unwrap();
-        assert_eq!(
-            body,
-            Bytes::from_static(br#"{"error":"osu is not ready/running"}"#)
-        );
     }
 
     #[test]

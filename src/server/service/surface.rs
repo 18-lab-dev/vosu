@@ -167,37 +167,11 @@ impl SurfaceRouter {
         request: &Request<Body>,
         websocket: bool,
     ) -> ResponseFuture<'_, Option<ProviderResponse>> {
-        let selected = (|| {
-            let context = self
-                .requester
-                .capture(vosu_surface::state::SessionTarget::Focused, &[])
-                .ok()?;
-            let query: Vec<_> =
-                url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-                    .take(vosu_surface::routes::MAX_QUERY_PAIRS + 1)
-                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                    .collect();
-            let headers = request
-                .headers()
-                .iter()
-                .filter(|(name, _)| {
-                    matches!(
-                        name.as_str(),
-                        "range" | "if-none-match" | "if-modified-since" | "if-range"
-                    )
-                })
-                .map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_owned())))
-                .collect::<Option<Vec<_>>>()?;
-            Some(SurfaceRequest {
-                method: request.method().to_string(),
-                path: request.uri().path().to_owned(),
-                query,
-                headers,
-                body: Arc::from([]),
-                context: Arc::new(context),
-                management: None,
-            })
-        })();
+        let selected = self
+            .requester
+            .capture(vosu_surface::state::SessionTarget::Focused, &[])
+            .ok()
+            .and_then(|context| surface_request(request, Arc::new(context)));
         Box::pin(async move {
             self.host
                 .dispatch_surface_route(
@@ -216,6 +190,56 @@ impl SurfaceRouter {
                 _ => not_found(),
             }
         })
+    }
+}
+
+/// The admitted request as a surface provider sees it: decoded query pairs,
+/// only the conditional and range headers, no body and no credentials.
+/// `None` when a forwarded header is not text or metadata exceeds its bounds.
+pub(super) fn surface_request(
+    request: &Request<Body>,
+    context: Arc<vosu_surface::state::CapturedSelection>,
+) -> Option<SurfaceRequest> {
+    let query: Vec<_> =
+        url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+            .take(vosu_surface::routes::MAX_QUERY_PAIRS + 1)
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+    let headers = request
+        .headers()
+        .iter()
+        .filter(|(name, _)| {
+            matches!(
+                name.as_str(),
+                "range" | "if-none-match" | "if-modified-since" | "if-range"
+            )
+        })
+        .map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_owned())))
+        .collect::<Option<Vec<_>>>()?;
+    let request = SurfaceRequest {
+        method: request.method().to_string(),
+        path: request.uri().path().to_owned(),
+        query,
+        headers,
+        body: Arc::from([]),
+        context,
+        management: None,
+    };
+    request.valid_metadata().then_some(request)
+}
+
+/// Overlay static serving reads no game state.
+pub(super) fn empty_selection() -> vosu_surface::state::CapturedSelection {
+    vosu_surface::state::CapturedSelection {
+        session: None,
+        focus_revision: 0,
+        roster: vosu_surface::state::IdentifiedRoster {
+            revision: 0,
+            sessions: Arc::from([]),
+        },
+        revision: 0,
+        namespace_revisions: Arc::from([]),
+        values: Arc::from([]),
     }
 }
 impl RouteDelegate for SurfaceRouter {

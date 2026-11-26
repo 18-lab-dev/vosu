@@ -27,6 +27,7 @@ mod plugin;
 pub mod presentation;
 pub mod preview_scheme;
 pub mod root;
+mod serve;
 mod service;
 mod settings;
 #[cfg(test)]
@@ -38,6 +39,7 @@ pub use model::{
 };
 pub use names::{OverlayName, OverlayNames};
 pub use plugin::vosu_plugin_vtable;
+pub use serve::{OverlayRootView, OverlayStatic};
 pub use service::{
     CounterDownloader, CounterError, CounterService, HardenedCounterDownloader, InstalledPackages,
     ReloadableCounterService, parse_metadata,

@@ -160,7 +160,10 @@ pub(super) fn register(
         .clone();
     if !matches!(
         reader.as_str(),
-        "vosu.adapter.upstream" | "vosu.adapter.gosumemory" | "vosu.adapter.streamcompanion"
+        "vosu.adapter.upstream"
+            | "vosu.adapter.gosumemory"
+            | "vosu.adapter.streamcompanion"
+            | "vosu.overlayhost"
     ) {
         return Err(RegistrationError::UnknownRequester);
     }

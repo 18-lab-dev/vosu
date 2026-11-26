@@ -10,4 +10,7 @@ presentation -> catalog
 presentation -> model
 presentation -> preview_scheme
 presentation -> service
+serve -> cards
+serve -> service
+serve -> settings
 service -> root

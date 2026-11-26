@@ -6,7 +6,8 @@
 //! guarantee a compile-time list does not give more simply — forgetting an
 //! entry here is a visible, reviewed omission, not a silent one.
 //!
-//! Production ships the game provider followed by three required projections.
+//! Production ships the game provider, three required projections and the
+//! overlay host (M7 O0).
 
 #[cfg(feature = "test-harness")]
 const TESTKIT_ECHO_MANIFEST: &str = "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
@@ -40,6 +41,14 @@ pub static BUNDLED: &[vosu_core::plugin::BundledPlugin<'static>] = &[
         namespace_schemas: &[],
         action_schemas: &[],
         vtable: vosu_adapter_streamcompanion::vosu_plugin_vtable,
+    },
+    // Index 4 is `OVERLAY_HOST_INDEX`: composition mints its overlay root lease.
+    vosu_core::plugin::BundledPlugin {
+        manifest: vosu_overlay_host::MANIFEST,
+        settings_schema: Some(vosu_overlay_host::SETTINGS_SCHEMA),
+        namespace_schemas: &[],
+        action_schemas: &[],
+        vtable: vosu_overlay_host::vosu_plugin_vtable,
     },
     #[cfg(feature = "test-harness")]
     vosu_core::plugin::BundledPlugin {

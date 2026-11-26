@@ -38,12 +38,13 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
     let current = config.current();
     let console = Arc::new(Console::default());
     let logger = Logger::new(root, LoggerOptions::default(), console.clone()).unwrap();
-    let settings = Arc::new(ConfigSettingsBridgeB2::new(config.clone()));
-    let plugins = PluginHost::new(
-        logger.clone(),
-        Arc::new(PluginSettingsService::new(settings)),
-        Handle::current(),
-    );
+    let settings_storage = Arc::new(crate::runtime::overlay_root::RuntimeSettingsStorage::new(
+        Arc::new(ConfigSettingsBridgeB2::new(config.clone())),
+    ));
+    let plugin_settings = Arc::new(PluginSettingsService::new(
+        settings_storage.clone() as Arc<dyn vosu_core::plugin::settings::SettingsStorage>
+    ));
+    let plugins = PluginHost::new(logger.clone(), plugin_settings.clone(), Handle::current());
     (
         ProductionRuntime {
             changes: config.subscribe(),
@@ -60,6 +61,9 @@ async fn owner(root: &Path) -> (ProductionRuntime, Arc<Console>) {
             update_handed_off: AtomicBool::new(false),
             update_notice: None,
             counters: AsyncMutex::new(None),
+            overlay_root: AsyncMutex::new(None),
+            settings_storage,
+            plugin_settings,
             tools: AsyncMutex::new(None),
             catalog: AsyncMutex::new(None),
             dev_tools: vec![],
@@ -174,7 +178,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 &mut plugin_management::Roster::default(),
             )
             .unwrap(),
-            5
+            6
         );
         assert!(owner.plugins.has_enabled_matchers());
         owner.shutdown().await.unwrap();
@@ -183,7 +187,7 @@ async fn required_registry_failure_is_fatal_but_optional_fixture_failure_is_not(
                 .0
                 .lock()
                 .unwrap()
-                .contains("optional bundled plugin at index 4 failed")
+                .contains("optional bundled plugin at index 5 failed")
         );
     })
     .await
