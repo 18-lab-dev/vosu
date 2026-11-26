@@ -322,6 +322,73 @@ for (const [width, reducedMotion] of [[390, 'no-preference'], [1280, 'no-prefere
   await context.close();
 }
 
+// Status strip (S0): core diagnostics joined by PID with API v1 session
+// summaries read from the overlay origin. The real daemon answers first
+// (no game: an empty list, read cross-origin without credentials); then
+// scripted responses cover focus moving between two sessions, unknown
+// fields, a failed summary read and a detach.
+{
+  const { context, page } = await open('/');
+  const sessionReads = [];
+  const sockets = [];
+  page.on('websocket', (socket) => sockets.push(socket.url()));
+  page.on('request', (request) => {
+    if (request.url() === `${OVERLAY}/api/v1/sessions`) sessionReads.push(request.headers());
+  });
+  const real = await page.waitForResponse((response) => response.url() === `${OVERLAY}/api/v1/sessions`, { timeout: 6000 }).catch(() => null);
+  check(real?.status() === 200, `status: the overlay-origin session read must succeed, got ${real?.status()}`);
+  check(sessionReads.length > 0 && sessionReads.every((headers) => !('x-vosu-csrf' in headers) && !('cookie' in headers) && !('authorization' in headers)),
+    `status: session reads must carry no CSRF, cookie or credential ${JSON.stringify(sessionReads)}`);
+  const instance = (pid, client, poll, precise, version = '2026.1') => ({ pid, client, version, state: 'reading', pollIntervalMs: poll, precisePollIntervalMs: precise });
+  const session = (pid, game, name, variant, focused, version = '2026.1') => ({ game, variant, name, version, pid, session: `s${pid}`, focused, plugin: { id: `vosu.${game}`, version: '2.0.0' } });
+  let scene = {
+    status: { available: true, connections: {}, instances: [instance(101, 'lazer', 150, 10), instance(202, 'other', 999, 77)] },
+    sessions: { sessions: [session(202, 'rhythm', 'Rhythm', 'beta', false), session(101, 'osu', 'osu!', 'lazer', true)] },
+  };
+  await page.route(`${DASHBOARD}/api/dashboard/status`, (route) => route.fulfill({ json: scene.status }));
+  await page.route(`${OVERLAY}/api/v1/sessions`, (route) => (scene.sessions === null
+    ? route.fulfill({ status: 500, json: { error: { code: 'internal' } }, headers: { 'access-control-allow-origin': '*' } })
+    : route.fulfill({ json: scene.sessions, headers: { 'access-control-allow-origin': '*' } })));
+  const strip = () => page.evaluate(() => {
+    const cell = (name) => document.querySelector(`[data-status-cell="${name}"]`);
+    return {
+      attachment: document.querySelector('#attachment-status').textContent,
+      client: cell('client').hidden ? null : cell('client').querySelector('.status-value').textContent,
+      poll: cell('poll').hidden ? null : cell('poll').querySelector('.status-value').textContent,
+    };
+  });
+  const settle = async (predicate, label) => {
+    const ok = await page.waitForFunction(predicate, null, { timeout: 6000 }).then(() => true, () => false);
+    const value = await strip();
+    report.status = [...(report.status ?? []), { label, ...value }];
+    check(ok, `status: ${label} ${JSON.stringify(value)}`);
+    return value;
+  };
+  await settle(() => document.querySelector('[data-status-cell="client"] .status-value').textContent.includes('PID 202'), 'two sessions');
+  const both = await strip();
+  check(both.client === 'osu! lazer 2026.1 · PID 101 (focused) | Rhythm beta 2026.1 · PID 202', `status: labels follow each PID ${JSON.stringify(both)}`);
+  check(both.poll === '150 ms / precise 10 ms', `status: only the osu session's own interval shows ${JSON.stringify(both)}`);
+  // Focus moves to a second osu session between reads: its own interval follows it.
+  scene = { ...scene, status: { ...scene.status, instances: [instance(101, 'lazer', 150, 10), instance(202, 'stable', 333, 7)] },
+    sessions: { sessions: [session(101, 'osu', 'osu!', 'lazer', false), session(202, 'osu', 'osu!', 'stable', true)] } };
+  await settle(() => document.querySelector('[data-status-cell="poll"] .status-value').textContent.startsWith('333'), 'focus moved');
+  // Unknown values are shown as unknown, never as zero or "null".
+  scene = { status: { available: true, connections: {}, instances: [{ pid: 303, client: 'lazer', version: null, state: 'reading', pollIntervalMs: null, precisePollIntervalMs: null }] },
+    sessions: { sessions: [{ ...session(303, 'osu', 'osu!', 'lazer', true), version: '' }] } };
+  const unknown = await settle(() => document.querySelector('[data-status-cell="client"] .status-value').textContent.includes('PID 303'), 'unknown fields');
+  check(unknown.client === 'osu! lazer version unknown · PID 303' && unknown.poll === null, `status: unknown fields ${JSON.stringify(unknown)}`);
+  // A failed summary read keeps core's own text and invents no game.
+  scene = { status: { available: true, connections: {}, instances: [instance(404, 'stable', 150, 10)] }, sessions: null };
+  const failed = await settle(() => document.querySelector('[data-status-cell="client"] .status-value').textContent.includes('PID 404'), 'summaries unavailable');
+  check(failed.client === 'stable 2026.1 · PID 404' && failed.poll === null, `status: failed summaries ${JSON.stringify(failed)}`);
+  // Detach: nothing from the previous poll remains.
+  scene = { status: { available: true, connections: {}, instances: [] }, sessions: { sessions: [] } };
+  const detached = await settle(() => document.querySelector('[data-status-cell="client"]').hidden, 'detached');
+  check(detached.client === null && detached.poll === null && detached.attachment.startsWith('Not detected'), `status: detach ${JSON.stringify(detached)}`);
+  check(sockets.length === 0, `status: the dashboard must open no state subscription ${JSON.stringify(sockets)}`);
+  await context.close();
+}
+
 await browser.close();
 report.failures = failures;
 fs.writeFileSync(`${evidence}/dashboard.json`, `${JSON.stringify(report, null, 2)}\n`);
