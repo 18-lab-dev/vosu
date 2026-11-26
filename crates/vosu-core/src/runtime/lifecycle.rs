@@ -220,6 +220,7 @@ impl ProductionRuntime {
             management.approvals(),
         );
         let catalog = catalog.await?;
+        let installed_catalog = catalog.services().installed().cloned();
         catalog.attach_management(&mut management);
         *self.catalog.get_mut() = Some(catalog);
         // Owned from here on: every later failure leaves it to `shutdown`.
@@ -277,6 +278,7 @@ impl ProductionRuntime {
             self.paths.cache().join("tools"),
             crate::tools::ExtraRoots {
                 dev: self.dev_tools.clone(),
+                catalog: installed_catalog,
             },
             self.origins.overlay(),
             self.dashboard.then(|| self.origins.dashboard()),

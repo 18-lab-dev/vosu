@@ -23,7 +23,10 @@ const STATUS_DOTS = {
   blocked: 'warn',
   untrusted: 'warn',
 };
-const SOURCE_LABELS = { dev: 'Dev', official: 'Official', user: 'User' };
+const SOURCE_LABELS = { dev: 'Dev', official: 'Official', 'official-fixture': 'Official fixture', user: 'User' };
+function sourceLabel(view) {
+  return view.fixture && view.source === 'user' ? 'Official fixture (inactive)' : SOURCE_LABELS[view.source] ?? view.source;
+}
 const BUSY_LABELS = {
   enable: 'Enabling…',
   disable: 'Disabling…',
@@ -179,7 +182,7 @@ export function mountTools({
       el('span', { className: 'v-dot', attrs: { 'data-state': displayStatus.dot } }),
       el('span', { text: displayStatus.label }));
     if (view.source && view.source !== 'official') {
-      line.append(el('span', { className: 'badge', text: SOURCE_LABELS[view.source] ?? view.source, attrs: { 'data-source': view.source } }));
+      line.append(el('span', { className: 'badge', text: sourceLabel(view), attrs: { 'data-source': view.source } }));
     }
     // Core's catalog update source (ToolView `update_available`); the
     // update itself goes through the Available card's reviewed plan.
@@ -194,7 +197,7 @@ export function mountTools({
     const actions = el('div', { className: 'tool-card__actions' });
     // A 1.x package can only be updated to 2.0; vosu refuses every action.
     const legacy = view.status_detail === LEGACY_DETAIL;
-    if (!view.trusted && status !== 'invalid' && !legacy) {
+    if (!view.trusted && !view.fixture && status !== 'invalid' && !legacy) {
       actions.append(actionButton('Trust…', 'trust', { primary: true, describe: `Trust ${name}` }));
     }
     // A disabled tool's next step is Enable. Open appears once the tool is
@@ -221,7 +224,7 @@ export function mountTools({
     add('Status', statusValue(view));
     add('Version', view.version ? `v${view.version}` : null);
     add('Author', view.author || null);
-    add('Source', SOURCE_LABELS[view.source] ?? view.source ?? null);
+    add('Source', sourceLabel(view) ?? null);
     add('Requires', idList(list(view.requires), dependency, 'Nothing'));
     if (list(view.optional).length) add('Uses if present', idList(list(view.optional), dependency, 'Nothing'));
     if (homepage) add('Homepage', el('a', { text: new URL(homepage).host, attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer' } }));

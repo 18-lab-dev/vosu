@@ -286,12 +286,20 @@ impl InstalledStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
-    pub(crate) fn plugin(&self, id: &str) -> Option<InstalledRecord> {
+    pub(crate) fn map_record<T>(
+        &self,
+        kind: PackageKind,
+        id: &str,
+        project: impl FnOnce(&InstalledRecord) -> T,
+    ) -> Option<T> {
         self.document
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .record(PackageKind::Plugin, id)
-            .cloned()
+            .record(kind, id)
+            .map(project)
+    }
+    pub(crate) fn plugin(&self, id: &str) -> Option<InstalledRecord> {
+        self.map_record(PackageKind::Plugin, id, Clone::clone)
     }
 
     /// The caller holds the catalog operation gate, as with `clear_approvals`.

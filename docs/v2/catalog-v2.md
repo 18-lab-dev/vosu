@@ -1774,9 +1774,11 @@ IDs, D8 eligibility and disclosure, provider resolution, and ordinary catalog
 install and load policy (including any approval required for Linux user
 namespaces). Catalog receipts, installed provenance and logs mark it
 `official-fixture` and/or `fixture: true`, not production official evidence.
-The switch cannot change saved source trust; an installed fixture plugin
-requires the same fixture selection on restart. A non-harness or release
-build never honors the variable. This is separate from the staged
+The switch cannot change saved source trust. An installed fixture plugin
+requires the same fixture selection on restart; a fixture web tool is trusted
+and launchable only with that selection and otherwise appears as an untrusted
+user tool with fixture provenance. A non-harness or release build never
+honors the variable. This is separate from the staged
 `VOSU_TEST_OFFICIAL_PLUGIN` fixture and grants no bundled authority.
 
 ## 1.x coexistence

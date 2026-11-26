@@ -132,7 +132,8 @@ is the shared identifier check, so `tools -> server` is the only edge between th
 Core `runtime` assembles the service graph: `app`, config, logging, plugin,
 state, resources, actions, catalog, desktop, removed-route notices, report,
 server, tools and updater. The server renders reports through `report` and
-the tool registry consumes the action and plugin capability registries.
+the tool registry consumes the action and plugin capability registries and
+derives v2 tool trust from the recovered catalog's installed records.
 
 - `crates/vosu-osu-reader/src/offset_generator.rs` depends on its own crate's
   `assets` (the embedded generator bundle and offsets template) and `memory`

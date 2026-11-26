@@ -49,6 +49,8 @@ runtime -> tools
 runtime -> updater
 # The registry supplies API v1 action authority without a server -> tools edge.
 tools -> actions
+# Web tools use the exact committed source and current catalog authority.
+tools -> catalog
 tools -> plugin
 tools -> server
 report -> config

@@ -126,7 +126,7 @@ impl ToolRegistry {
         let (requires, optional) = self
             .capability_view(entry)
             .unwrap_or_else(|| (json!([]), json!([])));
-        json!({
+        let mut view = json!({
             "id": entry.id,
             "name": tool.map_or(entry.id.as_str(), |t| &t.name),
             "version": tool.map_or("", |t| &t.version),
@@ -145,6 +145,10 @@ impl ToolRegistry {
             "requires": requires,
             "optional": optional,
             "has_settings": entry.settings.is_some(),
-        })
+        });
+        if entry.inactive_fixture || entry.source == "official-fixture" {
+            view["fixture"] = true.into();
+        }
+        view
     }
 }

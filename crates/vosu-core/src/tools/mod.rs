@@ -19,6 +19,7 @@ mod settings;
 mod tests;
 mod view;
 
+use crate::catalog::install::InstalledStore;
 use manifest::ToolPackage;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,7 @@ use std::{
 use subtle::ConstantTimeEq as _;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use vosu_plugin_api::manifest::PackageKind;
 
 pub use view::ToolHostViews;
 
@@ -44,6 +46,7 @@ const FIXTURE_VERSION: &str = "2.0.0-alpha.1";
 
 /// Legacy-package diagnosis (`ToolView.status_detail`, A7.2).
 const NEEDS_UPDATE: &str = "needs-2.0-update";
+const FIXTURE_NOT_SELECTED: &str = "official fixture source is not selected";
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct Saved {
@@ -65,6 +68,7 @@ struct Entry {
     id: String,
     root: PathBuf,
     source: &'static str,
+    inactive_fixture: bool,
     /// The validated v2 package; `None` for legacy and unreadable packages.
     manifest: Option<ToolPackage>,
     /// A 1.x `tool.toml`-only package (`needs-2.0-update`).
@@ -92,6 +96,7 @@ pub struct ToolRegistry {
     data: PathBuf,
     cache: PathBuf,
     roots: Vec<(PathBuf, &'static str)>,
+    catalog: Option<Arc<InstalledStore>>,
     overlay_url: String,
     dashboard_url: Option<String>,
     version: semver::Version,
@@ -161,8 +166,11 @@ pub fn development_roots(args: &[std::ffi::OsString]) -> io::Result<Vec<PathBuf>
     result.into_iter().map(std::path::absolute).collect()
 }
 /// Tool roots ahead of the user root, in precedence order.
+#[derive(Default)]
 pub struct ExtraRoots {
     pub dev: Vec<PathBuf>,
+    /// The recovered catalog store owning this registry's user root, if any.
+    pub catalog: Option<Arc<InstalledStore>>,
 }
 
 /// What discovery found in one candidate directory.
@@ -257,8 +265,9 @@ impl ToolRegistry {
         dashboard_url: Option<String>,
         version: semver::Version,
     ) -> io::Result<Arc<Self>> {
-        let ExtraRoots { dev } = extra;
+        let ExtraRoots { dev, catalog } = extra;
         let user = data.clone();
+        let catalog = catalog.filter(|store| store.layout().tools == user);
         fs::create_dir_all(&user)?;
         let mut roots = dev.into_iter().map(|p| (p, "dev")).collect::<Vec<_>>();
         roots.push((user, "user"));
@@ -295,6 +304,7 @@ impl ToolRegistry {
             data,
             cache,
             roots,
+            catalog,
             view: view::Publisher::new(dashboard_url.clone()),
             overlay_url,
             dashboard_url,
@@ -353,7 +363,9 @@ impl ToolRegistry {
                 .unwrap_or(true)
     }
     fn trusted(&self, entry: &Entry) -> bool {
-        entry.source != "user" || self.saved.lock().get(&entry.id).is_some_and(|s| s.trusted)
+        !entry.inactive_fixture
+            && (entry.source != "user"
+                || self.saved.lock().get(&entry.id).is_some_and(|s| s.trusted))
     }
     fn entry(&self, id: &str) -> Result<Arc<Entry>, String> {
         self.entries
@@ -388,6 +400,9 @@ impl ToolRegistry {
         }
         if let Some(error) = &entry.error {
             return ("invalid", Some(error.clone()));
+        }
+        if entry.inactive_fixture {
+            return ("untrusted", Some(FIXTURE_NOT_SELECTED.into()));
         }
         if !self.trusted(entry) {
             return ("untrusted", None);
@@ -509,26 +524,32 @@ impl ToolRegistry {
                     continue;
                 }
                 let id = candidate.id.clone();
-                let source = if *source == "user"
-                    && self
-                        .saved
-                        .lock()
-                        .get(&id)
-                        .is_some_and(|state| state.official)
-                {
-                    &"official"
+                let (source, inactive_fixture) = if *source == "user" {
+                    self.catalog
+                        .as_ref()
+                        .and_then(|store| {
+                            store.map_record(PackageKind::Tool, &id, catalog::installed_source)
+                        })
+                        .unwrap_or_else(|| {
+                            let saved = self.saved.lock();
+                            if saved.get(&id).is_some_and(|state| state.official) {
+                                ("official", false)
+                            } else {
+                                ("user", false)
+                            }
+                        })
                 } else {
-                    source
+                    (*source, false)
                 };
-                if *source != "dev" && path.file_name().and_then(|v| v.to_str()) != Some(&id) {
+                if source != "dev" && path.file_name().and_then(|v| v.to_str()) != Some(&id) {
                     candidate.error = Some("directory name must equal manifest id".into());
                 }
                 let mut key = id.clone();
                 if let Some(prior) = found.get(&id) {
-                    if prior.source == "dev" && *source != "dev" {
+                    if prior.source == "dev" && source != "dev" {
                         continue;
                     }
-                    if prior.source == "official" && *source == "user" {
+                    if matches!(prior.source, "official" | "official-fixture") && source == "user" {
                         candidate.error = Some(format!("user tool duplicates official id {id}"));
                         key = format!("{id}:duplicate-user");
                     } else {
@@ -542,7 +563,8 @@ impl ToolRegistry {
                 let old = self.entries.lock().get(&key).cloned();
                 if let Some(old) = old
                     && old.root == path
-                    && old.source == *source
+                    && old.source == source
+                    && old.inactive_fixture == inactive_fixture
                     && old.fingerprint == candidate.fingerprint
                     // A revoked (uninstalling) package is rediscovered fresh.
                     && old.package.is_live()
@@ -557,6 +579,7 @@ impl ToolRegistry {
                         package: lease::PackageRoot::new(path.clone()),
                         root: path,
                         source,
+                        inactive_fixture,
                         manifest: candidate.manifest,
                         legacy: candidate.legacy,
                         error: candidate.error,

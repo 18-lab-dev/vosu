@@ -1,12 +1,10 @@
-//! Saved trust records of tools a 1.x catalog installed. Catalog v2 owns
-//! fetching, planning and installation (`/api/catalog/*`, M6b H0); this host
-//! keeps only the exact-identity rule that already-installed legacy tools'
-//! records were written with, so their approval survives until M7/M8.
+//! Catalog v2 uses committed installed provenance for tool trust. Saved
+//! source and official flags remain only for the 1.x migration.
 use super::*;
+use crate::catalog::{install::InstalledRecord, sources::SourceIdentity};
 
 const OFFICIAL_SOURCE: &str = "18-lab-dev/vosu-tools";
 const VOSULAY_SOURCE: &str = "18-lab-dev/vosulay";
-const OVERLAYS_SOURCE: &str = "18-lab-dev/vosu-overlays";
 
 /// Historical default identities are migration inputs only, never trust aliases.
 pub(super) fn migrated_source(source: &str) -> Option<&'static str> {
@@ -17,15 +15,31 @@ pub(super) fn migrated_source(source: &str) -> Option<&'static str> {
     }
 }
 
-fn official_source(source: &str) -> bool {
-    matches!(source, OFFICIAL_SOURCE | VOSULAY_SOURCE | OVERLAYS_SOURCE)
+/// The installed record is evidence; only the current exact source can
+/// activate fixture authority. Do not store the result in tool preferences.
+pub(super) fn installed_source(record: &InstalledRecord) -> (&'static str, bool) {
+    if !record.matches_fixture_source() {
+        ("user", record.fixture)
+    } else if record.source.is_official() {
+        (
+            if record.fixture {
+                "official-fixture"
+            } else {
+                "official"
+            },
+            false,
+        )
+    } else {
+        ("user", false)
+    }
 }
 
 pub(super) fn record_source(state: &mut Saved, source: &str) {
     if state.catalog_source.as_deref() != Some(source) {
         state.trusted = false;
     }
-    state.official = official_source(source);
+    state.official =
+        SourceIdentity::parse(source).is_ok_and(|parsed| parsed.identity.is_allowlisted());
     state.trusted |= state.official;
     state.catalog_source = Some(source.into());
 }
@@ -37,7 +51,7 @@ mod tests {
     #[test]
     fn only_exact_official_source_identities_grant_automatic_trust() {
         let mut state = Saved::default();
-        for source in [OFFICIAL_SOURCE, VOSULAY_SOURCE, OVERLAYS_SOURCE] {
+        for source in crate::catalog::sources::OFFICIAL_SOURCES {
             record_source(&mut state, source);
             assert!(state.official && state.trusted);
             // Removing and re-adding the identical source does not change identity.

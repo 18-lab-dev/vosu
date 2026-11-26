@@ -289,7 +289,7 @@ async fn removed_immediate_install_routes_never_install_or_start_a_job() {
         root.path().join("config"),
         root.path().join("tools"),
         root.path().join("cache"),
-        vosu_core::tools::ExtraRoots { dev: Vec::new() },
+        vosu_core::tools::ExtraRoots::default(),
         "http://127.0.0.1:24050".into(),
         Some("http://127.0.0.1:24051".into()),
         vosu::BUNDLE.version(),

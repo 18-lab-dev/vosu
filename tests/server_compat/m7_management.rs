@@ -23,7 +23,10 @@ async fn d1_tool_update_available_comes_from_its_own_catalog_source() {
         root.join("tool-config"),
         root.join("tools"),
         root.join("tool-cache"),
-        vosu_core::tools::ExtraRoots { dev: Vec::new() },
+        vosu_core::tools::ExtraRoots {
+            dev: Vec::new(),
+            catalog: fixture.composition.services().installed().cloned(),
+        },
         "http://127.0.0.1:24050".into(),
         Some("http://127.0.0.1:24051".into()),
         vosu::BUNDLE.version(),

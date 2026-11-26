@@ -13,6 +13,7 @@ use vosu_sys::platform::BuildChannel;
 const ACTION: &str = "test.p0.testkit.echo";
 const OFFICIAL_ID: &str = "vosu.test.catalog-fixture";
 const CONSUMER_ID: &str = "catalog-fixture-overlay";
+const TOOL_ID: &str = "catalog-fixture-editor";
 type Files = Arc<Mutex<HashMap<String, Bytes>>>;
 
 struct CatalogFixture {
@@ -166,6 +167,31 @@ impl CatalogFixture {
         files.insert("catalog-v2.json".into(), Bytes::from(text));
         files.insert("plugin.zip".into(), Bytes::from(archive));
         files.insert("overlay.zip".into(), Bytes::from(overlay));
+    }
+
+    fn publish_tool(&self) {
+        let host = format!("={}", vosu::BUNDLE.version);
+        let manifest = toml::to_string(&json!({
+            "manifest_version":1,"kind":"tool","id":TOOL_ID,"name":TOOL_ID,
+            "version":"1.0.0","host":host,"ui":{"root":"web"},
+        }))
+        .unwrap();
+        let archive = zip_files([
+            ("manifest.toml", manifest.into_bytes()),
+            (
+                "web/index.html",
+                b"<!doctype html><p>fixture editor</p>".to_vec(),
+            ),
+        ]);
+        let catalog = json!({"catalog_version":2,"name":"Tool fixture",
+            "published":"2026-11-26T00:00:00Z","tools":[{
+                "id":TOOL_ID,"name":TOOL_ID,"version":"1.0.0","host":host,
+                "packages":{"any":self.archive_ref("tool.zip", &archive)},
+            }],
+        });
+        let mut files = self.files.lock().unwrap();
+        files.insert("catalog-v2.json".into(), Bytes::from(catalog.to_string()));
+        files.insert("tool.zip".into(), Bytes::from(archive));
     }
 
     fn archive_ref(&self, name: &str, archive: &[u8]) -> Value {
@@ -464,6 +490,87 @@ fn approval_catalog_official_fixture_resolves_d8_dependency_and_runs_in_a_plugin
     assert_eq!(load_status(&daemon), "refused", "{}", daemon.log());
     assert!(!daemon.plugins().iter().any(|row| row["id"] == OFFICIAL_ID));
     assert_eq!(fixture.fixture.receipts("create").len(), 1);
+}
+
+#[test]
+fn approval_catalog_official_fixture_tool_launches_only_with_the_exact_opt_in() {
+    let fixture = CatalogFixture::new();
+    fixture.publish_tool();
+    let source = format!("{}/catalog-v2.json", fixture.origin());
+    let target = json!({"kind":"tool","id":TOOL_ID,"source":source});
+    let view_path = format!("/api/tools/{TOOL_ID}");
+    let launch_path = format!("{view_path}/launch");
+    let install = |daemon: &Daemon, fixture: bool| {
+        request(daemon, Method::POST, "/api/catalog/refresh", None, 200);
+        let plan = request(
+            daemon,
+            Method::POST,
+            "/api/catalog/install",
+            Some(&target),
+            200,
+        );
+        assert_eq!(plan["errors"], json!([]), "{plan}");
+        assert_eq!(plan["adds"][0].get("fixture").is_some(), fixture);
+        let confirm = format!(
+            "/api/catalog/plans/{}/confirm",
+            plan["plan_id"].as_str().unwrap()
+        );
+        let job = request(
+            daemon,
+            Method::POST,
+            &confirm,
+            Some(&json!({"approve":[]})),
+            200,
+        );
+        wait_job(daemon, &job);
+    };
+
+    let daemon = fixture.daemon();
+    fixture.enable(&daemon);
+    install(&daemon, false);
+    let ordinary = request(&daemon, Method::GET, &view_path, None, 200);
+    assert_eq!(ordinary["source"], "user", "{ordinary}");
+    assert_eq!(ordinary["trusted"], false, "{ordinary}");
+    assert_eq!(ordinary["status"], "untrusted", "{ordinary}");
+    assert!(ordinary.get("fixture").is_none(), "{ordinary}");
+    request(&daemon, Method::POST, &launch_path, Some(&json!({})), 400);
+    let mut removal = target.clone();
+    removal["remove_data"] = json!(false);
+    let job = request(
+        &daemon,
+        Method::POST,
+        "/api/catalog/uninstall",
+        Some(&removal),
+        200,
+    );
+    wait_job(&daemon, &job);
+    daemon.kill();
+
+    let daemon = fixture.daemon_with(Some(&source), true);
+    install(&daemon, true);
+    let official = request(&daemon, Method::GET, &view_path, None, 200);
+    assert_eq!(official["source"], "official-fixture", "{official}");
+    assert_eq!(official["fixture"], true, "{official}");
+    assert_eq!(official["trusted"], true, "{official}");
+    assert_eq!(official["status"], "running", "{official}");
+    let launch = request(&daemon, Method::POST, &launch_path, Some(&json!({})), 200);
+    assert!(launch["url"].as_str().unwrap().contains("#vosu-launch="));
+    daemon.kill();
+
+    let daemon = fixture.daemon();
+    let dormant = request(&daemon, Method::GET, &view_path, None, 200);
+    assert_eq!(dormant["source"], "user", "{dormant}");
+    assert_eq!(dormant["fixture"], true, "{dormant}");
+    assert_eq!(dormant["trusted"], false, "{dormant}");
+    assert_eq!(dormant["status"], "untrusted", "{dormant}");
+    request(&daemon, Method::POST, &launch_path, Some(&json!({})), 400);
+    request(
+        &daemon,
+        Method::POST,
+        &format!("{view_path}/trust"),
+        Some(&json!({})),
+        400,
+    );
 }
 
 #[test]

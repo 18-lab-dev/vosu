@@ -71,6 +71,9 @@ impl ToolRegistry {
                 if action == "trust" && entry.manifest.is_none() {
                     return Err("invalid tools cannot be trusted".into());
                 }
+                if action == "trust" && entry.inactive_fixture {
+                    return Err(FIXTURE_NOT_SELECTED.into());
+                }
                 let _gate = self.gate.lock().await;
                 {
                     let mut saved = self.saved.lock();

@@ -131,7 +131,10 @@ async fn tools(h: &Harness, root: &std::path::Path) -> Arc<vosu_core::tools::Too
         root.join("config"),
         root.join("data"),
         root.join("cache"),
-        vosu_core::tools::ExtraRoots { dev: vec![path] },
+        vosu_core::tools::ExtraRoots {
+            dev: vec![path],
+            catalog: None,
+        },
         "http://127.0.0.1:25050".into(),
         Some("http://127.0.0.1:25051".into()),
         vosu::BUNDLE.version(),

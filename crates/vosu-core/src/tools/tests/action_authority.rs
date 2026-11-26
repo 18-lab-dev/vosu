@@ -83,7 +83,10 @@ async fn host(root: &Path, paths: Vec<PathBuf>) -> Arc<ToolRegistry> {
         root.join("config"),
         root.join("data"),
         root.join("cache"),
-        ExtraRoots { dev: paths },
+        ExtraRoots {
+            dev: paths,
+            catalog: None
+        },
         "http://127.0.0.1:25150".into(),
         Some("http://127.0.0.1:25151".into()),
         semver::Version::parse(FIXTURE_VERSION).unwrap(),

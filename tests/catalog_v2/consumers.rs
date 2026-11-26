@@ -52,7 +52,7 @@ async fn tool_corpus_uses_real_discovery_and_dashboard() {
                 std::fs::write(dir.join("tool.toml"),"manifest_version=1\nid='corpus'\nname='Legacy'\nversion='1.0.0'\n[ui]\nroot='web'\n").unwrap();
                 let host = vosu_core::tools::ToolRegistry::new(
                     root.path().join("config"), root.path().join("data"), root.path().join("cache"),
-                    vosu_core::tools::ExtraRoots { dev: vec![] }, "http://127.0.0.1:1".into(),
+                    vosu_core::tools::ExtraRoots::default(), "http://127.0.0.1:1".into(),
                     Some("http://127.0.0.1:2".into()), vosu::BUNDLE.version(),
                 ).await.unwrap();
                 let response = host.dashboard(axum::http::Request::builder().uri("/api/tools").body(axum::body::Body::empty()).unwrap(),bytes::Bytes::new()).await;
