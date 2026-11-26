@@ -540,6 +540,55 @@ fn relay_concurrent_dispatch_runs_deliveries_in_parallel() {
     child.stop();
 }
 
+#[test]
+fn relay_refuses_an_overloaded_waiter_before_writing() {
+    let (mut core, child) = pair();
+    let child = Child::start(child, 0);
+    for _ in 0..super::super::frame::MAX_REQUESTS {
+        child
+            .relay
+            .waiters()
+            .reserve(RequestKind::Status, Settle::Nothing)
+            .unwrap();
+    }
+    assert_eq!(
+        child.send(&timer_set(2), 0),
+        vosu_status::VOSU_ERR_INVALID_ARGUMENT
+    );
+    assert!(
+        core.receiver
+            .recv_until(&mut PayloadBuffer::new(), Some(Instant::now()))
+            .unwrap()
+            .is_none()
+    );
+    assert!(child.fatal.lock().unwrap().is_empty());
+    child.stop();
+}
+
+#[test]
+fn relay_releases_a_reserved_waiter_if_the_write_fails() {
+    let (_core, child) = pair();
+    // Don't start the reader: the channel is closed, but the waiter
+    // ledger is still open when the send runs.
+    let relay = Relay::new(
+        child.sender,
+        child.closer,
+        Waiters::new(child.ledger),
+        Duration::ZERO,
+        Box::new(|code| {
+            assert_eq!(code, EXIT_CHANNEL_LOST);
+            vosu_status::VOSU_ERR_BACKEND
+        }),
+    );
+    relay.closer().close().unwrap();
+    let (header, payload) = frame(&timer_set(2));
+    assert_eq!(
+        relay.send(header.opcode, header.flags, header.correlation, &payload),
+        vosu_status::VOSU_ERR_BACKEND
+    );
+    assert_eq!(relay.waiters().reserved(), 0);
+}
+
 /// §7.6 backstops: a status nobody answers ends the channel after 2 s; the
 /// child never fabricates a status.
 #[test]

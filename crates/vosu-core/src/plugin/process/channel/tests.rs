@@ -3,6 +3,9 @@
 //! "core" and "child" sides as two processes would, plus a third mapping
 //! standing in for a hostile peer.
 
+use std::convert::Infallible;
+use std::sync::Barrier;
+use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -485,6 +488,62 @@ fn an_acknowledged_pair_is_never_split_by_another_sender() {
     ack.join().unwrap();
     plain.join().unwrap();
     assert_eq!(acknowledged, (1..=200).collect::<Vec<_>>());
+}
+
+#[test]
+fn concurrent_acknowledged_requests_reach_core_in_id_order() {
+    const THREADS: usize = 16;
+    let Pair {
+        mut core, child, ..
+    } = pair();
+    let start = Barrier::new(THREADS);
+    let next = AtomicU64::new(1);
+    let (published, publication) = sync_channel(1);
+    let sender = &child.sender;
+    thread::scope(|scope| {
+        for worker in 1..THREADS {
+            let (start, next, published) = (&start, &next, &published);
+            scope.spawn(move || {
+                start.wait();
+                sender
+                    .reserve_and_send_acknowledged(&to_host(worker as u64), &[], || {
+                        Ok::<_, Infallible>(next.fetch_add(1, Ordering::Relaxed))
+                    })
+                    .unwrap();
+                if worker == 1 {
+                    published.send(()).unwrap();
+                }
+            });
+        }
+        sender
+            .reserve_and_send_acknowledged(&to_host(0), &[], || {
+                // No other sender has passed the barrier. If reservation
+                // runs unlocked, force a later id onto the ring before 1.
+                let unlocked = sender.shared.producer.try_lock().is_ok();
+                let id = next.fetch_add(1, Ordering::Relaxed);
+                start.wait();
+                if unlocked {
+                    publication.recv_timeout(BOUND).unwrap();
+                }
+                Ok::<_, Infallible>(id)
+            })
+            .unwrap();
+    });
+
+    // Read through the real core policy, which rejects a regressing id.
+    let mut buffer = PayloadBuffer::new();
+    let received = (0..THREADS)
+        .map(|_| {
+            let ack = recv_one(&mut core.receiver, &mut buffer);
+            assert_eq!(ack.opcode, super::super::frame::control::ACK_NEXT);
+            assert_eq!(
+                recv_one(&mut core.receiver, &mut buffer).opcode,
+                to_host(0).opcode
+            );
+            ack.correlation
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(received, (1..=THREADS as u64).collect::<Vec<_>>());
 }
 
 #[test]

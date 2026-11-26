@@ -25,6 +25,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
   checker or later; older checkers reject the runtime table. The SDK is
   bumped in-tree only. The native ABI remains v1.
 
+- Fixed a process-plugin disconnect when concurrent sends published acknowledgement IDs out of order.
+
 - Session-bound actions can now run against sessions owned by another plugin.
   The provider learns the session handle before the action is invoked.
   The provider can subscribe to that session's state from the action handler.

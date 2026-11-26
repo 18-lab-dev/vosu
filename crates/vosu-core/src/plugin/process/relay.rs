@@ -10,10 +10,10 @@
 //! plugin opcode a plugin sends has no effect in-process and returns
 //! `VOSU_OK` without a write. `VOSU_OP_LOG_RECORD` is written
 //! unacknowledged. Every other message reserves one of the 64 shared
-//! waiters ([`super::waiters`]), is written as `ACK_NEXT` plus the
-//! unmodified frame under the one producer lock, and, with that lock
-//! released, blocks until core's reply: the plugin sees core's own status,
-//! and a refused request produces no later result. An accepted `SYNC`
+//! waiters ([`super::waiters`]) and writes `ACK_NEXT` plus the unmodified
+//! frame under the same producer lock, then releases it before waiting
+//! for core's reply: the plugin sees core's own status, and a refused
+//! request produces no later result. An accepted `SYNC`
 //! plan's result is dispatched by the submitting thread itself before
 //! `send` returns, concurrently with whatever the dispatch workers run. A
 //! waiter past its backstop (2 s, or the `SYNC` budget plus 2 s) means core
@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 use vosu_plugin_api::{Message, VOSU_READ_PLAN_SYNC, validate_flags, vosu_opcode, vosu_status};
 
 use super::admission::{Admission, Route, Settle, route};
-use super::channel::{Closer, Receiver, Sender};
+use super::channel::{AcknowledgedSendError, Closer, Receiver, Sender};
 use super::control::EXIT_CHANNEL_LOST;
 use super::delivery::{DeliveryQueue, inspect};
 use super::frame::{FrameHeader, PRIVATE_OPCODE_BIT, RequestKind, control};
@@ -216,19 +216,22 @@ impl Relay {
         settle: Settle,
         backstop: Duration,
     ) -> vosu_status {
-        let id = match self.waiters.reserve(kind, settle) {
+        let id = match self
+            .sender
+            .reserve_and_send_acknowledged(header, payload, || self.waiters.reserve(kind, settle))
+        {
             Ok(id) => id,
-            Err(settle) => {
+            Err(AcknowledgedSendError::Refused(settle)) => {
                 // The documented overload status, before any write.
                 self.admission
                     .settle(&settle, vosu_status::VOSU_ERR_INVALID_ARGUMENT);
                 return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
             }
+            Err(AcknowledgedSendError::Send { request, .. }) => {
+                self.waiters.release(request);
+                return self.fail(EXIT_CHANNEL_LOST);
+            }
         };
-        if self.sender.send_acknowledged(id, header, payload).is_err() {
-            self.waiters.release(id);
-            return self.fail(EXIT_CHANNEL_LOST);
-        }
         let deadline = Instant::now() + backstop;
         match self.waiters.wait(id, deadline) {
             Ok(Reply::Status(status)) => status,
