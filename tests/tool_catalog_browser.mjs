@@ -199,12 +199,17 @@ try {
   await card.waitFor({ timeout: 15000 });
   await page.locator('.catalog-installed [data-installed="catalog-tool"]').waitFor({ timeout: 15000 });
   await card.getByRole('button', { name: 'Details for Catalog tool fixture', exact: true }).click();
-  await page.getByRole('button', { name: 'Uninstall Catalog tool fixture', exact: true }).click({ timeout: 15000 });
+  const details = page.locator('dialog.tool-details[data-tool-id="catalog-tool"]');
+  await details.getByRole('button', { name: 'Uninstall Catalog tool fixture', exact: true }).click({ timeout: 15000 });
   dialog = page.locator('dialog.catalog-uninstall[open]');
   await dialog.locator('[data-removal="catalog-tool"]').waitFor();
   await dialog.screenshot({ path: `${evidence}/uninstall-preview.png` });
   await dialog.getByRole('button', { name: 'Uninstall, keep data', exact: true }).click();
   await card.waitFor({ state: 'detached', timeout: 20000 });
+  check(await page.locator('#tools-root .tool-card').count() === 0, 'uninstall fixture did not leave an empty tools inventory');
+  // Before any offer refresh or reload, verify the real empty-inventory
+  // render dismissed the details drawer on both Linux and Windows.
+  await details.waitFor({ state: 'hidden', timeout: 5000 });
   passed('plans: approval + D8 review, one confirmation, load reports (process, loaded), error plan, uninstall preview');
 
   // 7. Game offer for the running matched process: review only.
