@@ -9,6 +9,11 @@
 //    save state is empty at rest, shows "Saved" after a save and then
 //    disappears (at once with reduced motion), and keeps "Unsaved changes"
 //    while a network field waits for Apply.
+// 5. The status strip joins core diagnostics with API v1 session summaries.
+// 6. The update notice follows DashboardStatus.update: minor and major copy,
+//    major consent, and a release link only for an http(s) URL.
+// 7. Settings fills from SettingsView without saving anything, and a failed
+//    SettingsView read replaces the form with an alert.
 import fs from 'node:fs';
 
 const [modulePath, evidence] = process.argv.slice(2);
@@ -387,6 +392,181 @@ for (const [width, reducedMotion] of [[390, 'no-preference'], [1280, 'no-prefere
   check(detached.client === null && detached.poll === null && detached.attachment.startsWith('Not detected'), `status: detach ${JSON.stringify(detached)}`);
   check(sockets.length === 0, `status: the dashboard must open no state subscription ${JSON.stringify(sockets)}`);
   await context.close();
+}
+
+// A page whose routes are installed before its first request.
+async function openRouted(path, routes) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  page.on('pageerror', (error) => failures.push(`${path}: page error ${error.message}`));
+  for (const [url, handler] of routes) await page.route(url, handler);
+  await page.goto(DASHBOARD + path, { waitUntil: 'domcontentloaded' });
+  return { context, page };
+}
+
+// Update notice (D0): DashboardStatus.update fills the notice once per
+// version. A minor update shows the plain copy; a major one shows the
+// consent block, installs only after consent, and links its release notes
+// only for an http(s) URL. "Later" hides that version across reloads.
+{
+  report.updateNotice = [];
+  let update = { version: '9.1.0', major: false, release_url: null };
+  const updates = [];
+  const { context, page } = await openRouted('/', [
+    [`${DASHBOARD}/api/dashboard/status`, (route) => route.fulfill({ json: { available: true, connections: {}, instances: [], update } })],
+    [`${DASHBOARD}/api/runUpdates`, (route) => { updates.push(route.request().postData()); return route.fulfill({ json: { status: 'latest' } }); }],
+  ]);
+  const notice = (label) => page.evaluate(() => {
+    const element = document.querySelector('#update-notice');
+    const chip = document.querySelector('.status-update');
+    return {
+      hidden: element.hidden,
+      version: element.dataset.version,
+      major: element.dataset.major,
+      copy: !element.querySelector(':scope > .update-notice__copy').hidden,
+      majorBlock: !element.querySelector('.update-notice__major').hidden,
+      versions: [...document.querySelectorAll('[data-role="new-version"]')].map((node) => node.textContent),
+      href: element.querySelector('[data-role="release-url"]').getAttribute('href'),
+      chip: chip.hidden ? null : chip.textContent.trim(),
+    };
+  }).then((value) => { report.updateNotice.push({ label, ...value }); return value; });
+  const shown = (version) => page.waitForFunction((v) => document.querySelector('#update-notice')?.dataset.version === v, version, { timeout: 6000 })
+    .then(() => true, () => false);
+
+  check(await shown('9.1.0'), 'update: a minor notice must appear');
+  const minor = await notice('minor');
+  check(!minor.hidden && minor.copy && !minor.majorBlock && minor.major === 'false', `update: minor shows the plain copy ${JSON.stringify(minor)}`);
+  check(minor.versions.every((value) => value === '9.1.0') && minor.chip === '9.1.0 available', `update: minor version text ${JSON.stringify(minor)}`);
+  check(minor.href === null, `update: a minor notice links nowhere ${JSON.stringify(minor)}`);
+  await page.locator('[data-action="dismiss-update"]').click();
+  check(await page.locator('#update-notice').isHidden(), 'update: "Later" must hide the notice');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  check(await shown('9.1.0'), 'update: the reloaded page must read the notice again');
+  const later = await notice('minor after Later and reload');
+  check(later.hidden && later.chip === '9.1.0 available', `update: a dismissed version stays hidden, its chip stays ${JSON.stringify(later)}`);
+
+  const release = 'https://github.com/18-lab-dev/vosu/releases/tag/v10.0.0';
+  update = { version: '10.0.0', major: true, release_url: release };
+  check(await shown('10.0.0'), 'update: a major notice must appear');
+  const major = await notice('major');
+  check(!major.hidden && !major.copy && major.majorBlock && major.major === 'true', `update: major shows the consent block ${JSON.stringify(major)}`);
+  check(major.href === release, `update: major links its release notes ${JSON.stringify(major)}`);
+  const link = page.locator('[data-role="release-url"]');
+  check((await link.getAttribute('target')) === '_blank' && (await link.getAttribute('rel'))?.includes('noopener'), 'update: the release link must open apart, without an opener');
+  const install = page.locator('#update-notice [data-action="app-update"]');
+  await install.click();
+  await page.waitForTimeout(400);
+  check(updates.length === 0, `update: a major update must not start without consent ${JSON.stringify(updates)}`);
+
+  // A later unsafe release URL removes the earlier safe link, and none of
+  // these ever becomes a link.
+  for (const [index, unsafe] of ['javascript:alert(1)', 'data:text/html,<b>x</b>', '//evil.example/notes', 'file:///etc/passwd', 42, null].entries()) {
+    const version = `11.0.${index}`;
+    update = { version, major: true, release_url: unsafe };
+    check(await shown(version), `update: notice ${version} must appear`);
+    const value = await notice(`unsafe ${JSON.stringify(unsafe)}`);
+    check(value.majorBlock && value.href === null, `update: ${JSON.stringify(unsafe)} must not become a link ${JSON.stringify(value)}`);
+  }
+  // A hostile version string is text, never markup.
+  const hostile = '12.0.0"><img src=x onerror="window.__vosuPwned=1"><script>window.__vosuPwned=2</script>';
+  update = { version: hostile, major: true, release_url: release };
+  check(await shown(hostile), 'update: a hostile version must still show as text');
+  const escaped = await notice('hostile version');
+  const injected = await page.evaluate(() => ({
+    pwned: window.__vosuPwned ?? null,
+    elements: document.querySelectorAll('#update-notice img, #update-notice script, .status-update img, .status-update script').length,
+  }));
+  check(escaped.versions.every((value) => value === hostile) && injected.pwned === null && injected.elements === 0,
+    `update: the version must be inserted as text ${JSON.stringify({ escaped, injected })}`);
+  check(await page.locator('[data-count="installed"]').first().textContent() === '6', 'update: the installed count must follow the overlay list');
+
+  const requested = page.waitForRequest(`${DASHBOARD}/api/runUpdates`, { timeout: 6000 }).catch(() => null);
+  await page.locator('[data-role="major-update-consent"]').check();
+  await install.click();
+  await requested;
+  check(updates.length === 1 && JSON.parse(updates[0] ?? '{}').consent === true, `update: consent must send one consenting request ${JSON.stringify(updates)}`);
+  await page.screenshot({ path: `${evidence}/update-notice.png`, clip: { x: 0, y: 0, width: 1280, height: 260 } });
+  await context.close();
+}
+
+// Settings (D0): the shell carries no values; they arrive from core's
+// SettingsView, fill every control without saving, and never include the
+// dashboard switch. A failed read replaces the form with an alert.
+{
+  report.settings = {};
+  const saves = [];
+  const recordSaves = [`${DASHBOARD}/api/settingsSave`, (route) => { saves.push(route.request().postData()); return route.fulfill({ json: { status: 'updated' } }); }];
+  const filled = (page) => page.waitForFunction(() => {
+    const form = document.querySelector('#runtime-settings');
+    return form && !form.inert && !form.hasAttribute('aria-busy');
+  }, null, { timeout: 6000 }).then(() => true, () => false);
+  const controls = (page) => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#runtime-settings [data-id]')]
+    .map((control) => [control.dataset.id, control.type === 'checkbox' ? control.checked : control.value])));
+
+  {
+    const { context, page } = await openRouted('/settings', [recordSaves]);
+    check(await filled(page), 'settings: the form must be filled and enabled');
+    const view = await page.evaluate(async () => {
+      const { csrf } = JSON.parse(document.querySelector('#vosu-context').textContent);
+      return (await fetch('/api/settings', { headers: { Accept: 'application/json', 'X-Vosu-CSRF': csrf } })).json();
+    });
+    const shown = await controls(page);
+    report.settings.filled = shown;
+    check(Object.keys(view.values ?? {}).length === 17, `settings: SettingsView must carry 17 keys ${JSON.stringify(view)}`);
+    for (const [key, value] of Object.entries(view.values ?? {})) {
+      const expected = typeof value === 'boolean' ? value
+        : key === 'ALLOWED_IPS' ? String(value).split(',').map((entry) => entry.trim()).filter(Boolean).join('\n')
+          : String(value);
+      check(shown[key] === expected, `settings: ${key} shows ${JSON.stringify(shown[key])}, view has ${JSON.stringify(value)}`);
+    }
+    check(shown.SERVER_PORT === '25150' && shown.DASHBOARD_PORT === '25151' && shown.ENABLE_AUTOUPDATE === false
+      && shown.ALLOWED_IPS === '127.0.0.1\nlocalhost\nabsolute', `settings: values follow vosu.toml ${JSON.stringify(shown)}`);
+    check(!('ENABLE_DASHBOARD' in shown) && !('ENABLE_DASHBOARD' in (view.values ?? {})), 'settings: the dashboard switch must have no control or value');
+    await page.waitForTimeout(500);
+    check(saves.length === 0, `settings: filling must save nothing ${JSON.stringify(saves)}`);
+    await context.close();
+  }
+  {
+    // A partial view leaves missing keys empty rather than inventing them;
+    // externally managed updates lock the auto-update control.
+    const { context, page } = await openRouted('/settings', [recordSaves, [`${DASHBOARD}/api/settings`, (route) => route.fulfill({
+      json: { values: { ENABLE_AUTOUPDATE: true, DEBUG_LOG: true, SERVER_PORT: 25150 }, updates_externally_managed: true },
+    })]]);
+    check(await filled(page), 'settings: a partial view must still enable the form');
+    const shown = await controls(page);
+    const managed = await page.evaluate(() => ({
+      disabled: document.querySelector('[data-id="ENABLE_AUTOUPDATE"]').disabled,
+      description: document.querySelector('#setting-ENABLE_AUTOUPDATE-description')?.textContent,
+    }));
+    report.settings.partial = { shown, managed };
+    check(shown.DEBUG_LOG === true && shown.SERVER_PORT === '25150' && shown.POLL_RATE === '', `settings: a partial view fills only its keys ${JSON.stringify(shown)}`);
+    check(managed.disabled && managed.description?.includes('managed by your Linux package manager'), `settings: managed updates lock the control ${JSON.stringify(managed)}`);
+    await page.waitForTimeout(500);
+    check(saves.length === 0, `settings: a partial fill must save nothing ${JSON.stringify(saves)}`);
+    await context.close();
+  }
+  for (const [label, handler] of [
+    ['500', (route) => route.fulfill({ status: 500, json: { error: 'settings store unavailable' } })],
+    ['network', (route) => route.abort('connectionrefused')],
+  ]) {
+    const { context, page } = await openRouted('/settings', [recordSaves, [`${DASHBOARD}/api/settings`, handler]]);
+    const alerted = await page.waitForFunction(() => [...document.querySelectorAll('[role="alert"] h2')]
+      .some((heading) => heading.textContent === "Couldn't load settings"), null, { timeout: 6000 }).then(() => true, () => false);
+    const failure = await page.evaluate(() => {
+      const alert = [...document.querySelectorAll('.empty-state[role="alert"]')].find((element) => element.querySelector('h2')?.textContent === "Couldn't load settings");
+      return {
+        form: Boolean(document.querySelector('#runtime-settings')),
+        message: alert?.querySelector('p')?.textContent ?? null,
+        retry: alert?.querySelector('a')?.getAttribute('href') ?? null,
+      };
+    });
+    report.settings[`failure ${label}`] = failure;
+    check(alerted && !failure.form && failure.retry === '/settings', `settings (${label}): a failed read must replace the form with a retry alert ${JSON.stringify(failure)}`);
+    if (label === '500') check(failure.message === 'settings store unavailable', `settings: the alert names the error ${JSON.stringify(failure)}`);
+    check(saves.length === 0, `settings (${label}): a failed read must save nothing ${JSON.stringify(saves)}`);
+    if (label === '500') await page.screenshot({ path: `${evidence}/settings-load-failure.png` });
+    await context.close();
+  }
 }
 
 await browser.close();
