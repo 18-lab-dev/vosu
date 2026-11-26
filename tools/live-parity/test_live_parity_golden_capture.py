@@ -9,6 +9,7 @@ endpoint authorization, lifecycle and cleanup and not_ready no-client dumps.
 from __future__ import annotations
 
 import contextlib
+import copy
 import functools
 import hashlib
 import io
@@ -29,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION
+from parity_artifacts import UPSTREAM_LAZER_OFFSETS
 import parity_build
 import parity_golden
 import parity_golden_capture as gc
@@ -277,6 +279,32 @@ class FakeTraversalTests(CaptureTestCase):
         manifest = json.loads((candidate / "linux-lazer" / "manifest.json").read_text("utf-8"))
         self.assertEqual(manifest["case_counts"]["state-http"], 10)
         self.assertEqual(manifest["case_counts"]["ws"], 1)
+
+    def test_capture_attests_the_seeded_lazer_offsets(self) -> None:
+        scenario = gc.ScenarioSet("test-offsets", ("menu",), ("state-http.json-v2.get.menu",))
+        pin = UPSTREAM_LAZER_OFFSETS
+        cfg = self.config(scenario, client_version=pin["version"])
+        cfg["_artifact_identity"]["client"]["version"] = pin["version"]
+        offsets = self.tmp / "offsets.json"
+        offsets.write_bytes(b'{"OsuVersion":"2026.1117.0"}')
+        digest = sha256(str(offsets))
+        cfg["_artifact_identity"]["source"]["lazer_offsets"] = {**pin, "sha256": digest, "path": str(offsets)}
+        with mock.patch.dict(pin, sha256=digest):
+            capture = self.capture(scenario, FakeClient(self.state), cfg)
+            self.assertEqual(capture["attestation"]["source"]["lazer_offsets_sha256"], digest)
+            self.assertEqual(self.transcript()["launch"]["source"]["lazer_offsets_sha256"], digest)
+            candidate = self.golden(self.out)
+            manifest = json.loads((candidate / "linux-lazer" / "manifest.json").read_text("utf-8"))
+            self.assertEqual(manifest["source"]["lazer_offsets_sha256"], digest)
+            for replacement in (None, "0" * 64):
+                broken = copy.deepcopy(capture)
+                source = broken["attestation"]["source"]
+                if replacement is None:
+                    del source["lazer_offsets_sha256"]
+                else:
+                    source["lazer_offsets_sha256"] = replacement
+                with self.assertRaisesRegex(parity_golden.GoldenError, "lazer_offsets_sha256"):
+                    parity_golden._check_identity(broken)
 
     def test_retry_is_whole_case_and_attempts_are_never_mixed(self) -> None:
         scenario = gc.ScenarioSet("test-retry", ("menu",), ("state-http.json-v2-precise.get.menu",))

@@ -302,6 +302,49 @@ class ProcessOwnershipTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "source_static"):
                     LIVE_RUN.launch(cfg, ("source",), source_static=bad)
 
+    def test_launch_seeds_the_platform_cache_before_spawning_upstream(self) -> None:
+        for platform, cache in (("win32", ".cache"), ("linux", ".cache/tosu")):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp).resolve()
+                runtime, next_runtime = root / "isolated", root / "second-launch"
+                for directory in (runtime, next_runtime):
+                    directory.mkdir()
+                offsets = root / "download.json"
+                raw = b'{"OsuVersion":"2026.1117.0"}'
+                offsets.write_bytes(raw)
+                pin = LIVE_RUN.UPSTREAM_LAZER_OFFSETS
+                binary = Path(sys.executable).resolve()
+                port = self._free_port()
+                cfg = {"poll_rate_ms": 150, "daemons": {"source": {
+                    "base_url": f"http://127.0.0.1:{port}", "command": [str(binary)]}},
+                    "_artifact_identity": {"source": {"mode": "node-build", "executable": str(binary),
+                        "executable_sha256": LIVE_RUN.sha256_file(binary), "lazer_offsets": {
+                            **pin, "path": str(offsets)}}}}
+                process = mock.Mock(pid=123)
+
+                def launch(*args, **kwargs):
+                    self.assertEqual((runtime / cache / f"{pin['version']}.json").read_bytes(), raw)
+                    if platform == "win32":
+                        self.assertEqual(kwargs["cwd"], str(runtime))
+                    return process
+
+                with mock.patch.object(sys, "platform", platform), \
+                        mock.patch.dict(pin, sha256=hashlib.sha256(raw).hexdigest()), \
+                        mock.patch.object(LIVE_RUN, "_port_is_unused", return_value=True), \
+                        mock.patch.object(LIVE_RUN, "_private_runtime_dir", side_effect=[runtime, next_runtime]), \
+                        mock.patch.object(LIVE_RUN, "_socket_owner", return_value=process.pid), \
+                        mock.patch.object(LIVE_RUN, "_process_start_identity", return_value="start"), \
+                        mock.patch.object(LIVE_RUN, "_process_executable", return_value=binary), \
+                        mock.patch.object(subprocess, "Popen", side_effect=launch) as spawn:
+                    _, evidence = LIVE_RUN.launch(cfg, ("source",))
+                    self.assertEqual(evidence["source"]["lazer_offsets_sha256"], pin["sha256"])
+                    self.assertEqual(offsets.read_bytes(), raw)
+                    offsets.write_bytes(raw + b"\n")
+                    spawn.reset_mock()
+                    with self.assertRaisesRegex(ValueError, "upstream_offsets_sha256_mismatch"):
+                        LIVE_RUN.launch(cfg, ("source",))
+                    spawn.assert_not_called()
+
     def test_runtime_ownership_evidence_tracks_exact_pid(self) -> None:
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))

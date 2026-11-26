@@ -39,6 +39,27 @@ from parity_domains import (
 import parity_process as _parity_process
 globals().update({name: value for name, value in vars(_parity_process).items() if not name.startswith("__")})
 
+# Host-fetched from the pinned upstream loader's primary endpoint. Keep the
+# original bytes outside Git: the upstream Rust relicensing grant does not cover them.
+UPSTREAM_LAZER_OFFSETS = {
+    "version": "2026.1117.0",
+    "source_url": "https://tosu.app/offsets/2026.1117.0.json",
+    "retrieved_utc": "2026-11-26",
+    "sha256": "21400f60b82cb87e6277e74cf5f7f366df0606807dd256eaf852b4638e65e788",
+}
+
+
+def _read_pinned_lazer_offsets(path: Path) -> bytes:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"upstream_offsets_missing: cannot read golden.upstream_offsets: {exc}") from exc
+    if hashlib.sha256(data).hexdigest() != UPSTREAM_LAZER_OFFSETS["sha256"]:
+        raise ValueError("upstream_offsets_sha256_mismatch: golden.upstream_offsets differs "
+                         f"from the pinned SHA-256 {UPSTREAM_LAZER_OFFSETS['sha256']}")
+    return data
+
+
 # Upstream parity evidence, not a first-party executable. The Linux pkg release
 # compresses its JS version string. This exact ELF was extracted from
 # https://github.com/tosuapp/tosu/releases/download/v4.26.2/tosu-linux-v4.26.2.zip
@@ -363,6 +384,22 @@ def validate_artifacts(cfg: dict[str, Any], *, client: bool = True) -> dict[str,
     }
     if deps_record is not None:
         client_record["version_source"] = deps_record
+    golden = cfg.get("golden")
+    if golden is not None:
+        path = golden.get("upstream_offsets")
+        if cfg["client"] == "lazer" and client_version == UPSTREAM_LAZER_OFFSETS["version"]:
+            if path is None:
+                raise ValueError("upstream_offsets_missing: golden.upstream_offsets is required "
+                                 f"for lazer {client_version}")
+            if sys.platform == "win32" and source_mode != "node-build":
+                raise ValueError("golden.upstream_offsets requires node-build on Windows "
+                                 "(the native reference caches beside its executable)")
+            path = Path(path)
+            _read_pinned_lazer_offsets(path)
+            source_record["lazer_offsets"] = {**UPSTREAM_LAZER_OFFSETS, "path": str(path)}
+        elif path is not None:
+            raise ValueError("golden.upstream_offsets is only pinned for lazer "
+                             f"{UPSTREAM_LAZER_OFFSETS['version']}")
     identity["client"] = client_record
     return identity
 def _controlled_tool_path(

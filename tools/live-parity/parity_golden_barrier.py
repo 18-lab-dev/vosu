@@ -2,13 +2,13 @@
 result -> no-client, and comparing both daemons' reported client state at each one.
 
 Split out of `parity_golden_capture.py` (docs/architecture/source-map.md's 1,000-line
-maintained-file limit) because that module was already at the limit; `Session` mixes
-in `BarrierMixin` for `_observe`/`_holds`/`_wait_barrier`, so this is purely a module
-boundary, not a behavior change. GOLDEN_CONTRACT.md §6 is normative for the barrier
-order and the play barrier's pre-gameplay pause tolerance documented there.
+maintained-file limit). `Session` mixes in `BarrierMixin` for
+`_observe`/`_holds`/`_wait_barrier`. GOLDEN_CONTRACT.md §6 is normative for the
+barrier order and the play barrier's pre-gameplay pause tolerance.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import time
 from typing import TYPE_CHECKING, Any
@@ -27,6 +27,8 @@ TRAVERSAL = ("menu", "play", "paused", "result", "no-client")
 # the provider generation advance on every read) needs only the reported state.
 STABLE_OBSERVATIONS = 3
 POLL_S = 0.1
+# The pinned upstream waits up to 15 s for lazer startup after discovering it.
+UPSTREAM_READY_TIMEOUT_S = 30.0
 OPERATOR_STEPS = {
     "menu": "open song select on the approved map (menu)",
     "play": "resume the song-select track, then start the approved map (active play)",
@@ -40,18 +42,55 @@ class CaptureError(ValueError):
     """golden-capture cannot produce a complete attested capture."""
 
 
+def _text(payload: Any, section: str, key: str) -> str:
+    block = payload.get(section) if isinstance(payload, dict) else None
+    value = block.get(key) if isinstance(block, dict) else None
+    return value if isinstance(value, str) and value.strip() else ""
+
+
+@dataclass(frozen=True)
+class ClientFields:
+    checksum: str
+    path: str
+    game_folder: str
+
+    @classmethod
+    def read(cls, payload: Any) -> ClientFields:
+        path = _text(payload, "directPath", "beatmapFile")
+        return cls(_text(payload, "beatmap", "checksum").strip().lower(), "" if path == "." else path,
+                   _text(payload, "folders", "game"))
+
+    def missing(self) -> list[str]:
+        return (["beatmap.checksum or directPath.beatmapFile"] if not (self.checksum or self.path)
+                else []) + (["folders.game"] if not self.game_folder else [])
+
+    def same_beatmap(self, other: ClientFields) -> bool:
+        if self.checksum and other.checksum:
+            return self.checksum == other.checksum
+        return bool(self.path and self.path == other.path)
+
+
+@dataclass(frozen=True)
+class BarrierObservation:
+    seen: dict[str, str | None]
+    view: Any
+    clock: float | None
+    source: ClientFields
+    vosu: ClientFields
+
+
 class BarrierMixin:
     """`Session`'s barrier observe/wait methods (parity_golden_capture.py); expects the
     instance attributes `transcript`, `client`, `deadline` and `operator` it defines."""
 
-    def _observe(self, source: Daemon, dump: HarnessDump) -> tuple[dict[str, str | None], Any, float | None]:
-        """Both daemons' barriers, the non-volatile view of their v2 state, and the
-        source's live beatmap clock (None when the payload carries none)."""
+    def _observe(self, source: Daemon, dump: HarnessDump) -> BarrierObservation:
+        """Barrier, non-volatile v2 view, upstream clock and attachment fields."""
         with HttpProbe(f"http://127.0.0.1:{source.port}", "source", "v2", source.evidence) as probe:
             sample = probe.fetch()
         upstream = barrier_of(sample)
         clock = beatmap_time(sample.payload)
         envelope = dump.fetch("v2")
+        payload = None
         if envelope["http"]["kind"] == "not_ready":
             vosu = "process-exit"
         else:
@@ -66,13 +105,16 @@ class BarrierMixin:
                     volatile.dump_view(envelope)[0])
         except volatile.VolatileError:
             view = None  # never stable: a volatile field broke its rule
-        return {"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)}, view, clock
+        return BarrierObservation({"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)},
+                                  view, clock, ClientFields.read(sample.payload), ClientFields.read(payload))
 
-    def _holds(self, barrier: str, seen: dict[str, str | None]) -> bool:
-        """Both daemons report the barrier, and the attested client is alive in a client
-        barrier and its exit was observed for no-client (unapproved clients raise)."""
-        exited = self.client.exited()
-        return exited == (barrier == "no-client") and all(value == barrier for value in seen.values())
+    def _holds(self, barrier: str, observation: BarrierObservation) -> bool:
+        """An attested live client with two matching reads, or an observed client exit."""
+        no_client = barrier == "no-client"
+        return (self.client.exited() == no_client
+                and all(value == barrier for value in observation.seen.values())
+                and (no_client or (not observation.source.missing() and not observation.vosu.missing()
+                                   and observation.source.same_beatmap(observation.vosu))))
 
     def _wait_barrier(self, barrier: str, source: Daemon, dump: HarnessDump,
                       reached: list[str], *, identical_views: bool = True) -> None:
@@ -90,10 +132,12 @@ class BarrierMixin:
         last_clock: float | None = None
         gameplay_started = False
         pregame_pauses = 0
+        unready_since: float | None = None
         while stable < STABLE_OBSERVATIONS:
             if time.monotonic() > self.deadline:
                 raise CaptureError(f"barrier {barrier} was not reached before the timeout")
-            seen, view, clock = self._observe(source, dump)
+            observation = self._observe(source, dump)
+            seen, view, clock = observation.seen, observation.view, observation.clock
             if barrier == "play" and clock is not None:
                 if last_clock is not None and clock != last_clock:
                     gameplay_started = True
@@ -109,7 +153,24 @@ class BarrierMixin:
                     continue  # The player loader's frozen clock, not a real pause.
                 raise CaptureError(f"barrier out of order: {daemon} reached {value} while "
                                    f"waiting for {barrier} after {reached or ['launch']}")
-            if not self._holds(barrier, seen) or (identical_views and view is None):
+            readiness_error = None
+            if barrier != "no-client" and not observation.vosu.missing():
+                source_missing = observation.source.missing()
+                if source_missing:
+                    readiness_error = f"missing {', '.join(source_missing)}"
+                elif not observation.source.same_beatmap(observation.vosu):
+                    readiness_error = "beatmap.checksum or directPath.beatmapFile does not match vosu"
+            if readiness_error is not None:
+                now = time.monotonic()
+                if unready_since is None:
+                    unready_since = now
+                elif now - unready_since >= UPSTREAM_READY_TIMEOUT_S:
+                    raise CaptureError(f"upstream_not_reading_client: waiting for {barrier}; "
+                                       f"{readiness_error} after "
+                                       f"{UPSTREAM_READY_TIMEOUT_S:g} s with vosu ready")
+            else:
+                unready_since = None
+            if not self._holds(barrier, observation) or (identical_views and view is None):
                 stable, previous = 0, None
             elif not identical_views:
                 stable += 1

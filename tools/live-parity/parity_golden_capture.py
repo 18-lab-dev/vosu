@@ -519,19 +519,19 @@ class Session(BarrierMixin):
         schema = dump_schema(case)
         raw: dict[str, Any] = {"case": case.id, "attempt": number}
         self.transcript["cases"].append(raw)
-        guard = self._observe(source, dump)[0]
-        raw["barrier_before"] = guard
+        guard = self._observe(source, dump)
+        raw["barrier_before"] = guard.seen
         if not self._holds(case.barrier, guard):
-            return f"barrier {case.barrier} not held before the attempt: {guard}"
+            return f"barrier {case.barrier} not held before the attempt: {guard.seen}"
         upstream = pr.run_identical(item, [source.endpoint, source.endpoint], ledger=self.ledger)
         before = dump.fetch(schema)
         route = pr.run_identical(item, [vosu.endpoint], ledger=self.ledger)[0]
         after = dump.fetch(schema)
-        guard = self._observe(source, dump)[0]
+        guard = self._observe(source, dump)
         raw.update(source=upstream, vosu=route, dump_before=before, dump_after=after,
-                   barrier_after=guard)
+                   barrier_after=guard.seen)
         if not self._holds(case.barrier, guard):
-            return f"barrier {case.barrier} not held after the attempt: {guard}"
+            return f"barrier {case.barrier} not held after the attempt: {guard.seen}"
         for record in (*upstream, route):
             if not record["outcome_allowed"]:
                 prime = f" (priming status {pr.priming_status(record)})" \
@@ -624,6 +624,8 @@ class Session(BarrierMixin):
         self.transcript["excluded"] = excluded
         source, vosu = self._launch()
         self.transcript["launch"] = {"source": source.evidence, "vosu": vosu.evidence}
+        if "lazer_offsets_sha256" in source.evidence:
+            identity["source"]["lazer_offsets_sha256"] = source.evidence["lazer_offsets_sha256"]
         dump = HarnessDump(vosu, self.capability)
         self.transcript["harness_endpoint"] = dump.verify_mounted()
         self.transcript["client"] = self.client.start()
@@ -916,6 +918,8 @@ def golden_capture(cfg: dict[str, Any], scenario: ScenarioSet, out: str, *,
         "platform": capture["platform"], "scenario_set": scenario.id, "cases": len(capture["cases"]),
         "upstream_crashed": sum(case["attempts"][-1]["outcome"] == crash.OUTCOME
                                 for case in capture["cases"]),
+        **({"upstream_offsets_sha256": capture["attestation"]["source"]["lazer_offsets_sha256"]}
+           if "lazer_offsets_sha256" in capture["attestation"]["source"] else {}),
         "retried_cases": sum(len(case["attempts"]) > 1 for case in capture["cases"]),
         "findings": session.transcript["findings"], "vosu_sha256": capture["attestation"]["vosu"]["sha256"],
         "sha256": hashlib.sha256(outputs[0][1]).hexdigest(),

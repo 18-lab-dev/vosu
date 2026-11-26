@@ -196,6 +196,17 @@ def launch(cfg: dict[str, Any], names: tuple[str, ...] = ("source", "vosu"), *,
                 config_path = xdg_config / config_root / config_name
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(config_text, encoding="utf-8")
+            artifact = cfg.get("_artifact_identity", {}).get(name)
+            offsets = artifact.get("lazer_offsets") if name == "source" and artifact else None
+            if offsets is not None:
+                # The pinned loader uses the program cwd on Windows (Node), and
+                # XDG_CACHE_HOME/tosu on Linux. Both roots here belong to this launch.
+                cache = (Path(cwd) / ".cache" if sys.platform == "win32"
+                         else Path(env["XDG_CACHE_HOME"]) / "tosu")
+                data = _read_pinned_lazer_offsets(Path(offsets["path"]))
+                cache.mkdir(parents=True, exist_ok=True)
+                with (cache / f"{offsets['version']}.json").open("xb") as handle:
+                    handle.write(data)
             process = subprocess.Popen(
                 spec["command"], cwd=cwd, env=env,
                 stdout=None, stderr=None, start_new_session=True)
@@ -205,7 +216,6 @@ def launch(cfg: dict[str, Any], names: tuple[str, ...] = ("source", "vosu"), *,
                 setattr(process, "_live_parity_seeded_config", seeded_config)
             processes[name] = process
             start = _process_start_identity(process.pid)
-            artifact = cfg.get("_artifact_identity", {}).get(name)
             allow_exclusive = (
                 sys.platform.startswith("linux")
                 and name == "source"
@@ -268,6 +278,8 @@ def launch(cfg: dict[str, Any], names: tuple[str, ...] = ("source", "vosu"), *,
                     "phase": "listen",
                 }],
             }
+            if offsets is not None:
+                evidence[name]["lazer_offsets_sha256"] = UPSTREAM_LAZER_OFFSETS["sha256"]
         return processes, evidence
     except Exception:
         for process in processes.values():

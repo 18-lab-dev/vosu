@@ -15,6 +15,8 @@ import time
 import sys
 import tempfile
 import unittest
+import contextlib
+import io
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -25,6 +27,7 @@ from live_parity import (
     validate_barriers,
 )
 from parity_domains import gamebase_path_family, infer_reference_capabilities
+from parity_golden_config import FIXTURE_VALUES, ROUTE_PREFIXES
 RUN_SPEC = importlib.util.spec_from_file_location("live_parity_run", HERE / "run.py")
 assert RUN_SPEC and RUN_SPEC.loader
 LIVE_RUN = importlib.util.module_from_spec(RUN_SPEC)
@@ -54,10 +57,10 @@ class ConfigCliTests(unittest.TestCase):
         self.assertIs(environment, actual)
         self.assertIsNone(msvc)
 
-    def config(self) -> dict:
+    def config(self, source: Path | None = None) -> dict:
         root = HERE.parents[1]
         # Pinned upstream tosu checkout and package layout.
-        source = root.parent / "tosu"
+        source = root.parent / "tosu" if source is None else source
         entrypoint = source / "packages/tosu/dist/index.js"
         client = root / ("osu!.exe" if sys.platform == "win32" else "osu!")
         vosu = root / "target/release" / ("vosu.exe" if sys.platform == "win32" else "vosu")
@@ -186,6 +189,57 @@ class ConfigCliTests(unittest.TestCase):
         self.assertEqual(PINNED_SOURCE_REVISION, value["artifacts"]["source"]["revision"])
         self.assertEqual("lazer", value["artifacts"]["client"]["kind"])
         self.assertEqual(64, len(value["artifacts"]["vosu"]["sha256"]))
+
+    def test_check_config_requires_the_exact_pinned_upstream_offsets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            cfg = self.config(source=root)
+            cfg["daemons"]["source"]["command"][0] = str(Path(sys.executable).resolve())
+            client = root / "osu!.exe"
+            client.write_bytes(b"client")
+            offsets = root / "offsets.json"
+            raw = b'{"OsuVersion":"2026.1117.0"}'
+            pin = LIVE_RUN.UPSTREAM_LAZER_OFFSETS
+            cfg.update(client_executable=str(client), client_expected_version=pin["version"],
+                       client_expected_sha256=hashlib.sha256(client.read_bytes()).hexdigest())
+            (root / "osu!.deps.json").write_text(
+                json.dumps({"libraries": {f"osu!/{pin['version']}": {}}}), encoding="utf-8")
+            cfg["golden"] = {
+                "authorization": {key: "auth" for key in
+                                  ("reference", "platform", "source_revision", "vosu_commit",
+                                   "client_version", "scenario_set")},
+                "capture_root": str(root), "capture_slot": "osu!",
+                "route_roots": dict.fromkeys(ROUTE_PREFIXES, str(root)), "other_roots": {},
+                "inside_files": dict.fromkeys(ROUTE_PREFIXES, "file"),
+                "fixture_values": dict.fromkeys(FIXTURE_VALUES, "file"), "assets": [],
+            }
+            path = root / "config.json"
+            exe = Path(sys.executable).resolve()
+            package = subprocess.CompletedProcess([], 0, json.dumps({"version": PINNED_SOURCE_VERSION}).encode())
+            with mock.patch.object(LIVE_RUN, "_validate_source_repository", return_value=PINNED_SOURCE_REVISION), \
+                    mock.patch.object(LIVE_RUN, "_git_command", return_value=["git"]), \
+                    mock.patch.object(LIVE_RUN, "_resolved_trusted_command", return_value=exe), \
+                    mock.patch.object(subprocess, "run", return_value=package), \
+                    mock.patch.dict(pin, sha256=hashlib.sha256(raw).hexdigest()), \
+                    mock.patch.object(sys, "argv", ["run.py", "check-config", "--config", str(path)]):
+                for case, error in (("unset", "upstream_offsets_missing"),
+                                    ("missing", "upstream_offsets_missing"),
+                                    ("mismatched", "upstream_offsets_sha256_mismatch"), ("ok", None)):
+                    with self.subTest(case=case), contextlib.redirect_stdout(io.StringIO()) as stdout, \
+                            contextlib.redirect_stderr(io.StringIO()) as stderr:
+                        if case != "unset":
+                            cfg["golden"]["upstream_offsets"] = str(offsets)
+                        if case == "mismatched":
+                            offsets.write_bytes(raw + b"\n")
+                        elif case == "ok":
+                            offsets.write_bytes(raw)
+                        path.write_text(json.dumps(cfg), encoding="utf-8")
+                        self.assertEqual(LIVE_RUN.main(), 2 if error else 0, stderr.getvalue())
+                        if error:
+                            self.assertIn(error, stderr.getvalue())
+                        else:
+                            source = json.loads(stdout.getvalue())["artifacts"]["source"]
+                            self.assertEqual(source["lazer_offsets"], {**pin, "path": str(offsets)})
 
     def test_validate_artifacts_accepts_exact_native_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

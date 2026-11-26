@@ -7,19 +7,11 @@ only the rules in `parity_golden_rules`, and publishes a new candidate directory
 with the `tests/fixtures/upstream/<pin>/` layout. It never writes committed
 fixtures, and its errors never echo private content.
 
-Capture shape (written by `golden-capture`; every object is closed):
+Capture header: format, source_revision, platform, scenario_set, authorization,
+attestation, roots, assets and expected_cases. For the offline-pinned lazer
+build, attestation.source also carries `lazer_offsets_sha256`. Every object is
+closed. Case records have this shape:
 
-    {"format": "vosu-golden-capture-v1", "source_revision": <pin>,
-     "platform": "windows-lazer", "scenario_set": str,
-     "authorization": {"reference", "platform", "source_revision", "vosu_commit",
-                       "client_version", "scenario_set"},
-     "attestation": {"source": {"revision", "kind": "source"|"native", "sha256"},
-                     "vosu": {"commit", "version", "profile": "debug", "features",
-                              "target", "sha256"},
-                     "client": {"variant", "version", "sha256"}},
-     "roots": [{"slot", "private"}],
-     "assets": [{"id", "slot", "relative", "media_type", "generator", "license", "sha256", "b64"}],
-     "expected_cases": [case id, ...],
      "cases": [{"id", "family", "barrier", "dump_schema",
                 "conditional": null|"etag"|"last-modified",
                 "attempts": [{"attempt": 1, "outcome": "failed", "reason": str},
@@ -60,6 +52,7 @@ from typing import Any, Literal
 from urllib.parse import unquote
 
 from live_parity import PINNED_SOURCE_REVISION, PINNED_VOSU_VERSION, SUPPORTED_MATRIX
+from parity_artifacts import UPSTREAM_LAZER_OFFSETS
 from parity_golden_rules import (
     CAPABILITY_HEADER, CREDENTIAL_HEADERS, ENVELOPE_KEYS, NON_GOLDEN_SEGMENTS,
     NORMALIZATION_VERSION, OLD_BRAND, TRANSPORT_OUTCOMES, VALIDATOR_REQUEST_HEADERS,
@@ -354,11 +347,7 @@ def _check_identity(capture: dict[str, Any]) -> dict[str, Any]:
         raise GoldenError(f"capture.platform: {platform!r} is not a supported platform")
     scenario = _str(capture["scenario_set"], "capture.scenario_set")
     attestation = _obj(capture["attestation"], "capture.attestation", ("source", "vosu", "client"))
-    source = _obj(attestation["source"], "attestation.source", ("revision", "kind", "sha256"))
-    if source["revision"] != PINNED_SOURCE_REVISION:
-        raise GoldenError("attestation.source.revision: wrong pin")
-    _str(source["kind"], "attestation.source.kind", choices=("source", "native"))
-    _hex(source["sha256"], "attestation.source.sha256", 64)
+    source_keys = ("revision", "kind", "sha256")
     vosu = _obj(attestation["vosu"], "attestation.vosu",
                 ("commit", "version", "profile", "features", "target", "sha256"))
     _hex(vosu["commit"], "attestation.vosu.commit", 40)
@@ -376,6 +365,16 @@ def _check_identity(capture: dict[str, Any]) -> dict[str, Any]:
         raise GoldenError("attestation.client.variant: wrong platform client")
     _str(client["version"], "attestation.client.version", re.compile(r"[0-9A-Za-z.+_-]{1,64}"))
     _hex(client["sha256"], "attestation.client.sha256", 64)
+    offsets_required = variant == "lazer" and client["version"] == UPSTREAM_LAZER_OFFSETS["version"]
+    if offsets_required:
+        source_keys += ("lazer_offsets_sha256",)
+    source = _obj(attestation["source"], "attestation.source", source_keys)
+    if source["revision"] != PINNED_SOURCE_REVISION:
+        raise GoldenError("attestation.source.revision: wrong pin")
+    _str(source["kind"], "attestation.source.kind", choices=("source", "native"))
+    _hex(source["sha256"], "attestation.source.sha256", 64)
+    if offsets_required and source["lazer_offsets_sha256"] != UPSTREAM_LAZER_OFFSETS["sha256"]:
+        raise GoldenError("attestation.source.lazer_offsets_sha256: wrong upstream offsets pin")
     authorization = _obj(capture["authorization"], "capture.authorization", (
         "reference", "platform", "source_revision", "vosu_commit", "client_version", "scenario_set"))
     _str(authorization["reference"], "authorization.reference", re.compile(r"[A-Za-z0-9._:#-]{1,128}"))
@@ -386,7 +385,7 @@ def _check_identity(capture: dict[str, Any]) -> dict[str, Any]:
         if authorization[key] != value:
             raise GoldenError(f"authorization.{key}: capture differs from the owner authorization")
     return {"platform": platform, "windows": os_name == "windows", "scenario_set": scenario,
-            "source": {"kind": source["kind"], "sha256": source["sha256"]},
+            "source": {key: source[key] for key in source_keys if key != "revision"},
             "vosu": {key: vosu[key] for key in ("commit", "version", "profile", "features",
                                                  "target", "sha256")},
             "client": dict(client), "authorization": authorization["reference"]}

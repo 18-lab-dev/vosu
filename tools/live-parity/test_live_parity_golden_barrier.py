@@ -4,6 +4,7 @@ limit). `Session._wait_barrier`/`_observe` are exercised directly with a mocked
 `_observe`, so these need neither the fake-daemon harness nor a real client."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -13,6 +14,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import parity_golden_barrier as pgb
 import parity_golden_capture as gc
+from live_parity import Sample
+
+READY = pgb.ClientFields("chart-checksum", "", "game-root")
+BLANK = pgb.ClientFields("", "", "")
+
+
+def observe(seen, view, clock, *, source=READY, vosu=READY) -> pgb.BarrierObservation:
+    return pgb.BarrierObservation(seen, view, clock, source, vosu)
 
 
 class BarrierTests(unittest.TestCase):
@@ -23,10 +32,11 @@ class BarrierTests(unittest.TestCase):
                              timeout=timeout, build=None, client=client, operator=lambda b, m: None)
         calls: list = []
 
-        def observe(_source, _dump):
+        def next_observation(_source, _dump):
             calls.append(1)
-            return observations[len(calls) - 1]
-        session._observe = observe
+            observation = observations[len(calls) - 1]
+            return observation if isinstance(observation, pgb.BarrierObservation) else observe(*observation)
+        session._observe = next_observation
         return session, calls
 
     def test_barrier_needs_consecutive_identical_views(self) -> None:
@@ -47,6 +57,91 @@ class BarrierTests(unittest.TestCase):
         self.assertEqual(len(calls), 3)
         self.assertFalse(session.transcript["barriers"][0]["identical_views"])
 
+    def test_observes_client_fields_from_both_v2_payloads(self) -> None:
+        session, _ = self.session([])
+        source, dump = mock.Mock(port=1234), mock.Mock()
+        blank = {"state": {"name": "menu"}, "beatmap": {"checksum": ""},
+                 "directPath": {"beatmapFile": "."}, "folders": {"game": ""}}
+        ready = {"state": {"name": "selectPlay"}, "beatmap": {"checksum": "chart-checksum"},
+                 "folders": {"game": "game-root"}}
+        dump.fetch.return_value = {"http": {"kind": "ready", "body_utf8": json.dumps(ready)}}
+        with mock.patch.object(pgb, "HttpProbe") as probe, \
+                mock.patch.object(pgb.volatile, "dump_view", return_value=("dump", [])):
+            upstream = probe.return_value.__enter__.return_value
+            upstream.fetch.return_value = Sample("source", "v2", 0, blank)
+            observation = gc.Session._observe(session, source, dump)
+            self.assertEqual(observation.seen, {"source": "menu", "vosu": "menu"})
+            self.assertEqual((observation.source, observation.vosu), (BLANK, READY))
+            self.assertFalse(session._holds("menu", observation))
+            upstream.fetch.return_value = Sample("source", "v2", 0, ready)
+            self.assertTrue(session._holds("menu", gc.Session._observe(session, source, dump)))
+
+    def test_client_barriers_wait_for_matching_ready_sources(self) -> None:
+        for index, barrier in enumerate(pgb.TRAVERSAL[:-1]):
+            with self.subTest(barrier=barrier):
+                seen = {"source": barrier, "vosu": barrier}
+                ready = observe(seen, "same", None)
+                session, calls = self.session([
+                    ready, ready,
+                    observe(seen, "same", None, source=BLANK),
+                    observe(seen, "same", None, vosu=BLANK),
+                    observe(seen, "same", None, source=pgb.ClientFields("wrong", "", "game-root")),
+                    ready, ready, ready,
+                ])
+                with mock.patch.object(pgb, "POLL_S", 0):
+                    session._wait_barrier(barrier, None, None, list(pgb.TRAVERSAL[:index]),
+                                          identical_views=barrier != "play")
+                self.assertEqual(len(calls), 8)
+                self.assertEqual([b["barrier"] for b in session.transcript["barriers"]], [barrier])
+
+    def test_matching_beatmap_path_can_substitute_for_missing_checksum(self) -> None:
+        seen = {"source": "menu", "vosu": "menu"}
+        source = pgb.ClientFields("", "map.osu", "game-root")
+        vosu = pgb.ClientFields("chart-checksum", "map.osu", "game-root")
+        session, _ = self.session([])
+        self.assertTrue(session._holds("menu", observe(seen, "same", None, source=source, vosu=vosu)))
+        no_folder = pgb.ClientFields("", "map.osu", "")
+        self.assertFalse(session._holds("menu", observe(seen, "same", None, source=no_folder, vosu=vosu)))
+
+    def test_no_client_keeps_requiring_exit_not_client_fields(self) -> None:
+        observation = observe({"source": "no-client", "vosu": "no-client"}, "same", None,
+                              source=BLANK, vosu=BLANK)
+        session, calls = self.session([observation] * 3)
+        self.assertFalse(session._holds("no-client", observation))
+        session.client.exited.return_value = True
+        with mock.patch.object(pgb, "POLL_S", 0):
+            session._wait_barrier("no-client", None, None, list(pgb.TRAVERSAL[:-1]))
+        self.assertEqual(len(calls), 3)
+
+    def test_upstream_unready_fails_30_seconds_after_vosu_is_ready(self) -> None:
+        seen = {"source": "menu", "vosu": "menu"}
+        session, calls = self.session([
+            observe(seen, "same", None, source=BLANK, vosu=BLANK),
+            observe(seen, "same", None, source=BLANK, vosu=BLANK),
+            *[observe(seen, "same", None, source=BLANK)] * 3,
+        ])
+        session.deadline = 3600
+        # 100 s spent waiting for vosu do not count; upstream gets 30 s from then.
+        with mock.patch.object(pgb.time, "monotonic", side_effect=[0, 99, 100, 100, 129, 129, 130, 130]), \
+                mock.patch.object(pgb.time, "sleep"), \
+                self.assertRaisesRegex(pgb.CaptureError,
+                                       r"upstream_not_reading_client.*beatmap\.checksum.*folders\.game.*30 s"):
+            session._wait_barrier("menu", None, None, [])
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(session.transcript["barriers"], [])
+
+    def test_upstream_reading_the_wrong_beatmap_also_fails_fast(self) -> None:
+        wrong_map = pgb.ClientFields("wrong", "", "game-root")
+        waiting = observe({"source": "menu", "vosu": "menu"}, "same", None, source=wrong_map)
+        session, _ = self.session([waiting] * 2)
+        session.deadline = 3600
+        with mock.patch.object(pgb.time, "monotonic", side_effect=[0, 0, 30, 30]), \
+                mock.patch.object(pgb.time, "sleep"), \
+                self.assertRaisesRegex(pgb.CaptureError,
+                                       r"upstream_not_reading_client.*beatmap\.checksum.*does not match vosu"):
+            session._wait_barrier("menu", None, None, [])
+        self.assertEqual(session.transcript["barriers"], [])
+
 
 class PlayBarrierPregamePauseTests(unittest.TestCase):
     """GOLDEN_CONTRACT.md §6 / owner amendment 2026-11-26: the play barrier tolerates
@@ -59,10 +154,10 @@ class PlayBarrierPregamePauseTests(unittest.TestCase):
                              timeout=timeout, build=None, client=client, operator=lambda b, m: None)
         calls: list = []
 
-        def observe(_source, _dump):
+        def next_observation(_source, _dump):
             calls.append(1)
-            return observations[len(calls) - 1]
-        session._observe = observe
+            return observe(*observations[len(calls) - 1])
+        session._observe = next_observation
         return session, calls
 
     def test_tolerates_upstream_paused_before_gameplay(self) -> None:

@@ -37,6 +37,7 @@ ENVELOPES = (json.loads(Path(os.environ["GOLDEN_FAKE_ENVELOPES"]).read_text("utf
 LOCK = threading.Lock()
 READS: dict[tuple[str, str], int] = {}
 COUNTS: dict[str, int] = {}
+ATTACHED = {"beatmap": {"checksum": "fixture-chart"}, "folders": {"game": "fixture-game"}}
 
 
 def state() -> dict:
@@ -58,6 +59,10 @@ def envelope(schema: str, advance: bool) -> dict:
         if advance:
             READS[current, schema] = index + 1
     value = dict(reads[index % len(reads)])
+    if schema == "v2" and current != "no-client":
+        http = value["http"]
+        body = {**json.loads(http["body_utf8"]), **ATTACHED}
+        value["http"] = dict(http, body_utf8=json.dumps(body, separators=(",", ":")))
     if reads[0]["provider_generation"] != reads[-1]["provider_generation"]:
         # An advancing provider (sc) keeps advancing past the exported reads: only the
         # fields the digest leaves out move, exactly as between the exported reads.
@@ -84,7 +89,7 @@ def state_body(schema: str) -> tuple[int, bytes]:
     if current == "no-client":
         return 500, NOT_READY
     # The upstream state is the same shape the vosu fixture envelopes carry.
-    body = ENVELOPES_UPSTREAM[current]
+    body = ENVELOPES_UPSTREAM[schema, current]
     unstable = OPTIONS.get("unstable_upstream")
     if unstable and (unstable is True or current in unstable) and schema == "v2":
         with LOCK:
@@ -94,8 +99,10 @@ def state_body(schema: str) -> tuple[int, bytes]:
 
 
 ENVELOPES_UPSTREAM = {
-    name: json.dumps({"state": {"number": number, "name": label}, "game": {"paused": paused}},
-                     separators=(",", ":")).encode()
+    (schema, name): json.dumps({"state": {"number": number, "name": label}, "game": {"paused": paused},
+                                **(ATTACHED if schema == "v2" else {})},
+                               separators=(",", ":")).encode()
+    for schema in STATE_ROUTES.values()
     for name, number, label, paused in (("menu", 0, "menu", False), ("play", 2, "play", False),
                                         ("paused", 2, "play", True),
                                         ("result", 7, "resultScreen", False))}

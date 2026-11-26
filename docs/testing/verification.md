@@ -232,6 +232,7 @@ schema):
                     "source_revision": "<pin>", "vosu_commit": "<40-hex HEAD>",
                     "client_version": "<client_expected_version>",
                     "scenario_set": "m4b-dry-run-v1"},
+  "upstream_offsets": "C:\\vosu-capture\\m4b-pilot-<utc>\\upstream-offsets-2026.1117.0.json",
   "capture_root": "C:\\vosu-capture\\m4b-pilot-<utc>",
   "capture_slot": "osu!",
   "route_roots": {"/Songs/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files",
@@ -345,6 +346,34 @@ scenario set, or the run is refused before the build.
    inside the window and the other sent none. `golden-capture` prints the same
    `findings` in its summary. A finding is for review; it is never normalized.
 
+   **Stage the offline upstream offsets before the Windows dry run or pilot.**
+   For lazer `2026.1117.0`, use `source_mode: node-build` and set
+   `golden.upstream_offsets` to the absolute path of the staged file. Reuse the
+   verified host copy when available. To retrieve it on the network-enabled
+   host, from a private staging directory:
+
+   ```sh
+   umask 077
+   UPSTREAM_OFFSETS=upstream-offsets-2026.1117.0.json
+   curl --fail --silent --show-error --retry 1 --retry-delay 60 \
+      'https://tosu.app/offsets/2026.1117.0.json' --output "$UPSTREAM_OFFSETS"
+   printf '%s  %s\n' 21400f60b82cb87e6277e74cf5f7f366df0606807dd256eaf852b4638e65e788 \
+      "$UPSTREAM_OFFSETS" | sha256sum --check
+   ```
+
+   Transfer only a hash-matching file, without re-encoding it, into the
+   task-owned VM capture root at the configured path. Do not fetch it inside
+   the VM or change the firewall. The pin and retrieval date are in
+   `parity_artifacts.py`. Keep the original bytes outside Git: the
+   [upstream LGPL attribution and limited relicensing grant](../provenance-audit.md#relicensing-permission-2026-10-12)
+   do not establish redistribution terms for the separately served offsets.
+   `check-config` refuses a missing or mismatched file. Each upstream launch
+   verifies the bytes again and pre-seeds the pinned loader's
+   `<working directory>\.cache\2026.1117.0.json` before starting it. The capture
+   attestation and launch transcript record `lazer_offsets_sha256`; the
+   completion receipt reports `upstream_offsets_sha256`. The no-client Linux
+   rehearsal does not stage or need the file.
+
 1. **Mandatory dry run first.** Use a config whose
    `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and
    three cases. Then run `golden` on it into a scratch candidate directory, in
@@ -435,11 +464,18 @@ non-decreasing. Everything else, including number spelling and member
 order, stays exact, and nothing is rewritten in the fixture: the first
 upstream record keeps its raw value and the case file lists the ledger IDs
 it used (`volatile`). `adapter_golden` must apply the same rules to those
-IDs before such a case can replay. A barrier is reached only when both daemons
-report it across three consecutive observations whose non-volatile upstream
-v2 payload and vosu v2 dump are identical. A barrier without cases (`play`,
-whose clock and provider generation advance on every read) needs only both
-daemons reporting it across those three observations.
+IDs before such a case can replay. A client barrier is reached only when both
+daemons report it across three consecutive observations with non-empty v2
+`folders.game` and a matching `beatmap.checksum` (or matching non-default
+`directPath.beatmapFile` if a checksum is absent). Blank upstream `menu` is
+not attachment. After 30 seconds of continuous vosu readiness with upstream
+still missing these fields or reading a different beatmap, the wait fails as
+`upstream_not_reading_client` and names the missing or mismatched fields.
+The attached-client check also applies before and after each golden attempt.
+Cases still require identical non-volatile
+views across the three observations; case-less `play` does not, and its
+pre-gameplay upstream pause tolerance is unchanged. `no-client` still needs
+both daemons to report no client plus the observed client exit, not v2 fields.
 
 ## M3 API, resources and actions
 

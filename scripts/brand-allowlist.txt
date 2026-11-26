@@ -31,7 +31,7 @@ docs/quickstart.md 1 upstream names the upstream tosu compatibility target for n
 docs/features.md 1 third-party-catalog names the upstream tosu.app community overlay catalog behind the Available page
 docs/security.md 2 upstream describes the upstream tosu catalog network dependency
 docs/testing/benchmarks.md 73 history records historical released-tosu comparison measurements
-docs/testing/verification.md 6 upstream tosu.env migration precedence, the pinned upstream reference release used by live parity, and the M5 X0 parity corpus pin's upstream revision
+docs/testing/verification.md 7 upstream migration precedence and pinned upstream references for the live-parity releases, offline offsets, and M5 X0 corpus
 docs/testing/verification-history.md 8 history dated parity captures against the pinned upstream tosu reference build
 docs/workflows/compatibility-and-calculation.md 1 upstream references the upstream tosu compatibility target
 docs/workflows/runtime-and-config.md 3 upstream references legacy tosu.env migration handling

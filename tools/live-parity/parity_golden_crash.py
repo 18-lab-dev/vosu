@@ -91,8 +91,9 @@ def _settle(session: gc.Session, source: gc.Daemon, dump: gc.HarnessDump) -> dic
     while stable < gc.STABLE_OBSERVATIONS:
         if time.monotonic() > session.deadline:
             raise gc.CaptureError("upstream did not report no-client before the timeout")
-        seen = session._observe(source, dump)[0]
-        stable = stable + 1 if session._holds("no-client", seen) else 0
+        observation = session._observe(source, dump)
+        seen = observation.seen
+        stable = stable + 1 if session._holds("no-client", observation) else 0
         if stable < gc.STABLE_OBSERVATIONS:
             time.sleep(gc.POLL_S)
     return seen

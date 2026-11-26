@@ -62,6 +62,7 @@ from typing import Any, Callable, Iterable, NoReturn
 from live_parity import PINNED_SOURCE_REVISION
 import parity_golden
 import parity_golden_capture as gc
+from parity_golden_barrier import BarrierObservation
 import parity_golden_crash as crash
 from parity_golden_rules import GoldenError
 import parity_routes as pr
@@ -221,8 +222,8 @@ class Rehearsal(gc.Session):
         self.cases = tuple(cases)
         self.transcript["rehearsal"] = []
 
-    def _holds(self, barrier: str, seen: dict[str, str | None]) -> bool:
-        return all(value == "no-client" for value in seen.values())
+    def _holds(self, barrier: str, observation: BarrierObservation) -> bool:
+        return all(value == "no-client" for value in observation.seen.values())
 
     def _client_attestation(self) -> dict[str, Any]:
         return {"variant": self.cfg["client"].lower(), **NO_CLIENT}

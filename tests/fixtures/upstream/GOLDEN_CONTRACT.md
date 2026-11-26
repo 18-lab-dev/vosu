@@ -187,6 +187,15 @@ contributes only diagnostic cadence/framing and coarse lifecycle evidence,
 never an exact payload fixture. Each platform scenario traverses
 menu → play → paused → result → client exit.
 
+For client barriers both v2 views must have a non-empty `folders.game` and
+identify the same beatmap in each observation: compare `beatmap.checksum` when
+both are present, otherwise compare non-default `directPath.beatmapFile`.
+This also guards the request sandwiches before and after each attempt. A
+blank/default upstream view never holds a client barrier. If upstream keeps
+missing attachment fields or reports a different beatmap for 30 seconds with
+vosu ready, abort with `upstream_not_reading_client`. The `no-client` barrier
+does not require these fields.
+
 While waiting for the `play` barrier, an upstream `paused` observation is
 tolerated, never treated as out of order, only before gameplay has started
 (owner amendment, 2026-11-26, after the first full pilot's run 3). The
