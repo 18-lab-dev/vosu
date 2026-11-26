@@ -1931,7 +1931,7 @@ No unit makes a length exception. Every file stays at or below 1,000 lines.
 The [D17 contract](../testing/benchmarks.md#m5-d17-contract) records the
 D17 names, metrics and bars.
 
-#### M5 landing decisions and open obligations (2026-11-25)
+#### M5 landing decisions and obligation audit (2026-11-25–26)
 
 Main accepted these E0 and P1 results on 2026-11-25:
 
@@ -1950,14 +1950,24 @@ Main accepted these E0 and P1 results on 2026-11-25:
   pipe stays measurement-only, and the Windows D17 bar and P1's method
   deviations are adopted ([brokered reads](brokered-reads.md#decision-and-windows-bar-approved-2026-11-25)).
 
-E0 landed the child lifecycle and a test-installed launcher. These pieces
-are open obligations with named owners, not completed work:
+**Obligation audit (2026-11-26).** E0 landed the child lifecycle and a
+test-installed launcher. The following commits closed the obligations it
+left open. This is the implementation receipt, not the D17 measurement
+receipt.
 
-| Owner | Open obligation |
-| --- | --- |
-| T1, B0 | The child refuses a `VOSU_READ_PLAN_SYNC` submission with `VOSU_ERR_UNSUPPORTED` until the `REPLY_NEXT` path exists. The 64-per-instance local admission caps are not yet applied before the write; core still enforces them. Child dispatch is one serial worker even under `concurrent_dispatch`. The child's delivery queue is a bounded FIFO that blocks the ring reader when full, so a full queue ends as a 2-second stall loss rather than T1's coalescing queue. Core's ring reader delivers each plugin → host message to the handler on its own thread. |
-| U0 | The launcher computes `library_sha256` from the library at launch; U0 passes the approved digest instead. Production composition installs `ProcessHostLauncher` only after the approval flow (A5.5). |
-| C0 | `HostError::ProcessStartupFailed` carries the formatted `stage … (code)` text. C0 consumes the structured startup failure (`StartupFailure`, `StartupStage::is_crash_class`) to decide restarts and the `failed` latch. |
+| Owner | Obligation | Closure and regression coverage |
+| --- | --- | --- |
+| T1, B0 | Child `VOSU_READ_PLAN_SYNC` / `REPLY_NEXT` | Closed by `90ee1913` on the child and `7ea9d2e0` on the production broker. The ring reader routes the result to the waiter; the submitter dispatches it before `send` returns. Native relay and SYNC tests (`fc19e3b2`, `960feff1`) cover blocked dispatch, nested refusal, budget expiry and late-result suppression. |
+| T1 | Local admission before writing | Closed by `90ee1913`. The child reserves async plans, scans, action calls and timers against their separate 64-per-instance caps before writing; core also validates admission. Admission and relay unit tests cover caps and slot release, and the native relay test (`fc19e3b2`) covers the 65th async plan and recovery. |
+| T1 | Concurrent child dispatch | Closed by `90ee1913`. The child starts four dispatch workers for `concurrent_dispatch` and one otherwise. `relay_concurrent_dispatch_runs_deliveries_in_parallel` and `session_affine_deliveries_are_serialized` cover overlap and the same-session ordering constraint. |
+| T1 | Nonblocking child delivery queue | Closed by `90ee1913`. The reader enqueues into semantic lanes without waiting for dispatch: notifications coalesce, complete state updates merge, and the terminal lane runs ahead of ordinary work. `relay_delivery_merges_coalesces_and_keeps_terminals_under_a_blocked_dispatch` (`fc19e3b2`) covers this over the real transport. |
+| T1, B0 | No per-message core handler thread | Closed by `90ee1913` and `7ea9d2e0`. The core reader hands ordinary frames to one ordered ingress worker and SYNC work to bounded broker workers. `sync_requests_run_beside_a_blocked_ordinary_lane` and `log_records_past_the_budget_are_dropped_while_requests_are_answered` exercise the two routes and the log bound. |
+| U0 | Approval-gated production launch with the approved digest | Closed by `0aea7804` (digest handoff), `2b05783e` (production gate), and `d0e93f83` (catalog-installed process launch). Both package origins use `ApprovalGate`; it passes the digest that matched the approval or verified catalog record into `CREATE`, and the child rehashes the opened library. `every_load_and_restart_passes_the_gate_with_the_approved_digest` and the native catalog approval tests cover the handoff, restart and reapproval. |
+| C0 | Structured startup failure, restart and `failed` latch | Closed by `cfa8abf8`. `HostError::ProcessStartupFailed` retains `StartupFailure`; the supervisor uses `StartupStage::is_crash_class` to count only crash-class automatic-start failures toward the latch. Initial startup failures and deterministic refusals wait for manual restart. `startup_failures_split_by_their_structured_stage` and the native restart chain (`2963082f`) cover the classification and latch. |
+
+The native memory regression target remains the root `tests/process_memory.rs`
+(`cargo test --locked --test process_memory -- --nocapture`), with OS-specific
+native backend and plan-memory tests.
 
 **Dev-profile measure (P0, 2026-11-25).** The workspace builds `sha2` at
 `opt-level = 3` in the dev profile (`[profile.dev.package.sha2]`). Core and
