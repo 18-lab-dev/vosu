@@ -97,7 +97,14 @@ pub struct ToolRegistry {
     stopping: AtomicBool,
     cancel: CancellationToken,
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// `ToolView.update_available` for a catalog-installed tool (M7 D1);
+    /// unset (no update) until the catalog composition attaches it.
+    updates: std::sync::OnceLock<UpdateSource>,
 }
+
+/// Whether a newer installable version of the installed tool `id` is
+/// listed by its own catalog source.
+pub type UpdateSource = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 pub fn secret() -> io::Result<String> {
     use std::fmt::Write as _;
@@ -290,10 +297,19 @@ impl ToolRegistry {
             stopping: AtomicBool::new(false),
             cancel: CancellationToken::new(),
             watcher: Mutex::new(None),
+            updates: std::sync::OnceLock::new(),
         });
         registry.recover_replacement().map_err(io::Error::other)?;
         registry.rescan().await;
         Ok(registry)
+    }
+    /// Attaches core's catalog update source once (M7 D1); a second call
+    /// keeps the first source.
+    pub fn set_update_source(&self, source: UpdateSource) {
+        let _ = self.updates.set(source);
+    }
+    fn update_available(&self, id: &str) -> bool {
+        self.updates.get().is_some_and(|source| source(id))
     }
     pub fn activate(self: &Arc<Self>, origins: Option<Arc<crate::server::origins::Origins>>) {
         *self.origins.lock() = origins;

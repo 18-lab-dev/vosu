@@ -136,7 +136,7 @@ impl ToolRegistry {
             "icon_url": art(tool.and_then(|t| t.icon.as_ref()), "icon"),
             "banner_url": art(tool.and_then(|t| t.banner.as_ref()), "banner"),
             "source": entry.source,
-            "update_available": false,
+            "update_available": entry.source != "dev" && self.update_available(&entry.id),
             "trusted": self.trusted(entry),
             "enabled": self.enabled(entry),
             "status": status,

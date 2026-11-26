@@ -814,6 +814,7 @@ include!("server_compat/listener.rs");
 include!("server_compat/legacy_catalog.rs");
 include!("server_compat/catalog.rs");
 include!("server_compat/catalog_plans.rs");
+include!("server_compat/m7_management.rs");
 
 struct SnapshotFixture {
     generation: AtomicU64,

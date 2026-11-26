@@ -30,6 +30,7 @@ use vosu_core::{
     },
     plugin::{DEFAULT_QUEUE_CAPACITY, PluginInstanceId, WorkerPool},
 };
+use vosu_plugin_api::manifest::{HostSupport, PackageKind};
 
 /// Catalog-loaded instance ids start far above bundled and `--plugin` ones.
 const FIRST_CATALOG_INSTANCE: u64 = 1 << 32;
@@ -244,12 +245,17 @@ impl CatalogComposition {
     }
 
     /// Web-package hosts exist only after recovery ran; attach them before
-    /// any catalog operation can start.
+    /// any catalog operation can start. The tool registry also reads its
+    /// `ToolView.update_available` from this catalog (M7 D1).
     pub fn attach_web_hosts(
         &self,
         tools: Arc<crate::tools::ToolRegistry>,
         counters: Arc<ReloadableCounterService>,
     ) {
+        let runtime = Arc::clone(&self.runtime);
+        tools.set_update_source(Arc::new(move |id: &str| {
+            update_available(&runtime, PackageKind::Tool, id)
+        }));
         let _ = self.handoff.tools.set(tools);
         let _ = self.handoff.counters.set(counters);
     }
@@ -301,6 +307,40 @@ fn builtin_providers() -> io::Result<BuiltinProviders> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| io::Error::other(error.to_string()))?;
     Ok(BuiltinProviders::from_registry(&registry, &bundled))
+}
+
+/// Core's read-only update source (M7 D1): the catalog-installed `kind`
+/// package `id` has an update when the last validated publication of its
+/// exact installed source lists a newer version this host and target can
+/// install. Nothing is fetched here; a refresh publishes new candidates.
+fn update_available(runtime: &CatalogRuntime, kind: PackageKind, id: &str) -> bool {
+    let Some(record) = runtime.installed().and_then(|store| {
+        store
+            .snapshot()
+            .records
+            .into_iter()
+            .find(|record| record.package_kind() == kind && record.id == id)
+    }) else {
+        return false;
+    };
+    let Ok(installed) = semver::Version::parse(&record.version) else {
+        return false;
+    };
+    let Some(snapshot) = runtime
+        .fetch()
+        .and_then(|fetch| fetch.sources().candidate_snapshot().ok().flatten())
+    else {
+        return false;
+    };
+    snapshot.candidates().any(|candidate| {
+        candidate.kind == kind
+            && candidate.entry.id == id
+            && candidate.source.identity == record.source
+            && candidate.support.host == HostSupport::Supported
+            && candidate.support.target
+            && semver::Version::parse(&candidate.entry.version)
+                .is_ok_and(|version| version > installed)
+    })
 }
 
 #[path = "catalog_removal.rs"]
