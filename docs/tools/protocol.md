@@ -6,7 +6,7 @@ description: "Manifest, process, HTTP, browser-bridge, and dashboard contract be
 
 # Tool protocol v1
 
-A **tool** is an application that vosu discovers, supervises, and serves next to overlays. Tools may ship a browser UI, a background HTTP service, or both. Any language that can read environment variables, write one stdout line, and serve HTTP on loopback can implement a tool. Rust tools may use the `vosu-tool-sdk` crate; [`examples/tools/hello-python`](../../examples/tools/hello-python/) is a dependency-free Python reference. The decision record is [ADR 0017](../decisions/0017-tool-host.md). Editors can validate manifests with [`tool.schema.json`](tool.schema.json).
+A **tool** is an application that vosu discovers, supervises, and serves next to overlays. Tools may ship a browser UI, a background HTTP service, or both. Any language that can read environment variables, write one stdout line, and serve HTTP on loopback can implement a tool. Rust tools may use the `vosu-tool-sdk` crate; [`examples/tools/hello-python`](../../examples/tools/hello-python/) is a dependency-free Python reference. The decision record is [ADR 0017](../decisions/0017-tool-host.md).
 
 ## 2.0 transition inventory (A7.2)
 
@@ -204,7 +204,6 @@ host = ["context", "songs:write"]  # see "Host API" below
 ```
 
 `settings.json` in the tool directory, when present, uses exactly the overlay `settings.json` schema and is edited from the tool's card on the Tools page (**Settings** opens the same dialog overlays use; `/settings?tool=<id>` shows it as a page). Profiles do not apply to tools. Settings of `type: "password"` are write-only from the dashboard: they are never shown or returned there, a blank field keeps the stored value, and **Clear** removes it. Use that type for credentials; only the tool's own service reads the value, through `GET /tools/_host/v1/settings`.
-Editors supporting JSON Schema for TOML (Taplo / Even Better TOML) can put `#:schema https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json` on the first line. A local manifest can instead use `#:schema ../../docs/tools/tool.schema.json`, adjusted relative to that manifest. The schema validates structure; vosu additionally checks filesystem confinement, dependencies, and semantic versions.
 
 `icon` and `banner` give a tool its identity on the dashboard. The icon is square (SVG, or PNG at least 256×256) and is shown at 40–64 px. The banner is 3:1 (recommended 1200×400) and spans the full card width, cropped with `object-fit: cover`, so keep important content centred. Both are served from the tool directory on the overlay origin as `/tools/<id>/_icon` and `/tools/<id>/_banner` in every tool status, including disabled, untrusted, and failed tools, with a sandboxing `Content-Security-Policy` so an SVG opened directly cannot run script; ToolView reports them as `icon_url` and `banner_url`. A missing or unreadable icon falls back to the name's initials, and a missing banner leaves the card without one.
 

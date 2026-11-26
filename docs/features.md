@@ -28,7 +28,7 @@ The dashboard runs on its own listener (`DASHBOARD_PORT`, [ADR 0016](decisions/0
 | Tray | **Open dashboard**, **Quit** | `crates/vosu-core/src/desktop/tray.rs` | manual (needs a desktop session) |
 | Second launch | Opens the running instance's dashboard and exits | `crates/vosu-core/src/app.rs`, `crates/vosu-core/src/desktop/` | `daemon_smoke` |
 | Setup | `vosu --setup` (Linux process-event capabilities) | `src/platform/linux/` | `process_memory` (native) |
-| Tool CLI | `vosux` / `vosu x` (`--list`, `--open`, `--install`, `--update`, `--uninstall`, `--autostart`) | `src/vosux.rs`, `src/tools/` | `tests/tool_host_smoke.py` |
+| Plugin action CLI | `vosux` / `vosu x` `<plugin-id> <action> [json] [--detach] [--session <id>]`; the 1.x tool form and its options were removed in M7 | `src/vosux.rs` | `api_v1_compat` (`cli::vosux_production_action_routes`), `vosux` unit tests |
 | Game state APIs | `/json`, `/json/sc`, `/json/v2`, `/json/v2/precise`, WebSockets, selected-field v2 subscriptions | `src/api/`, `src/server/`, `src/state/` | `state_api_compat`, `server_compat`, `performance_invariants` |
 | Current game files | `/files/beatmap/…`, `/files/skin/…` | `src/server/files.rs` | `server_compat` |
 | Overlay settings profiles | `/api/counters/profiles`, brokered commands | `src/counters/`, `src/server/` | `server_compat`, `config_compat` |
