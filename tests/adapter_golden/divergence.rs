@@ -7,9 +7,10 @@
 //! case is missing on a listed platform, when it changes nothing, when two
 //! rules claim one part, or when it subtracts a whole status, body,
 //! handshake, frame or every case of a route without a ledger scope naming
-//! that route verbatim. Each other comparison stays exact; a body rule never
-//! touches a header, and an unused rule fails the run.
+//! that route verbatim. Each other comparison still follows §6–7; a body
+//! rule never touches a header, and an unused rule fails the run.
 use super::{
+    compare::{has_json_content_type, same_body, same_header, same_text_frame},
     envelope::tokens,
     fixture::{Body, Case, Expected, Fixture, compared, object, string_list},
 };
@@ -344,24 +345,33 @@ fn derive(rule: &Rule, expected: &Expected) -> Result<bool, String> {
                 .filter(|(n, _)| n == name)
                 .map(|(_, v)| v.as_str())
                 .collect();
-            header_value(&rule.change)
-                .as_deref()
-                .into_iter()
-                .collect::<Vec<_>>()
-                != upstream
+            match header_value(&rule.change).as_deref() {
+                Some(value) => {
+                    !matches!(upstream.as_slice(), [old] if same_header(name, value, old))
+                }
+                None => !upstream.is_empty(),
+            }
         }
         Part::Body => {
             let Body::Text(text) = &expected.body else {
                 return Err("a binary body is never subtracted".into());
             };
-            apply_text(&rule.change, text)? != *text
+            !same_body(
+                apply_text(&rule.change, text)?.as_bytes(),
+                text.as_bytes(),
+                has_json_content_type(&expected.headers),
+            )
         }
         Part::WsHandshake => {
-            let Change::Value(value) = &rule.change else {
-                unreachable!("validated handshake value")
-            };
-            Some(expected.status) != status(&Change::Value(value["status"].clone()))
-                || headers(value).as_ref() != Some(&expected.headers)
+            let (status, headers) = handshake(&rule.change).expect("validated handshake");
+            status != expected.status
+                || headers.len() != expected.headers.len()
+                || headers
+                    .iter()
+                    .zip(&expected.headers)
+                    .any(|((name, value), (old_name, old))| {
+                        name != old_name || !same_header(name, value, old)
+                    })
         }
         Part::WsFrame => {
             let mut changed = false;
@@ -371,7 +381,12 @@ fn derive(rule: &Rule, expected: &Expected) -> Result<bool, String> {
                     any = true;
                     let text = std::str::from_utf8(&frame.payload)
                         .map_err(|_| "server text frame is not UTF-8")?;
-                    changed |= apply_text(&rule.change, text)? != text;
+                    let replacement = apply_text(&rule.change, text)?;
+                    changed |= if frame.fin {
+                        !same_text_frame(replacement.as_bytes(), &frame.payload)
+                    } else {
+                        replacement != text
+                    };
                 }
             }
             if !any {

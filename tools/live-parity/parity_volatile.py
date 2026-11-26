@@ -3,13 +3,9 @@
 A volatile field is a live-advancing value that two reads of one stable barrier can never
 reproduce byte for byte: the menu track clock and upstream's decaying `bassDensity`. Each
 entry names its exact scope, its rule and its authority. A sandwich compares a volatile
-field by presence, JSON type and the stated rule, never by value; every other byte is still
-compared exactly. Nothing is normalized in the fixture: the first upstream record keeps its
-raw value, and the private candidate receipt lists the IDs checked for sandwiches
-that differed before this comparison.
-
-JSON is parsed losslessly (number spelling, object member order and duplicates are kept),
-so `1` versus `1.0` or a reordered object is still a difference.
+field by presence, JSON type and the stated rule, never by value; other values follow
+GOLDEN_CONTRACT.md §7. Nothing is normalized in the fixture: the first upstream record
+keeps its raw value, and the private receipt lists the IDs needed for the comparison.
 """
 from __future__ import annotations
 
@@ -22,6 +18,9 @@ from typing import Any
 
 AUTHORITY = ("Main contract decision 2026-11-25 (M4b O0 dry run, finding 2): live-advancing "
              "values are compared by presence, type and rule, never by value")
+
+# GOLDEN_CONTRACT.md §7, also implemented in tests/adapter_golden/compare.rs.
+JSON_RELATIVE_TOLERANCE = 1e-12
 
 V2_PATHS = ("/json/v2", "/json/v2/precise", "/websocket/v2", "/websocket/v2/precise")
 SC_PATHS = ("/json/sc", "/tokens")
@@ -78,13 +77,78 @@ class VolatileError(ValueError):
     """A volatile field broke its stated rule (wrong type, range or presence)."""
 
 
-# ---------------------------------------------------------------- lossless values
+# ---------------------------------------------------------------- comparison values
+
+
+def _number(token: str) -> float:
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError("JSON number is not finite binary64")
+    return value
 
 
 def _parse_json(text: str) -> Any:
-    return json.loads(text, object_pairs_hook=lambda pairs: ("{}", [list(p) for p in pairs]),
-                      parse_float=lambda s: ("num", s), parse_int=lambda s: ("num", s),
-                      parse_constant=lambda s: ("num", s))
+    return json.loads(text, parse_float=_number, parse_int=_number, parse_constant=_number)
+
+
+@dataclass(eq=False)
+class JsonPayload:
+    """A parsed body or frame; use the same equality inside every sandwich view."""
+    value: Any
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, JsonPayload) and _json_equal(self.value, other.value)
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, float):
+        return abs(left - right) <= JSON_RELATIVE_TOLERANCE * max(abs(left), abs(right))
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _json_equal(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def without_charset(value: str) -> str:
+    """Drop only charset parameters; do not split a quoted parameter value."""
+    start = 0
+    quoted = escaped = False
+    parts = []
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == ";" and not quoted:
+            parts.append(value[start:index])
+            start = index + 1
+    parts.append(value[start:])
+    return ";".join([parts[0].rstrip(), *[
+        part for part in parts[1:] if "=" not in part
+        or part.split("=", 1)[0].strip().lower() != "charset"]])
+
+
+def is_json_media_type(value: str) -> bool:
+    media = value.partition(";")[0].strip().lower()
+    return media == "application/json" or ("/" in media and media.endswith("+json"))
+
+
+def body_length(status: int, size: int, *, head: bool) -> int | None:
+    # HEAD and 304 can describe a representation not carried in the response.
+    return None if head or status == 304 else size
+
+
+def check_content_length(value: str, size: int | None) -> None:
+    if not value.isascii() or not value.isdecimal() \
+            or (size is not None and (value.lstrip("0") or "0") != str(size)):
+        raise VolatileError("content-length differs from the body length"
+                            if size is not None else "invalid content-length")
 
 
 def _cbor(data: bytes, pos: int = 0) -> tuple[Any, int]:
@@ -142,7 +206,8 @@ def _check(rule: str, value: Any, field_id: str) -> None:
         ok = isinstance(value, str) or (isinstance(value, tuple) and value[0] == "text")
     else:
         try:
-            number = float(value[1]) if isinstance(value, tuple) and value[0] == "num" else None
+            number = value if isinstance(value, float) else (
+                float(value[1]) if isinstance(value, tuple) and value[0] == "num" else None)
         except ValueError:
             number = None
         ok = number is not None and math.isfinite(number) and number >= 0
@@ -158,6 +223,10 @@ def _mask(tree: Any, pointer: str, rule: str, field_id: str) -> tuple[Any, bool]
         if index == len(parts):
             _check(rule, node, field_id)
             return ("volatile", field_id), True
+        if isinstance(node, dict) and parts[index] in node:
+            key = parts[index]
+            item, found = walk(node[key], index + 1)
+            return {**node, key: item}, found
         if isinstance(node, tuple) and node[0] == "{}":
             hits = [i for i, (k, _v) in enumerate(node[1]) if _key(k) == parts[index]]
             if len(hits) != 1:
@@ -176,76 +245,92 @@ def _mask(tree: Any, pointer: str, rule: str, field_id: str) -> tuple[Any, bool]
 # ---------------------------------------------------------------- views
 
 
-def payload_view(path: str, data: bytes) -> tuple[Any, list[str]]:
-    """(comparable view, ledger IDs used) of one HTTP body or WS text payload of `path`."""
-    fields = [f for f in FIELDS if path in f.paths]
-    if not fields:
+def payload_view(path: str, data: bytes, *, json_required: bool = True,
+                 mask: bool = True) -> tuple[Any, list[str]]:
+    """Parsed JSON and any ledger IDs used; untyped non-JSON text stays bytes."""
+    if not data:
         return data, []
     try:
         tree = _parse_json(data.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (ValueError, RecursionError) as exc:
+        if json_required:
+            raise VolatileError("expected a JSON payload") from exc
         return data, []
     used = []
-    for field in fields:
-        tree, found = _mask(tree, field.pointer, field.rule, field.id)
-        if found:
-            used.append(field.id)
-    return (tree if used else data), used
+    if mask:
+        for field in FIELDS:
+            if path in field.paths:
+                tree, found = _mask(tree, field.pointer, field.rule, field.id)
+                if found:
+                    used.append(field.id)
+    return JsonPayload(tree), used
 
 
-def record_view(path: str, status: Any, headers: list[list[str]], body: bytes,
-                frames: list[tuple[Any, ...]] | None) -> tuple[tuple[Any, ...], list[str]]:
-    """A record's comparable view. `frames` items are (direction, fin, opcode, masked, payload).
-
-    When a payload holds a volatile field its length can legitimately change, so the
-    content-length and frame length are compared as "equals the payload length" instead."""
-    view, used = payload_view(path, body)
+def record_view(path: str, status: Any, headers: list[list[str]], body: bytes | dict,
+                frames: list[tuple[Any, ...]] | None, *, head: bool = False,
+                mask: bool = True) -> tuple[tuple[Any, ...], list[str]]:
+    """Compare headers and body, plus (direction, fin, opcode, mask, payload) frames."""
+    if isinstance(body, bytes):
+        is_json = any(name.lower() == "content-type" and is_json_media_type(value)
+                      for name, value in headers)
+        view, used = payload_view(path, body, mask=mask) if is_json else (body, [])
+        size = len(body)
+    else:
+        view, used, size = body, [], body["length"]
     shown = []
     for name, value in headers:
-        if used and name.lower() == "content-length":
-            if value.strip() != str(len(body)):
-                raise VolatileError("content-length differs from the body length")
-            value = "<length of body>"
-        shown.append([name.lower(), value])
+        name = name.lower()
+        if name == "content-length":
+            check_content_length(value, body_length(int(status), size, head=head))
+            value = "<consistent length>"
+        elif name == "content-type":
+            value = without_charset(value)
+        shown.append([name, value])
     frame_views = None
     if frames is not None:
         frame_views = []
         for direction, fin, opcode, masked, payload in frames:
-            fview, fused = payload_view(path, payload) if opcode == 1 and fin else (payload, [])
+            fview, fused = payload_view(path, payload, json_required=False, mask=mask) \
+                if opcode == 1 and fin else (payload, [])
             used += [i for i in fused if i not in used]
-            frame_views.append((direction, fin, opcode, masked, fview,
-                                "<length of payload>" if fused else len(payload)))
+            frame_views.append((direction, fin, opcode, masked, fview))
     return (status, sorted(shown), view, frame_views), used
 
 
-def expected_view(path: str, expected: dict[str, Any]) -> tuple[Any, list[str]]:
+def expected_view(path: str, expected: dict[str, Any], *, head: bool,
+                  mask: bool) -> tuple[Any, list[str]]:
     """The comparable view of one normalized `golden` expected record."""
     if "outcome" in expected:
         return expected, []
     body = expected["body"]
-    data = body["text"].encode("utf-8") if "text" in body else json.dumps(body).encode("utf-8")
+    data = body["text"].encode("utf-8") if "text" in body else body
     frames = None
     if "frames" in expected:
         frames = [(f["from"], f["fin"], f["opcode"], f["masked"],
                    f["payload"]["text"].encode("utf-8") if "text" in f["payload"]
                    else bytes.fromhex(f["payload"]["hex"])) for f in expected["frames"]]
-    return record_view(path, expected["status"], expected["headers"], data, frames)
+    return record_view(path, expected["status"], expected["headers"], data, frames,
+                       head=head, mask=mask)
 
 
 def sandwich(path: str, first: dict[str, Any], second: dict[str, Any], *,
-             synthetic: bool) -> list[str]:
+             head: bool, synthetic: bool) -> list[str]:
     """Validate stability and return receipt diagnostics, never fixture metadata."""
-    if synthetic:
-        # Mechanics fixtures replay exact normalized records, not live fields.
-        if first != second:
-            raise VolatileError("synthetic sandwich responses differ after approved normalization")
+    def view(record: dict[str, Any], *, mask: bool) -> tuple[Any, list[str]]:
+        return expected_view(path, record, head=head, mask=mask)
+
+    if view(first, mask=False)[0] == view(second, mask=False)[0]:
+        if not synthetic:
+            # Check scoped field types even when neither live value changed.
+            view(first, mask=True)
         return []
-    first_view, used = expected_view(path, first)
-    second_view, _ = expected_view(path, second)
-    if first_view != second_view:
-        raise VolatileError("upstream sandwich responses differ after approved normalization "
+    if synthetic:
+        raise VolatileError("synthetic sandwich responses differ after approved comparison")
+    first_view, used = view(first, mask=True)
+    if first_view != view(second, mask=True)[0]:
+        raise VolatileError("upstream sandwich responses differ after approved comparison "
                             "and the volatile ledger")
-    return used if first != second else []
+    return used
 
 
 def _entries_view(entries: list[dict[str, Any]], used: list[str]) -> list[Any]:

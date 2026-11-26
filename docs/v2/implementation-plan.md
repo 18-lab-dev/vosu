@@ -1689,15 +1689,19 @@ in summary:
 6. **Normalization (A4b.6).** A closed list of exact-scope rules (`date`,
    file `last-modified`/`etag` and their request validators, capability
    redaction in raw evidence, dump identities, synthetic roots, and
-   individually listed client timestamps, none initially). Never status,
-   route, method, content-type, security, cache, range or upgrade semantics,
-   numbers, null versus absence, order, quirks or coherent-sample
-   relationships. A new rule needs review, a counterexample test and a
-   manifest version bump.
+   individually listed client timestamps, none initially). **2026-11-26
+   owner amendment:** Compare HTTP JSON (including errors) and WebSocket
+   JSON text frames as parsed payloads using the uniform equality in the
+   golden contract §7; non-JSON bytes stay exact. Status, field presence,
+   JSON types, array order, quirks and coherent-sample relationships stay
+   strict. A new normalization rule needs review, a counterexample test
+   and a manifest version bump.
 7. **Headers (A4b.7).** Status, content type/length, cache, validators,
    range, location, CSP, nosniff, `access-control-*` and WebSocket
    upgrade/accept/protocol fields are compared; others are recorded
-   privately.
+   privately. Ignore only `Content-Type` charset parameters, and check
+   `Content-Length` against each response's own bytes, not the other
+   response's number.
 8. **Publication (A4b.8).** `golden` writes only a candidate directory; main
    reviews the diff, brand inventory, privacy and asset checks and replay
    before commit. Nothing is uploaded or published.
@@ -1711,13 +1715,14 @@ in summary:
     existing non-`temporary` ledger IDs with exact case and record-part
     scope; unused rules fail; whole-route subtraction needs whole-route
     ledger scope.
-    For `GET /api/calculate/pp`, record status/body/content-length
-    differences for the exact cases named by `legacy-calculate-mod-inputs`
-    and `legacy-calculate-client-errors` in the
+    **2026-11-26 owner amendment:** Alternate expectations are compared
+    under the same §7 payload equality; JSON spelling and bounded
+    round-off do not need divergence rules. For `GET /api/calculate/pp`,
+    record status and payload differences for the exact cases named by
+    `legacy-calculate-mod-inputs` and `legacy-calculate-client-errors` in the
     [divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md).
     Keep upstream responses in the fixture; scope alternate vosu
-    expectations to evidenced platforms and affected parts. Success
-    number spelling is a production wire contract, not normalization.
+    expectations to evidenced platforms and affected parts.
 12. **`/api/ingame` (A4b.12).** Not captured, not a golden. The clean-room
     observation this item kept separate was withdrawn with the endpoint on
     2026-11-25 (section 6).

@@ -182,9 +182,9 @@ An ID is unique within a platform and is never reused for different request
 bytes; changed request bytes need a new ID.
 
 Barriers are `no-client`, `menu`, `paused` and `result`. They are the only
-**stable windows** in which exact payload goldens are recorded. Active play
+**stable windows** in which payload goldens are recorded. Active play
 contributes only diagnostic cadence/framing and coarse lifecycle evidence,
-never an exact payload fixture. Each platform scenario traverses
+never a payload fixture. Each platform scenario traverses
 menu → play → paused → result → client exit.
 
 For client barriers both v2 views must have a non-empty `folders.game` and
@@ -214,12 +214,13 @@ A case is recorded as:
 1. Wait for the case's barrier.
 2. **Upstream sandwich:** send request A to upstream, record the response,
    send the identical A again. The case is valid only when both upstream
-   responses are equal after the rules of §7.
+   responses agree under §6–7.
 3. **vosu sandwich:** call the dump endpoint, send A to the real vosu route,
    call the dump endpoint again. Both dumps must agree on provider generation,
    selected-entry digest, focus and roster revisions and derived-input state,
-   and a state route's `GET` response must equal the dump's adapter status and
-   bytes. The dump holds the adapter's answer, so this applies only to a request
+   and a state route's `GET` response must match the dump's adapter status
+   and parsed JSON payload (2026-11-26 owner amendment). The dump holds the
+   adapter's answer, so this applies only to a request
    that reaches the adapter: a request over the `adapter-surface-request-budget`
    limits ([DIVERGENCES.md](DIVERGENCES.md)) never does, and its vosu route must
    instead be that row's ordinary 404; a budget case within the limits is
@@ -319,8 +320,8 @@ routes, which appear only as negative near-miss cases, and `/api/ingame` (§8).
 
 ### Header comparison (A4b.7)
 
-Compared exactly after §7 (name, presence and value; the reason phrase and
-header order are recorded privately): the status code, `content-type`,
+Compared exactly after §7, except as noted below (name, presence and value;
+the reason phrase and header order are recorded privately): status, `content-type`,
 `content-length`, `cache-control`, `etag`, `last-modified`, `accept-ranges`,
 `content-range`, `location`, `content-security-policy`,
 `x-content-type-options`, every `access-control-*` header, and for WebSocket
@@ -330,10 +331,14 @@ negotiation fields `sec-websocket-protocol`, `sec-websocket-extensions` and
 capture. Another header joins this set only when a client contract relies on
 it, through a reviewed amendment to this file.
 
-When `root-prefix` changed a body or frame, `content-length` (or the frame
-length) is compared as the byte length of the normalized body, and each side's
-raw `content-length` must still equal its own raw body length (for `HEAD`, the
-length of the matching `GET` body).
+**2026-11-26 owner amendment:** Ignore `charset` parameters on `content-type`;
+other media-type parameters still compare exactly. When `content-length` is
+present, its value must describe that side's own body, not match the other
+side's value. For `HEAD`, validate against the matching `GET` from that side
+when recorded. With no matching `GET` or for `304`, validate the length's
+syntax only: it can describe a representation not sent in the response.
+When `root-prefix` changes the number of bytes, validate the raw length first
+and recompute the normalized `content-length` or frame length for storage.
 
 ## 7. Normalization inventory (A4b.6)
 
@@ -361,10 +366,25 @@ vosu_core::server
 
 vosu_core::server
 
-**Never normalized:** status, route or method, body error class;
-content-type, security, cache, range or upgrade semantics; numbers; null
-versus absence; object and array order; legacy quirks; bus revision
-relationships; coherent-sample identity; anything outside the scopes above.
+**Payload equality (2026-11-26 owner amendment).** After the rules above,
+compare HTTP bodies with a JSON media type (`application/json` or a `+json`
+subtype) and complete WebSocket text frames carrying JSON as parsed JSON.
+Object key sets must agree, arrays keep their order, and each value must
+match recursively with the same JSON type. This includes error bodies;
+null is not absence, and strings and booleans are not numbers. Whitespace,
+JSON number spelling and object key order do not matter.
+
+For finite binary64 numbers, use one symmetric relative bound everywhere:
+`|a − b| ≤ 1e-12 × max(|a|, |b|)`. Thus `5` and `5.0` are equal. The bound
+allows small accumulated floating-point round-off while detecting changes
+above one part per trillion; there is no absolute floor near zero or
+per-field exception.
+
+Status, route and method, security, cache, range and upgrade semantics,
+WebSocket frame flags and order, legacy quirks, bus revision relationships
+and coherent-sample identity stay strict. Non-JSON bodies and frame payloads
+compare byte for byte after the approved rewrites. The comparison does not
+rewrite JSON in the evidence or change the normalization version.
 
 Adding or widening a rule (including a `client-timestamp-pointer` instance)
 requires a reviewed amendment to this file, a counterexample test in
@@ -413,11 +433,11 @@ frames, all from upstream, or exactly `{"outcome": "closed"}` (§6). An
 
 The private JSON receipt printed by `golden` records live sandwich
 volatility diagnostics under `platforms.<platform>.volatile`, keyed by
-case ID, only when the two normalized upstream records differ and pass
-the reviewed live volatile-field comparison. The case files retain the
-first upstream record without volatility metadata or rewrites. Synthetic
-mechanics sandwiches compare exactly after §7; they have no live fields
-to exempt. This receipt does not authorize any replay differences.
+case ID, only when the upstream sandwich needs the reviewed live
+volatile-field comparison in addition to §6–7 equality. The case files
+retain the first upstream record without volatility metadata or rewrites.
+Synthetic mechanics sandwiches also use §6–7 equality, but have no live
+fields to exempt. This receipt does not authorize any replay differences.
 
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so
@@ -464,16 +484,18 @@ labeled upstream and never count as pilot or full evidence.
 - `cases` lists exact case IDs; `platforms` lists the platforms it applies to.
 - `part` is one of `status`, `headers.<name>` (a §6 header), `body`,
   `ws.handshake` or `ws.frame`.
-- Exactly one of `vosu_value` (the exact expected vosu value of that part) or
+- Exactly one of `vosu_value` (the expected vosu value of that part) or
   `vosu_replacements` (minimal JSON Pointer replacements inside a JSON body or
-  frame) is present.
+  frame) is present. **2026-11-26 owner amendment:** §6–7 equality also
+  applies to the replacement expectation; JSON spelling, bounded round-off
+  and byte length differences do not require subtraction.
 - Every rule must match at least one recorded case; an unused rule fails.
 - A rule that replaces a whole status, body, handshake or frame, or lists
   every case of a route, is a whole-route subtraction. It is admitted only
   when the ledger row's scope names that route verbatim. A header issue is
   never subtracted through `body`.
-- Every comparison not covered by a rule is exact. A security rule proves
-  vosu's stricter result; it never hides an upstream body mismatch elsewhere.
+- Every comparison not covered by a rule follows §6–7 unchanged. A security
+  rule proves vosu's stricter result; it never hides a mismatch elsewhere.
 - Part details: `headers.<name>` takes a string `vosu_value`, or `null` for
   an absent header, and never names `date`. `ws.handshake` replaces the status
   and the whole compared header list. `ws.frame` applies to every server text
@@ -486,8 +508,8 @@ labeled upstream and never count as pilot or full evidence.
 
 For the observed Windows-lazer `calculation.absolute-outside-root` response
 with upstream status 200, `golden` inventories the §10 body rule above and
-companion `status` (`400`) and `headers.content-length` (`"75"`, when it
-differs) rules under `legacy-calculate-declared-roots`. The original upstream
+companion `status` (`400`) rule under `legacy-calculate-declared-roots`.
+Each side's `content-length` describes its own body. The original upstream
 case stays unchanged. These rules do not apply to the positive probes or to
 platforms without evidence, and no other header or record part is subtracted.
 

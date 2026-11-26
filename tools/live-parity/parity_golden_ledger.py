@@ -1,7 +1,7 @@
 """The vosu route check of a state-route sandwich, and the ledger rows that decide it.
 
 GOLDEN_CONTRACT.md §6 step 3: the adapter dump records the adapter's `GET` response, so
-a state route's `GET` must answer exactly the dump's status and bytes, but only when the
+a state route's `GET` must match the dump's status and JSON payload, but only when the
 request reaches the adapter. A divergence-ledger row can decide the route outcome before
 it does; then the case is checked against that row's rule instead of the dump. Every
 other case, including a ledger case whose request stays within the row's limits, is
@@ -19,7 +19,7 @@ forwarded header set mirror `crates/vosu-surface/src/routes.rs`
 from __future__ import annotations
 
 import json
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 from urllib.parse import parse_qsl
 
 import parity_volatile as volatile
@@ -86,9 +86,70 @@ def check_state_route(case_id: str, path: str, route: dict[str, Any],
         return
     if route["status"] != dump["http"]["status"]:
         raise GoldenError(f"case {case_id}: vosu route status differs from the dump's adapter status")
-    if volatile.payload_view(path, route["body"])[0] != volatile.payload_view(
-            path, dump["http"]["body_utf8"].encode("utf-8"))[0]:
-        raise GoldenError(f"case {case_id}: vosu route bytes differ from the dump's adapter bytes")
+    try:
+        route_body, _ = volatile.payload_view(path, route["body"])
+        dump_body, _ = volatile.payload_view(path, dump["http"]["body_utf8"].encode("utf-8"))
+    except volatile.VolatileError as exc:
+        raise GoldenError(f"case {case_id}: {exc}") from exc
+    if route_body != dump_body:
+        raise GoldenError(f"case {case_id}: vosu route JSON differs from the dump's adapter payload")
+
+
+ResponseSizes = dict[tuple[str, str, int], tuple[int, int]]
+
+
+def get_response_sizes(cases: list[dict[str, Any]],
+                       normalized_size: Callable[[dict, bytes], int]) -> list[ResponseSizes]:
+    """Key each sandwich side's GET sizes by barrier, exact request and status."""
+    sizes: list[ResponseSizes] = [{}, {}, {}]
+    for case in cases:
+        if case["method"] != "GET":
+            continue
+        for index, record in enumerate([*case["source"], case["route"]]):
+            if record["outcome"] is not None or record["status"] == 304:
+                continue
+            body = record["body"]
+            sizes[index].setdefault((case["barrier"], record["request"], record["status"]), (
+                len(body), normalized_size(case, body) if index < 2 else len(body)))
+    return sizes
+
+
+def _matching_get(case: dict[str, Any], record: dict[str, Any],
+                  sizes: ResponseSizes) -> tuple[int, int] | None:
+    if record["status"] == 304 or not record["request"].startswith("HEAD "):
+        return None
+    return sizes.get((case["barrier"], "GET " + record["request"][len("HEAD "):], record["status"]))
+
+
+def check_route_length(case: dict[str, Any], sizes: ResponseSizes | None = None) -> None:
+    route = case["route"]
+    head = route["request"].startswith("HEAD ")
+    matched = _matching_get(case, route, sizes) if sizes is not None else None
+    size = matched[0] if matched else volatile.body_length(route["status"], len(route["body"]),
+                                                           head=head)
+    for name, value in route["headers"]:
+        if name.lower() == "content-length":
+            _check_length(case["id"], "vosu route", value, size)
+
+
+def normalize_lengths(headers: list[list[str]], case: dict, record: dict, length: int,
+                      sizes: ResponseSizes) -> None:
+    raw = volatile.body_length(record["status"], len(record["body"]), head=case["method"] == "HEAD")
+    lengths = (raw, length) if raw is not None else _matching_get(case, record, sizes)
+    for item in headers:
+        if item[0] == "content-length":
+            _check_length(case["id"], "upstream", item[1], lengths[0] if lengths else None)
+            if lengths and lengths[0] != lengths[1]:
+                item[1] = str(lengths[1])
+        elif item[0] == "content-range" and lengths and lengths[0] != lengths[1]:
+            raise GoldenError(f"case {case['id']}: root-prefix changed a partial body")
+
+
+def _check_length(case_id: str, side: str, value: str, size: int | None) -> None:
+    try:
+        volatile.check_content_length(value, size)
+    except volatile.VolatileError as exc:
+        raise GoldenError(f"case {case_id}: {side} {exc}") from exc
 
 
 def calculation_outside_rule(files: dict[str, bytes]) -> dict[str, Any] | None:
@@ -104,10 +165,7 @@ def calculation_outside_rule(files: dict[str, bytes]) -> dict[str, Any] | None:
         return None
     error = '{"error":"invalid beatmap path: outside declared roots or unsafe spelling"}'
     parts = [("status", 400), ("body", error)]
-    length = str(len(error.encode("utf-8")))
-    if [value for name, value in record["expected"]["headers"] if name == "content-length"] \
-            != [length]:
-        parts.append(("headers.content-length", length))
+    # Content-Length describes each side's own bytes, including for a body rule.
     return {"format": "vosu-golden-divergence-rules-v1", "rules": [
         {"ledger_id": "legacy-calculate-declared-roots", "platforms": [platform],
          "cases": [case], "part": part, "vosu_value": value} for part, value in parts]}

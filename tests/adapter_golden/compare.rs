@@ -9,9 +9,8 @@
 //! equal the declared replay file mtime, `AssetFile.modified`),
 //! `header-etag` (an ordinal bijection with upstream, so distinct tags stay
 //! distinct) and `root-prefix` for the replay's real temporary roots.
-//! Comparison is exact per part (status, each header, body, each frame);
-//! only a validated divergence rule replaces the expected value of its own
-//! part.
+//! Headers, bodies and frames use the payload equality in §7. A validated
+//! divergence rule only replaces the expectation for its own record part.
 use super::{
     assets::{AssetFile, ReplayAssets, ResourceAsset, RootAsset},
     case_file::etag_ordinal,
@@ -22,7 +21,9 @@ use super::{
     routes::{self, RawResponse},
     websocket::{self, Frame, Step},
 };
+use serde_json::Value;
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -167,6 +168,7 @@ pub struct Observed {
     /// Compared headers only, lowercase, sorted by name; `etag` is raw.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    raw_body_len: usize,
     /// Every frame in sequence order for an upgraded `ws` case.
     pub frames: Vec<Frame>,
     /// `header-etag` ordinals the request substitution bound.
@@ -241,6 +243,7 @@ fn case(
                     status: 0,
                     headers: Vec::new(),
                     body: Vec::new(),
+                    raw_body_len: 0,
                     frames: Vec::new(),
                     bound,
                     invariants,
@@ -439,6 +442,7 @@ pub fn normalize(
         out
     };
     let mut body = response.body;
+    let raw_body_len = body.len();
     let mut rewritten = false;
     if let Ok(text) = std::str::from_utf8(&body) {
         let normalized = rewrite(text);
@@ -472,6 +476,12 @@ pub fn normalize(
             last_modified(&value, &mut invariants);
             value = LAST_MODIFIED.into();
         } else if name == "content-length" && rewritten {
+            if !valid_content_length(&value, Some(raw_body_len)) {
+                invariants.push((
+                    "headers.content-length".into(),
+                    format!("vosu {value:?} does not describe its raw {raw_body_len}-byte body"),
+                ));
+            }
             value = body.len().to_string();
         }
         headers.push((name, value));
@@ -481,6 +491,7 @@ pub fn normalize(
         status: response.status,
         headers,
         body,
+        raw_body_len,
         frames,
         bound,
         invariants,
@@ -525,15 +536,143 @@ impl Etags {
     }
 }
 
+pub(super) fn has_json_content_type(headers: &[(String, String)]) -> bool {
+    headers.iter().any(|(name, value)| {
+        if name != "content-type" {
+            return false;
+        }
+        let media = value.split(';').next().unwrap_or_default().trim();
+        media.eq_ignore_ascii_case("application/json")
+            || media
+                .rsplit_once('/')
+                .and_then(|(_, subtype)| subtype.get(subtype.len().saturating_sub(5)..))
+                .is_some_and(|suffix| suffix.eq_ignore_ascii_case("+json"))
+    })
+}
+
+fn media_type_parts(value: &str) -> impl Iterator<Item = &str> {
+    let (mut quoted, mut escaped) = (false, false);
+    value
+        .split(move |c| {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' && quoted {
+                escaped = true;
+            } else if c == '"' {
+                quoted = !quoted;
+            } else if c == ';' && !quoted {
+                return true;
+            }
+            false
+        })
+        .enumerate()
+        .filter_map(|(index, part)| {
+            if index == 0 {
+                Some(part.trim_end())
+            } else if part
+                .split_once('=')
+                .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case("charset"))
+            {
+                None
+            } else {
+                Some(part)
+            }
+        })
+}
+
+pub(super) fn same_header(name: &str, left: &str, right: &str) -> bool {
+    match name {
+        "content-type" => media_type_parts(left).eq(media_type_parts(right)),
+        // Check each side's framing separately; only presence is compared.
+        "content-length" => true,
+        _ => left == right,
+    }
+}
+
+fn valid_content_length(value: &str, size: Option<usize>) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|b| b.is_ascii_digit())
+        && size.is_none_or(|size| value.parse::<usize>() == Ok(size))
+}
+
+pub(super) fn same_body(got: &[u8], want: &[u8], json: bool) -> bool {
+    if !json || (got.is_empty() && want.is_empty()) {
+        return got == want;
+    }
+    match (serde_json::from_slice(got), serde_json::from_slice(want)) {
+        (Ok(got), Ok(want)) => same_json(&got, &want),
+        _ => false,
+    }
+}
+
+pub(super) fn same_text_frame(got: &[u8], want: &[u8]) -> bool {
+    got == want
+        || match (serde_json::from_slice(got), serde_json::from_slice(want)) {
+            (Ok(got), Ok(want)) => same_json(&got, &want),
+            _ => false,
+        }
+}
+
+fn same_json(got: &Value, want: &Value) -> bool {
+    match (got, want) {
+        (Value::Number(a), Value::Number(b)) => {
+            // GOLDEN_CONTRACT.md §7; mirrored in tools/live-parity/parity_volatile.py.
+            const RELATIVE_TOLERANCE: f64 = 1e-12;
+            let a = a.as_f64().expect("JSON number fits in binary64");
+            let b = b.as_f64().expect("JSON number fits in binary64");
+            (a - b).abs() <= RELATIVE_TOLERANCE * a.abs().max(b.abs())
+        }
+        (Value::Object(got), Value::Object(want)) => {
+            got.len() == want.len()
+                && got
+                    .iter()
+                    .all(|(key, got)| want.get(key).is_some_and(|want| same_json(got, want)))
+        }
+        (Value::Array(got), Value::Array(want)) => {
+            got.len() == want.len() && got.iter().zip(want).all(|(a, b)| same_json(a, b))
+        }
+        _ => got == want,
+    }
+}
+
+fn body_len(body: &Body) -> usize {
+    match body {
+        Body::Text(text) => text.len(),
+        Body::Asset { length, .. } => *length,
+    }
+}
+
+fn expected_size(case: &Case, get: Option<&Case>) -> Option<usize> {
+    if case.expected.status == 304 {
+        None
+    } else if case.request.starts_with("HEAD ") {
+        get.filter(|get| get.expected.status == case.expected.status)
+            .map(|get| body_len(&get.expected.body))
+    } else {
+        Some(body_len(&case.expected.body))
+    }
+}
+
+fn observed_size(case: &Case, observed: &Observed, get: Option<&Observed>) -> Option<usize> {
+    if observed.status == 304 {
+        None
+    } else if case.request.starts_with("HEAD ") {
+        get.filter(|get| get.status == observed.status)
+            .map(|get| get.raw_body_len)
+    } else {
+        Some(observed.body.len())
+    }
+}
+
 /// Compares every case of `platform` with its observation.
 pub fn compare(
     platform: &Platform,
-    observed: &[Result<Observed, String>],
+    observations: &[Result<Observed, String>],
     rules: &[Rule],
 ) -> Report {
     let mut report = Report::default();
     let mut etags = Etags::default();
-    for (case, observed) in platform.cases.iter().zip(observed) {
+    for (case, observed) in platform.cases.iter().zip(observations) {
         let mut push = |part: &str, detail: String| {
             report.mismatches.push(Mismatch {
                 case: case.id.clone(),
@@ -594,6 +733,34 @@ pub fn compare(
                 format!("vosu {}, expected {status}", observed.status),
             );
         }
+        let matching_get = case.request.strip_prefix("HEAD ").and_then(|target| {
+            platform.cases.iter().zip(observations).find(|(get, _)| {
+                get.barrier == case.barrier && get.request.strip_prefix("GET ") == Some(target)
+            })
+        });
+        let expected_size = expected_size(case, matching_get.map(|(get, _)| get));
+        let observed_size = observed_size(
+            case,
+            observed,
+            matching_get.and_then(|(_, get)| get.as_ref().ok()),
+        );
+        // Validate the original evidence and the observation, not the bytes a
+        // divergence rule substituted. A body rule never changes wire framing.
+        for (side, headers, size) in [
+            ("upstream", &case.expected.headers, expected_size),
+            ("vosu", &observed.headers, observed_size),
+        ] {
+            for (_, value) in headers.iter().filter(|(name, _)| name == "content-length") {
+                if !valid_content_length(value, size) {
+                    push(
+                        "headers.content-length",
+                        format!(
+                            "{side} {value:?} is not consistent with its own response length {size:?}"
+                        ),
+                    );
+                }
+            }
+        }
         let names: BTreeSet<&str> = headers
             .iter()
             .chain(&observed.headers)
@@ -621,7 +788,11 @@ pub fn compare(
                         })
                     })
             } else {
-                want == got
+                want.len() == got.len()
+                    && want
+                        .iter()
+                        .zip(&got)
+                        .all(|(want, got)| same_header(name, want, got))
             };
             if !same {
                 push(
@@ -634,17 +805,23 @@ pub fn compare(
         let want = match (&case.expected.body, body_rule) {
             (Body::Text(text), Some(r)) => {
                 report.used.insert(r.index);
-                divergence::apply_text(&r.change, text).map(String::into_bytes)
+                divergence::apply_text(&r.change, text).map(|text| Cow::Owned(text.into_bytes()))
             }
-            (Body::Text(text), None) => Ok(text.as_bytes().to_vec()),
-            (Body::Asset { id, offset, length }, _) => Ok(platform
-                .asset(id)
-                .expect("validated asset")
-                .bytes[*offset..offset + length]
-                .to_vec()),
+            (Body::Text(text), None) => Ok(Cow::Borrowed(text.as_bytes())),
+            (Body::Asset { id, offset, length }, _) => Ok(Cow::Borrowed(
+                &platform.asset(id).expect("validated asset").bytes[*offset..offset + length],
+            )),
         };
+        let json = matches!(case.expected.body, Body::Text(_))
+            && (has_json_content_type(&case.expected.headers) || has_json_content_type(&headers));
         match want {
-            Ok(want) if want == observed.body => {}
+            Ok(want) if same_body(&observed.body, &want, json) => {}
+            Ok(want) if json && want == observed.body => {
+                push(
+                    "body",
+                    "both sides sent the same invalid JSON payload".into(),
+                );
+            }
             Ok(want) => push("body", difference(&observed.body, &want)),
             Err(error) => push("body", error),
         }
@@ -682,13 +859,13 @@ fn frames(
         );
     }
     for (index, (want, got)) in expected.iter().zip(observed).enumerate() {
-        let mut payload = want.payload.clone();
+        let mut payload = Cow::Borrowed(want.payload.as_slice());
         if let Some(rule) = rule
             && want.from_server
             && want.opcode == 1
         {
             match divergence::apply_text(&rule.change, &String::from_utf8_lossy(&payload)) {
-                Ok(text) => payload = text.into_bytes(),
+                Ok(text) => payload = Cow::Owned(text.into_bytes()),
                 Err(error) => push("ws.frame", format!("frame {index}: {error}")),
             }
         }
@@ -701,7 +878,11 @@ fn frames(
                     "frame {index}: (server, fin, opcode, masked) {got_flags:?}, expected {want_flags:?}"
                 ),
             );
-        } else if got.payload != payload {
+        } else if !(if want.fin && want.opcode == 1 {
+            same_text_frame(&got.payload, &payload)
+        } else {
+            payload == got.payload
+        }) {
             push(
                 "ws.frame",
                 format!("frame {index}: {}", difference(&got.payload, &payload)),

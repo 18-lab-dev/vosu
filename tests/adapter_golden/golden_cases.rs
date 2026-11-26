@@ -44,7 +44,7 @@ static OBSERVED: LazyLock<Vec<Result<Observed, String>>> =
     LazyLock::new(|| compare::observe(platform()).unwrap_or_else(|e| panic!("{e}")));
 
 /// The synthetic platforms this host replays: route bytes depend on the
-/// replaying OS, so only platforms named for it compare exactly here.
+/// replaying OS, so only platforms named for it are compared here.
 fn host_platforms() -> Vec<&'static Platform> {
     let prefix = format!("{}-", synthetic::host_os());
     let platforms: Vec<_> = SYNTHETIC
@@ -87,6 +87,17 @@ fn text_mut(case: &mut Case) -> &mut String {
         panic!("{}: binary body", case.id)
     };
     text
+}
+fn set_text(case: &mut Case, text: String) {
+    if let Some((_, length)) = case
+        .expected
+        .headers
+        .iter_mut()
+        .find(|(name, _)| name == "content-length")
+    {
+        *length = text.len().to_string();
+    }
+    *text_mut(case) = text;
 }
 /// The (case, part) pairs the comparator reports.
 fn mismatches(platform: &Platform, rules: &[Rule]) -> Vec<(String, String)> {
@@ -138,7 +149,7 @@ fn golden_fixtures_replay_at_the_cargo_pin() {
 }
 
 #[test]
-fn golden_synthetic_fixture_compares_exactly_with_nonzero_coverage() {
+fn golden_synthetic_fixture_compares_with_nonzero_coverage() {
     assert_eq!(SYNTHETIC.provenance, Provenance::Synthetic);
     for platform in host_platforms() {
         let counts = platform.counts();
@@ -437,11 +448,12 @@ fn golden_comparator_reports_exactly_the_part_that_differs() {
         },
         &[(V2, "body")],
     );
-    // Numbers, nullness and order are never normalized.
+    // A type change never passes, even when all the other fields match.
     check(
         &|p| {
-            let text = text_mut(case_mut(p, V2));
-            *text = text.replacen("\"paused\":false", "\"paused\":null", 1);
+            let case = case_mut(p, V2);
+            let text = text_mut(case).replacen("\"paused\":false", "\"paused\":null", 1);
+            set_text(case, text);
         },
         &[(V2, "body")],
     );
@@ -480,6 +492,87 @@ fn golden_comparator_reports_exactly_the_part_that_differs() {
     );
 }
 
+#[test]
+fn golden_compares_http_and_websocket_json_payloads_not_wire_spelling() {
+    const V2: &str = "state-http.get-json-v2";
+    const WS: &str = "ws.upgrade-websocket-v2";
+    let mut changed = platform().clone();
+    let case = case_mut(&mut changed, V2);
+    let original = text_mut(case).clone();
+    let mut payload: BTreeMap<String, Value> = serde_json::from_str(&original).unwrap();
+    let sorted = serde_json::to_string_pretty(&payload).unwrap();
+    assert_ne!(original, sorted);
+    let reformatted = sorted.replacen("1234567", "1234567.0", 1);
+    assert_ne!(reformatted, sorted);
+    set_text(case, reformatted);
+    set_header(case, "content-type", "application/json; charset=\"utf-8\"");
+    let frame = &mut case_mut(&mut changed, WS).expected.frames.as_mut().unwrap()[0];
+    let frame_json: BTreeMap<String, Value> = serde_json::from_slice(&frame.payload).unwrap();
+    frame.payload = serde_json::to_vec_pretty(&frame_json).unwrap();
+    frame.length = frame.payload.len();
+    let case = case_mut(&mut changed, CALC);
+    set_text(
+        case,
+        "{ \"error\" : \"osu is not ready/running\" }\n".into(),
+    );
+    assert!(mismatches(&changed, &[]).is_empty());
+
+    let case = case_mut(&mut changed, V2);
+    set_header(
+        case,
+        "content-type",
+        "application/json; charset=utf-8; version=2",
+    );
+    assert_eq!(
+        mismatches(&changed, &[]),
+        pairs(&[(V2, "headers.content-type")])
+    );
+    let case = case_mut(&mut changed, V2);
+    set_header(case, "content-type", "application/json");
+    set_header(case, "content-length", "0");
+    assert_eq!(
+        mismatches(&changed, &[]),
+        pairs(&[(V2, "headers.content-length")])
+    );
+
+    let removed = payload.pop_first().unwrap().0;
+    let case = case_mut(&mut changed, V2);
+    let without_field = serde_json::to_string(&payload).unwrap();
+    set_text(case, without_field);
+    assert_eq!(
+        mismatches(&changed, &[]),
+        pairs(&[(V2, "body")]),
+        "{removed}"
+    );
+}
+
+#[test]
+fn golden_json_number_bound_and_non_json_bytes() {
+    let body = |got: &[u8], want: &[u8]| compare::same_body(got, want, true);
+    assert!(body(b"5", b"5.0"));
+    assert!(body(b"5.0", b"5.0000000000025"));
+    assert!(!body(b"5.0", b"5.00000000001"));
+    assert!(!body(b"5", br#""5""#));
+    assert!(!body(b"1", b"true"));
+    assert!(!body(b"0", b"1e-16"));
+    assert!(!body(b"[1,2]", b"[2,1]"));
+    assert!(!body(b"{", b"{"));
+    assert!(!compare::same_body(br#"{"n":5}"#, br#"{"n":5.0}"#, false));
+    assert!(!compare::same_body(b"\x00\xff", b"\x00\xfe", false));
+    assert!(!compare::same_text_frame(b"hello", b"hello "));
+}
+
+#[test]
+fn golden_head_length_describes_its_matching_get() {
+    const HEAD: &str = "files.head-beatmap-file";
+    let mut changed = platform().clone();
+    set_header(case_mut(&mut changed, HEAD), "content-length", "0");
+    assert_eq!(
+        mismatches(&changed, &[]),
+        pairs(&[(HEAD, "headers.content-length")])
+    );
+}
+
 const CALC: &str = "calculation.no-query";
 
 fn calc_rule(part: &str, key: &str, value: Value) -> Value {
@@ -496,9 +589,9 @@ fn calc_rule(part: &str, key: &str, value: Value) -> Value {
 /// differs from vosu's.
 fn diverging() -> Platform {
     let mut changed = platform().clone();
-    let text = text_mut(case_mut(&mut changed, CALC));
-    assert_eq!(text, r#"{"error":"osu is not ready/running"}"#);
-    *text = r#"{"error":"upstream wording"}"#.into();
+    let case = case_mut(&mut changed, CALC);
+    assert_eq!(text_mut(case), r#"{"error":"osu is not ready/running"}"#);
+    set_text(case, r#"{"error":"upstream wording"}"#.into());
     changed
 }
 
@@ -592,6 +685,22 @@ fn golden_rules_refuse_unknown_temporary_overbroad_and_unused_rules() {
         vec![edit(
             "vosu_replacements",
             json!([{"pointer": "/error", "value": "upstream wording"}]),
+        )],
+        "changes nothing",
+    );
+    rejected(
+        vec![calc_rule(
+            "body",
+            "vosu_value",
+            json!("{ \"error\" : \"upstream wording\" }"),
+        )],
+        "changes nothing",
+    );
+    rejected(
+        vec![calc_rule(
+            "headers.content-type",
+            "vosu_value",
+            json!("application/json; charset=us-ascii"),
         )],
         "changes nothing",
     );

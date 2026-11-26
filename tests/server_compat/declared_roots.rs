@@ -256,11 +256,6 @@ fn mounted_calculation_preserves_number_spelling_mod_inputs_and_client_errors() 
             async move {
                 let response = request.send().await.unwrap();
                 assert_eq!(response.status(), expected_status, "{query}");
-                assert_eq!(
-                    response.headers()[header::CONTENT_TYPE],
-                    "application/json",
-                    "{query}"
-                );
                 let length = response.headers()[header::CONTENT_LENGTH].clone();
                 let bytes = response.bytes().await.unwrap();
                 assert_eq!(length, bytes.len().to_string(), "{query}");

@@ -581,6 +581,7 @@ def _check_sandwiches(case: dict[str, Any]) -> None:
                 rule = "header-etag" if name == "etag" else "header-last-modified"
                 raise GoldenError(f"case {case_id}: {rule} invariant: {name} must be present and "
                                   "equal in both upstream sandwich responses")
+    ledger.check_route_length(case)
 
 
 # ---------------------------------------------------------------- normalization
@@ -643,7 +644,7 @@ class _Platform:
         raise GoldenError(f"case {case_id}: binary body is not an approved asset or a slice of one")
 
     def expected(self, case: dict[str, Any], record: dict[str, Any], used: set[str],
-                 get_lengths: dict[str, tuple[int, int]]) -> dict[str, Any]:
+                 get_lengths: ledger.ResponseSizes) -> dict[str, Any]:
         family = case["family"]
         if record["outcome"] is not None:
             return {"outcome": record["outcome"]}
@@ -651,24 +652,12 @@ class _Platform:
             record["headers"], family == "files", self.validators)
         used |= rules
         body, length = self.body(case["id"], family, record["body"], used)
-        lengths = (len(record["body"]), length)
-        if case["method"] == "HEAD":
-            # A HEAD content-length describes the matching GET body (GOLDEN_CONTRACT §6).
-            lengths = get_lengths.get("GET " + record["request"][len("HEAD "):], (0, 0))
         projected: list[list[str]] = []
         for name, value in headers:
             lowered = name.lower()
             if lowered in COMPARED_HEADERS or lowered.startswith("access-control-"):
                 projected.append([lowered, self.text(value, family, None, used)])
-        if lengths[0] != lengths[1]:
-            for item in projected:
-                if item[0] == "content-range":
-                    raise GoldenError(f"case {case['id']}: root-prefix changed a partial body")
-                if item[0] == "content-length":
-                    if item[1] != str(lengths[0]):
-                        raise GoldenError(f"case {case['id']}: raw content-length differs from "
-                                          "the raw body length; cannot recompute it")
-                    item[1] = str(lengths[1])
+        ledger.normalize_lengths(projected, case, record, length, get_lengths)
         projected.sort(key=lambda item: item[0])
         expected: dict[str, Any] = {"status": record["status"], "headers": projected, "body": body}
         if record["frames"] is not None:
@@ -752,25 +741,24 @@ def _platform_files(capture: Any, review_receipt: str | None,
         if case["family"] == "files":
             for record in case["source"]:
                 state.validators.observe(record["headers"])
-    get_lengths: dict[str, tuple[int, int]] = {}
-    for case in cases:
-        record = case["source"][0]
-        if case["method"] == "GET" and record["outcome"] is None and _utf8(record["body"]) is not None:
-            get_lengths[record["request"]] = (
-                len(record["body"]), state.body(case["id"], case["family"], record["body"], set())[1])
+    get_lengths = ledger.get_response_sizes(cases, lambda case, data: state.body(
+        case["id"], case["family"], data, set())[1])
 
     platform = identity["platform"]
     files: dict[str, bytes] = {}
     listing = []
     volatile_cases: dict[str, list[str]] = {}
     for case in cases:
+        if case["method"] == "HEAD":
+            ledger.check_route_length(case, get_lengths[2])
         used: set[str] = set()
         request = state.request(case, used)
-        first = state.expected(case, case["source"][0], used, get_lengths)
-        second = state.expected(case, case["source"][1], set(), get_lengths)
+        first = state.expected(case, case["source"][0], used, get_lengths[0])
+        second = state.expected(case, case["source"][1], set(), get_lengths[1])
         target = _request_line(case["source"][0]["request"])[1].partition("?")[0]
         try:
-            ids_used = volatile.sandwich(target, first, second, synthetic=provenance == "synthetic")
+            ids_used = volatile.sandwich(target, first, second, head=case["method"] == "HEAD",
+                                         synthetic=provenance == "synthetic")
         except volatile.VolatileError as exc:
             raise GoldenError(f"case {case['id']}: {exc}") from exc
         if ids_used:

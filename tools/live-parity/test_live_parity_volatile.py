@@ -26,8 +26,8 @@ def v2(bass: str, live: str = "3300", extra: str = "1") -> bytes:
             f'"beatmap":{{"time":{{"live":{live}}}}},"other":{extra}}}').encode()
 
 
-def record(body: bytes, length: int | None = None) -> tuple:
-    headers = [["Content-Type", "application/json"],
+def record(body: bytes, length: int | None = None, media: str = "application/json") -> tuple:
+    headers = [["Content-Type", media],
                ["Content-Length", str(len(body) if length is None else length)]]
     return volatile.record_view("/json/v2", "200", headers, body, None)
 
@@ -39,10 +39,42 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(used, ["upstream-bass-density", "menu-time-v2-live"])
 
-    def test_every_other_byte_is_still_exact(self) -> None:
+    def test_nonvolatile_json_compares_values_not_serialization(self) -> None:
+        def view(body: bytes, media: str = "application/json") -> tuple:
+            return record(body, media=media)[0]
+
+        first = view(b'{"n":5,"a":[true, null, 2]}')
+        self.assertEqual(first, view(b' {"a":[true,null,2.0],"n":5.0}\n',
+                                     'application/json; CHARSET="utf-8"'))
+        self.assertEqual(first, view(b'{"n":5.0000000000025,"a":[true,null,2]}'))
+        for changed in (
+            b'{"n":5.00000000001,"a":[true,null,2]}', b'{"n":5}',
+            b'{"n":"5","a":[true,null,2]}', b'{"n":5,"a":[1,null,2]}',
+            b'{"n":5,"a":[null,true,2]}',
+        ):
+            self.assertNotEqual(first, view(changed), changed)
+        self.assertNotEqual(first, view(b'{"n":5,"a":[true,null,2]}',
+                                       "application/json; version=2"))
+        media = 'application/json; profile="a; charset=b"'
+        self.assertEqual(view(b'{"n":5}', media), view(b'{"n":5}', f"{media}; charset=utf-8"))
         self.assertNotEqual(record(v2("0.5"))[0], record(v2("0.5", extra="2"))[0])
-        self.assertNotEqual(record(v2("0.5"))[0], record(v2("0.5", extra="1.0"))[0],
-                            "number spelling is never normalized")
+        self.assertEqual(record(v2("0.5"))[0], record(v2("0.5", extra="1.0"))[0])
+
+    def test_non_json_body_and_frame_payloads_are_byte_exact(self) -> None:
+        self.assertNotEqual(record(b'{"n":5}', media="text/plain")[0],
+                            record(b'{"n":5.0}', media="text/plain")[0])
+        self.assertNotEqual(record(b"\x00\xff", media="image/png")[0],
+                            record(b"\x00\xfe", media="image/png")[0])
+        for opcode, first, second, same in (
+            (1, b'{"n":5,"s":null}', b'{ "s":null, "n":5.0 }', True),
+            (1, b'{"n":5}', b'{"n":"5"}', False),
+            (1, b"hello", b"hello ", False),
+            (2, b'{"n":5}', b'{"n":5.0}', False),
+        ):
+            def frame(payload: bytes) -> tuple:
+                return volatile.record_view(
+                    "/websocket/v2", 101, [], b"", [("server", True, opcode, False, payload)])[0]
+            self.assertEqual(frame(first) == frame(second), same)
 
     def test_rule_violations_and_absence_are_findings(self) -> None:
         with self.assertRaisesRegex(volatile.VolatileError, "nonnegative-number"):
@@ -55,6 +87,8 @@ class LedgerTests(unittest.TestCase):
     def test_content_length_must_still_describe_the_body(self) -> None:
         with self.assertRaisesRegex(volatile.VolatileError, "content-length"):
             record(v2("0.5"), length=3)
+        with self.assertRaisesRegex(volatile.VolatileError, "content-length"):
+            record(b'{"nonvolatile":true}', length=3)
 
     def test_ws_frames_mask_only_text_payloads_of_their_route(self) -> None:
         frames = [("server", True, 1, False, v2("0.51")), ("client", True, 8, True, b"\x03\xe8")]
@@ -99,6 +133,17 @@ class DumpSandwichTests(unittest.TestCase):
                          "bus_revision")
         self.assertIn("volatile field", dump_sandwich_difference(envelope(1.0, 1),
                                                                  envelope(-1.0, 2)))
+
+    def test_http_dump_parses_payload_but_still_checks_errors_and_status(self) -> None:
+        first = envelope(3300.0, 23)
+        first["http"].update(status=400, body_utf8='{"error":"not ready","code":5}')
+        second = envelope(3300.0, 23)
+        second["http"].update(status=400, body_utf8=' { "code":5.0, "error":"not ready" }')
+        self.assertIsNone(dump_sandwich_difference(first, second))
+        second["http"]["body_utf8"] = '{"code":5,"error":"another reason"}'
+        self.assertEqual(dump_sandwich_difference(first, second), "http")
+        second["http"].update(status=404, body_utf8=first["http"]["body_utf8"])
+        self.assertEqual(dump_sandwich_difference(first, second), "http")
 
 
 class ClientRootTests(unittest.TestCase):

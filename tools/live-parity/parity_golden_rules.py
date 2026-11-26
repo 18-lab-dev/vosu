@@ -530,8 +530,8 @@ def dump_sandwich_difference(before: dict[str, Any], after: dict[str, Any]) -> s
 
     `sc` reads release the streamCompanion chart-work handle, so its provider generation
     and derived revision advance on every read (GOLDEN_CONTRACT §6). For `sc` the
-    sandwich therefore compares everything else: digest, selection, derived status and
-    HTTP bytes. `v1`/`v2`/`v2-precise` keep full equality, except the reviewed volatile
+    sandwich therefore compares selection, derived status and HTTP result.
+    `v1`/`v2`/`v2-precise` keep full equality, except the reviewed volatile
     ledger (`parity_volatile`): the live track-clock entry and the adapter body's volatile
     fields are compared by rule, the revision counters as non-decreasing and the digest,
     which only summarizes the fields compared one by one, is not compared.

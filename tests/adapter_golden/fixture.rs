@@ -123,6 +123,7 @@ pub struct Asset {
 pub struct Case {
     pub id: String,
     pub family: String,
+    pub barrier: String,
     pub conditional: Option<String>,
     pub normalized: Vec<String>,
     /// The normalized request text, validator placeholders included.
