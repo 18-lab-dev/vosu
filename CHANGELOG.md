@@ -12,9 +12,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
   `Cache-Control: no-store` and `Content-Disposition: attachment`, streamed
   without buffering and released when the job expires, fails, or its launch
   session ends. A succeeded job lists them as `artifacts`; `vosux` prints that
-  list on stderr. Public resources are unchanged. The plugin SDK gains the
-  `ARTIFACT_DECLARE`/`DECLARED`/`OPEN`/`RELEASE` opcodes in
-  `vosu-plugin-api` `1.0.0-alpha.2`.
+  list on stderr. A tool reads them through the bridge: `handle.artifacts()`
+  or `vosu.artifacts(jobId)` return each artifact with `fetch` (whole, one
+  byte range or `HEAD`) and `download`, which streams into the file the user
+  picks where the browser supports it. Public resources are unchanged. The
+  plugin SDK gains the `ARTIFACT_DECLARE`/`DECLARED`/`OPEN`/`RELEASE` opcodes
+  in `vosu-plugin-api` `1.0.0-alpha.2`.
 - vosu 2.0 does not serve `/api/ingame`, and the clean-room reimplementation
   that ADR 0021 had planned is dropped (owner decision, 2026-11-25). Every
   request gets the ordinary 404 that other removed routes return, as in 1.x

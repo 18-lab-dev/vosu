@@ -307,6 +307,7 @@ files are resources the state refers to, never "current file" lookups.
 | `GET /api/v1/trees/{id}/` | `{"entries":[{"path","size","type","hash"?}],"truncated":bool,"revision":string}` | `no-cache` (store, revalidate) | strong, revalidated |
 | `GET`/`HEAD /api/v1/trees/{id}/{path}` | one file via the plugin's own lookup rules | `no-cache` | strong, revalidated |
 | `GET /api/v1/sessions/{id\|active}/chart/{file\|audio\|background}`, `/api/v1/sessions/{id\|active}/skin/{path}` | `307` to the current resource URL | `no-store` | none |
+| `GET`/`HEAD /api/v1/jobs/{job}/artifacts/{artifact}` | one [job artifact](#job-artifacts-af12) to the job's own launch session or the broker; a single validated byte range; `attachment` | `no-store` | none |
 
 `If-None-Match` (including weak comparisons, lists, and `*`) takes precedence
 over `If-Modified-Since`; a satisfied condition returns a bodyless 304. HEAD
@@ -578,7 +579,10 @@ credential) never can:
   Both route by `session`: omitted or a string (a session id or `"active"`;
   omitted means `"active"`) uses `POST /api/v1/sessions/{session}/actions/…`,
   and `null` uses `POST /api/v1/actions/…`; the action's declared `session`
-  mode decides which of the two is valid, as Create a job defines.
+  mode decides which of the two is valid, as Create a job defines. A
+  succeeded job's [artifacts](#job-artifacts-af12) come from
+  `handle.artifacts()` or `vosu.artifacts(jobId)`, which read and download
+  them with the same header ([protocol](../tools/protocol.md#browser-bridge)).
 - **The CLI**, through the native loopback broker credential, for an action
   declared `cli = true` (`docs/v2/catalog-v2.md`): `vosux <plugin-id>
   <action> [json-args]` forwards to the same HTTP route under the broker's

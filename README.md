@@ -584,7 +584,10 @@ Send `{"arguments": ...}` and optionally `?wait=0..30000`; running jobs return
 `?after=<revision>&wait=<ms>`) and advisory DELETE cancellation. These routes
 require a live tool launch token with the action capability, or the loopback
 broker credential for CLI-exposed actions; API keys grant no action authority.
-Tool jobs remain private to the exact launch session. All action/job responses
+Tool jobs remain private to the exact launch session. A succeeded job may list
+`artifacts`, files its action declared, served by `GET`/`HEAD
+/api/v1/jobs/{id}/artifacts/{artifact}` to the same credential only, with one
+byte range and `Content-Disposition: attachment`. All action/job responses
 are no-store, and credentials never bypass peer or same-origin checks.
 
 ### Renderer state (API v1)
