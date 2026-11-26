@@ -116,7 +116,11 @@ fn legacy_calculation_preserves_engine_bytes_for_current_relative_and_contained_
         .unwrap();
     assert_eq!(
         current,
-        ResultBody::Ready(serde_json::to_vec(&expected).unwrap().into())
+        ResultBody::Ready(
+            vosu_adapter_support::json::encode(&expected, 1024)
+                .unwrap()
+                .into()
+        )
     );
     for path in [
         "Set/map.osu".to_owned(),

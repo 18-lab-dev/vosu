@@ -594,7 +594,16 @@ Maintainer workflow, evidence interpretation, troubleshooting, and maintenance t
 
 `navigate` follows keyboard paths from an unobstructed idle logo: lazer uses `P,P,P` for song select and `P,P,M,M` for multiplayer, while stable uses `P,P,P` and `P,P,M`. Navigation key-down onsets default to 100 ms apart. Optional song-select search text uses 1 ms key-down onset spacing. Use each command's `--help` for backend, timing, geometry, and key-map options.
 
-All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu, `1` taiko, `2` catch, `3` mania), `ar`, `cs`, `hp`, `od`, `clockRate`, `passedObjects`, `combo`, `nMisses`, `n100`, `n300`, `n50`, `nGeki`, `nKatu`, `mods` (legacy bits or a JSON mod object/array), `acc`, `sliderEndHits`, `smallTickHits`, `largeTickHits`, and `hitresultPriority`.
+All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu,
+`1` taiko, `2` catch, `3` mania), `ar`, `cs`, `hp`, `od`, `clockRate`,
+`passedObjects`, `combo`, `nMisses`, `n100`, `n300`, `n50`, `nGeki`, `nKatu`,
+`mods` (legacy numeric bitmask, concatenated two-letter acronyms such as
+`HDDT`, or a JSON mod object/array with optional settings), `acc`,
+`sliderEndHits`, `smallTickHits`, `largeTickHits`, and `hitresultPriority`.
+With a ready chart, successes use `application/json` and ECMAScript number
+spelling. Malformed accuracy, out-of-range clock rate (outside `0.01..=100`),
+malformed mod acronyms, invalid unsigned counts, and invalid rulesets return
+HTTP 400 with a JSON `{"error": string}` body.
 
 ### Public session state (API v1, 2.0 prerelease)
 

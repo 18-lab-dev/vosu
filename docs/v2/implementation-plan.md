@@ -1448,6 +1448,8 @@ The owner-delegated approvals A4.1–A4.6 are normative:
    roots; all others are rejected as the named
    `legacy-calculate-declared-roots` security divergence. Keep the engine,
    query, mods and result contract unchanged.
+   The [ADR 0004 M4b legacy HTTP amendment](../decisions/0004-separate-calculation-contracts.md#m4b-legacy-http-amendment-2026-11-26)
+   names the preserved vosu mod inputs and client errors.
 5. Attribute removed requests only to validated installed overlay identity;
    unknown is separate. Retain at most 128 known overlays, deduplicated with
    24-hour inactivity TTL, plus fixed unknown feature buckets; no path/referrer
@@ -1709,6 +1711,13 @@ in summary:
     existing non-`temporary` ledger IDs with exact case and record-part
     scope; unused rules fail; whole-route subtraction needs whole-route
     ledger scope.
+    For `GET /api/calculate/pp`, record status/body/content-length
+    differences for the exact cases named by `legacy-calculate-mod-inputs`
+    and `legacy-calculate-client-errors` in the
+    [divergence ledger](../../tests/fixtures/upstream/DIVERGENCES.md).
+    Keep upstream responses in the fixture; scope alternate vosu
+    expectations to evidenced platforms and affected parts. Success
+    number spelling is a production wire contract, not normalization.
 12. **`/api/ingame` (A4b.12).** Not captured, not a golden. The clean-room
     observation this item kept separate was withdrawn with the endpoint on
     2026-11-25 (section 6).
