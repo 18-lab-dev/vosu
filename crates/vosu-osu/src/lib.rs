@@ -15,6 +15,16 @@
 //! thread. The plugin owns state-bus publication and session reader threads.
 //! Per-session publication and selector-driven sampling stay plugin-owned;
 //! bundled registration and its namespace schema live in `src/plugins.rs`.
+#![cfg_attr(
+    not(feature = "test-harness"),
+    doc = r"
+The daemon's parity ingress is absent even when only `bench-harness` is enabled:
+
+```compile_fail
+use vosu_osu::fixtures::FixtureOrProducer;
+```
+"
+)]
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
@@ -40,6 +50,10 @@ mod test_support;
 #[cfg(all(feature = "test-harness", not(test)))]
 pub use session::test_support;
 
+#[cfg(all(feature = "test-harness", debug_assertions))]
+vosu_plugin_internal::export_plugin!(bundled concurrent fixtures::FixtureOrProducer);
+
+#[cfg(not(all(feature = "test-harness", debug_assertions)))]
 vosu_plugin_internal::export_plugin!(bundled concurrent plugin::OsuPlugin);
 
 /// The plugin's `manifest.toml`, embedded verbatim (`docs/v2/plugin-abi.md`

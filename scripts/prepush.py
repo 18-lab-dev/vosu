@@ -236,6 +236,8 @@ COMMAND_MANIFEST["actionlint"] = ACTIONLINT_CMD_TEXT
 COMMAND_MANIFEST["dashboard-build"] = " ".join(DASHBOARD_BUILD_CMD)
 COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST["dashboard-browser"] = "python tests/dashboard_smoke.py --binary <binary> --playwright-module <playwright>"
+COMMAND_MANIFEST["dashboard-tool-catalog"] = "python tests/tool_catalog_smoke.py --binary <binary> --playwright-module <playwright>"
+COMMAND_MANIFEST["dashboard-catalog-art"] = "python tests/catalog_art_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST.update(NATIVE_COMMANDS)
 COMMAND_MANIFEST["standalone-crates"] = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
 COMMAND_MANIFEST["sdk-package"] = " ".join("python" if token == sys.executable else token for token in SDK_PACKAGE_CMD)
@@ -340,7 +342,10 @@ def run_sdk_package(log_dir, applicable):
 def run_dashboard(log_dir, applicable, playwright_module):
     """CI's dashboard job: build a test-harness daemon, then the tool host and browser smokes."""
     name = "dashboard"
-    command = "; ".join(COMMAND_MANIFEST[key] for key in ("dashboard-build", "dashboard-tool-host", "dashboard-browser"))
+    command = "; ".join(COMMAND_MANIFEST[key] for key in (
+        "dashboard-build", "plugin-host-fixtures", "dashboard-tool-host", "dashboard-browser",
+        "dashboard-tool-catalog", "dashboard-catalog-art",
+    ))
     if not applicable:
         return StepResult(name, False, "not_applicable", command=command)
     if not playwright_module or not Path(playwright_module).is_file():
@@ -350,19 +355,23 @@ def run_dashboard(log_dir, applicable, playwright_module):
             "<path to playwright/index.mjs> or set VOSU_PLAYWRIGHT_MODULE",
         )
     binary = Path(LINUX_ENV["CARGO_TARGET_DIR"]) / "debug" / "vosu"
-    commands = [
-        (DASHBOARD_BUILD_CMD, LINUX_ENV),
-        ([sys.executable, "tests/tool_host_smoke.py", "--binary", str(binary), "--playwright-module", playwright_module], None),
-        ([sys.executable, "tests/dashboard_smoke.py", "--binary", str(binary), "--playwright-module", playwright_module], None),
-    ]
-    log = []
-    total = 0.0
-    for cmd, env_overrides in commands:
-        exit_code, stdout, stderr, wall = run(cmd, env_overrides=env_overrides)
-        total += wall
-        log.append(f"$ {' '.join(cmd)}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
-        if exit_code != 0:
-            break
+    build_exit, stdout, stderr, total = run(DASHBOARD_BUILD_CMD, env_overrides=LINUX_ENV)
+    log = [f"$ {' '.join(DASHBOARD_BUILD_CMD)}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n"]
+    exit_code = build_exit
+    if exit_code == 0:
+        started = time.monotonic()
+        exit_code, preparation, fixtures = prepare_plugin_host_fixtures(log_dir)
+        total += time.monotonic() - started
+        log.append(preparation)
+        if exit_code == 0:
+            for smoke in ("tool_host_smoke", "dashboard_smoke", "tool_catalog_smoke", "catalog_art_smoke"):
+                cmd = [sys.executable, f"tests/{smoke}.py", "--binary", str(binary),
+                       "--playwright-module", playwright_module]
+                exit_code, stdout, stderr, wall = run(cmd, env_overrides=fixtures)
+                total += wall
+                log.append(f"$ {' '.join(cmd)}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
+                if exit_code != 0:
+                    break
     (log_dir / f"{name}.log").write_text("\n".join(log), encoding="utf-8")
     status = "passed" if exit_code == 0 else "failed"
     return StepResult(name, True, status, exit_code, round(total, 3), command, log[-1])

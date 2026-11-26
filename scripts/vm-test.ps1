@@ -96,6 +96,23 @@ try {
     }
     $exitCode = Invoke-VosuCargoStep -Name 'cargo-test' -CargoExe $cargo -WorkingDirectory $source `
         -Arguments $cargoArgs -LogDir $logs -Steps $steps -TimeoutSeconds $TimeoutSeconds
+    if ($exitCode -eq 0 -and $config.BrowserSmokes) {
+        if (-not $env:VOSU_PLAYWRIGHT_MODULE -or -not (Test-Path $env:VOSU_PLAYWRIGHT_MODULE)) {
+            throw '--browser-smokes requires --env VOSU_PLAYWRIGHT_MODULE=<guest Playwright index.mjs>'
+        }
+        $python = (Get-Command python.exe -ErrorAction Stop).Source
+        $binary = Join-Path $env:CARGO_TARGET_DIR 'debug\vosu.exe'
+        foreach ($name in 'tool_host_smoke', 'dashboard_smoke', 'tool_catalog_smoke', 'catalog_art_smoke') {
+            $exitCode = Invoke-VosuCargoStep -Name $name -CargoExe $python -WorkingDirectory $source `
+                -Arguments @("tests\$name.py", '--binary', $binary, '--playwright-module', $env:VOSU_PLAYWRIGHT_MODULE) `
+                -LogDir $logs -Steps $steps -TimeoutSeconds $TimeoutSeconds
+            foreach ($stream in 'stdout', 'stderr') {
+                Get-Content (Join-Path $logs "$name.$stream.log") |
+                    Add-Content (Join-Path $logs "cargo-test.$stream.log") -Encoding UTF8
+            }
+            if ($exitCode -ne 0) { break }
+        }
+    }
     Remove-VosuPluginHostScratch
 
     $timedOut = $steps[$steps.Count - 1].timedOut

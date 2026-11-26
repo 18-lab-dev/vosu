@@ -14,6 +14,46 @@ use std::sync::{
 use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot, StateWorkerError};
 use vosu_plugin_api::{HostServices, Message, vosu_status};
 
+#[cfg(all(feature = "test-harness", debug_assertions))]
+mod parity;
+
+/// The same optional M5 publication ingress for the staged process fixture
+/// and the X0 bundled daemon. Only an explicit control in the plugin's
+/// isolated data directory opts in; the normal producer needs no control.
+#[cfg(all(feature = "test-harness", debug_assertions))]
+pub struct FixtureOrProducer(FixtureMode);
+
+#[cfg(all(feature = "test-harness", debug_assertions))]
+enum FixtureMode {
+    Producer(Box<crate::plugin::OsuPlugin>),
+    Parity(Box<parity::Parity>),
+}
+
+#[cfg(all(feature = "test-harness", debug_assertions))]
+impl vosu_plugin_api::ConcurrentPlugin for FixtureOrProducer {
+    fn create(
+        host: vosu_plugin_api::VtableHostServices,
+        init: vosu_plugin_api::Init,
+    ) -> Result<Self, vosu_plugin_api::PluginError> {
+        let mode = match parity::Parity::load(host, &init.data_dir) {
+            Some(parity) => FixtureMode::Parity(Box::new(parity)),
+            None => FixtureMode::Producer(Box::new(crate::plugin::OsuPlugin::create(host, init)?)),
+        };
+        Ok(Self(mode))
+    }
+
+    fn on_message(
+        &self,
+        message: Message,
+        correlation_id: u64,
+    ) -> Result<(), vosu_plugin_api::PluginError> {
+        match &self.0 {
+            FixtureMode::Producer(plugin) => plugin.on_message(message, correlation_id),
+            FixtureMode::Parity(parity) => parity.on_message(message, correlation_id),
+        }
+    }
+}
+
 pub struct Roster {
     tournament: Arc<Tournament>,
     resources: bool,

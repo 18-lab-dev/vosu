@@ -6,23 +6,42 @@
 // sessionless artifact; another tab and a revoked tab refused).
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
+import {browserReceipt, watchBrowser} from './browser_diagnostics.mjs';
 const [modulePath] = process.argv.slice(2);
 if (!modulePath) throw new Error('A Playwright index.mjs is required');
 const OVERLAY = 'http://127.0.0.1:25150';
 const DASHBOARD = 'http://127.0.0.1:25151';
-const {chromium} = await import(modulePath);
+const {chromium} = await import(pathToFileURL(modulePath).href);
 const browser = await chromium.launch({headless: true, executablePath: process.env.VOSU_CHROMIUM || undefined});
+const cases = [];
+const passed = (name) => { cases.push(name); console.log(name); };
+const failures = [];
+const diagnostics = [];
 try {
   const context = await browser.newContext();
+  watchBrowser(context, diagnostics);
   context.setDefaultTimeout(15000);
   context.setDefaultNavigationTimeout(15000);
   const sockets = [];
   context.on('page', page => {
-    page.on('pageerror', error => console.error(`browser page error: ${error.message}`));
+    page.on('pageerror', error => failures.push(`page error: ${error.message}`));
+    page.on('console', message => {
+      // Chromium reports intentionally refused HTTP responses in the console.
+      // Their status and JSON are asserted in their own scenario below.
+      if (message.type() === 'error' && !message.text().startsWith('Failed to load resource: the server responded with a status of ')) {
+        failures.push(`console error: ${message.text()}`);
+      }
+    });
     page.on('websocket', socket => sockets.push(socket.url()));
   });
   const requests = [];
   context.on('request', request => requests.push(request));
+  context.on('requestfailed', request => {
+    if (request.failure()?.errorText !== 'net::ERR_ABORTED') {
+      failures.push(`network: ${new URL(request.url()).pathname}: ${request.failure()?.errorText}`);
+    }
+  });
   const traffic = [];
   context.on('response', response => {
     if (response.url().includes('/api/v1/') || response.url().endsWith('/tools/_host/v1/session')) {
@@ -59,7 +78,7 @@ try {
   assert.ok(job);
   await tool.locator('#abort').click();
   await tool.waitForFunction(() => document.querySelector('#terminal').textContent === '"cancelled"', {timeout: 15000});
-  console.log('v2 browser: dashboard launch, single-use exchange, invoke result, progress, abort and cancelled terminal passed');
+  passed('M7-T01 / X0 dashboard launch, single-use exchange, invoke, progress and cancel');
 
   // Counterexample: an abort racing job creation must not lose the cancel.
   // The abort fires after the POST left and before its response arrived.
@@ -80,7 +99,7 @@ try {
     }
   });
   assert.equal(raced.outcome, 'cancelled', 'abort during creation cancels the created job');
-  console.log('v2 browser: abort racing job creation still cancels the created job');
+  passed('M7-T05 abort racing job creation still cancels the created job');
 
   // Counterexamples: a reconnect never holds two sockets; unsubscribe never
   // reconnects (open, during backoff, or on a later online event).
@@ -149,7 +168,7 @@ try {
   assert.deepEqual(reconnect, {
     afterOnline: 2, afterBackoff: 3, afterStop: 3, total: 4, maxLive: 1, open: 0, initial: [0, 0, 0],
   });
-  console.log('v2 browser: reconnects hold one socket at a time; unsubscribe never reconnects');
+  passed('M7-T05 reconnects hold one socket at a time; unsubscribe never reconnects');
 
   // Counterexample: the token never reaches a read, artwork, settings, a URL,
   // a caller-supplied destination or browser storage.
@@ -214,8 +233,48 @@ try {
   for (const headers of [{}, {'X-Vosu-Tool-Session': 'not-a-session'}]) {
     const direct = await context.request.post(`${OVERLAY}/api/v1/actions/test.api.fixture.run?wait=0`, {headers, data: {arguments: {}}, timeout: 10000});
     assert.equal(direct.status(), 401, 'an action without a live session is unauthorized');
+    assert.deepEqual((await direct.json()).error, {code: 'unauthorized', message: 'Action credential required'});
   }
-  console.log('v2 browser: reload, bookmark and replayed launch URL are read-only; sessionless actions are 401');
+  passed('M7-T01/T05 reload, bookmark and replayed launch URL are read-only; sessionless actions are 401');
+
+  // Exercise the live action with a valid token for the wrong tool, not
+  // merely an unknown action or an arbitrary fabricated token.
+  const csrf = await dashboard.evaluate(() => JSON.parse(document.getElementById('vosu-context').textContent).csrf);
+  async function launchReader() {
+    const response = await context.request.post(`${DASHBOARD}/api/tools/fixture-reader/launch`, {
+      headers: {Origin: DASHBOARD, 'X-Vosu-CSRF': csrf}, data: {},
+    });
+    assert.equal(response.status(), 200);
+    const code = new URLSearchParams(new URL((await response.json()).url).hash.slice(1)).get('vosu-launch');
+    assert.ok(code);
+    return code;
+  }
+  const redeem = (tool, code) => context.request.post(`${OVERLAY}/tools/_host/v1/session`, {data: {tool, code}});
+  const wrongToolCode = await launchReader();
+  const wrongTool = await redeem('fixture-v2', wrongToolCode);
+  assert.equal(wrongTool.status(), 403, 'another tool cannot redeem the code');
+  assert.deepEqual(await wrongTool.json(), {error: 'invalid or expired launch code'});
+  assert.equal((await redeem('fixture-reader', wrongToolCode)).status(), 403, 'a failed exchange also consumes the code');
+  const readerCode = await launchReader();
+  const readerExchange = await redeem('fixture-reader', readerCode);
+  assert.equal(readerExchange.status(), 200);
+  const readerToken = (await readerExchange.json()).session;
+  const startAction = (sessionToken, originHeaders = {}) => context.request.post(`${OVERLAY}/api/v1/actions/test.api.fixture.run?wait=0`, {
+    headers: {'X-Vosu-Tool-Session': sessionToken, ...originHeaders},
+    data: {arguments: {sentinel: 'origin-control'}},
+  });
+  const forbidden = async (response, message) => {
+    assert.equal(response.status(), 403);
+    assert.deepEqual((await response.json()).error, {code: 'forbidden', message});
+  };
+  await forbidden(await startAction(readerToken, {Origin: OVERLAY}), 'Action capability required');
+  for (const origin of [{Origin: DASHBOARD}, {Referer: `${DASHBOARD}/tools`}]) {
+    await forbidden(await startAction(token, origin), 'Cross-origin action forbidden');
+  }
+  const sameOrigin = await startAction(token, {Origin: OVERLAY, Referer: `${OVERLAY}/tools/fixture-v2/`});
+  assert.equal(sameOrigin.status(), 202);
+  assert.ok((await sameOrigin.json()).id);
+  passed('M7-T02 same-origin control, cross-origin action refusal and live session missing capability');
 
   // Counterexample: the removed v1 bridge and its /websocket/v2/subscribe.
   for (const path of ['/tools/_host/v1/bridge.js', '/assets/tool-bridge-v1.js']) {
@@ -317,7 +376,7 @@ try {
   const file = await readFile(await download.path());
   assert.equal(file.length, ARTIFACT_SIZE);
   assert.ok(file.every((value, offset) => value === artifactByte(offset)), 'downloaded bytes');
-  console.log(`v2 browser: the tool streamed, ranged and downloaded a ${ARTIFACT_SIZE}-byte sessionless artifact`);
+  passed(`B0: tool streamed, ranged and downloaded a ${ARTIFACT_SIZE}-byte sessionless artifact`);
 
   // Counterexample: another tab, and no session at all, cannot read it.
   const artifactUrl = `${OVERLAY}/api/v1/jobs/${encodeURIComponent(made.job)}/artifacts/${encodeURIComponent(made.artifact.id)}`;
@@ -338,7 +397,6 @@ try {
   assert.equal((await otherRead.json()).error.code, 'unknown_job');
   // Counterexample: disabling the tool revokes the owner's launch session,
   // and the artifact with it.
-  const csrf = await dashboard.evaluate(() => JSON.parse(document.getElementById('vosu-context').textContent).csrf);
   const disabled = await dashboard.evaluate(async csrf => (await fetch('/api/tools/fixture-v2/disable', {
     method: 'POST', headers: {'Content-Type': 'application/json', 'X-Vosu-CSRF': csrf}, body: '{}',
   })).status, csrf);
@@ -353,11 +411,11 @@ try {
   assert.deepEqual(revoked, ['unauthorized', 'http_error', 'unauthorized']);
   const ownerRead = await context.request.get(artifactUrl, {headers: {'X-Vosu-Tool-Session': exchanged[1]}, timeout: 10000});
   assert.equal(ownerRead.status(), 401);
-  console.log('v2 browser: another tab, a sessionless request and a revoked tab cannot read the artifact');
+  passed('M7-T02/T03 another tab, a sessionless request and a revoked tab cannot read the artifact');
 
   // Every request: same two origins only; the codes and tokens never in a URL,
   // Referer or body; the session header only on action, job and artifact routes.
-  const codes = [code, owner.code, other.code];
+  const codes = [code, owner.code, other.code, readerCode, wrongToolCode];
   let authenticated = 0;
   for (const request of requests) {
     const url = new URL(request.url());
@@ -366,7 +424,7 @@ try {
     // A launch navigation carries the code in its fragment, which no request
     // sends; what reaches the wire must be free of both secrets.
     const sent = request.url().split('#')[0];
-    for (const secret of [...exchanged, ...codes]) {
+    for (const secret of [...exchanged, readerToken, ...codes]) {
       assert.equal(sent.includes(secret), false, `secret in URL ${sent}`);
       assert.equal((headers.referer || '').includes(secret), false, `secret in Referer of ${url}`);
     }
@@ -384,7 +442,14 @@ try {
     'the artifact reads carried the owner session');
   assert.ok(requests.some(r => new URL(r.url()).pathname === '/tools/fixture-v2/_icon'), 'artwork was requested');
   assert.ok(requests.some(r => new URL(r.url()).pathname === '/tools/fixture-v2/_settings'), 'settings were read');
-  console.log('v2 browser: no v1 bridge or removed socket; the tokens stay in memory and on action, job and artifact routes only');
+  passed('M7-R02/T05 removed bridge/socket and launch secret confinement');
+  assert.ok(cases.length >= 8, 'named bridge browser scenarios were omitted');
+  for (const secret of [...exchanged, readerToken, ...codes, csrf]) {
+    assert.ok(!JSON.stringify(diagnostics).includes(secret), 'browser diagnostics leaked a launch secret');
+  }
+  assert.deepEqual(failures, []);
+  console.log(`bridge browser: ${cases.length} named scenarios passed`);
+  browserReceipt('tool_host_v2_browser.mjs', cases.length, diagnostics);
 } finally {
   await browser.close();
 }

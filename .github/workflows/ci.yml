@@ -241,6 +241,11 @@ jobs:
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo build --locked --features test-harness
+      - name: Prepare native browser fixtures
+        if: needs.changes.outputs.verified != 'true'
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
+        run: python scripts/plugin-host-fixtures.py --env-file "$GITHUB_ENV"
       - name: Install pinned Node toolchain
         if: needs.changes.outputs.verified != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -258,6 +263,12 @@ jobs:
       - name: Dashboard browser smoke
         if: needs.changes.outputs.verified != 'true'
         run: python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
+      - name: Tool catalog browser smoke
+        if: needs.changes.outputs.verified != 'true'
+        run: python tests/tool_catalog_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
+      - name: Catalog artwork browser smoke
+        if: needs.changes.outputs.verified != 'true'
+        run: python tests/catalog_art_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
       - name: Save Cargo downloads
         if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

@@ -134,10 +134,21 @@ class InvocationConfigTests(unittest.TestCase):
         runner = Path(__file__).with_name("vm-test.ps1").read_text(encoding="utf-8")
         self.assertIn("-ReleaseDaemon:([bool]$config.ReleaseDaemon)", runner)
 
+    def test_browser_smokes_are_opt_in_and_prepare_native_artifacts(self):
+        config = vm_test.build_invocation_config(
+            "V:\\bt\\vmt-abc-123", "deadbeefcafef00d", ["test"], has_patch=False,
+            jobs=8, timeout_seconds=1200, browser_smokes=True,
+        )
+        self.assertIs(config["BrowserSmokes"], True)
+        self.assertIs(config["PluginHostFixtures"], True)
+        runner = Path(__file__).with_name("vm-test.ps1").read_text(encoding="utf-8")
+        self.assertIn("'tool_host_smoke', 'dashboard_smoke', 'tool_catalog_smoke', 'catalog_art_smoke'", runner)
+
 
 class PluginHostFixtureSelectionTests(unittest.TestCase):
     def test_selections_that_can_run_the_root_native_target_prepare_fixtures(self):
-        for package, test in [(None, None), (None, "plugin_host_native"), ("vosu", None), ("vosu", "plugin_host_native")]:
+        for package, test in [(None, None), (None, "plugin_host_native"), ("vosu", None),
+                              ("vosu", "plugin_host_native"), ("vosu", "daemon_smoke")]:
             self.assertTrue(vm_test.needs_plugin_host_fixtures(package, test, False), (package, test))
 
     def test_other_selections_do_not(self):

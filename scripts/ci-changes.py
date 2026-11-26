@@ -17,6 +17,15 @@ UI_PREFIXES = (
     "crates/vosu-dashboard/",
     "crates/vosu-overlay-host/",
     "crates/vosu-tool-host/",
+    "crates/vosu-core/src/runtime/dev_plugins.rs",
+    "crates/vosu-core/src/runtime/discovery.rs",
+    "crates/vosu-core/src/runtime/signals.rs",
+    "crates/vosu-plugin-testkit/examples/api_v1_",
+    "crates/vosu-plugin-testkit/src/fixture.rs",
+    "scripts/plugin-host-fixtures.py",
+    "tests/catalog_v2_fixture.py",
+    "tests/fixtures/api-v1-plugin/",
+    "tests/fixtures/tool-host",
 )
 # Everything `scripts/sdk-package.py verify` depends on: the published SDK
 # crate itself, the workspace manifest/lock/toolchain it inherits and packages

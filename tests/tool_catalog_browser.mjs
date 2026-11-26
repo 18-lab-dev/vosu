@@ -2,6 +2,7 @@
 // 25151, test-harness catalog listener). Drives catalog v2 management in
 // Chromium through the dashboard itself and saves screenshots of each state.
 import { mkdir } from 'node:fs/promises';
+import {browserReceipt, watchBrowser} from './browser_diagnostics.mjs';
 
 const [modulePath, evidence, first, second, username, password, pluginSecret] = process.argv.slice(2);
 if (!modulePath || !evidence || !first || !second || !username || !password || !pluginSecret) {
@@ -9,15 +10,20 @@ if (!modulePath || !evidence || !first || !second || !username || !password || !
 }
 const DASHBOARD = 'http://127.0.0.1:25151';
 const WARNING = 'Plugins from this source can run in-process, with the same memory access as vosu itself. Only trust sources you control or know well.';
-const { chromium } = await import(modulePath);
+const {pathToFileURL} = await import('node:url');
+const { chromium } = await import(pathToFileURL(modulePath).href);
 await mkdir(evidence, { recursive: true });
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VOSU_CHROMIUM || undefined });
 const check = (condition, message) => { if (!condition) throw new Error(message); };
+const diagnostics = [];
+const cases = [];
+const passed = (name) => { cases.push(name); console.log(name); };
 const sources = (page) => page.evaluate(() => fetch('/api/catalog/sources').then((r) => r.json()));
 const record = async (page, source) => (await sources(page)).sources.find((entry) => entry.source === source);
 
 async function themed(theme) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, colorScheme: theme });
+  watchBrowser(context, diagnostics);
   await context.addInitScript((value) => localStorage.setItem('vosu.theme.v1', value), theme);
   const page = await context.newPage();
   const errors = [];
@@ -75,7 +81,7 @@ try {
   check(await page.getByRole('dialog', { name: 'Trust this catalog source?' }).count() === 0, 'untrust showed the grant warning');
   dialog = await grantWarning(page, toggle); // shown again: nothing remembered
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  console.log('trust: exact warning before each grant, cancel keeps untrusted, no remembered bypass');
+  passed('trust: exact warning before each grant, cancel keeps untrusted, no remembered bypass');
 
   // 2. Write-only credential and the private-network flag.
   await row.getByRole('button', { name: `Credential for ${first}`, exact: true }).click();
@@ -99,7 +105,7 @@ try {
   await row.getByRole('button', { name: `Credential for ${first}`, exact: true }).click();
   await page.getByRole('dialog', { name: `Credential for ${first}` }).getByRole('button', { name: 'Delete credential' }).click();
   await row.getByText('No credential', { exact: true }).waitFor();
-  console.log('credential: write-only save/delete, never in DOM or storage; private toggle round-trips');
+  passed('credential: write-only save/delete, never in DOM or storage; private toggle round-trips');
 
   // 3. Plan review: process plugin with approval and the D8 disclosure.
   await page.goto(`${DASHBOARD}/tools`);
@@ -169,7 +175,7 @@ try {
   check(!(await page.content()).includes(pluginSecret), 'plugin password readable in the page');
   await page.keyboard.press('Escape');
   await plugins.screenshot({ path: `${evidence}/plugins-section.png` });
-  console.log('plugins vs web tools separated; plugin settings defaults, write-only password, blank after a failed save');
+  passed('plugins vs web tools separated; plugin settings defaults, write-only password, blank after a failed save');
 
   // 6. A tool: install, then uninstall through the preview.
   const tool = page.locator('.tools-catalog [data-catalog-entry="catalog-tool"]');
@@ -185,7 +191,7 @@ try {
   await dialog.screenshot({ path: `${evidence}/uninstall-preview.png` });
   await dialog.getByRole('button', { name: 'Uninstall, keep data', exact: true }).click();
   await card.waitFor({ state: 'detached', timeout: 20000 });
-  console.log('plans: approval + D8 review, one confirmation, load reports (process, loaded), error plan, uninstall preview');
+  passed('plans: approval + D8 review, one confirmation, load reports (process, loaded), error plan, uninstall preview');
 
   // 7. Game offer for the running matched process: review only.
   const offer = page.locator('.catalog-offers [data-offer="acme.game"]');
@@ -229,7 +235,7 @@ try {
     check(pendingText.includes(fact), `pending row lacks "${fact}": ${pendingText}`);
   }
   await pendingRow.screenshot({ path: `${evidence}/plugin-pending-restart.png` });
-  console.log('offers, overlay install, truthful untrust notice and the pending-restart banner and row shown');
+  passed('offers, overlay install, truthful untrust notice and the pending-restart banner and row shown');
   if (errors.length) throw new Error(errors.join('\n'));
   await context.close();
 
@@ -243,4 +249,9 @@ try {
   await light.page.screenshot({ path: `${evidence}/tools-light.png`, fullPage: true });
   if (light.errors.length) throw new Error(light.errors.join('\n'));
   await light.context.close();
+  passed('light theme: source and tool management surfaces');
 } finally { await browser.close(); }
+for (const sentinel of [username, password, pluginSecret]) {
+  check(!JSON.stringify(diagnostics).includes(sentinel), 'browser diagnostics leaked a secret');
+}
+browserReceipt('tool_catalog_browser.mjs', cases.length, diagnostics);

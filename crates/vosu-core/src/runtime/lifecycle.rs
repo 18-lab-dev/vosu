@@ -33,7 +33,7 @@ pub struct ProductionRuntime {
     /// K0 catalog owner: started before tools/discovery/routes, stopped first.
     catalog: AsyncMutex<Option<super::CatalogComposition>>,
     dev_tools: Vec<PathBuf>,
-    dev_plugins: Vec<PathBuf>,
+    dev_plugins: dev_plugins::StartupPlugins,
     plugins: Arc<PluginHost>,
     api_v1: api_v1::ApiV1Service,
     state_host: AsyncMutex<Option<vosu_surface::state::StateHostInstalled>>,
@@ -755,9 +755,17 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
     // A7.3: an invalid VOSU_DASHBOARD fails startup before any probe or bind.
     let dashboard_forced_off =
         super::dashboard::forced_off(env::var_os(super::dashboard::ENV).as_deref())?;
+    if !cfg!(all(feature = "test-harness", debug_assertions))
+        && env::var_os(super::signals::TEST_STOP_FILE_ENV).is_some()
+    {
+        return Err(io::Error::other(
+            "VOSU_TEST_STOP_FILE requires a debug build with test-harness",
+        ));
+    }
     let startup_flags = bundle.hosts.startup_flags(&raw_args);
     // `argv` after the executable: the `--plugin`/`--tool` roots' input.
     let args = raw_args.get(1..).unwrap_or_default().to_vec();
+    let dev_plugin_dirs = dev_plugins::StartupPlugins::parse(bundle, &args)?;
     let environment = EnvironmentSnapshot::capture();
     let resolver = SnapshotPathResolver {
         executable: env::current_exe()?,
@@ -869,7 +877,6 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
     let changes = config.subscribe();
     let shutdown_token = CancellationToken::new();
     let signal_task = tokio::spawn(run_signal_cancellation(shutdown_token.clone()));
-    let dev_plugin_dirs = crate::plugin::development_roots(&args)?;
     // Resolve development roots before constructing owned runtime resources.
     let dev_tools = crate::tools::development_roots(&args)?;
     let origins = crate::server::origins::Origins::new(

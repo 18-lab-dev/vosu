@@ -71,7 +71,7 @@ async fn owner(root: &Path, bundle: &'static Bundle) -> (ProductionRuntime, Arc<
             tool_host: AsyncMutex::new(None),
             catalog: AsyncMutex::new(None),
             dev_tools: vec![],
-            dev_plugins: vec![],
+            dev_plugins: dev_plugins::StartupPlugins::default(),
             api_v1: api_v1::ApiV1Service::new(&plugins, &current),
             plugins,
             state_host: AsyncMutex::new(None),
@@ -169,7 +169,7 @@ impl TestDaemon {
         Ok(Arc::new(dev_plugins::load_all(
             owner.bundle,
             &owner.plugins,
-            vec![],
+            dev_plugins::StartupPlugins::default(),
             &owner.paths,
             &owner.logger,
             dashboard,

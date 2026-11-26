@@ -14,10 +14,10 @@ workspace = true
 
 [features]
 # Per-crate test-harness seam (mirrors vosu-core, vosu-osu-state): never
-# enabled in a release build (src/lib.rs's `compile_error!` guard). It
-# includes the publication fixtures, which the external osu! process
-# fixture's parity ingress (M5 X0) publishes through.
-test-harness = ["bench-harness"]
+# enabled in a release build (src/lib.rs's `compile_error!` guard). Both the
+# bundled harness daemon and external osu! process fixture can replay M5's
+# source oracle through the same production publisher.
+test-harness = ["bench-harness", "dep:vosu-osu-calc"]
 # Instance-owned production-publisher fixtures, including release benchmarks.
 bench-harness = []
 
@@ -29,6 +29,7 @@ serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] 
 sha2 = "=0.11.0"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+vosu-osu-calc = { path = "../vosu-osu-calc", optional = true }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-osu-reader = { path = "../vosu-osu-reader" }
 vosu-osu-state = { path = "../vosu-osu-state" }

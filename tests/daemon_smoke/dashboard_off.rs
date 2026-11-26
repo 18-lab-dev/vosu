@@ -5,7 +5,6 @@
 //! restart. Discovery is isolated, so no real game process is ever read.
 use super::*;
 
-const ISOLATED_DISCOVERY_ENV: &str = "VOSU_TEST_ISOLATED_DISCOVERY";
 const RESTART_NOTICE: &str = "ENABLE_DASHBOARD changed in vosu.toml; restart vosu to apply it";
 
 /// Fields drop in order: the daemon is killed before its root is removed.
@@ -20,10 +19,18 @@ struct Run {
 
 impl Run {
     fn spawn(environment: Option<&str>, enable_dashboard: Option<bool>) -> Self {
+        Self::spawn_on(environment, enable_dashboard, available_port())
+    }
+
+    fn spawn_on(
+        environment: Option<&str>,
+        enable_dashboard: Option<bool>,
+        dashboard_port: u16,
+    ) -> Self {
         let root = TempDir::new().unwrap();
-        let config_dir = smoke_channel().root(root.path().join("config/vosu"));
+        let (mut command, config_dir) = isolated_daemon(root.path());
         fs::create_dir_all(&config_dir).unwrap();
-        let (port, dashboard_port) = (available_port(), available_port());
+        let port = available_port();
         let mut text = toml_config(port, &root.path().join("static")).replace(
             "DASHBOARD_PORT = 0",
             &format!("DASHBOARD_PORT = {dashboard_port}"),
@@ -34,19 +41,7 @@ impl Run {
         let config = config_dir.join("vosu.toml");
         fs::write(&config, text).unwrap();
         let log = fs::File::create_new(root.path().join("daemon.log")).unwrap();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_vosu"));
-        command
-            .arg("--update=false")
-            .env("HOME", root.path())
-            .env("XDG_CONFIG_HOME", root.path().join("config"))
-            .env("XDG_DATA_HOME", root.path().join("data"))
-            .env("XDG_CACHE_HOME", root.path().join("cache"))
-            .env("XDG_RUNTIME_DIR", root.path().join("runtime"))
-            .env("VOSU_PROCESS_EVENTS", "poll")
-            .env(ISOLATED_DISCOVERY_ENV, "1")
-            .env_remove("VOSU_DASHBOARD")
-            .stdout(log.try_clone().unwrap())
-            .stderr(log);
+        command.stdout(log.try_clone().unwrap()).stderr(log);
         if let Some(value) = environment {
             command.env("VOSU_DASHBOARD", value);
         }
@@ -148,8 +143,28 @@ async fn dashboard_off_binds_no_dashboard_listener_and_keeps_overlays_and_api_v1
 }
 
 #[tokio::test]
+async fn dashboard_off_ignores_occupied_port() {
+    let occupied = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let dashboard_port = occupied.local_addr().unwrap().port();
+    let run = Run::spawn_on(Some("off"), Some(true), dashboard_port);
+    let ready = bounded!(wait_get(
+        &run.client,
+        &format!("{}/api/v1/sessions", run.base())
+    ));
+    assert_eq!(ready.status(), 200);
+    run.wait_for_log("Dashboard is off: vosu.dashboard is inactive (dashboard_disabled)")
+        .await;
+    assert!(!run.log().contains("Dashboard: http"), "{}", run.log());
+    assert_eq!(
+        run.status(&format!("{}/api/dashboard", run.base())).await,
+        404
+    );
+    drop(occupied);
+}
+
+#[tokio::test]
 async fn any_other_vosu_dashboard_value_fails_startup_before_binding() {
-    for value in ["", "on", "OFF", "false"] {
+    for value in ["", "on", "OFF", "0", "false"] {
         let mut run = Run::spawn(Some(value), None);
         let mut child = run.child.0.take().unwrap();
         let status = tokio::task::spawn_blocking(move || vosu_proptest::wait::child(&mut child))

@@ -2309,6 +2309,61 @@ dashboard port, natively; cross-compilation is not native evidence.
 Windows evidence never relies on `/proc`, `/bin/sh`, POSIX signals or `.so`
 files.
 
+### Running the X0 exit corpus
+
+Build the debug daemon with `cargo build --locked --features test-harness`.
+Prepare the native artifacts once with `python scripts/plugin-host-fixtures.py
+--env-file <new-env-file>` and export the variables it writes before running
+the smokes. The helper selects the native files from Cargo's artifact records
+and prints their SHA-256 receipts. The tests do not invoke Cargo. Set
+`VOSU_PLAYWRIGHT_MODULE` to the Playwright `index.mjs` and install its Chromium
+build first. Run the four scripts serially against free ports 25150/25151:
+
+```sh
+for smoke in tool_host dashboard tool_catalog catalog_art; do
+  python "tests/${smoke}_smoke.py" --binary "$CARGO_TARGET_DIR/debug/vosu" \
+    --playwright-module "$VOSU_PLAYWRIGHT_MODULE" || break
+done
+```
+
+Each browser phase must report a nonzero `M7_BROWSER` receipt. The receipts
+include page, console and request-failure diagnostics; deliberate network
+failures (e.g. the D20 handshake, the Settings error case and the sandboxed
+SVG) are asserted separately. The tools corpus requires the real
+`test.api.fixture` debug development plugin (`in-process`), a second web tool
+with no action grant, and byte receipts for both the legacy-only package and
+the malformed-v2-plus-legacy package. The dashboard uses **harness-driven
+osu! state**: its `vosu.osu` data directory contains the M5 `parity.json`
+control for a committed replay, while an independent testkit plugin publishes
+its own session and file. Both use the production ABI publication path.
+The parity ingress does not compile without `test-harness`, including with
+`bench-harness` alone. `VOSU_TEST_ISOLATED_DISCOVERY` limits candidates to
+the harness's explicit PID/path list (`1` means none); a file created at
+`VOSU_TEST_STOP_FILE` triggers the real joined shutdown on either OS.
+
+**Official process fixture.** `VOSU_TEST_OFFICIAL_PLUGIN=<absolute package
+directory>` is for debug `test-harness` daemons only. It reuses
+`load_official_test_fixture` and labels the dashboard roster and smoke
+evidence **fixture-official**. It neither grants bundled capabilities nor
+bypasses native process approval: approve both exact digests before the
+plugin host may start. A bundled ID is refused before startup; ordinary
+`--plugin` cannot grant official namespaces. The switch fails before root
+initialization in debug non-harness and release daemons, and the root build
+script rejects `test-harness` in release.
+
+For the native Windows equivalent, point the VM runner at guest Node,
+Playwright and Chromium paths. It stages and builds native artifacts, runs the
+named daemon tests and runs all four Python/Chromium smokes serially. It
+does not start or stop the guest:
+
+```sh
+/usr/bin/flock -s /tmp/vosu-prepush.lock python scripts/vm-test.py \
+  --package vosu --test daemon_smoke --browser-smokes \
+  --env 'VOSU_TEST_NODE=V:\path\to\node.exe' \
+  --env 'VOSU_PLAYWRIGHT_MODULE=V:\path\to\playwright\index.mjs' \
+  --env 'PLAYWRIGHT_BROWSERS_PATH=V:\path\to\chromium'
+```
+
 ### A7 documentation acceptance
 
 Run in the assigned `m7-a7` checkout after `source scripts/dev-env.sh`.

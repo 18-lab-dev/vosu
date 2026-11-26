@@ -7,35 +7,7 @@
 //! release builds reject). The bundled manifest stays target-free and
 //! in-process; only this separately staged library runs in a plugin host.
 //!
-//! When its data directory holds a parity control (M5 X0), the instance runs
-//! M4a's source-oracle publication ingress instead of capturing a client
-//! (`osu_process_plugin/parity.rs`); otherwise it is the producer itself.
+//! When its data directory holds `parity.json`, the instance runs M5's
+//! source-oracle publication ingress instead of capturing a client.
 
-#[path = "osu_process_plugin/parity.rs"]
-mod parity;
-
-use vosu_osu::plugin::OsuPlugin;
-use vosu_plugin_api::{ConcurrentPlugin, Init, Message, PluginError, VtableHostServices};
-
-enum ProcessOsu {
-    Producer(Box<OsuPlugin>),
-    Parity(Box<parity::Parity>),
-}
-
-impl ConcurrentPlugin for ProcessOsu {
-    fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
-        match parity::Parity::load(host, &init.data_dir) {
-            Some(parity) => Ok(Self::Parity(Box::new(parity))),
-            None => OsuPlugin::create(host, init).map(|plugin| Self::Producer(Box::new(plugin))),
-        }
-    }
-
-    fn on_message(&self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
-        match self {
-            Self::Producer(plugin) => plugin.on_message(message, correlation_id),
-            Self::Parity(parity) => parity.on_message(message, correlation_id),
-        }
-    }
-}
-
-vosu_plugin_internal::export_plugin!(concurrent ProcessOsu);
+vosu_plugin_internal::export_plugin!(concurrent vosu_osu::fixtures::FixtureOrProducer);

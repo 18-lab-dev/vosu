@@ -37,20 +37,10 @@ ARCHIVE_CMD = [
     "cargo", "nextest", "archive", "--workspace", "--lib", "--bins", "--tests",
     "--examples", "--all-features", "--locked", "--archive-file",
 ]
-# The prepared plugin-host fixture libraries (scripts/plugin-host-fixtures.py).
-# They live under the target dir, which the container mounts at the same path,
-# so the host paths are passed through unchanged.
-FIXTURE_VARIABLES = ("VOSU_PLUGIN_HOST_TESTKIT_LIBRARY", "VOSU_PLUGIN_HOST_OSU_LIBRARY")
-# The container has no toolchain, so `daemon_smoke`'s api_fixture test cannot
-# build its fixture plugin there and falls back to the cdylib in the profile's
-# `examples/` directory. The nextest archive builds examples as test targets,
-# not cdylib outputs, so that file exists only if something else happened to
-# build it into this target dir; build it explicitly so a fresh target dir
-# passes too.
-FIXTURE_EXAMPLE_CMD = [
-    "cargo", "build", "--locked", "--all-features", "-p", "vosu-plugin-testkit",
-    "--example", "api_v1_plugin",
-]
+# The prepared artifacts live under the target dir, which the container
+# mounts at the same path, so the host paths are passed through unchanged.
+FIXTURE_VARIABLES = ("VOSU_PLUGIN_HOST_TESTKIT_LIBRARY", "VOSU_PLUGIN_HOST_OSU_LIBRARY",
+                     "VOSU_M7_API_LIBRARY", "VOSU_M7_TARGET")
 
 
 def podman_path():
@@ -124,12 +114,10 @@ def run(root=ROOT, cargo_target_dir=None, cargo_nextest_bin=None, extra_env=None
 
         archive_file = Path(archive_dir) / "nextest-archive.tar.zst"
         started = time.monotonic()
-        for step in (FIXTURE_EXAMPLE_CMD, [*ARCHIVE_CMD, str(archive_file)]):
-            archive_result = subprocess.run(
-                step, cwd=root, env=env, capture_output=True, text=True, check=False,
-            )
-            if archive_result.returncode != 0:
-                break
+        archive_result = subprocess.run(
+            [*ARCHIVE_CMD, str(archive_file)], cwd=root, env=env,
+            capture_output=True, text=True, check=False,
+        )
         archive_wall = time.monotonic() - started
         if archive_result.returncode != 0:
             return {

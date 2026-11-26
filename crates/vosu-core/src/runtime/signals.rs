@@ -4,6 +4,8 @@ use std::{future::Future, io};
 
 use tokio_util::sync::CancellationToken;
 
+pub(super) const TEST_STOP_FILE_ENV: &str = "VOSU_TEST_STOP_FILE";
+
 pub(super) async fn cancel_on_signal(
     shutdown: CancellationToken,
     signal: impl Future<Output = io::Result<()>>,
@@ -17,6 +19,18 @@ pub(super) async fn cancel_on_signal(
 }
 
 pub(super) async fn run_signal_cancellation(shutdown: CancellationToken) -> io::Result<()> {
+    #[cfg(feature = "test-harness")]
+    if let Some(path) = std::env::var_os(TEST_STOP_FILE_ENV) {
+        return cancel_on_signal(shutdown, async move {
+            loop {
+                if tokio::fs::try_exists(&path).await? {
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+    }
     cancel_on_signal(shutdown, shutdown_signal()).await
 }
 

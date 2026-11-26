@@ -18,10 +18,12 @@
 //    launch through the single-use exchange, and no request to a deleted
 //    service-era tool route from any page.
 import fs from 'node:fs';
+import {browserReceipt, watchBrowser} from './browser_diagnostics.mjs';
 
 const [modulePath, evidence] = process.argv.slice(2);
 if (!modulePath || !evidence) throw new Error('Usage: node dashboard_browser.mjs <playwright index.mjs> <evidence directory>');
-const { chromium } = await import(modulePath);
+const {pathToFileURL} = await import('node:url');
+const { chromium } = await import(pathToFileURL(modulePath).href);
 fs.mkdirSync(evidence, { recursive: true });
 const OVERLAY = 'http://127.0.0.1:25150';
 const DASHBOARD = 'http://127.0.0.1:25151';
@@ -30,6 +32,7 @@ const TOLERANCE = 0.5;
 const DELETED_TOOL_ROUTE = /^\/api\/tools\/[^/]+\/(start|stop|restart|open-data|clear-cache|logs|autostart)$/;
 const report = { baselines: [], keyboard: [], previews: {}, heads: [], saveState: [], toolStatuses: [] };
 const failures = [];
+const diagnostics = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
 const browser = await chromium.launch({
@@ -40,6 +43,7 @@ const browser = await chromium.launch({
 
 async function open(path, { theme = 'dark', width = 1280, height = 900, reducedMotion = 'no-preference' } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, reducedMotion });
+  watchBrowser(context, diagnostics);
   await context.addInitScript((value) => { try { localStorage.setItem('vosu.theme.v1', value); } catch (_) { /* opaque */ } }, theme);
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(`${path}: page error ${error.message}`));
@@ -422,6 +426,7 @@ for (const [width, reducedMotion] of [[390, 'no-preference'], [1280, 'no-prefere
 // A page whose routes are installed before its first request.
 async function openRouted(path, routes) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  watchBrowser(context, diagnostics);
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(`${path}: page error ${error.message}`));
   for (const [url, handler] of routes) await page.route(url, handler);
@@ -601,3 +606,4 @@ if (failures.length) {
   console.error(failures.join('\n'));
   process.exit(1);
 }
+browserReceipt('dashboard_browser.mjs', Object.keys(report).length - 1, diagnostics);

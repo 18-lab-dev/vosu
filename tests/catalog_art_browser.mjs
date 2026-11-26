@@ -6,15 +6,18 @@
 // after:  the installed tool card shows its own art and the installed
 //   catalog overlay keeps its proxied preview.
 import fs from 'node:fs';
+import {browserReceipt, watchBrowser} from './browser_diagnostics.mjs';
 
 const [modulePath, evidence, phase, iconUrl] = process.argv.slice(2);
 if (!modulePath || !evidence || !['before', 'after'].includes(phase) || !iconUrl) {
   throw new Error('Usage: node catalog_art_browser.mjs <playwright index.mjs> <evidence dir> <before|after> <icon URL>');
 }
-const { chromium } = await import(modulePath);
+const {pathToFileURL} = await import('node:url');
+const { chromium } = await import(pathToFileURL(modulePath).href);
 fs.mkdirSync(evidence, { recursive: true });
 const DASHBOARD = 'http://127.0.0.1:25151';
 const report = {};
+const diagnostics = [];
 const failures = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VOSU_CHROMIUM || undefined });
@@ -36,6 +39,7 @@ async function rendered(page, selector, name) {
 try {
   for (const theme of ['dark', 'light']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    watchBrowser(context, diagnostics);
     await context.addInitScript((value) => localStorage.setItem('vosu.theme.v1', value), theme);
     const page = await context.newPage();
     page.on('pageerror', (error) => failures.push(`page error: ${error.message}`));
@@ -67,6 +71,7 @@ try {
   if (phase === 'before') {
     // The proxied hostile SVG opened as a page on the dashboard origin.
     const context = await browser.newContext();
+    watchBrowser(context, diagnostics);
     const requests = [];
     // The browser's own favicon probe is not the document's doing.
     context.on('request', (request) => { if (!request.url().endsWith('/favicon.ico')) requests.push(request.url()); });
@@ -98,3 +103,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`${phase}: ${Object.keys(report).length} checks passed`);
+browserReceipt('catalog_art_browser.mjs', Object.keys(report).length, diagnostics);
