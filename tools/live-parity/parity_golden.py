@@ -1,35 +1,13 @@
 """`golden`: validate a private golden capture and write a reviewable candidate fixture.
 
-`tests/fixtures/upstream/GOLDEN_CONTRACT.md` is normative. Upstream records are
-the only expected values; vosu dumps are replay input only. The command reads
-complete, attested `vosu-golden-capture-v1` files (one per platform), applies
-only the rules in `parity_golden_rules`, and publishes a new candidate directory
-with the `tests/fixtures/upstream/<pin>/` layout. It never writes committed
-fixtures, and its errors never echo private content.
+`tests/fixtures/upstream/GOLDEN_CONTRACT.md` describes the closed capture
+format, provenance, normalizations and candidate layout. Input is one
+attested `vosu-golden-capture-v1` per platform. A complete attempt contains
+two upstream responses and the vosu dump–route–dump sandwich. Raw requests,
+bodies and frames use text or base64. Declared upstream crashes or missing
+responses are audited but do not publish case files.
 
-Capture header: format, source_revision, platform, scenario_set, authorization,
-attestation, roots, assets and expected_cases. For the offline-pinned lazer
-build, attestation.source also carries `lazer_offsets_sha256`. Every object is
-closed. Case records have this shape:
-
-     "cases": [{"id", "family", "barrier", "dump_schema",
-                "conditional": null|"etag"|"last-modified",
-                "attempts": [{"attempt": 1, "outcome": "failed", "reason": str},
-                             {"attempt": 2, "outcome": "complete",
-                              "source": [record, record],
-                              "vosu": {"dump_before": dump, "route": record,
-                                       "dump_after": dump}}]}]}
-
-    record = {"attempt", "request": bytes, "status_line", "headers": [[name, value]],
-              "body": bytes (after transfer-coding removal), "frames": [frame] (ws only)}
-           | {"attempt", "request": bytes, "outcome": "closed", "frames": [] (ws only)}
-             (the connection closed without a response byte; expected {"outcome": "closed"})
-    A final attempt may be `upstream_crashed` instead (parity_golden_crash): no case file.
-    Upstream records may carry a declared outcome (parity_golden_expected): no case file.
-    frame  = {"from": "client"|"server", "fin", "opcode", "masked", "mask_key": hex|null,
-              "length", "payload": bytes}
-    dump   = {"attempt", "envelope": vosu-adapter-capture-v1}
-    bytes  = {"text": str} | {"b64": str}
+The command writes only a new candidate, never committed fixtures.
 """
 from __future__ import annotations
 
@@ -42,9 +20,12 @@ import os
 from pathlib import Path
 import re
 from parity_asset_corrections import Corrections
+import parity_golden_alternates as alternates
 import parity_golden_crash as crash
 import parity_golden_ledger as ledger
 import parity_golden_expected as no_response
+from parity_golden_selection import RUN5_CAPTURE_SHA256, recorded_selections
+import route_matrix as rm
 import parity_volatile as volatile
 import shutil
 import subprocess
@@ -58,7 +39,7 @@ from parity_golden_rules import (
     CAPABILITY_HEADER, CREDENTIAL_HEADERS, ENVELOPE_KEYS, NON_GOLDEN_SEGMENTS,
     NORMALIZATION_VERSION, OLD_BRAND, TRANSPORT_OUTCOMES, VALIDATOR_REQUEST_HEADERS,
     GoldenError, Root, RootRewriter, Validators, apply_timestamp_pointers,
-    check_approved_rules, dump_sandwich_difference, entity_tag, normalize_response_headers,
+    check_approved_rules, dump_sandwich_difference, entity_tag,
     privacy_findings, rewrite_cbor_text, synthetic_root, validate_private_root,
 )
 
@@ -79,13 +60,6 @@ FAMILIES = ("state-http", "ws", "files", "path-security", "calculation", "origin
 BARRIERS = ("no-client", "menu", "paused", "result")
 ENVELOPE_SCHEMAS = ("v1", "sc", "v2", "v2-precise")
 STATE_ROUTES = {"/json": "v1", "/json/sc": "sc", "/json/v2": "v2", "/json/v2/precise": "v2-precise"}
-# GOLDEN_CONTRACT.md §6 header comparison set, plus `date` whose presence is compared.
-COMPARED_HEADERS = frozenset({
-    "content-type", "content-length", "cache-control", "etag", "last-modified",
-    "accept-ranges", "content-range", "location", "content-security-policy",
-    "x-content-type-options", "upgrade", "connection", "sec-websocket-accept",
-    "sec-websocket-protocol", "sec-websocket-extensions", "sec-websocket-version", "date",
-})
 MAX_ATTEMPTS = 3
 MAX_CAPTURE_BYTES = 512 << 20
 JSON_BUDGET = 8 << 20
@@ -106,7 +80,7 @@ _DIGEST_KEYS = ("session", "focus_revision", "roster", "bus_revision", "namespac
 # ---------------------------------------------------------------- strict input
 
 
-def _load_capture(path: str) -> Any:
+def _load_capture(path: str) -> tuple[Any, str]:
     try:
         with open(path, "rb") as handle:
             raw = handle.read(MAX_CAPTURE_BYTES + 1)
@@ -127,7 +101,8 @@ def _load_capture(path: str) -> Any:
         raise GoldenError(f"capture contains non-finite number {name}")
 
     try:
-        return json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+        capture = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+        return capture, hashlib.sha256(raw).hexdigest()
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise GoldenError(f"capture is not UTF-8 JSON: {exc}") from exc
 
@@ -649,15 +624,11 @@ class _Platform:
         family = case["family"]
         if record["outcome"] is not None:
             return {"outcome": record["outcome"]}
-        headers, rules = normalize_response_headers(
-            record["headers"], family == "files", self.validators)
-        used |= rules
+        headers = record["headers"]
         body, length = self.body(case["id"], family, record["body"], used)
-        projected: list[list[str]] = []
-        for name, value in headers:
-            lowered = name.lower()
-            if lowered in COMPARED_HEADERS or lowered.startswith("access-control-"):
-                projected.append([lowered, self.text(value, family, None, used)])
+        projected = [[name.lower(), self.text(value, family, None, used)]
+                     for name, value in headers
+                     if name.lower() in rm.COMPARED_HEADERS or name.lower() == "content-length"]
         ledger.normalize_lengths(projected, case, record, length, get_lengths)
         projected.sort(key=lambda item: item[0])
         expected: dict[str, Any] = {"status": record["status"], "headers": projected, "body": body}
@@ -718,6 +689,7 @@ def _dump(value: Any) -> bytes:
 
 def _platform_files(
     capture: Any, review_receipt: str | None, provenance: Provenance, corrections: Corrections | None = None,
+    *, capture_sha256: str = "",
 ) -> tuple[str, dict[str, bytes], dict[str, Any]]:
     _obj(capture, "capture", ("format", "source_revision", "platform", "scenario_set",
                               "authorization", "attestation", "roots", "assets",
@@ -745,6 +717,8 @@ def _platform_files(
                 state.validators.observe(record["headers"])
     corrected = (corrections.apply(state.assets, cases, lazer=identity["platform"].endswith("-lazer"))
                  if corrections else [])
+    replay_choices, migration = (recorded_selections(cases, capture_sha256, review_receipt)
+                                 if provenance == "captured" else ({}, None))
     get_lengths = ledger.get_response_sizes(cases, lambda case, data: state.body(
         case["id"], case["family"], data, set())[1])
 
@@ -767,12 +741,13 @@ def _platform_files(
             raise GoldenError(f"case {case['id']}: {exc}") from exc
         if ids_used:
             volatile_cases[case["id"]] = ids_used
+        replay = state.envelope(replay_choices.get(case["id"], case["dumps"][0]), used)
         case_file = {
             "format": CASE_FORMAT, "id": case["id"], "family": case["family"],
             "barrier": case["barrier"], "conditional": case["conditional"],
             "attempts": case["attempts"], "normalized": sorted(used),
             "request": {"text": request}, "expected": first,
-            "replay": state.envelope(case["dumps"][0], used),
+            "replay": replay,
         }
         files[f"cases/{case['id']}.json"] = _dump(case_file)
         listing.append({"id": case["id"], "family": case["family"], "barrier": case["barrier"],
@@ -794,6 +769,7 @@ def _platform_files(
         "case_counts": {family: sum(case["family"] == family for case in cases) for family in FAMILIES},
         "cases": listing,
         **({"asset_media_type_corrections": corrected} if corrected else {}),
+        **({"calculation_chart_migration": migration} if migration else {}),
     })
     scan = _scan(platform, files, state)
     files["brand-inventory.txt"] = _brand_inventory(platform, files)
@@ -816,6 +792,15 @@ def _platform_files(
                no_response.SUMMARY_KEY: sorted(silent, key=lambda case: case["id"])}
     if volatile_cases:
         summary["volatile"] = volatile_cases
+    if provenance == "captured" and capture_sha256 == RUN5_CAPTURE_SHA256:
+        def render_text(data: bytes, family: str, part: str) -> str:
+            return state.text(data.decode("utf-8"), family, part, set())
+
+        rules = alternates.rules(cases, files, render_text)
+        for value in _string_leaves(rules):
+            if findings := privacy_findings(value, state.rewriter):
+                raise GoldenError(f"privacy scan: {findings[0]} in {platform} divergence rules")
+        summary["rules"] = rules
     return platform, files, summary
 
 
@@ -970,11 +955,14 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
     target = _prepare_target(candidate_dir, repo_root)
     files: dict[str, bytes] = {}
     platforms: dict[str, Any] = {}
+    rules = []
     for path in captures:
-        platform, platform_files, summary = _platform_files(_load_capture(path), review_receipt,
-                                                            provenance, corrections)
+        capture, capture_sha256 = _load_capture(path)
+        platform, platform_files, summary = _platform_files(
+            capture, review_receipt, provenance, corrections, capture_sha256=capture_sha256)
         if platform in platforms:
             raise GoldenError(f"two captures for platform {platform}")
+        rules.extend(summary.pop("rules", []))
         platforms[platform] = summary
         files.update({f"{platform}/{rel}": data for rel, data in platform_files.items()})
         summary["inventory_sha256"] = hashlib.sha256(platform_files["inventory.json"]).hexdigest()
@@ -985,8 +973,11 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
         "provenance": provenance, "source_revision": PINNED_SOURCE_REVISION,
         "platforms": sorted(platforms),
     })
-    if provenance == "captured" and (rule := ledger.calculation_outside_rule(files)) is not None:
-        files["divergence-rules.json"] = _dump(rule)
+    if provenance == "captured" and (outside := ledger.calculation_outside_rule(files)) is not None:
+        rules.extend(outside["rules"])
+    if rules:
+        files["divergence-rules.json"] = _dump(
+            {"format": "vosu-golden-divergence-rules-v1", "rules": rules})
     files["inventory.json"] = _dump({
         "format": INVENTORY_FORMAT, "source_revision": PINNED_SOURCE_REVISION,
         "normalization_version": NORMALIZATION_VERSION, "files": _inventory_entries(files),

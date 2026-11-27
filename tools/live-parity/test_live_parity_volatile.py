@@ -84,6 +84,35 @@ class LedgerTests(unittest.TestCase):
         missing = b'{"settings":{},"beatmap":{"time":{"live":1}},"other":1}'
         self.assertNotEqual(record(v2("0.5"))[0], record(missing)[0])
 
+    def test_replay_live_clock_bound_keeps_type_shape_and_units(self) -> None:
+        def body(route, payload):
+            return volatile.record_view(route, 200, [["content-type", "application/json"]],
+                                        payload, None, replay_clock=True)[0]
+
+        first = v2("0.6", "1000")
+        self.assertEqual(body("/json/v2", first), body("/json/v2", v2("0.6", "1250")))
+        self.assertNotEqual(body("/json/v2", first), body("/json/v2", v2("0.6", "1251")))
+        self.assertNotEqual(body("/json/v2", first), body("/json/v2", v2("0.6", '"1000"')))
+        self.assertNotEqual(body("/json/v2", first),
+                            body("/json/v2", first.replace(b'"live":1000', b'')))
+        self.assertNotEqual(body("/json/v2", first), body("/json/v2", v2("0", "1000")))
+        self.assertNotEqual(body("/json/v2/precise", first),
+                            body("/json/v2/precise", v2("0.6", "1250")))
+        v1 = b'{"menu":{"bm":{"time":{"current":1000}}}}'
+        self.assertEqual(body("/json", v1), body("/json", v1.replace(b"1000", b"1250")))
+        sc = b'{"time":24,"mapPosition":"00:00:24.4","timeLeft":"-1:-1:-7.-500"}'
+        near = b'{"time":24.25,"mapPosition":"00:00:24.254","timeLeft":"-1:-1:-7.-750"}'
+        self.assertEqual(body("/json/sc", sc), body("/json/sc", near))
+        for changed in (near.replace(b".254", b".255"), near.replace(b"24.25", b"24250"),
+                        near.replace(b"-1:-1:-7.-750", b"invalid")):
+            self.assertNotEqual(body("/json/sc", sc), body("/json/sc", changed))
+
+        def frame(payload, direction):
+            frames = [(direction, True, 1, False, payload)]
+            return volatile.record_view("/tokens", 101, [], b"", frames, replay_clock=True)[0]
+        self.assertEqual(frame(sc, "server"), frame(near, "server"))
+        self.assertNotEqual(frame(sc, "client"), frame(near, "client"))
+
     def test_content_length_must_still_describe_the_body(self) -> None:
         with self.assertRaisesRegex(volatile.VolatileError, "content-length"):
             record(v2("0.5"), length=3)

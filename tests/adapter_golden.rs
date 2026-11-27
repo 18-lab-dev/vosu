@@ -32,6 +32,8 @@ mod fixture;
 mod golden_cases;
 #[path = "adapter_golden/golden_gates.rs"]
 mod golden_gates;
+#[path = "adapter_golden/payload_clock.rs"]
+mod payload_clock;
 #[path = "adapter_golden/replay.rs"]
 mod replay;
 #[path = "adapter_golden/replay_cases.rs"]

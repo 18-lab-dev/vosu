@@ -35,15 +35,9 @@ OP_CONTINUATION, OP_TEXT, OP_BINARY, OP_CLOSE, OP_PING, OP_PONG = 0, 1, 2, 8, 9,
 HOST = "127.0.0.1"
 VALIDATOR = "validator"
 
-# A4b.7: compared exactly after normalization; every other header, the reason
-# phrase and header order stay in the private raw record.
-COMPARED_HEADERS = frozenset({
-    "content-type", "content-length", "cache-control", "etag", "last-modified",
-    "accept-ranges", "content-range", "location", "content-security-policy",
-    "x-content-type-options"})
-WS_COMPARED_HEADERS = frozenset({
-    "upgrade", "connection", "sec-websocket-accept", "sec-websocket-protocol",
-    "sec-websocket-extensions", "sec-websocket-version"})
+# GOLDEN_CONTRACT §6: across implementations, compare payload headers only.
+# Raw records still keep every header, including local framing and policy.
+COMPARED_HEADERS = frozenset({"content-type", "content-range", "location", "accept-ranges"})
 
 # Fixture placeholders: path values are plain relative '/'-separated paths
 # encoded per segment; query values are encoded as one form value.
@@ -198,14 +192,13 @@ def client_frame(case_id: str, label: str, opcode: int, payload: bytes) -> bytes
     return mask_frame(opcode, payload, _derive(case_id, label, 4))
 
 
-def split_headers(headers: Iterable[tuple[str, str]], *, websocket: bool
+def split_headers(headers: Iterable[tuple[str, str]]
                   ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Split ordered raw headers into (compared, private-only), preserving order and case."""
     compared, private = [], []
     for name, value in headers:
         lower = name.lower()
-        if lower in COMPARED_HEADERS or lower.startswith("access-control-") or (
-                websocket and lower in WS_COMPARED_HEADERS):
+        if lower in COMPARED_HEADERS:
             compared.append((name, value))
         else:
             private.append((name, value))
@@ -768,7 +761,7 @@ __all__ = [
     "BARRIERS", "CASES", "COMPARED_HEADERS", "CaseUnavailable", "Close", "FAMILIES", "Hold",
     "MATRIX", "MatrixContext", "PLATFORMS", "Recv", "RenderedCase", "RequestLedger", "RouteCase",
     "SecurityAbort", "Send", "UPSTREAM_CRASH_LEDGER", "UPSTREAM_EXPECTED", "Validator",
-    "WS_COMPARED_HEADERS", "allowed_outcomes", "client_frame", "golden_eligible", "manifest",
+    "allowed_outcomes", "client_frame", "golden_eligible", "manifest",
     "mask_frame", "render", "requirements_unmet", "select", "split_headers",
     "upstream_crash_ledger", "upstream_expected", "ws_key",
 ]

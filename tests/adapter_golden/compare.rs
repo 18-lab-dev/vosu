@@ -4,19 +4,16 @@
 //! Observation sends the recorded request bytes to the production listener
 //! of a replay of the case's envelope. Its only substitution is a declared
 //! conditional validator, taken from vosu's own answer to the same target
-//! earlier in the case. The vosu record then gets exactly the §7 rules: the
-//! compared header set, `header-date`, `header-last-modified` (which must
-//! equal the declared replay file mtime, `AssetFile.modified`),
-//! `header-etag` (an ordinal bijection with upstream, so distinct tags stay
-//! distinct) and `root-prefix` for the replay's real temporary roots.
+//! earlier in the case. Payload headers and framing are retained; validator
+//! bindings are verified locally rather than compared with upstream policy.
 //! Headers, bodies and frames use the payload equality in §7. A validated
 //! divergence rule only replaces the expectation for its own record part.
 use super::{
     assets::{AssetFile, ReplayAssets, ResourceAsset, RootAsset},
-    case_file::etag_ordinal,
     divergence::{self, Part, Rule},
     envelope::{Envelope, reference_position, tokens, tree_position},
-    fixture::{Asset, Body, Case, DATE, LAST_MODIFIED, Platform, compared},
+    fixture::{Asset, Body, Case, LAST_MODIFIED, Platform, compared},
+    payload_clock::Clocks,
     replay::Replay,
     routes::{self, RawResponse},
     websocket::{self, Frame, Step},
@@ -165,7 +162,7 @@ fn recorded_asset<'a>(
 #[derive(Clone, Debug)]
 pub struct Observed {
     pub status: u16,
-    /// Compared headers only, lowercase, sorted by name; `etag` is raw.
+    /// Compared payload headers plus `content-length` for local framing only.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     raw_body_len: usize,
@@ -181,6 +178,13 @@ pub struct Observed {
 
 /// Replays every case of `platform`, one replay per distinct envelope.
 pub fn observe(platform: &Platform) -> Result<Vec<Result<Observed, String>>, String> {
+    observe_with_rules(platform, &[])
+}
+
+fn observe_with_rules(
+    platform: &Platform,
+    rules: &[Rule],
+) -> Result<Vec<Result<Observed, String>>, String> {
     let mut out: Vec<Option<Result<Observed, String>>> = vec![None; platform.cases.len()];
     let mut groups: Vec<(&[u8], Vec<usize>)> = Vec::new();
     for (index, case) in platform.cases.iter().enumerate() {
@@ -210,7 +214,14 @@ pub fn observe(platform: &Platform) -> Result<Vec<Result<Observed, String>>, Str
             })
             .collect();
         for index in members {
-            out[index] = Some(case(&replay, &platform.cases[index], platform, &roots));
+            let record = &platform.cases[index];
+            out[index] = Some(case(
+                &replay,
+                record,
+                platform,
+                &roots,
+                sequence_rule(rules, platform, record),
+            ));
         }
     }
     Ok(out
@@ -224,6 +235,7 @@ fn case(
     case: &Case,
     platform: &Platform,
     roots: &[(String, String)],
+    sequence: Option<&Rule>,
 ) -> Result<Observed, String> {
     let mut invariants = Vec::new();
     let request = if case.id == "calculation.absolute-inside-root-osu" {
@@ -235,10 +247,9 @@ fn case(
     if case.expected.closed {
         // Upstream closed without a response: vosu must close too, and a
         // response it sends instead is observed in full for the report.
-        let files = case.family == "files";
         return Ok(
             match routes::exchange_or_close(replay.address, request.as_bytes())? {
-                Some(response) => normalize(response, Vec::new(), files, roots, bound, invariants),
+                Some(response) => normalize(response, Vec::new(), roots, bound, invariants),
                 None => Observed {
                     status: 0,
                     headers: Vec::new(),
@@ -252,14 +263,9 @@ fn case(
             },
         );
     }
-    let (response, frames) = if case.family == "ws" {
-        let steps: Vec<Step> = case
-            .expected
-            .frames
-            .as_deref()
-            .map(payload_frames)
-            .into_iter()
-            .flatten()
+    let (response, frames) = if let Some(expected) = expected_frames(case, sequence) {
+        let steps: Vec<Step> = expected
+            .iter()
             .map(|frame| match frame.from_server {
                 true => Step::Receive,
                 false => Step::Send {
@@ -277,14 +283,22 @@ fn case(
             Vec::new(),
         )
     };
-    Ok(normalize(
-        response,
-        frames,
-        case.family == "files",
-        roots,
-        bound,
-        invariants,
-    ))
+    Ok(normalize(response, frames, roots, bound, invariants))
+}
+
+fn sequence_rule<'a>(rules: &'a [Rule], platform: &Platform, case: &Case) -> Option<&'a Rule> {
+    rules
+        .iter()
+        .find(|rule| rule.part == Part::WsSequence && rule.covers(&platform.name, &case.id))
+}
+
+fn expected_frames<'a>(
+    case: &'a Case,
+    sequence: Option<&'a Rule>,
+) -> Option<&'a [super::fixture::ExpectedFrame]> {
+    sequence
+        .map(|rule| divergence::sequence(&rule.change).expect("validated sequence"))
+        .or_else(|| case.expected.frames.as_deref().map(payload_frames))
 }
 
 /// Bind just the positive absolute calculator probe to an approved asset in
@@ -416,14 +430,9 @@ fn last_modified(value: &str, invariants: &mut Vec<(String, String)>) {
     }
 }
 
-fn imf_fixdate(value: &str) -> bool {
-    httpdate::parse_http_date(value).is_ok_and(|time| httpdate::fmt_http_date(time) == value)
-}
-
 pub fn normalize(
     response: RawResponse,
     mut frames: Vec<Frame>,
-    files: bool,
     roots: &[(String, String)],
     bound: Vec<(u64, String)>,
     mut invariants: Vec<(String, String)>,
@@ -462,22 +471,11 @@ pub fn normalize(
     let mut headers = Vec::new();
     for (name, value) in response.headers {
         let name = name.to_ascii_lowercase();
-        if !compared(&name) {
+        if !(compared(&name) || name == "content-length") {
             continue;
         }
         let mut value = rewrite(&value);
-        if name == "date" {
-            if !imf_fixdate(&value) {
-                invariants.push((
-                    "headers.date".into(),
-                    format!("Date {value:?} is not an IMF-fixdate"),
-                ));
-            }
-            value = DATE.into();
-        } else if files && name == "last-modified" {
-            last_modified(&value, &mut invariants);
-            value = LAST_MODIFIED.into();
-        } else if name == "content-length" && rewritten {
+        if name == "content-length" && rewritten {
             if !valid_content_length(&value, Some(raw_body_len)) {
                 invariants.push((
                     "headers.content-length".into(),
@@ -585,8 +583,6 @@ fn media_type_parts(value: &str) -> impl Iterator<Item = &str> {
 pub(super) fn same_header(name: &str, left: &str, right: &str) -> bool {
     match name {
         "content-type" => media_type_parts(left).eq(media_type_parts(right)),
-        // Check each side's framing separately; only presence is compared.
-        "content-length" => true,
         _ => left == right,
     }
 }
@@ -598,24 +594,34 @@ fn valid_content_length(value: &str, size: Option<usize>) -> bool {
 }
 
 pub(super) fn same_body(got: &[u8], want: &[u8], json: bool) -> bool {
+    same_body_on(got, want, json, "")
+}
+
+pub(super) fn same_body_on(got: &[u8], want: &[u8], json: bool, route: &str) -> bool {
     if !json || (got.is_empty() && want.is_empty()) {
         return got == want;
     }
     match (serde_json::from_slice(got), serde_json::from_slice(want)) {
-        (Ok(got), Ok(want)) => same_json(&got, &want),
+        (Ok(got), Ok(want)) => same_json(&got, &want, &Clocks::for_route(route, &want)),
         _ => false,
     }
 }
 
 pub(super) fn same_text_frame(got: &[u8], want: &[u8]) -> bool {
-    got == want
-        || match (serde_json::from_slice(got), serde_json::from_slice(want)) {
-            (Ok(got), Ok(want)) => same_json(&got, &want),
-            _ => false,
-        }
+    same_text_frame_on(got, want, "")
 }
 
-fn same_json(got: &Value, want: &Value) -> bool {
+pub(super) fn same_text_frame_on(got: &[u8], want: &[u8], route: &str) -> bool {
+    match (serde_json::from_slice(got), serde_json::from_slice(want)) {
+        (Ok(got), Ok(want)) => same_json(&got, &want, &Clocks::for_route(route, &want)),
+        _ => got == want,
+    }
+}
+
+fn same_json(got: &Value, want: &Value, clocks: &Clocks<'_>) -> bool {
+    if let Some(matches) = clocks.compare(got, want) {
+        return matches;
+    }
     match (got, want) {
         (Value::Number(a), Value::Number(b)) => {
             // GOLDEN_CONTRACT.md §7; mirrored in tools/live-parity/parity_volatile.py.
@@ -626,12 +632,13 @@ fn same_json(got: &Value, want: &Value) -> bool {
         }
         (Value::Object(got), Value::Object(want)) => {
             got.len() == want.len()
-                && got
-                    .iter()
-                    .all(|(key, got)| want.get(key).is_some_and(|want| same_json(got, want)))
+                && got.iter().all(|(key, got)| {
+                    want.get(key)
+                        .is_some_and(|want| same_json(got, want, clocks))
+                })
         }
         (Value::Array(got), Value::Array(want)) => {
-            got.len() == want.len() && got.iter().zip(want).all(|(a, b)| same_json(a, b))
+            got.len() == want.len() && got.iter().zip(want).all(|(a, b)| same_json(a, b, clocks))
         }
         _ => got == want,
     }
@@ -767,6 +774,11 @@ pub fn compare(
             .iter()
             .chain(&observed.headers)
             .map(|(name, _)| name.as_str())
+            .chain(rules.iter().filter_map(|rule| match &rule.part {
+                Part::Header(name) if rule.covers(&platform.name, &case.id) => Some(name.as_str()),
+                _ => None,
+            }))
+            .filter(|name| compared(name))
             .collect();
         for name in names {
             let values = |list: &[(String, String)]| -> Vec<String> {
@@ -781,21 +793,11 @@ pub fn compare(
                 report.used.insert(r.index);
             }
             let got = values(&observed.headers);
-            let same = if name == "etag" && case.family == "files" {
-                want.len() == got.len()
-                    && want.iter().zip(&got).all(|(want, got)| {
-                        let tag = got.strip_prefix("W/").unwrap_or(got);
-                        etag_ordinal(want).is_some_and(|(weak, ordinal)| {
-                            weak == got.starts_with("W/") && etags.bind(ordinal, tag).is_ok()
-                        })
-                    })
-            } else {
-                want.len() == got.len()
-                    && want
-                        .iter()
-                        .zip(&got)
-                        .all(|(want, got)| same_header(name, want, got))
-            };
+            let same = want.len() == got.len()
+                && want
+                    .iter()
+                    .zip(&got)
+                    .all(|(want, got)| same_header(name, want, got));
             if !same {
                 push(
                     &format!("headers.{name}"),
@@ -810,14 +812,26 @@ pub fn compare(
                 divergence::apply_text(&r.change, text).map(|text| Cow::Owned(text.into_bytes()))
             }
             (Body::Text(text), None) => Ok(Cow::Borrowed(text.as_bytes())),
+            (Body::Asset { .. }, Some(r)) => {
+                report.used.insert(r.index);
+                divergence::apply_text(&r.change, "").map(|text| Cow::Owned(text.into_bytes()))
+            }
             (Body::Asset { id, offset, length }, _) => Ok(Cow::Borrowed(
                 &platform.asset(id).expect("validated asset").bytes[*offset..offset + length],
             )),
         };
-        let json = matches!(case.expected.body, Body::Text(_))
-            && (has_json_content_type(&case.expected.headers) || has_json_content_type(&headers));
+        let json = rule(&Part::Header("content-type".into())).map_or_else(
+            || has_json_content_type(&headers),
+            |r| {
+                divergence::header_value(&r.change).is_some_and(|value| {
+                    let media = [("content-type".to_owned(), value)];
+                    has_json_content_type(&media)
+                })
+            },
+        ) && (!matches!(case.expected.body, Body::Asset { .. }) || body_rule.is_some());
+        let route = divergence::route(case);
         match want {
-            Ok(want) if same_body(&observed.body, &want, json) => {}
+            Ok(want) if same_body_on(&observed.body, &want, json, &route) => {}
             Ok(want) if json && want == observed.body => {
                 push(
                     "body",
@@ -827,10 +841,15 @@ pub fn compare(
             Ok(want) => push("body", difference(&observed.body, &want)),
             Err(error) => push("body", error),
         }
-        if let Some(expected) = &case.expected.frames {
+        let sequence = sequence_rule(rules, platform, case);
+        if let Some(r) = sequence {
+            report.used.insert(r.index);
+        }
+        if let Some(expected) = expected_frames(case, sequence) {
             frames(
-                payload_frames(expected),
+                expected,
                 &observed.frames,
+                &route,
                 rule(&Part::WsFrame),
                 &mut report.used,
                 &mut push,
@@ -843,7 +862,9 @@ pub fn compare(
 /// The terminal client-initiated normal close is capture cleanup, not a
 /// payload observation (GOLDEN_CONTRACT §6). Retain other control frames,
 /// including early or server-initiated closes, at their exact positions.
-fn payload_frames(frames: &[super::fixture::ExpectedFrame]) -> &[super::fixture::ExpectedFrame] {
+pub(super) fn payload_frames(
+    frames: &[super::fixture::ExpectedFrame],
+) -> &[super::fixture::ExpectedFrame] {
     match frames {
         [payload @ .., sent, received]
             if sent.fin
@@ -866,6 +887,7 @@ fn payload_frames(frames: &[super::fixture::ExpectedFrame]) -> &[super::fixture:
 fn frames(
     expected: &[super::fixture::ExpectedFrame],
     observed: &[Frame],
+    route: &str,
     rule: Option<&Rule>,
     used: &mut BTreeSet<usize>,
     push: &mut impl FnMut(&str, String),
@@ -886,6 +908,7 @@ fn frames(
     for (index, (want, got)) in expected.iter().zip(observed).enumerate() {
         let mut payload = Cow::Borrowed(want.payload.as_slice());
         if let Some(rule) = rule
+            && rule.applies_to_frame(index)
             && want.from_server
             && want.opcode == 1
         {
@@ -904,7 +927,11 @@ fn frames(
                 ),
             );
         } else if !(if want.fin && want.opcode == 1 {
-            same_text_frame(&got.payload, &payload)
+            same_text_frame_on(
+                &got.payload,
+                &payload,
+                if want.from_server { route } else { "" },
+            )
         } else {
             payload == got.payload
         }) {
@@ -942,7 +969,7 @@ pub fn run(platforms: &[Platform], rules: &[Rule]) -> Result<Vec<Counts>, String
     let mut failures = Vec::new();
     let mut counts = Vec::new();
     for platform in platforms {
-        let observed = observe(platform)?;
+        let observed = observe_with_rules(platform, rules)?;
         let report = compare(platform, &observed, rules);
         used.extend(report.used);
         failures.extend(

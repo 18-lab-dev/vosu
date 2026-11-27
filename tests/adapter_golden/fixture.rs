@@ -28,12 +28,11 @@ pub const FAMILIES: [&str; 6] = [
     "calculation",
     "origin-peer",
 ];
-pub const NORMALIZATION_VERSION: u64 = 2;
-/// `GOLDEN_CONTRACT.md` §7, first column. Version 2 approves no
+pub const NORMALIZATION_VERSION: u64 = 3;
+/// `GOLDEN_CONTRACT.md` §7, first column. Version 3 approves no
 /// `client-timestamp-pointer` instance, and `raw-capability-redaction` only
 /// ever applies to private raw evidence.
-pub const RULE_IDS: [&str; 7] = [
-    "header-date",
+pub const RULE_IDS: [&str; 6] = [
     "header-last-modified",
     "header-etag",
     "root-prefix",
@@ -41,35 +40,16 @@ pub const RULE_IDS: [&str; 7] = [
     "raw-capability-redaction",
     "client-timestamp-pointer",
 ];
-/// `GOLDEN_CONTRACT.md` §6 compared headers plus `date`, whose presence is
-/// compared; every `access-control-*` header is compared too.
-pub const COMPARED_HEADERS: [&str; 17] = [
-    "accept-ranges",
-    "cache-control",
-    "connection",
-    "content-length",
-    "content-range",
-    "content-security-policy",
-    "content-type",
-    "date",
-    "etag",
-    "last-modified",
-    "location",
-    "sec-websocket-accept",
-    "sec-websocket-extensions",
-    "sec-websocket-protocol",
-    "sec-websocket-version",
-    "upgrade",
-    "x-content-type-options",
-];
+/// GOLDEN_CONTRACT.md §6: payload headers, not policy or transport.
+pub const COMPARED_HEADERS: [&str; 4] =
+    ["accept-ranges", "content-range", "content-type", "location"];
 pub const JSON_BUDGET: u64 = 8 << 20;
 pub const ASSET_BUDGET: u64 = 4 << 20;
 pub const MARKER: &str = "PENDING_PILOT";
-pub const DATE: &str = "<golden:date>";
 pub const LAST_MODIFIED: &str = "<golden:last-modified>";
 
 pub fn compared(name: &str) -> bool {
-    COMPARED_HEADERS.contains(&name) || name.starts_with("access-control-")
+    COMPARED_HEADERS.contains(&name)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -375,7 +355,7 @@ fn layout(name: &str, all: &BTreeSet<String>) -> Result<(), String> {
     Ok(())
 }
 
-const PLATFORM_KEYS: [&str; 15] = [
+const PLATFORM_KEYS: [&str; 14] = [
     "format",
     "normalization_version",
     "provenance",
@@ -390,7 +370,6 @@ const PLATFORM_KEYS: [&str; 15] = [
     "synthetic_roots",
     "case_counts",
     "cases",
-    "asset_media_type_corrections",
 ];
 
 fn platform(
@@ -409,12 +388,16 @@ fn platform(
     let at = |file: &str| format!("{name}/{file}");
     let manifest = json(&dir, "manifest.json")?;
     let where_ = at("manifest.json");
-    let keys = if manifest.get("asset_media_type_corrections").is_some() {
-        &PLATFORM_KEYS[..]
-    } else {
-        &PLATFORM_KEYS[..PLATFORM_KEYS.len() - 1]
-    };
-    let manifest = object(&manifest, &where_, keys)?;
+    let mut keys = PLATFORM_KEYS.to_vec();
+    for optional in [
+        "asset_media_type_corrections",
+        "calculation_chart_migration",
+    ] {
+        if manifest.get(optional).is_some() {
+            keys.push(optional);
+        }
+    }
+    let manifest = object(&manifest, &where_, &keys)?;
     expect_str(manifest, "format", "vosu-golden-platform-v1", &where_)?;
     expect_header(manifest, pin, &where_)?;
     if label(manifest, &where_)? != provenance {
@@ -497,6 +480,9 @@ fn platform(
     }
     brand(&dir, name, pin, provenance, &files)?;
     let cases = cases(&dir, name, manifest, &files, &assets)?;
+    if let Some(migration) = manifest.get("calculation_chart_migration") {
+        check_calculation_chart_migration(migration, manifest, &cases, provenance, &where_)?;
+    }
     for case in &cases {
         super::case_file::request_roots(&case.request, &synthetic_roots, &case.normalized)
             .map_err(|e| format!("{name}/cases/{}.json: {e}", case.id))?;
@@ -507,6 +493,62 @@ fn platform(
         assets,
         cases,
     })
+}
+
+fn check_calculation_chart_migration(
+    migration: &Value,
+    manifest: &Map<String, Value>,
+    cases: &[Case],
+    provenance: Provenance,
+    at: &str,
+) -> Result<(), String> {
+    let at = format!("{at}.calculation_chart_migration");
+    let row = object(
+        migration,
+        &at,
+        &[
+            "capture_sha256",
+            "review_receipt",
+            "barrier",
+            "donor_case",
+            "donor_attempt",
+            "cases",
+        ],
+    )?;
+    let donor = cases
+        .iter()
+        .find(|case| row["donor_case"] == case.id)
+        .filter(|case| {
+            case.family == "state-http"
+                && case.replay.schema == vosu_core::server::websocket::Schema::StreamCompanion
+        })
+        .ok_or_else(|| format!("{at}: missing SC donor case"))?;
+    let targets = string_list(&row["cases"], &at)?;
+    if provenance != Provenance::Captured
+        || !row["capture_sha256"]
+            .as_str()
+            .is_some_and(|sha| hex(sha, 64))
+        || row["review_receipt"] != manifest["review_receipt"]
+        || row["barrier"] != donor.barrier
+        || row["donor_attempt"]
+            .as_u64()
+            .is_none_or(|n| !(1..=3).contains(&n))
+        || targets.is_empty()
+        || targets.windows(2).any(|pair| pair[0] >= pair[1])
+        || targets.iter().any(|id| {
+            !cases.iter().any(|case| {
+                case.id == *id
+                    && case.family == "calculation"
+                    && case.barrier == donor.barrier
+                    && case.replay_json == donor.replay_json
+            })
+        })
+    {
+        return Err(format!(
+            "{at}: migration differs from its recorded donor or review"
+        ));
+    }
+    Ok(())
 }
 
 fn check_asset_media_type_corrections(

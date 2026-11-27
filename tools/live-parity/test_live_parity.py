@@ -749,7 +749,7 @@ class ComparatorTests(unittest.TestCase):
                         left, right, 300, active_override=False)],
                 )
 
-    def test_phase_sensitive_fields_are_always_volatile(self) -> None:
+    def test_phase_sensitive_fields_keep_types_and_bounded_stable_clocks(self) -> None:
         cases = (
             (
                 "v1",
@@ -777,8 +777,8 @@ class ComparatorTests(unittest.TestCase):
             ),
             (
                 "sc",
-                {"mapPosition": 100, "time": 100, "timeLeft": 900},
-                {"mapPosition": 200, "time": 200, "timeLeft": 800},
+                {"mapPosition": "00:00:00.100", "time": 0.1, "timeLeft": "00:00:00.900"},
+                {"mapPosition": "00:00:00.350", "time": 0.35, "timeLeft": "00:00:00.650"},
             ),
         )
         for schema, left_payload, right_payload in cases:
@@ -790,13 +790,18 @@ class ComparatorTests(unittest.TestCase):
 
                 right_payload = dict(right_payload)
                 first = next(iter(right_payload))
-                right_payload[first] = "wrong type"
+                right_payload[first] = None
                 wrong_type = Sample("vosu", schema, 2, right_payload)
                 self.assertTrue(any(
                     mismatch.comparator == "type"
                     for mismatch in compare_pair(
                         left, wrong_type, 300, active_override=False)
                 ))
+        left = Sample("source", "sc", 1, {"time": 0.1})
+        right = Sample("vosu", "sc", 2, {"time": 0.351})
+        [finding] = compare_pair(left, right, 300, active_override=False)
+        self.assertEqual(("/time", "live-clock", 250), (finding.pointer, finding.comparator,
+                                                       finding.tolerance))
 
     def test_types_and_omissions_are_detected_inside_volatile_root(self) -> None:
         left = Sample("source", "precise", 1, {"keys": {"k1": 1}})

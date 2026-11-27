@@ -10,9 +10,10 @@
 //! that route verbatim. Each other comparison still follows §6–7; a body
 //! rule never touches a header, and an unused rule fails the run.
 use super::{
-    compare::{has_json_content_type, same_body, same_header, same_text_frame},
+    case_file,
+    compare::{has_json_content_type, payload_frames, same_body, same_header, same_text_frame},
     envelope::tokens,
-    fixture::{Body, Case, Expected, Fixture, compared, object, string_list},
+    fixture::{Body, Case, Expected, ExpectedFrame, Fixture, compared, object, string_list},
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -66,6 +67,7 @@ pub enum Part {
     Body,
     WsHandshake,
     WsFrame,
+    WsSequence,
 }
 impl Part {
     pub fn name(&self) -> String {
@@ -75,6 +77,7 @@ impl Part {
             Part::Body => "body".into(),
             Part::WsHandshake => "ws.handshake".into(),
             Part::WsFrame => "ws.frame".into(),
+            Part::WsSequence => "ws.sequence".into(),
         }
     }
 }
@@ -85,6 +88,7 @@ pub enum Change {
     Value(Value),
     /// Minimal replacements inside a JSON body or frame.
     Replacements(Vec<(String, Value)>),
+    Frames(Vec<ExpectedFrame>),
 }
 
 #[derive(Clone, Debug)]
@@ -95,15 +99,22 @@ pub struct Rule {
     pub cases: Vec<String>,
     pub part: Part,
     pub change: Change,
+    pub frame_indices: Option<Vec<usize>>,
 }
 impl Rule {
     pub fn covers(&self, platform: &str, case: &str) -> bool {
         self.platforms.iter().any(|p| p == platform) && self.cases.iter().any(|c| c == case)
     }
+    pub fn applies_to_frame(&self, index: usize) -> bool {
+        self.frame_indices
+            .as_ref()
+            .is_none_or(|indices| indices.contains(&index))
+    }
     fn whole(&self) -> bool {
         match (&self.part, &self.change) {
-            (Part::Status | Part::WsHandshake, _)
-            | (Part::Body | Part::WsFrame, Change::Value(_)) => true,
+            (Part::Status | Part::WsHandshake | Part::WsSequence, _)
+            | (Part::Body | Part::WsFrame, Change::Value(_))
+            | (_, Change::Frames(_)) => true,
             (_, Change::Replacements(list)) => list.iter().any(|(pointer, _)| pointer.is_empty()),
             (Part::Header(_), Change::Value(_)) => false,
         }
@@ -150,6 +161,37 @@ pub fn rules(
         }
         out.push(rule);
     }
+    for sequence_rule in out.iter().filter(|rule| rule.part == Part::WsSequence) {
+        let admitted = !sequence(&sequence_rule.change)
+            .expect("validated sequence")
+            .is_empty();
+        for platform in &sequence_rule.platforms {
+            for case in &sequence_rule.cases {
+                if !out.iter().any(|rule| {
+                    rule.part == Part::Status
+                        && rule.ledger_id == sequence_rule.ledger_id
+                        && rule.covers(platform, case)
+                        && status(&rule.change).is_some_and(|status| (status == 101) == admitted)
+                }) {
+                    return Err(format!(
+                        "{}: ws.sequence needs its matching admission status rule",
+                        sequence_rule.label()
+                    ));
+                }
+            }
+        }
+    }
+    if out.iter().any(|r| {
+        r.part == Part::WsSequence
+            && out.iter().any(|o| {
+                o.part == Part::WsFrame
+                    && r.platforms
+                        .iter()
+                        .any(|p| r.cases.iter().any(|c| o.covers(p, c)))
+            })
+    }) {
+        return Err("ws.sequence and ws.frame cannot claim the same case".into());
+    }
     Ok(out)
 }
 
@@ -173,11 +215,11 @@ fn rule(
             ));
         }
     };
-    object(
-        item,
-        &at,
-        &["ledger_id", "platforms", "cases", "part", change_key],
-    )?;
+    let mut keys = vec!["ledger_id", "platforms", "cases", "part", change_key];
+    if map.contains_key("frame_indices") {
+        keys.push("frame_indices");
+    }
+    object(item, &at, &keys)?;
     let ledger_id = map["ledger_id"].as_str().unwrap_or_default().to_owned();
     let row = ledger.get(&ledger_id).ok_or(format!(
         "{at}: ledger id {ledger_id:?} is not a DIVERGENCES.md row"
@@ -216,20 +258,44 @@ fn rule(
         "body" => Part::Body,
         "ws.handshake" => Part::WsHandshake,
         "ws.frame" => Part::WsFrame,
+        "ws.sequence" => Part::WsSequence,
         other => match other.strip_prefix("headers.") {
-            Some(name) if compared(name) && name != "date" && name == name.to_lowercase() => {
+            Some(name) if compared(name) && name == name.to_ascii_lowercase() => {
                 Part::Header(name.to_owned())
             }
             _ => return Err(format!("{at}: part {other:?} is not a §10 record part")),
         },
     };
-    if matches!(part, Part::WsHandshake | Part::WsFrame)
-        && targets.iter().any(|(_, case)| case.family != "ws")
+    if matches!(part, Part::WsHandshake | Part::WsFrame | Part::WsSequence)
+        && targets.iter().any(|(_, case)| {
+            case.family != "ws" && !(part == Part::WsSequence && case.id == "origin-peer.ws.null")
+        })
     {
         return Err(format!("{at}: {} applies only to ws cases", part.name()));
     }
     let change = change(&part, &map[change_key], change_key == "vosu_value")
         .map_err(|e| format!("{at}: {e}"))?;
+    let frame_indices = if let Some(indices) = map.get("frame_indices") {
+        let indices = indices
+            .as_array()
+            .ok_or(format!("{at}: frame_indices is not an array"))?;
+        let indices = indices
+            .iter()
+            .map(super::fixture::as_usize)
+            .collect::<Result<Vec<_>, _>>()?;
+        if part != Part::WsFrame
+            || !matches!(change, Change::Replacements(_))
+            || indices.is_empty()
+            || indices.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(format!(
+                "{at}: frame_indices must be sorted distinct indices on a frame pointer rule"
+            ));
+        }
+        Some(indices)
+    } else {
+        None
+    };
     let rule = Rule {
         index,
         ledger_id,
@@ -237,6 +303,7 @@ fn rule(
         cases,
         part,
         change,
+        frame_indices,
     };
     let mut whole = rule.whole();
     for (platform, _) in &targets {
@@ -249,9 +316,9 @@ fn rule(
             .any(|ids| ids.iter().all(|id| rule.cases.iter().any(|c| c == id)));
     }
     for (_, case) in &targets {
-        if whole && !scope_names(&row.scope, &route(case)) {
+        if whole && !(scope_names(&row.scope, &route(case)) || scope_names(&row.scope, &case.id)) {
             return Err(format!(
-                "{}: a whole-route subtraction on {} needs a ledger scope naming {} verbatim",
+                "{}: a whole-route subtraction on {} needs a ledger scope naming {} verbatim or the exact case ID",
                 rule.label(),
                 case.id,
                 route(case)
@@ -304,6 +371,30 @@ fn change(part: &Part, value: &Value, whole: bool) -> Result<Change, String> {
         }
         return Ok(Change::Replacements(list));
     }
+    if *part == Part::WsSequence {
+        let frames = value
+            .as_array()
+            .ok_or("ws.sequence is not an array")?
+            .iter()
+            .map(case_file::frame)
+            .collect::<Result<Vec<_>, _>>()?;
+        if !matches!(
+            frames.as_slice(),
+            [] | [ExpectedFrame {
+                from_server: true,
+                fin: true,
+                opcode: 1,
+                masked: false,
+                ..
+            }]
+        ) {
+            return Err(
+                "ws.sequence must be empty for rejection or one server initial frame for admission"
+                    .into(),
+            );
+        }
+        return Ok(Change::Frames(frames));
+    }
     let valid = match part {
         Part::Status => value.as_u64().is_some_and(|s| (100..=599).contains(&s)),
         Part::Header(_) => value.is_string() || value.is_null(),
@@ -314,6 +405,7 @@ fn change(part: &Part, value: &Value, whole: bool) -> Result<Change, String> {
                 .is_some_and(|s| (100..=599).contains(&s))
                 && headers(value).is_some()
         }),
+        Part::WsSequence => unreachable!("handled above"),
     };
     if !valid {
         return Err(format!("vosu_value does not fit part {}", part.name()));
@@ -354,7 +446,8 @@ fn derive(rule: &Rule, expected: &Expected) -> Result<bool, String> {
         }
         Part::Body => {
             let Body::Text(text) = &expected.body else {
-                return Err("a binary body is never subtracted".into());
+                return Ok(rule.ledger_id == "legacy-beatmap-shortcut-exact"
+                    && matches!(&rule.change, Change::Value(value) if value == "Not Found"));
             };
             !same_body(
                 apply_text(&rule.change, text)?.as_bytes(),
@@ -376,8 +469,18 @@ fn derive(rule: &Rule, expected: &Expected) -> Result<bool, String> {
         Part::WsFrame => {
             let mut changed = false;
             let mut any = false;
-            for frame in expected.frames.iter().flatten() {
-                if frame.from_server && frame.opcode == 1 {
+            let frames = payload_frames(expected.frames.as_deref().unwrap_or_default());
+            if let Some(indices) = &rule.frame_indices
+                && indices.iter().any(|&index| {
+                    !frames
+                        .get(index)
+                        .is_some_and(|frame| frame.from_server && frame.fin && frame.opcode == 1)
+                })
+            {
+                return Err("frame index does not name a complete server text frame".into());
+            }
+            for (index, frame) in frames.iter().enumerate() {
+                if frame.from_server && frame.opcode == 1 && rule.applies_to_frame(index) {
                     any = true;
                     let text = std::str::from_utf8(&frame.payload)
                         .map_err(|_| "server text frame is not UTF-8")?;
@@ -394,13 +497,20 @@ fn derive(rule: &Rule, expected: &Expected) -> Result<bool, String> {
             }
             changed
         }
+        Part::WsSequence => {
+            let frames = sequence(&rule.change).expect("validated sequence");
+            // Sequence changes accompany a change in admission, not a payload skip.
+            frames.is_empty() == (expected.status == 101)
+                && frames.len()
+                    != payload_frames(expected.frames.as_deref().unwrap_or_default()).len()
+        }
     })
 }
 
 pub fn status(change: &Change) -> Option<u16> {
     match change {
         Change::Value(value) => value.as_u64().and_then(|s| u16::try_from(s).ok()),
-        Change::Replacements(_) => None,
+        Change::Replacements(_) | Change::Frames(_) => None,
     }
 }
 
@@ -419,6 +529,13 @@ pub fn handshake(change: &Change) -> Option<(u16, Vec<(String, String)>)> {
         u16::try_from(value["status"].as_u64()?).ok()?,
         headers(value)?,
     ))
+}
+
+pub fn sequence(change: &Change) -> Option<&[ExpectedFrame]> {
+    match change {
+        Change::Frames(frames) => Some(frames),
+        _ => None,
+    }
 }
 
 /// The vosu text of a body or frame: the whole value, or the upstream text
@@ -445,6 +562,7 @@ pub fn apply_text(change: &Change, upstream: &str) -> Result<String, String> {
             }
             Ok(out)
         }
+        Change::Frames(_) => Err("a frame sequence is not text".into()),
     }
 }
 

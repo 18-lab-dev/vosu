@@ -320,25 +320,22 @@ routes, which appear only as negative near-miss cases, and `/api/ingame` (§8).
 
 ### Header comparison (A4b.7)
 
-Compared exactly after §7, except as noted below (name, presence and value;
-the reason phrase and header order are recorded privately): status, `content-type`,
-`content-length`, `cache-control`, `etag`, `last-modified`, `accept-ranges`,
-`content-range`, `location`, `content-security-policy`,
-`x-content-type-options`, every `access-control-*` header, and for WebSocket
-handshakes `upgrade`, `connection`, `sec-websocket-accept` and the protocol
-negotiation fields `sec-websocket-protocol`, `sec-websocket-extensions` and
-`sec-websocket-version`. Every other header is recorded only in the private
-capture. Another header joins this set only when a client contract relies on
-it, through a reviewed amendment to this file.
+Across implementations, only the status code and these response headers compare:
+the `content-type` media type (ignoring `charset`; other parameters remain
+strict), `content-range`, `location`, and `accept-ranges`. Header names and
+presence compare, but order and reason phrases do not. `Date`, `Connection`,
+`Upgrade`, `Keep-Alive`, `Transfer-Encoding` and WebSocket protocol handshake
+headers are transport facts, not payload comparisons. Upgrade status, frame
+flags and order still compare. Browser and caching policy is vosu-owned:
+CORS, CSP, nosniff, `Cache-Control`, `ETag` and `Last-Modified` are tested
+against vosu's own contract rather than against upstream.
 
-**2026-11-26 owner amendment:** Ignore `charset` parameters on `content-type`;
-other media-type parameters still compare exactly. When `content-length` is
-present, its value must describe that side's own body, not match the other
-side's value. For `HEAD`, validate against the matching `GET` from that side
-when recorded. With no matching `GET` or for `304`, validate the length's
-syntax only: it can describe a representation not sent in the response.
-When `root-prefix` changes the number of bytes, validate the raw length first
-and recompute the normalized `content-length` or frame length for storage.
+`Content-Length` is a local framing invariant, not a compared header (not
+even presence). If present, it describes that side's own body, or the
+matching same-side GET representation for HEAD. With no matching GET or
+for 304, check only syntax. When `root-prefix` changes the number of bytes,
+validate raw framing first and store the resulting normalized body or frame
+length. All headers remain in the private raw capture.
 
 ## 7. Normalization inventory (A4b.6)
 
@@ -350,19 +347,18 @@ is a string; a number, boolean, null or absent member at a scoped location is
 never touched. `golden` checks that its implemented rule IDs equal the first
 column of this table exactly.
 
-Normalization version: 2
+Normalization version: 3
 
 vosu_core::server
 
 | Rule ID | Scope | Replacement | Retained local invariant |
 |---|---|---|---|
-| `header-date` | Response and WebSocket handshake header `date` | `<golden:date>` | Value is an IMF-fixdate; presence is compared |
-| `header-last-modified` | Response header `last-modified` in the `files` family, and the same value echoed in that case's request `If-Modified-Since`/`If-Range` (§6) | `<golden:last-modified>` | IMF-fixdate, present and equal in both upstream sandwich responses; in replay, equal to the declared replay file's mtime |
-| `header-etag` | Response header `etag` in the `files` family, and the same tag echoed in that case's request `If-None-Match`/`If-Range` (§6) | `"<golden:etag:N>"`, one ordinal per distinct value, weak `W/` prefix kept | Valid entity-tag, present and equal in both upstream sandwich responses; distinct tags stay distinct |
+| `header-last-modified` | Only the value echoed from a recorded `files` response in that case's request `If-Modified-Since`/`If-Range` (§6) | `<golden:last-modified>` | The upstream validator is a valid IMF-fixdate and stable in the sandwich. Replay echoes its own earlier validator and checks the declared replay file mtime; the header is not compared across daemons |
+| `header-etag` | Only the tag echoed from a recorded `files` response in that case's request `If-None-Match`/`If-Range` (§6) | `"<golden:etag:N>"`, one ordinal per distinct value, weak `W/` prefix kept | The upstream validator is a valid entity-tag and stable in the sandwich. Replay echoes its own validator; distinct echoed ordinals bind distinct tags, without comparing policy headers |
 | `root-prefix` | Exact token-bounded occurrences of an attested private absolute root prefix: raw, JSON-escaped (one and two levels, including nested JSON strings), percent-encoded and Windows forward-slash spellings, in request lines, bodies, frames, headers and dump CBOR text strings. In a request target the closing `/` of a route prefix (`/Songs/`, `/files/beatmap/`, `/files/skin/`) ends a token, so an absolute path spelled right after it (`/Songs//root/…`, `/Songs/C%3A%5C…`) starts at a token boundary | The synthetic root assigned to that attested root (below) | The path below the root is kept verbatim; only the changed body's `content-length` or frame length is recomputed (§6); any remaining private prefix fails the privacy scan |
 | `envelope-identity-ordinal` | Session, roster, resource and process identity fields of vosu dump envelopes only; ordinalized by the capture endpoint, verified by `golden` | Stable ordinals | Equal inputs map to equal ordinals and distinct inputs to distinct ordinals; selected session, roster order and foreground/generation relations preserved |
 | `raw-capability-redaction` | Request header `X-Vosu-Test-Capture` in private raw evidence, redacted by `golden-capture` | `<redacted>` | `golden` rejects any occurrence of the header or its value in a capture or candidate; dump calls are not route records |
-| `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 2: none.** |
+| `client-timestamp-pointer` | String-valued client timestamps at an exact (case family, record part, JSON Pointer) scope listed in this row only | `<golden:client-timestamp>` | Proven volatile: the value differed between the two upstream sandwich responses while nothing else did. **Approved instances in version 3: none.** |
 
 vosu_core::server
 
@@ -374,17 +370,29 @@ match recursively with the same JSON type. This includes error bodies;
 null is not absence, and strings and booleans are not numbers. Whitespace,
 JSON number spelling and object key order do not matter.
 
-For finite binary64 numbers, use one symmetric relative bound everywhere:
-`|a − b| ≤ 1e-12 × max(|a|, |b|)`. Thus `5` and `5.0` are equal. The bound
-allows small accumulated floating-point round-off while detecting changes
-above one part per trillion; there is no absolute floor near zero or
-per-field exception.
+For ordinary finite binary64 numbers, use a symmetric relative bound:
+`|a − b| ≤ 1e-12 × max(|a|, |b|)`. Thus `5` and `5.0` are equal.
 
-Status, route and method, security, cache, range and upgrade semantics,
-WebSocket frame flags and order, legacy quirks, bus revision relationships
-and coherent-sample identity stay strict. Non-JSON bodies and frame payloads
-compare byte for byte after the approved rewrites. The comparison does not
-rewrite JSON in the evidence or change the normalization version.
+**Reviewed live-clock comparison (version 3).** Only the following pointers
+in JSON response bodies and equivalent complete server WS text frames use
+an inclusive absolute bound of 250 ms. Absence on one side, a wrong JSON type,
+an invalid legacy duration string, and a unit or scaling error outside the
+bound all fail. Both sides may omit the field (for example a filter
+projection). The raw values are retained.
+
+| HTTP path | WS path | JSON Pointer | Recorded unit |
+|---|---|---|---|
+| `/json` | `/ws` | `/menu/bm/time/current` | numeric milliseconds |
+| `/json/sc` | `/tokens` | `/time` | numeric seconds |
+| `/json/sc` | `/tokens` | `/mapPosition`, `/timeLeft` | legacy `h:m:s.ms` strings, decoded as milliseconds, including signed remainders and unpadded millisecond digits |
+| `/json/v2` | `/websocket/v2` | `/beatmap/time/live` | numeric milliseconds |
+
+This rule does not apply to `bassDensity`, precise-route fields, other
+`time` members or client frames. The separate within-capture volatility
+ledger still checks whether a capture was stable; it grants no replay
+exceptions. Non-JSON bodies and frame payloads compare byte for byte after
+approved rewrites; coherent-sample identity, array order and bus revision
+relationships stay strict.
 
 Adding or widening a rule (including a `client-timestamp-pointer` instance)
 requires a reviewed amendment to this file, a counterexample test in
@@ -494,25 +502,32 @@ labeled upstream and never count as pilot or full evidence.
   class is `security`, `contract` or `licensing`; `temporary` or unknown
   classes fail.
 - `cases` lists exact case IDs; `platforms` lists the platforms it applies to.
-- `part` is one of `status`, `headers.<name>` (a §6 header), `body`,
-  `ws.handshake` or `ws.frame`.
+- `part` is `status`, `headers.<name>` (a §6 payload header), `body`,
+  `ws.handshake`, `ws.frame` or `ws.sequence`.
 - Exactly one of `vosu_value` (the expected vosu value of that part) or
   `vosu_replacements` (minimal JSON Pointer replacements inside a JSON body or
   frame) is present. **2026-11-26 owner amendment:** §6–7 equality also
   applies to the replacement expectation; JSON spelling, bounded round-off
   and byte length differences do not require subtraction.
 - Every rule must match at least one recorded case; an unused rule fails.
-- A rule that replaces a whole status, body, handshake or frame, or lists
-  every case of a route, is a whole-route subtraction. It is admitted only
-  when the ledger row's scope names that route verbatim. A header issue is
-  never subtracted through `body`.
+- A rule that replaces a whole status, body, handshake, frame or sequence,
+  or lists every case of a route, is a whole-route subtraction. It is
+  admitted only when the ledger names the literal route or the exact case
+  ID verbatim in its scope. A header issue is never subtracted through `body`.
 - Every comparison not covered by a rule follows §6–7 unchanged. A security
   rule proves vosu's stricter result; it never hides a mismatch elsewhere.
-- Part details: `headers.<name>` takes a string `vosu_value`, or `null` for
-  an absent header, and never names `date`. `ws.handshake` replaces the status
-  and the whole compared header list. `ws.frame` applies to every server text
-  frame of the listed cases. A route with a single recorded case is listed
-  whole by any rule on that case. Every listed case must exist on every
+- `headers.<name>` takes one string or null (absent). `ws.handshake`
+  replaces status and the whole payload header list. `ws.frame` applies to
+  each server text frame, or to the exact zero-based complete server-text
+  `frame_indices` on a pointer rule. `ws.sequence` is allowed only together
+  with the same ledger row's status rule changing the upgrade outcome. It
+  expects either no frames on rejection or one exact recorded initial
+  server text frame on admission. The latter still compares every member
+  under §7 and never sends additional client frames. A protected file
+  shortcut rejection may expect exact `Not Found` instead of an upstream
+  asset response; it never substitutes bytes of a successful asset.
+  A route with a single recorded case is listed whole by any rule on it.
+  Every listed case must exist on every
   listed platform, and a rule whose vosu value equals the upstream part, or
   two rules on one part of one case, fail. `divergence-rules.json` is
   optional: without it nothing is subtracted, and when present it is
@@ -524,6 +539,13 @@ companion `status` (`400`) rule under `legacy-calculate-declared-roots`.
 Each side's `content-length` describes its own body. The original upstream
 case stays unchanged. These rules do not apply to the positive probes or to
 platforms without evidence, and no other header or record part is subtracted.
+
+The run-five generator additionally records only the parts changed by the
+approved calculator routes: `calculation.mods-acronyms` and `.mods-json`
+must return 200 with their captured successful JSON (checked by replay);
+the five cases `calculation.invalid-{accuracy,clock-rate,count,mode}` and
+`calculation.mods-invalid` use their exact documented 400 JSON errors.
+The actual fixtures retain the upstream observations in every case.
 
 ## 11. Pin policy (A4b.10)
 
@@ -589,6 +611,28 @@ Replay inputs follow what the platform's production host records:
   so an absolute or private recorded path matches nothing and the case is
   refused. A reference with no matching asset is refused, and a recorded path
   never falls back to file authority.
+- **Selected calculator migration (run 5).** New calculation sandwiches
+  select `sc`, which records the chart authority. For the attested
+  Windows-lazer run-five capture only (SHA-256
+  `e3b52216667347fc9b0783e287cc8293e2a14c3293fe01e8f89ab8c04c1b39d5`),
+  the generator uses the intact recorded `state-http.json-sc.get.menu`
+  envelope for the 14 selected-chart GETs without an explicit `path`.
+  It checks both recorded sandwiches for the same barrier, full selected
+  session and roster, focus, bus revision and identical recorded
+  `/internal/paths`, and requires a recorded `/resources/file` in both SC
+  dumps. It never assembles a resource from a hash, another barrier, an
+  inferred location, or a global handle. `calculation_chart_migration` in
+  the platform manifest records the capture hash, review receipt, barrier,
+  donor case and attempt, and exact target case IDs. The loader checks each
+  migrated envelope is identical to its recorded donor. The private
+  capture itself is unchanged.
+- **Admitted read alternates (run 5).** The admitted 16 KiB query control,
+  opaque HTTP Origin, and empty/missing Host cases use the upstream
+  `state-http.json-v2.get.menu` payload recorded at the same barrier of
+  that capture. Opaque-Origin WS uses the recorded `ws.v2.upgrade.menu`
+  initial frame. These do not use an old vosu state response as an oracle:
+  the sole settings substitutions are the two exact S3 song-select fields.
+  Replay still compares all other fields, headers, status and frame flags.
 - **Explicit calculation paths.** Capture inventories the selected chart and
   the byte-identical ordinary `.osu` copy separately, with the actual `files`
   or `songs` slot and its slot-relative path. A synthetic prefix on

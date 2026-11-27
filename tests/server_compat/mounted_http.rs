@@ -184,6 +184,18 @@ fn mounted_origin_peer_limits_and_api_v1_privacy_are_enforced_on_adapter_routes(
                     .await
                     .unwrap();
                 assert_eq!(allowed.status(), StatusCode::OK, "{origin} {path}");
+                let headers = allowed.headers();
+                assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+                assert_eq!(
+                    headers[header::ACCESS_CONTROL_ALLOW_HEADERS],
+                    "Origin, X-Requested-With, Content-Type, Accept"
+                );
+                assert_eq!(
+                    headers[header::ACCESS_CONTROL_ALLOW_METHODS],
+                    "POST, GET, PUT, DELETE, OPTIONS"
+                );
+                assert_eq!(headers["access-control-allow-private-network"], "true");
+                assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
             }
         }
         for (path, _) in FEEDS {
@@ -193,6 +205,7 @@ fn mounted_origin_peer_limits_and_api_v1_privacy_are_enforced_on_adapter_routes(
                 "{path}"
             );
             assert!(m.ws(path, Some(&m.origin)).await.is_ok(), "{path}");
+            assert!(m.ws(path, Some("null")).await.is_ok(), "{path}");
         }
         // A peer outside the allow-list is refused before any provider runs,
         // for state reads and upgrades alike (in-process: same dispatcher).

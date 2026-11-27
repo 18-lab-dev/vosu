@@ -15,10 +15,9 @@ from urllib.parse import quote, unquote
 
 from route_security import ROUTE_PREFIXES
 
-NORMALIZATION_VERSION = 2
+NORMALIZATION_VERSION = 3
 
 RULE_IDS = (
-    "header-date",
     "header-last-modified",
     "header-etag",
     "root-prefix",
@@ -28,10 +27,9 @@ RULE_IDS = (
 )
 
 # (case family, record part, JSON Pointer) scopes approved for
-# client-timestamp-pointer. Version 2 approves none.
+# client-timestamp-pointer. Version 3 approves none.
 CLIENT_TIMESTAMP_POINTERS: tuple[tuple[str, str, str], ...] = ()
 
-DATE_PLACEHOLDER = "<golden:date>"
 LAST_MODIFIED_PLACEHOLDER = "<golden:last-modified>"
 CLIENT_TIMESTAMP_PLACEHOLDER = "<golden:client-timestamp>"
 CAPABILITY_HEADER = "x-vosu-test-capture"
@@ -135,10 +133,6 @@ class Validators:
                     raise GoldenError("header-last-modified invariant: Last-Modified is not an IMF-fixdate")
                 self.modified.add(value)
 
-    def etag(self, value: str) -> str:
-        weak, opaque = entity_tag(value) or ("", "")
-        return f'{weak}"<golden:etag:{self.etags[opaque]}>"'
-
     def request_value(self, name: str, value: str) -> tuple[str, set[str]]:
         """Replace echoed validators in one conditional request header value."""
         used: set[str] = set()
@@ -155,28 +149,6 @@ class Validators:
             return f'{match.group(1) or ""}"<golden:etag:{self.etags[match.group(2)]}>"'
 
         return _ENTITY_TAG.sub(replace, value), used
-
-
-def normalize_response_headers(
-        headers: list[list[str]], files_family: bool, validators: Validators,
-) -> tuple[list[list[str]], set[str]]:
-    out: list[list[str]] = []
-    used: set[str] = set()
-    for name, value in headers:
-        lowered = name.lower()
-        if lowered == "date":
-            if not is_imf_fixdate(value):
-                raise GoldenError("header-date invariant: Date is not an IMF-fixdate")
-            value = DATE_PLACEHOLDER
-            used.add("header-date")
-        elif files_family and lowered == "etag":
-            value = validators.etag(value)
-            used.add("header-etag")
-        elif files_family and lowered == "last-modified":
-            value = LAST_MODIFIED_PLACEHOLDER
-            used.add("header-last-modified")
-        out.append([name, value])
-    return out, used
 
 
 # ---------------------------------------------------------------- roots

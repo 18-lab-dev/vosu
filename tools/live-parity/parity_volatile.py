@@ -13,14 +13,84 @@ from dataclasses import dataclass
 import base64
 import json
 import math
+import re
 import struct
 from typing import Any
+
+from route_matrix import COMPARED_HEADERS
 
 AUTHORITY = ("Main contract decision 2026-11-25 (M4b O0 dry run, finding 2): live-advancing "
              "values are compared by presence, type and rule, never by value")
 
 # GOLDEN_CONTRACT.md §7, also implemented in tests/adapter_golden/compare.rs.
 JSON_RELATIVE_TOLERANCE = 1e-12
+CLOCK_MS_TOLERANCE = 250.0
+
+# Replay scope is independent of the capture-sandwich volatility ledger.
+REPLAY_CLOCKS = (
+    (("/json", "/ws"), (("menu", "bm", "time", "current"),), "ms"),
+    (("/json/v2", "/websocket/v2"), (("beatmap", "time", "live"),), "ms"),
+    (("/json/sc", "/tokens"), (("time",),), "seconds"),
+    (("/json/sc", "/tokens"), (("mapPosition",), ("timeLeft",)), "sc-duration"),
+)
+
+
+def _sc_duration(value: str) -> float:
+    # SC floors signed JS remainders for h/m/s, and writes the remaining
+    # milliseconds after '.' without padding ('.4' means 4 ms, not 400).
+    # Full match also rejects seconds syntax in the millisecond component.
+    match = re.fullmatch(r"(-?[0-9]+):(-?[0-9]+):(-?[0-9]+)\.(-?[0-9]+(?:\.[0-9]+)?)",
+                         value)
+    if match is None:
+        return math.nan
+    h, m, s, ms = map(float, match.groups())
+    if h < 0:
+        h += m != 0 or s != 0 or ms != 0
+        m += s != 0 or ms != 0
+        s += ms != 0
+        if not (-60 < m <= 0 and -60 < s <= 0 and -1000 < ms <= 0):
+            return math.nan
+    elif not (0 <= m < 60 and 0 <= s < 60 and 0 <= ms < 1000):
+        return math.nan
+    return ((h * 60 + m) * 60 + s) * 1000 + ms
+
+
+@dataclass(eq=False)
+class Clock:
+    value: Any
+    unit: str
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Clock) or self.unit != other.unit:
+            return False
+
+        def milliseconds(value: Any) -> float:
+            if self.unit == "sc-duration":
+                return _sc_duration(value) if type(value) is str else math.nan
+            return value * (1000 if self.unit == "seconds" else 1) \
+                if type(value) in (int, float) else math.nan
+
+        return abs(milliseconds(self.value) - milliseconds(other.value)) <= CLOCK_MS_TOLERANCE
+
+
+def clock_equal(path: str, pointer: tuple[str, ...], left: Any, right: Any) -> bool | None:
+    """Compare a scoped live-clock leaf, or None if this path is not a clock."""
+    for routes, pointers, unit in REPLAY_CLOCKS:
+        if path in routes and pointer in pointers:
+            return Clock(left, unit) == Clock(right, unit)
+    return None
+
+
+def _clock_view(path: str, tree: Any) -> None:
+    for routes, pointers, unit in REPLAY_CLOCKS:
+        if path not in routes:
+            continue
+        for pointer in pointers:
+            node = tree
+            for key in pointer[:-1]:
+                node = node.get(key) if isinstance(node, dict) else None
+            if isinstance(node, dict) and pointer[-1] in node:
+                node[pointer[-1]] = Clock(node[pointer[-1]], unit)
 
 V2_PATHS = ("/json/v2", "/json/v2/precise", "/websocket/v2", "/websocket/v2/precise")
 SC_PATHS = ("/json/sc", "/tokens")
@@ -269,7 +339,7 @@ def _mask(tree: Any, pointer: str, rule: str, field_id: str) -> tuple[Any, bool]
 
 
 def payload_view(path: str, data: bytes, *, json_required: bool = True,
-                 mask: bool = True) -> tuple[Any, list[str]]:
+                 mask: bool = True, replay_clock: bool = False) -> tuple[Any, list[str]]:
     """Parsed JSON and any ledger IDs used; untyped non-JSON text stays bytes."""
     if not data:
         return data, []
@@ -280,6 +350,8 @@ def payload_view(path: str, data: bytes, *, json_required: bool = True,
             raise VolatileError("expected a JSON payload") from exc
         return data, []
     used = []
+    if replay_clock:
+        _clock_view(path, tree)
     if mask:
         for field in FIELDS:
             if path in field.paths:
@@ -291,12 +363,13 @@ def payload_view(path: str, data: bytes, *, json_required: bool = True,
 
 def record_view(path: str, status: Any, headers: list[list[str]], body: bytes | dict,
                 frames: list[tuple[Any, ...]] | None, *, head: bool = False,
-                mask: bool = True) -> tuple[tuple[Any, ...], list[str]]:
+                mask: bool = True, replay_clock: bool = False) -> tuple[tuple[Any, ...], list[str]]:
     """Compare headers and body, plus (direction, fin, opcode, mask, payload) frames."""
     if isinstance(body, bytes):
         is_json = any(name.lower() == "content-type" and is_json_media_type(value)
                       for name, value in headers)
-        view, used = payload_view(path, body, mask=mask) if is_json else (body, [])
+        view, used = (payload_view(path, body, mask=mask and not replay_clock,
+                                   replay_clock=replay_clock) if is_json else (body, []))
         size = len(body)
     else:
         view, used, size = body, [], body["length"]
@@ -305,16 +378,20 @@ def record_view(path: str, status: Any, headers: list[list[str]], body: bytes | 
         name = name.lower()
         if name == "content-length":
             check_content_length(value, body_length(int(status), size, head=head))
-            value = "<consistent length>"
+            continue
         elif name == "content-type":
             value = without_charset(value)
+        elif name not in COMPARED_HEADERS:
+            continue
         shown.append([name, value])
     frame_views = None
     if frames is not None:
         frame_views = []
         for direction, fin, opcode, masked, payload in frames:
-            fview, fused = payload_view(path, payload, json_required=False, mask=mask) \
-                if opcode == 1 and fin else (payload, [])
+            fview, fused = payload_view(
+                path, payload, json_required=False, mask=mask and not replay_clock,
+                replay_clock=replay_clock and direction == "server",
+            ) if opcode == 1 and fin else (payload, [])
             used += [i for i in fused if i not in used]
             frame_views.append((direction, fin, opcode, masked, fview))
     return (status, sorted(shown), view, frame_views), used

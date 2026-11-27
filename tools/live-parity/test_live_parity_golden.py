@@ -23,6 +23,7 @@ from parity_golden_rules import (
     NORMALIZATION_VERSION, RULE_IDS, GoldenError, Root, RootRewriter, apply_timestamp_pointers,
     check_approved_rules, rewrite_cbor_text,
 )
+from parity_golden_selection import RUN5_CAPTURE_SHA256, RUN5_DONOR, recorded_selections
 
 PIN = PINNED_SOURCE_REVISION
 CONTRACT = (f"Normalization version: {NORMALIZATION_VERSION}\n\n| Rule ID | Scope |\n|---|---|\n"
@@ -136,6 +137,34 @@ def capture(cases: list[dict], **overrides) -> dict:
     return value
 
 
+class SelectedCalculationTests(unittest.TestCase):
+    def test_run5_uses_only_a_coherent_recorded_sc_donor(self) -> None:
+        def entry(ns, pointer):
+            return {"ns": ns, "pointer": pointer, "value_cbor_b64": "Y2FiYw==", "error": None}
+        paths = entry("vosu.osu", "/internal/paths")
+        resource = entry("vosu.chart", "/resources/file")
+        http = response()
+        raw = case("calculation.no-query", request(target="/api/calculate/pp"), (http, http),
+                   dump=envelope(entries=[paths]))
+        sc = case(RUN5_DONOR, request(target="/json/sc"), (http, http), schema="sc",
+                  dump=envelope(schema="sc", entries=[paths, resource]))
+        calc, donor = (golden_mod._case(item, index) for index, item in enumerate((raw, sc)))
+        selected, provenance = recorded_selections([calc, donor], RUN5_CAPTURE_SHA256, "review")
+        self.assertEqual({calc["id"]: donor["dumps"][0]}, selected)
+        self.assertEqual([calc["id"]], provenance["cases"])
+        self.assertEqual((RUN5_DONOR, 1, "menu"), (provenance["donor_case"],
+                                                     provenance["donor_attempt"], provenance["barrier"]))
+        with self.assertRaisesRegex(GoldenError, "selected calculator chart was not recorded"):
+            recorded_selections([calc, donor], "other capture", "review")
+        wrong_barrier = {**donor, "barrier": "paused"}
+        with self.assertRaisesRegex(GoldenError, "different barrier"):
+            recorded_selections([calc, wrong_barrier], RUN5_CAPTURE_SHA256, "review")
+        wrong_revision = copy.deepcopy(donor)
+        wrong_revision["dumps"][1]["bus_revision"] += 1
+        with self.assertRaisesRegex(GoldenError, "same recorded selection"):
+            recorded_selections([calc, wrong_revision], RUN5_CAPTURE_SHA256, "review")
+
+
 class GoldenTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -235,8 +264,8 @@ class CandidateLayoutTests(GoldenTestCase):
         candidate = self.run_golden(capture([state_case()]))
         expected = self.case_file(candidate, "state-http.get-json-v2")["expected"]
         self.assertEqual(200, expected["status"])
-        self.assertEqual([["content-length", "11"], ["content-type", "application/json"],
-                          ["date", "<golden:date>"]], expected["headers"])
+        self.assertEqual([["content-length", "11"], ["content-type", "application/json"]],
+                         expected["headers"])
         self.assertEqual({"text": '{"ok":true}'}, expected["body"])
 
     def test_refuses_non_empty_directory_and_committed_fixture_tree(self) -> None:
@@ -794,7 +823,7 @@ class NormalizationTests(GoldenTestCase):
         candidate = self.run_golden(capture([files_case("files.beatmap-file", '"0"', text(body))]))
         expected = self.case_file(candidate, "files.beatmap-file")["expected"]
         self.assertEqual({"text": body}, expected["body"])
-        self.assertIn(["etag", '"<golden:etag:1>"'], expected["headers"])
+        self.assertNotIn("etag", dict(expected["headers"]))
         scope = (("files", "body", "/a"),)
         with self.assertRaisesRegex(GoldenError, "targets a number"):
             apply_timestamp_pointers(body, "files", "body", scope)
@@ -813,17 +842,15 @@ class NormalizationTests(GoldenTestCase):
         cases = [
             files_case("files.a", '"aa"'), files_case("files.b", 'W/"bb"'),
             files_case("files.c", '"aa"'),
-            files_case("files.d-if-none-match", '"bb"', extra=('If-None-Match: "bb"',),
+            files_case("files.d-if-none-match", '"bb"', extra=('If-None-Match: "aa", W/"bb"',),
                        route_request=request("GET", "/files/beatmap/file",
                                              'If-None-Match: "vosu-own"'),
                        conditional="etag"),
         ]
         candidate = self.run_golden(capture(cases))
-        tags = {case_id: dict(self.case_file(candidate, case_id)["expected"]["headers"])["etag"]
-                for case_id in ("files.a", "files.b", "files.c")}
-        self.assertEqual({"files.a": '"<golden:etag:1>"', "files.b": 'W/"<golden:etag:2>"',
-                          "files.c": '"<golden:etag:1>"'}, tags)
-        self.assertIn('If-None-Match: "<golden:etag:2>"',
+        for case_id in ("files.a", "files.b", "files.c"):
+            self.assertNotIn("etag", dict(self.case_file(candidate, case_id)["expected"]["headers"]))
+        self.assertIn('If-None-Match: "<golden:etag:1>", W/"<golden:etag:2>"',
                       self.case_file(candidate, "files.d-if-none-match")["request"]["text"])
         with self.assertRaisesRegex(GoldenError, "same synthetic root"):
             RootRewriter([Root("a", "C:\\one\\", SYN_ROOT), Root("b", "C:\\two\\", SYN_ROOT)], True)

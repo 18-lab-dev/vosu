@@ -119,7 +119,7 @@ for case_id, target in (
     ("ws.get-without-upgrade", "/websocket/v2"),
     ("files.get-beatmap-file", "/files/beatmap/file"),
     ("path-security.encoded-parent-files-beatmap", "/files/beatmap/..%2Fsentinel.osu"),
-    ("calculation.no-query", "/api/calculate/pp"),
+    ("calculation.relative-osu-path", "/api/calculate/pp?path=chart.osu"),
     ("origin-peer.http.none", "/json/v2"),
 ):
     frames = [] if case_id.startswith("ws.") else None
@@ -243,7 +243,7 @@ fn golden_gates_refuse_unapproved_content() {
     refused(
         |root| {
             edit_json(&case_path(root, calc), |v| {
-                v["normalized"] = json!(["client-timestamp-pointer", "header-date"]);
+                v["normalized"] = json!(["client-timestamp-pointer"]);
             });
         },
         true,
@@ -253,12 +253,11 @@ fn golden_gates_refuse_unapproved_content() {
         |root| {
             edit_json(&case_path(root, calc), |v| {
                 let headers = v["expected"]["headers"].as_array_mut().unwrap();
-                let date = headers.iter_mut().find(|h| h[0] == "date").unwrap();
-                date[1] = json!("Mon, 24 Nov 2026 10:00:00 GMT");
+                headers.push(json!(["date", "Mon, 24 Nov 2026 10:00:00 GMT"]));
             });
         },
         true,
-        "is not normalized by its rule",
+        "not a payload header or local framing",
     );
     refused(
         |root| {

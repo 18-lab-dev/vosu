@@ -235,6 +235,8 @@ def check_expected_cases(expected: list[str], scenario: ScenarioSet,
 
 
 def dump_schema(case: rm.RouteCase) -> str:
+    if case.family == "calculation":
+        return "sc"  # Records the calculator's selected chart resource.
     return _SCHEMA_OF_PATH.get(case.target.partition("?")[0], "v2")
 
 
@@ -391,18 +393,14 @@ def _raw(value: dict[str, str]) -> bytes:
 
 
 def _comparable(record: dict[str, Any]) -> tuple[Any, ...]:
-    """The parts a golden compares; the Date value is normalized, its presence is not.
+    """The compared payload and local framing checks; raw headers remain private.
 
-    Volatile-ledger fields are compared by presence, type and rule (`parity_volatile`);
-    a record breaking a rule never compares equal to anything."""
+    Volatile-ledger fields are checked independently for capture stability."""
     if "outcome" in record:
         return (record["outcome"],)
     request = _raw(record["request"]).decode("utf-8", "replace").split(" ", 2)
     path = request[1].partition("?")[0] if len(request) > 1 else ""
-    headers = [[name, "<date>" if name.lower() == "date" else value]
-               for name, value in record["headers"]
-               if name.lower() in parity_golden.COMPARED_HEADERS
-               or name.lower().startswith("access-control-")]
+    headers = record["headers"]
     frames = None if record.get("frames") is None else [
         (f["from"], f["fin"], f["opcode"], (f["masked"], f["mask_key"]), _raw(f["payload"]))
         for f in record["frames"]]

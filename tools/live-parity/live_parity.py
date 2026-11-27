@@ -9,6 +9,8 @@ import math
 import time
 from typing import Any, Callable, Iterable
 
+from parity_volatile import CLOCK_MS_TOLERANCE, clock_equal
+
 SCHEMAS = {
     "v1": "/json",
     "v2": "/json/v2",
@@ -389,6 +391,13 @@ def compare_pair(
         if ka != kb:
             add(parts, "type", a, b, f"type differs: {ka} != {kb}")
             return
+        if not active:
+            clock = clock_equal(SCHEMAS[left.schema], parts, a, b)
+            if clock is not None:
+                if not clock:
+                    add(parts, "live-clock", a, b, "invalid clock or difference exceeds 250 ms",
+                        CLOCK_MS_TOLERANCE)
+                return
         volatile = _is_volatile(left.schema, parts, active)
         if isinstance(a, dict):
             observable_a = {

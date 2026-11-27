@@ -160,14 +160,22 @@ fn golden_excludes_only_the_terminal_client_initiated_normal_close() {
         payload: 1000_u16.to_be_bytes().to_vec(),
     };
     let id = "ws.upgrade-websocket-v2";
-    let frames = case_mut(&mut candidate, id).expected.frames.as_mut().unwrap();
+    let frames = case_mut(&mut candidate, id)
+        .expected
+        .frames
+        .as_mut()
+        .unwrap();
     frames.push(close.clone());
     close.from_server = true;
     close.masked = false;
     frames.push(close);
     assert!(mismatches(&candidate, &[]).is_empty());
 
-    let frames = case_mut(&mut candidate, id).expected.frames.as_mut().unwrap();
+    let frames = case_mut(&mut candidate, id)
+        .expected
+        .frames
+        .as_mut()
+        .unwrap();
     frames.last_mut().unwrap().payload = 1001_u16.to_be_bytes().to_vec();
     assert_eq!(mismatches(&candidate, &[]), pairs(&[(id, "ws.frame")]));
 }
@@ -194,9 +202,14 @@ fn golden_synthetic_fixture_compares_with_nonzero_coverage() {
                 .count()
         };
         // Every §7 header rule the synthetic set can exercise is exercised.
-        assert_eq!(normalized("header-date"), platform.cases.len());
-        assert!(normalized("header-etag") >= 4);
-        assert!(normalized("header-last-modified") >= 4);
+        assert!(platform.cases.iter().all(|case| {
+            case.expected
+                .headers
+                .iter()
+                .all(|(name, _)| fixture::compared(name) || name == "content-length")
+        }));
+        assert_eq!(normalized("header-etag"), 1);
+        assert_eq!(normalized("header-last-modified"), 1);
         let conditional: BTreeSet<_> = platform
             .cases
             .iter()
@@ -375,35 +388,17 @@ fn golden_last_modified_must_equal_the_declared_replay_file_mtime() {
     // The real file mtime reaches the route.
     let served = httpdate::fmt_http_date(shifted);
     assert_eq!(response.header("last-modified"), Some(served.as_str()));
-    drop(replay);
-    let observed = compare::normalize(response, Vec::new(), true, &[], Vec::new(), Vec::new());
-    assert!(
-        observed.invariants.iter().any(|(part, detail)| {
-            part == "headers.last-modified" && detail.contains("declared replay file mtime")
-        }),
-        "{:?}",
-        observed.invariants
-    );
-    // The placeholder alone would have hidden it; the comparator does not.
-    // The shifted replay's file identity also changed its ETag, which is a
-    // different invariant, so the original tag is kept here.
-    let index = platform().cases.iter().position(|c| c.id == ID).unwrap();
-    let mut all = OBSERVED.clone();
-    let original = all[index].as_ref().unwrap().headers.clone();
-    let mut observed = observed;
-    for (name, value) in &mut observed.headers {
-        if name == "etag" {
-            value.clone_from(&original.iter().find(|(n, _)| n == "etag").unwrap().1);
-        }
-    }
-    all[index] = Ok(observed);
-    let report = compare::compare(platform(), &all, &[]);
-    let found: Vec<_> = report
-        .mismatches
-        .iter()
-        .map(|m| (m.case.as_str(), m.part.as_str()))
-        .collect();
-    assert_eq!(found, [(ID, "headers.last-modified")]);
+    // Last-Modified is not compared with upstream. When a case actually
+    // echoes the validator, the earlier replay answer must use the declared mtime.
+    let request = case.request.trim_end_matches("\r\n");
+    let request = format!("{request}\r\nIf-Modified-Since: <golden:last-modified>\r\n\r\n");
+    let mut invariants = Vec::new();
+    let (request, _) = compare::substitute(replay.address, &request, &mut invariants).unwrap();
+    assert!(request.contains(&served));
+    assert!(invariants.iter().any(|(part, detail)| {
+        part == "headers.last-modified" && detail.contains("declared replay file mtime")
+    }));
+    assert_eq!(invariants.len(), 1);
 }
 
 #[test]
@@ -425,10 +420,20 @@ fn golden_root_prefix_rewrites_only_replay_roots_and_recomputes_length() {
         headers: vec![
             ("Content-Length".into(), body.len().to_string()),
             ("X-Powered-By".into(), "replay".into()),
+            ("Date".into(), "not a comparison field".into()),
+            ("Transfer-Encoding".into(), "ignored here".into()),
+            ("Connection".into(), "Upgrade".into()),
+            ("Upgrade".into(), "websocket".into()),
+            ("Keep-Alive".into(), "timeout=2".into()),
+            ("Access-Control-Allow-Origin".into(), "*".into()),
+            ("Content-Security-Policy".into(), "sandbox".into()),
+            ("Cache-Control".into(), "no-cache".into()),
+            ("ETag".into(), "\"tag\"".into()),
+            ("Last-Modified".into(), "not a comparison field".into()),
         ],
         body: body.as_bytes().to_vec(),
     };
-    let observed = compare::normalize(response, Vec::new(), false, &roots, Vec::new(), Vec::new());
+    let observed = compare::normalize(response, Vec::new(), &roots, Vec::new(), Vec::new());
     let expected = r#"{"a":"/vosu-golden/songs/x.osu","b":"C:\\vosu-golden\\files\\y","c":"/tmp/.tmpA1/songsx","n":0}"#;
     assert_eq!(String::from_utf8(observed.body).unwrap(), expected);
     // Only compared headers remain, and the length follows the new body.
@@ -460,9 +465,9 @@ fn golden_comparator_reports_exactly_the_part_that_differs() {
             case_mut(p, V2)
                 .expected
                 .headers
-                .retain(|(n, _)| n != "connection")
+                .push(("location".into(), "/different".into()));
         },
-        &[(V2, "headers.connection")],
+        &[(V2, "headers.location")],
     );
     check(
         &|p| {
@@ -481,18 +486,24 @@ fn golden_comparator_reports_exactly_the_part_that_differs() {
         },
         &[(V2, "body")],
     );
-    // header-etag keeps distinct upstream tags distinct: one vosu tag cannot
-    // stand for two upstream ordinals.
-    check(
-        &|p| {
-            set_header(
-                case_mut(p, "files.head-beatmap-file"),
-                "etag",
-                "\"<golden:etag:2>\"",
-            )
-        },
-        &[("files.head-beatmap-file", "headers.etag")],
-    );
+    // Distinct echoed request ordinals cannot bind to the same replay tag.
+    let id = "files.if-none-match-beatmap-file";
+    let index = platform()
+        .cases
+        .iter()
+        .position(|case| case.id == id)
+        .unwrap();
+    let mut observed = OBSERVED.clone();
+    let bound = &mut observed[index].as_mut().unwrap().bound;
+    let (ordinal, tag) = bound[0].clone();
+    bound.push((ordinal + 1, tag));
+    let report = compare::compare(platform(), &observed, &[]);
+    let found: Vec<_> = report
+        .mismatches
+        .iter()
+        .map(|m| (m.case.as_str(), m.part.as_str()))
+        .collect();
+    assert_eq!(found, [(id, "request")]);
     check(
         &|p| {
             let frame = &mut case_mut(p, WS).expected.frames.as_mut().unwrap()[0];
@@ -584,6 +595,46 @@ fn golden_json_number_bound_and_non_json_bytes() {
     assert!(!compare::same_body(br#"{"n":5}"#, br#"{"n":5.0}"#, false));
     assert!(!compare::same_body(b"\x00\xff", b"\x00\xfe", false));
     assert!(!compare::same_text_frame(b"hello", b"hello "));
+}
+
+#[test]
+fn golden_live_clock_bound_keeps_exact_shape_and_scope() {
+    let check = |route, left: &str, right: &str, equal| {
+        assert_eq!(
+            compare::same_body_on(left.as_bytes(), right.as_bytes(), true, route),
+            equal
+        );
+    };
+    let v1 = r#"{"menu":{"bm":{"time":{"current":1000}}}}"#;
+    check("/json", v1, &v1.replace("1000", "1250"), true);
+    check("/json", v1, &v1.replace("1000", "1251"), false);
+    check("/json", v1, &v1.replace("1000", "\"1000\""), false);
+    check("/json", v1, r#"{"menu":{"bm":{"time":{}}}}"#, false);
+    let v2 = r#"{"beatmap":{"time":{"live":1000}},"settings":{"bassDensity":0.6}}"#;
+    check("/json/v2", v2, &v2.replace("1000", "750"), true);
+    check("/json/v2/precise", v2, &v2.replace("1000", "750"), false);
+    check("/json/v2", v2, &v2.replace("0.6", "0"), false);
+    let sc = r#"{"time":24,"mapPosition":"00:00:24.4","timeLeft":"-1:-1:-7.-500"}"#;
+    let near = r#"{"time":24.25,"mapPosition":"00:00:24.254","timeLeft":"-1:-1:-7.-750"}"#;
+    check("/json/sc", sc, near, true);
+    check("/json/sc", sc, &near.replace(".254", ".255"), false);
+    check(
+        "/json/sc",
+        sc,
+        &near.replace("-1:-1:-7.-750", "invalid"),
+        false,
+    );
+    check("/json/sc", sc, &near.replace("24.25", "24250"), false);
+    assert!(compare::same_text_frame_on(
+        sc.as_bytes(),
+        near.as_bytes(),
+        "/tokens"
+    ));
+    assert!(!compare::same_text_frame_on(
+        sc.as_bytes(),
+        near.as_bytes(),
+        "/websocket/v2"
+    ));
 }
 
 #[test]

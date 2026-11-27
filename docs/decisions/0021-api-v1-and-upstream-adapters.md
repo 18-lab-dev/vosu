@@ -332,5 +332,10 @@ values, quirks, status codes and error bodies bug for bug. HTTP JSON and
 WebSocket JSON text frames are compared after parsing, including error
 bodies. Non-JSON payloads stay byte-exact. The
 [golden contract §7](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md#7-normalization-inventory-a4b6)
-defines payload equality; its §6 defines the header exceptions for
-`Content-Type` charset and per-response `Content-Length`.
+defines payload equality, including the scoped 250 ms live-clock bound.
+Its §6 compares only the media type (ignoring charset), `Content-Range`,
+`Location`, and `Accept-Ranges`. Date, connection, upgrade, keep-alive,
+transfer coding and WebSocket handshake headers are not payloads.
+`Content-Length` checks each response's own framing. CORS, CSP, nosniff,
+`Cache-Control`, `ETag` and `Last-Modified` remain governed by vosu's own
+security and contract tests, not by upstream behavior.

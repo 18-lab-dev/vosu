@@ -6,8 +6,8 @@
 use super::{
     envelope::Envelope,
     fixture::{
-        Asset, Body, Case, DATE, Expected, ExpectedFrame, FAMILIES, LAST_MODIFIED, RULE_IDS,
-        as_usize, compared, expect_str, json, object, string_list,
+        Asset, Body, Case, Expected, ExpectedFrame, FAMILIES, LAST_MODIFIED, RULE_IDS, as_usize,
+        compared, expect_str, json, object, string_list,
     },
 };
 use serde_json::Value;
@@ -95,8 +95,8 @@ pub fn case(dir: &Path, platform: &str, id: &str, assets: &[Asset]) -> Result<Ca
     excluded_target(&request).map_err(|e| format!("{at}: {e}"))?;
     request_placeholders(&request, conditional.as_deref(), &normalized)
         .map_err(|e| format!("{at}: {e}"))?;
-    let expected = expected(&value["expected"], &family, &normalized, assets)
-        .map_err(|e| format!("{at}: {e}"))?;
+    let expected =
+        expected(&value["expected"], &family, assets).map_err(|e| format!("{at}: {e}"))?;
     let replay_json = serde_json::to_vec(&value["replay"]).map_err(|e| e.to_string())?;
     let replay = Envelope::parse(&replay_json).map_err(|e| format!("{at}: replay: {e}"))?;
     foreground_facts(platform, &replay).map_err(|e| format!("{at}: replay: {e}"))?;
@@ -299,22 +299,7 @@ fn strip_etag_placeholders(value: &str) -> String {
     out
 }
 
-/// The ordinal of a normalized `etag` (`W/` kept), or `None`.
-pub fn etag_ordinal(value: &str) -> Option<(bool, u64)> {
-    let (weak, tag) = value
-        .strip_prefix("W/")
-        .map_or((false, value), |tag| (true, tag));
-    let digits = tag.strip_prefix("\"<golden:etag:")?.strip_suffix(">\"")?;
-    let ordinal: u64 = digits.parse().ok().filter(|n| *n > 0)?;
-    (ordinal.to_string() == digits).then_some((weak, ordinal))
-}
-
-fn expected(
-    value: &Value,
-    family: &str,
-    normalized: &[String],
-    assets: &[Asset],
-) -> Result<Expected, String> {
+fn expected(value: &Value, family: &str, assets: &[Asset]) -> Result<Expected, String> {
     if value.get("outcome").is_some() {
         let value = object(value, "expected", &["outcome"])?;
         if value["outcome"] != "closed" {
@@ -344,22 +329,13 @@ fn expected(
     for pair in value["headers"].as_array().ok_or("expected headers")? {
         let pair = string_list(pair, "expected header")?;
         let [name, value] = <[String; 2]>::try_from(pair).map_err(|_| "header is not a pair")?;
-        if !compared(&name) {
-            return Err(format!("header {name} is not in the compared set"));
-        }
-        let rule = |id: &str| normalized.iter().any(|r| r == id);
-        let placeholder = match name.as_str() {
-            "date" => value == DATE && rule("header-date"),
-            "etag" if family == "files" => etag_ordinal(&value).is_some() && rule("header-etag"),
-            "last-modified" if family == "files" => {
-                value == LAST_MODIFIED && rule("header-last-modified")
-            }
-            _ => !value.contains("<golden:"),
-        };
-        if !placeholder {
+        if !(compared(&name) || name == "content-length") {
             return Err(format!(
-                "header {name}: {value:?} is not normalized by its rule"
+                "header {name} is not a payload header or local framing"
             ));
+        }
+        if value.contains("<golden:") {
+            return Err(format!("header {name} carries an unapproved placeholder"));
         }
         headers.push((name, value));
     }
@@ -416,7 +392,7 @@ fn expected(
     })
 }
 
-fn frame(value: &Value) -> Result<ExpectedFrame, String> {
+pub(super) fn frame(value: &Value) -> Result<ExpectedFrame, String> {
     let value = object(
         value,
         "frame",

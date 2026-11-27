@@ -171,10 +171,9 @@ class RawHttpTests(unittest.TestCase):
         self.assertEqual([["X-B", "1"], ["set-Cookie", "a"], ["Content-Type", "text/plain"],
                           ["X-B", "2"], ["Content-Length", "2"]], response["headers"])
         self.assertEqual(raw[:-2], pr.decode_bytes(response["head"]))
-        compared, private = rm.split_headers(response["headers"], websocket=False)
-        self.assertEqual([["Content-Type", "text/plain"], ["Content-Length", "2"]],
-                         [list(item) for item in compared])
-        self.assertEqual(["X-B", "set-Cookie", "X-B"], [name for name, _ in private])
+        compared, private = rm.split_headers(response["headers"])
+        self.assertEqual([["Content-Type", "text/plain"]], [list(item) for item in compared])
+        self.assertEqual(["X-B", "set-Cookie", "X-B", "Content-Length"], [name for name, _ in private])
 
     def test_chunked_wire_bytes_trailers_and_decoded_body_are_both_exact(self) -> None:
         wire = b"4;ext=1\r\n{\"a\"\r\n3\r\n:1}\r\n0\r\nX-Trailer: t\r\n\r\n"
@@ -762,18 +761,15 @@ class MatrixTests(unittest.TestCase):
         self.assertNotIn("files.skin.file.get", lazer)
 
     def test_compared_header_set_is_exactly_a4b7(self) -> None:
-        headers = [("Date", "x"), ("ETag", "1"), ("Access-Control-Allow-Origin", "*"),
-                   ("Upgrade", "websocket"), ("Sec-WebSocket-Accept", "a"), ("Server", "s"),
-                   ("Content-Security-Policy", "sandbox"), ("X-Content-Type-Options", "nosniff")]
-        http, private = rm.split_headers(headers, websocket=False)
-        self.assertEqual(["ETag", "Access-Control-Allow-Origin", "Content-Security-Policy",
-                          "X-Content-Type-Options"], [name for name, _ in http])
-        self.assertEqual(["Date", "Upgrade", "Sec-WebSocket-Accept", "Server"],
-                         [name for name, _ in private])
-        ws, _ = rm.split_headers(headers, websocket=True)
-        self.assertEqual(["ETag", "Access-Control-Allow-Origin", "Upgrade", "Sec-WebSocket-Accept",
-                          "Content-Security-Policy", "X-Content-Type-Options"],
-                         [name for name, _ in ws])
+        headers = [(name, "x") for name in (
+            "Date", "ETag", "Last-Modified", "Cache-Control", "Access-Control-Allow-Origin",
+            "Connection", "Upgrade", "Keep-Alive", "Transfer-Encoding", "Sec-WebSocket-Accept",
+            "Content-Security-Policy", "X-Content-Type-Options", "Content-Length",
+            "Content-Type", "Content-Range", "Location", "Accept-Ranges",
+        )]
+        compared, private = rm.split_headers(headers)
+        self.assertEqual(headers[-4:], compared)
+        self.assertEqual(headers[:-4], private)
 
     def test_budget_cases_sit_exactly_at_and_above_the_limits(self) -> None:
         def query(case_id: str) -> str:
