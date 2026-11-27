@@ -8,12 +8,16 @@ use std::{
     io::{Read as _, Write as _},
     net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     time::{Duration, Instant},
 };
 use vosu_proptest::bounded;
 
 use tempfile::TempDir;
+
+#[path = "release_smoke/process.rs"]
+mod process;
+use process::{shutdown_and_verify_no_orphans, spawn_release_daemon};
 
 /// The test-harness adapter capture endpoint (GOLDEN_CONTRACT.md §5), which
 /// `build.rs` keeps out of every release build.
@@ -46,29 +50,6 @@ fn assert_no_test_harness_endpoint(executable: &[u8]) {
                 .any(|window| window == marker.as_bytes()),
             "release executable contains {marker}"
         );
-    }
-}
-
-struct ChildGuard {
-    child: Option<Child>,
-    #[cfg(windows)]
-    _job: Option<windows_process::SmokeJob>,
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            #[cfg(unix)]
-            {
-                let pgid = child.id() as libc::pid_t;
-                // SAFETY: `libc::kill` with a negative process group id and
-                // `SIGKILL` has no memory safety preconditions; the daemon was
-                // spawned in its own process group via `process_group(0)`.
-                let _ = unsafe { libc::kill(-pgid, libc::SIGKILL) };
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        }
     }
 }
 
@@ -156,200 +137,6 @@ async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
             }
             Err(error) => panic!("release daemon did not become reachable at {url}: {error}"),
         }
-    }
-}
-
-#[cfg(unix)]
-fn configure_daemon_process(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-}
-
-#[cfg(windows)]
-fn configure_daemon_process(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    // ADR 0024: graphical Windows launches run console-less without relying on
-    // console attachment or CTRL_BREAK delivery.
-    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-}
-
-#[cfg(windows)]
-mod windows_process {
-    use std::{
-        io,
-        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
-        process::Child,
-        time::{Duration, Instant},
-    };
-    use windows_sys::Win32::{
-        Foundation::{ERROR_MORE_DATA, HANDLE},
-        System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicProcessIdList,
-            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
-        },
-    };
-
-    const LISTED_IDS: usize = 64;
-
-    #[repr(C)]
-    struct IdList {
-        assigned: u32,
-        listed: u32,
-        ids: [usize; LISTED_IDS],
-    }
-
-    pub struct SmokeJob {
-        handle: OwnedHandle,
-    }
-
-    impl SmokeJob {
-        pub fn attach(child: &Child) -> io::Result<Self> {
-            // SAFETY: null security attributes and unnamed job object have no
-            // memory safety preconditions.
-            let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-            if raw.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: `raw` is a fresh handle owned exclusively by this struct.
-            let handle = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
-            // SAFETY: all-zero `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` is valid.
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            // SAFETY: `handle` is live and `limits` is correctly sized.
-            let ok = unsafe {
-                SetInformationJobObject(
-                    handle.as_raw_handle() as HANDLE,
-                    JobObjectExtendedLimitInformation,
-                    (&raw const limits).cast(),
-                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-            };
-            if ok == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: both `handle` and `child` are live process/job handles.
-            let assigned = unsafe {
-                AssignProcessToJobObject(
-                    handle.as_raw_handle() as HANDLE,
-                    child.as_raw_handle() as HANDLE,
-                )
-            };
-            if assigned == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(Self { handle })
-        }
-
-        pub fn assigned_processes(&self) -> io::Result<u32> {
-            let mut list = IdList {
-                assigned: 0,
-                listed: 0,
-                ids: [0; LISTED_IDS],
-            };
-            // SAFETY: `self.handle` is live and `list` is a writable
-            // `JOBOBJECT_BASIC_PROCESS_ID_LIST`-compatible buffer.
-            let ok = unsafe {
-                QueryInformationJobObject(
-                    self.handle.as_raw_handle() as HANDLE,
-                    JobObjectBasicProcessIdList,
-                    (&raw mut list).cast(),
-                    size_of::<IdList>() as u32,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
-                    return Err(error);
-                }
-            }
-            Ok(list.assigned)
-        }
-    }
-
-    pub async fn assert_no_job_orphans(job: &SmokeJob) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let remaining = job
-                .assigned_processes()
-                .expect("query Windows smoke job process list");
-            if remaining == 0 {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "release daemon left {remaining} orphan child process(es) in Windows job"
-            );
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    }
-}
-
-#[cfg(unix)]
-async fn shutdown_and_verify_no_orphans(guard: &mut ChildGuard) {
-    let pid = guard.child.as_ref().expect("running daemon").id() as libc::pid_t;
-    // SAFETY: `libc::kill` with a valid pid and `SIGTERM` has no memory safety
-    // preconditions; `pid` is this test's own spawned daemon process.
-    let result = unsafe { libc::kill(pid, libc::SIGTERM) };
-    assert_eq!(result, 0, "send release daemon SIGTERM");
-
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(status) = guard.child.as_mut().unwrap().try_wait().unwrap() {
-            assert!(
-                status.success(),
-                "release daemon exited unsuccessfully after SIGTERM: {status}"
-            );
-            guard.child.take();
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "release daemon failed to drain after SIGTERM"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    let orphan_deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        // SAFETY: signal 0 probes whether any process remains in the daemon's
-        // dedicated process group without delivering a signal.
-        let probe = unsafe { libc::kill(-pid, 0) };
-        if probe == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-            return;
-        }
-        assert!(
-            Instant::now() < orphan_deadline,
-            "release daemon left orphan child process(es) in process group {pid}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-#[cfg(windows)]
-async fn shutdown_and_verify_no_orphans(guard: &mut ChildGuard) {
-    // ADR 0024: the console-less daemon cannot rely on CTRL_BREAK console
-    // attachment. Terminate the daemon process directly and verify via the
-    // Windows Job Object that zero child processes remain orphaned.
-    let child = guard.child.as_mut().expect("running daemon");
-    child
-        .kill()
-        .expect("terminate console-less Windows release daemon");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if guard.child.as_mut().unwrap().try_wait().unwrap().is_some() {
-            guard.child.take();
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "Windows release daemon did not exit after controlled termination"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    if let Some(job) = guard._job.as_ref() {
-        windows_process::assert_no_job_orphans(job).await;
     }
 }
 
@@ -456,12 +243,19 @@ fn assert_removed_ingame_headers(label: &str, headers: &[(String, String)]) {
 /// listener is a removed route that returns the ordinary 404 for GET, HEAD,
 /// POST, and WebSocket upgrade requests, with no upgrade, redirect,
 /// `Deprecation`, or `Link` header.
-async fn assert_removed_ingame_route(client: &reqwest::Client, overlay_port: u16) {
+async fn assert_removed_ingame_route(overlay_port: u16) {
+    // Never auto-follow redirects so a regressed 3xx + Location -> 404 fails.
+    let no_redirect_client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("build no-redirect /api/ingame probe client");
     let url = format!("http://127.0.0.1:{overlay_port}/api/ingame");
     for (label, builder) in [
-        ("GET", client.get(&url)),
-        ("HEAD", client.head(&url)),
-        ("POST", client.post(&url)),
+        ("GET", no_redirect_client.get(&url)),
+        ("HEAD", no_redirect_client.head(&url)),
+        ("POST", no_redirect_client.post(&url)),
     ] {
         let response = bounded!(builder.send()).expect("send /api/ingame probe");
         assert_eq!(
@@ -655,27 +449,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     let normal_dir = config_dir.clone();
     let normal_files = config_files(&normal_dir);
 
-    let mut command = Command::new(&staged_binary);
-    command.arg("--update=false");
-    apply_isolated_env(&mut command, roots.path());
-    // A release build has no harness endpoint to mount, even when offered a
-    // well-formed capability.
-    command
-        .env(HARNESS_CAPABILITY_ENV, HARNESS_CAPABILITY)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    configure_daemon_process(&mut command);
-    let spawned = command.spawn().expect("spawn unpacked release executable");
-    #[cfg(windows)]
-    let job = Some(
-        windows_process::SmokeJob::attach(&spawned)
-            .expect("attach console-less Windows daemon to smoke job"),
-    );
-    let mut child = ChildGuard {
-        child: Some(spawned),
-        #[cfg(windows)]
-        _job: job,
-    };
+    let mut child = spawn_release_daemon(&staged_binary, roots.path());
 
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -739,7 +513,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     );
 
     // Verify 2026-11-25 removed `/api/ingame` contract on the overlay listener.
-    assert_removed_ingame_route(&client, first_port).await;
+    assert_removed_ingame_route(first_port).await;
 
     // A prerelease runs on its own `prerelease/` roots: it imports the 1.x
     // config once, read-only, and never writes the normal tree.
