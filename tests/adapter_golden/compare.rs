@@ -13,7 +13,7 @@ use super::{
     divergence::{self, Part, Rule},
     envelope::{Envelope, reference_position, tokens, tree_position},
     fixture::{Asset, Body, Case, LAST_MODIFIED, Platform, compared},
-    payload_clock::Scope,
+    payload_clock::{Delta, Scope},
     replay::Replay,
     routes::{self, RawResponse},
     websocket::{self, Frame, Step},
@@ -180,7 +180,7 @@ pub fn observe(platform: &Platform) -> Result<Vec<Result<Observed, String>>, Str
     observe_with_rules(platform, &[])
 }
 
-fn observe_with_rules(
+pub(super) fn observe_with_rules(
     platform: &Platform,
     rules: &[Rule],
 ) -> Result<Vec<Result<Observed, String>>, String> {
@@ -502,7 +502,22 @@ pub fn normalize(
 pub struct Mismatch {
     pub case: String,
     pub part: String,
-    pub detail: String,
+    pub detail: Detail,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Detail {
+    Other(String),
+    Json {
+        frame: Option<usize>,
+        deltas: Vec<Delta>,
+    },
+}
+
+impl From<String> for Detail {
+    fn from(value: String) -> Self {
+        Self::Other(value)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -655,7 +670,7 @@ pub fn compare(
     let mut report = Report::default();
     let mut etags = Etags::default();
     for (case, observed) in platform.cases.iter().zip(observations) {
-        let mut push = |part: &str, detail: String| {
+        let mut push = |part: &str, detail: Detail| {
             report.mismatches.push(Mismatch {
                 case: case.id.clone(),
                 part: part.to_owned(),
@@ -665,16 +680,16 @@ pub fn compare(
         let observed = match observed {
             Ok(observed) => observed,
             Err(error) => {
-                push("transport", error.clone());
+                push("transport", error.clone().into());
                 continue;
             }
         };
         for (part, detail) in &observed.invariants {
-            push(part, detail.clone());
+            push(part, detail.clone().into());
         }
         for (ordinal, tag) in &observed.bound {
             if let Err(error) = etags.bind(*ordinal, tag) {
-                push("request", error);
+                push("request", error.into());
             }
         }
         if case.expected.closed || observed.closed {
@@ -684,12 +699,13 @@ pub fn compare(
                     format!(
                         "vosu answered {}, expected the connection to close without a response",
                         observed.status
-                    ),
+                    )
+                    .into(),
                 );
             } else if !case.expected.closed {
                 push(
                     "outcome",
-                    "vosu closed the connection without a response".into(),
+                    Detail::Other("vosu closed the connection without a response".into()),
                 );
             }
             continue;
@@ -712,7 +728,7 @@ pub fn compare(
         if observed.status != status {
             push(
                 "status",
-                format!("vosu {}, expected {status}", observed.status),
+                format!("vosu {}, expected {status}", observed.status).into(),
             );
         }
         let matching_get = case.request.strip_prefix("HEAD ").and_then(|target| {
@@ -738,7 +754,8 @@ pub fn compare(
                         "headers.content-length",
                         format!(
                             "{side} {value:?} is not consistent with its own response length {size:?}"
-                        ),
+                        )
+                        .into(),
                     );
                 }
             }
@@ -774,7 +791,7 @@ pub fn compare(
             if !same {
                 push(
                     &format!("headers.{name}"),
-                    format!("vosu {got:?}, expected {want:?}"),
+                    format!("vosu {got:?}, expected {want:?}").into(),
                 );
             }
         }
@@ -802,14 +819,14 @@ pub fn compare(
                 })
             },
         ) && (!matches!(case.expected.body, Body::Asset { .. }) || body_rule.is_some());
-        let scope = Scope::for_case(divergence::route(case), platform);
+        let scope = Scope::for_case(case, platform);
         match want {
             Ok(want) if body_matches(&observed.body, &want, json, scope) => {}
             Ok(want) => push(
                 "body",
-                payload_difference(&observed.body, &want, json, scope),
+                payload_difference(&observed.body, &want, json, scope, None),
             ),
-            Err(error) => push("body", error),
+            Err(error) => push("body", error.into()),
         }
         let sequence = sequence_rule(rules, platform, case);
         if let Some(r) = sequence {
@@ -860,7 +877,7 @@ fn frames(
     scope: Scope<'_>,
     rule: Option<&Rule>,
     used: &mut BTreeSet<usize>,
-    push: &mut impl FnMut(&str, String),
+    push: &mut impl FnMut(&str, Detail),
 ) {
     if let Some(rule) = rule {
         used.insert(rule.index);
@@ -872,7 +889,8 @@ fn frames(
                 "vosu sent {} frames, expected {}",
                 observed.len(),
                 expected.len()
-            ),
+            )
+            .into(),
         );
     }
     for (index, (want, got)) in expected.iter().zip(observed).enumerate() {
@@ -884,7 +902,7 @@ fn frames(
         {
             match divergence::apply_text(&rule.change, &String::from_utf8_lossy(&payload)) {
                 Ok(text) => payload = Cow::Owned(text.into_bytes()),
-                Err(error) => push("ws.frame", format!("frame {index}: {error}")),
+                Err(error) => push("ws.frame", format!("frame {index}: {error}").into()),
             }
         }
         let want_flags = (want.from_server, want.fin, want.opcode, want.masked);
@@ -900,7 +918,8 @@ fn frames(
                 "ws.frame",
                 format!(
                     "frame {index}: (server, fin, opcode, masked) {got_flags:?}, expected {want_flags:?}"
-                ),
+                )
+                .into(),
             );
         } else if !(if text {
             scope
@@ -911,20 +930,29 @@ fn frames(
         }) {
             push(
                 "ws.frame",
-                format!(
-                    "frame {index}: {}",
-                    payload_difference(&got.payload, &payload, text, scope)
-                ),
+                payload_difference(&got.payload, &payload, text, scope, Some(index)),
             );
         }
     }
 }
 
-fn payload_difference(got: &[u8], want: &[u8], json: bool, scope: Scope<'_>) -> String {
-    if json && let Some(paths) = scope.describe_json(got, want) {
-        paths
-    } else {
-        difference(got, want)
+fn payload_difference(
+    got: &[u8],
+    want: &[u8],
+    json: bool,
+    scope: Scope<'_>,
+    frame: Option<usize>,
+) -> Detail {
+    if json
+        && let Some(deltas) = scope.json_differences(got, want)
+        && !deltas.is_empty()
+    {
+        return Detail::Json { frame, deltas };
+    }
+    let bytes = difference(got, want);
+    match frame {
+        Some(index) => format!("frame {index}: {bytes}").into(),
+        None => bytes.into(),
     }
 }
 
@@ -942,40 +970,4 @@ fn difference(got: &[u8], want: &[u8]) -> String {
         excerpt(got),
         excerpt(want)
     )
-}
-
-/// Case counts by family for one platform.
-pub type Counts = (String, BTreeMap<&'static str, usize>);
-
-/// Replays and compares every platform; returns the counts by platform and
-/// family, or every mismatch and unused rule.
-pub fn run(platforms: &[Platform], rules: &[Rule]) -> Result<Vec<Counts>, String> {
-    let mut used = BTreeSet::new();
-    let mut failures = Vec::new();
-    let mut counts = Vec::new();
-    for platform in platforms {
-        let observed = observe_with_rules(platform, rules)?;
-        let report = compare(platform, &observed, rules);
-        used.extend(report.used);
-        failures.extend(
-            report
-                .mismatches
-                .into_iter()
-                .map(|m| format!("{} {} {}: {}", platform.name, m.case, m.part, m.detail)),
-        );
-        counts.push((platform.name.clone(), platform.counts()));
-    }
-    for rule in rules {
-        if !used.contains(&rule.index) {
-            failures.push(format!(
-                "divergence rule {} ({}) is unused",
-                rule.index, rule.ledger_id
-            ));
-        }
-    }
-    if failures.is_empty() {
-        Ok(counts)
-    } else {
-        Err(failures.join("\n"))
-    }
 }

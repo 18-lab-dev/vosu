@@ -1,7 +1,17 @@
 //! Exact live-clock scopes from GOLDEN_CONTRACT §7, mirrored by parity_volatile.py.
-use super::fixture::Platform;
+use super::{
+    divergence,
+    fixture::{Case, Platform},
+    pending::Reason,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Delta {
+    pub pointer: String,
+    pub reason: Option<Reason>,
+}
 
 /// JSON payload comparison of one route on the replaying host.
 #[derive(Clone, Copy)]
@@ -9,6 +19,7 @@ pub(super) struct Scope<'a> {
     route: &'a str,
     foreign_windows_focus: bool,
     run5: bool,
+    missing_raw_pair: bool,
 }
 
 impl<'a> Scope<'a> {
@@ -17,15 +28,25 @@ impl<'a> Scope<'a> {
             route,
             foreign_windows_focus: false,
             run5: false,
+            missing_raw_pair: false,
         }
     }
 
-    pub(super) fn for_case(route: &'a str, platform: &Platform) -> Self {
+    pub(super) fn for_case(case: &'a Case, platform: &Platform) -> Self {
+        let has_selector = |pointer| {
+            case.replay
+                .entries
+                .iter()
+                .any(|entry| entry.ns == "vosu.osu" && entry.pointer == pointer)
+        };
         Self {
-            route,
+            route: divergence::route(case),
             foreign_windows_focus: cfg!(target_os = "linux")
                 && platform.name.starts_with("windows-"),
             run5: platform.run5,
+            missing_raw_pair: platform.run5
+                && has_selector("/session/paused")
+                && !has_selector("/internal/playClock"),
         }
     }
 
@@ -53,7 +74,7 @@ impl<'a> Scope<'a> {
         ))
     }
 
-    pub(super) fn describe_json(self, got: &[u8], want: &[u8]) -> Option<String> {
+    pub(super) fn json_differences(self, got: &[u8], want: &[u8]) -> Option<Vec<Delta>> {
         let (got, want) = self.parsed(got, want)?;
         let clocks = Clocks::for_route(self.route, &want);
         let mut changed = Vec::new();
@@ -64,20 +85,35 @@ impl<'a> Scope<'a> {
             &mut String::new(),
             &mut changed,
         );
-        let paths = changed
-            .iter()
-            .map(|path| match path.as_str() {
-                "/menu/mainMenu/bassDensity" | "/settings/bassDensity" if self.run5 => format!(
-                    "{path} (pending recapture: unmatched pre-barrier main-menu FFT history)"
-                ),
-                "/game/paused" if self.run5 && got.pointer(path).is_none() => {
-                    format!("{path} (pending recapture: raw play-clock pair was not recorded)")
-                }
-                "/" => "root value".into(),
-                _ => path.clone(),
-            })
-            .collect::<Vec<_>>();
-        Some(format!("JSON differs at {}", paths.join(", ")))
+        Some(
+            changed
+                .into_iter()
+                .map(|pointer| {
+                    let reason = match (pointer.as_str(), self.route) {
+                        ("/game/paused", "/json/v2" | "/websocket/v2")
+                            if self.missing_raw_pair
+                                && got.pointer(&pointer).is_none()
+                                && want.pointer(&pointer).is_some_and(Value::is_boolean) =>
+                        {
+                            Some(Reason::S2RawClockPairAbsent)
+                        }
+                        ("/settings/bassDensity", "/json/v2" | "/websocket/v2")
+                        | ("/menu/mainMenu/bassDensity", "/json" | "/ws")
+                            if self.run5
+                                && got.pointer(&pointer).and_then(Value::as_f64) == Some(0.0)
+                                && want
+                                    .pointer(&pointer)
+                                    .and_then(Value::as_f64)
+                                    .is_some_and(|number| number > 0.0) =>
+                        {
+                            Some(Reason::FftPreBarrierHistoryAbsent)
+                        }
+                        _ => None,
+                    };
+                    Delta { pointer, reason }
+                })
+                .collect(),
+        )
     }
 }
 
@@ -115,9 +151,6 @@ fn difference_paths(
     path: &mut String,
     changed: &mut Vec<String>,
 ) {
-    if changed.len() >= 16 {
-        return;
-    }
     if let (Some(got), Some(want)) = (got, want)
         && let Some(matches) = clocks.compare(got, want)
     {
@@ -146,11 +179,7 @@ fn difference_paths(
             }
         }
         (Some(a), Some(b)) if same_json(a, b, clocks) => {}
-        _ => changed.push(if path.is_empty() {
-            "/".into()
-        } else {
-            path.clone()
-        }),
+        _ => changed.push(path.clone()),
     }
 }
 
@@ -252,6 +281,7 @@ fn foreign_host_projects_only_the_windows_focus_field() {
         route: "/json/v2",
         foreign_windows_focus: true,
         run5: true,
+        missing_raw_pair: true,
     };
     let want = br#"{"game":{"focused":true,"paused":true},"settings":{"bassDensity":0.6}}"#;
     let same = br#"{"game":{"paused":true},"settings":{"bassDensity":0.6}}"#;
@@ -267,12 +297,26 @@ fn foreign_host_projects_only_the_windows_focus_field() {
         Some(false)
     );
     assert_eq!(scope.same_json(missing, want), Some(false));
-    let detail = scope.describe_json(missing, want).unwrap();
-    assert!(detail.contains(
-        "/settings/bassDensity (pending recapture: unmatched pre-barrier main-menu FFT history)"
-    ));
-    assert!(
-        detail.contains("/game/paused (pending recapture: raw play-clock pair was not recorded)")
+    let deltas = scope.json_differences(missing, want).unwrap();
+    assert_eq!(
+        deltas,
+        [
+            Delta {
+                pointer: "/game/paused".into(),
+                reason: Some(Reason::S2RawClockPairAbsent)
+            },
+            Delta {
+                pointer: "/settings/bassDensity".into(),
+                reason: Some(Reason::FftPreBarrierHistoryAbsent)
+            },
+        ]
     );
-    assert!(!detail.contains("/game/focused"));
+    let changed = br#"{"game":{"paused":false},"settings":{"bassDensity":0.2}}"#;
+    assert!(
+        scope
+            .json_differences(changed, want)
+            .unwrap()
+            .iter()
+            .all(|d| d.reason.is_none())
+    );
 }

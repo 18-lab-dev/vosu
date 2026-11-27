@@ -413,6 +413,19 @@ and of the manifest `normalization_version`. A pilot mismatch is never
 resolved by a new rule unless it is a proven volatile value; payload defects
 are fixed in the owning vosu module.
 
+**2026-11-26 — Run-five pending recapture.** Only evidence gaps that a
+recapture will fix may be listed in the root `pending-recapture.json`, never
+product behavior. The reviewed entries identify the platform, case, part,
+complete server frame index where applicable, exact JSON pointer, reason,
+decision and review ID. `golden --pending-recapture <reviewed-list>` writes
+the list into the candidate and its root inventory. Only the missing raw
+play-clock pair (`s2-raw-clock-pair-absent`) and missing pre-barrier FFT
+history (`fft-pre-barrier-history-absent`) qualify for this capture. Replay
+requires the exact set of observed differences and their reasons. It fails
+on extra differences anywhere or on a stale entry; remove stale entries via
+the generator when the evidence is recaptured. All other comparisons are
+unchanged. This is not a divergence rule or a claim of parity for those values.
+
 ## 8. `/api/ingame` exclusion (A4b.12)
 
 M4b captures no `/api/ingame` request, status, header or body, and no upstream
@@ -432,6 +445,7 @@ tests/fixtures/upstream/<pin>/
   manifest.json            revision manifest (format vosu-golden-fixture-v1)
   inventory.json           SHA-256 and byte size of every file below <pin>/
   divergence-rules.json    §10
+  pending-recapture.json   optional reviewed evidence gaps (§7)
   windows-stable/  windows-lazer/  linux-lazer/
     manifest.json          platform manifest (format vosu-golden-platform-v1)
     inventory.json  assets.json  brand-inventory.txt

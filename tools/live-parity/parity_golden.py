@@ -24,6 +24,7 @@ import parity_golden_alternates as alternates
 import parity_golden_crash as crash
 import parity_golden_ledger as ledger
 import parity_golden_expected as no_response
+import parity_golden_pending as pending
 from parity_golden_selection import RUN5_CAPTURE_SHA256, recorded_selections
 import route_matrix as rm
 import parity_volatile as volatile
@@ -933,7 +934,7 @@ def _publish(target: Path, files: dict[str, bytes]) -> None:
 def golden(captures: list[str], candidate_dir: str, approved_rules: str | None = None, *,
            correct_asset_media_type: list[tuple[str, str]] | None = None,
            review_receipt: str | None = None, provenance: Provenance = "captured",
-           repo_root: Path = REPO_ROOT) -> int:
+           pending_recapture: str | None = None, repo_root: Path = REPO_ROOT) -> int:
     """Write one candidate. `provenance="synthetic"` labels a vosu-generated mechanics
     fixture (GOLDEN_CONTRACT.md §9); it is never pilot or full evidence, and
     `adapter_golden` refuses it under `tests/fixtures/upstream/<pin>/`."""
@@ -978,6 +979,8 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
     if rules:
         files["divergence-rules.json"] = _dump(
             {"format": "vosu-golden-divergence-rules-v1", "rules": rules})
+    if pending_recapture is not None:
+        files[pending.FILE] = _dump(pending.load(pending_recapture, files))
     files["inventory.json"] = _dump({
         "format": INVENTORY_FORMAT, "source_revision": PINNED_SOURCE_REVISION,
         "normalization_version": NORMALIZATION_VERSION, "files": _inventory_entries(files),

@@ -128,6 +128,7 @@ def parser() -> argparse.ArgumentParser:
     gold.add_argument("--approved-rules", default=str(parity_golden.DEFAULT_APPROVED_RULES),
                       help="normalization contract (default: tests/fixtures/upstream/GOLDEN_CONTRACT.md)")
     gold.add_argument("--review-receipt", help="main's review receipt reference, once reviewed")
+    gold.add_argument("--pending-recapture", help="reviewed exact evidence-gap list (run five only)")
     gold.add_argument("--correct-asset-media-type", action="append", nargs=2,
                       metavar=("ASSET-ID=MEDIA/TYPE", "REASON"),
                       help="reviewed correction to one asset's declared type (repeatable)")
@@ -165,7 +166,8 @@ def main() -> int:
         if args.action == "golden":
             return parity_golden.golden(args.capture, args.candidate_dir, args.approved_rules,
                                         review_receipt=args.review_receipt,
-                                        correct_asset_media_type=args.correct_asset_media_type)
+                                        correct_asset_media_type=args.correct_asset_media_type,
+                                        pending_recapture=args.pending_recapture)
         if args.action == "diff":
             return export_diffs(args.capture, args.out_dir)
         return compare(args.capture, args.report)

@@ -64,6 +64,7 @@ pub struct Fixture {
     pub platforms: Vec<Platform>,
     /// `divergence-rules.json`, when present.
     pub rules: Option<Value>,
+    pub pending: Vec<super::pending::Entry>,
 }
 
 #[derive(Clone, Debug)]
@@ -291,7 +292,7 @@ pub fn load(root: &Path, pin: &str, provenance: Provenance) -> Result<Fixture, S
         let top = file.split('/').next().unwrap_or_default();
         let known = matches!(
             file.as_str(),
-            "manifest.json" | "inventory.json" | "divergence-rules.json"
+            "manifest.json" | "inventory.json" | "divergence-rules.json" | super::pending::FILE
         ) || (file.contains('/') && names.iter().any(|name| name == top));
         if !known {
             return Err(format!("unknown fixture file {file}"));
@@ -324,7 +325,8 @@ pub fn load(root: &Path, pin: &str, provenance: Provenance) -> Result<Fixture, S
     let platforms = names
         .iter()
         .map(|name| platform(root, name, pin, label, &files))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
+    let pending = super::pending::load(root, &files, &platforms, provenance)?;
     let rules = files
         .contains("divergence-rules.json")
         .then(|| json(root, "divergence-rules.json"))
@@ -333,6 +335,7 @@ pub fn load(root: &Path, pin: &str, provenance: Provenance) -> Result<Fixture, S
         provenance,
         platforms,
         rules,
+        pending,
     })
 }
 

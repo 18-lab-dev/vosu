@@ -14,6 +14,11 @@
       "sha256": "f666b12cc8c1c6cd50d891bdbd820e2ce4761dcb763c0843707dc7c3cbfa8937"
     },
     {
+      "path": "pending-recapture.json",
+      "bytes": 20023,
+      "sha256": "11174e1e7d79efb2e5cc5e946d95c608d96c2fe0db797b5e2bfdae83aaa3eeeb"
+    },
+    {
       "path": "windows-lazer/assets.json",
       "bytes": 1903,
       "sha256": "bc56c4c1d26dedbbef76a7513e3e05536d9029c7db1267dabcc0b6a6407ac56b"

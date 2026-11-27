@@ -1,0 +1,575 @@
+{
+  "format": "vosu-golden-pending-recapture-v1",
+  "entries": [
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.duplicate",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.duplicate",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.empty",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.empty",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.foreign",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.foreign",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.missing",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.host.missing",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.localhost",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.localhost",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.loopback-ip",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.loopback-ip",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.none",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.none",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.null",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.http.null",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.ws.null",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "origin-peer.ws.null",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.budget.headers-32",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.budget.headers-32",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.budget.query-bytes-16384",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.budget.query-bytes-16384",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.budget.query-pairs-128",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.budget.query-pairs-128",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.get.menu",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.get.menu",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.get.paused",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.get.paused",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.get.result",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.get.result",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.near.query",
+      "part": "body",
+      "frame": null,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json-v2.near.query",
+      "part": "body",
+      "frame": null,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json.get.menu",
+      "part": "body",
+      "frame": null,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json.get.paused",
+      "part": "body",
+      "frame": null,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json.get.result",
+      "part": "body",
+      "frame": null,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "state-http.json.near.query",
+      "part": "body",
+      "frame": null,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.duplicate-keys",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.duplicate-keys",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.invalid-json",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.invalid-json",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.invalid-json",
+      "part": "ws.frame",
+      "frame": 2,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.invalid-json",
+      "part": "ws.frame",
+      "frame": 2,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.nested",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.nested",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.oversized",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.oversized",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.repeated-message",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.filter.repeated-message",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.upgrade.menu",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.upgrade.menu",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.upgrade.paused",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.upgrade.paused",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.upgrade.result",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/game/paused",
+      "reason": "s2-raw-clock-pair-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.v2.upgrade.result",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/settings/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.ws.upgrade.menu",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.ws.upgrade.paused",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    },
+    {
+      "platform": "windows-lazer",
+      "case": "ws.ws.upgrade.result",
+      "part": "ws.frame",
+      "frame": 0,
+      "pointer": "/menu/mainMenu/bassDensity",
+      "reason": "fft-pre-barrier-history-absent",
+      "decision": "run5-replay-triage \"Main decision\"",
+      "review_id": "main-review-m4b-run5-pending-recapture-2026-11-26"
+    }
+  ]
+}

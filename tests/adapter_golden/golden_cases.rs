@@ -3,9 +3,9 @@
 //!
 //! `golden_fixtures_replay_at_the_cargo_pin` is the M4b evidence test. It
 //! reads only `tests/fixtures/upstream/<Cargo pin>/`, replays every case and
-//! fails on any mismatch or unused divergence rule. Until the pilot commits
-//! fixtures, it passes only because `tests/fixtures/upstream/PENDING_PILOT`
-//! names exactly the Cargo pin, and it says loudly that it compared nothing.
+//! fails on any finding outside the exact reviewed pending-recapture list,
+//! a stale entry, or an unused divergence rule. Before the pilot fixture was
+//! committed, the exact Cargo pin could be marked `PENDING_PILOT`, with no replay.
 //! Every other test here runs the same comparator over
 //! `tests/fixtures/golden-synthetic/`: vosu-generated mechanics input that is
 //! never pilot or full evidence.
@@ -139,11 +139,8 @@ fn golden_fixtures_replay_at_the_cargo_pin() {
         Ok(Pinned::Present(fixture)) => {
             let rules = divergence::rules(fixture.rules.as_ref(), &ledger(), &fixture)
                 .unwrap_or_else(|e| panic!("{e}"));
-            let counts = compare::run(&fixture.platforms, &rules)
+            super::pending::run(&fixture, &rules)
                 .unwrap_or_else(|e| panic!("golden mismatches at pin {pin}:\n{e}"));
-            for (platform, families) in counts {
-                eprintln!("adapter_golden {pin} {platform}: {families:?}");
-            }
         }
     }
 }
