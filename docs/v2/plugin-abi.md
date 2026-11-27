@@ -442,7 +442,8 @@ A relayed `ACTION_RESULT` that would land over the cap after remapping is delive
 A plugin declares its settings shape with `settings_schema` (§8), a path to a `settings.schema.json` sibling using exactly the overlay/tool `settings.json` schema format ([`docs/tools/protocol.md`](../tools/protocol.md)). Core owns storage, the dashboard editing UI, and `password`-type write-only handling. The plugin's effective settings object is part of the `create` vtable function's `init` parameter (`vosu_plugin.h`: CBOR `{"plugin_id", "settings", "data_dir"}`) — no round trip is needed for the initial value — and every later change arrives as `VOSU_OP_SETTINGS_CHANGED` (host → plugin, CBOR, no reply): `{"values": <CBOR map>}`, where `values` is always the complete effective settings object in `init.settings`'s own shape, never a diff of only the changed keys — matching `SETTINGS_CHANGED`'s one-per-instance coalescing (§7.2), which replaces a queued instance wholesale rather than merging it, exactly because the whole object is self-sufficient.
 
 **M7 storage and editing (A7.1, approved 2026-11-24).** M7 adds core's
-per-plugin settings storage. The dashboard edits it only through the core
+per-plugin settings storage (`<config>/plugins/settings.json`, format v1,
+4 MiB cap). The dashboard edits it only through the core
 routes `GET`/`POST /api/plugins/<id>/settings`: GET returns the validated
 schema, values with defaults applied and a `secrets` presence map, with every
 `password` value `""`; POST validates the whole submitted document before
@@ -451,6 +452,39 @@ storing, keeps a stored secret for `""` or an omitted field and clears it for
 nothing and publishes nothing. Bridge B2 keeps serving `vosu.osu`'s five keys
 until M8. `vosu.overlayhost`'s `static_folder_path` (A7.1-OR) is seeded by
 core from `STATIC_FOLDER_PATH` until M8, outside B2.
+
+**M8 permanent settings persistence and D19 migration precedence (A8.1, A8.3,
+adopted 2026-11-24).** In M8, every settings-bearing plugin — including
+`vosu.osu` and `vosu.overlayhost` — routes through core's single generic
+`SettingsStorage` (`<config>/plugins/settings.json`, channel-aware per D21),
+published atomically in its own directory (`atomic_replace` / `read_published`)
+before in-memory publication and `SETTINGS_CHANGED`. Bridge B2 and the M7
+`STATIC_FOLDER_PATH` seeding path are deleted whole, with no compatibility
+alias, fallback read, or polling watcher replacement. During normal-root
+first-start migration:
+
+- **Conflict precedence:** existing valid per-plugin overrides in
+  `<config>/plugins/settings.json` win per explicit key. Migration imports only
+  missing legacy overrides for `vosu.osu`'s five case-sensitive keys
+  (`CALCULATE_PP`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`,
+  `READ_MANIA_SCROLL_SPEED`) and `vosu.overlayhost`'s `static_folder_path`
+  (from `STATIC_FOLDER_PATH`), each validated against that plugin's real
+  `settings.schema.json`.
+- **Presence vs defaults:** explicit `false` and `0` values permitted by
+  existing validation are preserved as explicit overrides; schema defaults
+  apply only to absent keys. Legacy input precedence is `vosu.toml` >
+  `vosu.env` > the pre-rename legacy `.env` file, snapshotted before the old
+  serializer can discard any key.
+- **Malformed input:** malformed legacy or destination input fails local
+  conversion without deleting source keys/files, without overwriting valid
+  destinations, and without writing `local_conversion_complete`, emitting an
+  actionable redacted diagnostic.
+- **Crash replay:** the migration journal (`<config>/migration-v2-journal.json`)
+  snapshots raw source fingerprints and extracted legacy values before any
+  destructive write. Destination settings are published durably before source
+  keys are removed from `vosu.toml`. Replay uses the journal snapshot and skips
+  already-committed steps, so it never rereads later-edited legacy inputs into
+  an already-committed destination and never overwrites post-migration edits.
 
 ### 6.10 Logging
 

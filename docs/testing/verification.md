@@ -2589,3 +2589,245 @@ Every script exited 0:
 | `check-lint-expectations.py` | 18 sites, 0 errors |
 | `check-deleted-assertions.py` | pass |
 | `check-standalone-crates.py` | 23 members, Linux and Windows (xwin) |
+
+## M8 migration and release verification (A8)
+
+This section freezes the M8 (A8.1–A8.6, adopted 2026-11-24) release evidence
+manifest schema, divergence-ledger parser contract, supervisor process-runtime
+CI split, and named counterexample inventory. It is normative for M8-L1 through
+M8-L5; it claims no test execution, capture, measurement, or release approval.
+See [A8 approved contract freeze](../v2/implementation-plan.md#a8-approved-contract-freeze-2026-11-24)
+and [catalog v2](../v2/catalog-v2.md#day-0-release-check).
+
+### Candidate-bound release evidence manifest (A8.4)
+
+`scripts/check-day0.py` keeps the four unauthenticated GitHub latest-release
+checks and the divergence-ledger check unchanged. Stable `2.0.0` publication
+(`.github/workflows/release.yml` and local `scripts/sign-release.py` preflight)
+additionally consumes one candidate-bound JSON evidence manifest (format
+version 1) that binds every required external, native, parity, package, and
+performance receipt to the exact release candidate:
+
+```json
+{
+  "manifest_version": 1,
+  "candidate": {
+    "tag": "v2.0.0",
+    "version": "2.0.0",
+    "commit": "<40-hex>",
+    "created_at": "<RFC 3339>",
+    "sdk": {
+      "version": "1.0.0",
+      "crate_sha256": "<64-hex>",
+      "header_sha256": "<64-hex>"
+    }
+  },
+  "artifacts": [
+    {
+      "file": "vosu-linux-v2.0.0.zip | vosu-windows-v2.0.0.zip | vosu_plugin.h | ...",
+      "target": "x86_64-unknown-linux-gnu | x86_64-pc-windows-msvc | any",
+      "sha256": "<64-hex>",
+      "size": 0,
+      "signed": true
+    }
+  ],
+  "day0_check": {
+    "checked_at": "<RFC 3339>",
+    "ledger_sha256": "<64-hex>",
+    "ledger_counts": { "security": 0, "contract": 0, "licensing": 0, "temporary": 0 },
+    "repositories": [
+      {
+        "repository": "18-lab-dev/vosu-tools | 18-lab-dev/vosulay | 18-lab-dev/vosu-overlays | 18-lab-dev/vosu-overlay-quickstart",
+        "tag": "<tag>",
+        "commit": "<40-hex>",
+        "release_id": 0,
+        "catalog_v2_sha256": "<64-hex | null for quickstart>",
+        "catalog_v1_sha256": "<64-hex | null for quickstart>",
+        "checked_at": "<RFC 3339>"
+      }
+    ]
+  },
+  "ecosystem_receipts": [
+    "Verbatim format-1 ecosystem receipt objects from docs/v2/ecosystem-release-matrix.md §9 (never reinterpreted): own-ci-process receipts for every official plugin on each supported native target against the latest adopted host alpha, plus separate Linux and Windows native-sandbox in-process receipts for vosu.vosulay (A8.6)."
+  ],
+  "m4b_parity": {
+    "source_pin": "<40-hex Cargo upstream pin>",
+    "inventory_sha256": "<64-hex>",
+    "pairs": [
+      {
+        "platform": "windows-stable | windows-lazer | linux-lazer",
+        "authorization_ref": "<owner authorization id>",
+        "vosu_commit": "<40-hex>",
+        "client_version": "<client version>",
+        "states": ["menu", "play", "paused", "result"],
+        "case_count": 0,
+        "capture_sha256": "<64-hex>",
+        "result": "pass | fail"
+      }
+    ]
+  },
+  "d17_performance": {
+    "decision": "pass | fail",
+    "baseline_pre_m0_commit": "<40-hex>",
+    "baseline_prev_commit": "<40-hex>",
+    "candidate_commit": "<40-hex>",
+    "linux_receipt_dir": "<label>",
+    "windows_receipt_dir": "<label>",
+    "broker_linux_ratios": { "precise": 0.0, "regular": 0.0, "cap": 2.0 },
+    "broker_windows_ratios": { "precise": 0.0, "regular": 0.0, "cap": 2.0 },
+    "cumulative_verdict": "pass | fail",
+    "build_budget_verdict": "pass | fail"
+  },
+  "native_verification": {
+    "linux_prepush_sha": "<40-hex>",
+    "windows_native_sha": "<40-hex>",
+    "packaged_smoke": [
+      {
+        "platform": "linux | windows",
+        "binary_sha256": "<64-hex>",
+        "child_fixture_sha256": "<64-hex>",
+        "api_ingame_404": true,
+        "consoleless_lifecycle_stop": true,
+        "no_orphans": true,
+        "result": "pass | fail"
+      }
+    ],
+    "updater_1_2_4": [
+      {
+        "platform": "linux | windows",
+        "source_binary_sha256": "<64-hex>",
+        "candidate_sha256": "<64-hex>",
+        "decline_no_download": true,
+        "accept_upgrade": true,
+        "rollback": true,
+        "result": "pass | fail"
+      }
+    ],
+    "packages": [
+      {
+        "manager": "deb | rpm | arch | aur | winget | scoop",
+        "owner_repo": "<repo or in-tree path>",
+        "package_id": "<package identifier>",
+        "artifact_sha256": "<64-hex>",
+        "install_upgrade_uninstall": true,
+        "result": "pass | fail"
+      }
+    ],
+    "owner_live_sessions": [
+      {
+        "platform": "windows-stable | windows-lazer | linux-lazer",
+        "client_version": "<client version>",
+        "states_traversed": ["menu", "play", "paused", "result"],
+        "installed_ids": ["<official tool>", "<official plugin>", "<official overlay>", "vosulay-editor", "vosu.vosulay"],
+        "cef_sandbox_verified": true,
+        "cleanup_verified": true,
+        "result": "pass | fail"
+      }
+    ],
+    "d15_forge_receipts": [
+      {
+        "forge": "github | gitlab | codeberg | gitea_or_forgejo",
+        "checked_at": "<RFC 3339>",
+        "result": "pass | fail"
+      }
+    ]
+  }
+}
+```
+
+Verification fails closed if any of these holds:
+
+- `manifest_version != 1`, unknown required field missing, or malformed hash/commit/timestamp;
+- any receipt is missing, stale (candidate commit, artifact SHA-256, host alpha tag/binary hash, or M4b `source_pin` differs from the release candidate), or has `result != "pass"`;
+- `day0_check.ledger_counts.temporary != 0`, or `day0_check.repositories` does not match the exact four repositories (three with non-null `catalog_v2_sha256`, quickstart with semver major 2);
+- any ecosystem receipt fails the rejection rules in [ecosystem release matrix §9](../v2/ecosystem-release-matrix.md#ecosystem-receipt-one-json-file-per-run-job-and-target) (`selected == 0`, skipped counted as passed, inferred from an asset name, `runtime` mismatch, or `fixture:` child offered as production CEF evidence);
+- `m4b_parity.pairs` omits any of the three required native pairs or omits any of `menu`, `play`, `paused`, `result`;
+- `d17_performance.decision != "pass"`, `cumulative_verdict != "pass"`, `build_budget_verdict != "pass"`, or `candidate_commit != candidate.commit`;
+- any `packaged_smoke` binary hash differs from the signed candidate artifact, or `api_ingame_404` / `no_orphans` is false;
+- `release.yml` or local `scripts/sign-release.py` attempts to publish a stable `2.0.0` release without a fresh day-0 check and passing manifest verification.
+
+### Divergence ledger and day-0 gate rules (A8.4)
+
+`scripts/check-day0.py` parses `tests/fixtures/upstream/DIVERGENCES.md`
+strictly:
+
+- Exactly one Markdown table with header `| id | class | scope | reason | closed by |`.
+- Every row inside the table (and any stray pipe-delimited row that looks like
+  a malformed ledger entry) must parse cleanly into 5 non-empty cells with a
+  unique `id` and a `class` strictly in `{"security", "contract", "licensing",
+  "temporary"}`.
+- Reject any `temporary` row, any missing/unknown/ambiguous class, any
+  duplicate `id`, or any malformed row; never silently skip unparseable lines.
+- Valid permanent `security`, `contract`, and `licensing` rows are accepted; a
+  non-empty permanent ledger is expected and never fails the gate.
+- Never delete or reclassify a `temporary` entry merely to pass the check.
+- Unit tests (`scripts/test_gate_tooling.py`) use injected HTTP transports for
+  all four-repository tests and never rely on public network access as a unit
+  oracle.
+
+### Supervisor process-runtime CI split (A8.6)
+
+Adopted 2026-11-24. Because D16 requires the production `vosu.vosulay`
+supervisor to run `in-process` so Chromium's Linux sandbox and Windows
+Medium-integrity CEF bootstrap stay intact, `vosu.vosulay` supplies two
+distinct, non-interchangeable receipts on both Linux and Windows:
+
+1. **Own-CI process-runtime ABI/lifecycle smoke** (`kind: "own-ci-process"`,
+   `runtime: "process"`, `child: "fixture:<id>"`): runs the production
+   supervisor plugin under `vosu plugin-host` against the latest adopted host
+   alpha using a separately identified non-CEF child fixture, proving ABI
+   loading, lifecycle actions, IPC framing, and process-host teardown.
+2. **Production in-process CEF sandbox and parent-death smoke**
+   (`kind: "native-sandbox"`, `runtime: "in-process"`, `child: "production"`):
+   runs the production in-process supervisor against the real vosulay CEF
+   runtime on Linux and Windows, verifying an active CEF sandbox, Windows
+   Medium-integrity child token (including from an elevated daemon, with no
+   High fallback), and clean parent-death teardown.
+
+Neither receipt substitutes for the other. Linux `no_new_privs` and generic
+plugin-host seccomp are never weakened for CEF, and setuid `chrome-sandbox` is
+never attempted under generic `no_new_privs`. Every other official plugin (all
+seven `vosu.tools.*` plugins) retains real `runtime = "process"` own-CI
+execution of its actual production functionality.
+
+### M8 migration and release counterexample inventory
+
+Every test in M8-L1 through M8-L5 must exercise production startup, migration,
+settings, catalog, gate, packaging, and benchmark code paths (never a second
+test-only converter) and fail deterministically for its named counterexample.
+Migration fixtures (`tests/migration_compat.rs` and `tests/migration/{config,settings,sources,installed,recovery,layouts}.rs`)
+must run natively on both Linux and Windows (a Windows-looking path string on
+Linux is supplemental only), executing first start, unchanged second start,
+crash-restart at every durable mutation boundary, and post-migration edit plus
+restart.
+
+| ID | Unit / Landing | Target / Owner | Scenario and discriminating counterexample |
+| --- | --- | --- | --- |
+| M8-A01 | A8 (L1) | Contract freeze & checks | Journal `local_conversion_complete` written before plugin settings are durable; "every plugin" silently omits `vosu.vosulay`; claimed external packaging path does not exist in-tree. |
+| M8-S01 | S0 (L1) | `vosu-core::plugin::settings` | Explicit `false` or `0` override replaced by schema default. |
+| M8-S02 | S0 (L1) | `vosu-core::plugin::settings` (native Windows) | Locked Windows destination replacement loses or corrupts the previous `plugins/settings.json` file. |
+| M8-S03 | S0 (L1) | `plugin_host`, `vosu-core::plugin::settings` | Creating or live plugin instance receives stale settings relative to durable publication / `SETTINGS_CHANGED`. |
+| M8-S04 | S0 (L1) | `vosu-core::plugin::settings` | Two distinct plugin IDs collide on the same settings storage slot, or a prerelease/alpha build writes normal-root settings. |
+| M8-M01 | M0 (L2) | `migration_compat`, `config_compat` | Old `ConfigDocument` serializer drops the five D19 keys or `STATIC_FOLDER_PATH` before raw snapshot export. |
+| M8-M02 | M0 (L2) | `migration_compat`, `config_compat` | `API_V1_SUBSCRIPTION_DEBOUNCE` is deleted alongside N0's four retired keys, or a nested unknown table key coincidentally named `POLL_RATE` is deleted. |
+| M8-M03 | M0 (L2) | `migration_compat`, `osu_plugin`, `daemon_smoke` | Editing `vosu.toml` after cutover still controls `vosu.osu` (surviving B2 bridge, alias, or watcher). |
+| M8-M04 | M0 (L2) | `migration_compat` | `local_conversion_complete` commits before both `<config>/plugins/settings.json` and canonical `<config>/vosu.toml` are durable. |
+| M8-M05 | M0 (L2) | `migration_compat` | Repeated start or crash replay rereads later-edited legacy inputs into an already-committed destination or overwrites post-migration user edits; or malformed input deletes source files or writes a completion marker. |
+| M8-M06 | M1 (L2) | `migration_compat`, `catalog_v2_compat` | HTTPS/URL alias of an official repository inherits official trust, or a disabled 1.x source becomes enabled during migration. |
+| M8-M07 | M1 (L2) | `migration_compat`, `catalog_v2_compat` | A 1.x user overlay is disabled as if it were a tool, or a 1.x user tool service starts before disablement (`enabled: false`, `needs-2.0-update`). |
+| M8-M08 | M1 (L2) | `migration_compat`, `catalog_v2_compat` | Cross-kind `replaces` claim accepted; 0 claims guesses a rename or deletes the 1.x install instead of leaving it unmanaged; >1 same-kind/source claims silently picks the first instead of surfacing a visible conflict. |
+| M8-M09 | M1 (L2) | `migration_compat`, `catalog_v2_compat` | Offline/failed download marks a queued replacement installed; catalog error falls back to another source; second restart duplicates a pending intent; native add auto-confirms without explicit artifact/runtime approval. |
+| M8-M10 | M1 (L2) | `migration_compat` | Official replacement or AF.2 cross-kind data/settings transfer overwrites an already-occupied destination instead of recording a no-overwrite collision and preserving both sides. |
+| M8-X01 | X0 (L2) | `migration_compat` (Linux + native Windows) | Marker-only idempotence hides dropped data; crash before `local_conversion_complete` reruns a destructive rename; locked Windows destination succeeds only on Linux. |
+| M8-X02 | X0 (L2) | `migration_compat`, `config_compat` | Fresh 2.0 install receives fake 1.x disabled user-tool status; normal migration modifies `<root>/prerelease/`; stable `2.0.0` imports alpha credentials/state; `--help`/`--version`/`logs`/`plugin-host` triggers normal daemon migration. |
+| M8-G01 | G0 (L3) | `scripts/test_gate_tooling.py` | One of the four repository checks fails while the other three pass and the gate still exits 0; quickstart tag `v1.9.0` accepted as major 2; prerelease/draft satisfies `/releases/latest`. |
+| M8-G02 | G0 (L3) | `scripts/test_gate_tooling.py` | Missing/unknown/ambiguous ledger class or malformed ledger row silently skipped; `temporary` hidden in a later row missed; non-empty permanent ledger (`security`/`contract`/`licensing`) wrongly fails the gate. |
+| M8-G03 | G0 (L3) | `release.yml`, `scripts/sign-release.py` | A previously created CI draft is published without a fresh day-0 and candidate-manifest verification; or the day-0 gate blocks ecosystem-bootstrapping alphas before prerequisites can ship. |
+| M8-E01 | E0 (L3) | `adapter_golden`, candidate manifest | Pilot capture substituted for the full three-pair set (`windows-stable`, `windows-lazer`, `linux-lazer`); fixtures use an older Cargo source pin; source-only oracle golden claimed as a live route capture. |
+| M8-E02 | E0 (L3) | Ecosystem CI receipts, `catalog_v2_compat` | Own-CI "process smoke" tests a bundled local vtable instead of `vosu plugin-host`; non-CEF supervisor fixture (`child: "fixture:..."`) claimed as real CEF sandbox evidence; first-party tool bypasses the resolver. |
+| M8-V01 | V0 (L4) | `vosu-plugin-api` manifest tests, `catalog_v2_compat` | `host = ">=2.0.0, <3.0.0"` fixture expected to admit `2.0.0-alpha.N`; valid stable package rejected due to a stale alpha pin; SDK `vosu-plugin-api` bulk-bumped to `2.0.0`. |
+| M8-V02 | V0 (L4) | `migration_compat`, `updater_compat` | Stable `2.0.0` accidentally imports alpha credentials/data, or stable update discovery selects an alpha prerelease. |
+| M8-R01 | R0 (L4) | `package-release.py`, `sign-release.py`, `vosu-release-smoke` | Signed bytes differ from smoked bytes; `vosu_plugin.h` stuffed into the two-entry updater ZIP (breaking the updater) or omitted from verify-set/signatures; packaged binary answers `/api/ingame` with anything other than the ordinary removed-route 404 (or adds upgrade/redirect/`Deprecation`/`Link` headers). |
+| M8-R02 | R0 (L4) | `vosu-release-smoke` (native Windows & Linux), `updater_native` | High-integrity Windows CEF child; console-less Windows startup causes CTRL_BREAK-based smoke to hang or leaves orphan children; actual 1.2.4 consent decline still downloads `2.0.0`; package install/upgrade/uninstall deletes user data; external winget/Scoop manifest hash points to a prior release. |
+| M8-P01 | P0 (L5) | `state_bus_bench`, `plan_memory_bench`, `brokered_reads_bench`, `benchmarks.md` | Same Cargo target directory reused across historical sources; benchmark filter matches zero cases; baseline does less output work than the candidate; independent +8% per-milestone drifts exceed the +10% cumulative bar against pre-M0 `3a91ff9`; busy-host run labeled pass; inherited M1/M2/M3/M5/M7 regressions silently dropped. |
+| M8-X03 | X1 (L5) | Final rehearsal & docs | Release binary SHA-256 differs from the final tested candidate; Windows cross-build reported as native verification; owner live session omits `paused` state or a `process`-runtime official tool; user docs claim migration completed while official replacements remain pending; an early four-repository check is reused after remote releases change. |
