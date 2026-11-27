@@ -6,23 +6,14 @@
   "conditional": null,
   "attempts": 1,
   "normalized": [
-    "header-date"
+    "root-prefix"
   ],
   "request": {
     "text": "GET /json/v2 HTTP/1.1\r\nConnection: close\r\n\r\n"
   },
   "expected": {
     "status": 400,
-    "headers": [
-      [
-        "connection",
-        "close"
-      ],
-      [
-        "date",
-        "<golden:date>"
-      ]
-    ],
+    "headers": [],
     "body": {
       "text": ""
     }

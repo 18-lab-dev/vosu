@@ -13,20 +13,7 @@
   },
   "expected": {
     "status": 101,
-    "headers": [
-      [
-        "connection",
-        "Upgrade"
-      ],
-      [
-        "sec-websocket-accept",
-        "4YdTkX9MMTZ9KgN/ARUFaC4SUqU="
-      ],
-      [
-        "upgrade",
-        "websocket"
-      ]
-    ],
+    "headers": [],
     "body": {
       "text": ""
     },

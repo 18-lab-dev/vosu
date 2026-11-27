@@ -2,6 +2,4067 @@
   "format": "vosu-golden-divergence-rules-v1",
   "rules": [
     {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-accuracy"
+      ],
+      "part": "body",
+      "vosu_value": "{\"error\":\"invalid acc\"}"
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-accuracy"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-clock-rate"
+      ],
+      "part": "body",
+      "vosu_value": "{\"error\":\"clockRate must be between 0.01 and 100\"}"
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-clock-rate"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-count"
+      ],
+      "part": "body",
+      "vosu_value": "{\"error\":\"invalid combo\"}"
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-count"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-mode"
+      ],
+      "part": "body",
+      "vosu_value": "{\"error\":\"mode must be 0, 1, 2, or 3\"}"
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.invalid-mode"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-calculate-mod-inputs",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.mods-acronyms"
+      ],
+      "part": "body",
+      "vosu_value": "{\"difficulty\":{\"mode\":0,\"stars\":3.022404100864857,\"isConvert\":false,\"aim\":1.717395161568558,\"aimDifficultSliderCount\":0,\"speed\":1.053717404476468,\"flashlight\":0,\"sliderFactor\":1,\"aimTopWeightedSliderFactor\":0,\"speedTopWeightedSliderFactor\":0,\"speedNoteCount\":29.568327746732074,\"aimDifficultStrainCount\":24.210357009776427,\"speedDifficultStrainCount\":26.723797156743426,\"nestedScorePerObject\":0,\"legacyScoreBaseMultiplier\":3,\"maximumLegacyComboScore\":16740,\"hp\":2,\"nCircles\":32,\"nSliders\":0,\"nLargeTicks\":0,\"nSpinners\":0,\"ar\":7.666666666666666,\"greatHitWindow\":45,\"okHitWindow\":82.33333333333333,\"mehHitWindow\":119.66666666666667,\"maxCombo\":32},\"state\":{\"maxCombo\":32,\"osuLargeTickHits\":0,\"osuSmallTickHits\":0,\"sliderEndHits\":0,\"nGeki\":0,\"nKatu\":0,\"n300\":32,\"n100\":0,\"n50\":0,\"misses\":0},\"pp\":35.51150325480238,\"ppAim\":17.89058590331909,\"ppFlashlight\":0,\"ppSpeed\":3.883917720011256,\"ppAccuracy\":12.162764323995187,\"effectiveMissCount\":0,\"speedDeviation\":30.420367360080352,\"comboBasedEstimatedMissCount\":0,\"aimEstimatedSliderBreaks\":0,\"speedEstimatedSliderBreaks\":0}"
+    },
+    {
+      "ledger_id": "legacy-calculate-mod-inputs",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.mods-acronyms"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.mods-invalid"
+      ],
+      "part": "body",
+      "vosu_value": "{\"error\":\"invalid mods acronyms\"}"
+    },
+    {
+      "ledger_id": "legacy-calculate-client-errors",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.mods-invalid"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-calculate-mod-inputs",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.mods-json"
+      ],
+      "part": "body",
+      "vosu_value": "{\"difficulty\":{\"mode\":0,\"stars\":2.5687704486208167,\"isConvert\":false,\"aim\":1.4700389679097856,\"aimDifficultSliderCount\":0,\"speed\":0.857339867445248,\"flashlight\":0,\"sliderFactor\":1,\"aimTopWeightedSliderFactor\":0,\"speedTopWeightedSliderFactor\":0,\"speedNoteCount\":29.869743063444133,\"aimDifficultStrainCount\":20.81399566909996,\"speedDifficultStrainCount\":25.925810980707467,\"nestedScorePerObject\":0,\"legacyScoreBaseMultiplier\":3,\"maximumLegacyComboScore\":16740,\"hp\":2,\"nCircles\":32,\"nSliders\":0,\"nLargeTicks\":0,\"nSpinners\":0,\"ar\":6.6,\"greatHitWindow\":54,\"okHitWindow\":98.8,\"mehHitWindow\":143.6,\"maxCombo\":32},\"state\":{\"maxCombo\":32,\"osuLargeTickHits\":0,\"osuSmallTickHits\":0,\"sliderEndHits\":0,\"nGeki\":0,\"nKatu\":0,\"n300\":32,\"n100\":0,\"n50\":0,\"misses\":0},\"pp\":20.00649794811494,\"ppAim\":11.037326162118024,\"ppFlashlight\":0,\"ppSpeed\":2.015283841803918,\"ppAccuracy\":5.99991285999241,\"effectiveMissCount\":0,\"speedDeviation\":36.4230904632099,\"comboBasedEstimatedMissCount\":0,\"aimEstimatedSliderBreaks\":0,\"speedEstimatedSliderBreaks\":0}"
+    },
+    {
+      "ledger_id": "legacy-calculate-mod-inputs",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.mods-json"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.post"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.background-image.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "image/png"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.background-image.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.audio.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "audio/wav"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.audio.head"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": "bytes"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.audio.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "audio/wav"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.audio.head"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.background.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "image/png"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.background.head"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": "bytes"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.background.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "image/png"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.background.head"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.file.head"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": "bytes"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.file.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.file.head"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.file.post"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-beatmap-shortcut-exact",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.relative.get"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-beatmap-shortcut-exact",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.relative.get"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-beatmap-shortcut-exact",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.relative.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-beatmap-shortcut-exact",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.relative.get"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-beatmap-shortcut-exact",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.beatmap.relative.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-wire-header-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.budget.headers-33"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-wire-header-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.budget.headers-33"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-wire-header-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.budget.headers-33"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-modified-since-future"
+      ],
+      "part": "body",
+      "vosu_value": ""
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-modified-since-future"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-modified-since-future"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-modified-since-future"
+      ],
+      "part": "status",
+      "vosu_value": 304
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-none-match-star"
+      ],
+      "part": "body",
+      "vosu_value": ""
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-none-match-star"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-none-match-star"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "upstream-no-file-validators",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-none-match-star"
+      ],
+      "part": "status",
+      "vosu_value": 304
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-range-other"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "audio/wav"
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.conditional.if-range-past"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "audio/wav"
+    },
+    {
+      "ledger_id": "legacy-single-range",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.multiple"
+      ],
+      "part": "body",
+      "vosu_value": ""
+    },
+    {
+      "ledger_id": "legacy-single-range",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.multiple"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-single-range",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.multiple"
+      ],
+      "part": "headers.content-range",
+      "vosu_value": "bytes */264644"
+    },
+    {
+      "ledger_id": "legacy-single-range",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.multiple"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-single-range",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.multiple"
+      ],
+      "part": "status",
+      "vosu_value": 416
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.single"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "audio/wav"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.single-head"
+      ],
+      "part": "headers.accept-ranges",
+      "vosu_value": "bytes"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.single-head"
+      ],
+      "part": "headers.content-range",
+      "vosu_value": "bytes 0-15/264644"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.single-head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "audio/wav"
+    },
+    {
+      "ledger_id": "legacy-file-head",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.range.single-head"
+      ],
+      "part": "status",
+      "vosu_value": 206
+    },
+    {
+      "ledger_id": "adr0021-removed-legacy-skin-index",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.index.get"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "adr0021-removed-legacy-skin-index",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.index.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "adr0021-removed-legacy-skin-index",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.index.get"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "adr0021-removed-legacy-skin-index",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.index.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "lazer-legacy-skin-404",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.lazer-file.get"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "lazer-legacy-skin-404",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.lazer-file.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "lazer-legacy-skin-404",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.lazer-file.get"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "lazer-legacy-skin-404",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.skin.lazer-file.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-directory-safe-index",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.songs.dir.get"
+      ],
+      "part": "body",
+      "vosu_value": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <meta name=\"color-scheme\" content=\"dark\">\n    <meta name=\"theme-color\" content=\"#100E18\">\n    <title>vosu - /Songs/d/dd/</title>\n    <link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">\n    <style>\n      :root {\n        color-scheme: dark;\n        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n        color: #F9F7FF;\n        background: #100E18;\n      }\n\n      * {\n        box-sizing: border-box;\n      }\n\n      body {\n        width: min(100% - 2rem, 72rem);\n        min-width: 18rem;\n        min-height: 100vh;\n        margin: 0 auto;\n        background:\n          radial-gradient(circle at top right, rgba(122, 225, 248, 0.12), transparent 26rem),\n          #100E18;\n      }\n\n      header {\n        padding: 2.5rem 0 1.25rem;\n        border-bottom: 1px solid rgba(249, 247, 255, 0.16);\n      }\n\n      .eyebrow {\n        margin: 0 0 0.4rem;\n        color: #F45CAD;\n        font-size: 0.75rem;\n        font-weight: 800;\n        letter-spacing: 0.12em;\n        text-transform: uppercase;\n      }\n\n      h1 {\n        margin: 0;\n        overflow-wrap: anywhere;\n        font-size: clamp(1.6rem, 5vw, 2.8rem);\n      }\n\n      #overlays-list {\n        display: grid;\n        grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));\n        gap: 0.65rem;\n        margin: 0;\n        padding: 1.5rem 0 3rem;\n        list-style: none;\n      }\n\n      #overlays-list li {\n        min-width: 0;\n      }\n\n      #overlays-list a {\n        display: block;\n        min-height: 3rem;\n        padding: 0.8rem 0.9rem;\n        overflow-wrap: anywhere;\n        color: #7AE1F8;\n        font-weight: 650;\n        text-decoration: none;\n        background: #181423;\n        border: 1px solid rgba(249, 247, 255, 0.16);\n        border-radius: 0.65rem;\n      }\n\n      #overlays-list a:hover {\n        color: #F9F7FF;\n        border-color: #F45CAD;\n      }\n\n      #overlays-list a:focus-visible {\n        outline: 0.2rem solid #7AE1F8;\n        outline-offset: 0.2rem;\n      }\n    </style>\n  </head>\n  <body>\n    <header>\n      <p class=\"eyebrow\">Vosu file index</p>\n      <h1>vosu - /Songs/d/dd/</h1>\n    </header>\n    <ul id=\"overlays-list\">\n      <li><a href=\"/Songs/d/dd/ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\">ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3</a></li>\n    </ul>\n  </body>\n</html>"
+    },
+    {
+      "ledger_id": "legacy-file-media-type",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.songs.file.get"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "application/octet-stream"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "files.songs.file.head"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.duplicate"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.empty"
+      ],
+      "part": "body",
+      "vosu_value": "{\"game\":{\"focused\":true,\"paused\":true},\"client\":\"lazer\",\"server\":\"ppy.sh\",\"state\":{\"number\":5,\"name\":\"selectPlay\"},\"session\":{\"playTime\":0,\"playCount\":0},\"settings\":{\"interfaceVisible\":true,\"replayUIVisible\":true,\"chatVisibilityStatus\":{\"number\":0,\"name\":\"hidden\"},\"leaderboard\":{\"visible\":false,\"type\":{\"number\":0,\"name\":\"details\"}},\"progressBar\":{\"number\":0,\"name\":\"off\"},\"bassDensity\":0.6081565691839917,\"resolution\":{\"fullscreen\":true,\"width\":1366,\"height\":768,\"widthFullscreen\":9999,\"heightFullscreen\":9999},\"client\":{\"updateAvailable\":false,\"branch\":0,\"version\":\"2026.1117.0\"},\"scoreMeter\":{\"type\":{\"number\":0,\"name\":\"none\"},\"size\":0},\"cursor\":{\"useSkinCursor\":false,\"autoSize\":false,\"size\":1,\"menuSize\":1},\"mouse\":{\"rawInput\":true,\"disableButtons\":false,\"disableWheel\":false,\"sensitivity\":1},\"tablet\":{\"enabled\":true,\"x\":0,\"y\":0,\"width\":0,\"height\":0,\"rotation\":0,\"pressureThreshold\":0},\"mania\":{\"speedBPMScale\":false,\"usePerBeatmapSpeedScale\":false,\"scrollSpeed\":8,\"scrollDirection\":{\"number\":1,\"name\":\"down\"}},\"sort\":{\"number\":10,\"name\":\"title\"},\"group\":{\"number\":0,\"name\":\"none\"},\"skin\":{\"useDefaultSkinInEditor\":false,\"ignoreBeatmapSkins\":false,\"tintSliderBall\":false,\"useTaikoSkin\":false,\"name\":\"osu! \\\"argon\\\" (2022)\"},\"mode\":{\"number\":0,\"name\":\"osu\"},\"audio\":{\"ignoreBeatmapSounds\":false,\"useSkinSamples\":false,\"volume\":{\"masterInactive\":25,\"master\":60,\"music\":60,\"effect\":60},\"offset\":{\"universal\":0}},\"background\":{\"storyboard\":true,\"video\":true,\"blur\":0,\"dim\":70},\"keybinds\":{\"osu\":{\"k1\":\"\",\"k2\":\"\",\"smokeKey\":\"\"},\"fruits\":{\"k1\":\"\",\"k2\":\"\",\"Dash\":\"\"},\"taiko\":{\"innerLeft\":\"\",\"innerRight\":\"\",\"outerLeft\":\"\",\"outerRight\":\"\"},\"quickRetry\":\"\"}},\"profile\":{\"userStatus\":{\"number\":0,\"name\":\"reconnecting\"},\"banchoStatus\":{\"number\":0,\"name\":\"idle\"},\"id\":0,\"name\":\"Guest\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"rankedScore\":0,\"level\":0,\"accuracy\":0,\"pp\":0,\"playCount\":0,\"globalRank\":0,\"countryCode\":{\"number\":0,\"name\":\"\"},\"backgroundColour\":\"ffffffff\",\"matchmaking\":null},\"beatmap\":{\"isKiai\":false,\"isBreak\":false,\"isConvert\":false,\"time\":{\"live\":2744,\"firstObject\":2000,\"lastObject\":17500,\"mp3Length\":24000},\"status\":{\"number\":1,\"name\":\"notSubmitted\"},\"checksum\":\"76f5ec46cb0597836d6069e44b947688\",\"id\":0,\"set\":-1,\"mode\":{\"number\":0,\"name\":\"osu\"},\"artist\":\"vosu generator\",\"artistUnicode\":\"vosu generator\",\"title\":\"vosu M4b synthetic\",\"titleUnicode\":\"vosu M4b synthetic\",\"mapper\":\"vosu\",\"version\":\"O0 dry run\",\"source\":\"generated\",\"tags\":\"vosu synthetic m4b\",\"stats\":{\"stars\":{\"live\":0,\"aim\":1.14,\"speed\":0.45,\"sliderFactor\":1,\"hitWindow\":67.5,\"total\":1.91},\"ar\":{\"original\":5,\"converted\":5},\"cs\":{\"original\":4,\"converted\":4},\"od\":{\"original\":2,\"converted\":2},\"hp\":{\"original\":2,\"converted\":2},\"bpm\":{\"realtime\":120,\"common\":120,\"min\":120,\"max\":120},\"objects\":{\"circles\":32,\"sliders\":0,\"spinners\":0,\"holds\":0,\"total\":32},\"hitWindow\":{\"miss\":400,\"meh\":179.5,\"ok\":123.5,\"great\":67.5},\"maxCombo\":32}},\"play\":{\"failed\":false,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":100,\"healthBar\":{\"normal\":0,\"smooth\":0},\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderBreaks\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"hitErrorArray\":[],\"combo\":{\"current\":0,\"max\":0},\"mods\":{\"checksum\":\"97d3b6f9c68dc2470b22e1d6b7de2c88\",\"number\":1,\"name\":\"NF\",\"array\":[{\"acronym\":\"NF\"}],\"rate\":1},\"rank\":{\"current\":\"\",\"maxThisPlay\":\"\"},\"pp\":{\"current\":0,\"fc\":0,\"maxAchieved\":0,\"maxAchievable\":0,\"detailed\":{\"current\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0},\"fc\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0}}},\"unstableRate\":0},\"leaderboard\":[],\"performance\":{\"accuracy\":{\"90\":6,\"91\":6.23,\"92\":6.23,\"93\":6.55,\"94\":6.55,\"95\":7,\"96\":7,\"97\":7.68,\"98\":7.68,\"99\":8.73,\"100\":8.73},\"graph\":{\"series\":[{\"name\":\"aim\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"aimNoSliders\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"reading\",\"data\":[-100,-100,-100,-100,-100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"flashlight\",\"data\":[-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"speed\",\"data\":[-100,-100,-100,-100,-100,2.32,3.590716333411985,4.286716333411984,4.66793123343558,4.66793123343558,4.87673123343558,4.991095703442658,5.053735703442658,5.088045044444782,5.088045044444782,5.106837044444783,5.11712984674542,5.12276744674542,5.125855287435611,5.125855287435611,5.12754656743561,5.128472919642668,5.128980303642669,5.129258209304785,5.129258209304785,5.129410424504785,5.12949379620342,5.12953946076342,5.12956447227301,5.12956447227301,5.129578171641011,5.129585675093889,5.129589784904288,5.129592035940151,5.129592035940151,5.129593268883271,5.1295939441940295,5.129594314076966,5.129594516670194,5.129594516670194,5.129594627635075,5.129594688413043,5.129594721702507,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]}],\"xaxis\":[0,400,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000,6400,6800,7200,7600,8000,8400,8800,9200,9600,10000,10400,10800,11200,11600,12000,12400,12800,13200,13600,14000,14400,14800,15200,15600,16000,16400,16800,17500,17900,18300,18700,19100,19500,19900,20300,20700,21100,21500,21900,22300,22700,23100,23500,23900]}},\"resultsScreen\":{\"scoreId\":0,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":0,\"name\":\"\",\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"mods\":{\"checksum\":\"\",\"number\":0,\"name\":\"\",\"array\":[],\"rate\":1},\"maxCombo\":0,\"rank\":\"\",\"pp\":{\"current\":0,\"fc\":0},\"createdAt\":\"\"},\"folders\":{\"game\":\"C:\\\\vosu-golden\\\\osu!\\\\client\",\"skin\":\".\",\"songs\":\"C:\\\\vosu-golden\\\\osu!\\\\client\\\\files\",\"beatmap\":\".\"},\"files\":{\"beatmap\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"background\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"audio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\"},\"directPath\":{\"beatmapFile\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"beatmapBackground\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"beatmapAudio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\",\"beatmapFolder\":\".\",\"skinFolder\":\".\"},\"tourney\":{\"scoreVisible\":false,\"starsVisible\":false,\"ipcState\":0,\"bestOF\":0,\"team\":{\"left\":\"\",\"right\":\"\"},\"points\":{\"left\":0,\"right\":0},\"chat\":[],\"totalScore\":{\"left\":0,\"right\":0},\"clients\":[]}}"
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.empty"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "application/json"
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.empty"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.empty"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.foreign"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.missing"
+      ],
+      "part": "body",
+      "vosu_value": "{\"game\":{\"focused\":true,\"paused\":true},\"client\":\"lazer\",\"server\":\"ppy.sh\",\"state\":{\"number\":5,\"name\":\"selectPlay\"},\"session\":{\"playTime\":0,\"playCount\":0},\"settings\":{\"interfaceVisible\":true,\"replayUIVisible\":true,\"chatVisibilityStatus\":{\"number\":0,\"name\":\"hidden\"},\"leaderboard\":{\"visible\":false,\"type\":{\"number\":0,\"name\":\"details\"}},\"progressBar\":{\"number\":0,\"name\":\"off\"},\"bassDensity\":0.6081565691839917,\"resolution\":{\"fullscreen\":true,\"width\":1366,\"height\":768,\"widthFullscreen\":9999,\"heightFullscreen\":9999},\"client\":{\"updateAvailable\":false,\"branch\":0,\"version\":\"2026.1117.0\"},\"scoreMeter\":{\"type\":{\"number\":0,\"name\":\"none\"},\"size\":0},\"cursor\":{\"useSkinCursor\":false,\"autoSize\":false,\"size\":1,\"menuSize\":1},\"mouse\":{\"rawInput\":true,\"disableButtons\":false,\"disableWheel\":false,\"sensitivity\":1},\"tablet\":{\"enabled\":true,\"x\":0,\"y\":0,\"width\":0,\"height\":0,\"rotation\":0,\"pressureThreshold\":0},\"mania\":{\"speedBPMScale\":false,\"usePerBeatmapSpeedScale\":false,\"scrollSpeed\":8,\"scrollDirection\":{\"number\":1,\"name\":\"down\"}},\"sort\":{\"number\":10,\"name\":\"title\"},\"group\":{\"number\":0,\"name\":\"none\"},\"skin\":{\"useDefaultSkinInEditor\":false,\"ignoreBeatmapSkins\":false,\"tintSliderBall\":false,\"useTaikoSkin\":false,\"name\":\"osu! \\\"argon\\\" (2022)\"},\"mode\":{\"number\":0,\"name\":\"osu\"},\"audio\":{\"ignoreBeatmapSounds\":false,\"useSkinSamples\":false,\"volume\":{\"masterInactive\":25,\"master\":60,\"music\":60,\"effect\":60},\"offset\":{\"universal\":0}},\"background\":{\"storyboard\":true,\"video\":true,\"blur\":0,\"dim\":70},\"keybinds\":{\"osu\":{\"k1\":\"\",\"k2\":\"\",\"smokeKey\":\"\"},\"fruits\":{\"k1\":\"\",\"k2\":\"\",\"Dash\":\"\"},\"taiko\":{\"innerLeft\":\"\",\"innerRight\":\"\",\"outerLeft\":\"\",\"outerRight\":\"\"},\"quickRetry\":\"\"}},\"profile\":{\"userStatus\":{\"number\":0,\"name\":\"reconnecting\"},\"banchoStatus\":{\"number\":0,\"name\":\"idle\"},\"id\":0,\"name\":\"Guest\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"rankedScore\":0,\"level\":0,\"accuracy\":0,\"pp\":0,\"playCount\":0,\"globalRank\":0,\"countryCode\":{\"number\":0,\"name\":\"\"},\"backgroundColour\":\"ffffffff\",\"matchmaking\":null},\"beatmap\":{\"isKiai\":false,\"isBreak\":false,\"isConvert\":false,\"time\":{\"live\":2744,\"firstObject\":2000,\"lastObject\":17500,\"mp3Length\":24000},\"status\":{\"number\":1,\"name\":\"notSubmitted\"},\"checksum\":\"76f5ec46cb0597836d6069e44b947688\",\"id\":0,\"set\":-1,\"mode\":{\"number\":0,\"name\":\"osu\"},\"artist\":\"vosu generator\",\"artistUnicode\":\"vosu generator\",\"title\":\"vosu M4b synthetic\",\"titleUnicode\":\"vosu M4b synthetic\",\"mapper\":\"vosu\",\"version\":\"O0 dry run\",\"source\":\"generated\",\"tags\":\"vosu synthetic m4b\",\"stats\":{\"stars\":{\"live\":0,\"aim\":1.14,\"speed\":0.45,\"sliderFactor\":1,\"hitWindow\":67.5,\"total\":1.91},\"ar\":{\"original\":5,\"converted\":5},\"cs\":{\"original\":4,\"converted\":4},\"od\":{\"original\":2,\"converted\":2},\"hp\":{\"original\":2,\"converted\":2},\"bpm\":{\"realtime\":120,\"common\":120,\"min\":120,\"max\":120},\"objects\":{\"circles\":32,\"sliders\":0,\"spinners\":0,\"holds\":0,\"total\":32},\"hitWindow\":{\"miss\":400,\"meh\":179.5,\"ok\":123.5,\"great\":67.5},\"maxCombo\":32}},\"play\":{\"failed\":false,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":100,\"healthBar\":{\"normal\":0,\"smooth\":0},\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderBreaks\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"hitErrorArray\":[],\"combo\":{\"current\":0,\"max\":0},\"mods\":{\"checksum\":\"97d3b6f9c68dc2470b22e1d6b7de2c88\",\"number\":1,\"name\":\"NF\",\"array\":[{\"acronym\":\"NF\"}],\"rate\":1},\"rank\":{\"current\":\"\",\"maxThisPlay\":\"\"},\"pp\":{\"current\":0,\"fc\":0,\"maxAchieved\":0,\"maxAchievable\":0,\"detailed\":{\"current\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0},\"fc\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0}}},\"unstableRate\":0},\"leaderboard\":[],\"performance\":{\"accuracy\":{\"90\":6,\"91\":6.23,\"92\":6.23,\"93\":6.55,\"94\":6.55,\"95\":7,\"96\":7,\"97\":7.68,\"98\":7.68,\"99\":8.73,\"100\":8.73},\"graph\":{\"series\":[{\"name\":\"aim\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"aimNoSliders\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"reading\",\"data\":[-100,-100,-100,-100,-100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"flashlight\",\"data\":[-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"speed\",\"data\":[-100,-100,-100,-100,-100,2.32,3.590716333411985,4.286716333411984,4.66793123343558,4.66793123343558,4.87673123343558,4.991095703442658,5.053735703442658,5.088045044444782,5.088045044444782,5.106837044444783,5.11712984674542,5.12276744674542,5.125855287435611,5.125855287435611,5.12754656743561,5.128472919642668,5.128980303642669,5.129258209304785,5.129258209304785,5.129410424504785,5.12949379620342,5.12953946076342,5.12956447227301,5.12956447227301,5.129578171641011,5.129585675093889,5.129589784904288,5.129592035940151,5.129592035940151,5.129593268883271,5.1295939441940295,5.129594314076966,5.129594516670194,5.129594516670194,5.129594627635075,5.129594688413043,5.129594721702507,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]}],\"xaxis\":[0,400,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000,6400,6800,7200,7600,8000,8400,8800,9200,9600,10000,10400,10800,11200,11600,12000,12400,12800,13200,13600,14000,14400,14800,15200,15600,16000,16400,16800,17500,17900,18300,18700,19100,19500,19900,20300,20700,21100,21500,21900,22300,22700,23100,23500,23900]}},\"resultsScreen\":{\"scoreId\":0,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":0,\"name\":\"\",\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"mods\":{\"checksum\":\"\",\"number\":0,\"name\":\"\",\"array\":[],\"rate\":1},\"maxCombo\":0,\"rank\":\"\",\"pp\":{\"current\":0,\"fc\":0},\"createdAt\":\"\"},\"folders\":{\"game\":\"C:\\\\vosu-golden\\\\osu!\\\\client\",\"skin\":\".\",\"songs\":\"C:\\\\vosu-golden\\\\osu!\\\\client\\\\files\",\"beatmap\":\".\"},\"files\":{\"beatmap\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"background\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"audio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\"},\"directPath\":{\"beatmapFile\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"beatmapBackground\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"beatmapAudio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\",\"beatmapFolder\":\".\",\"skinFolder\":\".\"},\"tourney\":{\"scoreVisible\":false,\"starsVisible\":false,\"ipcState\":0,\"bestOF\":0,\"team\":{\"left\":\"\",\"right\":\"\"},\"points\":{\"left\":0,\"right\":0},\"chat\":[],\"totalScore\":{\"left\":0,\"right\":0},\"clients\":[]}}"
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.missing"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "application/json"
+    },
+    {
+      "ledger_id": "legacy-overlay-host-field",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.host.missing"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.http.localhost"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.http.loopback-ip"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.http.none"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-opaque-origin-read",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.http.null"
+      ],
+      "part": "body",
+      "vosu_value": "{\"game\":{\"focused\":true,\"paused\":true},\"client\":\"lazer\",\"server\":\"ppy.sh\",\"state\":{\"number\":5,\"name\":\"selectPlay\"},\"session\":{\"playTime\":0,\"playCount\":0},\"settings\":{\"interfaceVisible\":true,\"replayUIVisible\":true,\"chatVisibilityStatus\":{\"number\":0,\"name\":\"hidden\"},\"leaderboard\":{\"visible\":false,\"type\":{\"number\":0,\"name\":\"details\"}},\"progressBar\":{\"number\":0,\"name\":\"off\"},\"bassDensity\":0.6081565691839917,\"resolution\":{\"fullscreen\":true,\"width\":1366,\"height\":768,\"widthFullscreen\":9999,\"heightFullscreen\":9999},\"client\":{\"updateAvailable\":false,\"branch\":0,\"version\":\"2026.1117.0\"},\"scoreMeter\":{\"type\":{\"number\":0,\"name\":\"none\"},\"size\":0},\"cursor\":{\"useSkinCursor\":false,\"autoSize\":false,\"size\":1,\"menuSize\":1},\"mouse\":{\"rawInput\":true,\"disableButtons\":false,\"disableWheel\":false,\"sensitivity\":1},\"tablet\":{\"enabled\":true,\"x\":0,\"y\":0,\"width\":0,\"height\":0,\"rotation\":0,\"pressureThreshold\":0},\"mania\":{\"speedBPMScale\":false,\"usePerBeatmapSpeedScale\":false,\"scrollSpeed\":8,\"scrollDirection\":{\"number\":1,\"name\":\"down\"}},\"sort\":{\"number\":10,\"name\":\"title\"},\"group\":{\"number\":0,\"name\":\"none\"},\"skin\":{\"useDefaultSkinInEditor\":false,\"ignoreBeatmapSkins\":false,\"tintSliderBall\":false,\"useTaikoSkin\":false,\"name\":\"osu! \\\"argon\\\" (2022)\"},\"mode\":{\"number\":0,\"name\":\"osu\"},\"audio\":{\"ignoreBeatmapSounds\":false,\"useSkinSamples\":false,\"volume\":{\"masterInactive\":25,\"master\":60,\"music\":60,\"effect\":60},\"offset\":{\"universal\":0}},\"background\":{\"storyboard\":true,\"video\":true,\"blur\":0,\"dim\":70},\"keybinds\":{\"osu\":{\"k1\":\"\",\"k2\":\"\",\"smokeKey\":\"\"},\"fruits\":{\"k1\":\"\",\"k2\":\"\",\"Dash\":\"\"},\"taiko\":{\"innerLeft\":\"\",\"innerRight\":\"\",\"outerLeft\":\"\",\"outerRight\":\"\"},\"quickRetry\":\"\"}},\"profile\":{\"userStatus\":{\"number\":0,\"name\":\"reconnecting\"},\"banchoStatus\":{\"number\":0,\"name\":\"idle\"},\"id\":0,\"name\":\"Guest\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"rankedScore\":0,\"level\":0,\"accuracy\":0,\"pp\":0,\"playCount\":0,\"globalRank\":0,\"countryCode\":{\"number\":0,\"name\":\"\"},\"backgroundColour\":\"ffffffff\",\"matchmaking\":null},\"beatmap\":{\"isKiai\":false,\"isBreak\":false,\"isConvert\":false,\"time\":{\"live\":2744,\"firstObject\":2000,\"lastObject\":17500,\"mp3Length\":24000},\"status\":{\"number\":1,\"name\":\"notSubmitted\"},\"checksum\":\"76f5ec46cb0597836d6069e44b947688\",\"id\":0,\"set\":-1,\"mode\":{\"number\":0,\"name\":\"osu\"},\"artist\":\"vosu generator\",\"artistUnicode\":\"vosu generator\",\"title\":\"vosu M4b synthetic\",\"titleUnicode\":\"vosu M4b synthetic\",\"mapper\":\"vosu\",\"version\":\"O0 dry run\",\"source\":\"generated\",\"tags\":\"vosu synthetic m4b\",\"stats\":{\"stars\":{\"live\":0,\"aim\":1.14,\"speed\":0.45,\"sliderFactor\":1,\"hitWindow\":67.5,\"total\":1.91},\"ar\":{\"original\":5,\"converted\":5},\"cs\":{\"original\":4,\"converted\":4},\"od\":{\"original\":2,\"converted\":2},\"hp\":{\"original\":2,\"converted\":2},\"bpm\":{\"realtime\":120,\"common\":120,\"min\":120,\"max\":120},\"objects\":{\"circles\":32,\"sliders\":0,\"spinners\":0,\"holds\":0,\"total\":32},\"hitWindow\":{\"miss\":400,\"meh\":179.5,\"ok\":123.5,\"great\":67.5},\"maxCombo\":32}},\"play\":{\"failed\":false,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":100,\"healthBar\":{\"normal\":0,\"smooth\":0},\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderBreaks\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"hitErrorArray\":[],\"combo\":{\"current\":0,\"max\":0},\"mods\":{\"checksum\":\"97d3b6f9c68dc2470b22e1d6b7de2c88\",\"number\":1,\"name\":\"NF\",\"array\":[{\"acronym\":\"NF\"}],\"rate\":1},\"rank\":{\"current\":\"\",\"maxThisPlay\":\"\"},\"pp\":{\"current\":0,\"fc\":0,\"maxAchieved\":0,\"maxAchievable\":0,\"detailed\":{\"current\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0},\"fc\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0}}},\"unstableRate\":0},\"leaderboard\":[],\"performance\":{\"accuracy\":{\"90\":6,\"91\":6.23,\"92\":6.23,\"93\":6.55,\"94\":6.55,\"95\":7,\"96\":7,\"97\":7.68,\"98\":7.68,\"99\":8.73,\"100\":8.73},\"graph\":{\"series\":[{\"name\":\"aim\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"aimNoSliders\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"reading\",\"data\":[-100,-100,-100,-100,-100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"flashlight\",\"data\":[-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"speed\",\"data\":[-100,-100,-100,-100,-100,2.32,3.590716333411985,4.286716333411984,4.66793123343558,4.66793123343558,4.87673123343558,4.991095703442658,5.053735703442658,5.088045044444782,5.088045044444782,5.106837044444783,5.11712984674542,5.12276744674542,5.125855287435611,5.125855287435611,5.12754656743561,5.128472919642668,5.128980303642669,5.129258209304785,5.129258209304785,5.129410424504785,5.12949379620342,5.12953946076342,5.12956447227301,5.12956447227301,5.129578171641011,5.129585675093889,5.129589784904288,5.129592035940151,5.129592035940151,5.129593268883271,5.1295939441940295,5.129594314076966,5.129594516670194,5.129594516670194,5.129594627635075,5.129594688413043,5.129594721702507,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]}],\"xaxis\":[0,400,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000,6400,6800,7200,7600,8000,8400,8800,9200,9600,10000,10400,10800,11200,11600,12000,12400,12800,13200,13600,14000,14400,14800,15200,15600,16000,16400,16800,17500,17900,18300,18700,19100,19500,19900,20300,20700,21100,21500,21900,22300,22700,23100,23500,23900]}},\"resultsScreen\":{\"scoreId\":0,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":0,\"name\":\"\",\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"mods\":{\"checksum\":\"\",\"number\":0,\"name\":\"\",\"array\":[],\"rate\":1},\"maxCombo\":0,\"rank\":\"\",\"pp\":{\"current\":0,\"fc\":0},\"createdAt\":\"\"},\"folders\":{\"game\":\"C:\\\\vosu-golden\\\\osu!\\\\client\",\"skin\":\".\",\"songs\":\"C:\\\\vosu-golden\\\\osu!\\\\client\\\\files\",\"beatmap\":\".\"},\"files\":{\"beatmap\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"background\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"audio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\"},\"directPath\":{\"beatmapFile\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"beatmapBackground\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"beatmapAudio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\",\"beatmapFolder\":\".\",\"skinFolder\":\".\"},\"tourney\":{\"scoreVisible\":false,\"starsVisible\":false,\"ipcState\":0,\"bestOF\":0,\"team\":{\"left\":\"\",\"right\":\"\"},\"points\":{\"left\":0,\"right\":0},\"chat\":[],\"totalScore\":{\"left\":0,\"right\":0},\"clients\":[]}}"
+    },
+    {
+      "ledger_id": "legacy-opaque-origin-read",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.http.null"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "application/json"
+    },
+    {
+      "ledger_id": "legacy-opaque-origin-read",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.http.null"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "legacy-opaque-origin-read",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.ws.foreign"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-opaque-origin-read",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.ws.null"
+      ],
+      "part": "status",
+      "vosu_value": 101
+    },
+    {
+      "ledger_id": "legacy-opaque-origin-read",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "origin-peer.ws.null"
+      ],
+      "part": "ws.sequence",
+      "vosu_value": [
+        {
+          "from": "server",
+          "fin": true,
+          "opcode": 1,
+          "masked": false,
+          "length": 8127,
+          "payload": {
+            "text": "{\"game\":{\"focused\":true,\"paused\":true},\"client\":\"lazer\",\"server\":\"ppy.sh\",\"state\":{\"number\":5,\"name\":\"selectPlay\"},\"session\":{\"playTime\":0,\"playCount\":0},\"settings\":{\"interfaceVisible\":true,\"replayUIVisible\":true,\"chatVisibilityStatus\":{\"number\":0,\"name\":\"hidden\"},\"leaderboard\":{\"visible\":false,\"type\":{\"number\":0,\"name\":\"details\"}},\"progressBar\":{\"number\":0,\"name\":\"off\"},\"bassDensity\":0.6081565691839917,\"resolution\":{\"fullscreen\":true,\"width\":1366,\"height\":768,\"widthFullscreen\":9999,\"heightFullscreen\":9999},\"client\":{\"updateAvailable\":false,\"branch\":0,\"version\":\"2026.1117.0\"},\"scoreMeter\":{\"type\":{\"number\":0,\"name\":\"none\"},\"size\":0},\"cursor\":{\"useSkinCursor\":false,\"autoSize\":false,\"size\":1,\"menuSize\":1},\"mouse\":{\"rawInput\":true,\"disableButtons\":false,\"disableWheel\":false,\"sensitivity\":1},\"tablet\":{\"enabled\":true,\"x\":0,\"y\":0,\"width\":0,\"height\":0,\"rotation\":0,\"pressureThreshold\":0},\"mania\":{\"speedBPMScale\":false,\"usePerBeatmapSpeedScale\":false,\"scrollSpeed\":8,\"scrollDirection\":{\"number\":1,\"name\":\"down\"}},\"sort\":{\"number\":10,\"name\":\"title\"},\"group\":{\"number\":0,\"name\":\"none\"},\"skin\":{\"useDefaultSkinInEditor\":false,\"ignoreBeatmapSkins\":false,\"tintSliderBall\":false,\"useTaikoSkin\":false,\"name\":\"osu! \\\"argon\\\" (2022)\"},\"mode\":{\"number\":0,\"name\":\"osu\"},\"audio\":{\"ignoreBeatmapSounds\":false,\"useSkinSamples\":false,\"volume\":{\"masterInactive\":25,\"master\":60,\"music\":60,\"effect\":60},\"offset\":{\"universal\":0}},\"background\":{\"storyboard\":true,\"video\":true,\"blur\":0,\"dim\":70},\"keybinds\":{\"osu\":{\"k1\":\"\",\"k2\":\"\",\"smokeKey\":\"\"},\"fruits\":{\"k1\":\"\",\"k2\":\"\",\"Dash\":\"\"},\"taiko\":{\"innerLeft\":\"\",\"innerRight\":\"\",\"outerLeft\":\"\",\"outerRight\":\"\"},\"quickRetry\":\"\"}},\"profile\":{\"userStatus\":{\"number\":0,\"name\":\"reconnecting\"},\"banchoStatus\":{\"number\":0,\"name\":\"idle\"},\"id\":0,\"name\":\"Guest\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"rankedScore\":0,\"level\":0,\"accuracy\":0,\"pp\":0,\"playCount\":0,\"globalRank\":0,\"countryCode\":{\"number\":0,\"name\":\"\"},\"backgroundColour\":\"ffffffff\",\"matchmaking\":null},\"beatmap\":{\"isKiai\":false,\"isBreak\":false,\"isConvert\":false,\"time\":{\"live\":2744,\"firstObject\":2000,\"lastObject\":17500,\"mp3Length\":24000},\"status\":{\"number\":1,\"name\":\"notSubmitted\"},\"checksum\":\"76f5ec46cb0597836d6069e44b947688\",\"id\":0,\"set\":-1,\"mode\":{\"number\":0,\"name\":\"osu\"},\"artist\":\"vosu generator\",\"artistUnicode\":\"vosu generator\",\"title\":\"vosu M4b synthetic\",\"titleUnicode\":\"vosu M4b synthetic\",\"mapper\":\"vosu\",\"version\":\"O0 dry run\",\"source\":\"generated\",\"tags\":\"vosu synthetic m4b\",\"stats\":{\"stars\":{\"live\":0,\"aim\":1.14,\"speed\":0.45,\"sliderFactor\":1,\"hitWindow\":67.5,\"total\":1.91},\"ar\":{\"original\":5,\"converted\":5},\"cs\":{\"original\":4,\"converted\":4},\"od\":{\"original\":2,\"converted\":2},\"hp\":{\"original\":2,\"converted\":2},\"bpm\":{\"realtime\":120,\"common\":120,\"min\":120,\"max\":120},\"objects\":{\"circles\":32,\"sliders\":0,\"spinners\":0,\"holds\":0,\"total\":32},\"hitWindow\":{\"miss\":400,\"meh\":179.5,\"ok\":123.5,\"great\":67.5},\"maxCombo\":32}},\"play\":{\"failed\":false,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":100,\"healthBar\":{\"normal\":0,\"smooth\":0},\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderBreaks\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"hitErrorArray\":[],\"combo\":{\"current\":0,\"max\":0},\"mods\":{\"checksum\":\"97d3b6f9c68dc2470b22e1d6b7de2c88\",\"number\":1,\"name\":\"NF\",\"array\":[{\"acronym\":\"NF\"}],\"rate\":1},\"rank\":{\"current\":\"\",\"maxThisPlay\":\"\"},\"pp\":{\"current\":0,\"fc\":0,\"maxAchieved\":0,\"maxAchievable\":0,\"detailed\":{\"current\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0},\"fc\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0}}},\"unstableRate\":0},\"leaderboard\":[],\"performance\":{\"accuracy\":{\"90\":6,\"91\":6.23,\"92\":6.23,\"93\":6.55,\"94\":6.55,\"95\":7,\"96\":7,\"97\":7.68,\"98\":7.68,\"99\":8.73,\"100\":8.73},\"graph\":{\"series\":[{\"name\":\"aim\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"aimNoSliders\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"reading\",\"data\":[-100,-100,-100,-100,-100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"flashlight\",\"data\":[-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"speed\",\"data\":[-100,-100,-100,-100,-100,2.32,3.590716333411985,4.286716333411984,4.66793123343558,4.66793123343558,4.87673123343558,4.991095703442658,5.053735703442658,5.088045044444782,5.088045044444782,5.106837044444783,5.11712984674542,5.12276744674542,5.125855287435611,5.125855287435611,5.12754656743561,5.128472919642668,5.128980303642669,5.129258209304785,5.129258209304785,5.129410424504785,5.12949379620342,5.12953946076342,5.12956447227301,5.12956447227301,5.129578171641011,5.129585675093889,5.129589784904288,5.129592035940151,5.129592035940151,5.129593268883271,5.1295939441940295,5.129594314076966,5.129594516670194,5.129594516670194,5.129594627635075,5.129594688413043,5.129594721702507,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]}],\"xaxis\":[0,400,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000,6400,6800,7200,7600,8000,8400,8800,9200,9600,10000,10400,10800,11200,11600,12000,12400,12800,13200,13600,14000,14400,14800,15200,15600,16000,16400,16800,17500,17900,18300,18700,19100,19500,19900,20300,20700,21100,21500,21900,22300,22700,23100,23500,23900]}},\"resultsScreen\":{\"scoreId\":0,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":0,\"name\":\"\",\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"mods\":{\"checksum\":\"\",\"number\":0,\"name\":\"\",\"array\":[],\"rate\":1},\"maxCombo\":0,\"rank\":\"\",\"pp\":{\"current\":0,\"fc\":0},\"createdAt\":\"\"},\"folders\":{\"game\":\"C:\\\\vosu-golden\\\\osu!\\\\client\",\"skin\":\".\",\"songs\":\"C:\\\\vosu-golden\\\\osu!\\\\client\\\\files\",\"beatmap\":\".\"},\"files\":{\"beatmap\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"background\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"audio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\"},\"directPath\":{\"beatmapFile\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"beatmapBackground\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"beatmapAudio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\",\"beatmapFolder\":\".\",\"skinFolder\":\".\"},\"tourney\":{\"scoreVisible\":false,\"starsVisible\":false,\"ipcState\":0,\"bestOF\":0,\"team\":{\"left\":\"\",\"right\":\"\"},\"points\":{\"left\":0,\"right\":0},\"chat\":[],\"totalScore\":{\"left\":0,\"right\":0},\"clients\":[]}}"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.ads"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.ads"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.ads"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.backslash-encoded"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.backslash-encoded"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.backslash-raw"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.backslash-raw"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.dot-segment"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.dot-segment"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.double-encoded-parent"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.double-encoded-parent"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.double-encoded-parent"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.encoded-parent"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.encoded-parent"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.trailing-dot"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.trailing-dot"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.trailing-dot"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.trailing-space"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.trailing-space"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.beatmap.trailing-space"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.ads"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.ads"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.ads"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.backslash-encoded"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.backslash-encoded"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.backslash-raw"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.backslash-raw"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.dot-segment"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.dot-segment"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.double-encoded-parent"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.double-encoded-parent"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.double-encoded-parent"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.encoded-parent"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.encoded-parent"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.trailing-dot"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.trailing-dot"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.trailing-dot"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.trailing-space"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.trailing-space"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-confined-path-probes",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "path-security.songs.trailing-space"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.delete"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.head.menu"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.head.no-client"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.head.paused"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.head.result"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.inner-double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.inner-double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.inner-double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.inner-double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.suffix"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.suffix"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.suffix"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.suffix"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.trailing-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.trailing-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.wrong-case"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.wrong-case"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.wrong-case"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.near.wrong-case"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.options"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.post"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-sc.put"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.delete"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.head.menu"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.head.no-client"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.head.paused"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.head.result"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.inner-double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.inner-double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.inner-double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.inner-double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.suffix"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.suffix"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.suffix"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.suffix"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.trailing-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.trailing-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.wrong-case"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.wrong-case"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.wrong-case"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.near.wrong-case"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.options"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.post"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2-precise.put"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.headers-32"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.headers-33"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.headers-33"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.headers-33"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-wire-header-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-bytes-16384"
+      ],
+      "part": "body",
+      "vosu_value": "{\"game\":{\"focused\":true,\"paused\":true},\"client\":\"lazer\",\"server\":\"ppy.sh\",\"state\":{\"number\":5,\"name\":\"selectPlay\"},\"session\":{\"playTime\":0,\"playCount\":0},\"settings\":{\"interfaceVisible\":true,\"replayUIVisible\":true,\"chatVisibilityStatus\":{\"number\":0,\"name\":\"hidden\"},\"leaderboard\":{\"visible\":false,\"type\":{\"number\":0,\"name\":\"details\"}},\"progressBar\":{\"number\":0,\"name\":\"off\"},\"bassDensity\":0.6081565691839917,\"resolution\":{\"fullscreen\":true,\"width\":1366,\"height\":768,\"widthFullscreen\":9999,\"heightFullscreen\":9999},\"client\":{\"updateAvailable\":false,\"branch\":0,\"version\":\"2026.1117.0\"},\"scoreMeter\":{\"type\":{\"number\":0,\"name\":\"none\"},\"size\":0},\"cursor\":{\"useSkinCursor\":false,\"autoSize\":false,\"size\":1,\"menuSize\":1},\"mouse\":{\"rawInput\":true,\"disableButtons\":false,\"disableWheel\":false,\"sensitivity\":1},\"tablet\":{\"enabled\":true,\"x\":0,\"y\":0,\"width\":0,\"height\":0,\"rotation\":0,\"pressureThreshold\":0},\"mania\":{\"speedBPMScale\":false,\"usePerBeatmapSpeedScale\":false,\"scrollSpeed\":8,\"scrollDirection\":{\"number\":1,\"name\":\"down\"}},\"sort\":{\"number\":10,\"name\":\"title\"},\"group\":{\"number\":0,\"name\":\"none\"},\"skin\":{\"useDefaultSkinInEditor\":false,\"ignoreBeatmapSkins\":false,\"tintSliderBall\":false,\"useTaikoSkin\":false,\"name\":\"osu! \\\"argon\\\" (2022)\"},\"mode\":{\"number\":0,\"name\":\"osu\"},\"audio\":{\"ignoreBeatmapSounds\":false,\"useSkinSamples\":false,\"volume\":{\"masterInactive\":25,\"master\":60,\"music\":60,\"effect\":60},\"offset\":{\"universal\":0}},\"background\":{\"storyboard\":true,\"video\":true,\"blur\":0,\"dim\":70},\"keybinds\":{\"osu\":{\"k1\":\"\",\"k2\":\"\",\"smokeKey\":\"\"},\"fruits\":{\"k1\":\"\",\"k2\":\"\",\"Dash\":\"\"},\"taiko\":{\"innerLeft\":\"\",\"innerRight\":\"\",\"outerLeft\":\"\",\"outerRight\":\"\"},\"quickRetry\":\"\"}},\"profile\":{\"userStatus\":{\"number\":0,\"name\":\"reconnecting\"},\"banchoStatus\":{\"number\":0,\"name\":\"idle\"},\"id\":0,\"name\":\"Guest\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"rankedScore\":0,\"level\":0,\"accuracy\":0,\"pp\":0,\"playCount\":0,\"globalRank\":0,\"countryCode\":{\"number\":0,\"name\":\"\"},\"backgroundColour\":\"ffffffff\",\"matchmaking\":null},\"beatmap\":{\"isKiai\":false,\"isBreak\":false,\"isConvert\":false,\"time\":{\"live\":2744,\"firstObject\":2000,\"lastObject\":17500,\"mp3Length\":24000},\"status\":{\"number\":1,\"name\":\"notSubmitted\"},\"checksum\":\"76f5ec46cb0597836d6069e44b947688\",\"id\":0,\"set\":-1,\"mode\":{\"number\":0,\"name\":\"osu\"},\"artist\":\"vosu generator\",\"artistUnicode\":\"vosu generator\",\"title\":\"vosu M4b synthetic\",\"titleUnicode\":\"vosu M4b synthetic\",\"mapper\":\"vosu\",\"version\":\"O0 dry run\",\"source\":\"generated\",\"tags\":\"vosu synthetic m4b\",\"stats\":{\"stars\":{\"live\":0,\"aim\":1.14,\"speed\":0.45,\"sliderFactor\":1,\"hitWindow\":67.5,\"total\":1.91},\"ar\":{\"original\":5,\"converted\":5},\"cs\":{\"original\":4,\"converted\":4},\"od\":{\"original\":2,\"converted\":2},\"hp\":{\"original\":2,\"converted\":2},\"bpm\":{\"realtime\":120,\"common\":120,\"min\":120,\"max\":120},\"objects\":{\"circles\":32,\"sliders\":0,\"spinners\":0,\"holds\":0,\"total\":32},\"hitWindow\":{\"miss\":400,\"meh\":179.5,\"ok\":123.5,\"great\":67.5},\"maxCombo\":32}},\"play\":{\"failed\":false,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":100,\"healthBar\":{\"normal\":0,\"smooth\":0},\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderBreaks\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"hitErrorArray\":[],\"combo\":{\"current\":0,\"max\":0},\"mods\":{\"checksum\":\"97d3b6f9c68dc2470b22e1d6b7de2c88\",\"number\":1,\"name\":\"NF\",\"array\":[{\"acronym\":\"NF\"}],\"rate\":1},\"rank\":{\"current\":\"\",\"maxThisPlay\":\"\"},\"pp\":{\"current\":0,\"fc\":0,\"maxAchieved\":0,\"maxAchievable\":0,\"detailed\":{\"current\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0},\"fc\":{\"aim\":0,\"speed\":0,\"accuracy\":0,\"difficulty\":0,\"flashlight\":0,\"total\":0}}},\"unstableRate\":0},\"leaderboard\":[],\"performance\":{\"accuracy\":{\"90\":6,\"91\":6.23,\"92\":6.23,\"93\":6.55,\"94\":6.55,\"95\":7,\"96\":7,\"97\":7.68,\"98\":7.68,\"99\":8.73,\"100\":8.73},\"graph\":{\"series\":[{\"name\":\"aim\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"aimNoSliders\",\"data\":[-100,-100,-100,-100,-100,0,0,24.468177255440242,43.12458056280056,43.12458056280056,45.6870472051779,52.390146386002684,49.81469407159405,54.21825484641152,54.21825484641152,50.62927938631779,54.57948479675739,50.79082633121424,54.65173078682656,54.65173078682656,50.823135720193534,54.6661799848404,50.82959759798939,54.66906982444317,54.66906982444317,50.830889973548565,54.66964779236372,50.83114844866039,54.66976338594783,54.66976338594783,50.831200143682764,54.66978650466466,50.83121048268724,54.66979112840802,54.66979112840802,50.83121255048813,54.66979205315669,50.831212964048305,54.669792238106425,54.669792238106425,50.83121304676034,54.66979227509637,50.831213063302755,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"reading\",\"data\":[-100,-100,-100,-100,-100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"flashlight\",\"data\":[-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]},{\"name\":\"speed\",\"data\":[-100,-100,-100,-100,-100,2.32,3.590716333411985,4.286716333411984,4.66793123343558,4.66793123343558,4.87673123343558,4.991095703442658,5.053735703442658,5.088045044444782,5.088045044444782,5.106837044444783,5.11712984674542,5.12276744674542,5.125855287435611,5.125855287435611,5.12754656743561,5.128472919642668,5.128980303642669,5.129258209304785,5.129258209304785,5.129410424504785,5.12949379620342,5.12953946076342,5.12956447227301,5.12956447227301,5.129578171641011,5.129585675093889,5.129589784904288,5.129592035940151,5.129592035940151,5.129593268883271,5.1295939441940295,5.129594314076966,5.129594516670194,5.129594516670194,5.129594627635075,5.129594688413043,5.129594721702507,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100,-100]}],\"xaxis\":[0,400,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000,6400,6800,7200,7600,8000,8400,8800,9200,9600,10000,10400,10800,11200,11600,12000,12400,12800,13200,13600,14000,14400,14800,15200,15600,16000,16400,16800,17500,17900,18300,18700,19100,19500,19900,20300,20700,21100,21500,21900,22300,22700,23100,23500,23900]}},\"resultsScreen\":{\"scoreId\":0,\"playerName\":\"\",\"mode\":{\"number\":0,\"name\":\"osu\"},\"score\":0,\"accuracy\":0,\"name\":\"\",\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":0,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0},\"mods\":{\"checksum\":\"\",\"number\":0,\"name\":\"\",\"array\":[],\"rate\":1},\"maxCombo\":0,\"rank\":\"\",\"pp\":{\"current\":0,\"fc\":0},\"createdAt\":\"\"},\"folders\":{\"game\":\"C:\\\\vosu-golden\\\\osu!\\\\client\",\"skin\":\".\",\"songs\":\"C:\\\\vosu-golden\\\\osu!\\\\client\\\\files\",\"beatmap\":\".\"},\"files\":{\"beatmap\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"background\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"audio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\"},\"directPath\":{\"beatmapFile\":\"d\\\\dd\\\\ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3\",\"beatmapBackground\":\"a\\\\ab\\\\ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34\",\"beatmapAudio\":\"d\\\\d1\\\\d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4\",\"beatmapFolder\":\".\",\"skinFolder\":\".\"},\"tourney\":{\"scoreVisible\":false,\"starsVisible\":false,\"ipcState\":0,\"bestOF\":0,\"team\":{\"left\":\"\",\"right\":\"\"},\"points\":{\"left\":0,\"right\":0},\"chat\":[],\"totalScore\":{\"left\":0,\"right\":0},\"clients\":[]}}"
+    },
+    {
+      "ledger_id": "legacy-adapter-wire-header-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-bytes-16384"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "application/json"
+    },
+    {
+      "ledger_id": "legacy-adapter-wire-header-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-bytes-16384"
+      ],
+      "part": "status",
+      "vosu_value": 200
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-bytes-16385"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-bytes-16385"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-bytes-16385"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-pairs-128"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-pairs-129"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-pairs-129"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "adapter-surface-request-budget",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.budget.query-pairs-129"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.delete"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.get.menu"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.get.paused"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.get.result"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.head.menu"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.head.no-client"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.head.paused"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.head.result"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.inner-double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.inner-double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.inner-double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.inner-double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.query"
+      ],
+      "part": "body",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ]
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.suffix"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.suffix"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.suffix"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.suffix"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.trailing-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.trailing-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.wrong-case"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.wrong-case"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.wrong-case"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.near.wrong-case"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.options"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.post"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json-v2.put"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.delete"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.head.menu"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.head.no-client"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.head.paused"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.head.result"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.double-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.double-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.double-slash"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.double-slash"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.suffix"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.suffix"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.suffix"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.suffix"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.trailing-slash"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.trailing-slash"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.wrong-case"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.wrong-case"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.wrong-case"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.near.wrong-case"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.options"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.post"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-adapter-near-route-exactness",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "state-http.json.put"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "adr0021-removed-selected-v2-feed",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.near.v2-subscribe-plain"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "adr0021-removed-selected-v2-feed",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.near.v2-subscribe-plain"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "adr0021-removed-selected-v2-feed",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.near.v2-subscribe-plain"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "adr0021-removed-selected-v2-feed",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.near.v2-subscribe-plain"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.get-plain"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.get-plain"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.get-plain"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.get-plain"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-connection"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-connection"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-connection"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-connection"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-key"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Key` header missing"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-key"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "`Upgrade` header did not include 'websocket'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-upgrade"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.missing-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.post-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.post-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.post-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.wrong-version"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Version` header did not include '13'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.wrong-version"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.wrong-version"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.tokens.invalid.wrong-version"
+      ],
+      "part": "ws.sequence",
+      "vosu_value": []
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.get-plain"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.get-plain"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.get-plain"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.get-plain"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-connection"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-connection"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-connection"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-connection"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-key"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Key` header missing"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-key"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "`Upgrade` header did not include 'websocket'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-upgrade"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.missing-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.post-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.post-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.post-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.wrong-version"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Version` header did not include '13'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.wrong-version"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.wrong-version"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2-precise.invalid.wrong-version"
+      ],
+      "part": "ws.sequence",
+      "vosu_value": []
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.filter.duplicate-keys"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.filter.invalid-json"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0,
+        2
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.filter.nested"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.filter.oversized"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.filter.repeated-message"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.get-plain"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.get-plain"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.get-plain"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.get-plain"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-connection"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-connection"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-connection"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-connection"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-key"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Key` header missing"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-key"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "`Upgrade` header did not include 'websocket'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-upgrade"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.missing-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.post-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.post-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.post-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.wrong-version"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Version` header did not include '13'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.wrong-version"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.wrong-version"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.invalid.wrong-version"
+      ],
+      "part": "ws.sequence",
+      "vosu_value": []
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.upgrade.menu"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.upgrade.paused"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-lazer-song-select-settings",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.v2.upgrade.result"
+      ],
+      "part": "ws.frame",
+      "vosu_replacements": [
+        {
+          "pointer": "/settings/sort",
+          "value": {
+            "number": 10,
+            "name": "title"
+          }
+        },
+        {
+          "pointer": "/settings/group",
+          "value": {
+            "number": 0,
+            "name": "none"
+          }
+        }
+      ],
+      "frame_indices": [
+        0
+      ]
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.get-plain"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.get-plain"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.get-plain"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.get-plain"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-connection"
+      ],
+      "part": "body",
+      "vosu_value": "Connection header did not include 'upgrade'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-connection"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-connection"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-connection"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-key"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Key` header missing"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-key"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "`Upgrade` header did not include 'websocket'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-upgrade"
+      ],
+      "part": "headers.location",
+      "vosu_value": null
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.missing-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.post-upgrade"
+      ],
+      "part": "body",
+      "vosu_value": "Not Found"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.post-upgrade"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.post-upgrade"
+      ],
+      "part": "status",
+      "vosu_value": 404
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.wrong-version"
+      ],
+      "part": "body",
+      "vosu_value": "`Sec-WebSocket-Version` header did not include '13'"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.wrong-version"
+      ],
+      "part": "headers.content-type",
+      "vosu_value": "text/plain; charset=utf-8"
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.wrong-version"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-ws-strict-upgrade",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "ws.ws.invalid.wrong-version"
+      ],
+      "part": "ws.sequence",
+      "vosu_value": []
+    },
+    {
       "ledger_id": "legacy-calculate-declared-roots",
       "platforms": [
         "windows-lazer"

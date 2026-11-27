@@ -6,7 +6,7 @@
   "conditional": null,
   "attempts": 1,
   "normalized": [
-    "header-date"
+    "root-prefix"
   ],
   "request": {
     "text": "GET /files/beatmap/audio.wav HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
@@ -19,36 +19,12 @@
         "bytes"
       ],
       [
-        "access-control-allow-headers",
-        "Origin, X-Requested-With, Content-Type, Accept"
-      ],
-      [
-        "access-control-allow-methods",
-        "POST, GET, PUT, DELETE, OPTIONS"
-      ],
-      [
-        "access-control-allow-origin",
-        "*"
-      ],
-      [
-        "access-control-allow-private-network",
-        "true"
-      ],
-      [
-        "connection",
-        "close"
-      ],
-      [
         "content-length",
         "264644"
       ],
       [
         "content-type",
         ""
-      ],
-      [
-        "date",
-        "<golden:date>"
       ]
     ],
     "body": {

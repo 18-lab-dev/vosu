@@ -5,7 +5,9 @@
   "barrier": "menu",
   "conditional": null,
   "attempts": 1,
-  "normalized": [],
+  "normalized": [
+    "root-prefix"
+  ],
   "request": {
     "text": "GET /websocket/v2 HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ElysXIrKLbnseYicVeKpHw==\r\nSec-WebSocket-Version: 13\r\nOrigin: https://example.invalid\r\n\r\n"
   },

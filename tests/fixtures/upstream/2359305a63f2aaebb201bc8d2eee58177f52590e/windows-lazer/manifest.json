@@ -1,6 +1,6 @@
 {
   "format": "vosu-golden-platform-v1",
-  "normalization_version": 2,
+  "normalization_version": 3,
   "provenance": "captured",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
   "platform": "windows-lazer",
@@ -26,7 +26,7 @@
   },
   "scenario_set": "m4b-full-v1",
   "authorization": "owner-auth-m4b-o0-dryrun-20261125#amendment-run5",
-  "review_receipt": "main-review-m4b-run5-payload-2026-11-26b",
+  "review_receipt": "main-review-m4b-run5-replay-v3-2026-11-26",
   "synthetic_roots": {
     "files": "C:\\vosu-golden\\files\\",
     "osu!": "C:\\vosu-golden\\osu!\\"
@@ -1552,7 +1552,30 @@
       "original": "text/plain",
       "corrected": "application/octet-stream",
       "reason": "recipe declared text/plain for the extensionless lazer-stored chart; vosu serves application/octet-stream",
-      "review_receipt": "main-review-m4b-run5-payload-2026-11-26b"
+      "review_receipt": "main-review-m4b-run5-replay-v3-2026-11-26"
     }
-  ]
+  ],
+  "calculation_chart_migration": {
+    "capture_sha256": "e3b52216667347fc9b0783e287cc8293e2a14c3293fe01e8f89ab8c04c1b39d5",
+    "review_receipt": "main-review-m4b-run5-replay-v3-2026-11-26",
+    "barrier": "menu",
+    "donor_case": "state-http.json-sc.get.menu",
+    "donor_attempt": 2,
+    "cases": [
+      "calculation.accuracy",
+      "calculation.attributes",
+      "calculation.combo",
+      "calculation.invalid-accuracy",
+      "calculation.invalid-clock-rate",
+      "calculation.invalid-count",
+      "calculation.invalid-mode",
+      "calculation.lazer-statistics",
+      "calculation.mods-acronyms",
+      "calculation.mods-bits",
+      "calculation.mods-invalid",
+      "calculation.mods-json",
+      "calculation.no-query",
+      "calculation.statistics"
+    ]
+  }
 }

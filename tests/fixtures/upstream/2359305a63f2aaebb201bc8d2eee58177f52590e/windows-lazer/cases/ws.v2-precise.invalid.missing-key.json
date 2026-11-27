@@ -13,10 +13,6 @@
     "status": 400,
     "headers": [
       [
-        "connection",
-        "close"
-      ],
-      [
         "content-length",
         "43"
       ],

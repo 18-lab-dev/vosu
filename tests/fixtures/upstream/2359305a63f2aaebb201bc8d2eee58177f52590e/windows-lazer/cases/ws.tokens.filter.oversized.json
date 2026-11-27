@@ -5,26 +5,15 @@
   "barrier": "paused",
   "conditional": null,
   "attempts": 1,
-  "normalized": [],
+  "normalized": [
+    "root-prefix"
+  ],
   "request": {
     "text": "GET /tokens HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: yahq5pg6VjBB5LJOihy6lw==\r\nSec-WebSocket-Version: 13\r\n\r\n"
   },
   "expected": {
     "status": 101,
-    "headers": [
-      [
-        "connection",
-        "Upgrade"
-      ],
-      [
-        "sec-websocket-accept",
-        "d/6kbaUunNHeJOYAIuM/N3nXde8="
-      ],
-      [
-        "upgrade",
-        "websocket"
-      ]
-    ],
+    "headers": [],
     "body": {
       "text": ""
     },

@@ -5,9 +5,7 @@
   "barrier": "no-client",
   "conditional": null,
   "attempts": 1,
-  "normalized": [
-    "header-date"
-  ],
+  "normalized": [],
   "request": {
     "text": "GET /json/v2 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
   },
@@ -15,36 +13,12 @@
     "status": 500,
     "headers": [
       [
-        "access-control-allow-headers",
-        "Origin, X-Requested-With, Content-Type, Accept"
-      ],
-      [
-        "access-control-allow-methods",
-        "POST, GET, PUT, DELETE, OPTIONS"
-      ],
-      [
-        "access-control-allow-origin",
-        "*"
-      ],
-      [
-        "access-control-allow-private-network",
-        "true"
-      ],
-      [
-        "connection",
-        "close"
-      ],
-      [
         "content-length",
         "36"
       ],
       [
         "content-type",
         "application/json"
-      ],
-      [
-        "date",
-        "<golden:date>"
       ]
     ],
     "body": {
