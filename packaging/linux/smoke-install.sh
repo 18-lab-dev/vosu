@@ -32,6 +32,7 @@ if [ "${VOSU_HTTP_SMOKE:-0}" = 1 ]; then
     mkdir -p /tmp/smoke/config/vosu /tmp/smoke/data /tmp/smoke/cache
     cat > /tmp/smoke/config/vosu/vosu.toml <<'CONFIG'
 SERVER_PORT = 24109.0
+DASHBOARD_PORT = 24110.0
 OPEN_DASHBOARD_ON_STARTUP = false
 ENABLE_AUTOUPDATE = false
 CONFIG
@@ -40,11 +41,18 @@ CONFIG
     child=$!
     trap 'kill "$child" 2>/dev/null || true' EXIT
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if curl --fail --silent http://127.0.0.1:24109/ -o /tmp/dashboard; then
-            echo 'dashboard HTTP 200'
-            exit 0
-        fi
+        overlay_probe=$(curl --silent --output /dev/null --write-out '%{http_code} %{redirect_url}' http://127.0.0.1:24109/ || true)
+        dashboard_code=$(curl --silent --output /tmp/dashboard --write-out '%{http_code}' http://127.0.0.1:24110/ || true)
+        case "$overlay_probe" in
+            '302 http://127.0.0.1:24110/'*)
+                if [ "$dashboard_code" = 200 ] && [ -s /tmp/dashboard ] && grep -qi '<html' /tmp/dashboard; then
+                    echo 'overlay HTTP 302 -> dashboard HTTP 200'
+                    exit 0
+                fi
+                ;;
+        esac
         sleep 1
     done
+    echo "HTTP smoke failed (overlay='${overlay_probe:-}' dashboard='${dashboard_code:-}')" >&2
     exit 1
 fi

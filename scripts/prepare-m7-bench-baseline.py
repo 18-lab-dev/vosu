@@ -53,11 +53,35 @@ def main():
     runtime += '\n#[path = "m7_bench_daemon.rs"]\nmod m7_bench_daemon;\npub use m7_bench_daemon::TestDaemon;\n'
     exports = (baseline / "src/runtime.rs").read_text() + "\n#[doc(hidden)]\npub use lifecycle::TestDaemon;\n"
 
+    network = (baseline / "crates/vosu-core/src/config/network.rs").read_text()
+    network = replace_once(
+        network,
+        """\
+        let conflicts = |host: &str, port: f64| {
+            candidate.dashboard_port == port && overlapping_hosts(&candidate.dashboard_ip, host)
+        };
+        if conflicts(&candidate.server_ip, candidate.server_port)
+            || conflicts(&current.server_ip, current.server_port)
+            || (candidate.server_port == current.dashboard_port
+                && overlapping_hosts(&candidate.server_ip, &current.dashboard_ip))""",
+        """\
+        let same_port = |a: f64, b: f64| a != 0.0 && a == b;
+        let conflicts = |host: &str, port: f64| {
+            same_port(candidate.dashboard_port, port)
+                && overlapping_hosts(&candidate.dashboard_ip, host)
+        };
+        if conflicts(&candidate.server_ip, candidate.server_port)
+            || conflicts(&current.server_ip, current.server_port)
+            || (same_port(candidate.server_port, current.dashboard_port)
+                && overlapping_hosts(&candidate.server_ip, &current.dashboard_ip))""",
+    )
+
     registration = (baseline / "benches/state_bus_bench.rs").read_text()
     registration = '#[path = "support/m7_e2e.rs"]\nmod m7_e2e;\n' + replace_once(
         registration, "    adapter_e2e::bench(c);\n", "    adapter_e2e::bench(c);\n    m7_e2e::bench(c);\n",
     )
     files = {
+        "crates/vosu-core/src/config/network.rs": network,
         "src/runtime/lifecycle.rs": runtime,
         "src/runtime.rs": exports,
         "src/runtime/m7_bench_daemon.rs": (ROOT / "benches/support/m7/pre_m7_daemon.rs").read_text(),
