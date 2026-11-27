@@ -256,7 +256,9 @@ fn case(
         let steps: Vec<Step> = case
             .expected
             .frames
-            .iter()
+            .as_deref()
+            .map(payload_frames)
+            .into_iter()
             .flatten()
             .map(|frame| match frame.from_server {
                 true => Step::Receive,
@@ -827,7 +829,7 @@ pub fn compare(
         }
         if let Some(expected) = &case.expected.frames {
             frames(
-                expected,
+                payload_frames(expected),
                 &observed.frames,
                 rule(&Part::WsFrame),
                 &mut report.used,
@@ -836,6 +838,29 @@ pub fn compare(
         }
     }
     report
+}
+
+/// The terminal client-initiated normal close is capture cleanup, not a
+/// payload observation (GOLDEN_CONTRACT §6). Retain other control frames,
+/// including early or server-initiated closes, at their exact positions.
+fn payload_frames(frames: &[super::fixture::ExpectedFrame]) -> &[super::fixture::ExpectedFrame] {
+    match frames {
+        [payload @ .., sent, received]
+            if sent.fin
+                && received.fin
+                && sent.opcode == 8
+                && received.opcode == 8
+                && !sent.from_server
+                && received.from_server
+                && sent.masked
+                && !received.masked
+                && sent.payload == 1000_u16.to_be_bytes()
+                && received.payload == sent.payload =>
+        {
+            payload
+        }
+        _ => frames,
+    }
 }
 
 fn frames(

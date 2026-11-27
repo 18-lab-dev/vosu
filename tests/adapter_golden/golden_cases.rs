@@ -149,6 +149,30 @@ fn golden_fixtures_replay_at_the_cargo_pin() {
 }
 
 #[test]
+fn golden_excludes_only_the_terminal_client_initiated_normal_close() {
+    let mut candidate = platform().clone();
+    let mut close = super::fixture::ExpectedFrame {
+        from_server: false,
+        fin: true,
+        opcode: 8,
+        masked: true,
+        length: 2,
+        payload: 1000_u16.to_be_bytes().to_vec(),
+    };
+    let id = "ws.upgrade-websocket-v2";
+    let frames = case_mut(&mut candidate, id).expected.frames.as_mut().unwrap();
+    frames.push(close.clone());
+    close.from_server = true;
+    close.masked = false;
+    frames.push(close);
+    assert!(mismatches(&candidate, &[]).is_empty());
+
+    let frames = case_mut(&mut candidate, id).expected.frames.as_mut().unwrap();
+    frames.last_mut().unwrap().payload = 1001_u16.to_be_bytes().to_vec();
+    assert_eq!(mismatches(&candidate, &[]), pairs(&[(id, "ws.frame")]));
+}
+
+#[test]
 fn golden_synthetic_fixture_compares_with_nonzero_coverage() {
     assert_eq!(SYNTHETIC.provenance, Provenance::Synthetic);
     for platform in host_platforms() {
