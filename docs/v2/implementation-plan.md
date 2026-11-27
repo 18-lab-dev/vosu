@@ -2027,14 +2027,22 @@ the pipe remains measurement-only. Four process `plan_memory` fixture
 cases, ten attached live stable/lazer profiles and a separate idle-host
 profile were recorded as measurements, not gates.
 
-**Only outstanding M5 exit evidence: official Linux D17.** No official
-Linux result is recorded here; exploratory timings do not decide the gate.
-Use the [pinned broker and bundled comparison commands](../testing/benchmarks.md#official-command-sequence-main-exclusive-host-and-vm)
-and [live process-runtime commands](../testing/benchmarks.md#official-live-process-runtime-commands-main)
-on the exclusive host. The five-round `sudo python3 scripts/bench-compare.py
---cpu 7 --rounds 5` comparisons require the owner's sudo. The five native
-broker rounds and process reader profiles use the release artifacts and
-filters in those command blocks.
+**D17 Linux: measured on `ad724666`, FAIL / OPEN.** Official Linux D17 ran
+in the owner-approved pinned `vosu-gaming` VM (isolated core `[6, 7]` /
+`0-7` for broker, receipts in `evidence/d17/linux-ad724666/`, details in
+[Linux official results](../testing/benchmarks.md#linux-official-results-2026-11-27-ad724666)):
+`performance_invariants` (20/20), `runtime_wakeups` (4/4),
+`memory_reader_bench`, all 11 bundled `plan_memory/*` cases, all 4
+`plan_memory/*_process` fixture cases, and all 10 live lazer `2026.1117.0`
+process/adapter/idle profiles completed cleanly. Two M5 Linux gates failed
+and remain **OPEN** pending fixes and re-measurement:
+
+- Broker ratio `production_sync / shm` in the pinned VM: **2.107× precise,
+  2.385× regular** against the 2.0 cap (**FAIL**; KVM 4-hop vs 2-hop wakeup
+  inflation vs bare-metal exploratory 1.46×/1.71× is recorded, not waived).
+- Bundled `end_to_end/{bus,bus_precise,api_frame}` vs M4a `49e95cf`:
+  **+17.11%, +16.84%, +18.21%** with non-overlapping 95% CIs (**FAIL**;
+  already present at pre-M7 `33f957de`).
 
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
@@ -2732,14 +2740,19 @@ and quickstart counts on Linux and native Windows. The receipts have their
 own host pins; they are neither a rerun on `ad724666` nor published
 catalog-release evidence.
 
-**Performance is separate.** `3d8151ad` freezes and exercises the three
-M7 workloads, but official Linux D17 has no result in this closeout. The
-[exclusive comparison commands](../testing/benchmarks.md#official-comparison-main-exclusive-linux-window)
-run `sudo python3 "$M7/scripts/bench-compare.py" --cpu 7 --rounds 5`
-for the eight equivalent `end_to_end` cases against `33f957de` and two
-shared cold serializer outputs against `3a91ff95`. Both commands, filters,
-disjoint build/evidence directories and smoke prerequisites are specified
-there. No M7 D17 performance pass is claimed.
+**Performance (Linux D17 on `ad724666`): measured, FAIL / OPEN.** Official
+five-round comparisons against pre-M7 `33f957de` and pre-M0 `3a91ff95` ran
+in the pinned `vosu-gaming` VM on isolated core `[6, 7]`
+([M7 Linux official results](../testing/benchmarks.md#m7-linux-official-results-2026-11-27-ad724666)).
+Six of eight per-M7 `end_to_end/*` cases and five of eight `adapter/*` cases
+stayed within bar or inconclusive, and `serializers_cold/v2_precise`
+improved `-76.02%`. The remaining regressions failed the +10% non-overlapping
+95% CI bar and keep M7 D17 **OPEN** pending fixes and re-measurement:
+`end_to_end/adapter_precise` (`+11.42%`), `end_to_end/m7_tool_action_progress`
+(`+13.98%`), `adapter/http_then_ws_cache` (`+10.98%`),
+`adapter/plain_100_clients` (`+12.99%`), `adapter/slow_consumer`
+(`+10.55%`, spread > delta), and cumulative `serializers_cold/v2`
+(`+229.32%` vs `3a91ff95`).
 
 ### M8: 1.x migration and day-0 release gate
 
