@@ -544,7 +544,7 @@ async function openRouted(path, routes) {
     });
     const shown = await controls(page);
     report.settings.filled = shown;
-    check(Object.keys(view.values ?? {}).length === 17, `settings: SettingsView must carry 17 keys ${JSON.stringify(view)}`);
+    check(Object.keys(view.values ?? {}).length === 11, `settings: SettingsView must carry 11 keys ${JSON.stringify(view)}`);
     for (const [key, value] of Object.entries(view.values ?? {})) {
       // SettingsView has a platform-independent shape, but the control
       // starts a systemd user service and must not appear on Windows.
@@ -560,6 +560,9 @@ async function openRouted(path, routes) {
     check(shown.SERVER_PORT === '25150' && shown.DASHBOARD_PORT === '25151' && shown.ENABLE_AUTOUPDATE === false
       && shown.ALLOWED_IPS === '127.0.0.1\nlocalhost\nabsolute', `settings: values follow vosu.toml ${JSON.stringify(shown)}`);
     check(!('ENABLE_DASHBOARD' in shown) && !('ENABLE_DASHBOARD' in (view.values ?? {})), 'settings: the dashboard switch must have no control or value');
+    for (const moved of ['CALCULATE_PP', 'POLL_RATE', 'PRECISE_DATA_POLL_RATE', 'SHOW_MP_COMMANDS', 'READ_MANIA_SCROLL_SPEED', 'STATIC_FOLDER_PATH']) {
+      check(!(moved in shown) && !(moved in (view.values ?? {})), `settings: moved key ${moved} must not appear on Settings`);
+    }
     await page.waitForTimeout(500);
     check(saves.length === 0, `settings: filling must save nothing ${JSON.stringify(saves)}`);
     await context.close();
@@ -577,7 +580,7 @@ async function openRouted(path, routes) {
       description: document.querySelector('#setting-ENABLE_AUTOUPDATE-description')?.textContent,
     }));
     report.settings.partial = { shown, managed };
-    check(shown.DEBUG_LOG === true && shown.SERVER_PORT === '25150' && shown.POLL_RATE === '', `settings: a partial view fills only its keys ${JSON.stringify(shown)}`);
+    check(shown.DEBUG_LOG === true && shown.SERVER_PORT === '25150' && shown.API_V1_SUBSCRIPTION_DEBOUNCE === '', `settings: a partial view fills only its keys ${JSON.stringify(shown)}`);
     check(managed.disabled && managed.description?.includes('managed by your Linux package manager'), `settings: managed updates lock the control ${JSON.stringify(managed)}`);
     await page.waitForTimeout(500);
     check(saves.length === 0, `settings: a partial fill must save nothing ${JSON.stringify(saves)}`);

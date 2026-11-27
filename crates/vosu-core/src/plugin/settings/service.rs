@@ -1,4 +1,4 @@
-//! Bridge-neutral [`PluginSettingsService`]: builds `init.settings` (§6.9),
+//! Per-plugin [`PluginSettingsService`]: builds `init.settings` (§6.9),
 //! serves the dashboard's redacted view (`GET /api/plugins/<id>/settings`),
 //! validates and persists submissions/patches/imports, and builds complete
 //! `VOSU_OP_SETTINGS_CHANGED` messages only after durable storage succeeds.
@@ -11,6 +11,12 @@ use vosu_plugin_api::{CborValue, Message, SettingsChanged};
 
 use super::import::{ImportOutcome, plan_import};
 use super::{SettingsError, SettingsStorage};
+
+/// Optional per-plugin transformation applied only to the effective map
+/// delivered to a plugin instance (`init.settings` and `SETTINGS_CHANGED`),
+/// leaving stored overrides and `dashboard_view` untouched.
+pub type SettingsDeliveryTransform =
+    Arc<dyn Fn(&str, Map<String, Value>) -> Map<String, Value> + Send + Sync>;
 
 pub(super) fn json_to_cbor(value: Value) -> CborValue {
     match value {
@@ -76,6 +82,7 @@ pub struct PluginSettingsService {
     /// One read-modify-write mutation at a time: load, validate, and store
     /// never interleave across concurrent submissions, patches, or imports.
     writes: Mutex<()>,
+    delivery_transform: Option<SettingsDeliveryTransform>,
 }
 
 impl PluginSettingsService {
@@ -83,7 +90,35 @@ impl PluginSettingsService {
         Self {
             storage,
             writes: Mutex::new(()),
+            delivery_transform: None,
         }
+    }
+
+    /// Constructs a service whose plugin-facing deliveries (`effective_settings`,
+    /// `submit`, `apply`) pass through `delivery_transform` before CBOR encoding,
+    /// while persistent storage and `dashboard_view` keep the raw user overrides.
+    pub fn with_delivery_transform(
+        storage: Arc<dyn SettingsStorage>,
+        delivery_transform: SettingsDeliveryTransform,
+    ) -> Self {
+        Self {
+            storage,
+            writes: Mutex::new(()),
+            delivery_transform: Some(delivery_transform),
+        }
+    }
+
+    fn deliver_map(&self, plugin_id: &str, effective: Map<String, Value>) -> CborValue {
+        let delivered = match &self.delivery_transform {
+            Some(transform) => transform(plugin_id, effective),
+            None => effective,
+        };
+        json_map_to_cbor(delivered)
+    }
+
+    /// Reads the raw stored overrides for `plugin_id` from storage.
+    pub fn stored_overrides(&self, plugin_id: &str) -> Result<Map<String, Value>, SettingsError> {
+        self.storage.load(plugin_id)
     }
 
     /// The CBOR value for `create`'s `init.settings` (§6.9: "no round trip
@@ -99,7 +134,7 @@ impl PluginSettingsService {
         };
         let stored = valid_overrides(schema, self.storage.load(plugin_id)?);
         let effective = schema.merge(&stored)?;
-        Ok(json_map_to_cbor(effective))
+        Ok(self.deliver_map(plugin_id, effective))
     }
 
     /// `GET /api/plugins/<id>/settings` (A7.1 `PluginSettings`): the
@@ -156,9 +191,6 @@ impl PluginSettingsService {
         schema: &SettingsSchema,
         inputs: Vec<(String, Value)>,
     ) -> Result<Message, SettingsError> {
-        if !self.storage.editable(plugin_id) {
-            return Err(SettingsError::ManagedElsewhere(plugin_id.to_owned()));
-        }
         let _write = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
         let mut overrides = valid_overrides(schema, self.storage.load(plugin_id)?);
         for (key, value) in inputs {
@@ -176,8 +208,9 @@ impl PluginSettingsService {
         schema.merge(&overrides)?;
         self.storage.store(plugin_id, &overrides)?;
         let stored = valid_overrides(schema, self.storage.load(plugin_id)?);
+        let effective = schema.merge(&stored)?;
         Ok(Message::SettingsChanged(SettingsChanged {
-            values: json_map_to_cbor(schema.merge(&stored)?),
+            values: self.deliver_map(plugin_id, effective),
         }))
     }
 
@@ -198,16 +231,10 @@ impl PluginSettingsService {
         }
         let effective = schema.merge(&merged)?;
         self.storage.store(plugin_id, &effective)?;
-        // Storage may adjust what was actually saved (bridge B2's
-        // `ConfigStore::update` clamps `POLL_RATE`/`PRECISE_DATA_POLL_RATE`
-        // to their schema minimums, for instance): rebuild the broadcast
-        // from what storage now reports is actually stored, never from
-        // what this call merely asked it to store, so a plugin is never
-        // told a value it did not get.
         let stored = self.storage.load(plugin_id)?;
         let actual_effective = schema.merge(&stored)?;
         Ok(Message::SettingsChanged(SettingsChanged {
-            values: json_map_to_cbor(actual_effective),
+            values: self.deliver_map(plugin_id, actual_effective),
         }))
     }
 

@@ -67,7 +67,7 @@ struct InstanceEntry {
     plugin_id: String,
     /// This instance's own parsed `settings.schema.json` (`registry::
     /// LoadedPlugin::settings_schema`), kept here so this host's
-    /// `SettingsSchemaSource` impl can resolve `BRIDGE_B2_PLUGIN_ID`'s
+    /// `SettingsSchemaSource` impl can resolve a plugin's live schema
     /// (`vosu.osu`'s) schema from its live instance instead of a copy
     /// bridge B2 used to embed itself (P0).
     settings_schema: Option<SettingsSchema>,
@@ -914,15 +914,13 @@ impl SettingsChangeDelivery for PluginHost {
 }
 
 impl SettingsSchemaSource for PluginHost {
-    /// `BRIDGE_B2_PLUGIN_ID`'s (`vosu.osu`'s) own `LoadedPlugin::
-    /// settings_schema` (P1's real `settings.schema.json`), resolved from
-    /// whichever slot the instance is currently registered under —
-    /// `Creating` as well as `Live` (review finding: `create` can block
-    /// for a while, and a B2 change arriving in that window must still
-    /// resolve the real schema, not `None`, or the replayed delivery
-    /// once `Live` sends an empty, spec-violating effective settings
-    /// map). `None` only once no instance of `plugin_id` is registered
-    /// at all (never created, already `Destroying`, or already gone).
+    /// Resolves `plugin_id`'s `LoadedPlugin::settings_schema` from whichever
+    /// slot the instance is currently registered under — `Creating` as well
+    /// as `Live` (`create` can block while a settings change arrives, and
+    /// resolving `Creating` ensures the replayed `SETTINGS_CHANGED` carries
+    /// the complete effective settings map rather than an empty map).
+    /// Returns `None` when no instance of `plugin_id` is registered at all
+    /// (never created, already `Destroying`, or already gone).
     fn schema_for(&self, plugin_id: &str) -> Option<SettingsSchema> {
         self.instances
             .lock()

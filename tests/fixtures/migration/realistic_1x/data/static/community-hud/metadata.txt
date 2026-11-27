@@ -1,0 +1,7 @@
+Usecase: ingame
+Name: Community HUD
+Version: 1.2
+Author: CommunityAuthor
+CompatibleWith: vosu
+Resolution: 500x200
+authorLinks: https://example.invalid

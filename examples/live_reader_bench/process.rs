@@ -130,11 +130,8 @@ impl Host {
             .worker_threads(2)
             .enable_all()
             .build()?;
-        let config = runtime.block_on(vosu_core::config::ConfigStore::initialize(
-            &root.path().join("vosu.toml"),
-        ))?;
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
-            plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+            plugin::settings::PluginSettingsStore::open(root.path()),
         )));
         let host = {
             let _enter = runtime.enter();

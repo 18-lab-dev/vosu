@@ -7,6 +7,9 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// Pre-rename legacy `.env` filename consumed only by one-time migration.
+pub(crate) const PRE_RENAME_ENV_FILENAME: &str = "tosu.env";
+
 pub(super) struct InitialConfig {
     pub(super) config: Config,
     pub(super) bytes: Vec<u8>,
@@ -22,7 +25,7 @@ pub(super) fn initialize_file(
     fs::create_dir_all(parent)?;
 
     let vosu_env_path = parent.join("vosu.env");
-    let tosu_env_path = parent.join("tosu.env");
+    let tosu_env_path = parent.join(PRE_RENAME_ENV_FILENAME);
     let toml_content = read_authoritative(path)?;
     let vosu_env_content = fs::read_to_string(&vosu_env_path).ok();
     let tosu_env_content = fs::read_to_string(&tosu_env_path).ok();
@@ -178,7 +181,7 @@ pub(super) fn legacy_table(values: &HashMap<String, String>) -> toml::Table {
         table.insert(item.binding.to_owned(), value);
     }
     for (binding, value) in values {
-        if !is_known(binding) && !super::document::RETIRED_BINDINGS.contains(&binding.as_str()) {
+        if !is_known(binding) && !super::document::is_stripped_binding(binding) {
             table.insert(binding.clone(), toml::Value::String(value.clone()));
         }
     }
@@ -258,7 +261,7 @@ fn strip_export(line: &str) -> &str {
     }
 }
 
-fn parse_real_number(raw: &str) -> Option<f64> {
+pub(crate) fn parse_real_number(raw: &str) -> Option<f64> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;

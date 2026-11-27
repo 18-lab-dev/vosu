@@ -50,9 +50,6 @@ pub(super) fn initialize(
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         document.apply_table(&table);
     }
-    // No copied writable path is an explicit alpha override. The default is
-    // resolved by Paths::static_path under the isolated alpha data root.
-    document.config_mut().static_folder_path = super::Config::default().static_folder_path;
     let warnings = document.validate();
     let bytes = document.serialize().into_bytes();
     fs::create_dir_all(parent)?;

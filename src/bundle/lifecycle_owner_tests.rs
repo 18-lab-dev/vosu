@@ -338,7 +338,7 @@ async fn signal_task_panic_still_joins_config_and_logger_before_returning_error(
         let root = tempfile::tempdir().unwrap();
         let mut owner = TestDaemon::new(root.path(), &BUNDLE).await;
         let config = owner.config().clone();
-        config.update(|current| current.poll_rate = 275.0);
+        config.update(|current| current.api_v1_subscription_debounce = 275.0);
         // Leave the worker idle, not waiting on a timer that might panic
         // during runtime drop and accidentally conceal a missing shutdown.
         config.flush().await.unwrap();

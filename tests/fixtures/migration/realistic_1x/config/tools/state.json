@@ -1,0 +1,31 @@
+{
+  "custom-user-tool": {
+    "enabled": true,
+    "trusted": true,
+    "autostart": true
+  },
+  "downloader": {
+    "enabled": true,
+    "trusted": true,
+    "official": true,
+    "catalog_source": "18-lab-dev/vosu-tools"
+  },
+  "lazer-library": {
+    "enabled": true,
+    "trusted": true,
+    "official": true,
+    "catalog_source": "18-lab-dev/vosu-tools"
+  },
+  "legacy-official-helper": {
+    "enabled": true,
+    "trusted": true,
+    "official": true,
+    "catalog_source": "18-lab-dev/vosu-tools"
+  },
+  "vosulay": {
+    "enabled": true,
+    "trusted": true,
+    "official": true,
+    "catalog_source": "18-lab-dev/vosulay"
+  }
+}

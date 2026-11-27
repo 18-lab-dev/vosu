@@ -58,7 +58,7 @@ impl ConfigDocument {
                 .items()
                 .iter()
                 .any(|item| item.binding == key)
-                && !RETIRED_BINDINGS.contains(&key.as_str())
+                && !is_stripped_binding(key)
             {
                 self.unknown.insert(key.clone(), value.clone());
             }
@@ -93,7 +93,7 @@ impl ConfigDocument {
     /// Practical timer ceiling, also safe for `Instant` arithmetic.
     pub const MAX_INTERVAL_MS: f64 = 60_000.0;
 
-    /// Clamps polling and subscription intervals to supported timer bounds.
+    /// Clamps subscription intervals and package size caps to supported bounds.
     pub fn validate(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
         if self.config.max_package_bytes().is_none() {
@@ -104,22 +104,6 @@ impl ConfigDocument {
             self.config.max_package_mib = 512.0;
         }
 
-        if self.config.poll_rate < 100.0 {
-            warnings.push(format!(
-                "Config %POLL_RATE% value %{}% is below the minimum %100%, clamping.",
-                format_number(self.config.poll_rate)
-            ));
-            self.config.poll_rate = 100.0;
-        }
-
-        if self.config.precise_data_poll_rate < 1.0 {
-            warnings.push(format!(
-                "Config %PRECISE_DATA_POLL_RATE% value %{}% is below the minimum %1%, clamping.",
-                format_number(self.config.precise_data_poll_rate)
-            ));
-            self.config.precise_data_poll_rate = 1.0;
-        }
-
         if self.config.api_v1_subscription_debounce < 1.0 {
             warnings.push(format!(
                 "Config %API_V1_SUBSCRIPTION_DEBOUNCE% value %{}% is below the minimum %1%, clamping.",
@@ -128,24 +112,14 @@ impl ConfigDocument {
             self.config.api_v1_subscription_debounce = 1.0;
         }
 
-        for (name, interval) in [
-            ("POLL_RATE", &mut self.config.poll_rate),
-            (
-                "PRECISE_DATA_POLL_RATE",
-                &mut self.config.precise_data_poll_rate,
-            ),
-            (
-                "API_V1_SUBSCRIPTION_DEBOUNCE",
-                &mut self.config.api_v1_subscription_debounce,
-            ),
-        ] {
-            if !interval.is_finite() || *interval > Self::MAX_INTERVAL_MS {
-                warnings.push(format!(
-                    "Config %{name}% interval is outside the supported range, clamping to %{}% ms.",
-                    Self::MAX_INTERVAL_MS
-                ));
-                *interval = Self::MAX_INTERVAL_MS;
-            }
+        if !self.config.api_v1_subscription_debounce.is_finite()
+            || self.config.api_v1_subscription_debounce > Self::MAX_INTERVAL_MS
+        {
+            warnings.push(format!(
+                "Config %API_V1_SUBSCRIPTION_DEBOUNCE% interval is outside the supported range, clamping to %{}% ms.",
+                Self::MAX_INTERVAL_MS
+            ));
+            self.config.api_v1_subscription_debounce = Self::MAX_INTERVAL_MS;
         }
 
         warnings
@@ -183,17 +157,12 @@ impl ConfigDocument {
             ConfigKey::OpenDashboardOnStartup => self.config.open_dashboard_on_startup = value,
             ConfigKey::StartAtLogin => self.config.start_at_login = value,
             ConfigKey::DebugLog => self.config.debug_log = value,
-            ConfigKey::CalculatePp => self.config.calculate_pp = value,
-            ConfigKey::ShowMpCommands => self.config.show_mp_commands = value,
-            ConfigKey::ReadManiaScrollSpeed => self.config.read_mania_scroll_speed = value,
             _ => unreachable!("schema boolean key has boolean storage"),
         }
     }
 
     fn set_number(&mut self, key: ConfigKey, value: f64) {
         match key {
-            ConfigKey::PollRate => self.config.poll_rate = value,
-            ConfigKey::PreciseDataPollRate => self.config.precise_data_poll_rate = value,
             ConfigKey::ApiV1SubscriptionDebounce => {
                 self.config.api_v1_subscription_debounce = value
             }
@@ -208,7 +177,6 @@ impl ConfigDocument {
         match key {
             ConfigKey::ServerIp => self.config.server_ip = value,
             ConfigKey::DashboardIp => self.config.dashboard_ip = value,
-            ConfigKey::StaticFolderPath => self.config.static_folder_path = value,
             ConfigKey::AllowedIps => self.config.allowed_ips = value,
             _ => unreachable!("schema string key has string storage"),
         }
@@ -223,19 +191,13 @@ impl ConfigDocument {
             }
             "START_AT_LOGIN" => toml::Value::Boolean(self.config.start_at_login),
             "DEBUG_LOG" => toml::Value::Boolean(self.config.debug_log),
-            "CALCULATE_PP" => toml::Value::Boolean(self.config.calculate_pp),
-            "POLL_RATE" => toml::Value::Float(self.config.poll_rate),
-            "PRECISE_DATA_POLL_RATE" => toml::Value::Float(self.config.precise_data_poll_rate),
             "API_V1_SUBSCRIPTION_DEBOUNCE" => {
                 toml::Value::Float(self.config.api_v1_subscription_debounce)
             }
-            "SHOW_MP_COMMANDS" => toml::Value::Boolean(self.config.show_mp_commands),
-            "READ_MANIA_SCROLL_SPEED" => toml::Value::Boolean(self.config.read_mania_scroll_speed),
             "SERVER_IP" => toml::Value::String(self.config.server_ip.clone()),
             "SERVER_PORT" => toml::Value::Float(self.config.server_port),
             "DASHBOARD_IP" => toml::Value::String(self.config.dashboard_ip.clone()),
             "DASHBOARD_PORT" => toml::Value::Float(self.config.dashboard_port),
-            "STATIC_FOLDER_PATH" => toml::Value::String(self.config.static_folder_path.clone()),
             "ALLOWED_IPS" => toml::Value::String(self.config.allowed_ips.clone()),
             "MAX_PACKAGE_MIB" => toml::Value::Integer(self.config.max_package_mib as i64),
             _ => unreachable!("binding order contains only schema bindings"),
@@ -249,3 +211,19 @@ pub(super) const RETIRED_BINDINGS: [&str; 4] = [
     "ENABLE_HIT_OFFSETS",
     "V2_SUBSCRIPTION_DEBOUNCE",
 ];
+
+/// Top-level 1.x keys moved to plugin settings (`vosu.osu` per D19 and
+/// `vosu.overlayhost` per A7.1-OR). Stripped from `vosu.toml` rather than
+/// preserved as unknown keys.
+pub(super) const MOVED_BINDINGS: [&str; 6] = [
+    "CALCULATE_PP",
+    "POLL_RATE",
+    "PRECISE_DATA_POLL_RATE",
+    "SHOW_MP_COMMANDS",
+    "READ_MANIA_SCROLL_SPEED",
+    "STATIC_FOLDER_PATH",
+];
+
+pub(super) fn is_stripped_binding(key: &str) -> bool {
+    RETIRED_BINDINGS.contains(&key) || MOVED_BINDINGS.contains(&key)
+}

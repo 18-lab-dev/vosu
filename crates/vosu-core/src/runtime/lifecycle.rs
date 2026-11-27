@@ -22,10 +22,9 @@ pub struct ProductionRuntime {
     /// Core's D20 recorder (A7.4/A7.5): one per process, outliving any route composition.
     removed_routes: Arc<crate::removed_routes::RemovedRoutes>,
     /// A7.1-OR and the A7 overlay host: the counter service, command
-    /// processing and relays, the root seed's `SETTINGS_CHANGED` delivery
-    /// and the read-only lease generations, composed by the bundle.
+    /// processing and relays, `SETTINGS_CHANGED` delivery and the read-only
+    /// lease generations, composed by the bundle.
     overlay: AsyncMutex<Option<Arc<dyn OverlayComposition>>>,
-    settings_storage: Arc<super::overlay_root::RuntimeSettingsStorage>,
     plugin_settings: Arc<PluginSettingsService>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolRegistry>>>,
     /// The bundled tool host's routes; dropped before the registry stops.
@@ -37,12 +36,6 @@ pub struct ProductionRuntime {
     plugins: Arc<PluginHost>,
     api_v1: api_v1::ApiV1Service,
     state_host: AsyncMutex<Option<vosu_surface::state::StateHostInstalled>>,
-    /// Bridge B2's `ConfigStore` watch task (§6.9): has no other way to
-    /// stop, since `ConfigStore::shutdown` never drops the `changed`
-    /// sender this task's `RecvError::Closed` path waits on. Aborted
-    /// explicitly in `shutdown` instead of being left to outlive the
-    /// Tokio runtime.
-    plugin_settings_watch: AsyncMutex<Option<JoinHandle<()>>>,
     listener: AsyncMutex<Option<ListenerOwner>>,
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
@@ -80,16 +73,6 @@ impl ProductionRuntime {
         let mut result = Ok(());
         self.shutdown_token.cancel();
         self.api_v1.shutdown();
-        if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
-            watch.abort();
-            if let Err(error) = watch.await
-                && !error.is_cancelled()
-            {
-                result = Err(io::Error::other(format!(
-                    "plugin settings watch failed: {error}"
-                )));
-            }
-        }
         if let Some(catalog) = self.catalog.lock().await.take() {
             catalog.shutdown().await;
         }
@@ -206,7 +189,8 @@ impl ProductionRuntime {
         let program = env::current_exe()?;
         #[cfg(feature = "test-harness")]
         let adapter_capture = crate::server::adapter_capture::endpoint::Capability::from_env()?;
-        let static_root = resolved_static_root(&self.paths, &config)?;
+        let static_root =
+            resolved_overlay_root(&self.paths, &self.plugin_settings, bundle.overlay_root)?;
         let overlay_instance = bundle
             .instance(bundle.overlay_root.plugin)
             .ok_or_else(|| io::Error::other("the overlay host is not a required bundled plugin"))?;
@@ -230,8 +214,7 @@ impl ProductionRuntime {
             data_dir: self
                 .paths
                 .bundled_plugin_data_dir(bundle.overlay_root.plugin),
-            storage: Arc::clone(&self.settings_storage),
-            settings: Arc::clone(&self.plugin_settings),
+            overlay_root: bundle.overlay_root,
             static_root,
             settings_root: self.paths.config().join("settings"),
             cache_root: self.paths.cache().join("downloads"),
@@ -240,19 +223,12 @@ impl ProductionRuntime {
             shutdown: self.shutdown_token.clone(),
             origins: Arc::clone(&self.origins),
         });
+        management.attach_overlay_root(OverlayRootHandler {
+            setting: bundle.overlay_root,
+            paths: self.paths.clone(),
+            overlay: Arc::clone(&overlay),
+        });
         *self.overlay.get_mut() = Some(Arc::clone(&overlay));
-        {
-            let overlay = Arc::clone(&overlay);
-            let paths = self.paths.clone();
-            let logger = self.logger.clone();
-            self.config.register_before_publish(move |next| {
-                if let Err(error) = reload_overlay_root(&paths, next, overlay.as_ref()) {
-                    logger.warn(format!(
-                        "Failed to resolve or create requested static root; retaining previous counter root: {error}"
-                    ));
-                }
-            });
-        }
         let api_keys_path = self.paths.config().join("api-keys.toml");
         let logger = Some(self.logger.clone());
         // `ApiKeys::load` now retries a transient missing read of
@@ -267,7 +243,7 @@ impl ProductionRuntime {
         let (adapters, hubs) = adapters::Adapters::start(
             bundle,
             &self.plugins,
-            Arc::clone(&self.config),
+            Arc::clone(&self.plugin_settings),
             self.dashboard,
         )
         .await?;
@@ -343,6 +319,7 @@ impl ProductionRuntime {
             }),
             Arc::new(RuntimeReportInput {
                 config: Arc::clone(&self.config),
+                plugin_settings: Arc::clone(&self.plugin_settings),
                 plugins: Arc::clone(&self.plugins),
                 adapters: Arc::clone(&adapters),
                 overlay: Arc::clone(&overlay),
@@ -791,7 +768,9 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
             Some(readiness)
         }
     };
-    let config = Arc::new(super::config::initialize_startup_config(&paths, channel).await?);
+    let (config, settings_store) =
+        super::config::initialize_startup_storage(bundle, &paths, channel).await?;
+    let config = Arc::new(config);
     // Read once: a live edit of ENABLE_DASHBOARD needs a restart.
     let dashboard = !dashboard_forced_off && config.current().enable_dashboard;
     if ordinary_role
@@ -896,26 +875,14 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
     } else {
         origins.without_dashboard()
     });
-    let settings_bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
-    let settings_storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(
-        settings_bridge.clone(),
-        Arc::new(crate::plugin::settings::PluginSettingsStore::open(
-            paths.config(),
-        )),
-        bundle.overlay_root,
-    ));
-    // The overlay host is created with the effective root already seeded.
-    if let Ok(root) = resolved_static_root(&paths, &current) {
-        settings_storage.seed_overlay_root(&root);
-    }
-    let plugin_settings = Arc::new(PluginSettingsService::new(
-        settings_storage.clone() as Arc<dyn SettingsStorage>
+    let plugin_settings = Arc::new(PluginSettingsService::with_delivery_transform(
+        settings_store as Arc<dyn SettingsStorage>,
+        overlay_root_delivery_transform(paths.clone(), bundle.overlay_root),
     ));
     let plugin_host =
         api_v1::resource_host(logger.clone(), plugin_settings.clone(), paths.data()).await?;
     let state_host = vosu_surface::state::install_state_host(plugin_host.surface_host())
         .map_err(io::Error::other)?;
-    let plugin_settings_watch = plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
     // Discovery/foreground poller start in `compose()`, not here (P3: only after `App::run`'s guards).
     let hooks = ProductionRuntime {
         bundle,
@@ -934,7 +901,6 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
         update_notice: None,
         removed_routes: Arc::default(),
         overlay: AsyncMutex::new(None),
-        settings_storage,
         plugin_settings,
         tools: AsyncMutex::new(None),
         tool_host: AsyncMutex::new(None),
@@ -945,7 +911,6 @@ pub async fn run_cli(bundle: &'static Bundle) -> io::Result<()> {
         plugins: plugin_host,
         state_host: AsyncMutex::new(Some(state_host)),
         adapters: AsyncMutex::new(None),
-        plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
         origins,

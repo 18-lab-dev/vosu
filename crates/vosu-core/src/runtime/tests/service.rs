@@ -20,26 +20,19 @@ fn settings_view_holds_exactly_the_settings_page_keys_and_never_the_dashboard_sw
         [
             "ALLOWED_IPS",
             "API_V1_SUBSCRIPTION_DEBOUNCE",
-            "CALCULATE_PP",
             "DASHBOARD_IP",
             "DASHBOARD_PORT",
             "DEBUG_LOG",
             "ENABLE_AUTOUPDATE",
             "MAX_PACKAGE_MIB",
             "OPEN_DASHBOARD_ON_STARTUP",
-            "POLL_RATE",
-            "PRECISE_DATA_POLL_RATE",
-            "READ_MANIA_SCROLL_SPEED",
             "SERVER_IP",
             "SERVER_PORT",
-            "SHOW_MP_COMMANDS",
             "START_AT_LOGIN",
-            "STATIC_FOLDER_PATH",
         ]
     );
     assert!(!values.contains_key("ENABLE_DASHBOARD"));
     assert_eq!(values["API_V1_SUBSCRIPTION_DEBOUNCE"], 7.375);
-    assert_eq!(values["PRECISE_DATA_POLL_RATE"], 10.0);
     assert_eq!(values["MAX_PACKAGE_MIB"], 512.0);
     assert_eq!(values["START_AT_LOGIN"], true);
     assert_eq!(values["ALLOWED_IPS"], "127.0.0.1, 100.64.0.0/10");
@@ -79,9 +72,6 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
 
     bounded!(service
         .save(serde_json::json!({
-            "POLL_RATE": " 175.5 ",
-            "PRECISE_DATA_POLL_RATE": "\t12.25\n",
-            "V2_SUBSCRIPTION_DEBOUNCE": " 1.125 ",
             "API_V1_SUBSCRIPTION_DEBOUNCE": " 7.375 ",
             "SERVER_PORT": " 24890 ",
             "DASHBOARD_PORT": " 24891 ", "_network_action": "apply"
@@ -90,8 +80,6 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     bounded!(service.save(serde_json::json!({"_network_action":"confirm", "_request_origin":"http://127.0.0.1:24891"}))).unwrap();
 
     let current = store.current();
-    assert_eq!(current.poll_rate, 175.5);
-    assert_eq!(current.precise_data_poll_rate, 12.25);
     assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(
         listen_target(&current).unwrap(),
@@ -104,32 +92,19 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
 
     let reloaded = bounded!(ConfigStore::initialize(config_path)).unwrap();
     let current = reloaded.current();
-    assert_eq!(current.poll_rate, 175.5);
-    assert_eq!(current.precise_data_poll_rate, 12.25);
     assert_eq!(current.api_v1_subscription_debounce, 7.375);
     assert_eq!(current.server_port, 24_890.0);
     bounded!(reloaded.shutdown()).unwrap();
 }
 
 #[tokio::test]
-async fn settings_reject_a_missing_overlays_folder_and_revert_pending_network_changes() {
+async fn settings_revert_pending_network_changes() {
     let root = tempfile::tempdir().unwrap();
     let store = Arc::new(
         bounded!(ConfigStore::initialize(root.path().join("vosu.toml")))
             .unwrap(),
     );
     let service = RuntimeConfig::new(Arc::clone(&store));
-
-    // A typo in an absolute overlays folder is rejected, not created empty.
-    let missing = root.path().join("no such folder");
-    let error = bounded!(service
-        .save(serde_json::json!({"STATIC_FOLDER_PATH": missing.to_str().unwrap()})))
-        .unwrap_err();
-    assert_eq!(error, format!("Overlays folder not found: {}", missing.display()));
-    bounded!(service
-        .save(serde_json::json!({"STATIC_FOLDER_PATH": root.path().to_str().unwrap()})))
-        .unwrap();
-    assert_eq!(store.current().static_folder_path, root.path().to_str().unwrap());
 
     // "Revert now" restores the previous listeners at once.
     let before = listen_target(&store.current()).unwrap();
@@ -160,10 +135,6 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
     let bytes = std::fs::read(&path).unwrap();
     let service = RuntimeConfig::new(Arc::clone(&store));
     let cases = [
-        ("POLL_RATE", serde_json::json!(99)),
-        ("PRECISE_DATA_POLL_RATE", serde_json::json!(0.5)),
-        ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0)),
-        ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0.5)),
         ("API_V1_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0)),
         ("API_V1_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0.5)),
         ("SERVER_PORT", serde_json::json!(0)),
@@ -171,7 +142,7 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
         ("SERVER_PORT", serde_json::json!("24050.5")),
         ("DASHBOARD_PORT", serde_json::json!("24051.5")),
     ];
-    let unbounded = ["POLL_RATE", "PRECISE_DATA_POLL_RATE", "V2_SUBSCRIPTION_DEBOUNCE", "API_V1_SUBSCRIPTION_DEBOUNCE", "SERVER_PORT", "DASHBOARD_PORT"]
+    let unbounded = ["API_V1_SUBSCRIPTION_DEBOUNCE", "SERVER_PORT", "DASHBOARD_PORT"]
         .into_iter()
         .flat_map(|key| {
             [
@@ -186,7 +157,6 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
         let mut object = serde_json::Map::new();
         object.insert(key.to_owned(), value.clone());
         object.insert("_network_action".into(), serde_json::json!("apply"));
-        object.insert("STATIC_FOLDER_PATH".to_owned(), serde_json::json!("/"));
         assert!(bounded!(service.save(object.into())).is_err(), "{key}={value}");
         assert_eq!(*store.current(), *original);
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
@@ -200,27 +170,22 @@ fn settings_save_accepts_finite_json_numbers_and_ignores_invalid_or_nonfinite_va
     apply_config_values(
         &mut config,
         serde_json::json!({
-            "POLL_RATE": 144.5,
-            "PRECISE_DATA_POLL_RATE": 8,
-            "V2_SUBSCRIPTION_DEBOUNCE": 0.25,
+            "API_V1_SUBSCRIPTION_DEBOUNCE": 8.5,
             "SERVER_PORT": 24060
         })
         .as_object()
         .unwrap(),
     );
 
-    assert_eq!(config.poll_rate, 144.5);
-    assert_eq!(config.precise_data_poll_rate, 8.0);
-    assert_eq!(config.api_v1_subscription_debounce, 1.0);
+    assert_eq!(config.api_v1_subscription_debounce, 8.5);
     assert_eq!(config.server_port, 24_060.0);
 
     let unchanged = config.clone();
     apply_config_values(
         &mut config,
         serde_json::json!({
-            "POLL_RATE": "not-a-number",
-            "PRECISE_DATA_POLL_RATE": "NaN",
-            "V2_SUBSCRIPTION_DEBOUNCE": "inf",
+            "API_V1_SUBSCRIPTION_DEBOUNCE": "NaN",
+            "DASHBOARD_PORT": "inf",
             "SERVER_PORT": "   "
         })
         .as_object()

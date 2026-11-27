@@ -214,8 +214,8 @@ export function mountPlugins({ before, requestJson, notify, setBusy, errorText, 
     const name = nameOf(plugin);
     const wrap = el('div', { className: 'plugin-row__actions' });
     if (!plugin.id) return wrap;
-    // Bundled plugins' settings live on the Settings page until M8.
-    const settings = plugin.trust !== 'bundled' && plugin.state !== 'inactive' ? settingsButton(plugin.id, name) : null;
+    const hasSettings = plugin.has_settings ?? (plugin.trust !== 'bundled');
+    const settings = hasSettings && plugin.state !== 'inactive' ? settingsButton(plugin.id, name) : null;
     if (plugin.runtime !== 'process') {
       if (settings) wrap.append(settings);
       return wrap;

@@ -8,26 +8,29 @@ fn prerelease_import_preserves_sources_and_never_reads_them_again() {
     let source = root.path().join("vosu.toml");
     let legacy = root.path().join("vosu.env");
     let old = root.path().join("tosu.env");
-    let toml = "POLL_RATE = 413.0\nUNKNOWN_SENTINEL = 'preserve me'\nSTATIC_FOLDER_PATH = 'C:\\normal\\writable'\n";
+    let toml = "SERVER_PORT = 24413.0\nPOLL_RATE = 413.0\nUNKNOWN_SENTINEL = 'preserve me'\nSTATIC_FOLDER_PATH = 'C:\\normal\\writable'\n";
     fs::write(&source, toml).unwrap();
-    fs::write(&legacy, "POLL_RATE=312\nDEBUG_LOG=true\n").unwrap();
-    fs::write(&old, "POLL_RATE=211\nCALCULATE_PP=false\n").unwrap();
+    fs::write(&legacy, "SERVER_PORT=24312\nDEBUG_LOG=true\n").unwrap();
+    fs::write(&old, "SERVER_PORT=24211\nENABLE_AUTOUPDATE=false\n").unwrap();
     fs::write(root.path().join("broker.json"), "private broker credential").unwrap();
     fs::write(root.path().join("resource-secret"), "private secret").unwrap();
     let target = root.path().join("prerelease/vosu.toml");
     let imported = initialize(&target, &source, &SystemAtomicReplace).unwrap();
-    assert_eq!(imported.config.poll_rate, 413.0);
+    assert_eq!(imported.config.server_port, 24413.0);
     assert!(imported.config.debug_log);
-    assert!(!imported.config.calculate_pp);
-    assert_eq!(imported.config.static_folder_path, "./static");
+    assert!(!imported.config.enable_auto_update);
+    let written = fs::read_to_string(&target).unwrap();
+    assert!(written.contains("UNKNOWN_SENTINEL = \"preserve me\""));
+    assert!(!written.contains("POLL_RATE"));
+    assert!(!written.contains("STATIC_FOLDER_PATH"));
     assert_eq!(fs::read_to_string(&source).unwrap(), toml);
     assert_eq!(
         fs::read_to_string(&legacy).unwrap(),
-        "POLL_RATE=312\nDEBUG_LOG=true\n"
+        "SERVER_PORT=24312\nDEBUG_LOG=true\n"
     );
     assert_eq!(
         fs::read_to_string(&old).unwrap(),
-        "POLL_RATE=211\nCALCULATE_PP=false\n"
+        "SERVER_PORT=24211\nENABLE_AUTOUPDATE=false\n"
     );
     assert!(!target.parent().unwrap().join("broker.json").exists());
     assert!(!target.parent().unwrap().join("resource-secret").exists());
@@ -41,20 +44,20 @@ fn prerelease_import_preserves_sources_and_never_reads_them_again() {
 }
 
 #[test]
-fn prerelease_alpha_inputs_win_and_keep_explicit_writable_override() {
+fn prerelease_alpha_inputs_win_and_keep_explicit_core_override() {
     let root = TempDir::new().unwrap();
     let target = root.path().join("prerelease/vosu.toml");
     fs::create_dir_all(target.parent().unwrap()).unwrap();
     fs::write(
         target.parent().unwrap().join("vosu.env"),
-        "POLL_RATE=723\nSTATIC_FOLDER_PATH=alpha-choice\n",
+        "SERVER_PORT=24723\nALLOWED_IPS=127.0.0.1\n",
     )
     .unwrap();
     let unavailable = root.path().join("unavailable/vosu.toml");
     fs::create_dir_all(&unavailable).unwrap();
     let local = initialize(&target, &unavailable, &SystemAtomicReplace).unwrap();
-    assert_eq!(local.config.poll_rate, 723.0);
-    assert_eq!(local.config.static_folder_path, "alpha-choice");
+    assert_eq!(local.config.server_port, 24723.0);
+    assert_eq!(local.config.allowed_ips, "127.0.0.1");
 }
 
 #[test]
@@ -62,7 +65,7 @@ fn prerelease_malformed_source_leaves_both_trees_untouched() {
     let root = TempDir::new().unwrap();
     let source = root.path().join("vosu.toml");
     let legacy = root.path().join("vosu.env");
-    fs::write(&source, "POLL_RATE = [broken").unwrap();
+    fs::write(&source, "SERVER_PORT = [broken").unwrap();
     fs::write(&legacy, "DEBUG_LOG=true").unwrap();
     let target = root.path().join("prerelease/vosu.toml");
     assert_eq!(
@@ -73,7 +76,7 @@ fn prerelease_malformed_source_leaves_both_trees_untouched() {
         io::ErrorKind::InvalidData
     );
     assert!(!target.parent().unwrap().exists());
-    assert_eq!(fs::read_to_string(source).unwrap(), "POLL_RATE = [broken");
+    assert_eq!(fs::read_to_string(source).unwrap(), "SERVER_PORT = [broken");
     assert_eq!(fs::read_to_string(legacy).unwrap(), "DEBUG_LOG=true");
 }
 
@@ -84,9 +87,9 @@ fn prerelease_missing_source_publishes_defaults_once() {
     let target = root.path().join("prerelease/vosu.toml");
     let first = initialize(&target, &source, &SystemAtomicReplace).unwrap();
     assert_eq!(first.config, crate::config::Config::default());
-    fs::write(&source, "POLL_RATE=987.0").unwrap();
+    fs::write(&source, "SERVER_PORT=24987.0").unwrap();
     let next = initialize(&target, &source, &SystemAtomicReplace).unwrap();
-    assert_eq!(next.config.poll_rate, 150.0);
+    assert_eq!(next.config.server_port, 24_050.0);
 }
 
 #[test]
@@ -102,8 +105,8 @@ fn prerelease_legacy_source_precedence_and_publication_failure_are_nondestructiv
     let source = root.path().join("vosu.toml");
     let legacy = root.path().join("vosu.env");
     let older = root.path().join("tosu.env");
-    fs::write(&legacy, "POLL_RATE=532\n").unwrap();
-    fs::write(&older, "POLL_RATE=321\nDEBUG_LOG=true\n").unwrap();
+    fs::write(&legacy, "SERVER_PORT=24532\n").unwrap();
+    fs::write(&older, "SERVER_PORT=24321\nDEBUG_LOG=true\n").unwrap();
     let target = root.path().join("prerelease/vosu.toml");
     assert_eq!(
         initialize(&target, &source, &Refuse).err().unwrap().kind(),
@@ -111,13 +114,13 @@ fn prerelease_legacy_source_precedence_and_publication_failure_are_nondestructiv
     );
     assert!(!target.exists());
     assert!(!source.exists());
-    assert_eq!(fs::read_to_string(&legacy).unwrap(), "POLL_RATE=532\n");
+    assert_eq!(fs::read_to_string(&legacy).unwrap(), "SERVER_PORT=24532\n");
     assert_eq!(
         fs::read_to_string(&older).unwrap(),
-        "POLL_RATE=321\nDEBUG_LOG=true\n"
+        "SERVER_PORT=24321\nDEBUG_LOG=true\n"
     );
     let retried = initialize(&target, &source, &SystemAtomicReplace).unwrap();
-    assert_eq!(retried.config.poll_rate, 532.0);
+    assert_eq!(retried.config.server_port, 24532.0);
     assert!(retried.config.debug_log);
 }
 
@@ -138,7 +141,7 @@ fn prerelease_invalid_alpha_config_never_falls_back_to_source() {
     fs::create_dir(&source).unwrap();
     let target = root.path().join("prerelease/vosu.toml");
     fs::create_dir_all(target.parent().unwrap()).unwrap();
-    let invalid = "POLL_RATE = [invalid alpha";
+    let invalid = "SERVER_PORT = [invalid alpha";
     fs::write(&target, invalid).unwrap();
     assert_eq!(
         initialize(&target, &source, &SystemAtomicReplace)

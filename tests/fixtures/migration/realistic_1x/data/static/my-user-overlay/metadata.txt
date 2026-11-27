@@ -1,0 +1,7 @@
+Usecase: ingame
+Name: My User Overlay
+Version: 1.0
+Author: UserAuthor
+CompatibleWith: vosu
+Resolution: 400x200
+authorLinks: https://example.invalid

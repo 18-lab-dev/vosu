@@ -16,6 +16,7 @@ pub use parse::{
 };
 #[cfg(feature = "test-harness")]
 pub(crate) use parse::{HARNESS_HOST, harness_socket};
+pub(crate) use store::publish_migrated_records;
 pub use store::{
     SourceGeneration, SourceInput, SourceLifecycle, SourceRecord, SourceStore, SourceStoreError,
 };

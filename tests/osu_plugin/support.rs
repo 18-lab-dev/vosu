@@ -213,35 +213,11 @@ pub struct Harness {
     pub memories: Vec<Arc<Memory>>,
     pub pids: Vec<u32>,
     pub foreground: Arc<plugin::SyntheticForegroundSource>,
-    config: Arc<vosu_core::config::ConfigStore>,
     _dirs: Vec<tempfile::TempDir>,
     _runtime: tokio::runtime::Runtime,
     _lease: TestLease,
 }
 struct Console;
-// The production B2 bridge intentionally serves only vosu.osu. Preserve its
-// real persistence semantics while each integration instance has a unique id.
-struct Storage {
-    bridge: plugin::settings::ConfigSettingsBridgeB2,
-    expected_id: String,
-}
-impl plugin::settings::SettingsStorage for Storage {
-    fn load(
-        &self,
-        id: &str,
-    ) -> Result<serde_json::Map<String, serde_json::Value>, plugin::settings::SettingsError> {
-        assert_eq!(id, self.expected_id);
-        plugin::settings::SettingsStorage::load(&self.bridge, "vosu.osu")
-    }
-    fn store(
-        &self,
-        id: &str,
-        values: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<(), plugin::settings::SettingsError> {
-        assert_eq!(id, self.expected_id);
-        plugin::settings::SettingsStorage::store(&self.bridge, "vosu.osu", values)
-    }
-}
 impl vosu_core::logging::ConsoleSink for Console {
     fn is_tty(&self) -> bool {
         false
@@ -285,17 +261,7 @@ impl Harness {
             Arc::new(Console),
         )
         .unwrap();
-        let config = Arc::new(
-            runtime
-                .block_on(vosu_core::config::ConfigStore::initialize(
-                    &dirs[1].path().join("vosu.toml"),
-                ))
-                .unwrap(),
-        );
-        let storage = Arc::new(Storage {
-            bridge: plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&config)),
-            expected_id: id.into(),
-        });
+        let storage = Arc::new(plugin::settings::PluginSettingsStore::open(dirs[1].path()));
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(storage));
         let foreground = Arc::new(plugin::SyntheticForegroundSource::new(None));
         let host = if synthetic {
@@ -374,7 +340,6 @@ impl Harness {
             memories,
             pids,
             foreground,
-            config,
             _dirs: dirs,
             _runtime: runtime,
             _lease: lease,
@@ -455,13 +420,6 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         self.host.destroy_all(WAIT);
-        // B2 writes can still be saving/reloading after the session detaches.
-        // Join the config worker before dropping its directory or Tokio's timer
-        // driver: its spawn_blocking task is not cancelled by runtime shutdown.
-        self._runtime
-            .block_on(async { tokio::time::timeout(WAIT, self.config.shutdown()).await })
-            .expect("config shutdown deadline expired")
-            .expect("config shutdown failed");
         for &pid in &self.pids {
             plugin::test_support::clear_session_memory(pid);
         }

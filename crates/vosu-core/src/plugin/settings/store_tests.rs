@@ -187,31 +187,6 @@ fn an_unreadable_document_is_never_rewritten() {
     );
 }
 
-struct Managed;
-
-impl SettingsStorage for Managed {
-    fn load(&self, _: &str) -> Result<serde_json::Map<String, Value>, SettingsError> {
-        Ok(serde_json::Map::new())
-    }
-    fn store(&self, _: &str, _: &serde_json::Map<String, Value>) -> Result<(), SettingsError> {
-        panic!("a managed id is never stored through the plugin settings route")
-    }
-    fn editable(&self, _: &str) -> bool {
-        false
-    }
-}
-
-#[test]
-fn a_bridged_id_is_refused_before_anything_is_stored() {
-    let service = PluginSettingsService::new(Arc::new(Managed));
-    assert_eq!(
-        service
-            .submit(ID, &schema(), vec![("LABEL".into(), json!("x"))])
-            .unwrap_err(),
-        SettingsError::ManagedElsewhere(ID.into())
-    );
-}
-
 #[test]
 fn post_read_size_limit_rejects_oversized_payload_even_after_read() {
     let payload = br#"{"version":1,"plugins":{}}"#;

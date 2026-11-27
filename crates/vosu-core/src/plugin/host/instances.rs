@@ -2,16 +2,15 @@
 //! that file under the 1,000-line maintained-file limit
 //! (`docs/architecture/source-map.md`): registering and tearing down one
 //! plugin instance (`create_instance`), replaying deliveries queued while
-//! it was still [`InstanceSlot::Creating`], bridge B2's config-watcher
-//! hookup, and the by-`PluginInstanceId`/by-plugin-id dispatch routing
-//! every other host-side handler (`lifecycle.rs`, `read_plans.rs`,
-//! `scans.rs`, `host.rs`'s own `PluginHostHandler::handle`) calls through.
+//! it was still [`InstanceSlot::Creating`], and the by-`PluginInstanceId`/
+//! by-plugin-id dispatch routing every other host-side handler
+//! (`lifecycle.rs`, `read_plans.rs`, `scans.rs`, `host.rs`'s own
+//! `PluginHostHandler::handle`) calls through.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use tokio::runtime::Handle;
 use vosu_plugin_api::{Init, Message, encode, vosu_status};
 
 use super::super::dispatch::{OwnedMessage, WorkerPool};
@@ -22,18 +21,16 @@ use super::super::instance::PluginInstance;
 use super::super::read_plan::OutstandingPlans;
 use super::super::registry::LoadedPlugin;
 use super::super::scan::OutstandingScans;
-use super::super::settings::ConfigSettingsBridgeB2;
 use super::{
     InstanceEntry, InstanceSlot, PendingDelivery, PluginHost, SHUTDOWN_RACE_DESTROY_GRACE,
 };
 use crate::identity::PluginInstanceId;
 
 impl PluginHost {
-    /// Creates and registers one plugin instance: resolves `plugin_id`'s
-    /// settings schema (currently only bridge B2's own), builds
-    /// `init.settings` through `PluginSettingsService` (§6.9), then
-    /// `PluginInstance::create`s it with this host as its
-    /// `PluginHostHandler`.
+    /// Creates and registers one plugin instance: builds `init.settings`
+    /// from the loaded plugin's `settings.schema.json` through
+    /// `PluginSettingsService` (§6.9), then `PluginInstance::create`s it
+    /// with this host as its `PluginHostHandler`.
     ///
     /// Registers `id` under `InstanceSlot::Creating` *before* calling
     /// into the plugin's own `create` (module doc comment): a timer fired
@@ -348,27 +345,6 @@ impl PluginHost {
                 self.log_dispatch_dropped(id, delivery.message.opcode(), &error);
             }
         }
-    }
-
-    /// Spawns bridge B2's background `ConfigStore` change watcher (§6.9:
-    /// "every later change arrives as `SETTINGS_CHANGED`"), delivering
-    /// through this host and resolving `vosu.osu`'s current
-    /// `settings.schema.json` from this host's own `SettingsSchemaSource`
-    /// impl (the live instance's `LoadedPlugin::settings_schema`, P0/P1) —
-    /// no longer a schema bridge B2 embeds itself. A no-op for a `bridge`
-    /// whose plugin id has no live instance yet or ever —
-    /// `settings_changed` below simply finds nothing to deliver to.
-    pub fn watch_bridge_b2(
-        self: &Arc<Self>,
-        bridge: &Arc<ConfigSettingsBridgeB2>,
-        runtime: &Handle,
-    ) -> tokio::task::JoinHandle<()> {
-        bridge.watch_config_changes(
-            runtime,
-            Arc::clone(&self.settings),
-            self.clone(),
-            self.clone(),
-        )
     }
 
     /// Dispatches `message` directly to `instance`'s own queue, exactly

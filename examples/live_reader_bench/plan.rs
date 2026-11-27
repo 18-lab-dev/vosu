@@ -161,10 +161,7 @@ impl Attachment {
             },
             Arc::new(Silent),
         )?;
-        let config = runtime.block_on(vosu_core::config::ConfigStore::initialize(
-            &config_dir.path().join("vosu.toml"),
-        ))?;
-        let storage = plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config));
+        let storage = plugin::settings::PluginSettingsStore::open(config_dir.path());
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
             storage,
         )));

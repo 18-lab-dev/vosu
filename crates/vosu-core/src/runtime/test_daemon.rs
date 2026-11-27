@@ -34,19 +34,13 @@ async fn owner(root: &Path, bundle: &'static Bundle) -> (ProductionRuntime, Arc<
     let current = config.current();
     let console = Arc::new(Console::default());
     let logger = Logger::new(root, LoggerOptions::default(), console.clone()).unwrap();
-    let bridge = Arc::new(ConfigSettingsBridgeB2::new(config.clone()));
-    let settings_storage = Arc::new(RuntimeSettingsStorage::new(
-        bridge.clone(),
-        Arc::new(crate::plugin::settings::PluginSettingsStore::open(root)),
-        bundle.overlay_root,
-    ));
     let paths = crate::runtime::test_paths::runtime_test_paths(root);
-    settings_storage.seed_overlay_root(&resolved_static_root(&paths, &current).unwrap());
-    let plugin_settings = Arc::new(PluginSettingsService::new(
-        settings_storage.clone() as Arc<dyn crate::plugin::settings::SettingsStorage>
+    let settings_store = Arc::new(PluginSettingsStore::open(paths.config()));
+    let plugin_settings = Arc::new(PluginSettingsService::with_delivery_transform(
+        settings_store as Arc<dyn SettingsStorage>,
+        overlay_root_delivery_transform(paths.clone(), bundle.overlay_root),
     ));
     let plugins = PluginHost::new(logger.clone(), plugin_settings.clone(), Handle::current());
-    let plugin_settings_watch = plugins.watch_bridge_b2(&bridge, &Handle::current());
     (
         ProductionRuntime {
             bundle,
@@ -65,7 +59,6 @@ async fn owner(root: &Path, bundle: &'static Bundle) -> (ProductionRuntime, Arc<
             update_notice: None,
             removed_routes: Arc::default(),
             overlay: AsyncMutex::new(None),
-            settings_storage,
             plugin_settings,
             tools: AsyncMutex::new(None),
             tool_host: AsyncMutex::new(None),
@@ -75,7 +68,6 @@ async fn owner(root: &Path, bundle: &'static Bundle) -> (ProductionRuntime, Arc<
             api_v1: api_v1::ApiV1Service::new(&plugins, &current),
             plugins,
             state_host: AsyncMutex::new(None),
-            plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
             listener: AsyncMutex::new(None),
             dashboard_listener: AsyncMutex::new(None),
             origins: Arc::new(
@@ -231,7 +223,7 @@ impl TestDaemon {
         let (adapters, hubs) = adapters::Adapters::start(
             owner.bundle,
             &owner.plugins,
-            owner.config.clone(),
+            owner.plugin_settings.clone(),
             dashboard,
         )
         .await?;
@@ -276,9 +268,6 @@ impl TestDaemon {
         }
         if let Some(hubs) = self.runtime.hubs.lock().await.as_ref() {
             probes.extend(hubs.join_probes().map(|handle| ("legacy hub", handle)));
-        }
-        if let Some(task) = self.runtime.plugin_settings_watch.lock().await.as_ref() {
-            probes.push(("settings bridge", task.abort_handle()));
         }
         probes
     }

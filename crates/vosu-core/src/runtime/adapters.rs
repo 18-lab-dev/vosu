@@ -12,7 +12,7 @@ pub(super) struct Adapters {
     pub(super) services: Box<dyn AdapterServices>,
     requesters: AdapterRequesters,
     routes: Mutex<Vec<vosu_surface::routes::RegistrationLease>>,
-    config: Arc<ConfigStore>,
+    plugin_settings: Arc<PluginSettingsService>,
     bundle: &'static Bundle,
 }
 impl Adapters {
@@ -20,10 +20,10 @@ impl Adapters {
     pub(super) async fn start(
         bundle: &'static Bundle,
         host: &Arc<PluginHost>,
-        config: Arc<ConfigStore>,
+        plugin_settings: Arc<PluginSettingsService>,
         dashboard: bool,
     ) -> io::Result<(Arc<Self>, WebSocketHubs)> {
-        let adapters = Arc::new(Self::new(bundle, host, config)?);
+        let adapters = Arc::new(Self::new(bundle, host, plugin_settings)?);
         let hubs = WebSocketHubs::start(adapters.clone());
         if let Err(error) = adapters.mount(host, &hubs, dashboard) {
             hubs.shutdown().await;
@@ -37,7 +37,7 @@ impl Adapters {
     pub(super) fn new(
         bundle: &'static Bundle,
         host: &Arc<PluginHost>,
-        config: Arc<ConfigStore>,
+        plugin_settings: Arc<PluginSettingsService>,
     ) -> io::Result<Self> {
         let requester = |index| {
             host.surface_requester(PluginInstanceId::new(index))
@@ -49,9 +49,9 @@ impl Adapters {
             stream_companion: requester(3)?,
         };
         let projections = bundle.hosts.projections(&requesters);
-        let current = config.current();
-        let regular = bundle.hosts.poll_duration(current.poll_rate);
-        let precise = bundle.hosts.poll_duration(current.precise_data_poll_rate);
+        let (poll_rate, precise_data_poll_rate) = effective_osu_poll_rates(&plugin_settings);
+        let regular = bundle.hosts.poll_duration(poll_rate);
+        let precise = bundle.hosts.poll_duration(precise_data_poll_rate);
         let provider = |schema,
                         requester: &Arc<dyn vosu_surface::requester::BundledRequester>,
                         projection,
@@ -93,7 +93,7 @@ impl Adapters {
             services: projections.services,
             requesters,
             routes: Mutex::new(Vec::new()),
-            config,
+            plugin_settings,
             bundle,
         })
     }
@@ -158,13 +158,13 @@ fn schema_index(schema: WebSocketSchema) -> usize {
 }
 impl WebSocketStateProvider for Adapters {
     fn poll_rate(&self, schema: WebSocketSchema) -> Duration {
-        let config = self.config.current();
+        let (regular, precise) = effective_osu_poll_rates(&self.plugin_settings);
         self.bundle
             .hosts
             .poll_duration(if schema == WebSocketSchema::V2Precise {
-                config.precise_data_poll_rate
+                precise
             } else {
-                config.poll_rate
+                regular
             })
     }
     fn subscribe(&self, schema: WebSocketSchema) -> watch::Receiver<u64> {

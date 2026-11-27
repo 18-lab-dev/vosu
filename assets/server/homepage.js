@@ -1435,32 +1435,6 @@ import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashb
       return true;
     }
 
-    // The overlays folder changes which overlays exist, so it waits for an
-    // explicit Apply instead of saving on blur.
-    const folder = form.querySelector('[data-id="STATIC_FOLDER_PATH"]');
-    if (folder) {
-      let savedFolder = folder.value;
-      const applyFolder = document.createElement('button');
-      applyFolder.type = 'button';
-      applyFolder.className = 'button button-primary';
-      applyFolder.textContent = 'Apply';
-      applyFolder.hidden = true;
-      folder.after(applyFolder);
-      folder.addEventListener('input', () => { applyFolder.hidden = folder.value === savedFolder; });
-      folder.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' && !applyFolder.hidden) { event.preventDefault(); applyFolder.click(); }
-      });
-      applyFolder.addEventListener('click', async () => {
-        setBusy(applyFolder, true, 'Applying…');
-        const saved = await saveSetting(folder);
-        setBusy(applyFolder, false);
-        if (!saved) return;
-        savedFolder = folder.value;
-        applyFolder.hidden = true;
-        folder.focus();
-      });
-    }
-
     const apply = document.createElement('button');
     apply.type = 'button';
     apply.className = 'button button-primary';
@@ -1671,7 +1645,7 @@ import { applyUpdateNotice, loadOverlayList, loadRuntimeSettings } from './dashb
     // immediately for checkboxes; saves are serialized so they apply in order.
     form.addEventListener('change', (event) => {
       const control = event.target.closest('[data-id]');
-      if (!control || control.disabled || control === folder) return;
+      if (!control || control.disabled) return;
       // Network fields wait for Apply (see markNetworkDirty).
       if (networkKeys.has(control.dataset.id)) return;
       queue = queue.then(() => saveSetting(control));
