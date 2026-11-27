@@ -9,8 +9,6 @@ import math
 import time
 from typing import Any, Callable, Iterable
 
-from parity_volatile import CLOCK_MS_TOLERANCE, clock_equal
-
 SCHEMAS = {
     "v1": "/json",
     "v2": "/json/v2",
@@ -339,6 +337,10 @@ def compare_pair(
         unobservable: Callable[[str, tuple[str, ...]], str | None] | None = None,
         coverage: list[dict[str, Any]] | None = None,
 ) -> list[Mismatch]:
+    # The crate boundary check reads the version pin with runpy, without the
+    # live-parity directory on its import path.
+    from parity_volatile import CLOCK_MS_TOLERANCE, clock_equal
+
     mismatches: list[Mismatch] = []
     active = (state_of(left.payload) in PLAY_STATES and not paused_of(left.payload)) if active_override is None else active_override
 
