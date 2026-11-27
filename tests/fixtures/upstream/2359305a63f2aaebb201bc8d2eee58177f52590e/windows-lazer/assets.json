@@ -1,0 +1,45 @@
+{
+  "format": "vosu-golden-assets-v1",
+  "assets": [
+    {
+      "id": "m4b-o0-audio-wav",
+      "slot": "files",
+      "relative": "d/d1/d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4",
+      "media_type": "audio/wav",
+      "generator": "vosu m4b-o0 synth_assets.py v1 (python stdlib, deterministic)",
+      "license": "CC0-1.0 (generated vosu-owned test asset, no third-party input)",
+      "sha256": "d1a6d82ecedd1481b2d6a469cb8067c48aed28da9c5401a93484e78fe04848a4",
+      "bytes": 264644
+    },
+    {
+      "id": "m4b-o0-background-png",
+      "slot": "files",
+      "relative": "a/ab/ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34",
+      "media_type": "image/png",
+      "generator": "vosu m4b-o0 synth_assets.py v1 (python stdlib, deterministic)",
+      "license": "CC0-1.0 (generated vosu-owned test asset, no third-party input)",
+      "sha256": "ab814c9e4ad6c60cfb03abea1b173245c0222d390e0fda7e9c5e21598f7eba34",
+      "bytes": 7917
+    },
+    {
+      "id": "m4b-o0-beatmap-osu",
+      "slot": "files",
+      "relative": "d/dd/ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3",
+      "media_type": "application/octet-stream",
+      "generator": "vosu m4b-o0 synth_assets.py v1 (python stdlib, deterministic)",
+      "license": "CC0-1.0 (generated vosu-owned test asset, no third-party input)",
+      "sha256": "ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3",
+      "bytes": 1683
+    },
+    {
+      "id": "m4b-o0-calculate-probe-osu",
+      "slot": "files",
+      "relative": "m4b-calculate-probe.osu",
+      "media_type": "text/plain",
+      "generator": "vosu m4b-o0 synth_assets.py v1 (python stdlib, deterministic)",
+      "license": "CC0-1.0 (generated vosu-owned test asset, no third-party input)",
+      "sha256": "ddd9199795c70354d254cee4044288ca3273bd5948a43046bc53894ebe890ea3",
+      "bytes": 1683
+    }
+  ]
+}

@@ -1,0 +1,1558 @@
+{
+  "format": "vosu-golden-platform-v1",
+  "normalization_version": 2,
+  "provenance": "captured",
+  "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
+  "platform": "windows-lazer",
+  "client": {
+    "variant": "lazer",
+    "version": "2026.1117.0",
+    "sha256": "1e60f10df0aec287f7e49f73ad3b75151c7a97cf944d3c402e1835e80931c04b"
+  },
+  "source": {
+    "kind": "source",
+    "sha256": "c440a9105a1a24157fa9f0874c81191d1432068b64765b404343b14e412c2cbf",
+    "lazer_offsets_sha256": "21400f60b82cb87e6277e74cf5f7f366df0606807dd256eaf852b4638e65e788"
+  },
+  "vosu": {
+    "commit": "7a6d92a3cb3b671f5d1fcfa9cafd8c7ed6725b98",
+    "version": "2.0.0-alpha.2",
+    "profile": "debug",
+    "features": [
+      "test-harness"
+    ],
+    "target": "x86_64-pc-windows-msvc",
+    "sha256": "3a3f38126d7d33e8af4d5e7022bae35ce65f1c45948c0409483c42f1ff5fb276"
+  },
+  "scenario_set": "m4b-full-v1",
+  "authorization": "owner-auth-m4b-o0-dryrun-20261125#amendment-run5",
+  "review_receipt": "main-review-m4b-run5-payload-2026-11-26b",
+  "synthetic_roots": {
+    "files": "C:\\vosu-golden\\files\\",
+    "osu!": "C:\\vosu-golden\\osu!\\"
+  },
+  "case_counts": {
+    "state-http": 77,
+    "ws": 56,
+    "files": 32,
+    "path-security": 16,
+    "calculation": 19,
+    "origin-peer": 15
+  },
+  "cases": [
+    {
+      "id": "calculation.absolute-inside-root-osu",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.absolute-inside-root-osu.json"
+    },
+    {
+      "id": "calculation.absolute-outside-root",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.absolute-outside-root.json"
+    },
+    {
+      "id": "calculation.accuracy",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.accuracy.json"
+    },
+    {
+      "id": "calculation.attributes",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.attributes.json"
+    },
+    {
+      "id": "calculation.combo",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.combo.json"
+    },
+    {
+      "id": "calculation.invalid-accuracy",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.invalid-accuracy.json"
+    },
+    {
+      "id": "calculation.invalid-clock-rate",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.invalid-clock-rate.json"
+    },
+    {
+      "id": "calculation.invalid-count",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.invalid-count.json"
+    },
+    {
+      "id": "calculation.invalid-mode",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.invalid-mode.json"
+    },
+    {
+      "id": "calculation.lazer-statistics",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.lazer-statistics.json"
+    },
+    {
+      "id": "calculation.mods-acronyms",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.mods-acronyms.json"
+    },
+    {
+      "id": "calculation.mods-bits",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.mods-bits.json"
+    },
+    {
+      "id": "calculation.mods-invalid",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.mods-invalid.json"
+    },
+    {
+      "id": "calculation.mods-json",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.mods-json.json"
+    },
+    {
+      "id": "calculation.no-query",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.no-query.json"
+    },
+    {
+      "id": "calculation.no-query.no-client",
+      "family": "calculation",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/calculation.no-query.no-client.json"
+    },
+    {
+      "id": "calculation.post",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.post.json"
+    },
+    {
+      "id": "calculation.relative-osu-path",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.relative-osu-path.json"
+    },
+    {
+      "id": "calculation.statistics",
+      "family": "calculation",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/calculation.statistics.json"
+    },
+    {
+      "id": "files.background-image.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.background-image.get.json"
+    },
+    {
+      "id": "files.background-image.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.background-image.head.json"
+    },
+    {
+      "id": "files.beatmap.audio.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.audio.get.json"
+    },
+    {
+      "id": "files.beatmap.audio.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.audio.head.json"
+    },
+    {
+      "id": "files.beatmap.background.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.background.get.json"
+    },
+    {
+      "id": "files.beatmap.background.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.background.head.json"
+    },
+    {
+      "id": "files.beatmap.file.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.file.get.json"
+    },
+    {
+      "id": "files.beatmap.file.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.file.head.json"
+    },
+    {
+      "id": "files.beatmap.file.post",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.file.post.json"
+    },
+    {
+      "id": "files.beatmap.relative.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.relative.get.json"
+    },
+    {
+      "id": "files.beatmap.relative.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.beatmap.relative.head.json"
+    },
+    {
+      "id": "files.budget.headers-32",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.budget.headers-32.json"
+    },
+    {
+      "id": "files.budget.headers-33",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.budget.headers-33.json"
+    },
+    {
+      "id": "files.budget.range-control-byte",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.budget.range-control-byte.json"
+    },
+    {
+      "id": "files.conditional.if-modified-since-future",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.conditional.if-modified-since-future.json"
+    },
+    {
+      "id": "files.conditional.if-modified-since-past",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.conditional.if-modified-since-past.json"
+    },
+    {
+      "id": "files.conditional.if-none-match-other",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.conditional.if-none-match-other.json"
+    },
+    {
+      "id": "files.conditional.if-none-match-star",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.conditional.if-none-match-star.json"
+    },
+    {
+      "id": "files.conditional.if-range-other",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.conditional.if-range-other.json"
+    },
+    {
+      "id": "files.conditional.if-range-past",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.conditional.if-range-past.json"
+    },
+    {
+      "id": "files.range.multiple",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.range.multiple.json"
+    },
+    {
+      "id": "files.range.single",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.range.single.json"
+    },
+    {
+      "id": "files.range.single-head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.range.single-head.json"
+    },
+    {
+      "id": "files.range.unsatisfiable",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.range.unsatisfiable.json"
+    },
+    {
+      "id": "files.skin.index.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.skin.index.get.json"
+    },
+    {
+      "id": "files.skin.index.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.skin.index.head.json"
+    },
+    {
+      "id": "files.skin.lazer-file.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.skin.lazer-file.get.json"
+    },
+    {
+      "id": "files.skin.lazer-file.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.skin.lazer-file.head.json"
+    },
+    {
+      "id": "files.songs.dir-no-slash.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.songs.dir-no-slash.get.json"
+    },
+    {
+      "id": "files.songs.dir.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.songs.dir.get.json"
+    },
+    {
+      "id": "files.songs.file.get",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.songs.file.get.json"
+    },
+    {
+      "id": "files.songs.file.head",
+      "family": "files",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/files.songs.file.head.json"
+    },
+    {
+      "id": "origin-peer.host.duplicate",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.host.duplicate.json"
+    },
+    {
+      "id": "origin-peer.host.empty",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.host.empty.json"
+    },
+    {
+      "id": "origin-peer.host.foreign",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.host.foreign.json"
+    },
+    {
+      "id": "origin-peer.host.missing",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.host.missing.json"
+    },
+    {
+      "id": "origin-peer.http.foreign",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.http.foreign.json"
+    },
+    {
+      "id": "origin-peer.http.localhost",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.http.localhost.json"
+    },
+    {
+      "id": "origin-peer.http.loopback-ip",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.http.loopback-ip.json"
+    },
+    {
+      "id": "origin-peer.http.none",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.http.none.json"
+    },
+    {
+      "id": "origin-peer.http.null",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.http.null.json"
+    },
+    {
+      "id": "origin-peer.http.preflight",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.http.preflight.json"
+    },
+    {
+      "id": "origin-peer.ws.foreign",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.ws.foreign.json"
+    },
+    {
+      "id": "origin-peer.ws.localhost",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.ws.localhost.json"
+    },
+    {
+      "id": "origin-peer.ws.loopback-ip",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.ws.loopback-ip.json"
+    },
+    {
+      "id": "origin-peer.ws.none",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.ws.none.json"
+    },
+    {
+      "id": "origin-peer.ws.null",
+      "family": "origin-peer",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/origin-peer.ws.null.json"
+    },
+    {
+      "id": "path-security.beatmap.ads",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.ads.json"
+    },
+    {
+      "id": "path-security.beatmap.backslash-encoded",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.backslash-encoded.json"
+    },
+    {
+      "id": "path-security.beatmap.backslash-raw",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.backslash-raw.json"
+    },
+    {
+      "id": "path-security.beatmap.dot-segment",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.dot-segment.json"
+    },
+    {
+      "id": "path-security.beatmap.double-encoded-parent",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.double-encoded-parent.json"
+    },
+    {
+      "id": "path-security.beatmap.encoded-parent",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.encoded-parent.json"
+    },
+    {
+      "id": "path-security.beatmap.trailing-dot",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.trailing-dot.json"
+    },
+    {
+      "id": "path-security.beatmap.trailing-space",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.beatmap.trailing-space.json"
+    },
+    {
+      "id": "path-security.songs.ads",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.ads.json"
+    },
+    {
+      "id": "path-security.songs.backslash-encoded",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.backslash-encoded.json"
+    },
+    {
+      "id": "path-security.songs.backslash-raw",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.backslash-raw.json"
+    },
+    {
+      "id": "path-security.songs.dot-segment",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.dot-segment.json"
+    },
+    {
+      "id": "path-security.songs.double-encoded-parent",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.double-encoded-parent.json"
+    },
+    {
+      "id": "path-security.songs.encoded-parent",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.encoded-parent.json"
+    },
+    {
+      "id": "path-security.songs.trailing-dot",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.trailing-dot.json"
+    },
+    {
+      "id": "path-security.songs.trailing-space",
+      "family": "path-security",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/path-security.songs.trailing-space.json"
+    },
+    {
+      "id": "state-http.json-sc.delete",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.delete.json"
+    },
+    {
+      "id": "state-http.json-sc.get.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 2,
+      "file": "cases/state-http.json-sc.get.menu.json"
+    },
+    {
+      "id": "state-http.json-sc.get.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 2,
+      "file": "cases/state-http.json-sc.get.no-client.json"
+    },
+    {
+      "id": "state-http.json-sc.get.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.get.paused.json"
+    },
+    {
+      "id": "state-http.json-sc.get.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.get.result.json"
+    },
+    {
+      "id": "state-http.json-sc.head.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.head.menu.json"
+    },
+    {
+      "id": "state-http.json-sc.head.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.head.no-client.json"
+    },
+    {
+      "id": "state-http.json-sc.head.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.head.paused.json"
+    },
+    {
+      "id": "state-http.json-sc.head.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.head.result.json"
+    },
+    {
+      "id": "state-http.json-sc.near.double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.near.double-slash.json"
+    },
+    {
+      "id": "state-http.json-sc.near.inner-double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.near.inner-double-slash.json"
+    },
+    {
+      "id": "state-http.json-sc.near.query",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.near.query.json"
+    },
+    {
+      "id": "state-http.json-sc.near.suffix",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.near.suffix.json"
+    },
+    {
+      "id": "state-http.json-sc.near.trailing-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.near.trailing-slash.json"
+    },
+    {
+      "id": "state-http.json-sc.near.wrong-case",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.near.wrong-case.json"
+    },
+    {
+      "id": "state-http.json-sc.options",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.options.json"
+    },
+    {
+      "id": "state-http.json-sc.post",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.post.json"
+    },
+    {
+      "id": "state-http.json-sc.put",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-sc.put.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.delete",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.delete.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.get.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.get.menu.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.get.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.get.no-client.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.get.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.get.paused.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.get.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.get.result.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.head.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.head.menu.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.head.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.head.no-client.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.head.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.head.paused.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.head.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.head.result.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.near.double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.near.double-slash.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.near.inner-double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.near.inner-double-slash.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.near.query",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.near.query.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.near.suffix",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.near.suffix.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.near.trailing-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.near.trailing-slash.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.near.wrong-case",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.near.wrong-case.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.options",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.options.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.post",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.post.json"
+    },
+    {
+      "id": "state-http.json-v2-precise.put",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2-precise.put.json"
+    },
+    {
+      "id": "state-http.json-v2.budget.headers-32",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.budget.headers-32.json"
+    },
+    {
+      "id": "state-http.json-v2.budget.headers-33",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.budget.headers-33.json"
+    },
+    {
+      "id": "state-http.json-v2.budget.query-bytes-16384",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.budget.query-bytes-16384.json"
+    },
+    {
+      "id": "state-http.json-v2.budget.query-bytes-16385",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.budget.query-bytes-16385.json"
+    },
+    {
+      "id": "state-http.json-v2.budget.query-pairs-128",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.budget.query-pairs-128.json"
+    },
+    {
+      "id": "state-http.json-v2.budget.query-pairs-129",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.budget.query-pairs-129.json"
+    },
+    {
+      "id": "state-http.json-v2.delete",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.delete.json"
+    },
+    {
+      "id": "state-http.json-v2.get.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.get.menu.json"
+    },
+    {
+      "id": "state-http.json-v2.get.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.get.no-client.json"
+    },
+    {
+      "id": "state-http.json-v2.get.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.get.paused.json"
+    },
+    {
+      "id": "state-http.json-v2.get.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.get.result.json"
+    },
+    {
+      "id": "state-http.json-v2.head.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.head.menu.json"
+    },
+    {
+      "id": "state-http.json-v2.head.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.head.no-client.json"
+    },
+    {
+      "id": "state-http.json-v2.head.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.head.paused.json"
+    },
+    {
+      "id": "state-http.json-v2.head.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.head.result.json"
+    },
+    {
+      "id": "state-http.json-v2.near.double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.near.double-slash.json"
+    },
+    {
+      "id": "state-http.json-v2.near.inner-double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.near.inner-double-slash.json"
+    },
+    {
+      "id": "state-http.json-v2.near.query",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.near.query.json"
+    },
+    {
+      "id": "state-http.json-v2.near.suffix",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.near.suffix.json"
+    },
+    {
+      "id": "state-http.json-v2.near.trailing-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.near.trailing-slash.json"
+    },
+    {
+      "id": "state-http.json-v2.near.wrong-case",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.near.wrong-case.json"
+    },
+    {
+      "id": "state-http.json-v2.options",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.options.json"
+    },
+    {
+      "id": "state-http.json-v2.post",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.post.json"
+    },
+    {
+      "id": "state-http.json-v2.put",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json-v2.put.json"
+    },
+    {
+      "id": "state-http.json.delete",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.delete.json"
+    },
+    {
+      "id": "state-http.json.get.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.get.menu.json"
+    },
+    {
+      "id": "state-http.json.get.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json.get.no-client.json"
+    },
+    {
+      "id": "state-http.json.get.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json.get.paused.json"
+    },
+    {
+      "id": "state-http.json.get.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json.get.result.json"
+    },
+    {
+      "id": "state-http.json.head.menu",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.head.menu.json"
+    },
+    {
+      "id": "state-http.json.head.no-client",
+      "family": "state-http",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/state-http.json.head.no-client.json"
+    },
+    {
+      "id": "state-http.json.head.paused",
+      "family": "state-http",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/state-http.json.head.paused.json"
+    },
+    {
+      "id": "state-http.json.head.result",
+      "family": "state-http",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/state-http.json.head.result.json"
+    },
+    {
+      "id": "state-http.json.near.double-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.near.double-slash.json"
+    },
+    {
+      "id": "state-http.json.near.query",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.near.query.json"
+    },
+    {
+      "id": "state-http.json.near.suffix",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.near.suffix.json"
+    },
+    {
+      "id": "state-http.json.near.trailing-slash",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.near.trailing-slash.json"
+    },
+    {
+      "id": "state-http.json.near.wrong-case",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.near.wrong-case.json"
+    },
+    {
+      "id": "state-http.json.options",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.options.json"
+    },
+    {
+      "id": "state-http.json.post",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.post.json"
+    },
+    {
+      "id": "state-http.json.put",
+      "family": "state-http",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/state-http.json.put.json"
+    },
+    {
+      "id": "ws.near.v2-subscribe-plain",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.near.v2-subscribe-plain.json"
+    },
+    {
+      "id": "ws.tokens.filter.duplicate-keys",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.tokens.filter.duplicate-keys.json"
+    },
+    {
+      "id": "ws.tokens.filter.invalid-json",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.tokens.filter.invalid-json.json"
+    },
+    {
+      "id": "ws.tokens.filter.nested",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.tokens.filter.nested.json"
+    },
+    {
+      "id": "ws.tokens.filter.oversized",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.tokens.filter.oversized.json"
+    },
+    {
+      "id": "ws.tokens.filter.repeated-message",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.tokens.filter.repeated-message.json"
+    },
+    {
+      "id": "ws.tokens.invalid.get-plain",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.invalid.get-plain.json"
+    },
+    {
+      "id": "ws.tokens.invalid.missing-connection",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.invalid.missing-connection.json"
+    },
+    {
+      "id": "ws.tokens.invalid.missing-key",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.invalid.missing-key.json"
+    },
+    {
+      "id": "ws.tokens.invalid.missing-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.invalid.missing-upgrade.json"
+    },
+    {
+      "id": "ws.tokens.invalid.post-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.invalid.post-upgrade.json"
+    },
+    {
+      "id": "ws.tokens.invalid.wrong-version",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.invalid.wrong-version.json"
+    },
+    {
+      "id": "ws.tokens.upgrade.menu",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.tokens.upgrade.menu.json"
+    },
+    {
+      "id": "ws.tokens.upgrade.no-client",
+      "family": "ws",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/ws.tokens.upgrade.no-client.json"
+    },
+    {
+      "id": "ws.tokens.upgrade.paused",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.tokens.upgrade.paused.json"
+    },
+    {
+      "id": "ws.tokens.upgrade.result",
+      "family": "ws",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/ws.tokens.upgrade.result.json"
+    },
+    {
+      "id": "ws.v2-precise.filter.duplicate-keys",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.filter.duplicate-keys.json"
+    },
+    {
+      "id": "ws.v2-precise.filter.invalid-json",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.filter.invalid-json.json"
+    },
+    {
+      "id": "ws.v2-precise.filter.nested",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.filter.nested.json"
+    },
+    {
+      "id": "ws.v2-precise.filter.oversized",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.filter.oversized.json"
+    },
+    {
+      "id": "ws.v2-precise.filter.repeated-message",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.filter.repeated-message.json"
+    },
+    {
+      "id": "ws.v2-precise.invalid.get-plain",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.invalid.get-plain.json"
+    },
+    {
+      "id": "ws.v2-precise.invalid.missing-connection",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.invalid.missing-connection.json"
+    },
+    {
+      "id": "ws.v2-precise.invalid.missing-key",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.invalid.missing-key.json"
+    },
+    {
+      "id": "ws.v2-precise.invalid.missing-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.invalid.missing-upgrade.json"
+    },
+    {
+      "id": "ws.v2-precise.invalid.post-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.invalid.post-upgrade.json"
+    },
+    {
+      "id": "ws.v2-precise.invalid.wrong-version",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.invalid.wrong-version.json"
+    },
+    {
+      "id": "ws.v2-precise.upgrade.menu",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.upgrade.menu.json"
+    },
+    {
+      "id": "ws.v2-precise.upgrade.no-client",
+      "family": "ws",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.upgrade.no-client.json"
+    },
+    {
+      "id": "ws.v2-precise.upgrade.paused",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.upgrade.paused.json"
+    },
+    {
+      "id": "ws.v2-precise.upgrade.result",
+      "family": "ws",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/ws.v2-precise.upgrade.result.json"
+    },
+    {
+      "id": "ws.v2.filter.duplicate-keys",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2.filter.duplicate-keys.json"
+    },
+    {
+      "id": "ws.v2.filter.invalid-json",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2.filter.invalid-json.json"
+    },
+    {
+      "id": "ws.v2.filter.nested",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2.filter.nested.json"
+    },
+    {
+      "id": "ws.v2.filter.oversized",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2.filter.oversized.json"
+    },
+    {
+      "id": "ws.v2.filter.repeated-message",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2.filter.repeated-message.json"
+    },
+    {
+      "id": "ws.v2.invalid.get-plain",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.invalid.get-plain.json"
+    },
+    {
+      "id": "ws.v2.invalid.missing-connection",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.invalid.missing-connection.json"
+    },
+    {
+      "id": "ws.v2.invalid.missing-key",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.invalid.missing-key.json"
+    },
+    {
+      "id": "ws.v2.invalid.missing-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.invalid.missing-upgrade.json"
+    },
+    {
+      "id": "ws.v2.invalid.post-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.invalid.post-upgrade.json"
+    },
+    {
+      "id": "ws.v2.invalid.wrong-version",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.invalid.wrong-version.json"
+    },
+    {
+      "id": "ws.v2.upgrade.menu",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.v2.upgrade.menu.json"
+    },
+    {
+      "id": "ws.v2.upgrade.no-client",
+      "family": "ws",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/ws.v2.upgrade.no-client.json"
+    },
+    {
+      "id": "ws.v2.upgrade.paused",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.v2.upgrade.paused.json"
+    },
+    {
+      "id": "ws.v2.upgrade.result",
+      "family": "ws",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/ws.v2.upgrade.result.json"
+    },
+    {
+      "id": "ws.ws.invalid.get-plain",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.invalid.get-plain.json"
+    },
+    {
+      "id": "ws.ws.invalid.missing-connection",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.invalid.missing-connection.json"
+    },
+    {
+      "id": "ws.ws.invalid.missing-key",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.invalid.missing-key.json"
+    },
+    {
+      "id": "ws.ws.invalid.missing-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.invalid.missing-upgrade.json"
+    },
+    {
+      "id": "ws.ws.invalid.post-upgrade",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.invalid.post-upgrade.json"
+    },
+    {
+      "id": "ws.ws.invalid.wrong-version",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.invalid.wrong-version.json"
+    },
+    {
+      "id": "ws.ws.upgrade.menu",
+      "family": "ws",
+      "barrier": "menu",
+      "attempts": 1,
+      "file": "cases/ws.ws.upgrade.menu.json"
+    },
+    {
+      "id": "ws.ws.upgrade.no-client",
+      "family": "ws",
+      "barrier": "no-client",
+      "attempts": 1,
+      "file": "cases/ws.ws.upgrade.no-client.json"
+    },
+    {
+      "id": "ws.ws.upgrade.paused",
+      "family": "ws",
+      "barrier": "paused",
+      "attempts": 1,
+      "file": "cases/ws.ws.upgrade.paused.json"
+    },
+    {
+      "id": "ws.ws.upgrade.result",
+      "family": "ws",
+      "barrier": "result",
+      "attempts": 1,
+      "file": "cases/ws.ws.upgrade.result.json"
+    }
+  ],
+  "asset_media_type_corrections": [
+    {
+      "asset_id": "m4b-o0-beatmap-osu",
+      "original": "text/plain",
+      "corrected": "application/octet-stream",
+      "reason": "recipe declared text/plain for the extensionless lazer-stored chart; vosu serves application/octet-stream",
+      "review_receipt": "main-review-m4b-run5-payload-2026-11-26b"
+    }
+  ]
+}

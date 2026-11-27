@@ -1,0 +1,27 @@
+{
+  "format": "vosu-golden-divergence-rules-v1",
+  "rules": [
+    {
+      "ledger_id": "legacy-calculate-declared-roots",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.absolute-outside-root"
+      ],
+      "part": "status",
+      "vosu_value": 400
+    },
+    {
+      "ledger_id": "legacy-calculate-declared-roots",
+      "platforms": [
+        "windows-lazer"
+      ],
+      "cases": [
+        "calculation.absolute-outside-root"
+      ],
+      "part": "body",
+      "vosu_value": "{\"error\":\"invalid beatmap path: outside declared roots or unsafe spelling\"}"
+    }
+  ]
+}

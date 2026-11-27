@@ -63,5 +63,6 @@ tests/state_api_compat/oracle.rs 2 parity source-oracle revision document uses t
 tests/plugin_host_native/parity.rs 1 parity M5 X0 parity records the source-oracle corpus pin's upstream tosu revision
 tests/updater_compat.rs 2 migration updater compatibility test fixture rejecting the former tosu release asset name
 tests/fixtures/oracle/inventory.json 1 provenance pinned oracle inventory fixture recording the upstream tosu revision
+tests/fixtures/upstream/2359305a63f2aaebb201bc8d2eee58177f52590e/windows-lazer/cases/files.songs.dir.get.json 1 parity upstream wire observation and its replay input at the pinned source revision
 tools/oracle/** 63 provenance pinned calculator oracle tooling, reference fork, and input fixtures recording the upstream tosu revision and Creator metadata
 tools/live-parity/** 15 parity live-parity tooling builds and runs the pinned upstream tosu source for comparison captures

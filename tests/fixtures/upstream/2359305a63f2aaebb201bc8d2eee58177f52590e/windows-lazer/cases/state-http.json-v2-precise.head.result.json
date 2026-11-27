@@ -1,0 +1,112 @@
+{
+  "format": "vosu-golden-case-v1",
+  "id": "state-http.json-v2-precise.head.result",
+  "family": "state-http",
+  "barrier": "result",
+  "conditional": null,
+  "attempts": 1,
+  "normalized": [
+    "header-date"
+  ],
+  "request": {
+    "text": "HEAD /json/v2/precise HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+  },
+  "expected": {
+    "status": 404,
+    "headers": [
+      [
+        "access-control-allow-headers",
+        "Origin, X-Requested-With, Content-Type, Accept"
+      ],
+      [
+        "access-control-allow-methods",
+        "POST, GET, PUT, DELETE, OPTIONS"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "access-control-allow-private-network",
+        "true"
+      ],
+      [
+        "connection",
+        "close"
+      ],
+      [
+        "date",
+        "<golden:date>"
+      ]
+    ],
+    "body": {
+      "text": ""
+    }
+  },
+  "replay": {
+    "format": "vosu-adapter-capture-v1",
+    "schema": "v2-precise",
+    "provider_generation": 2,
+    "session": {
+      "ordinal": 0,
+      "generation": 1,
+      "owner": "vosu.osu",
+      "owner_instance": 0,
+      "game": "osu",
+      "variant": "lazer",
+      "foreground": true
+    },
+    "focus_revision": 4,
+    "roster": {
+      "revision": 5,
+      "sessions": [
+        {
+          "ordinal": 0,
+          "generation": 1,
+          "owner": "vosu.osu",
+          "owner_instance": 0,
+          "game": "osu",
+          "variant": "lazer",
+          "foreground": true
+        }
+      ]
+    },
+    "bus_revision": 6087,
+    "namespace_revisions": [
+      [
+        "vosu.osu",
+        6087
+      ]
+    ],
+    "entries": [
+      {
+        "ns": "vosu.osu",
+        "pointer": "/keys/overlay",
+        "value_cbor_b64": "pGJrMaJpaXNQcmVzc2Vk9GVjb3VudABiazKiaWlzUHJlc3NlZPRlY291bnQAYm0xomlpc1ByZXNzZWT0ZWNvdW50AGJtMvY=",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/hitErrors/all",
+        "value_cbor_b64": "gA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourney",
+        "value_cbor_b64": "qWxzY29yZVZpc2libGX0bHN0YXJzVmlzaWJsZfRoaXBjU3RhdGUAZmJlc3RPZgBkdGVhbaJkbGVmdGBlcmlnaHRgZnBvaW50c6JkbGVmdABlcmlnaHQAZGNoYXSAanRvdGFsU2NvcmWiZGxlZnT5AABlcmlnaHT5AABnY2xpZW50c4A=",
+        "error": null
+      }
+    ],
+    "derived": {
+      "revision": 0,
+      "status": "none"
+    },
+    "http": {
+      "kind": "ready",
+      "status": 200,
+      "body_utf8": "{\"keys\":{\"k1\":{\"isPressed\":false,\"count\":0},\"k2\":{\"isPressed\":false,\"count\":0},\"m1\":{\"isPressed\":false,\"count\":0},\"m2\":{\"isPressed\":false,\"count\":0}},\"hitErrors\":[],\"tourney\":[]}"
+    },
+    "digest": "sha256:8323bacded97da856f0661a4501b06ec69d3b1b7200a289975c96d869d88cffc"
+  }
+}

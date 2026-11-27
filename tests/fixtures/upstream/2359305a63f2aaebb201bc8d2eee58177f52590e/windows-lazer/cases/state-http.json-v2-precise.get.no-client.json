@@ -1,0 +1,102 @@
+{
+  "format": "vosu-golden-case-v1",
+  "id": "state-http.json-v2-precise.get.no-client",
+  "family": "state-http",
+  "barrier": "no-client",
+  "conditional": null,
+  "attempts": 1,
+  "normalized": [
+    "header-date"
+  ],
+  "request": {
+    "text": "GET /json/v2/precise HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+  },
+  "expected": {
+    "status": 500,
+    "headers": [
+      [
+        "access-control-allow-headers",
+        "Origin, X-Requested-With, Content-Type, Accept"
+      ],
+      [
+        "access-control-allow-methods",
+        "POST, GET, PUT, DELETE, OPTIONS"
+      ],
+      [
+        "access-control-allow-origin",
+        "*"
+      ],
+      [
+        "access-control-allow-private-network",
+        "true"
+      ],
+      [
+        "connection",
+        "close"
+      ],
+      [
+        "content-length",
+        "36"
+      ],
+      [
+        "content-type",
+        "application/json"
+      ],
+      [
+        "date",
+        "<golden:date>"
+      ]
+    ],
+    "body": {
+      "text": "{\"error\":\"osu is not ready/running\"}"
+    }
+  },
+  "replay": {
+    "format": "vosu-adapter-capture-v1",
+    "schema": "v2-precise",
+    "provider_generation": 3,
+    "session": null,
+    "focus_revision": 7,
+    "roster": {
+      "revision": 9,
+      "sessions": []
+    },
+    "bus_revision": 0,
+    "namespace_revisions": [
+      [
+        "vosu.osu",
+        0
+      ]
+    ],
+    "entries": [
+      {
+        "ns": "vosu.osu",
+        "pointer": "/keys/overlay",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/hitErrors/all",
+        "value_cbor_b64": null,
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourney",
+        "value_cbor_b64": null,
+        "error": null
+      }
+    ],
+    "derived": {
+      "revision": 0,
+      "status": "none"
+    },
+    "http": {
+      "kind": "not_ready",
+      "status": 500,
+      "body_utf8": "{\"error\":\"osu is not ready/running\"}"
+    },
+    "digest": "sha256:68225e5be0b523579f15a1ceef89513d12a584c31099d13dd651b88094aded3d"
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "format": "vosu-golden-case-v1",
+  "id": "ws.v2-precise.invalid.post-upgrade",
+  "family": "ws",
+  "barrier": "menu",
+  "conditional": null,
+  "attempts": 1,
+  "normalized": [],
+  "request": {
+    "text": "POST /websocket/v2/precise HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: PtLqHAUXXq+Xd0A9/XFbIw==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+  },
+  "expected": {
+    "status": 405,
+    "headers": [
+      [
+        "connection",
+        "close"
+      ],
+      [
+        "content-length",
+        "19"
+      ],
+      [
+        "content-type",
+        "text/html"
+      ]
+    ],
+    "body": {
+      "text": "Invalid HTTP method"
+    },
+    "frames": []
+  },
+  "replay": {
+    "format": "vosu-adapter-capture-v1",
+    "schema": "v2-precise",
+    "provider_generation": 1,
+    "session": {
+      "ordinal": 0,
+      "generation": 1,
+      "owner": "vosu.osu",
+      "owner_instance": 0,
+      "game": "osu",
+      "variant": "lazer",
+      "foreground": true
+    },
+    "focus_revision": 4,
+    "roster": {
+      "revision": 5,
+      "sessions": [
+        {
+          "ordinal": 0,
+          "generation": 1,
+          "owner": "vosu.osu",
+          "owner_instance": 0,
+          "game": "osu",
+          "variant": "lazer",
+          "foreground": true
+        }
+      ]
+    },
+    "bus_revision": 2288,
+    "namespace_revisions": [
+      [
+        "vosu.osu",
+        2288
+      ]
+    ],
+    "entries": [
+      {
+        "ns": "vosu.osu",
+        "pointer": "/keys/overlay",
+        "value_cbor_b64": "9g==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/play/hitErrors/all",
+        "value_cbor_b64": "gA==",
+        "error": null
+      },
+      {
+        "ns": "vosu.osu",
+        "pointer": "/tourney",
+        "value_cbor_b64": "qWxzY29yZVZpc2libGX0bHN0YXJzVmlzaWJsZfRoaXBjU3RhdGUAZmJlc3RPZgBkdGVhbaJkbGVmdGBlcmlnaHRgZnBvaW50c6JkbGVmdABlcmlnaHQAZGNoYXSAanRvdGFsU2NvcmWiZGxlZnT5AABlcmlnaHT5AABnY2xpZW50c4A=",
+        "error": null
+      }
+    ],
+    "derived": {
+      "revision": 0,
+      "status": "none"
+    },
+    "http": {
+      "kind": "ready",
+      "status": 200,
+      "body_utf8": "{\"keys\":{\"k1\":{\"isPressed\":false,\"count\":0},\"k2\":{\"isPressed\":false,\"count\":0},\"m1\":{\"isPressed\":false,\"count\":0},\"m2\":{\"isPressed\":false,\"count\":0}},\"hitErrors\":[],\"tourney\":[]}"
+    },
+    "digest": "sha256:9a08d836d544bf2a29230a2be6bdb924a23aafc9f277b683e6aa718338bd739a"
+  }
+}

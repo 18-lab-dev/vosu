@@ -1,0 +1,83 @@
+osu file format v14
+
+[General]
+AudioFilename: audio.wav
+AudioLeadIn: 0
+PreviewTime: 2000
+Countdown: 0
+SampleSet: Normal
+StackLeniency: 0.7
+Mode: 0
+LetterboxInBreaks: 0
+WidescreenStoryboard: 0
+
+[Editor]
+DistanceSpacing: 1
+BeatDivisor: 4
+GridSize: 32
+TimelineZoom: 1
+
+[Metadata]
+Title:vosu M4b synthetic
+TitleUnicode:vosu M4b synthetic
+Artist:vosu generator
+ArtistUnicode:vosu generator
+Creator:vosu
+Version:O0 dry run
+Source:generated
+Tags:vosu synthetic m4b
+BeatmapID:0
+BeatmapSetID:-1
+
+[Difficulty]
+HPDrainRate:2
+CircleSize:4
+OverallDifficulty:2
+ApproachRate:5
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[Events]
+//Background and Video events
+0,0,"bg.png",0,0
+//Break Periods
+//Storyboard Layer 0 (Background)
+
+
+[TimingPoints]
+0,500.0,4,1,0,60,1,0
+
+
+[HitObjects]
+128,192,2000,5,0,0:0:0:0:
+256,96,2500,1,0,0:0:0:0:
+384,192,3000,1,0,0:0:0:0:
+256,288,3500,1,0,0:0:0:0:
+128,192,4000,1,0,0:0:0:0:
+256,96,4500,1,0,0:0:0:0:
+384,192,5000,1,0,0:0:0:0:
+256,288,5500,1,0,0:0:0:0:
+128,192,6000,1,0,0:0:0:0:
+256,96,6500,1,0,0:0:0:0:
+384,192,7000,1,0,0:0:0:0:
+256,288,7500,1,0,0:0:0:0:
+128,192,8000,1,0,0:0:0:0:
+256,96,8500,1,0,0:0:0:0:
+384,192,9000,1,0,0:0:0:0:
+256,288,9500,1,0,0:0:0:0:
+128,192,10000,1,0,0:0:0:0:
+256,96,10500,1,0,0:0:0:0:
+384,192,11000,1,0,0:0:0:0:
+256,288,11500,1,0,0:0:0:0:
+128,192,12000,1,0,0:0:0:0:
+256,96,12500,1,0,0:0:0:0:
+384,192,13000,1,0,0:0:0:0:
+256,288,13500,1,0,0:0:0:0:
+128,192,14000,1,0,0:0:0:0:
+256,96,14500,1,0,0:0:0:0:
+384,192,15000,1,0,0:0:0:0:
+256,288,15500,1,0,0:0:0:0:
+128,192,16000,1,0,0:0:0:0:
+256,96,16500,1,0,0:0:0:0:
+384,192,17000,1,0,0:0:0:0:
+256,288,17500,1,0,0:0:0:0:
