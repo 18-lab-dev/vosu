@@ -146,6 +146,24 @@ impl ToolRegistry {
         snapshot
     }
 
+    /// Clones the live action/capability providers alongside the matching
+    /// `topology_generation` under one `action_providers` lock hold so a
+    /// concurrent `set_action_providers` swap can never associate an older
+    /// provider instance with the newer topology generation.
+    fn action_providers_snapshot(
+        &self,
+    ) -> (Arc<dyn ActionRegistry>, Arc<dyn InstalledCapabilities>, u64) {
+        let providers = self.action_providers.lock();
+        let tool_gen = self
+            .topology_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        (
+            providers.actions.clone(),
+            providers.capabilities.clone(),
+            tool_gen,
+        )
+    }
+
     /// Validates `entry` against the current tool + provider topology, hitting
     /// the entry's leaf `(tool_gen, provider_gen)` cache when both generations
     /// are unchanged and the provider reports a monotonic generation.
@@ -154,10 +172,8 @@ impl ToolRegistry {
         entry: &Entry,
         manifest: &super::manifest::ToolPackage,
         installed: &dyn InstalledCapabilities,
+        tool_gen: u64,
     ) -> Result<(), String> {
-        let tool_gen = self
-            .topology_generation
-            .load(std::sync::atomic::Ordering::Acquire);
         let provider_gen = installed.validation_generation();
         if let Some(provider_gen) = provider_gen
             && entry.context_validated_at(tool_gen, provider_gen)
@@ -186,11 +202,8 @@ impl ToolRegistry {
     ) -> Result<(), Forbidden> {
         self.check_live_entry(entry)?;
         let manifest = entry.manifest.as_ref().ok_or(Forbidden)?;
-        let (registry, installed) = {
-            let providers = self.action_providers.lock();
-            (providers.actions.clone(), providers.capabilities.clone())
-        };
-        self.validate_entry_context(entry, manifest, installed.as_ref())
+        let (registry, installed, tool_gen) = self.action_providers_snapshot();
+        self.validate_entry_context(entry, manifest, installed.as_ref(), tool_gen)
             .map_err(|_| Forbidden)?;
         let descriptor = registry.get(action).ok_or(Forbidden)?;
         if descriptor.id != action
@@ -225,11 +238,10 @@ impl ToolRegistry {
 
     pub(super) fn blocked_capabilities(&self, entry: &Entry) -> Option<String> {
         let manifest = entry.manifest.as_ref()?;
-        let (actions, installed) = {
-            let providers = self.action_providers.lock();
-            (providers.actions.clone(), providers.capabilities.clone())
-        };
-        if let Err(error) = self.validate_entry_context(entry, manifest, installed.as_ref()) {
+        let (actions, installed, tool_gen) = self.action_providers_snapshot();
+        if let Err(error) =
+            self.validate_entry_context(entry, manifest, installed.as_ref(), tool_gen)
+        {
             return Some(error);
         }
         manifest

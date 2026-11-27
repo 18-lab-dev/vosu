@@ -509,5 +509,91 @@ async fn validation_context_cache_hits_on_unchanged_topology_and_invalidates_imm
         registry.snapshot_calls.load(Ordering::Acquire),
         calls_after_restore + 1
     );
+
+    // Swapping to a fresh provider with the same numeric provider generation
+    // must still invalidate because tool topology generation was captured
+    // atomically with the provider Arc under `action_providers`.
+    let replacement = Arc::new(VersionedRegistry {
+        inner: Registry::default(),
+        generation: AtomicU64::new(registry.generation.load(Ordering::Acquire)),
+        snapshot_calls: AtomicUsize::new(0),
+        conflict: AtomicBool::new(true),
+    });
+    replacement.inner.insert(ACTION, "1.0.0");
+    host.set_action_providers(replacement.clone(), replacement.clone());
+    let replacement_calls_before = replacement.snapshot_calls.load(Ordering::Acquire);
+    assert!(
+        host.authorize_action_session(&token, ACTION).is_err(),
+        "swapped provider with matching numeric generation must not hit stale cache"
+    );
+    assert_eq!(
+        replacement.snapshot_calls.load(Ordering::Acquire),
+        replacement_calls_before + 1
+    );
+
+    // Mid-validation provider swap: an in-flight call on the old provider must
+    // not cache its Ok result under the swapped provider's generation.
+    struct SwappingRegistry {
+        inner: Registry,
+        host: Arc<ToolRegistry>,
+        next: Arc<VersionedRegistry>,
+        armed: AtomicBool,
+        swapped: AtomicBool,
+    }
+    impl ActionRegistry for SwappingRegistry {
+        fn get(&self, action: &str) -> Option<Arc<ActionDescriptor>> {
+            self.inner.get(action)
+        }
+    }
+    impl capabilities::InstalledCapabilities for SwappingRegistry {
+        fn version(&self, id: &str) -> Option<semver::Version> {
+            self.inner.version(id)
+        }
+        fn validation_generation(&self) -> Option<u64> {
+            if !self.armed.load(Ordering::Acquire) {
+                return None;
+            }
+            if !self.swapped.swap(true, Ordering::AcqRel) {
+                self.host
+                    .set_action_providers(self.next.clone(), self.next.clone());
+            }
+            Some(1)
+        }
+        fn validation_snapshot(&self) -> crate::plugin::ValidationSnapshot {
+            self.inner.validation_snapshot()
+        }
+    }
+    let conflicting = Arc::new(VersionedRegistry {
+        inner: Registry::default(),
+        generation: AtomicU64::new(1),
+        snapshot_calls: AtomicUsize::new(0),
+        conflict: AtomicBool::new(true),
+    });
+    conflicting.inner.insert(ACTION, "1.0.0");
+    let swapping = Arc::new(SwappingRegistry {
+        inner: Registry::default(),
+        host: host.clone(),
+        next: conflicting.clone(),
+        armed: AtomicBool::new(false),
+        swapped: AtomicBool::new(false),
+    });
+    swapping.inner.insert(ACTION, "1.0.0");
+    host.set_action_providers(swapping.clone(), swapping.clone());
+    swapping.armed.store(true, Ordering::Release);
+    // This call captures `tool_gen = G` under `action_providers.lock()`, then
+    // `swapping.validation_generation()` swaps in `conflicting` (bumping
+    // `topology_generation` to `G + 1`). The old provider validates `Ok`, but
+    // must not cache `(G + 1, 1)` on the entry.
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    assert!(swapping.swapped.load(Ordering::Acquire));
+    let calls_before_check = conflicting.snapshot_calls.load(Ordering::Acquire);
+    assert!(
+        host.authorize_action_session(&token, ACTION).is_err(),
+        "in-flight validation on swapped-out provider must never poison the new provider's cache"
+    );
+    assert_eq!(
+        conflicting.snapshot_calls.load(Ordering::Acquire),
+        calls_before_check + 1
+    );
     bounded!(host.shutdown());
 }
