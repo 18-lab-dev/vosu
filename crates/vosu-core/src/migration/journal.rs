@@ -222,14 +222,21 @@ pub enum IntentKind {
     Af2CrossKindTransfer,
 }
 
-/// Closed AF.2 cross-kind target metadata attached to an `Af2CrossKindTransfer`
-/// intent (`docs/v2/ecosystem-release-matrix.md` §5).
+/// Closed AF.2 cross-kind target metadata and per-substep durable progress
+/// receipts attached to an `Af2CrossKindTransfer` intent
+/// (`docs/v2/ecosystem-release-matrix.md` §5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Af2TransferSpec {
     pub target_plugin: Option<String>,
     pub target_web_tool: Option<String>,
     pub copy_durable_data: bool,
+    #[serde(default)]
+    pub data_copied: bool,
+    #[serde(default)]
+    pub plugin_settings_imported: bool,
+    #[serde(default)]
+    pub web_settings_copied: bool,
 }
 
 /// Independent lifecycle state for a single `PendingIntent` (A8.2 / A8.3).

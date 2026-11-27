@@ -479,3 +479,238 @@ fn vosulay_af2_copies_config_json_without_promoting_backend_setting() {
     );
     assert!(store.load("vosu.vosulay").unwrap().is_empty());
 }
+
+#[test]
+fn af2_multi_target_crash_recovery_resumes_remaining_substeps_without_false_collision() {
+    let downloader_schema = SettingsSchema::parse(
+        r#"[
+            {"uniqueID":"concurrency","type":"number","title":"Concurrency","value":2},
+            {"uniqueID":"client_id","type":"text","title":"Client ID","value":""},
+            {"uniqueID":"client_secret","type":"password","title":"Client secret","value":""}
+        ]"#,
+    )
+    .unwrap();
+
+    for crash_point in [
+        Af2CrashPoint::AfterDataCopied,
+        Af2CrashPoint::AfterPluginSettingsImported,
+        Af2CrashPoint::AfterWebSettingsCopied,
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        let data = tmp.path().join("data");
+        fs::create_dir_all(config.join("tools/settings")).unwrap();
+        fs::create_dir_all(data.join("tool-data/downloader/sub")).unwrap();
+        // Plant a leftover staging directory from a simulated mid-copy crash;
+        // replay must clean it up cleanly instead of colliding.
+        fs::create_dir_all(data.join("plugins/.af2-stage-vosu.tools.downloader")).unwrap();
+        fs::write(
+            data.join("plugins/.af2-stage-vosu.tools.downloader/stale.tmp"),
+            b"stale",
+        )
+        .unwrap();
+
+        fs::write(
+            config.join("tools/state.json"),
+            serde_json::to_vec_pretty(&json!({
+                "downloader": {"official": true, "catalog_source": "18-lab-dev/vosu-tools"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            data.join("tool-data/downloader/sub/queue.db"),
+            b"downloader-1x-data",
+        )
+        .unwrap();
+        fs::write(
+            config.join("tools/settings/downloader.json"),
+            serde_json::to_vec_pretty(&json!({
+                "concurrency": 6,
+                "client_id": "cid-1",
+                "client_secret": "csec-1",
+                "hide_owned": true,
+                "follow_current_map": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let schemas = real_schemas();
+        let store_initial = PluginSettingsStore::open(&config);
+        let MigrationOutcome::Completed(mut journal) = run_local_migration(
+            &config,
+            &data,
+            BuildChannel::Release,
+            &schemas,
+            &store_initial,
+        )
+        .unwrap() else {
+            panic!("expected Completed");
+        };
+
+        let intent_id = "af2:downloader:vosu.tools.downloader";
+        let err = execute_af2_transfer_with_crash_hook(
+            &config,
+            &data,
+            &mut journal,
+            intent_id,
+            &store_initial,
+            Some(&downloader_schema),
+            Some(crash_point),
+        )
+        .unwrap_err();
+        assert_eq!(err, MigrationError::InjectedAf2Crash(crash_point));
+
+        // Reload journal from disk after crash and verify durable substep flags.
+        let mut reloaded = load_journal(&config).unwrap().unwrap();
+        let intent = reloaded
+            .pending_intents
+            .iter()
+            .find(|item| item.intent_id == intent_id)
+            .unwrap();
+        assert_eq!(intent.status, IntentStatus::Pending);
+        let spec = intent.af2_transfer.as_ref().unwrap();
+        assert!(spec.data_copied);
+        assert_eq!(
+            spec.plugin_settings_imported,
+            matches!(
+                crash_point,
+                Af2CrashPoint::AfterPluginSettingsImported | Af2CrashPoint::AfterWebSettingsCopied
+            )
+        );
+        assert_eq!(
+            spec.web_settings_copied,
+            crash_point == Af2CrashPoint::AfterWebSettingsCopied
+        );
+
+        // Retry with a fresh store: MUST complete remaining substeps cleanly,
+        // NEVER recording a false `IntentStatus::Collision`.
+        let store_retry = PluginSettingsStore::open(&config);
+        let outcome = execute_af2_transfer(
+            &config,
+            &data,
+            &mut reloaded,
+            intent_id,
+            &store_retry,
+            Some(&downloader_schema),
+        )
+        .unwrap();
+        assert!(
+            matches!(outcome, Af2TransferOutcome::Completed { .. }),
+            "expected Completed after resuming from {crash_point:?}, got {outcome:?}"
+        );
+
+        let final_journal = load_journal(&config).unwrap().unwrap();
+        let final_intent = final_journal
+            .pending_intents
+            .iter()
+            .find(|item| item.intent_id == intent_id)
+            .unwrap();
+        assert_eq!(final_intent.status, IntentStatus::Completed);
+        let final_spec = final_intent.af2_transfer.as_ref().unwrap();
+        assert!(final_spec.data_copied);
+        assert!(final_spec.plugin_settings_imported);
+        assert!(final_spec.web_settings_copied);
+
+        // Verify all three targets hold expected copied values and staging dir is gone.
+        assert!(
+            !data
+                .join("plugins/.af2-stage-vosu.tools.downloader")
+                .exists()
+        );
+        assert_eq!(
+            fs::read(data.join("plugins/vosu.tools.downloader/sub/queue.db")).unwrap(),
+            b"downloader-1x-data"
+        );
+        let plugin_vals = store_retry.load("vosu.tools.downloader").unwrap();
+        assert_eq!(plugin_vals["concurrency"], json!(6));
+        assert_eq!(plugin_vals["client_id"], json!("cid-1"));
+        assert_eq!(plugin_vals["client_secret"], json!("csec-1"));
+        let web_vals: Map<String, Value> = serde_json::from_slice(
+            &fs::read(config.join("tools/settings/downloader-v2.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(web_vals["hide_owned"], json!(true));
+        assert_eq!(web_vals["follow_current_map"], json!(false));
+
+        // 1.x source files remain completely untouched.
+        assert_eq!(
+            fs::read(data.join("tool-data/downloader/sub/queue.db")).unwrap(),
+            b"downloader-1x-data"
+        );
+    }
+
+    // Genuine pre-existing collision on an uncommitted substep during resume MUST still collide.
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let data = tmp.path().join("data");
+    fs::create_dir_all(config.join("tools/settings")).unwrap();
+    fs::create_dir_all(data.join("tool-data/downloader")).unwrap();
+    fs::write(
+        config.join("tools/state.json"),
+        serde_json::to_vec_pretty(&json!({
+            "downloader": {"official": true, "catalog_source": "18-lab-dev/vosu-tools"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(data.join("tool-data/downloader/queue.db"), b"1x").unwrap();
+    fs::write(
+        config.join("tools/settings/downloader.json"),
+        serde_json::to_vec_pretty(&json!({"concurrency": 4, "hide_owned": true})).unwrap(),
+    )
+    .unwrap();
+
+    let schemas = real_schemas();
+    let store = PluginSettingsStore::open(&config);
+    let MigrationOutcome::Completed(mut journal) =
+        run_local_migration(&config, &data, BuildChannel::Release, &schemas, &store).unwrap()
+    else {
+        panic!("expected Completed");
+    };
+    let intent_id = "af2:downloader:vosu.tools.downloader";
+    assert_eq!(
+        execute_af2_transfer_with_crash_hook(
+            &config,
+            &data,
+            &mut journal,
+            intent_id,
+            &store,
+            Some(&downloader_schema),
+            Some(Af2CrashPoint::AfterDataCopied),
+        )
+        .unwrap_err(),
+        MigrationError::InjectedAf2Crash(Af2CrashPoint::AfterDataCopied)
+    );
+
+    // Plant a genuine 2.0 web-tool setting collision BEFORE retrying.
+    fs::write(
+        config.join("tools/settings/downloader-v2.json"),
+        r#"{"hide_owned":false}"#,
+    )
+    .unwrap();
+    let outcome = execute_af2_transfer(
+        &config,
+        &data,
+        &mut journal,
+        intent_id,
+        &store,
+        Some(&downloader_schema),
+    )
+    .unwrap();
+    assert_eq!(
+        outcome,
+        Af2TransferOutcome::Collision {
+            path_hint: "tools/settings/downloader-v2.json".to_owned(),
+        }
+    );
+    // Uncommitted plugin settings were NOT written because preflight failed,
+    // and the existing 2.0 web-tool setting was NOT overwritten.
+    assert!(store.load("vosu.tools.downloader").unwrap().is_empty());
+    let web_after: Map<String, Value> = serde_json::from_slice(
+        &fs::read(config.join("tools/settings/downloader-v2.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(web_after["hide_owned"], json!(false));
+}

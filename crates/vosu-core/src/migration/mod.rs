@@ -24,6 +24,7 @@
 //! 5. Publish `local_conversion_complete: true` ONLY after all four steps are
 //!    durable.
 
+mod af2_transfer;
 pub mod config;
 pub mod installed;
 pub mod intents;
@@ -55,6 +56,8 @@ pub use intents::{
     IntentResolutionSummary, ValidatedCatalogEntry, af2_row_for, execute_af2_transfer,
     resolve_intents,
 };
+#[cfg(test)]
+pub use intents::{Af2CrashPoint, execute_af2_transfer_with_crash_hook};
 pub use journal::{
     Af2TransferSpec, CatalogSourcesReceipt, CoreConfigReceipt, CoreConfigSnapshot,
     DiscoveredOfficialOverlay, DiscoveredOfficialTool, IntentKind, IntentStatus, JOURNAL_FILENAME,
@@ -150,6 +153,9 @@ pub enum MigrationError {
     #[cfg(test)]
     #[error("injected test crash at {0:?}")]
     InjectedCrash(CrashPoint),
+    #[cfg(test)]
+    #[error("injected AF.2 test crash at {0:?}")]
+    InjectedAf2Crash(Af2CrashPoint),
 }
 
 /// Executes or resumes normal-root 1.x -> 2.0 offline local migration (A8.1,
