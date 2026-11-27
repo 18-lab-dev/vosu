@@ -101,17 +101,51 @@ def find_release(repo, tag):
     return matches[0]
 
 
+def resolve_tag_commit(repo, tag):
+    """Resolve the remote git tag to a 40-hex commit SHA, peeling annotated tags."""
+    try:
+        ref = json.loads(run("gh", "api", f"repos/{repo}/git/ref/tags/{tag}", capture=True))
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as error:
+        raise SystemExit(f"refusing to publish {tag}: failed to resolve remote tag commit: {error}") from None
+
+    obj = ref.get("object") if isinstance(ref, dict) else None
+    for _ in range(5):
+        if not isinstance(obj, dict):
+            break
+        obj_type = obj.get("type")
+        obj_sha = obj.get("sha")
+        if not isinstance(obj_sha, str) or not day0_gate._is_hex40(obj_sha):
+            break
+        if obj_type == "commit":
+            return obj_sha
+        if obj_type == "tag":
+            try:
+                tag_obj = json.loads(run("gh", "api", f"repos/{repo}/git/tags/{obj_sha}", capture=True))
+            except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as error:
+                raise SystemExit(
+                    f"refusing to publish {tag}: failed to peel annotated tag {obj_sha}: {error}"
+                ) from None
+            obj = tag_obj.get("object") if isinstance(tag_obj, dict) else None
+            continue
+        break
+    raise SystemExit(f"refusing to publish {tag}: remote tag did not resolve to a 40-hex commit SHA")
+
+
 def verify_publish_day0(
     tag,
     evidence,
     *,
-    commit=None,
-    release_assets=None,
+    commit,
+    release_assets,
     fetcher=None,
     ledger_path=None,
     source_pin=None,
 ):
     """Run a fresh day-0 gate + candidate-bound evidence verification before stable publication."""
+    if not isinstance(commit, str) or not day0_gate._is_hex40(commit):
+        raise SystemExit(f"refusing to publish {tag}: candidate commit SHA is required and must be 40-hex, got {commit!r}")
+    if not isinstance(release_assets, dict) or not release_assets:
+        raise SystemExit(f"refusing to publish {tag}: draft release has no assets to bind against evidence manifest")
     kwargs = {
         "tag": tag,
         "commit": commit,
@@ -200,17 +234,23 @@ def main(argv=None, *, fetcher=None):
         if needs_day0:
             # Re-verify day-0 readiness and the candidate-bound evidence manifest
             # immediately before publication so a stale CI draft can never bypass
-            # the gate after creation.
+            # the gate after creation. Commit and asset binding fail closed.
+            if not asset_digests:
+                raise SystemExit(
+                    f"refusing to publish {args.tag}: draft release has no assets to bind against evidence manifest"
+                )
             target_commit = args.commit
             if target_commit is None:
                 candidate_commitish = release.get("target_commitish")
                 if isinstance(candidate_commitish, str) and day0_gate._is_hex40(candidate_commitish):
                     target_commit = candidate_commitish
+                else:
+                    target_commit = resolve_tag_commit(args.repo, args.tag)
             verify_publish_day0(
                 args.tag,
                 args.evidence,
                 commit=target_commit,
-                release_assets=asset_digests or None,
+                release_assets=asset_digests,
                 fetcher=fetcher,
             )
         fields = ["-F", "draft=false"]

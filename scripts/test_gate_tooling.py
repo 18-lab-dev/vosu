@@ -481,6 +481,7 @@ class Day0ReleaseGateTest(unittest.TestCase):
             publish_block.index("python scripts/check-day0.py"),
             publish_block.index("Create draft GitHub release"),
         )
+        self.assertIn("target_commitish: ${{ github.sha }}", publish_block)
 
     def test_day0_script_ledger_partial_repo_failure_and_prerelease_gating(self):
         day0 = _load_module("check_day0_gate_tooling_test", ROOT / "scripts" / "check-day0.py")

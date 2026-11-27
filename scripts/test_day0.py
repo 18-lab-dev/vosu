@@ -636,12 +636,66 @@ class EvidenceManifestTests(unittest.TestCase):
             ("skipped_counted_as_passed", lambda r: r["tests"][0].update({"selected": 10, "passed": 10, "skipped": 2})),
             ("empty_tests_asset_inference", lambda r: r.__setitem__("tests", [])),
             ("process_runtime_mismatch", lambda r: r.__setitem__("runtime", "in-process")),
+            ("unrelated_repo", lambda r: r.__setitem__("repository", "18-lab-dev/unrelated-repo")),
+            ("wrong_tools_owner_repo", lambda r: r.update({"repository": "18-lab-dev/vosulay", "commit": REPO_COMMITS["18-lab-dev/vosulay"]})),
+            ("host_tag_v1_rejected", lambda r: r["host"].__setitem__("tag", "v1.2.4")),
+            ("swapped_pkg_target", lambda r: r["packages"][0].__setitem__("target", "x86_64-pc-windows-msvc")),
         ):
             with self.subTest(case=label):
                 m = copy.deepcopy(base)
                 mutator(m["ecosystem_receipts"][0])
                 errors = self._validate(m)
                 self.assertTrue(errors, f"{label} should fail")
+
+        # Wrong owner repo for vosu.vosulay fails; 18-lab-dev/vosu with candidate commit passes for native-sandbox.
+        m_wrong_sup = copy.deepcopy(base)
+        for r in m_wrong_sup["ecosystem_receipts"]:
+            if r["kind"] == "native-sandbox":
+                r["repository"] = "18-lab-dev/vosu-tools"
+                r["commit"] = REPO_COMMITS["18-lab-dev/vosu-tools"]
+                break
+        self.assertTrue(self._validate(m_wrong_sup))
+
+        m_vosu_sup = copy.deepcopy(base)
+        for r in m_vosu_sup["ecosystem_receipts"]:
+            if r["kind"] == "native-sandbox":
+                r["repository"] = "18-lab-dev/vosu"
+                r["commit"] = CANDIDATE_COMMIT
+                break
+        self.assertEqual(self._validate(m_vosu_sup), ())
+
+    def test_unhashable_json_values_return_errors_never_typeerror(self):
+        base = _valid_manifest(self.ledger)
+        bad_val = ["unhashable"]
+        mutations = (
+            ("candidate.tag", lambda m: m["candidate"].__setitem__("tag", bad_val)),
+            ("candidate.sdk.version", lambda m: m["candidate"]["sdk"].__setitem__("version", bad_val)),
+            ("artifacts.target", lambda m: m["artifacts"][0].__setitem__("target", bad_val)),
+            ("day0.repository", lambda m: m["day0_check"]["repositories"][0].__setitem__("repository", bad_val)),
+            ("receipt.kind", lambda m: m["ecosystem_receipts"][0].__setitem__("kind", bad_val)),
+            ("receipt.repository", lambda m: m["ecosystem_receipts"][0].__setitem__("repository", bad_val)),
+            ("receipt.host.source", lambda m: m["ecosystem_receipts"][0]["host"].__setitem__("source", bad_val)),
+            ("receipt.target", lambda m: m["ecosystem_receipts"][0].__setitem__("target", bad_val)),
+            ("receipt.runtime", lambda m: m["ecosystem_receipts"][0].__setitem__("runtime", bad_val)),
+            ("receipt.pkg.kind", lambda m: m["ecosystem_receipts"][0]["packages"][0].__setitem__("kind", bad_val)),
+            ("receipt.pkg.target", lambda m: m["ecosystem_receipts"][0]["packages"][0].__setitem__("target", bad_val)),
+            ("receipt.catalog.file", lambda m: m["ecosystem_receipts"][0]["catalogs"][0].__setitem__("file", bad_val)),
+            ("m4b.platform", lambda m: m["m4b_parity"]["pairs"][0].__setitem__("platform", bad_val)),
+            ("m4b.states_nested_list", lambda m: m["m4b_parity"]["pairs"][0].__setitem__("states", [["menu"], "play", "paused", "result"])),
+            ("smoke.platform", lambda m: m["native_verification"]["packaged_smoke"][0].__setitem__("platform", bad_val)),
+            ("updater.platform", lambda m: m["native_verification"]["updater_1_2_4"][0].__setitem__("platform", bad_val)),
+            ("packages.manager", lambda m: m["native_verification"]["packages"][0].__setitem__("manager", bad_val)),
+            ("sessions.platform", lambda m: m["native_verification"]["owner_live_sessions"][0].__setitem__("platform", bad_val)),
+            ("sessions.states_nested", lambda m: m["native_verification"]["owner_live_sessions"][0].__setitem__("states_traversed", [{"a": 1}, "play", "paused", "result"])),
+            ("forges.forge", lambda m: m["native_verification"]["d15_forge_receipts"][0].__setitem__("forge", bad_val)),
+        )
+        for label, mutator in mutations:
+            with self.subTest(field=label):
+                m = copy.deepcopy(base)
+                mutator(m)
+                errors = self._validate(m)
+                self.assertTrue(errors, f"{label} with unhashable list must fail cleanly")
+                self.assertTrue(all(isinstance(e, str) for e in errors))
 
 
 class TagModeAndSignReleaseTests(unittest.TestCase):
@@ -692,8 +746,24 @@ class TagModeAndSignReleaseTests(unittest.TestCase):
             calls.append(command)
             return "" if capture else None
 
+        asset_bytes = b"vosu-linux-v2.0.0.zip"
+        asset_sha = hashlib.sha256(asset_bytes).hexdigest()
+
         def fake_find_release(repo, tag):
-            return {"id": 99, "draft": True, "target_commitish": CANDIDATE_COMMIT, "assets": []}
+            return {
+                "id": 99,
+                "draft": True,
+                "target_commitish": CANDIDATE_COMMIT,
+                "assets": [
+                    {"name": "vosu-linux-v2.0.0.zip", "digest": f"sha256:{asset_sha}"},
+                    {"name": "vosu-linux-v2.0.0.zip.sig", "digest": f"sha256:{_hex64('sig')}"},
+                ],
+            }
+
+        def fake_download(tag, repo, name, directory):
+            path = directory / name
+            path.write_bytes(asset_bytes if not name.endswith(".sig") else b"sig")
+            return path
 
         # 1. Missing --evidence fails BEFORE calling find_release or PATCH.
         with unittest.mock.patch.object(sign_release, "run", fake_run), \
@@ -706,11 +776,23 @@ class TagModeAndSignReleaseTests(unittest.TestCase):
             ev_path = Path(tmp) / "evidence.json"
             ev_path.write_text(json.dumps(_valid_manifest()), encoding="utf-8")
 
-            # 2. Failing day-0 (1 of 4 repos 404) refuses before PATCH.
+            # 2. Empty draft assets fail closed before PATCH (never skips asset binding).
+            with unittest.mock.patch.object(sign_release, "run", fake_run), \
+                 unittest.mock.patch.object(sign_release, "find_release", lambda r, t: {"id": 99, "draft": True, "target_commitish": CANDIDATE_COMMIT, "assets": []}), \
+                 self.assertRaisesRegex(SystemExit, "no assets"):
+                sign_release.main(
+                    ["--tag", "v2.0.0", "--publish", "--evidence", str(ev_path)],
+                    fetcher=_make_mock_fetcher(_all_good_responses()),
+                )
+            self.assertEqual(calls, [])
+
+            # 3. Failing day-0 (1 of 4 repos 404) refuses before PATCH.
             bad_responses = _all_good_responses()
             bad_responses["18-lab-dev/vosulay"] = day0.HttpResponse(status=404, body=b"{}")
             with unittest.mock.patch.object(sign_release, "run", fake_run), \
                  unittest.mock.patch.object(sign_release, "find_release", fake_find_release), \
+                 unittest.mock.patch.object(sign_release, "download", fake_download), \
+                 unittest.mock.patch.object(sign_release, "require_signed_by"), \
                  self.assertRaisesRegex(SystemExit, "day-0 gate failed"):
                 sign_release.main(
                     ["--tag", "v2.0.0", "--publish", "--evidence", str(ev_path)],
@@ -718,13 +800,15 @@ class TagModeAndSignReleaseTests(unittest.TestCase):
                 )
             self.assertEqual(calls, [])
 
-            # 3. Invalid/stale evidence manifest refuses before PATCH.
+            # 4. Invalid/stale evidence manifest refuses before PATCH.
             stale = _valid_manifest()
             stale["d17_performance"]["decision"] = "fail"
             stale_path = Path(tmp) / "stale.json"
             stale_path.write_text(json.dumps(stale), encoding="utf-8")
             with unittest.mock.patch.object(sign_release, "run", fake_run), \
                  unittest.mock.patch.object(sign_release, "find_release", fake_find_release), \
+                 unittest.mock.patch.object(sign_release, "download", fake_download), \
+                 unittest.mock.patch.object(sign_release, "require_signed_by"), \
                  self.assertRaisesRegex(SystemExit, "day-0 gate failed"):
                 sign_release.main(
                     ["--tag", "v2.0.0", "--publish", "--evidence", str(stale_path)],
@@ -732,10 +816,12 @@ class TagModeAndSignReleaseTests(unittest.TestCase):
                 )
             self.assertEqual(calls, [])
 
-            # 4. Passing fresh day-0 + valid evidence publishes via PATCH.
+            # 5. Passing fresh day-0 + valid evidence + matching asset publishes via PATCH.
             buf = io.StringIO()
             with unittest.mock.patch.object(sign_release, "run", fake_run), \
                  unittest.mock.patch.object(sign_release, "find_release", fake_find_release), \
+                 unittest.mock.patch.object(sign_release, "download", fake_download), \
+                 unittest.mock.patch.object(sign_release, "require_signed_by"), \
                  unittest.mock.patch("sys.stdout", buf):
                 sign_release.main(
                     ["--tag", "v2.0.0", "--publish", "--evidence", str(ev_path)],
@@ -745,6 +831,83 @@ class TagModeAndSignReleaseTests(unittest.TestCase):
             self.assertEqual(calls[0][:3], ("gh", "api", "--method"))
             self.assertIn("draft=false", calls[0])
             self.assertNotIn("prerelease=true", calls[0])
+
+    def test_sign_release_non_sha_target_commitish_resolves_annotated_tag_or_fails_closed(self):
+        asset_bytes = b"vosu-linux-v2.0.0.zip"
+        asset_sha = hashlib.sha256(asset_bytes).hexdigest()
+        tag_obj_sha = "e" * 40
+
+        def fake_find_release(repo, tag):
+            return {
+                "id": 101,
+                "draft": True,
+                "target_commitish": "main",
+                "assets": [
+                    {"name": "vosu-linux-v2.0.0.zip", "digest": f"sha256:{asset_sha}"},
+                    {"name": "vosu-linux-v2.0.0.zip.sig", "digest": f"sha256:{_hex64('sig')}"},
+                ],
+            }
+
+        def fake_download(tag, repo, name, directory):
+            path = directory / name
+            path.write_bytes(asset_bytes if not name.endswith(".sig") else b"sig")
+            return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ev_path = Path(tmp) / "evidence.json"
+            ev_path.write_text(json.dumps(_valid_manifest()), encoding="utf-8")
+
+            # Annotated tag peeling to CANDIDATE_COMMIT succeeds.
+            calls = []
+
+            def fake_run_peel(*command, capture=False):
+                calls.append(command)
+                if command == ("gh", "api", "repos/18-lab-dev/vosu/git/ref/tags/v2.0.0"):
+                    return json.dumps({"object": {"type": "tag", "sha": tag_obj_sha}})
+                if command == ("gh", "api", f"repos/18-lab-dev/vosu/git/tags/{tag_obj_sha}"):
+                    return json.dumps({"object": {"type": "commit", "sha": CANDIDATE_COMMIT}})
+                return "" if capture else None
+
+            with unittest.mock.patch.object(sign_release, "run", fake_run_peel), \
+                 unittest.mock.patch.object(sign_release, "find_release", fake_find_release), \
+                 unittest.mock.patch.object(sign_release, "download", fake_download), \
+                 unittest.mock.patch.object(sign_release, "require_signed_by"):
+                sign_release.main(
+                    ["--tag", "v2.0.0", "--publish", "--evidence", str(ev_path)],
+                    fetcher=_make_mock_fetcher(_all_good_responses()),
+                )
+            self.assertTrue(any(c[:3] == ("gh", "api", "--method") for c in calls))
+
+            # Tag resolving to a different commit fails closed before PATCH.
+            bad_calls = []
+
+            def fake_run_wrong_sha(*command, capture=False):
+                bad_calls.append(command)
+                if command == ("gh", "api", "repos/18-lab-dev/vosu/git/ref/tags/v2.0.0"):
+                    return json.dumps({"object": {"type": "commit", "sha": "f" * 40}})
+                return "" if capture else None
+
+            with unittest.mock.patch.object(sign_release, "run", fake_run_wrong_sha), \
+                 unittest.mock.patch.object(sign_release, "find_release", fake_find_release), \
+                 unittest.mock.patch.object(sign_release, "download", fake_download), \
+                 unittest.mock.patch.object(sign_release, "require_signed_by"), \
+                 self.assertRaisesRegex(SystemExit, "candidate.commit"):
+                sign_release.main(
+                    ["--tag", "v2.0.0", "--publish", "--evidence", str(ev_path)],
+                    fetcher=_make_mock_fetcher(_all_good_responses()),
+                )
+            self.assertFalse(any(c[:3] == ("gh", "api", "--method") for c in bad_calls))
+
+            # Unresolvable remote tag fails closed before PATCH.
+            with unittest.mock.patch.object(sign_release, "run", side_effect=OSError("gh unavailable")), \
+                 unittest.mock.patch.object(sign_release, "find_release", fake_find_release), \
+                 unittest.mock.patch.object(sign_release, "download", fake_download), \
+                 unittest.mock.patch.object(sign_release, "require_signed_by"), \
+                 self.assertRaisesRegex(SystemExit, "failed to resolve remote tag commit"):
+                sign_release.main(
+                    ["--tag", "v2.0.0", "--publish", "--evidence", str(ev_path)],
+                    fetcher=_make_mock_fetcher(_all_good_responses()),
+                )
 
     def test_sign_release_prerelease_publish_not_blocked_by_day0(self):
         calls = []

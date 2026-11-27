@@ -335,6 +335,7 @@ jobs:
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3.0.2
         with:
           draft: true
+          target_commitish: ${{ github.sha }}
           prerelease: ${{ steps.release-kind.outputs.prerelease }}
           make_latest: ${{ steps.release-kind.outputs.make_latest }}
           fail_on_unmatched_files: true
