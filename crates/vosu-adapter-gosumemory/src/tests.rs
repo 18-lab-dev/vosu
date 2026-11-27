@@ -107,6 +107,20 @@ fn direct_and_dto_match_with_distinct_source_facts() {
     assert_eq!(w["userProfile"]["backgroundColour"], "-ff");
 }
 #[test]
+fn lazer_empty_skin_and_initial_play_estimate_match_both_encoders() {
+    let mut d = document();
+    d["internal"]["paths"]["skinFolder"] = Value::Null;
+    d["beatmap"]["time"]["live"] = json!(100.0);
+    d["play"]["pp"]["fc"] = json!(0);
+    let v = decoded(&d, "lazer");
+    equivalent(&v);
+    let w = wire(&v);
+    assert_eq!(w["settings"]["folders"]["skin"], ".");
+    assert_eq!(w["gameplay"]["pp"]["fc"], 300.5);
+    assert!(w.get("game").is_none());
+}
+
+#[test]
 fn selected_mods_are_not_replaced_by_result_or_mode_sources() {
     for (state, number, name) in [(0, 8, "HD"), (2, 64, "DT"), (7, 256, "HT")] {
         let mut d = document();

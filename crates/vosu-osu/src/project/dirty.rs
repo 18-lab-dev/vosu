@@ -90,7 +90,9 @@ fn dependencies(p: P) -> u16 {
             GLOBAL | GAMEPLAY | RESULT | STATUS
         }
         SkinName => SETTINGS,
-        OsuSessionPlayTime | OsuSessionPaused | OsuSessionWatchingReplay => GLOBAL,
+        OsuSessionPlayTime | OsuSessionPaused | OsuSessionWatchingReplay | OsuInternalPlayClock => {
+            GLOBAL
+        }
         OsuSessionPlayCount | OsuSessionFocused | OsuSessionIpcId | OsuSessionServer => SESSION,
         OsuSessionState => STATUS,
         OsuProfile => USER,

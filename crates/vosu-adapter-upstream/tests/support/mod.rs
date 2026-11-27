@@ -26,6 +26,7 @@ struct Publisher {
     dir: PathBuf,
     ready: SyncSender<u64>,
     lazer: bool,
+    extensionless: bool,
 }
 impl Plugin for Publisher {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
@@ -35,12 +36,15 @@ impl Plugin for Publisher {
             dir: init.data_dir,
             ready,
             lazer: false,
+            extensionless: false,
         })
     }
     fn on_message(&mut self, message: Message, correlation: u64) -> Result<(), PluginError> {
         match message {
             Message::SessionAttached(attached) => {
-                self.lazer = attached.command_line.as_deref() == Some("lazer");
+                let command = attached.command_line.as_deref();
+                self.extensionless = command == Some("lazer-extensionless");
+                self.lazer = self.extensionless || command == Some("lazer");
                 self.send(
                     Message::SessionIdentify(SessionIdentify {
                         handle: attached.handle,
@@ -72,7 +76,11 @@ impl Plugin for Publisher {
                 let paths = serde_json::json!({
                     "stable":{"game":"/forged/outside","songs":"/forged/outside","skins":"/forged/outside","replays":null},
                     "lazer":null,
-                    "current":{"beatmapFolder":"Set","beatmapFile":"map.osu","background":"bg.jpg","audio":"audio.mp3"},
+                    "current": if self.extensionless {
+                        serde_json::json!({"beatmapFolder":"Set","beatmapFile":"chart-hash","background":"image-hash","audio":"audio-hash"})
+                    } else {
+                        serde_json::json!({"beatmapFolder":"Set","beatmapFile":"map.osu","background":"bg.jpg","audio":"audio.mp3"})
+                    },
                     "skinFolder":"Skin"
                 });
                 let mut cbor = Vec::new();
@@ -105,7 +113,12 @@ impl Plugin for Publisher {
                 self.send(
                     Message::ResourceResolved(vosu_plugin_api::ResourceResolved::Path {
                         root: if self.lazer { "files" } else { "songs" }.into(),
-                        path: "Set/map.osu".into(),
+                        path: if self.extensionless {
+                            "Set/chart-hash"
+                        } else {
+                            "Set/map.osu"
+                        }
+                        .into(),
                     }),
                     correlation,
                 );
@@ -176,6 +189,12 @@ pub struct Case {
 }
 impl Case {
     pub fn new(lazer: bool) -> Self {
+        Self::new_with_files(lazer, false)
+    }
+    pub fn extensionless_shortcuts() -> Self {
+        Self::new_with_files(true, true)
+    }
+    fn new_with_files(lazer: bool, extensionless: bool) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -199,6 +218,9 @@ impl Case {
             )
             .unwrap();
             std::fs::write(root.path().join(slot).join("Set/audio.mp3"), b"0123456789").unwrap();
+        }
+        if extensionless {
+            std::fs::write(root.path().join("files/Set/chart-hash"), MAP).unwrap();
         }
         std::fs::create_dir_all(root.path().join("skins/Skin/SubDir")).unwrap();
         std::fs::write(
@@ -267,7 +289,12 @@ impl Case {
             pid: 9911,
             name: "r1-fixture".into(),
             path: root.path().join("game").to_str().unwrap().into(),
-            command_line: if lazer { "lazer" } else { "stable" }.into(),
+            command_line: match (lazer, extensionless) {
+                (true, true) => "lazer-extensionless",
+                (true, false) => "lazer",
+                _ => "stable",
+            }
+            .into(),
             bitness: vosu_plugin_api::Bitness::X64,
             start_time: 1,
             argv: None,

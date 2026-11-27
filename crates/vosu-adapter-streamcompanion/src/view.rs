@@ -57,6 +57,7 @@ pub struct Metadata {
 #[serde(rename_all = "camelCase")]
 pub struct MapTime {
     pub mp3_length: Option<f64>,
+    pub first_hit_object: Option<i64>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -219,7 +220,7 @@ impl View {
         let mode: NumberName<i64> = image.get("/result/mode")?;
         let state: NumberName<i64> = image.get("/session/state")?;
         let ranking: NumberName<i64> = image.get("/settings/leaderboard")?;
-        let view = Self {
+        let mut view = Self {
             metadata: image.get("/beatmap")?,
             paths: image.get("/internal/paths")?,
             play: Play {
@@ -275,7 +276,25 @@ impl View {
             result_mode: mode.number,
             capture: capture.clone(),
         };
+        if let Some(first_object) = view.metadata.time.first_hit_object {
+            view.pp.fc = vosu_adapter_support::full_combo_pp(
+                view.pp.fc,
+                view.pp_accuracy.get(&100).copied().unwrap_or_default(),
+                view.raw_status,
+                view.play_time,
+                first_object,
+            );
+        }
         Ok(view)
+    }
+    pub(crate) fn skin_folder(&self) -> &str {
+        vosu_adapter_support::skin_folder(
+            self.capture
+                .session
+                .as_ref()
+                .is_some_and(|session| session.variant == "lazer"),
+            self.paths.skin_folder.as_deref(),
+        )
     }
     pub(crate) fn statistics(&self) -> Statistics {
         let j = self.play.judgements;

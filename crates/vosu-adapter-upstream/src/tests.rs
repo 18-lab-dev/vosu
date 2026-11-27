@@ -57,6 +57,82 @@ fn regular_bus_projection_has_no_extensions_and_direct_matches_dto() {
 }
 
 #[test]
+fn regular_paused_derives_from_adjacent_ticks_and_never_exposes_clock_facts() {
+    use vosu_osu_model::enums::GameState;
+
+    let mut source = fixture::source();
+    let mut previous = 0.0;
+    for (state, current, expected) in [
+        (GameState::Menu, 0.0, true),
+        (GameState::Play, 77.0, false),
+        (GameState::Play, 88.0, false),
+        (GameState::ResultScreen, 88.0, true),
+    ] {
+        let global = &mut std::sync::Arc::make_mut(&mut source.regular).global;
+        global.play_clock = [previous, current];
+        global.paused = !expected;
+        std::sync::Arc::make_mut(&mut source.precise).status = i64::from(state.value());
+        let selected = fixture::capture(&source, &regular::selectors());
+        let view = regular::View::from_capture(&selected).unwrap();
+        let payload = json(&regular::encode(&view).unwrap());
+        assert_eq!(payload["game"]["paused"], expected, "{state:?}");
+        assert!(!payload.to_string().contains("playClock"));
+        previous = current;
+    }
+    let mut old = fixture::capture(&source, &regular::selectors());
+    old.values = old
+        .values
+        .iter()
+        .filter(|e| e.pointer != regular::PLAY_CLOCK)
+        .cloned()
+        .collect();
+    let projected = regular::View::from_capture(&old).unwrap();
+    let payload = json(&regular::encode(&projected).unwrap());
+    assert!(payload.pointer("/game/paused").is_none());
+}
+
+#[test]
+fn lazer_regular_projects_fc_seed_skin_and_only_upstream_settings() {
+    let mut source = fixture::source();
+    source.source = vosu_osu_model::enums::ClientType::Lazer;
+    let r = std::sync::Arc::make_mut(&mut source.regular);
+    r.global.skin_folder.clear();
+    r.beatmap.first_object_time = Some(2000);
+    r.beatmap.pp_acc.insert(100, 8.75);
+    let precise = std::sync::Arc::make_mut(&mut source.precise);
+    precise.play_time = 100.0;
+    let mut selected = fixture::capture(&source, &regular::selectors());
+    let mut settings: Value = view::decode(&selected, "/settings").unwrap();
+    settings["visual"] = json!({"hitLighting": true, "sizeX": 1});
+    settings["mania"]["scrollSpeedValue"] = json!(11);
+    settings["mania"]["scrollTime"] = json!(22);
+    settings["mania"]["timingBasedNoteColouring"] = json!(true);
+    settings["mania"]["perBeatmapScrollSpeed"] = json!(33);
+    fixture::replace(&mut selected, "/settings", settings);
+    let projected = regular::View::from_capture(&selected).unwrap();
+    let bytes = regular::encode(&projected).unwrap();
+    assert_eq!(bytes.as_ref(), dto_bytes(regular::build(&projected)));
+    let payload = json(&bytes);
+    assert_eq!(payload["play"]["pp"]["current"], 0);
+    assert_eq!(payload["play"]["pp"]["fc"], 8.75);
+    assert_eq!(payload["play"]["pp"]["detailed"]["fc"]["total"], 8.75);
+    assert_eq!(payload["play"]["pp"]["detailed"]["fc"]["aim"], 0);
+    assert_eq!(payload["folders"]["skin"], ".");
+    assert_eq!(payload["directPath"]["skinFolder"], ".");
+    assert!(payload.pointer("/settings/visual").is_none());
+    let mania = payload["settings"]["mania"].as_object().unwrap();
+    assert_eq!(
+        mania.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "speedBPMScale",
+            "usePerBeatmapSpeedScale",
+            "scrollSpeed",
+            "scrollDirection"
+        ],
+    );
+}
+
+#[test]
 fn precise_uses_independent_overlay_slots_and_retains_only_upstream_history() {
     let source = fixture::source();
     let selected = fixture::capture(&source, &precise::selectors());
@@ -363,7 +439,7 @@ fn source_chat_decoding_restores_client_specific_property_order() {
 }
 
 #[test]
-fn lazer_null_skin_path_echoes_the_pinned_empty_string() {
+fn lazer_null_skin_path_echoes_the_pinned_dot() {
     let mut source = fixture::source();
     source.source = vosu_osu_model::enums::ClientType::Lazer;
     std::sync::Arc::make_mut(&mut source.regular)
@@ -384,7 +460,7 @@ fn lazer_null_skin_path_echoes_the_pinned_empty_string() {
         emitted["directPath"]["skinFolder"],
         pinned["directPath"]["skinFolder"]
     );
-    assert_eq!(emitted["directPath"]["skinFolder"], "");
+    assert_eq!(emitted["directPath"]["skinFolder"], ".");
 }
 
 #[test]

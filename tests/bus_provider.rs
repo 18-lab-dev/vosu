@@ -727,7 +727,7 @@ async fn union_disjoint_filters_preserve_legacy_tick_cadence_not_output_diffs() 
     }]);
     let selectors = requester.current_selectors.lock().unwrap().clone();
     assert_eq!(selectors.len(), 2);
-    assert!(selectors.iter().any(|s| s.pointer == "/session/paused"));
+    assert!(selectors.iter().any(|s| s.pointer == "/internal/playClock"));
     assert!(selectors.iter().any(|s| s.pointer == "/play/score"));
     let run = tokio::spawn({
         let hub = hub.clone();

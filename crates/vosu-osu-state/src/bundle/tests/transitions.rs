@@ -387,6 +387,31 @@ async fn mismatched_calculation_key_cannot_mutate_published_state() {
 }
 
 #[tokio::test]
+async fn lazer_bass_is_sampled_in_main_menu_and_retained_in_song_select() {
+    let mut bundle = StateBundle::new(ClientType::Lazer, 11, Arc::new(EchoCalculation));
+    let mut amplitude = vec![0.0; 40];
+    amplitude[0] = 0.1;
+    for (sequence, state, spectrum, velocity) in [
+        (1, GameState::Menu, amplitude, 0.3 * 0.95),
+        (2, GameState::Menu, vec![0.0; 40], 0.3 * 0.95 * 0.95),
+        (3, GameState::SelectPlay, vec![1.0; 40], 0.3 * 0.95 * 0.95),
+    ] {
+        let raw = RawRegularSnapshotBuilder::new(
+            RegularCaptureContext::new(ClientType::Lazer, 11, 0, sequence),
+            Ok(ReadStatus::Ready(raw_global(state, 0))),
+        )
+        .audio_velocity_base(Ok(ReadStatus::Ready(spectrum)))
+        .publish();
+        let applied = bounded!(bundle.apply_regular(raw)).expect("regular publication");
+        let density = applied.publication.regular.bass_density.density;
+        assert!(
+            (density - (1.0 + velocity) * 0.5).abs() < 1e-12,
+            "{state:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn calculation_uses_post_read_paths_and_metadata_even_when_pp_disabled() {
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let backend = Arc::new(RecordingCalculation {

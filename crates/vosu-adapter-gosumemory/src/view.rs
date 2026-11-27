@@ -102,7 +102,7 @@ impl View {
                 .map_err(|_| Error::Decode(format!("invalid selected value at {pointer}")))
         }
         let state: Number = get(&capture, "/session/state")?;
-        let view = Self {
+        let mut view = Self {
             client,
             state: state.number,
             interface_visible: get(&capture, "/settings/interfaceVisible")?,
@@ -136,6 +136,19 @@ impl View {
             tourney_availability: get(&capture, "/tourneyAvailability")?,
             capture,
         };
+        if let Some(first_object) = view.beatmap.time.first_hit_object {
+            view.play.pp.fc = vosu_adapter_support::full_combo_pp(
+                view.play.pp.fc,
+                view.performance
+                    .accuracy
+                    .get("100")
+                    .copied()
+                    .unwrap_or_default(),
+                view.state,
+                view.beatmap.time.live,
+                first_object,
+            );
+        }
         Ok(view)
     }
 }

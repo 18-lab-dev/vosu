@@ -239,13 +239,11 @@ async fn surface_game_response(
                     body: ResponseBody::Empty,
                 }
             } else {
-                let range = (!head)
-                    .then(|| headers.get(header::RANGE).and_then(|v| v.to_str().ok()))
-                    .flatten();
+                let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
                 match files::plan_response(
                     file.metadata.size,
-                    vosu_surface::files::content_type(Path::new(&name)),
-                    files::media_range_eligible(Path::new(&name)),
+                    matches!(route, Route::Beatmap | Route::Background | Route::Audio)
+                        || files::media_range_eligible(Path::new(&name)),
                     range,
                 ) {
                     Err(_) => SurfaceResponse {
@@ -257,8 +255,9 @@ async fn surface_game_response(
                         body: ResponseBody::Empty,
                     },
                     Ok(plan) => {
+                        let content_type = game_file_content_type(route, &file, &name).await;
                         let mut headers = vec![
-                            ("content-type".into(), plan.content_type.to_owned()),
+                            ("content-type".into(), content_type.to_owned()),
                             ("content-length".into(), plan.content_length.to_string()),
                         ];
                         if let Some(value) = plan.accept_ranges {
@@ -308,4 +307,72 @@ async fn surface_game_response(
         .headers
         .push(("content-security-policy".into(), "sandbox".into()));
     response
+}
+
+async fn game_file_content_type(
+    route: vosu_adapter_upstream::files::Route,
+    file: &vosu_surface::files::OpenedFile,
+    name: &str,
+) -> &'static str {
+    use vosu_adapter_upstream::files::Route;
+
+    const BINARY: &str = "application/octet-stream";
+    match route {
+        Route::Beatmap => "text/plain",
+        Route::Background | Route::Audio => {
+            const PREFIX_BYTES: u64 = 12;
+            if file.metadata.size == 0 {
+                return BINARY;
+            }
+            let Ok(prefix) = file
+                .read(0, file.metadata.size.min(PREFIX_BYTES) as u32)
+                .await
+            else {
+                return BINARY;
+            };
+            if route == Route::Background {
+                image_media_type(&prefix).unwrap_or(BINARY)
+            } else {
+                audio_media_type(&prefix).unwrap_or(BINARY)
+            }
+        }
+        _ => match vosu_surface::files::content_type(Path::new(name)) {
+            "" => BINARY,
+            content_type => content_type,
+        },
+    }
+}
+
+fn image_media_type(prefix: &[u8]) -> Option<&'static str> {
+    if prefix.starts_with(b"RIFF") && prefix.get(8..12) == Some(b"WEBP") {
+        return Some("image/webp");
+    }
+    match prefix {
+        [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, ..] => Some("image/png"),
+        [0xff, 0xd8, 0xff, ..] => Some("image/jpeg"),
+        [b'G', b'I', b'F', b'8', b'7' | b'9', b'a', ..] => Some("image/gif"),
+        [b'B', b'M', ..] => Some("image/bmp"),
+        _ => None,
+    }
+}
+
+fn audio_media_type(prefix: &[u8]) -> Option<&'static str> {
+    if prefix.starts_with(b"RIFF") && prefix.get(8..12) == Some(b"WAVE") {
+        return Some("audio/wav");
+    }
+    match prefix {
+        [b'O', b'g', b'g', b'S', 0, ..] => Some("audio/ogg"),
+        [b'f', b'L', b'a', b'C', ..] => Some("audio/flac"),
+        [b'I', b'D', b'3', 2..=4, ..] => Some("audio/mpeg"),
+        [0xff, flags, rate, _, ..]
+            if flags & 0xe0 == 0xe0
+                && flags & 0x18 != 0x08
+                && flags & 0x06 != 0
+                && rate & 0xf0 != 0xf0
+                && rate & 0x0c != 0x0c =>
+        {
+            Some("audio/mpeg")
+        }
+        _ => None,
+    }
 }

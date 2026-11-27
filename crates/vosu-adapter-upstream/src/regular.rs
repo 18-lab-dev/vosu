@@ -14,8 +14,10 @@ use vosu_surface::{
     state::{CapturedSelection, SessionTarget},
 };
 
+pub(crate) const PLAY_CLOCK: &str = "/internal/playClock";
+
 const PATHS: &[&str] = &[
-    "/session/paused",
+    PLAY_CLOCK,
     "/session/playTime",
     "/session/server",
     "/session/state",
@@ -55,6 +57,21 @@ pub fn selectors() -> Vec<Selector> {
     selectors
 }
 
+#[derive(serde::Deserialize)]
+struct PlayClock {
+    previous: f64,
+    current: f64,
+}
+
+fn legacy_paused(capture: &CapturedSelection) -> Result<Option<bool>, Error> {
+    match view::decode::<PlayClock>(capture, PLAY_CLOCK) {
+        Ok(clock) => Ok(Some(clock.previous == clock.current)),
+        // An older captured image cannot supply the preceding sample.
+        Err(Error::NotReady) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 #[derive(Debug)]
 pub struct View {
     pub identity: Identity,
@@ -88,7 +105,7 @@ impl View {
             profile.matchmaking = Some(None);
         }
         let raw: vosu_osu_model::source::HealthRaw = view::decode(capture, "/play/healthRaw")?;
-        let play = SourcePlay {
+        let mut play = SourcePlay {
             failed: view::decode(capture, "/play/failed")?,
             player_name: view::decode(capture, "/play/playerName")?,
             mode: view::decode(capture, "/play/mode")?,
@@ -119,7 +136,8 @@ impl View {
             let p = paths.stable.ok_or(Error::NotReady)?;
             (p.game.unwrap_or_default(), p.songs.unwrap_or_default())
         };
-        let skin = paths.skin_folder.unwrap_or_default();
+        let skin =
+            vosu_adapter_support::skin_folder(lazer, paths.skin_folder.as_deref()).to_owned();
         let direct_path = DirectPath {
             beatmap_file: crate::paths::direct_join(
                 current.beatmap_folder.as_deref(),
@@ -136,9 +154,20 @@ impl View {
             beatmap_folder: current.beatmap_folder.clone(),
             skin_folder: skin.clone(),
         };
+        let state: NumberName = view::decode(capture, "/session/state")?;
+        let beatmap: Beatmap = view::decode(capture, "/beatmap")?;
+        let performance: Performance = view::decode(capture, "/performance")?;
+        play.pp.fc = vosu_adapter_support::full_combo_pp(
+            play.pp.fc,
+            performance.accuracy.acc_100,
+            state.number.unwrap_or_default(),
+            beatmap.time.live,
+            beatmap.time.first_object,
+        );
+        play.pp.detailed.fc.total = play.pp.fc;
         let response = Response {
             game: Game {
-                paused: view::decode(capture, "/session/paused")?,
+                paused: legacy_paused(capture)?,
                 focused: cfg!(target_os = "windows").then(|| {
                     capture
                         .roster
@@ -154,7 +183,7 @@ impl View {
             client: identity.session.variant.clone(),
             server: view::decode::<Option<String>>(capture, "/session/server")?
                 .unwrap_or_else(|| "ppy.sh".into()),
-            state: view::decode(capture, "/session/state")?,
+            state,
             session: Session {
                 play_time: view::decode(capture, "/session/playTime")?,
                 play_count: 0,
@@ -162,10 +191,10 @@ impl View {
             ranked_play: view::decode(capture, "/rankedPlay")?,
             settings,
             profile,
-            beatmap: view::decode(capture, "/beatmap")?,
+            beatmap,
             play,
             leaderboard: view::decode(capture, "/leaderboard")?,
-            performance: view::decode(capture, "/performance")?,
+            performance,
             results_screen: view::decode(capture, "/result")?,
             folders: Folders {
                 game,

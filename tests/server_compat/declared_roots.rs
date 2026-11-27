@@ -77,25 +77,62 @@ fn body(case: &Case, response: Response) -> Bytes {
     case.run(to_bytes(response.into_body(), 1024 * 1024))
         .unwrap()
 }
+
+fn assert_file_policy(response: &Response, validators: bool) {
+    let headers = response.headers();
+    assert_eq!(headers[header::CONTENT_SECURITY_POLICY], "sandbox");
+    assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    if validators {
+        assert_eq!(headers[header::CACHE_CONTROL], "no-cache");
+        let etag = headers[header::ETAG].to_str().unwrap();
+        assert!(etag.starts_with('"') && etag.ends_with('"'));
+        let modified = headers[header::LAST_MODIFIED].to_str().unwrap();
+        assert!(httpdate::parse_http_date(modified).is_ok());
+    }
+}
+
 #[test]
 fn declared_root_http_routes_stream_exact_bytes_with_legacy_headers_and_errors() {
     let case = Case::new(false);
-    for (path, expected) in [
-        ("/Songs/Set/bg.jpg", b"stable-bg".as_slice()),
-        ("/files/beatmap/Set/bg.jpg", b"stable-bg"),
-        ("/backgroundImage", b"stable-bg"),
-        ("/files/beatmap/background", b"stable-bg"),
-        ("/files/beatmap/audio", b"0123456789"),
-        ("/files/beatmap/file", support::MAP),
-        ("/files/skin/subdir/mixed.png", b"skin-exact"),
+    for (path, expected, ranges) in [
+        ("/Songs/Set/bg.jpg", b"stable-bg".as_slice(), None),
+        ("/files/beatmap/Set/bg.jpg", b"stable-bg", None),
+        ("/backgroundImage", b"stable-bg", Some("bytes")),
+        ("/files/beatmap/background", b"stable-bg", Some("bytes")),
+        ("/files/beatmap/audio", b"0123456789", Some("bytes")),
+        ("/files/beatmap/file", support::MAP, Some("bytes")),
+        ("/files/skin/subdir/mixed.png", b"skin-exact", None),
     ] {
         let response = dispatch(&case, Method::GET, path, &[]);
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         assert_eq!(
-            response.headers()[header::CONTENT_SECURITY_POLICY],
-            "sandbox"
+            response
+                .headers()
+                .get(header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok()),
+            ranges,
+            "{path}"
+        );
+        assert_file_policy(
+            &response,
+            path != "/backgroundImage" && !path.starts_with("/Songs/"),
         );
         assert_eq!(body(&case, response), expected, "{path}");
+        let head = dispatch(&case, Method::HEAD, path, &[]);
+        if path == "/backgroundImage" || path.starts_with("/Songs/") {
+            assert_eq!(head.status(), StatusCode::NOT_FOUND, "{path}");
+            continue;
+        }
+        assert_eq!(head.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            head.headers()
+                .get(header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok()),
+            ranges,
+            "{path}"
+        );
+        assert_file_policy(&head, true);
+        assert!(body(&case, head).is_empty(), "{path}");
     }
     for path in [
         "/files/skin/",
@@ -107,6 +144,7 @@ fn declared_root_http_routes_stream_exact_bytes_with_legacy_headers_and_errors()
     ] {
         let response = dispatch(&case, Method::GET, path, &[]);
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(!response.headers().contains_key(header::ACCEPT_RANGES));
         assert_eq!(body(&case, response), "Not Found", "{path}");
     }
     assert_eq!(
@@ -118,6 +156,120 @@ fn declared_root_http_routes_stream_exact_bytes_with_legacy_headers_and_errors()
         StatusCode::NOT_FOUND
     );
 }
+
+#[test]
+fn extensionless_shortcuts_advertise_only_their_actual_media_type_on_get_and_head() {
+    let case = Case::extensionless_shortcuts();
+    let cases: &[(&str, &str, &str, &[u8])] = &[
+        (
+            "/files/beatmap/file",
+            "chart-hash",
+            "text/plain",
+            support::MAP,
+        ),
+        (
+            "/files/beatmap/background",
+            "image-hash",
+            "image/png",
+            b"\x89PNG\r\n\x1a\nmore-data",
+        ),
+        (
+            "/backgroundImage",
+            "image-hash",
+            "image/jpeg",
+            b"\xff\xd8\xff\xe1more-data",
+        ),
+        (
+            "/files/beatmap/background",
+            "image-hash",
+            "image/jpeg",
+            b"\xff\xd8\xff\xe1more-data",
+        ),
+        (
+            "/files/beatmap/background",
+            "image-hash",
+            "image/gif",
+            b"GIF89amore-data",
+        ),
+        (
+            "/files/beatmap/background",
+            "image-hash",
+            "image/webp",
+            b"RIFF\x00\x00\x00\x00WEBPmore-data",
+        ),
+        (
+            "/files/beatmap/background",
+            "image-hash",
+            "image/bmp",
+            b"BMmore-data",
+        ),
+        (
+            "/files/beatmap/audio",
+            "audio-hash",
+            "audio/mpeg",
+            b"\xff\xfb\x90\x64more-data",
+        ),
+        (
+            "/files/beatmap/audio",
+            "audio-hash",
+            "audio/mpeg",
+            b"ID3\x04\x00\x00more-data",
+        ),
+        (
+            "/files/beatmap/audio",
+            "audio-hash",
+            "audio/wav",
+            b"RIFF\x00\x00\x00\x00WAVEmore-data",
+        ),
+        (
+            "/files/beatmap/audio",
+            "audio-hash",
+            "audio/ogg",
+            b"OggS\x00more-data",
+        ),
+        (
+            "/files/beatmap/audio",
+            "audio-hash",
+            "audio/flac",
+            b"fLaCmore-data",
+        ),
+        (
+            "/files/beatmap/audio",
+            "audio-hash",
+            "application/octet-stream",
+            b"unknown",
+        ),
+        (
+            "/files/beatmap/background",
+            "image-hash",
+            "application/octet-stream",
+            b"<svg/>",
+        ),
+    ];
+    for &(path, file, content_type, bytes) in cases {
+        std::fs::write(case.songs().join("Set").join(file), bytes).unwrap();
+        for method in [Method::GET, Method::HEAD] {
+            let response = dispatch(&case, method.clone(), path, &[]);
+            if path == "/backgroundImage" && method == Method::HEAD {
+                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+                continue;
+            }
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers()[header::CONTENT_TYPE], content_type);
+            assert_eq!(
+                response.headers()[header::CONTENT_LENGTH],
+                bytes.len().to_string()
+            );
+            assert_eq!(response.headers()[header::ACCEPT_RANGES], "bytes");
+            assert_file_policy(&response, path != "/backgroundImage");
+            assert_eq!(
+                body(&case, response),
+                if method == Method::HEAD { &[] } else { bytes }
+            );
+        }
+    }
+}
+
 #[test]
 fn declared_root_http_range_head_validators_and_directory_contract() {
     let case = Case::new(false);
@@ -129,7 +281,9 @@ fn declared_root_http_range_head_validators_and_directory_contract() {
     );
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
     assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
+    assert_eq!(response.headers()[header::ACCEPT_RANGES], "bytes");
     assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+    assert_file_policy(&response, true);
     assert_eq!(body(&case, response), "2345");
     let response = dispatch(
         &case,
@@ -142,12 +296,24 @@ fn declared_root_http_range_head_validators_and_directory_contract() {
     assert!(body(&case, response).is_empty());
     let response = dispatch(
         &case,
+        Method::GET,
+        "/files/beatmap/audio",
+        &[("Range", "bytes=0-1,3-4")],
+    );
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */10");
+    assert!(body(&case, response).is_empty());
+    let response = dispatch(
+        &case,
         Method::HEAD,
         "/files/beatmap/audio",
         &[("Range", "bytes=2-5")],
     );
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()[header::CONTENT_LENGTH], "10");
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
+    assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+    assert_eq!(response.headers()[header::ACCEPT_RANGES], "bytes");
+    assert_file_policy(&response, true);
     let etag = response.headers()[header::ETAG]
         .to_str()
         .unwrap()
@@ -156,6 +322,15 @@ fn declared_root_http_range_head_validators_and_directory_contract() {
         .to_str()
         .unwrap()
         .to_owned();
+    assert!(body(&case, response).is_empty());
+    let response = dispatch(
+        &case,
+        Method::HEAD,
+        "/files/beatmap/audio",
+        &[("Range", "bytes=20-30")],
+    );
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes */10");
     assert!(body(&case, response).is_empty());
     for headers in [
         [("If-None-Match", etag.as_str())],
@@ -198,6 +373,7 @@ fn declared_root_http_range_head_validators_and_directory_contract() {
     assert_eq!(response.headers()[header::LOCATION], "/Songs/Set/?x=1");
     let response = dispatch(&case, Method::GET, "/Songs/Set/", &[]);
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key(header::ACCEPT_RANGES));
     assert!(
         String::from_utf8(body(&case, response).to_vec())
             .unwrap()

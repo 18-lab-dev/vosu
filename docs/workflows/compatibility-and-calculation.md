@@ -108,4 +108,27 @@ the owning adapter or core module; never regenerate an expected value from
 vosu output, widen normalization to hide it, or subtract it without an
 approved ledger row.
 
+The projection oracle sends its synthetic global seed through the pinned
+upstream regular update before building legacy payloads. In v2, the first
+play-clock comparison starts from zero. Lazer's empty skin-folder echo is
+normalized by that update, while the saved raw input and the osu! plugin's
+actual pause flag remain unchanged. The adjacent clock samples are private
+osu! plugin facts and do not appear in API v1 or legacy adapter payloads.
+
+To regenerate this corpus, install the pinned upstream checkout's locked
+dependencies and use its TypeScript loader with its own `tsconfig.json`.
+Set `reference_package` to the upstream daemon package directory inside
+the pinned checkout. The generator verifies both source revisions and the
+calculator tree:
+
+```sh
+export TSX_TSCONFIG_PATH="$reference_package/tsconfig.json"
+loader=$(node -p \
+  'require("node:module").createRequire(process.argv[1]).resolve("tsx")' \
+  "$reference_package/package.json")
+node --import "$loader" tools/oracle/generate.ts \
+  --source "$reference" --calculator-source "$calculator" \
+  --out tests/fixtures/oracle
+```
+
 The [testing and verification guide](../testing/verification.md) is the verification owner for commands and evidence interpretation. The [runtime architecture](../architecture/overview.md) explains why atomic snapshots and generation checks are non-negotiable.

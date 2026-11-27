@@ -294,7 +294,6 @@ fn parity(
 ) {
     let id = &input.id;
     for (from, to) in [
-        ("/game/paused", "/vosu.osu/session/paused"),
         ("/session/playTime", "/vosu.osu/session/playTime"),
         ("/session/playCount", "/vosu.osu/session/playCount"),
         ("/state", "/vosu.osu/session/state"),
@@ -305,6 +304,26 @@ fn parity(
     ] {
         row(id, v2, from, doc, to);
     }
+    let [previous, current] = snapshot.regular.global.play_clock;
+    equal(
+        id,
+        "/game/paused",
+        &v2["game"]["paused"],
+        &json!(previous == current),
+    );
+    equal(
+        id,
+        "/vosu.osu/session/paused",
+        &json!(snapshot.regular.global.paused),
+        &doc["vosu.osu"]["session"]["paused"],
+    );
+    equal(
+        id,
+        "plugin-only regular play clock",
+        &json!({ "previous": previous, "current": current }),
+        &private["vosu.osu"]["internal"]["playClock"],
+    );
+    assert!(doc["vosu.osu"].pointer("/internal/playClock").is_none());
     let mut room = v2["room"].clone();
     if let Some(object) = room.as_object_mut() {
         require(entries, "room-roomId-rename", "contract");
@@ -332,7 +351,7 @@ fn parity(
         assert!(doc["vosu.osu"]["session"]["focused"].is_null());
     }
     let status = match input.status {
-        2 if v2["game"]["paused"] == true => json!("pause"),
+        2 if snapshot.regular.global.paused => json!("pause"),
         2 => json!("play"),
         4 | 5 | 6 | 11 | 12 | 13 | 15 => json!("selection"),
         7 | 14 | 17 | 18 => json!("results"),

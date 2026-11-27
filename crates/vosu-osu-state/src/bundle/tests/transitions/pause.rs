@@ -2,6 +2,29 @@ use super::*;
 use vosu_proptest::bounded;
 
 #[tokio::test]
+async fn raw_regular_clock_keeps_adjacent_samples_independent_of_pause() {
+    let mut bundle = StateBundle::new(ClientType::Lazer, 11, Arc::new(EchoCalculation));
+    for (index, (state, time, pair)) in [
+        (GameState::Menu, 0, [0.0, 0.0]),
+        (GameState::Play, 500, [0.0, 500.0]),
+        (GameState::Play, 600, [500.0, 600.0]),
+        (GameState::ResultScreen, 600, [600.0, 600.0]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let raw = RawRegularSnapshotBuilder::new(
+            RegularCaptureContext::new(ClientType::Lazer, 11, 0, index as u64 + 1),
+            Ok(ReadStatus::Ready(raw_global_paused(state, time, false))),
+        )
+        .publish();
+        let applied = bounded!(bundle.apply_regular(raw)).expect("regular publication");
+        assert_eq!(applied.publication.regular.global.play_clock, pair);
+        assert!(!applied.publication.regular.global.paused);
+    }
+}
+
+#[tokio::test]
 async fn lazer_pause_preserves_score_and_applies_final_judgements() {
     let mut bundle = StateBundle::new(ClientType::Lazer, 11, Arc::new(EchoCalculation));
     let mut active_score = score(0, 50);

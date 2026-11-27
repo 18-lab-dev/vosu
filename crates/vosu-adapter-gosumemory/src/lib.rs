@@ -51,7 +51,7 @@ fn build_with<'a, V: From<&'a [f64]>>(v: &'a View) -> Result<Response<V>, Error>
             show_interface: v.interface_visible,
             folders: Folders {
                 game: game_folder(v).into(),
-                skin: v.paths.skin_folder.clone().unwrap_or_default(),
+                skin: skin_folder(v).into(),
                 songs: songs_folder(v).into(),
             },
         },
@@ -236,6 +236,9 @@ fn game_folder(v: &View) -> &str {
         .and_then(|p| p.game.as_deref())
         .or_else(|| v.paths.lazer.as_ref().and_then(|p| p.data.as_deref()))
         .unwrap_or("")
+}
+fn skin_folder(v: &View) -> &str {
+    vosu_adapter_support::skin_folder(v.client == "lazer", v.paths.skin_folder.as_deref())
 }
 fn songs_folder(v: &View) -> &str {
     v.paths

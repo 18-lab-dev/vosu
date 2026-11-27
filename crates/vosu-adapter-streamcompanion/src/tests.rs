@@ -153,6 +153,44 @@ fn flat_tokens_embedded_documents_and_extensions() {
     assert_eq!(wire["convertedUnstableRate"], 102.13);
 }
 #[test]
+fn lazer_empty_skin_and_initial_play_estimate_match_both_encoders() {
+    let mut capture = fixture();
+    capture.session.as_mut().unwrap().variant = "lazer".into();
+    let index = capture
+        .values
+        .iter()
+        .position(|e| e.pointer == "/beatmap")
+        .unwrap();
+    let mut beatmap: Value = capture.values[index]
+        .value
+        .as_ref()
+        .unwrap()
+        .deserialized()
+        .unwrap();
+    beatmap["time"]["firstHitObject"] = json!(1234);
+    replace(&mut capture, "/beatmap", beatmap);
+    replace(&mut capture, "/beatmap/time/live", json!(100.0));
+    replace(
+        &mut capture,
+        "/internal/paths",
+        json!({"current":null,"skinFolder":""}),
+    );
+    replace(
+        &mut capture,
+        "/play/pp",
+        json!({
+            "current":0.0,"fc":0.0,"detailed":{"current":{"accuracy":0.0,"aim":0.0,"speed":0.0,"difficulty":0.0}}
+        }),
+    );
+    let view = view::View::decode(capture).unwrap();
+    let wire = parity(&view, None);
+    assert_eq!(wire["ppIfRestFced"], 100.01);
+    assert_eq!(wire["noChokePp"], 100.01);
+    assert_eq!(wire["skin"], ".");
+    assert_eq!(wire["skinPath"], ".");
+}
+
+#[test]
 fn chart_raw_bpm_range_equal_and_timing_quirks() {
     let view = view::View::decode(fixture()).unwrap();
     let mut chart = chart::ChartFacts::default();

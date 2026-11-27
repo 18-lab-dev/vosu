@@ -335,24 +335,17 @@ pub struct FileResponsePlan {
     pub content_length: u64,
     pub accept_ranges: Option<&'static str>,
     pub content_range: Option<String>,
-    pub content_type: &'static str,
 }
 
 pub fn plan_file_response(
     target: &FileTarget,
     range_header: Option<&str>,
 ) -> Result<FileResponsePlan, RangeError> {
-    plan_response(
-        target.length,
-        target.content_type,
-        target.range_eligible,
-        range_header,
-    )
+    plan_response(target.length, target.range_eligible, range_header)
 }
 
 pub fn plan_response(
     length: u64,
-    content_type: &'static str,
     range_eligible: bool,
     range_header: Option<&str>,
 ) -> Result<FileResponsePlan, RangeError> {
@@ -364,7 +357,6 @@ pub fn plan_response(
             content_length: length,
             accept_ranges: range_eligible.then_some("bytes"),
             content_range: None,
-            content_type,
         }),
         ByteRange::Partial {
             start,
@@ -375,7 +367,6 @@ pub fn plan_response(
             content_length: end_inclusive - start + 1,
             accept_ranges: Some("bytes"),
             content_range: Some(format!("bytes {start}-{end_inclusive}/{length}")),
-            content_type,
         }),
     }
 }
