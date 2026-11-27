@@ -199,16 +199,11 @@ cargo test --locked --test performance_invariants --test runtime_wakeups
 None of these commands was run by A5. Record results only from an approved
 exclusive schedule.
 
-### M5 P1 candidate result and Windows bar (approved 2026-11-25)
+### M5 P1 exploratory candidate result
 
-**Main approved the proposal below on 2026-11-25 under A5.6.** The
-measurements stay the exploratory candidate result: other agents shared the
-CPUs and the VM, so they are not D17 evidence. The approved bar gates a later
-exclusive run of the production variants. The full method, every table and
-the contention record are in
-[brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result),
-with the accepted method deviations. The production variants now exist; see
-[the next section](#m5-p1-production-arm-and-x1-process-runtime-data-exploratory).
+These candidate runs shared the CPUs and VM; they do not decide D17. See
+[brokered reads](../v2/brokered-reads.md#windows-transport-candidates-m5-p1-candidate-result)
+for the candidate method, historical Windows rounds and contention record.
 
 The `brokered_reads_bench` runner now runs on Linux and Windows:
 
@@ -235,43 +230,262 @@ taskset -c 0-7,16-23 target/release/deps/brokered_reads_bench-HASH --bench --rou
 cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\brokered_reads_bench-HASH.exe --bench --round N
 ```
 
-Medians of five rounds on `a63a0bb`, in µs:
+Exploratory Linux medians of five rounds on `a63a0bb`, in µs:
 
 | Platform | Shape | `direct` p50 | Candidate p50 (p99) | Reference p50 | Ratio |
 |---|---|---:|---:|---:|---:|
 | Linux | precise | 7.59 | `ring` 14.56 (41.06) | `shm` 11.25 | 1.297 |
 | Linux | regular | 3.67 | `ring` 9.39 (20.33) | `shm` 6.85 | 1.383 |
-| Windows, set C | precise | 16.10 | `pipe` 89.80 (314.30) | `section` 80.50 | 1.256 |
-| Windows, set C | regular | 5.60 | `pipe` 71.80 (303.10) | `section` 65.00 | 1.058 |
 
-Across three Windows sets of five paired rounds, `pipe` was never lower in
-all five rounds; it was lower in 0, 1 or 2 of them. Its median p50 was 3–26%
-above `section`. Criterion's 95% intervals for set C do not overlap, with the
-pipe higher. Every result hash matched.
+### Windows official results (2026-11-26, `ad724666`)
 
-**Approved (2026-11-25):**
+Native Windows 11 Pro MSVC on the exclusive agent VM (16 vCPUs on the
+9950X3D non-V-cache CCD), Rust 1.96.1, locked release/bench builds with
+`--no-default-features` and the `win-x64` offset bundle. Exact source
+`ad724666ab3212313bfd1f617fed73b6b524ad76` was staged by verified Git bundle;
+the build and evidence trees were private to this revision. The target
+and plugin hosts inherited `/AFFINITY FFFF` (CPUs 0–15). All five paired
+rounds were accepted on attempt 1: the respective maximum
+`load_other_busy_cpus` readings were 0.729, 0.521, 0.513, 0.614 and 0.415.
+Raw logs, binary hashes, estimates and live receipts are in
+`evidence/d17/windows-ad724666/` in the vecosystem evidence tree.
 
-- **Windows transport.** The unnamed section and events stay the production
-  transport. The pipe fails the frozen tie rule and stays measurement-only.
-- **Windows bar.** For each shape, the median over five paired rounds of
-  `production_sync p50 / section p50`, from the same invocation, is at most
-  2.0. A gated run holds the VM exclusively, uses the 16-vCPU
-  `/AFFINITY FFFF` launcher with child affinity verified, records
-  `load_other_busy_cpus`, and reruns any round in which other work kept 2 or
-  more CPUs busy.
-- **Windows reference.** 167.2 µs for precise and 129.7 µs for regular are
-  reported alongside the gate and do not gate. They are twice the median
-  `section` p50 over the eight quiet rounds (83.6 µs and 64.9 µs).
+**Broker gate: PASS for both shapes.** Per the approved 2026-11-25 Windows
+bar, the median of the five *paired* `production_sync p50 / section p50`
+ratios must be at most 2.0. Brackets here and in the latency table are
+95% percentile bootstrap intervals across the five round values.
 
-Contention moved the absolute Windows numbers by up to 6×: in one busy round
-`section` had a regular-shape p50 of 11.2 µs, most likely (an inference, not
-profiled) because the busy guest avoided waking halted vCPUs.
-That is why only the same-run ratio is the gate.
+| Shape | Paired ratio, median [95%] | Historical reference, µs (not gated) | Verdict |
+|---|---:|---:|---|
+| Precise | 1.738 [1.509, 1.768] | 167.2 | PASS |
+| Regular | 1.817 [1.712, 2.028] | 129.7 | PASS |
+
+Regular round 2 reached 2.028×; the frozen gate is on the median, not
+each round or the upper confidence limit. The historical references are
+2× the earlier quiet `section` p50 medians (83.6 and 64.9 µs).
+
+| Shape | Variant | p50, µs [95%] | p99, µs [95%] |
+|---|---|---:|---:|
+| Precise | `direct` | 13.1 [12.9, 16.5] | 32.8 [31.3, 34.5] |
+| Precise | `section` | 77.2 [72.6, 82.2] | 229.6 [183.0, 737.0] |
+| Precise | `pipe` | 82.3 [76.4, 83.2] | 250.8 [232.6, 305.2] |
+| Precise | `production_sync` | 129.3 [124.0, 136.5] | 883.1 [746.2, 1,230.7] |
+| Precise | `production_async` | 300.4 [264.1, 323.8] | 1,774.0 [1,607.1, 2,085.4] |
+| Regular | `direct` | 4.4 [4.3, 5.8] | 11.6 [10.8, 39.2] |
+| Regular | `section` | 61.5 [59.9, 63.4] | 232.7 [205.8, 251.0] |
+| Regular | `pipe` | 63.8 [60.4, 71.8] | 242.2 [212.0, 967.9] |
+| Regular | `production_sync` | 111.0 [105.9, 122.9] | 625.7 [420.4, 1,904.2] |
+| Regular | `production_async` | 202.3 [193.2, 213.0] | 1,457.2 [1,310.3, 2,059.2] |
+
+Every variant matched `direct`'s result SHA-256 in all rounds with the
+frozen 43/8 reads and 358/116 bytes. The brokered variants made one
+submission each. The prototypes carried 2 wire / 0 control frames; both
+production variants carried 4 wire / 2 control frames. Async is not a
+performance gate. Median sync allocations per sample were 2.27 precise
+and 1.21 regular, compared with 305.59 and 70.41 for async. Production
+copy and clock-read counts were unmeasured; CPU, wakeups and Criterion
+estimates are in the raw logs.
+
+Cold spawn-to-`READY` p50/p99 in ms: `section` 16.1 [15.3, 20.0] /
+22.2 [21.0, 31.7]; `pipe` 14.5 [14.1, 15.5] / 20.5 [19.1, 22.0];
+production 25.1 [24.1, 26.0] / 44.4 [40.9, 56.9].
+**Transport decision: keep the unnamed section and events.** Pipe won
+only 1/5 precise and 2/5 regular paired p50 comparisons; its median paired
+change was 7.5% and 3.5% slower respectively. Equal hashes alone do not
+meet the pipe adoption rule.
+
+**Process-runtime fixture data (not a gate).** All four `plan_memory`
+cases matched the bundled plan digest before timing. Counts are per
+capture over the 16-capture census; the brackets are Criterion median
+95% intervals from the official fixture run.
+
+| `plan_memory/` case | Median, µs [95%] | Submissions | Stages | Reads | Bytes | Wire | Control | Local scans |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `stable_precise_process` | 144.6 [136.7, 151.8] | 1 | 1 | 2 | 8 | 4 | 2 | 0 |
+| `lazer_precise_process` | 1,269.2 [1,223.4, 1,309.4] | 8 | 17 | 51 | 1,840 | 32 | 16 | 0 |
+| `stable_regular_fields_process` | 2,125.8 [1,990.7, 2,230.7] | 13 | 15 | 56 | 4,324 | 52 | 26 | 0 |
+| `lazer_regular_fields_process` | 1,135.5 [1,111.3, 1,184.3] | 7 | 7 | 7 | 56 | 28 | 14 | 6 |
+
+Lazer regular still uses the zero/not-ready fixture, not a populated
+gameplay capture.
+
+**Live process-runtime data (not a gate).** Stable `b20261118.1` and lazer
+`2026.1117.0` ran as offline guests, one at a time in session 1. Each
+accepted attached profile restarted its client's Autoplay replay of the
+same 240-circle, 120 BPM synthetic `vosu D17 Replay` chart at the
+beginning. The stable version is verified by the adapter reader; the
+process-runtime receipt leaves that field blank. The attached rows used
+the actual game PIDs, `--warmup 5 --cycles 20`, and inherited CPU affinity.
+All ticks in the measured lanes were ready, with no capture errors.
+
+Lane cells give mean capture-thread CPU ms / wall ms / million CPU cycles
+per tick, with completed ticks in parentheses. These are one observed
+window per profile, not confidence intervals. Zero CPU ms is possible
+with Windows' coarse time accounting, even with nonzero executed cycles.
+Ring columns are whole-window totals, including both lanes and shared
+dispatch and publication traffic; the runner cannot split them by lane.
+
+| Client | Profile | Regular CPU / wall / cycles (ticks) | Precise CPU / wall / cycles (ticks) | Wire / control frames |
+|---|---|---:|---:|---:|
+| Stable | `no_client` | 0.000 / 4.278 / 2.464 (20) | 0.872 / 3.741 / 2.140 (215) | 17,844 / 9,022 |
+| Stable | `subscribed_precise` | 0.781 / 3.776 / 2.201 (20) | 0.300 / 2.779 / 1.906 (676) | 52,382 / 26,516 |
+| Stable | `contention` | 0.000 / 4.062 / 2.344 (20) | 0.315 / 2.397 / 2.107 (745) | 57,594 / 29,162 |
+| Stable | `delayed_dispatch` | 0.000 / 3.105 / 2.213 (20) | 0.432 / 2.301 / 1.839 (760) | 58,752 / 29,747 |
+| Stable | `full_stream` | 0.000 / 3.396 / 2.144 (20) | 0.355 / 2.315 / 1.838 (748) | 57,874 / 29,302 |
+| Lazer | `no_client` | 7.031 / 20.328 / 22.833 (20) | 0.289 / 2.233 / 1.219 (270) | 17,748 / 9,000 |
+| Lazer | `subscribed_precise` | 2.344 / 15.149 / 9.330 (20) | 0.215 / 1.832 / 1.031 (943) | 43,341 / 22,026 |
+| Lazer | `contention` | 0.000 / 13.786 / 9.390 (20) | 0.274 / 1.534 / 1.046 (1,025) | 46,459 / 23,609 |
+| Lazer | `delayed_dispatch` | 5.469 / 24.820 / 18.625 (20) | 0.294 / 2.404 / 1.164 (850) | 39,903 / 20,286 |
+| Lazer | `full_stream` | 1.562 / 16.296 / 17.865 (20) | 0.240 / 1.425 / 0.971 (1,041) | 46,977 / 23,867 |
+
+Mean `submissions / stages / reads / bytes` per tick across these profiles:
+stable regular 20–21 / 26–27 / 190–191 / 13,796–14,172;
+stable precise 18.01–18.03 / 18.01–18.03 / 27.01–27.03 / 140.03–140.11;
+lazer regular 88 / 92 / 236 / 9,231;
+lazer precise 9.02–9.08 / 17.02–17.08 / 21.02–21.08 / 1,248.23–1,249.04.
+Per-profile totals are in the receipts. The contender completed 28,213
+stable-window and 22,480 lazer-window reads. Dispatch stayed held in
+both requested profiles per client, and each full stream proved at
+least 61,366,248 bytes queued (91.44% of the 64 MiB budget) and drained.
+`idle_host` measured 0 reported process CPU ns over 5.015 s, with two
+receipts from the same unattached child and zero capture ticks.
+
+The temporary Defender exclusion, firewall rules, tasks and private
+guest stage were removed after collecting the evidence. The Windows
+result does not decide the separate Linux or bundled baseline
+comparisons below.
+
+### Linux official results (2026-11-27, `ad724666`)
+
+**Method deviation (owner-approved):** the entire Linux measurement set ran
+inside the pinned Arch Linux guest VM (`vosu-gaming.service`, kernel
+`7.2.11-zen1-1-zen`, 4 physical cores / 8 vCPUs pinned 1:1 to host V-cache
+CPUs `4-7,20-23`, host quiet), with both comparison arms in the same guest.
+Rust 1.96.1, locked release/bench builds with default features
+(`linux-process-events`) and the `linux-x64` offset bundle. Exact revisions
+were staged from `ad724666.bundle` with independent target and Criterion
+directories: candidate `ad724666`, M4a `49e95cf`, pre-M7 `33f957de`, and
+pre-M0 `3a91ff95`. Raw logs, binary hashes, host/guest quiet snapshots and
+receipts are in `evidence/d17/linux-ad724666/` in the vecosystem evidence
+tree.
+
+Two additional baseline-harness deviations are recorded:
+
+- Exact M4a `49e95cf` could not compile or run `state_bus_bench` unmodified
+  (`SchemaRegistry::register` E0599 in `benches/state_bus_bench.rs:83` and
+  `action_schemas: &[]` in `benches/support/api_e2e.rs:27`). An untimed
+  setup-only patch (`evidence/d17/linux-ad724666/m4a-baseline-setup.patch`)
+  was applied only in the disposable `m4a` checkout; zero timed code changed.
+- `per-m7` hit a pre-existing ephemeral-port bind collision in
+  `benches/support/m7_e2e.rs:97` (`Hosts::start`) when back-to-back `m7_*`
+  benchmarks ran in one invocation. The eight `per-m7` cases were run as four
+  paired 5-round `bench-compare.py` invocations (`per-m7-bus-adapter`,
+  `per-m7-idle`, `per-m7-dash`, `per-m7-tool`) using the exact same immutable
+  binaries on isolated physical core `[6, 7]`.
+
+**Invariants: PASS.** `performance_invariants` passed 20/20 and
+`runtime_wakeups` passed 4/4 (1 manual test ignored). All broker correctness
+hashes and `--test` case checks passed before timing.
+
+**Broker gate: FAIL for both shapes in the pinned VM.** All five rounds ran
+on guest CPUs `0-7` and were accepted on attempt 1 (maximum
+`load_other_busy_cpus`: 1.528, 1.431, 1.479, 1.386, 1.445). Brackets are 95%
+exact empirical bootstrap intervals across the five rounds.
+
+| Shape | Paired ratio `production_sync / shm`, median [95%] | Historical reference, µs (not gated) | Verdict |
+|---|---:|---:|---|
+| Precise | 2.107 [1.857, 2.203] | 21.540 | **FAIL** |
+| Regular | 2.385 [2.181, 2.462] | 13.126 | **FAIL** |
+
+| Shape | Variant | p50, µs [95%] | p99, µs [95%] |
+|---|---|---:|---:|
+| Precise | `direct` | 4.25 [4.23, 4.28] | 14.61 [12.88, 19.81] |
+| Precise | `uds` | 30.20 [29.79, 32.66] | 90.43 [83.66, 135.15] |
+| Precise | `shm` | 23.16 [22.65, 26.84] | 86.78 [56.17, 115.58] |
+| Precise | `naive` | 1,028.13 [1,021.52, 1,053.62] | 1,534.92 [1,366.30, 1,872.35] |
+| Precise | `ring` | 29.29 [27.93, 30.98] | 95.29 [88.86, 122.98] |
+| Precise | `production_sync` | 49.90 [48.80, 50.33] | 142.11 [138.58, 198.03] |
+| Precise | `production_async` | 97.48 [96.25, 98.10] | 541.97 [229.39, 748.95] |
+| Regular | `direct` | 1.65 [1.64, 1.74] | 2.98 [2.60, 3.92] |
+| Regular | `uds` | 25.02 [24.79, 26.58] | 54.93 [48.15, 113.76] |
+| Regular | `shm` | 18.88 [18.20, 20.44] | 73.38 [39.79, 86.18] |
+| Regular | `naive` | 185.51 [184.83, 187.22] | 308.78 [303.54, 341.82] |
+| Regular | `ring` | 22.49 [22.01, 23.04] | 52.32 [49.31, 79.36] |
+| Regular | `production_sync` | 44.58 [43.69, 45.33] | 151.21 [126.94, 430.77] |
+| Regular | `production_async` | 76.96 [75.20, 77.68] | 493.70 [188.87, 539.21] |
+
+Every variant matched `direct`'s result SHA-256 in all rounds with the frozen
+43/8 reads and 358/116 bytes, 1 round trip, 4 wire / 2 control frames for
+both production variants, and median 1.03 allocations / 4.21 (precise) and
+4.19 (regular) wakeups for `production_sync` (305.03 / 70.03 allocations and
+9.41 / 9.29 wakeups for `production_async`). Cold spawn-to-`READY` p50/p99
+in ms: `ring` 0.77 [0.72, 0.83] / 1.09 [1.00, 2.24]; production 3.08
+[3.06, 3.12] / 4.89 [3.61, 6.19]. Note that KVM cross-vCPU wakeup overhead
+inflated the 4-hop `production_sync` path more than 2-hop `shm` relative to
+the bare-metal exploratory run (`1.46×`/`1.71×` at `201afe10`), but this gate
+remains **FAIL / OPEN** and is not waived.
+
+**Process-runtime fixture data (not a gate).** All four `plan_memory` cases
+matched the bundled plan digest before timing (guest CPUs `0-7`, Criterion
+median 95% intervals):
+
+| `plan_memory/` case | Median, µs [95%] | Submissions | Stages | Reads | Bytes | Wire | Control | Local scans |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `stable_precise_process` | 42.92 [42.64, 43.13] | 1 | 1 | 2 | 8 | 4 | 2 | 0 |
+| `lazer_precise_process` | 890.17 [883.97, 900.39] | 21 | 26 | 60 | 912 | 84 | 42 | 0 |
+| `stable_regular_fields_process` | 566.62 [564.11, 574.03] | 13 | 15 | 56 | 4,324 | 52 | 26 | 0 |
+| `lazer_regular_fields_process` | 336.58 [329.61, 344.93] | 7 | 7 | 7 | 56 | 28 | 14 | 6 |
+
+**Live process-runtime data (Linux lazer `2026.1117.0`, not a gate).**
+Private offline AppImage under headless Gamescope (CPUs `0-5`), Yama
+`ptrace_scope = 1`, explicit `CAP_SYS_PTRACE` only on the reader launch,
+pinned to CPU `6` (`affinity: [6]`), `--warmup 5 --cycles 20` on the same
+synthetic `vosu D17 Replay` chart in Autoplay, 0 capture errors and all
+measured ticks ready:
+
+| Profile | Regular CPU / wall ms (ticks) | Precise CPU / wall ms (ticks) | Wire / control frames |
+|---|---:|---:|---:|
+| `no_client` | 0.255 / 0.892 (20) | 0.088 / 0.383 (289) | 32,791 / 16,522 |
+| `subscribed_precise` | 0.215 / 0.836 (20) | 0.076 / 0.303 (2,179) | 215,643 / 108,170 |
+| `contention` | 0.223 / 1.497 (20) | 0.073 / 0.531 (1,887) | 187,511 / 94,103 |
+| `delayed_dispatch` | 0.212 / 0.812 (20) | 0.077 / 0.310 (2,185) | 216,126 / 108,414 |
+| `full_stream` | 0.201 / 0.881 (20) | 0.073 / 0.301 (2,151) | 212,808 / 106,746 |
+
+Mean `submissions / stages / reads / bytes` per tick: lazer regular
+50–51 / 54–55 / 198–199 / 8,423–8,643; lazer precise 24.01–24.06 /
+28.01–28.06 / 32.01–32.06 / 328.1–328.8. Contention completed 270,262
+contender reads; dispatch stayed held in `delayed_dispatch` and `full_stream`;
+`full_stream` queued at least 61,366,248 bytes (91.44% of the 64 MiB budget)
+and drained. `idle_host` measured 95,449 ns process CPU over 5.000 s
+(`affinity: [6]`, 2 receipts, 0 capture ticks).
+
+**Bundled M5 comparisons (`memory_reader_bench`, `plan_memory/*`, `end_to_end/*`).**
+Measured on isolated physical core `[6, 7]` (5 interleaved rounds).
+
+- **`memory_reader_bench`: PASS / inconclusive.** `memory_reader_ns`
+  10,628.7 ns (`-1.11%` vs `pre-m0`, `-0.94%` vs `m4a`, overlapping);
+  `stable_idle_ns` 311.9 ns (`-8.74%` vs `pre-m0` within bar, `-0.34%` vs
+  `m4a` overlapping); `stable_key_overlay_ns` 298.0 ns (`+3.29%` vs `pre-m0`
+  within bar, `+0.02%` vs `m4a` overlapping).
+- **`plan_memory/*` (`m4a` `49e95cf` → `ad724666`): PASS / inconclusive (0/11
+  failures).** Significant speedups on `floor_eighteen_independent_ops`
+  (`-14.88%`), `floor_fifty_six_independent_ops` (`-17.50%`), and
+  `lazer_regular_fields` (`-18.00%`); the other eight cases had overlapping
+  95% CIs (`-11.20%` to `+5.65%`).
+- **`end_to_end/*` (`m4a` `49e95cf` → `ad724666`): FAIL (3/3 regressions >10%
+  with non-overlapping 95% CIs).** All three were already present at pre-M7
+  `33f957de`:
+
+| Case | `m4a` `49e95cf`, µs [95%] | `ad724666`, µs [95%] | Delta | Verdict |
+|---|---:|---:|---:|---|
+| `end_to_end/bus` | 23.37 [23.28, 25.07] | 27.36 [26.92, 29.45] | +17.11% | **FAIL** |
+| `end_to_end/bus_precise` | 16.52 [16.36, 18.70] | 19.30 [19.00, 20.33] | +16.84% | **FAIL** |
+| `end_to_end/api_frame` | 14.24 [14.22, 14.94] | 16.83 [16.73, 19.95] | +18.21% | **FAIL** |
 
 ### M5 P1 production arm and X1 process-runtime data (exploratory)
 
-**No D17 pass is claimed; the official run is still pending.** The first
-production table below is the arm's first exploratory run, at `a5de65cb` plus
+The following Linux runs are exploratory and do not decide D17.
+The production table below is the arm's first exploratory run, at `a5de65cb` plus
 the chunked ring census of the commit after it (`cf17e6fc`); it missed the
 bar. The [broker performance work](#broker-performance-work-exploratory-same-session-ab)
 after it brought the same-session ratios under 2.0 in exploratory runs. All
@@ -713,6 +927,50 @@ the binaries, the test-mode case lists, environment, and both
 `summary.json` files. A short benchmark smoke proves nonzero work only;
 it does not close D17.
 
+### M7 Linux official results (2026-11-27, `ad724666`)
+
+Measured in the same pinned Linux VM window (`vosu-gaming.service`, isolated
+physical core `[6, 7]`, 5 interleaved rounds per comparison, independent
+target/Criterion directories; receipts in `evidence/d17/linux-ad724666/`).
+**Verdict: FAIL / OPEN** — two per-M7 `end_to_end/*` cases, three
+inherited `adapter/*` cases (against pre-M7 `33f957de`, the first available
+like-for-like baseline; the M3/pre-M0 adapter comparator remains
+unestablished), and cumulative `serializers_cold/v2` exceeded the +10%
+non-overlapping-CI bar.
+
+**Per-M7 `end_to_end/*` (`33f957de` → `ad724666`):**
+
+| Case | `pre-m7` `33f957de`, µs [95%] | `ad724666`, µs [95%] | Delta | Verdict |
+|---|---:|---:|---:|---|
+| `end_to_end/adapter` | 114.37 [113.66, 119.98] | 123.66 [122.68, 125.02] | +8.12% | within bar |
+| `end_to_end/adapter_precise` | 37.47 [37.29, 37.76] | 41.75 [39.77, 42.04] | +11.42% | **FAIL** |
+| `end_to_end/api_frame` | 16.71 [16.68, 17.53] | 16.69 [16.66, 16.85] | -0.15% | inconclusive |
+| `end_to_end/bus` | 28.75 [27.34, 29.05] | 27.37 [27.25, 28.88] | -4.80% | inconclusive |
+| `end_to_end/bus_precise` | 19.72 [18.85, 20.50] | 18.92 [18.80, 18.97] | -4.06% | inconclusive |
+| `end_to_end/m7_dashboard_subscription` | 2,072.72 [2,056.66, 2,084.52] | 2,066.57 [2,042.89, 2,092.09] | -0.30% | inconclusive |
+| `end_to_end/m7_idle_hosts` | 1.53 [1.52, 1.76] | 1.59 [1.56, 1.81] | +4.15% | inconclusive |
+| `end_to_end/m7_tool_action_progress` | 214.22 [212.80, 216.47] | 244.16 [242.90, 247.94] | +13.98% | **FAIL** |
+
+**Cumulative cold serializers (`pre-m0` `3a91ff95` → `ad724666`):**
+
+| Case | `pre-m0` `3a91ff95`, µs [95%] | `ad724666`, µs [95%] | Delta | Verdict |
+|---|---:|---:|---:|---|
+| `serializers_cold/v2` | 2.57 [2.54, 2.67] | 8.47 [8.44, 8.50] | +229.32% | **FAIL** |
+| `serializers_cold/v2_precise` | 0.96 [0.95, 1.10] | 0.23 [0.22, 0.24] | -76.02% | within bar |
+
+**Inherited `adapter/*` (`pre-m7` `33f957de` → `ad724666`):**
+
+| Case | `pre-m7` `33f957de`, µs [95%] | `ad724666`, µs [95%] | Delta | Verdict |
+|---|---:|---:|---:|---|
+| `adapter/filtered_clients` | 1,911.08 [1,902.89, 2,033.94] | 2,081.00 [2,057.30, 2,086.22] | +8.89% | within bar |
+| `adapter/focus_switch` | 414.98 [406.94, 482.09] | 457.36 [442.22, 475.01] | +10.21% | inconclusive |
+| `adapter/http_then_ws_cache` | 314.24 [310.18, 329.04] | 348.73 [344.30, 370.23] | +10.98% | **FAIL** |
+| `adapter/idle_no_clients` | 10.46 [10.41, 11.07] | 10.50 [10.43, 10.88] | +0.36% | inconclusive |
+| `adapter/plain_100_clients` | 9,550.78 [9,492.73, 9,997.01] | 10,791.26 [10,703.10, 11,016.25] | +12.99% | **FAIL** |
+| `adapter/sc_changed_chart` | 647.44 [645.94, 651.49] | 649.40 [635.82, 655.70] | +0.30% | inconclusive |
+| `adapter/sc_unchanged_chart` | 206.08 [204.52, 218.13] | 206.73 [195.02, 243.12] | +0.32% | inconclusive |
+| `adapter/slow_consumer` | 1,047.82 [1,042.83, 1,108.33] | 1,158.37 [1,154.24, 1,347.69] | +10.55% | **FAIL** (spread > delta) |
+
 ## M4a D17 contract
 
 A4 freezes the following exact future case names in `state_bus_bench`; this
@@ -776,6 +1034,11 @@ pass.** Two measurements decide it, and neither has run:
    `GetThreadTimes`, which charges whole ~15.6 ms scheduler ticks, so a
    per-tick median of a sub-millisecond stage reads 0 there. Use a mean
    over many ticks, or a finer thread clock, before comparing stages.
+
+The [official Windows live adapter rows](#m4a-windows-live-adapter-results)
+and [official Linux live adapter rows](#m4a-linux-live-adapter-results)
+were measured at the M5 head. The paired legacy M3/pre-M0 adapter comparison
+remains open.
 
 The exploratory numbers in the next section decide nothing. They also predate
 the exit merge with `v2/main`, which brought M1 L3's reader and read-plan
@@ -891,6 +1154,59 @@ target\release\examples\live_reader_bench.exe --pid <lazer-pid> --client lazer -
 Linux lazer: `cargo build --release --locked --example live_reader_bench`, then
 `target/release/examples/live_reader_bench --pid <pid> --client lazer --adapter`
 (add `--memory plan`). Each JSON result holds both lanes and both modes.
+
+### M4a Windows live adapter results
+
+Same native Windows window, exact `ad724666`, stable `b20261118.1` and
+lazer `2026.1117.0`. `--adapter` read native and PlanMemory paths in
+the main menu (state 0) and in Autoplay (state 2) on the synthetic
+`vosu D17 Replay` chart. There were no reported capture errors in the
+accepted rows. These are current-head live measurements, not a matched
+legacy or M4a-exit-revision comparison.
+
+All times are µs. CPU data are medians of nine 1,000-tick batch averages
+from `GetThreadTimes`. Stage order is read / reduce / projection / commit /
+surface view / encode. Stage medians need not sum to the total median.
+Frame cells report the median read-to-actual-hub-frame latency and
+the number of changed frames measured; `—` indicates no new frame.
+The harness reports min and max, not confidence intervals, and does
+not expose allocation, clock-read or wakeup counters in this mode.
+
+| Client | State / memory | Regular CPU | Regular stages | Regular frame | Precise CPU | Precise stages | Precise frame |
+|---|---|---:|---|---:|---:|---|---:|
+| Stable | Menu / native | 421.9 | 46.9/328.1/0/0/31.2/0 | 867.6 (5,417) | 15.6 | 0/0/0/0/0/0 | — (0) |
+| Stable | Menu / plan | 406.2 | 46.9/312.5/0/0/31.2/0 | 1,078.3 (6,220) | 15.6 | 0/0/0/0/15.6/0 | — (0) |
+| Stable | Play / native | 375.0 | 46.9/265.6/0/0/62.5/15.6 | 841.4 (6,418) | 31.2 | 31.2/0/0/0/0/0 | 154.6 (4) |
+| Stable | Play / plan | 390.6 | 62.5/250.0/0/0/62.5/15.6 | 882.2 (7,209) | 31.2 | 31.2/0/0/0/0/0 | 219.2 (4) |
+| Lazer | Menu / native | 390.6 | 46.9/296.9/0/0/31.2/0 | 887.3 (5,854) | 15.6 | 15.6/0/0/0/0/0 | — (0) |
+| Lazer | Menu / plan | 421.9 | 62.5/312.5/0/0/15.6/15.6 | 935.6 (6,803) | 15.6 | 15.6/0/0/0/0/0 | — (0) |
+| Lazer | Play / native | 390.6 | 31.2/328.1/0/0/15.6/0 | 912.5 (3,438) | 31.2 | 15.6/0/0/0/15.6/0 | 278.5 (6) |
+| Lazer | Play / plan | 406.2 | 62.5/328.1/0/0/31.2/0 | 959.4 (4,055) | 31.2 | 15.6/0/0/0/0/0 | 197.5 (6) |
+
+Zero stage charges and the four/six precise gameplay frames per row are
+not enough to assign a precise regression verdict. These measurements
+do not close the inherited M1 or M4a comparison gates.
+
+### M4a Linux live adapter results
+
+Same pinned Linux VM window (`vosu-gaming.service`, exact `ad724666`, native
+offline lazer `2026.1117.0`, reader pinned to CPU `6` with explicit
+`CAP_SYS_PTRACE`), main menu (state 0) and Autoplay (state 2) on `vosu D17
+Replay`, 0 capture errors. All times are µs; stage order is read / reduce /
+projection / commit / surface view / encode (medians of nine 1,000-tick
+batch averages). Frame cells report median read-to-hub-frame latency and
+changed-frame count.
+
+| Client | State / memory | Regular CPU | Regular stages | Regular frame | Precise CPU | Precise stages | Precise frame |
+|---|---|---:|---|---:|---:|---|---:|
+| Lazer | Menu / native | 195.1 | 47.1/20.2/3.6/2.5/95.4/25.1 | 595.0 (5,166) | 15.0 | 7.8/0.4/1.3/0.0/5.5/0.0 | — (0) |
+| Lazer | Menu / plan | 221.2 | 68.5/22.1/6.6/2.9/97.4/25.5 | 617.1 (5,062) | 18.1 | 10.8/0.5/1.2/0.0/5.4/0.0 | — (0) |
+| Lazer | Play / native | 165.1 | 50.1/19.9/1.4/1.3/84.1/7.1 | 535.8 (1,702) | 18.6 | 10.8/0.6/1.2/0.0/5.7/0.0 | 59.9 (3) |
+| Lazer | Play / plan | 176.3 | 64.9/19.5/1.3/1.2/82.1/7.2 | 602.2 (1,822) | 22.1 | 14.7/0.5/1.4/0.1/5.7/0.0 | — (0) |
+
+These are current-head live observations, not a matched M3/pre-M0 legacy
+comparison; the inherited M1 and M4a comparison gates stay open.
+
 ### streamCompanion HTTP chart wait bound (X0)
 
 HTTP-only `/json/sc` readers keep chart facts: releasing the last consumer no
