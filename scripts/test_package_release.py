@@ -97,6 +97,7 @@ class ReleaseLicenseTests(unittest.TestCase):
     def test_extra_duplicate_and_nested_entries_are_rejected(self):
         for entries in (
             [("vosu", b"fixture"), ("LICENSE", b"one"), ("README.md", b"extra")],
+            [("vosu", b"fixture"), ("LICENSE", b"one"), ("vosu_plugin.h", b"header")],
             [("vosu", b"fixture"), ("LICENSE", b"one"), ("LICENSE", b"two")],
             [("folder/vosu", b"fixture"), ("LICENSE", b"one")],
         ):
@@ -104,6 +105,15 @@ class ReleaseLicenseTests(unittest.TestCase):
                 self.write_archive(entries)
                 with self.assertRaisesRegex(ValueError, "exactly"):
                     release.verify_archive(self.archive, "linux", self.license)
+
+    def test_plugin_header_inside_windows_daemon_zip_is_rejected(self):
+        self.write_archive([
+            ("vosu.exe", b"fixture"),
+            ("LICENSE", self.license.read_bytes()),
+            ("vosu_plugin.h", b"/* must stay standalone */"),
+        ])
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            release.verify_archive(self.archive, "windows", self.license)
 
     def test_corrupt_executable_crc_is_rejected(self):
         self.write_archive([("vosu", b"fixture"), ("LICENSE", self.license.read_bytes())])
@@ -327,7 +337,7 @@ class DistributionReleaseTests(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, "no section"):
                 release.release_notes(tag, changelog, signed=False)
 
-    def test_release_set_requires_distribution_packages(self):
+    def test_release_set_requires_distribution_packages_and_plugin_header(self):
         import argparse
         for version in ("1.2.3", "2.0.0-alpha.1"):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
@@ -338,8 +348,13 @@ class DistributionReleaseTests(unittest.TestCase):
                 dist.mkdir()
                 license_path = root / "LICENSE"
                 license_path.write_bytes(b"explicit test fixture license")
+                header_path = root / "include" / "vosu_plugin.h"
+                header_path.parent.mkdir()
+                header_bytes = (REPOSITORY / "include" / "vosu_plugin.h").read_bytes()
+                header_path.write_bytes(header_bytes)
                 args = argparse.Namespace(tag=f"v{version}", manifest=manifest,
-                                          directory=dist, license=license_path)
+                                          directory=dist, license=license_path,
+                                          header=header_path)
                 for platform, executable in release.PLATFORM_EXECUTABLE.items():
                     with zipfile.ZipFile(dist / f"vosu-{platform}-v{version}.zip", "w") as archive:
                         archive.writestr(executable, b"explicit non-daemon fixture")
@@ -349,12 +364,22 @@ class DistributionReleaseTests(unittest.TestCase):
                 # package contents are exercised with real binaries, not fixtures.
                 for name in names:
                     (dist / name).write_bytes(b"explicit asset-name fixture")
+                (dist / release.PLUGIN_HEADER_ASSET).write_bytes(header_bytes)
                 release.verify_release_set(args)
-                for name in names:
+                for name in (*names, release.PLUGIN_HEADER_ASSET):
                     (dist / name).unlink()
                     with self.subTest(missing=name), self.assertRaises(ValueError):
                         release.verify_release_set(args)
-                    (dist / name).write_bytes(b"explicit asset-name fixture")
+                    (dist / name).write_bytes(
+                        header_bytes if name == release.PLUGIN_HEADER_ASSET else b"explicit asset-name fixture"
+                    )
+                # Modified standalone vosu_plugin.h fails SHA-256 verification.
+                tampered = bytearray(header_bytes)
+                tampered[-1] ^= 0x01
+                (dist / release.PLUGIN_HEADER_ASSET).write_bytes(bytes(tampered))
+                with self.assertRaisesRegex(ValueError, "sha256"):
+                    release.verify_release_set(args)
+                (dist / release.PLUGIN_HEADER_ASSET).write_bytes(header_bytes)
                 (dist / "unexpected").touch()
                 with self.assertRaises(ValueError):
                     release.verify_release_set(args)
@@ -364,6 +389,47 @@ class DistributionReleaseTests(unittest.TestCase):
                     (dist / names[0]).rename(dist / "vosu_2.0.0~alpha.1_amd64.deb")
                     with self.assertRaises(ValueError):
                         release.verify_release_set(args)
+
+    def test_package_header_cli_stages_exact_copy_and_keeps_daemon_zip_two_entry(self):
+        real_header = REPOSITORY / "include" / "vosu_plugin.h"
+        self.assertTrue(real_header.is_file())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "Cargo.toml"
+            manifest.write_text('[package]\nversion = "2.0.0"\n')
+            license_path = root / "LICENSE"
+            license_path.write_bytes(b"fixture license\n")
+            binary = root / "vosu"
+            binary.write_bytes(b"fixture binary")
+            dist = root / "dist"
+            subprocess.run(
+                [sys.executable, SPEC.origin, "--manifest", manifest, "package",
+                 "--platform", "linux", "--tag", "v2.0.0", "--binary", binary,
+                 "--license", license_path, "--output", dist],
+                check=True, capture_output=True, text=True,
+            )
+            with zipfile.ZipFile(dist / "vosu-linux-v2.0.0.zip") as archive:
+                self.assertEqual(set(archive.namelist()), {"vosu", "LICENSE"})
+                self.assertNotIn("vosu_plugin.h", archive.namelist())
+            result = subprocess.run(
+                [sys.executable, SPEC.origin, "--manifest", manifest, "package-header",
+                 "--tag", "v2.0.0", "--header", real_header, "--output", dist],
+                check=True, capture_output=True, text=True,
+            )
+            staged = dist / "vosu_plugin.h"
+            self.assertEqual(result.stdout.strip(), str(staged))
+            self.assertEqual(staged.read_bytes(), real_header.read_bytes())
+            self.assertEqual(
+                release.verify_plugin_header(staged, real_header),
+                release.sha256_bytes(real_header.read_bytes()),
+            )
+
+    def test_release_workflow_stages_verifies_and_uploads_standalone_plugin_header(self):
+        workflow = (REPOSITORY / ".github/workflows/release.yml").read_text()
+        self.assertIn("python scripts/package-release.py package-header", workflow)
+        self.assertIn("python scripts/package-release.py verify-set", workflow)
+        create = workflow[workflow.index("      - name: Create draft GitHub release\n"):]
+        self.assertIn("dist/vosu_plugin.h", create)
 
 
 class DevelopmentArchiveTests(unittest.TestCase):

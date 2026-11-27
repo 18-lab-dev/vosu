@@ -114,6 +114,12 @@ jobs:
       - name: Build and inspect distro packages
         run: python scripts/package-linux.py build --tag "$RELEASE_TAG" --binary target/x86_64-unknown-linux-gnu/release/vosu --output dist --nfpm /tmp/nfpm/nfpm
 
+      - name: Stage C plugin ABI header
+        run: >-
+          python scripts/package-release.py package-header
+          --tag "$RELEASE_TAG"
+          --output dist
+
       - name: Upload Linux release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -346,3 +352,4 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.pkg.tar.zst
+            dist/vosu_plugin.h
