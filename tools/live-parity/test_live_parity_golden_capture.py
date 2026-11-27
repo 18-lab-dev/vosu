@@ -475,7 +475,7 @@ class FakeTraversalTests(CaptureTestCase):
         crash_targets = {"crash_targets": ["/json%", "/json/v2%zz"]}
         client = FakeClient(self.state)
         capture = self.capture(scenario, client, self.config(scenario, source_options=crash_targets))
-        self.assertEqual(client.requests, ["menu", "no-client"])
+        self.assertEqual(client.requests, ["main-menu", "menu", "no-client"])
         transcript = self.transcript()
         # After every barrier and its cases; the second needs a relaunched, re-attested upstream.
         self.assertEqual([raw["case"] for raw in transcript["cases"]][-2:], list(self.CRASHING))
