@@ -146,6 +146,26 @@ fn golden_fixtures_replay_at_the_cargo_pin() {
 }
 
 #[test]
+fn precise_filter_goldens_replay_in_command_order() {
+    let fixture = fixture::discover(&repo_root().join("tests/fixtures/upstream"), &pin()).unwrap();
+    let Pinned::Present(fixture) = fixture else {
+        return;
+    };
+    let mut platform = fixture
+        .platforms
+        .into_iter()
+        .find(|platform| platform.name == "windows-lazer")
+        .expect("the pinned precise filter evidence is Windows-lazer");
+    platform
+        .cases
+        .retain(|case| case.id.starts_with("ws.v2-precise.filter."));
+    assert_eq!(platform.cases.len(), 5);
+    let observed = compare::observe(&platform).unwrap();
+    let report = compare::compare(&platform, &observed, &[]);
+    assert!(report.mismatches.is_empty(), "{:#?}", report.mismatches);
+}
+
+#[test]
 fn golden_excludes_only_the_terminal_client_initiated_normal_close() {
     let mut candidate = platform().clone();
     let mut close = super::fixture::ExpectedFrame {

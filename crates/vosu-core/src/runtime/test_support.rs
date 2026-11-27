@@ -72,6 +72,21 @@ impl TestProductionComposition {
             .capture_for_harness()
     }
 
+    /// Disable automatic state publication on this replay's schema hub.
+    /// Before opening sockets, obtain this handle and call it once per state
+    /// frame after the client has fenced its input on the real socket.
+    pub fn websocket_replay_tick(&self, schema: WebSocketSchema) -> impl Fn() + use<> {
+        let hubs = self.hubs.as_ref().expect("hubs started");
+        let hub = match schema {
+            WebSocketSchema::V1 => &hubs.v1,
+            WebSocketSchema::StreamCompanion => &hubs.stream_companion,
+            WebSocketSchema::V2 => &hubs.v2,
+            WebSocketSchema::V2Precise => &hubs.v2_precise,
+        };
+        let tick = hub.replay_tick();
+        move || tick.notify_one()
+    }
+
     pub async fn shutdown(mut self) {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             self.stop().await;

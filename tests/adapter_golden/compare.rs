@@ -16,7 +16,7 @@ use super::{
     payload_clock::{Delta, Scope},
     replay::Replay,
     routes::{self, RawResponse},
-    websocket::{self, Frame, Step},
+    websocket::{self, Frame},
 };
 use std::{
     borrow::Cow,
@@ -204,6 +204,7 @@ pub(super) fn observe_with_rules(
                 platform.name, platform.cases[members[0]].id
             )
         })?;
+        replay.enable_stepped_websockets();
         let roots: Vec<(String, String)> = replay
             .roots()
             .iter()
@@ -263,18 +264,19 @@ fn case(
         );
     }
     let (response, frames) = if let Some(expected) = expected_frames(case, sequence) {
-        let steps: Vec<Step> = expected
-            .iter()
-            .map(|frame| match frame.from_server {
-                true => Step::Receive,
-                false => Step::Send {
-                    fin: frame.fin,
-                    opcode: frame.opcode,
-                    payload: frame.payload.clone(),
-                },
-            })
-            .collect();
-        let exchange = websocket::exchange(replay.address, request.as_bytes(), &steps)?;
+        let tick = replay.websocket_tick(divergence::route(case));
+        let exchange = websocket::replay(
+            replay.address,
+            request.as_bytes(),
+            expected,
+            tick.as_ref().map(|tick| tick as &dyn Fn()),
+        )?;
+        if exchange.pre_fence_text != 0 {
+            eprintln!(
+                "adapter_golden {} {}: filter fence discarded {} pre-pong text frame(s)",
+                platform.name, case.id, exchange.pre_fence_text
+            );
+        }
         (exchange.handshake, exchange.frames)
     } else {
         (

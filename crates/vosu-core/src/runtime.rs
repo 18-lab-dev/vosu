@@ -3,6 +3,15 @@
 //! This module deliberately owns process-wide resources so `main` remains a
 //! thin argument/exit-code adapter. The executable injects its bundled set as
 //! one [`Bundle`]; core composes it without naming any bundled crate.
+#![cfg_attr(
+    not(feature = "test-harness"),
+    doc = "
+Normal builds cannot obtain the test-harness-only WebSocket replay clock:
+```compile_fail,E0432
+use vosu_core::runtime::TestProductionComposition;
+let _ = TestProductionComposition::websocket_replay_tick;
+```"
+)]
 
 use std::{
     env,

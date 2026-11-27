@@ -218,6 +218,24 @@ impl Replay {
         self.composition.as_ref().expect("live replay composition")
     }
 
+    pub fn enable_stepped_websockets(&self) {
+        // Even a handshake-only case can briefly register a feed client.
+        // Arm every hub before executing the first request in this replay.
+        for schema in [
+            Schema::V1,
+            Schema::StreamCompanion,
+            Schema::V2,
+            Schema::V2Precise,
+        ] {
+            drop(self.composition().websocket_replay_tick(schema));
+        }
+    }
+
+    pub fn websocket_tick(&self, route: &str) -> Option<impl Fn() + use<>> {
+        let schema = vosu_core::server::websocket::Endpoint::classify(route)?.schema()?;
+        Some(self.composition().websocket_replay_tick(schema))
+    }
+
     /// Waits for derived work to reach the recorded status, then checks the
     /// provider's own dump against the recording.
     fn settle(&self, envelope: &Envelope) -> Result<(), String> {

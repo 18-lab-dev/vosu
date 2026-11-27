@@ -408,7 +408,8 @@ fn exchange(replay: &Replay, def: &Def) -> Value {
     };
     match &def.steps {
         Some(steps) => {
-            let done = websocket::exchange(replay.address, request.as_bytes(), steps).unwrap();
+            let done =
+                websocket::exchange(replay.address, request.as_bytes(), steps, None).unwrap();
             record(&request, &done.handshake, Some(&done.frames))
         }
         None => record(

@@ -400,6 +400,8 @@ struct HubInner {
     /// `run`; see `wake_writable`.
     writable_pending: AtomicBool,
     shutdown: CancellationToken,
+    #[cfg(feature = "test-harness")]
+    replay_tick: std::sync::OnceLock<Arc<Notify>>,
 }
 
 #[derive(Clone)]
@@ -460,6 +462,21 @@ impl WebSocketHub {
             writable,
             writable_pending: AtomicBool::new(false),
             shutdown: CancellationToken::new(),
+            #[cfg(feature = "test-harness")]
+            replay_tick: std::sync::OnceLock::new(),
+        }))
+    }
+
+    /// Select a manually stepped cadence before any replay socket connects.
+    #[cfg(feature = "test-harness")]
+    pub(crate) fn replay_tick(&self) -> Arc<Notify> {
+        Arc::clone(self.0.replay_tick.get_or_init(|| {
+            assert_eq!(
+                self.client_count(),
+                0,
+                "set replay cadence before connecting"
+            );
+            Arc::new(Notify::new())
         }))
     }
 
@@ -657,8 +674,47 @@ impl WebSocketHub {
                 break;
             }
 
+            #[cfg(feature = "test-harness")]
+            let manual_cadence = if let Some(tick) = self.0.replay_tick.get() {
+                if !force_delivery {
+                    tokio::select! {
+                        _ = self.0.shutdown.cancelled() => break,
+                        _ = tick.notified() => {}
+                    }
+                }
+                // A replay tick does not require a changed snapshot, for
+                // example after an invalid filter leaves the old plan intact.
+                force_delivery = true;
+                only_new_generation = false;
+                generation_ceiling = None;
+                true
+            } else {
+                false
+            };
+
             let clients = self.0.clients.load_full();
             let has_state_clients = clients.values().any(|client| client.publishes_state);
+
+            // If a writer still owns a preceding state frame, keep this
+            // explicit tick pending until that write finishes or it leaves.
+            #[cfg(feature = "test-harness")]
+            if manual_cadence
+                && clients.values().any(|client| {
+                    client.publishes_state && client.state.load(Ordering::Acquire) == CLIENT_PENDING
+                })
+            {
+                tokio::select! {
+                    _ = self.0.shutdown.cancelled() => break,
+                    changed = writable.changed() => {
+                        if changed.is_err() { break; }
+                        self.writable_consumed();
+                    },
+                    changed = local_wake.changed() => {
+                        if changed.is_err() { break; }
+                    },
+                }
+                continue;
+            }
             let has_writable = clients.values().any(|client| {
                 client.publishes_state && client.state.load(Ordering::Acquire) == CLIENT_OPEN
             });

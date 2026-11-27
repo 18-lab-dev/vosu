@@ -250,6 +250,18 @@ filtered-feed cases send exact legacy filter messages and record the
 resulting frame. Full feed sequences, normal close and slow-reader behavior
 are raw diagnostics, not payload goldens.
 
+During replay, an ordered ping fences preceding input on the same socket.
+The matching pong is not a publication fence by itself: a priority control
+reply can overtake a state frame already queued under the old filter. The
+real listener therefore uses a test-harness-only stepped state cadence:
+automatic publication is off on the replay hub, and the matching pong
+permits one publication through the ordinary provider, filter and writer.
+Replay counts and reports complete text frames received before the pong as
+pre-fence transport. The injected ping and its exact matching pong(s) are
+not captured frames; the next frame is compared in full without consulting
+its payload to select it. The production cadence and wire protocol do not
+change.
+
 vosu_core::server
 
 Raw HTTP records keep request bytes, status line, ordered raw headers and body
