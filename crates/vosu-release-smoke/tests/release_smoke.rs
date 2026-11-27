@@ -5,14 +5,19 @@
 
 use std::{
     fs,
-    net::{Ipv4Addr, SocketAddrV4, TcpListener},
+    io::{Read as _, Write as _},
+    net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::Command,
     time::{Duration, Instant},
 };
 use vosu_proptest::bounded;
 
 use tempfile::TempDir;
+
+#[path = "release_smoke/process.rs"]
+mod process;
+use process::{shutdown_and_verify_no_orphans, spawn_release_daemon};
 
 /// The test-harness adapter capture endpoint (GOLDEN_CONTRACT.md §5), which
 /// `build.rs` keeps out of every release build.
@@ -20,6 +25,22 @@ const HARNESS_PATH: &str = "/__vosu_test/v1/adapter-capture?schema=v2";
 const HARNESS_HEADER: &str = "x-vosu-test-capture";
 const HARNESS_CAPABILITY_ENV: &str = "VOSU_TEST_ADAPTER_CAPTURE";
 const HARNESS_CAPABILITY: &str = "3e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f";
+
+/// Exact production bundled plugin set (vosu 2.0); `vosu.testkit.echo` must
+/// never appear in a production release binary.
+const EXPECTED_BUNDLED_PLUGIN_IDS: [&str; 7] = [
+    "vosu.osu",
+    "vosu.adapter.upstream",
+    "vosu.adapter.gosumemory",
+    "vosu.adapter.streamcompanion",
+    "vosu.dashboard",
+    "vosu.overlayhost",
+    "vosu.toolhost",
+];
+
+/// `vosu plugin-host` exit status when invoked without valid bootstrap args
+/// (`vosu_core::plugin::process::control::EXIT_ARGUMENTS`).
+const PLUGIN_HOST_EXIT_ARGUMENTS: i32 = 70;
 
 fn assert_no_test_harness_endpoint(executable: &[u8]) {
     for marker in ["/__vosu_test/", HARNESS_HEADER, HARNESS_CAPABILITY_ENV] {
@@ -32,16 +53,6 @@ fn assert_no_test_harness_endpoint(executable: &[u8]) {
     }
 }
 
-struct ChildGuard(Option<Child>);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(child) = self.0.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
 fn available_port() -> u16 {
     TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
         .unwrap()
@@ -50,17 +61,24 @@ fn available_port() -> u16 {
         .port()
 }
 
-fn legacy_config(port: u16, static_root: &Path) -> String {
+fn available_port_excluding(excluded: u16) -> u16 {
+    loop {
+        let port = available_port();
+        if port != excluded {
+            return port;
+        }
+    }
+}
+
+fn legacy_config(overlay_port: u16, dashboard_port: u16) -> String {
     format!(
-        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nDASHBOARD_PORT=0\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
-        static_root.display(),
+        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nSTART_AT_LOGIN=false\nDEBUG_LOG=false\nSERVER_IP=127.0.0.1\nSERVER_PORT={overlay_port}\nDASHBOARD_IP=127.0.0.1\nDASHBOARD_PORT={dashboard_port}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
     )
 }
 
-fn toml_config(port: u16, static_root: &Path) -> String {
-    let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
+fn toml_config(overlay_port: u16, dashboard_port: u16) -> String {
     format!(
-        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_PORT = 0\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
+        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nSTART_AT_LOGIN = false\nDEBUG_LOG = false\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {overlay_port}\nDASHBOARD_IP = \"127.0.0.1\"\nDASHBOARD_PORT = {dashboard_port}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
 }
 
@@ -91,27 +109,21 @@ fn config_files(directory: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     files
 }
 
-async fn wait_for_seeded_counter(client: &reqwest::Client, base: &str) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let response = bounded!(
-            client
-                .get(format!("{base}/api/counters/search/seeded"))
-                .send()
-        )
-        .expect("search counters");
-        if bounded!(response.text())
-            .unwrap()
-            .contains("Seeded Counter")
-        {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "static path reload never exposed the seeded counter"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+fn apply_isolated_env(command: &mut Command, roots: &Path) {
+    command
+        .env("XDG_CONFIG_HOME", roots.join("config"))
+        .env("XDG_DATA_HOME", roots.join("data"))
+        .env("XDG_CACHE_HOME", roots.join("cache"))
+        .env("XDG_RUNTIME_DIR", roots.join("runtime"))
+        .env("HOME", roots)
+        .env("LOCALAPPDATA", roots.join("local"))
+        // Avoid the Windows archive/OneDrive guards mistaking a CI unpack root
+        // for the user's configured TEMP or OneDrive tree.
+        .env("TEMP", roots.join("runtime-temp-sentinel"))
+        .env("OneDrive", roots.join("onedrive-sentinel"))
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DBUS_SESSION_BUS_ADDRESS");
 }
 
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
@@ -128,71 +140,75 @@ async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     }
 }
 
-#[cfg(unix)]
-fn configure_process(_command: &mut Command) {}
-
-#[cfg(windows)]
-fn configure_process(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
-}
-
-#[cfg(unix)]
-fn request_graceful_shutdown(child: &Child) {
-    // SAFETY: `libc::kill` with a valid pid and signal number has no memory
-    // safety preconditions; `child` is this test's own spawned process.
-    let result = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
-    assert_eq!(result, 0, "send release daemon SIGINT");
-}
-
-#[cfg(windows)]
-fn request_graceful_shutdown(child: &Child) {
-    // SAFETY: `GenerateConsoleCtrlEvent` with a valid process group id has no
-    // memory safety preconditions; `child` is this test's own spawned
-    // process, started in its own process group via `CREATE_NEW_PROCESS_GROUP`.
-    let result = unsafe {
-        windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent(
-            windows_sys::Win32::System::Console::CTRL_BREAK_EVENT,
-            child.id(),
-        )
-    };
-    assert_ne!(result, 0, "send release daemon CTRL_BREAK_EVENT");
-}
-
-#[cfg(target_os = "linux")]
-fn assert_packaged_linux_cli_preflight(binary: &Path) {
-    let version = Command::new(binary)
+fn assert_packaged_cli_preflight(binary: &Path, roots: &Path) {
+    let mut version_cmd = Command::new(binary);
+    apply_isolated_env(&mut version_cmd, roots);
+    let version = version_cmd
         .arg("--version")
         .output()
-        .expect("run packaged Linux release --version");
+        .expect("run packaged release --version");
     assert!(
         version.status.success(),
         "--version failed with {}",
         version.status
     );
     assert_eq!(
-        String::from_utf8_lossy(&version.stdout),
+        String::from_utf8_lossy(&version.stdout).replace("\r\n", "\n"),
         format!("vosu {}\n", release_version()),
         "packaged executable is not this release's version"
     );
-    let help = Command::new(binary)
+
+    let mut help_cmd = Command::new(binary);
+    apply_isolated_env(&mut help_cmd, roots);
+    let help = help_cmd
         .arg("--help")
         .output()
-        .expect("run packaged Linux release --help preflight");
+        .expect("run packaged release --help");
+    let help_stdout = String::from_utf8_lossy(&help.stdout);
+    let help_stderr = String::from_utf8_lossy(&help.stderr);
     assert!(
         help.status.success(),
-        "packaged Linux release --help failed with {}\nstdout:\n{}\nstderr:\n{}",
+        "packaged release --help failed with {}\nstdout:\n{help_stdout}\nstderr:\n{help_stderr}",
         help.status,
-        String::from_utf8_lossy(&help.stdout),
-        String::from_utf8_lossy(&help.stderr),
     );
     assert!(
-        String::from_utf8_lossy(&help.stdout).contains("-s, --setup"),
-        "packaged Linux release --help omitted -s, --setup\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&help.stdout),
-        String::from_utf8_lossy(&help.stderr),
+        help_stdout.contains("vosu logs"),
+        "packaged release --help omitted vosu logs\nstdout:\n{help_stdout}\nstderr:\n{help_stderr}",
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        help_stdout.contains("-s, --setup"),
+        "packaged Linux release --help omitted -s, --setup\nstdout:\n{help_stdout}\nstderr:\n{help_stderr}",
     );
 
+    let mut logs_cmd = Command::new(binary);
+    apply_isolated_env(&mut logs_cmd, roots);
+    let logs = logs_cmd
+        .arg("logs")
+        .output()
+        .expect("run packaged release logs");
+    assert!(
+        logs.status.success(),
+        "packaged release `vosu logs` failed with {}\nstdout:\n{}\nstderr:\n{}",
+        logs.status,
+        String::from_utf8_lossy(&logs.stdout),
+        String::from_utf8_lossy(&logs.stderr),
+    );
+
+    let mut plugin_host_cmd = Command::new(binary);
+    apply_isolated_env(&mut plugin_host_cmd, roots);
+    let plugin_host = plugin_host_cmd
+        .arg("plugin-host")
+        .output()
+        .expect("run packaged release plugin-host");
+    assert_eq!(
+        plugin_host.status.code(),
+        Some(PLUGIN_HOST_EXIT_ARGUMENTS),
+        "packaged `vosu plugin-host` without bootstrap args must refuse with exit code {PLUGIN_HOST_EXIT_ARGUMENTS}, got {:?}",
+        plugin_host.status
+    );
+
+    #[cfg(target_os = "linux")]
     for probe in [
         "--vosu-internal-probe-backend=ebpf",
         "--vosu-internal-probe-backend=cn-proc",
@@ -210,6 +226,110 @@ fn assert_packaged_linux_cli_preflight(binary: &Path) {
             output.status,
         );
     }
+}
+
+fn assert_removed_ingame_headers(label: &str, headers: &[(String, String)]) {
+    for forbidden in ["upgrade", "location", "deprecation", "link"] {
+        assert!(
+            !headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(forbidden)),
+            "{label} /api/ingame unexpectedly returned forbidden header `{forbidden}`: {headers:?}"
+        );
+    }
+}
+
+/// 2026-11-25 owner decision (ADR 0021 amendment): `/api/ingame` on the overlay
+/// listener is a removed route that returns the ordinary 404 for GET, HEAD,
+/// POST, and WebSocket upgrade requests, with no upgrade, redirect,
+/// `Deprecation`, or `Link` header.
+async fn assert_removed_ingame_route(overlay_port: u16) {
+    // Never auto-follow redirects so a regressed 3xx + Location -> 404 fails.
+    let no_redirect_client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("build no-redirect /api/ingame probe client");
+    let url = format!("http://127.0.0.1:{overlay_port}/api/ingame");
+    for (label, builder) in [
+        ("GET", no_redirect_client.get(&url)),
+        ("HEAD", no_redirect_client.head(&url)),
+        ("POST", no_redirect_client.post(&url)),
+    ] {
+        let response = bounded!(builder.send()).expect("send /api/ingame probe");
+        assert_eq!(
+            response.status().as_u16(),
+            404,
+            "{label} /api/ingame must return 404"
+        );
+        let headers: Vec<(String, String)> = response
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), v.to_str().unwrap_or("").to_owned()))
+            .collect();
+        assert_removed_ingame_headers(label, &headers);
+    }
+
+    // Raw HTTP/1.1 WebSocket upgrade probe so reqwest does not alter Upgrade /
+    // Connection headers.
+    let mut stream = TcpStream::connect(SocketAddrV4::new(Ipv4Addr::LOCALHOST, overlay_port))
+        .expect("connect overlay listener for /api/ingame upgrade probe");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let request = format!(
+        "GET /api/ingame HTTP/1.1\r\n\
+         Host: 127.0.0.1:{overlay_port}\r\n\
+         Connection: Upgrade\r\n\
+         Upgrade: websocket\r\n\
+         Sec-WebSocket-Version: 13\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         \r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .expect("write /api/ingame upgrade request");
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+        let read = stream
+            .read(&mut chunk)
+            .expect("read /api/ingame upgrade response");
+        assert!(
+            read > 0,
+            "connection closed before HTTP response headers on /api/ingame upgrade"
+        );
+        raw.extend_from_slice(&chunk[..read]);
+        assert!(raw.len() < 65_536, "oversized /api/ingame response headers");
+    }
+    let header_end = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap();
+    let head = std::str::from_utf8(&raw[..header_end]).expect("UTF-8 HTTP response head");
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().expect("HTTP status line");
+    let status_code: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .expect("HTTP status code")
+        .parse()
+        .expect("numeric HTTP status code");
+    assert_eq!(
+        status_code, 404,
+        "WebSocket upgrade to /api/ingame must return 404 (never 101), got: {status_line}"
+    );
+    let headers: Vec<(String, String)> = lines
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_owned(), value.trim().to_owned()))
+        })
+        .collect();
+    assert_removed_ingame_headers("WS upgrade", &headers);
 }
 
 fn assert_no_update_artifacts(root: &Path) {
@@ -251,13 +371,52 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         "release smoke path is not a file: {}",
         binary.display()
     );
-
-    #[cfg(target_os = "linux")]
-    assert_packaged_linux_cli_preflight(&binary);
     assert_no_test_harness_endpoint(&fs::read(&binary).expect("read release executable"));
 
     let roots = TempDir::new().expect("temporary release roots");
-    let static_root = roots.path().join("static");
+    fs::create_dir_all(roots.path().join("runtime")).unwrap();
+    fs::create_dir_all(roots.path().join("local")).unwrap();
+
+    // Stage the executable inside the temp root on Windows so portable config,
+    // data, logs, and cache stay completely isolated from the unpacked folder.
+    #[cfg(windows)]
+    let staged_binary = {
+        let bin_dir = roots.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let target = bin_dir.join(binary.file_name().unwrap());
+        if fs::hard_link(&binary, &target).is_err() {
+            fs::copy(&binary, &target).expect("stage packaged Windows release executable");
+        }
+        target
+    };
+    #[cfg(unix)]
+    let staged_binary = binary.clone();
+
+    assert_packaged_cli_preflight(&staged_binary, roots.path());
+
+    let prerelease = release_version().contains('-');
+    #[cfg(unix)]
+    let (config_dir, data_dir, cache_root) = (
+        roots.path().join("config/vosu"),
+        roots.path().join("data/vosu"),
+        roots.path().join("cache/vosu"),
+    );
+    #[cfg(windows)]
+    let (config_dir, data_dir, cache_root) = {
+        let program_dir = staged_binary.parent().expect("staged binary parent");
+        (
+            program_dir.to_path_buf(),
+            program_dir.to_path_buf(),
+            program_dir.join(".cache"),
+        )
+    };
+    fs::create_dir_all(&config_dir).unwrap();
+    let effective_data_dir = if prerelease {
+        data_dir.join("prerelease")
+    } else {
+        data_dir.clone()
+    };
+    let static_root = effective_data_dir.join("static");
     let seeded = static_root.join("seeded-counter");
     fs::create_dir_all(&seeded).unwrap();
     fs::write(
@@ -271,45 +430,26 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     )
     .unwrap();
 
-    #[cfg(unix)]
-    let config_dir = roots.path().join("config/vosu");
-    #[cfg(windows)]
-    let config_dir = binary
-        .parent()
-        .expect("release binary parent")
-        .to_path_buf();
-    fs::create_dir_all(&config_dir).unwrap();
     let first_port = available_port();
+    let dashboard_port = available_port_excluding(first_port);
     let config_path = config_dir.join("vosu.toml");
     // A valid current TOML file is authoritative over both legacy env inputs.
-    fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
-    fs::write(config_dir.join("vosu.env"), legacy_config(1, &static_root)).unwrap();
-    fs::write(config_dir.join("tosu.env"), legacy_config(2, &static_root)).unwrap();
+    fs::write(&config_path, toml_config(first_port, dashboard_port)).unwrap();
+    fs::write(
+        config_dir.join("vosu.env"),
+        legacy_config(1, dashboard_port),
+    )
+    .unwrap();
+    fs::write(
+        config_dir.join("tosu.env"),
+        legacy_config(2, dashboard_port),
+    )
+    .unwrap();
     // A prerelease build must keep these normal-root files byte-identical.
-    let prerelease = release_version().contains('-');
     let normal_dir = config_dir.clone();
     let normal_files = config_files(&normal_dir);
 
-    let mut command = Command::new(&binary);
-    command
-        .arg("--update=false")
-        .env("XDG_CONFIG_HOME", roots.path().join("config"))
-        .env("XDG_DATA_HOME", roots.path().join("data"))
-        .env("XDG_CACHE_HOME", roots.path().join("cache"))
-        .env("HOME", roots.path())
-        // Avoid the Windows archive/OneDrive guards mistaking a CI unpack root
-        // for the user's configured TEMP or OneDrive tree.
-        .env("TEMP", roots.path().join("runtime-temp-sentinel"))
-        .env("OneDrive", roots.path().join("onedrive-sentinel"))
-        // A release build has no harness endpoint to mount, even when offered
-        // a well-formed capability.
-        .env(HARNESS_CAPABILITY_ENV, HARNESS_CAPABILITY)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    configure_process(&mut command);
-    let mut child = ChildGuard(Some(
-        command.spawn().expect("spawn unpacked release executable"),
-    ));
+    let mut child = spawn_release_daemon(&staged_binary, roots.path());
 
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -320,6 +460,11 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     let dashboard = bounded!(wait_get(&client, &format!("{base}/")));
     assert_eq!(dashboard.status(), 200);
     let management = dashboard.url().origin().ascii_serialization();
+    assert_eq!(
+        management,
+        format!("http://127.0.0.1:{dashboard_port}"),
+        "dashboard listener must bind configured DASHBOARD_PORT"
+    );
     let dashboard = bounded!(dashboard.text()).unwrap();
     assert!(dashboard.contains("vosu"));
     let csrf = dashboard
@@ -329,22 +474,55 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .split('"')
         .next()
         .unwrap();
+
+    // Verify vosu 2.0 API v1 sessions endpoint on the overlay listener.
+    let sessions = bounded!(client.get(format!("{base}/api/v1/sessions")).send())
+        .expect("GET /api/v1/sessions");
+    assert_eq!(sessions.status(), 200);
+    let sessions_json: serde_json::Value =
+        bounded!(sessions.json()).expect("/api/v1/sessions must return valid JSON");
+    assert!(
+        sessions_json["sessions"].is_array(),
+        "/api/v1/sessions payload missing `sessions` array: {sessions_json}"
+    );
+
+    // Verify exact 7 bundled plugins on the dashboard listener (no testkit echo).
+    let plugins_resp =
+        bounded!(client.get(format!("{management}/api/plugins")).send()).expect("GET /api/plugins");
+    assert_eq!(plugins_resp.status(), 200);
+    let plugins_json: serde_json::Value =
+        bounded!(plugins_resp.json()).expect("/api/plugins must return valid JSON");
+    let plugins = plugins_json["plugins"]
+        .as_array()
+        .expect("/api/plugins missing `plugins` array");
+    let plugin_ids: Vec<&str> = plugins
+        .iter()
+        .map(|entry| entry["id"].as_str().expect("plugin entry id"))
+        .collect();
+    assert_eq!(
+        plugin_ids, EXPECTED_BUNDLED_PLUGIN_IDS,
+        "packaged production binary must expose exactly the 7 bundled plugins"
+    );
+    assert!(
+        !plugin_ids.contains(&"vosu.testkit.echo"),
+        "production binary must never include vosu.testkit.echo"
+    );
+    assert!(
+        plugins.iter().all(|entry| entry["state"] == "running"),
+        "all bundled plugins must be running: {plugins_json}"
+    );
+
+    // Verify 2026-11-25 removed `/api/ingame` contract on the overlay listener.
+    assert_removed_ingame_route(first_port).await;
+
     // A prerelease runs on its own `prerelease/` roots: it imports the 1.x
-    // config once, read-only, resetting the copied static path to its isolated
-    // default, and never writes the normal tree.
+    // config once, read-only, and never writes the normal tree.
     let (config_dir, config_path) = if prerelease {
         let alpha_dir = normal_dir.join("prerelease");
         let alpha_path = alpha_dir.join("vosu.toml");
-        let imported: toml::Table = toml::from_str(
-            &fs::read_to_string(&alpha_path).expect("prerelease imports the 1.x config"),
-        )
-        .expect("imported prerelease TOML");
-        assert_ne!(
-            imported
-                .get("STATIC_FOLDER_PATH")
-                .and_then(toml::Value::as_str),
-            Some(static_root.to_string_lossy().as_ref()),
-            "imported static path must reset to the isolated default"
+        assert!(
+            alpha_path.is_file(),
+            "prerelease must import config into prerelease/vosu.toml"
         );
         assert_eq!(
             config_files(&normal_dir),
@@ -400,12 +578,6 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         );
     }
 
-    if prerelease {
-        // An explicit path in the prerelease's own config stays user-controlled.
-        fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
-        bounded!(wait_for_seeded_counter(&client, &management));
-    }
-
     let counters = bounded!(
         client
             .get(format!("{management}/api/counters/search/seeded"))
@@ -444,7 +616,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert!(disposition.contains("vosu-report-") && disposition.contains(".html"));
     assert!(bounded!(report.text()).unwrap().contains("vosu"));
 
-    let second_port = available_port();
+    let second_port = available_port_excluding(dashboard_port);
     fs::write(
         &config_path,
         format!("SERVER_PORT = {second_port}\nBROKEN = [\n"),
@@ -460,7 +632,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .expect("malformed TOML must retain the packaged listener");
     assert_eq!(last_good.status(), 200);
 
-    fs::write(&config_path, toml_config(second_port, &static_root)).unwrap();
+    fs::write(&config_path, toml_config(second_port, dashboard_port)).unwrap();
     let second_base = format!("http://127.0.0.1:{second_port}");
     let rebound = bounded!(wait_get(&client, &format!("{second_base}/")));
     assert_eq!(rebound.status(), 200);
@@ -470,10 +642,10 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
             .post(format!("{management}/api/settingsSave"))
             .header(reqwest::header::ORIGIN, &management)
             .header("X-Vosu-CSRF", csrf)
-            .json(&serde_json::json!({"SHOW_MP_COMMANDS": true}))
+            .json(&serde_json::json!({"DEBUG_LOG": true}))
             .send()
     )
-    .expect("save packaged uppercase JSON settings");
+    .expect("save packaged core settings");
     assert_eq!(saved.status(), 200);
     assert_eq!(
         bounded!(saved.json::<serde_json::Value>()).unwrap(),
@@ -483,9 +655,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         toml::from_str(&fs::read_to_string(&config_path).expect("read packaged settingsSave TOML"))
             .expect("packaged settingsSave persists typed TOML");
     assert_eq!(
-        persisted
-            .get("SHOW_MP_COMMANDS")
-            .and_then(toml::Value::as_bool),
+        persisted.get("DEBUG_LOG").and_then(toml::Value::as_bool),
         Some(true)
     );
 
@@ -503,23 +673,25 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert!(!config_dir.join("vosu.env").exists());
     assert!(!config_dir.join("tosu.env").exists());
 
-    request_graceful_shutdown(child.0.as_ref().unwrap());
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(status) = child.0.as_mut().unwrap().try_wait().unwrap() {
-            assert!(
-                status.success(),
-                "release daemon exited unsuccessfully: {status}"
-            );
-            child.0.take();
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "release daemon failed to drain after native interrupt"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    shutdown_and_verify_no_orphans(&mut child).await;
+
+    let mut post_logs_cmd = Command::new(&staged_binary);
+    apply_isolated_env(&mut post_logs_cmd, roots.path());
+    let post_logs = post_logs_cmd
+        .args(["logs", "-n", "20"])
+        .output()
+        .expect("run packaged release `vosu logs -n 20` after shutdown");
+    assert!(
+        post_logs.status.success(),
+        "`vosu logs -n 20` failed after shutdown with {}",
+        post_logs.status
+    );
+    #[cfg(unix)]
+    assert!(
+        String::from_utf8_lossy(&post_logs.stdout).contains("Overlays and API:"),
+        "post-shutdown `vosu logs -n 20` omitted daemon startup lines:\n{}",
+        String::from_utf8_lossy(&post_logs.stdout)
+    );
 
     if prerelease {
         assert_eq!(
@@ -536,9 +708,5 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         assert!(!normal_dir.join("prerelease").exists());
     }
 
-    #[cfg(unix)]
-    let cache_root = roots.path().join("cache/vosu");
-    #[cfg(windows)]
-    let cache_root = binary.parent().unwrap().join(".cache");
     assert_no_update_artifacts(&cache_root);
 }

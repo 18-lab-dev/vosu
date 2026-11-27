@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 import tomllib
@@ -25,6 +26,31 @@ VERSION_RE = re.compile(
 # rejected for distribution packaging rather than rendered ambiguously.
 DISTRIBUTION_PRERELEASE_RE = re.compile(rf"[A-Za-z]+(?:\.{_NUMBER})*")
 PLATFORM_EXECUTABLE = {"windows": "vosu.exe", "linux": "vosu"}
+PLUGIN_HEADER_ASSET = "vosu_plugin.h"
+DEFAULT_PLUGIN_HEADER = Path("include/vosu_plugin.h")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def verify_plugin_header(staged: Path, source: Path = DEFAULT_PLUGIN_HEADER) -> str:
+    if not source.is_file():
+        raise ValueError(f"C plugin ABI header source does not exist: {source}")
+    if not staged.is_file():
+        raise ValueError(f"staged C plugin ABI header does not exist: {staged}")
+    expected_bytes = source.read_bytes()
+    if not expected_bytes:
+        raise ValueError(f"C plugin ABI header source is empty: {source}")
+    actual_bytes = staged.read_bytes()
+    expected_sha = sha256_bytes(expected_bytes)
+    actual_sha = sha256_bytes(actual_bytes)
+    if actual_sha != expected_sha or actual_bytes != expected_bytes:
+        raise ValueError(
+            f"{staged} does not match {source} "
+            f"(expected sha256 {expected_sha}, got {actual_sha})"
+        )
+    return actual_sha
 
 
 def parse_version(version: str) -> tuple[str, str | None]:
@@ -181,13 +207,29 @@ def package(args: argparse.Namespace) -> Path:
     return archive
 
 
+def package_header(args: argparse.Namespace) -> Path:
+    version_from_tag(args.tag, args.manifest)
+    if not args.header.is_file():
+        raise ValueError(f"C plugin ABI header does not exist: {args.header}")
+    args.output.mkdir(parents=True, exist_ok=True)
+    destination = args.output / PLUGIN_HEADER_ASSET
+    destination.write_bytes(args.header.read_bytes())
+    verify_plugin_header(destination, args.header)
+    print(destination)
+    return destination
+
+
 def verify_release_set(args: argparse.Namespace) -> None:
     version = version_from_tag(args.tag, args.manifest)
     archives = {
         f"vosu-windows-v{version}.zip": "windows",
         f"vosu-linux-v{version}.zip": "linux",
     }
-    expected = set(archives) | {package.asset for package in distribution_packages(version)}
+    expected = (
+        set(archives)
+        | {package.asset for package in distribution_packages(version)}
+        | {PLUGIN_HEADER_ASSET}
+    )
     actual = {path.name for path in args.directory.iterdir() if path.is_file()}
     if actual != expected:
         raise ValueError(
@@ -195,6 +237,7 @@ def verify_release_set(args: argparse.Namespace) -> None:
         )
     for name, platform in archives.items():
         verify_archive(args.directory / name, platform, args.license)
+    verify_plugin_header(args.directory / PLUGIN_HEADER_ASSET, args.header)
     print("\n".join(sorted(expected)))
 
 
@@ -284,10 +327,19 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--output", type=Path, required=True)
     create.set_defaults(run=package)
 
+    header = subparsers.add_parser(
+        "package-header", help="stage and verify the standalone C plugin ABI header asset"
+    )
+    header.add_argument("--tag", required=True)
+    header.add_argument("--header", type=Path, default=DEFAULT_PLUGIN_HEADER)
+    header.add_argument("--output", type=Path, required=True)
+    header.set_defaults(run=package_header)
+
     verify = subparsers.add_parser("verify-set", help="inspect the complete release asset set")
     verify.add_argument("--tag", required=True)
     verify.add_argument("--directory", type=Path, required=True)
     verify.add_argument("--license", type=Path, default=Path("LICENSE"))
+    verify.add_argument("--header", type=Path, default=DEFAULT_PLUGIN_HEADER)
     verify.set_defaults(run=verify_release_set)
 
     flags = subparsers.add_parser(
