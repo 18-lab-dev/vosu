@@ -107,9 +107,18 @@ made with sxlvia's release key, fingerprint
 `6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`. The public key is
 [`packaging/release-signing-key.asc`](packaging/release-signing-key.asc).
 
+The daemon release archives (`vosu-linux-v<version>.zip` and
+`vosu-windows-v<version>.zip`) keep the exact two-entry root layout (`vosu` or
+`vosu.exe` plus `LICENSE`). For native C/C++/Rust plugin authors, 2.0 releases
+also publish the standalone `vosu_plugin.h` C ABI header (`include/vosu_plugin.h`)
+as a separate release asset with its own `vosu_plugin.h.sig` signature and
+GitHub SHA-256 digest.
+
 ```sh
 gpg --import packaging/release-signing-key.asc
 gpg --verify vosu-linux-v1.0.1.zip.sig vosu-linux-v1.0.1.zip
+# For 2.0 releases, verify the standalone C ABI header the same way:
+gpg --verify vosu_plugin.h.sig vosu_plugin.h
 ```
 
 Check that gpg reports a good signature from that fingerprint. Commits made
@@ -473,28 +482,31 @@ The directory containing `vosu.exe` is the program, configuration, and data root
 | Cache | `<program>/.cache/` |
 | Logs | Runtime log directory below the program location |
 
-An absolute `STATIC_FOLDER_PATH` is used as written. A custom relative path is resolved from the launch directory. The defaults `./static` and `.\static` map to the platform data root.
+An absolute `vosu.overlayhost` `static_folder_path` setting is used as written. A custom relative path is resolved from the launch directory. An empty/default value (and migrated `./static` or `.\static`) maps to `<data>/static`.
 
-On first start after the rename, vosu performs a one-time, idempotent state migration. On Linux it moves files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots without overwriting state already present there, then removes empty former roots. On every platform, configuration migration layers defaults, readable `tosu.env`, readable `vosu.env`, and canonical `vosu.toml` with precedence `vosu.toml > vosu.env > tosu.env > defaults`. The legacy dotenv files are migration inputs only. It writes canonical TOML to `vosu.toml` through an atomic same-directory replacement; if canonical TOML is malformed at startup, all source files remain untouched. After migration, vosu reads and writes only canonical `vosu.toml`; legacy counter settings inputs remain untouched.
+On first start after the rename, vosu performs a one-time, idempotent state migration. On Linux it moves files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots without overwriting state already present there, then removes empty former roots. On normal (stable) 2.0 roots, startup also runs a crash-recoverable offline 1.x → 2.0 conversion tracked in `<config>/migration-v2-journal.json` (prerelease roots are untouched and keep their read-only bootstrap). Before any destructive write, migration validates and snapshots legacy inputs (`vosu.toml`, `vosu.env`, and `tosu.env` layered as `vosu.toml > vosu.env > tosu.env > defaults`, `catalog-sources.json`, `tools/state.json`, `tools/overlay-catalog-state.json`, and `<data>/tools/`). It imports missing overrides into `<config>/plugins/settings.json` for `vosu.osu`'s five moved keys (`CALCULATE_PP`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, `READ_MANIA_SCROLL_SPEED`) and `vosu.overlayhost`'s `static_folder_path` (from `STATIC_FOLDER_PATH`) — existing valid per-plugin overrides win per key — then atomically writes canonical stripped `vosu.toml` (stripping those 6 moved keys plus the 4 retired keys `ENABLE_KEY_OVERLAY`, `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`, `V2_SUBSCRIPTION_DEBOUNCE`) before removing readable legacy dotenv files. If canonical TOML or any legacy input is malformed at startup, all source files remain untouched. Migration also copies 1.x catalog sources verbatim to `<config>/catalog-source-settings.json` (`trusted: true` only for exact official identities, `private_network: false`), disables 1.x `tool.toml`-only user tools in `tools/state.json` (reported as `needs-2.0-update`) while leaving their durable data and settings intact, keeps user overlays enabled (with dashboard D20 notices if they call removed APIs), and records offline `pending_intents` in the journal for official replacement matching and closed AF.2 copy-only data/settings transfer (which copies without deleting 1.x bytes and refuses destination collisions). After migration, vosu reads and writes only canonical `vosu.toml` and `<config>/plugins/settings.json`; legacy counter settings inputs remain untouched.
 For each counter, the package root's `settings.schema.toml` is the authoritative schema and developer schema saves write that file. Steady-state config storage contains only mutable values at `<config>/settings/<counter>.settings.values.toml`. When the root schema is missing, vosu creates it from root `settings.json` when present, otherwise by inferring setting types from scalar root `settings.toml`: strings become `text`, integers/floats become `number`, booleans become `checkbox`, and each key supplies `uniqueID`/`title` with the scalar as its default. Arrays, nested tables, and datetimes are rejected as ambiguous without creating a schema or modifying package inputs. Only after package sources does loading fall back to old config `<counter>.settings.toml` or `<counter>.settings.json`; every legacy counter schema and values input remains byte-for-byte untouched after canonical schema and values are created. Root JSON and TOML inputs remain untouched, and when both exist JSON defines the schema while TOML may seed values.
 
 ## Configuration
 
-Edit `vosu.toml` in the platform configuration root. It is a flat, typed TOML document with uppercase binding names. The daemon watches its parent directory and applies supported changes without restarting. Writes use a temporary file in the same directory, flush and sync it, then atomically replace the target.
+Edit `vosu.toml` in the platform configuration root. It is a flat, typed TOML document with 12 uppercase core binding names. The daemon watches its parent directory and applies supported changes without restarting. Writes use a temporary file in the same directory, flush and sync it, then atomically replace the target.
 
 ```toml
+DEBUG_LOG = false
 ENABLE_AUTOUPDATE = true
 ENABLE_DASHBOARD = true
 OPEN_DASHBOARD_ON_STARTUP = true
 START_AT_LOGIN = false
-POLL_RATE = 150.0
-PRECISE_DATA_POLL_RATE = 10.0
+
+API_V1_SUBSCRIPTION_DEBOUNCE = 1.0
+
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
 DASHBOARD_IP = "127.0.0.1"
 DASHBOARD_PORT = 24051.0
-STATIC_FOLDER_PATH = "./static"
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
+
+MAX_PACKAGE_MIB = 512.0
 ```
 
 At startup, malformed canonical TOML leaves every source file untouched. During watch reload, malformed TOML leaves the last-good runtime configuration and dependent resources active.
@@ -506,21 +518,20 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `OPEN_DASHBOARD_ON_STARTUP` | `true` | Open the effective dashboard listener after startup. |
 | `START_AT_LOGIN` | `false` | Linux only: run vosu as a systemd user service at graphical login. |
 | `DEBUG_LOG` | `false` | Include debug-level file and console logging. |
-| `CALCULATE_PP` | `true` | Enable live performance calculations. |
-| `POLL_RATE` | `150` | Regular state interval in milliseconds; range `100`–`60000`. |
-| `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; range `1`–`60000`. |
 | `API_V1_SUBSCRIPTION_DEBOUNCE` | `1` | API v1 subscription minimum interval; range `1`–`60000` milliseconds, fractional values supported. |
-| `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
-| `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
 | `SERVER_IP` | `127.0.0.1` | Overlay/data listener hostname or address (unchanged overlay origin). |
 | `SERVER_PORT` | `24050` | Overlay/data listener port. |
 | `DASHBOARD_IP` | `127.0.0.1` | Independent trusted dashboard listener, loopback-only by default even when overlays are shared on a LAN. |
 | `DASHBOARD_PORT` | `24051` | Trusted dashboard and management port. |
-| `STATIC_FOLDER_PATH` | `./static` | Counter root; the default maps to the data directory. |
-| `MAX_PACKAGE_MIB` | `512` | Catalog package compressed/expanded cap in MiB; integer `1`–`4096`, shared by resolution and download. Oversized entries remain valid catalogs but cannot be installed at the current cap. |
 | `ALLOWED_IPS` | `127.0.0.1,localhost,absolute` | Peer IPs/CIDRs, legacy IPv4 wildcard octets, and allowed Origin/Referer hostname tokens. Loopback peers are always allowed. `absolute` is a literal legacy hostname token, not a wildcard or authentication bypass. |
+| `MAX_PACKAGE_MIB` | `512` | Catalog package compressed/expanded cap in MiB; integer `1`–`4096`, shared by resolution and download. Oversized entries remain valid catalogs but cannot be installed at the current cap. |
 
-Disk configuration clamps oversized/nonfinite intervals to `60000` ms with a warning. Settings API updates above that ceiling fail without publishing or persisting any part of the update.
+Plugin-owned settings no longer live in `vosu.toml`: they are stored as explicit overrides in `<config>/plugins/settings.json` and edited in the dashboard under **Tools → Plugins** (`GET`/`POST /api/plugins/<id>/settings`):
+
+- **`vosu.osu`:** `CALCULATE_PP` (`true`), `POLL_RATE` (`150` ms, range `100`–`60000`), `PRECISE_DATA_POLL_RATE` (`10` ms, range `1`–`60000`), `SHOW_MP_COMMANDS` (`false`), and `READ_MANIA_SCROLL_SPEED` (`true`).
+- **`vosu.overlayhost`:** `static_folder_path` (`""`, mapping to `<data>/static` when empty).
+
+Disk configuration clamps oversized/nonfinite `API_V1_SUBSCRIPTION_DEBOUNCE` intervals to `60000` ms with a warning. Settings API updates above that ceiling fail without publishing or persisting any part of the update.
 
 Network settings (`SERVER_IP`, `SERVER_PORT`, `DASHBOARD_IP`, `DASHBOARD_PORT`, `ALLOWED_IPS`) use **Apply network settings**, not autosave. Confirm **Keep network settings** from the new dashboard origin within 30 seconds; otherwise vosu restores the previous network configuration and listeners even if the browser closes. Only one change may be pending. Other settings still autosave. File edits remain live-rebindable without this dashboard-only confirmation workflow.
 
@@ -706,7 +717,7 @@ local skin path.
 
 - `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
-- `POST /api/settingsSave` rejects unsupported numeric values: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` and `API_V1_SUBSCRIPTION_DEBOUNCE` 1–60000 ms, and both listener ports as integers 1–65535. Retired config keys are ignored. Network fields require `_network_action: "apply"` and `_network_action: "confirm"` from the new origin before the 30-second timeout.
+- `POST /api/settingsSave` saves core `vosu.toml` settings and rejects unsupported numeric values: `API_V1_SUBSCRIPTION_DEBOUNCE` 1–60000 ms, `MAX_PACKAGE_MIB` integer 1–4096, and both listener ports as integers 1–65535 (`ENABLE_DASHBOARD` is rejected with 400; retired and moved keys are ignored). Network fields require `_network_action: "apply"` and `_network_action: "confirm"` from the new origin before the 30-second timeout. Plugin settings (`POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `CALCULATE_PP`, `SHOW_MP_COMMANDS`, `READ_MANIA_SCROLL_SPEED` on `vosu.osu`, and `static_folder_path` on `vosu.overlayhost`) use `GET`/`POST /api/plugins/<id>/settings` instead.
 - `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement. A release whose major version exceeds the running build's returns `{"status":"majorAvailable","version":"...","releaseUrl":"..."}` and installs nothing unless the request body is `{"consent":true}`.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.

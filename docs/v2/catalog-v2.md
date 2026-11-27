@@ -1040,8 +1040,10 @@ Tool processes are stopped; a loaded plugin keeps running, its package
 directory is removed (on Windows a library the OS holds open makes the move
 fail and the whole removal roll back), and it is reported in
 `restart_required` until the daemon restarts. Data removal is refused for a
-plugin that is still loaded. Plugin settings stored in `vosu.toml` are not
-removed (M7 owns plugin settings).
+plugin that is still loaded. Plugin settings stored in
+`<config>/plugins/settings.json` are not removed on uninstall (core's
+`PluginSettingsStore` owns per-plugin settings since M7, and M8-L2 migrated
+the legacy plugin keys out of `vosu.toml`).
 
 ## Resolver algorithm
 

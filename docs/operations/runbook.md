@@ -45,23 +45,27 @@ or second executable is installed. See [ADR 0024](../decisions/0024-background-d
 
 ## Configuration
 
-Edit the platform config root's `vosu.toml`; it is a flat, typed TOML file with uppercase binding names. For example:
+Edit the platform config root's `vosu.toml`; it is a flat, typed TOML file with 12 uppercase core binding names. For example:
 
 ```toml
 ENABLE_AUTOUPDATE = true
+ENABLE_DASHBOARD = true
 OPEN_DASHBOARD_ON_STARTUP = true
+API_V1_SUBSCRIPTION_DEBOUNCE = 1.0
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
 DASHBOARD_IP = "127.0.0.1"
 DASHBOARD_PORT = 24051.0
-POLL_RATE = 150.0
+MAX_PACKAGE_MIB = 512.0
 ```
+
+Plugin-owned settings (`vosu.osu`'s `CALCULATE_PP`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, `READ_MANIA_SCROLL_SPEED`, and `vosu.overlayhost`'s `static_folder_path`) live in `<config>/plugins/settings.json` and are edited in the dashboard under **Tools → Plugins** (`GET`/`POST /api/plugins/<id>/settings`).
 
 Open the trusted dashboard on port **24051**; overlay URLs remain on **24050** so OBS sources and browser storage do not move. `GET /api/dashboard` on the overlay origin discovers the effective dashboard origin. Wildcard dashboard binds map to loopback for local discovery. Startup and successful rebind logs print full clickable `http://` URLs for both listeners. Redirected old dashboard bookmarks preserve path and query and do not trust arbitrary Host headers.
 
 Network changes in the dashboard require **Apply network settings**, then **Keep network settings** on the new dashboard origin within 30 seconds. The daemon itself rolls back unconfirmed changes, including after a closed page or an unreachable port typo such as `2405`. Only one change may be pending. File edits rebind both listeners independently as before. CIDR entries are supported: Tailscale uses `100.64.0.0/10`, not the public-space-covering legacy `100.*.*.*`. IPv6 CIDRs work too. The legacy `absolute` token matches only that literal hostname/raw browser header, never arbitrary remote peers.
 
-Startup precedence is `vosu.toml > vosu.env > tosu.env > defaults`. The two `.env` files are migration inputs only: vosu writes canonical TOML atomically first and removes readable legacy files only after successful replacement. A malformed TOML file leaves the prior runtime configuration active during watch reload; at startup, malformed input leaves all sources untouched.
+Startup precedence is `vosu.toml > vosu.env > tosu.env > defaults`. On normal (stable) 2.0 roots, first startup runs the crash-recoverable offline migration tracked in `<config>/migration-v2-journal.json` (prerelease roots skip it): it snapshots legacy inputs, imports missing `vosu.osu` and `vosu.overlayhost` overrides into `<config>/plugins/settings.json`, writes canonical stripped `vosu.toml` atomically, and only then removes readable legacy `.env` files. A malformed TOML file leaves the prior runtime configuration active during watch reload; at startup, malformed input leaves all sources untouched.
 
 On Windows filesystems with hard links (including NTFS), concurrent readers of config/settings almost always see the old or new file throughout saves: metadata is merged privately and the public name is replaced by a single rename. Measured evidence (see `vosu_sys::platform::atomic_replace`'s doc comment) found 0 missing-name observations across 320k+ concurrent reads at normal load, but under extreme CPU contention (16 build jobs plus a second concurrent full build) 1 run in 10 showed transient `NotFound`s, each within 0.8-40ms of the rename call; this is not a reliability guarantee. vosu's own readers of files published through `atomic_replace` (not files published through tempfile `persist`, such as tool settings, `state.json`, or catalog sources, which this guarantee does not cover) go through a retrying read helper (`vosu_sys::platform::read_published`/`read_published_async`, up to 3 reads total — 2 retries — over roughly 50ms) to absorb that window, except a documented same-task read strictly after that task's own publish, where no other writer of that path can exist. Existing ACLs, creation time and alternate streams are preserved. Readers that deny share-delete can delay a save; access-denied/sharing failures are retried for at most two seconds. FAT/exFAT and remote filesystems without hard links retain the older replacement path, which can briefly hide the filename from concurrent readers. At startup vosu performs a bounded cleanup of inactive `.vosu-atomic-*` staging directories under its program directory; live leases, unrelated names/layouts and directory symlinks are not removed.
 
@@ -76,11 +80,13 @@ Offset resolution is automatic per discovered process: a valid versioned
 generation from that exact PID and version. Generation never downloads offsets,
 scans another process, or uses a local-source override. The extracted helper
 cache is separately keyed by platform/runtime and embedded bundle checksum.
-The offsets cache is under `$XDG_CACHE_HOME/vosu/offsets` (default
-`$HOME/.cache/vosu/offsets`) on Linux and `.cache\offsets` under the portable
-Windows executable directory. Release binaries carry the platform-matching
-self-contained generator; debug builds without a prepared payload fail
-explicitly. End users do not install .NET.
+The offsets cache lives under the bundled osu! plugin's data directory:
+`${XDG_DATA_HOME:-$HOME/.local/share}/vosu/plugins/vosu.osu/offsets` on Linux
+and `plugins\vosu.osu\offsets` under the portable Windows executable directory
+(with the sibling `offset-generator` directory for the extracted helper
+payload; prereleases use their `prerelease/` data root). Release binaries carry
+the platform-matching self-contained generator; debug builds without a prepared
+payload fail explicitly. End users do not install .NET.
 
 Offset/signature resolution may remain pending and retry while a process is alive. A pending resolver alone does not confirm that a game build is supported.
 
@@ -138,17 +144,15 @@ The October 2026 hardening preserves existing dashboard/counter URLs and setting
 
 Startup updates follow stable releases, verify the selected platform archive’s published SHA-256 digest, stage exactly one root executable, and use a crash-recoverable helper/rollback flow. Set `ENABLE_AUTOUPDATE = false` in `vosu.toml` or pass `--update=false` to disable startup installation; release builds on self-updating installs still query the latest-release metadata at every start to report available updates. Use same-origin `POST /api/runUpdates` for the explicit route. Do not run Windows directly from an archive or OneDrive-controlled directory because safe replacement/rollback may be unavailable.
 
-Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow; the [code signing policy](../../CODE_SIGNING_POLICY.md) records team roles and the manual SignPath approval step, and must be updated with any change to who signs or how. The updater currently reads latest-release metadata from `18-lab-dev/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
+Release packaging requires exact two-entry platform archives containing only the executable and `LICENSE`, plus the standalone `vosu_plugin.h` C ABI header asset (`include/vosu_plugin.h`) and the three Linux distribution packages; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow; the [code signing policy](../../CODE_SIGNING_POLICY.md) records team roles and the manual SignPath approval step, and must be updated with any change to who signs or how. The updater reads latest-release metadata from `18-lab-dev/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
 
-Existing vosu 1.1.0 and vosulay 1.4.0 clients keep reaching releases through GitHub's former-owner redirects; new versions query the new owner directly. Publish the vosu-tools catalog release before vosu 1.2.0 and vosulay 1.5.0 so the public default identities resolve immediately. The private overlays repository is not released, tagged, or a default source; overlays remain on the existing tosu community catalog.
-
-At startup, exact former tools/vosulay shorthand identities migrate to the new owner. Exact enabled old three-default lists lose the private overlay source; untouched older two-default lists become the two current defaults unless the earlier migration marker records an explicit edit. Customized source lists keep their other entries, order, and enabled flags. A customized list still containing the old private overlay source will show it as unreachable; remove it in **Settings / Catalog sources** if it is no longer wanted.
+For vosu 2.0, the three public official default catalog sources are `18-lab-dev/vosu-tools`, `18-lab-dev/vosulay`, and `18-lab-dev/vosu-overlays` (each serving `catalog-v2.json` alongside a frozen 1.x `catalog.json`), while the Available page continues to list third-party overlays from the upstream tosu community catalog below catalog-source overlays. Before any stable `>= 2.0.0` release can be built or published, the fail-closed day-0 gate (`scripts/check-day0.py` and `scripts/day0_evidence.py`) verifies unauthenticated latest releases for those three catalog repositories plus `18-lab-dev/vosu-overlay-quickstart` (SemVer major 2), strictly checks `tests/fixtures/upstream/DIVERGENCES.md` for zero `temporary` or malformed rows, and verifies the candidate-bound format-1 release evidence manifest against the tag, candidate commit SHA, and draft release asset digests.
 
 Official tools, overlays and plugins are released separately ([vosu-tools](https://github.com/18-lab-dev/vosu-tools), [vosulay](https://github.com/18-lab-dev/vosulay) and [vosu-overlays](https://github.com/18-lab-dev/vosu-overlays)), not embedded in vosu or added to the daemon ZIP. vosu 2.0 installs, updates and uninstalls them only through dashboard install plans: choose an entry on the Tools or Available page, review the plan (packages, dependencies and any plugin approvals) and confirm; uninstall from the package's Details. Catalog jobs show progress, and every package is checked against its catalog's SHA-256 and exact size before extraction. The former `vosux --install`, `--update`, `--uninstall` and `--sources` options are removed. Package installation does not change the daemon updater's archive layout.
 
 Manage catalog development and production sources in **Settings / Catalog sources**: GitHub `owner/repo[@tag]`, a repository URL on GitHub, GitLab, Codeberg or a self-hosted GitLab/Gitea/Forgejo, or an HTTPS URL ending in `/catalog-v2.json`; add, remove, disable or reorder them. A 2.0 source resolves to its `catalog-v2.json`; the frozen 1.x `catalog.json` that official repositories keep publishing is ignored ([1.x coexistence](../v2/catalog-v2.md#1x-coexistence)). Fetch errors are shown per source and do not remove installed packages. The source list with its trust and private-network flags is stored atomically in the config root's `catalog-source-settings.json`, and credentials separately and write-only. The 1.x `tools/catalog-sources.json` is not read as a 2.0 source list; its one-time move is the [first-start migration](../v2/catalog-v2.md#first-start-migration-from-1x). HTTPS and public-destination checks (except a source's explicit private-network host), redirect limits, archive size/digest checks, and hostile ZIP rejection apply to every source. See [catalog sources and installation](../tools/protocol.md#catalog-sources-and-installation).
 
-The release workflow creates a **draft** release. Sign every file locally with the OpenPGP release key (`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`, public key in [`packaging/release-signing-key.asc`](../../packaging/release-signing-key.asc)) and publish in one step: `python scripts/sign-release.py --tag v<version> --publish`. The script checks each asset against GitHub's recorded SHA-256 digest, uploads `<asset>.sig`, re-verifies signatures that already exist (so a rerun fails on an asset replaced after signing), and publishes the draft only once every asset is signed. The repository has immutable releases enabled, so a published release accepts no new files: never publish the draft by hand before signing. v1.0.2 was published by the earlier workflow before signing and has no `.sig` files; its assets verify with `gh release verify-asset v1.0.2 <file> --repo 18-lab-dev/vosu`. The key never goes to CI; the same key signs commits and tags. For a semver prerelease tag (`v2.0.0-alpha.1`, `v2.0.0-rc.1`), `sign-release.py --publish` marks the release `prerelease` and does not set it `make_latest`, so it never becomes the repository's advertised "Latest release" or a stable-update target; a stable tag publishes exactly as before.
+The release workflow creates a **draft** release (running `scripts/check-day0.py` on stable `>= 2.0.0` tags). Sign every file locally — including the two daemon ZIPs, the three Linux packages, and standalone `vosu_plugin.h` — with the OpenPGP release key (`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`, public key in [`packaging/release-signing-key.asc`](../../packaging/release-signing-key.asc)) and publish in one step: `python scripts/sign-release.py --tag v<version> --publish` (adding `--evidence <manifest.json>` for stable `>= 2.0.0` releases, where `sign-release.py` re-runs the full day-0 gate and binds the manifest against the candidate commit and draft asset SHA-256 digests immediately before publication). The script checks each asset against GitHub's recorded SHA-256 digest, uploads `<asset>.sig`, re-verifies signatures that already exist (so a rerun fails on an asset replaced after signing), and publishes the draft only once every asset is signed. The repository has immutable releases enabled, so a published release accepts no new files: never publish the draft by hand before signing. v1.0.2 was published by the earlier workflow before signing and has no `.sig` files; its assets verify with `gh release verify-asset v1.0.2 <file> --repo 18-lab-dev/vosu`. The key never goes to CI; the same key signs commits and tags. For a semver prerelease tag (`v2.0.0-alpha.2`, `v2.0.0-rc.1`), `sign-release.py --publish` skips the stable day-0 gate, marks the release `prerelease`, and does not set it `make_latest`, so it never becomes the repository's advertised "Latest release" or a stable-update target; a stable tag publishes once day-0 and evidence verification pass.
 
 Release tags are `v<major>.<minor>.<patch>[-<prerelease>]` SemVer without leading zeros or build metadata, and must equal the root `Cargo.toml` package version exactly; `package-release.py validate-tag` enforces both before any build, and `sign-release.py` applies the same grammar before it signs. A prerelease must be an alphabetic label with optional numeric counters (`alpha`, `alpha.1`, `rc.2`) so that dpkg, rpm and pacman order it like SemVer. For a prerelease tag the workflow creates the draft as a GitHub prerelease with `make_latest=false` (`package-release.py release-flags`), so even a draft published by hand never becomes latest. A prerelease build runs on its own `prerelease/` storage roots, and the updater installs only stable releases: an alpha treats a newer stable release such as `2.0.0` as an update and never an older one such as `1.2.5`.
 
@@ -198,9 +202,10 @@ python scripts/package-linux.py build --tag v1.0.0 \
 
 This stages the 256px PNG outside checksum-covered assets and builds and
 inspects Debian, RPM, and Arch packages. The published set is exactly the two
-ZIPs, `vosu_<version>_amd64.deb`, `vosu-<version>-1.x86_64.rpm`, and
-`vosu-<version>-1-x86_64.pkg.tar.zst`. `package-release.py verify-set` rejects
-missing or extra assets. Asset names always spell the SemVer `<version>`
+ZIPs, `vosu_<version>_amd64.deb`, `vosu-<version>-1.x86_64.rpm`,
+`vosu-<version>-1-x86_64.pkg.tar.zst`, and the standalone `vosu_plugin.h` C ABI
+header (`include/vosu_plugin.h`). `package-release.py verify-set` rejects
+missing, mismatched, or extra assets. Asset names always spell the SemVer `<version>`
 (`vosu_2.0.0-alpha.1_amd64.deb`); GitHub would rename a `~`. The package
 metadata carries each format's native version from
 `package-release.py`'s `distribution_packages`: a prerelease is
