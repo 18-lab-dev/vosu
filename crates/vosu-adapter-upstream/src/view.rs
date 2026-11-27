@@ -193,8 +193,13 @@ pub(crate) fn write_cbor_json(out: &mut Vec<u8>, value: &Value, ctx: &str) -> Re
         Value::Integer(n) => {
             if let Ok(v) = i64::try_from(*n) {
                 write_i64(out, v);
+            } else if let Ok(v) = u64::try_from(*n) {
+                use std::io::Write as _;
+                write!(out, "{v}").expect("writing to a Vec cannot fail");
             } else {
-                push_js_number(out, i128::from(*n) as f64);
+                return Err(Error::InvalidSource(format!(
+                    "{ctx}: integer out of i64/u64 range"
+                )));
             }
             Ok(())
         }

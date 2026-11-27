@@ -443,3 +443,64 @@ fn precise_direct_capture_encoder_matches_dto_and_serde() {
     std::sync::Arc::make_mut(&mut reversed.values).reverse();
     assert_precise_three_way_parity(&reversed);
 }
+
+#[test]
+fn mod_settings_u64_max_and_out_of_range_negative_cbor_integers_match_serde() {
+    let source = fixture::source();
+    let mut selected = fixture::capture(&source, &regular::selectors());
+    let mods_with_u64_max = Cbor::Map(vec![
+        (Cbor::Text("checksum".into()), Cbor::Text("cl".into())),
+        (Cbor::Text("number".into()), Cbor::Integer(0.into())),
+        (Cbor::Text("name".into()), Cbor::Text("CL".into())),
+        (
+            Cbor::Text("array".into()),
+            Cbor::Array(vec![Cbor::Map(vec![
+                (Cbor::Text("acronym".into()), Cbor::Text("CL".into())),
+                (
+                    Cbor::Text("settings".into()),
+                    Cbor::Map(vec![(
+                        Cbor::Text("seed".into()),
+                        Cbor::Integer(ciborium::value::Integer::from(u64::MAX)),
+                    )]),
+                ),
+            ])]),
+        ),
+        (Cbor::Text("rate".into()), Cbor::Float(1.0)),
+    ]);
+    replace_cbor(&mut selected, "/play/mods", mods_with_u64_max);
+    let doc = assert_regular_three_way_parity(&selected);
+    assert_eq!(
+        doc["play"]["mods"]["array"][0]["settings"]["seed"],
+        u64::MAX
+    );
+
+    let below_i64_min = ciborium::value::Integer::try_from(i128::from(i64::MIN) - 1).unwrap();
+    let mods_with_underflow = Cbor::Map(vec![
+        (Cbor::Text("checksum".into()), Cbor::Text("cl".into())),
+        (Cbor::Text("number".into()), Cbor::Integer(0.into())),
+        (Cbor::Text("name".into()), Cbor::Text("CL".into())),
+        (
+            Cbor::Text("array".into()),
+            Cbor::Array(vec![Cbor::Map(vec![
+                (Cbor::Text("acronym".into()), Cbor::Text("CL".into())),
+                (
+                    Cbor::Text("settings".into()),
+                    Cbor::Map(vec![(
+                        Cbor::Text("bad".into()),
+                        Cbor::Integer(below_i64_min),
+                    )]),
+                ),
+            ])]),
+        ),
+        (Cbor::Text("rate".into()), Cbor::Float(1.0)),
+    ]);
+    replace_cbor(&mut selected, "/play/mods", mods_with_underflow);
+    assert!(matches!(
+        regular::encode_capture(&selected),
+        Err(Error::InvalidSource(_))
+    ));
+    assert!(matches!(
+        regular::View::from_capture(&selected),
+        Err(Error::InvalidSource(_))
+    ));
+}
