@@ -98,12 +98,17 @@ impl ConfigStore {
             .await
             .map_err(io::Error::other)??;
         let current = self.current();
+        // Port 0 requests OS-assigned ephemeral ports; independent `:0` binds
+        // cannot collide with each other or with historical fixed origins.
+        // User-facing `RuntimeConfig::save` still enforces ports >= 1.
+        let same_port = |a: f64, b: f64| a != 0.0 && a == b;
         let conflicts = |host: &str, port: f64| {
-            candidate.dashboard_port == port && overlapping_hosts(&candidate.dashboard_ip, host)
+            same_port(candidate.dashboard_port, port)
+                && overlapping_hosts(&candidate.dashboard_ip, host)
         };
         if conflicts(&candidate.server_ip, candidate.server_port)
             || conflicts(&current.server_ip, current.server_port)
-            || (candidate.server_port == current.dashboard_port
+            || (same_port(candidate.server_port, current.dashboard_port)
                 && overlapping_hosts(&candidate.server_ip, &current.dashboard_ip))
             || state
                 .overlay_origins
@@ -246,6 +251,13 @@ mod tests {
         assert!(vosu_proptest::bounded!(store.validate_network(&candidate)).is_err());
         candidate.dashboard_port = 24894.0;
         assert!(vosu_proptest::bounded!(store.validate_network(&candidate)).is_ok());
+        // Ephemeral OS-assigned `:0` ports cannot collide with each other.
+        let mut ephemeral = (*store.current()).clone();
+        ephemeral.server_ip = "127.0.0.1".into();
+        ephemeral.dashboard_ip = "127.0.0.1".into();
+        ephemeral.server_port = 0.0;
+        ephemeral.dashboard_port = 0.0;
+        assert!(vosu_proptest::bounded!(store.validate_network(&ephemeral)).is_ok());
         vosu_proptest::bounded!(store.shutdown()).unwrap();
     }
 }

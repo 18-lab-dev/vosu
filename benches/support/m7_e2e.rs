@@ -82,18 +82,16 @@ pub struct Hosts {
 impl Hosts {
     pub async fn start(root: &Path, capture: bool, tool: bool) -> Self {
         let mut daemon = daemon::new(root).await;
-        let dashboard = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         daemon.config().update(|config| {
             config.server_ip = "127.0.0.1".into();
             config.dashboard_ip = "127.0.0.1".into();
             config.server_port = 0.0;
-            config.dashboard_port = f64::from(dashboard.local_addr().unwrap().port());
+            config.dashboard_port = 0.0;
         });
         if tool {
             daemon.add_development_tool(tool::package(root));
             load(daemon.plugins(), tool::provider(), 100);
         }
-        drop(dashboard);
         daemon.compose(Arc::new(Processes(capture))).await.unwrap();
         let (overlay, dashboard) = daemon.listener_addresses().await;
         Self {
