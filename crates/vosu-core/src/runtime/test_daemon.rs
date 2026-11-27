@@ -113,6 +113,40 @@ impl TestDaemon {
         Self { runtime, console }
     }
 
+    pub fn add_development_tool(&mut self, root: PathBuf) {
+        self.runtime.dev_tools.push(root);
+    }
+
+    pub async fn listener_addresses(&self) -> (std::net::SocketAddr, std::net::SocketAddr) {
+        async fn address(owner: &AsyncMutex<Option<ListenerOwner>>) -> std::net::SocketAddr {
+            owner
+                .lock()
+                .await
+                .as_ref()
+                .unwrap()
+                .state()
+                .effective
+                .unwrap()
+                .address
+        }
+        (
+            address(&self.runtime.listener).await,
+            address(&self.runtime.dashboard_listener).await,
+        )
+    }
+
+    pub async fn adapter_cache_generations(&self) -> [u64; 4] {
+        let adapters = self.runtime.adapters.lock().await;
+        let adapters = adapters.as_ref().expect("composed adapters");
+        [
+            WebSocketSchema::V1,
+            WebSocketSchema::StreamCompanion,
+            WebSocketSchema::V2,
+            WebSocketSchema::V2Precise,
+        ]
+        .map(|schema| adapters.provider(schema).cached_generation())
+    }
+
     pub fn config(&self) -> &Arc<ConfigStore> {
         &self.runtime.config
     }
@@ -226,6 +260,7 @@ impl TestDaemon {
     }
 
     /// Observe completion without moving or aborting any runtime-owned task.
+    #[cfg(feature = "test-harness")]
     pub async fn join_probes(&self) -> Vec<(&'static str, tokio::task::AbortHandle)> {
         let mut probes = Vec::new();
         for (name, owner) in [

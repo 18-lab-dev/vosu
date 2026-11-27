@@ -498,6 +498,120 @@ cmd /c start "" /B /WAIT /AFFINITY FFFF target\release\deps\plan_memory_bench-HA
 
 Rerun any round whose `load_other_busy_cpus` reached 2 or more.
 
+## M7 D17 contract
+
+M7 X1 freezes these additional `state_bus_bench` cases before timing:
+
+- `end_to_end/m7_idle_hosts`: alternating, nonzero source captures committed
+  through the ABI and state bus with the dashboard, overlay and tool hosts
+  composed. No HTTP or WebSocket clients during the sample.
+- `end_to_end/m7_dashboard_subscription`: those same source changes through
+  the regular public `/vosu.play/score` selector over a real API v1 WebSocket
+  on the overlay listener, with the dashboard listener as its `Origin`.
+  This models an active dashboard-origin subscriber; the shipped status
+  strip itself makes one-shot reads and never opens a subscription.
+- `end_to_end/m7_tool_action_progress`: a launched web tool starts an ABI
+  action, reads nonzero progress through the real job API, cancels and
+  observes the terminal result. The launch and single-use exchange are setup,
+  not timed work. Each iteration starts a fresh job.
+
+Also retain `end_to_end/{bus,bus_precise,api_frame,adapter,adapter_precise}`.
+The quality bar is unchanged: no median regression above 10% with
+non-overlapping 95% intervals, per milestone and cumulatively on comparable
+outputs. A missing protocol or baseline harness is not a pass.
+
+The idle and dashboard cases publish scores 12,345/23,456 into the
+production host through the same fixture producer. An idle iteration must
+advance the bus revision; a dashboard iteration must deliver the new score
+in a distinct delta. The tool case must return fraction `0.375` at revision
+1 and the job's terminal `cancelled` at revision 2. The benchmarks exclude
+startup and teardown and use no real game, browser, or external server.
+`runtime_wakeups` checks that the composed hosts start no idle state
+delivery or extra sampling cadence, that the subscription releases demand
+on teardown, and that neither workload fills the legacy adapter caches.
+The pre-existing tool-directory rescan and process discovery reconciliation
+are housekeeping, not state polling; they remain enabled.
+
+### Official comparison (Main, exclusive Linux window)
+
+Use the frozen pre-M7 head `33f957de` (M7 A7's recorded pre-extraction
+baseline, also the last first-parent revision before M7), and pre-M0
+`3a91ff95`. The pre-M7 setup script adds the same three workload clients
+to that revision's benchmark, injecting only temporary configuration,
+broker path, and process discovery into the legacy production composition.
+Its route handlers, tool authorization, providers and job API are unmodified.
+The inherited five cases are already present at `33f957de`.
+
+The legacy v2 and precise serializers have the same stable, empty-history
+source shape in both `hot_paths` targets. Their cold output cost is the
+cumulative pre-M0 comparison below; it is **not** a source-to-frame delta.
+Pre-M0 is **not applicable** for the three M7 host cases or the full
+`end_to_end` cases: it has no comparable state bus, API v1 frames or
+launch-authorized action/job protocol. Never compare those cases to a
+different output just to produce a cumulative number.
+
+In Bash, set `REPO` to the registered source repo (not an ovnfs checkout)
+and `M7` to the clean candidate checkout containing this harness. Use
+disposable baseline checkouts and a new evidence directory:
+
+```bash
+set -euo pipefail
+: "${REPO:?absolute source repository}" "${M7:?absolute candidate checkout}"
+ROOT=$(mktemp -d "$HOME/vosu-m7-d17.XXXXXXXX")
+PRE_M7=$(cd "$REPO" && ovnfs new --name d17-m7-pre-m7 --rev 33f957de)
+PRE_M0=$(cd "$REPO" && ovnfs new --name d17-m7-pre-m0 --rev 3a91ff95)
+python3 "$M7/scripts/prepare-m7-bench-baseline.py" "$PRE_M7"
+
+build() (
+  cd "$1"
+  local label=$2 bench
+  shift 2
+  if [[ -f scripts/dev-env.sh ]]; then source scripts/dev-env.sh; fi
+  export PATH="$HOME/.cargo/bin:$PATH" RUSTC_WRAPPER=sccache
+  export CARGO_TARGET_DIR="$ROOT/targets/$label" CRITERION_HOME="$ROOT/criterion/$label"
+  taskset -c 0-7,16-23 nice -n 10 python3 scripts/prepare-offset-generator.py --rid linux-x64
+  for bench in "$@"; do
+    taskset -c 0-7,16-23 nice -n 10 cargo bench --locked --no-run \
+      --bench "$bench" --message-format=json >"$ROOT/$label-$bench.jsonl"
+    jq -sre --arg bench "$bench" '
+      [.[] | select(.reason == "compiler-artifact" and .target.name == $bench
+                   and (.target.kind | index("bench"))) | .executable | strings]
+      | unique | if length == 1 then .[0] else error("expected one bench executable") end
+    ' "$ROOT/$label-$bench.jsonl" >"$ROOT/$label-$bench.bin"
+  done
+)
+build "$M7" m7 state_bus_bench hot_paths
+build "$PRE_M7" pre-m7 state_bus_bench
+build "$PRE_M0" pre-m0 hot_paths
+
+E2E='^end_to_end/(bus|bus_precise|api_frame|adapter|adapter_precise|m7_idle_hosts|m7_dashboard_subscription|m7_tool_action_progress)$'
+COLD='^serializers_cold/(v2|v2_precise)$'
+for rev in pre-m7 m7; do
+  CRITERION_HOME="$ROOT/criterion/$rev" \
+    "$(cat "$ROOT/$rev-state_bus_bench.bin")" --test "$E2E"
+done
+for rev in pre-m0 m7; do
+  CRITERION_HOME="$ROOT/criterion/$rev" \
+    "$(cat "$ROOT/$rev-hot_paths.bin")" --test "$COLD"
+done
+# All 8 end-to-end and 2 cold-output cases must execute and pass the checks above.
+# Stop builds and other performance work before starting the exclusive runs.
+sudo python3 "$M7/scripts/bench-compare.py" --cpu 7 --rounds 5 \
+  --binary "pre-m7=$(cat "$ROOT/pre-m7-state_bus_bench.bin")" \
+  --binary "m7=$(cat "$ROOT/m7-state_bus_bench.bin")" \
+  --filter "$E2E" --output "$ROOT/per-m7"
+sudo python3 "$M7/scripts/bench-compare.py" --cpu 7 --rounds 5 \
+  --binary "pre-m0=$(cat "$ROOT/pre-m0-hot_paths.bin")" \
+  --binary "m7=$(cat "$ROOT/m7-hot_paths.bin")" \
+  --filter "$COLD" --output "$ROOT/cumulative-pre-m0"
+```
+
+The comparison tool assigns a fresh Criterion home per revision **and**
+round under each output directory. Save the source revisions, SHA-256s of
+the binaries, the test-mode case lists, environment, and both
+`summary.json` files. A short benchmark smoke proves nonzero work only;
+it does not close D17.
+
 ## M4a D17 contract
 
 A4 freezes the following exact future case names in `state_bus_bench`; this

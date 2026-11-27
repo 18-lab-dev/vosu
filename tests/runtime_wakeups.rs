@@ -490,3 +490,104 @@ fn idle_adapter_hubs_arm_no_timer_and_wake_nothing() {
             .expect("hub run task");
     }
 }
+
+#[path = "../benches/support/m7_e2e.rs"]
+#[expect(
+    dead_code,
+    reason = "This test uses the host and publisher, not Criterion or the tool client"
+)]
+mod m7_e2e;
+
+#[test]
+fn m7_composed_hosts_do_not_poll_state_or_multiply_caches() {
+    use m7_e2e::{Capture, Hosts, SUBSCRIBE, bounded, connect, frame, update};
+
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let unpark_wakes = Arc::clone(&wakes);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .on_thread_unpark(move || {
+            unpark_wakes.fetch_add(1, Ordering::Relaxed);
+        })
+        .build()
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let hosts = runtime.block_on(bounded(Hosts::start(root.path(), true, false)));
+    let host = hosts.daemon.plugins();
+    let mut capture = Capture::attach(host);
+    let key = capture.key;
+    let demand = || {
+        host.state()
+            .subscriptions
+            .lock()
+            .unwrap()
+            .demand(key, Some("play"))
+    };
+    let subscriptions = hosts.daemon.subscriptions();
+    let parked = |duration| {
+        let (_keep, never) = mpsc::sync_channel::<()>(1);
+        assert!(never.recv_timeout(duration).is_err());
+    };
+    // Exclude startup. The pre-M7 tool-directory rescan (1 s) and discovery
+    // reconciliation (5 s with a tracked process) still run; allow their
+    // housekeeping wakes, but not a new state polling cadence.
+    parked(Duration::from_millis(250));
+    let before = wakes.load(Ordering::Relaxed);
+    let revision = capture.revision(host);
+    for _ in 0..128 {
+        capture.publish();
+    }
+    parked(Duration::from_millis(300));
+    let idle_wakes = wakes.load(Ordering::Relaxed) - before;
+    assert!(
+        idle_wakes <= 4,
+        "no periodic state polling with idle hosts: {idle_wakes} wakes"
+    );
+    assert_eq!(capture.revision(host) - revision, 128);
+    assert_eq!(subscriptions.active_tasks(), 0);
+    assert!(
+        demand().selectors.is_empty(),
+        "idle hosts request no capture demand"
+    );
+    assert_eq!(
+        runtime.block_on(hosts.daemon.adapter_cache_generations()),
+        [0; 4]
+    );
+
+    runtime.block_on(bounded(async {
+        let mut socket = connect(&hosts, SUBSCRIBE).await;
+        assert_eq!(frame(&mut socket).await[0], 0);
+        assert_eq!(subscriptions.active_tasks(), 1);
+        assert!(demand().regular, "regular sampling is the positive control");
+        assert!(
+            !demand().precise,
+            "dashboard-origin regular fields must not promote sampling"
+        );
+        for _ in 0..8 {
+            update(&mut socket, &mut capture).await;
+        }
+        assert_eq!(hosts.daemon.adapter_cache_generations().await, [0; 4]);
+        drop(socket);
+        while subscriptions.active_tasks() != 0 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            demand().selectors.is_empty(),
+            "socket teardown releases demand"
+        );
+
+        // Positive cache control: the composed legacy route actually
+        // populates its provider; merely composing/streaming API v1 did not.
+        let _response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("{}/json/v2", hosts.overlay))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(hosts.daemon.adapter_cache_generations().await, [0, 0, 1, 0]);
+        hosts.shutdown().await;
+    }));
+}

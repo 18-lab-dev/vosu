@@ -100,7 +100,7 @@ impl ApiV1SubscriptionHub {
         tasks.wait().await;
     }
 
-    #[cfg(feature = "test-harness")]
+    #[cfg(feature = "bench-harness")]
     pub fn active_tasks(&self) -> usize {
         lock(&self.0.tasks).len()
     }
