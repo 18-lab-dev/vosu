@@ -449,9 +449,10 @@ schema, values with defaults applied and a `secrets` presence map, with every
 `password` value `""`; POST validates the whole submitted document before
 storing, keeps a stored secret for `""` or an omitted field and clears it for
 `null`, and delivers one complete `SETTINGS_CHANGED`. An invalid POST changes
-nothing and publishes nothing. Bridge B2 keeps serving `vosu.osu`'s five keys
-until M8. `vosu.overlayhost`'s `static_folder_path` (A7.1-OR) is seeded by
-core from `STATIC_FOLDER_PATH` until M8, outside B2.
+nothing and publishes nothing. During M7, Bridge B2 kept serving `vosu.osu`'s
+five keys and core seeded `vosu.overlayhost`'s `static_folder_path` (A7.1-OR)
+from `STATIC_FOLDER_PATH` outside B2; both interim paths were deleted in M8-L2
+as specified below.
 
 **M8 permanent settings persistence and D19 migration precedence (A8.1, A8.3,
 adopted 2026-11-24).** In M8, every settings-bearing plugin — including
@@ -772,8 +773,9 @@ these channels:
 A bundled host that needs configuration uses the ordinary ABI settings
 service (§6.9). The one host storage location is A7.1-OR (approved
 2026-11-25): `vosu.overlayhost` receives its overlay root as its
-`static_folder_path` setting, which core seeds from `STATIC_FOLDER_PATH` until
-M8 migrates the key; it is not part of bridge B2. The overlay host writes
+`static_folder_path` setting from core's `PluginSettingsStore` (seeded from
+`STATIC_FOLDER_PATH` during M7 and migrated into `plugins/settings.json` in
+M8-L2; never part of bridge B2). The overlay host writes
 under that root only through `vosu-net`'s hardened primitives
 (`extract_zip_atomic` with its path, symlink, count and size checks, and the
 atomic publish/replace helpers), after validating every relative name with

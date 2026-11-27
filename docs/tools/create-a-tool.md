@@ -75,7 +75,7 @@ export VOSU_PROCESS_EVENTS=poll
 CONFIG_DIR="$XDG_CONFIG_HOME/vosu"
 case "$("$VOSU_BIN" --version)" in *-*) CONFIG_DIR="$CONFIG_DIR/prerelease" ;; esac
 mkdir -p "$HOME" "$CONFIG_DIR" "$XDG_DATA_HOME" \
-  "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$LAB/static"
+  "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
 cat > "$CONFIG_DIR/vosu.toml" <<EOF
 ENABLE_AUTOUPDATE = false
@@ -84,11 +84,12 @@ SERVER_IP = "127.0.0.1"
 SERVER_PORT = 25850
 DASHBOARD_IP = "127.0.0.1"
 DASHBOARD_PORT = 25851
-STATIC_FOLDER_PATH = "$LAB/static"
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 EOF
 "$VOSU_BIN" --tool "$TOOL"
 ```
+
+The overlay folder defaults to `static/` inside the isolated data root (`$XDG_DATA_HOME/vosu/static` on stable builds or `$XDG_DATA_HOME/vosu/prerelease/static` on prereleases). To point overlays at a custom directory, set `static_folder_path` under **Tools → Plugins → vosu.overlayhost** (or under `"vosu.overlayhost"` in `"$CONFIG_DIR/plugins/settings.json"`).
 
 Leave vosu in the foreground; Ctrl+C stops it. Open <http://127.0.0.1:25851/tools> in a browser. Under **Hello web**, choose **Open**.
 

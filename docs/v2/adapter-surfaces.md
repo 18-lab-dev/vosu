@@ -290,8 +290,9 @@ and an already opened file stays bound to its object. A lease is read-only.
 
 **Overlay-root writes (A7.1-OR, approved 2026-11-25).** `vosu.overlayhost`
 learns the overlay root only from its `static_folder_path` ABI setting
-(plugin-abi.md §6.9), which core seeds from `STATIC_FOLDER_PATH` until M8.
-It never receives the path through this surface. It performs every write
+(plugin-abi.md §6.9), stored in core's `PluginSettingsStore` (seeded from
+`STATIC_FOLDER_PATH` during M7 and migrated into `plugins/settings.json` in
+M8-L2). It never receives the path through this surface. It performs every write
 itself, using only `vosu-net`'s hardened primitives: `extract_zip_atomic`,
 with its path, symlink, entry-count and expanded-size checks, and the atomic
 publish/replace helpers. Every relative name is validated with the SDK's

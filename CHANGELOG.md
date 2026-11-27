@@ -15,6 +15,15 @@ All notable user-visible changes to vosu are documented here. Older sections are
   adds job artifacts. The application's version and package `host`
   requirement are separate.
 
+## Unreleased — 2.0 M8
+
+The in-tree application version remains `2.0.0-alpha.2` until the stable `2.0.0` release cutover.
+
+- **Hardened plugin settings store (M8-L1):** `PluginSettingsStore` (`<config>/plugins/settings.json`, format v1, 4 MiB cap) now publishes via `atomic_replace`/`read_published`, enters a fail-closed state with redacted diagnostics on corruption or unsupported versions instead of overwriting data, and provides schema-validated `import_missing_overrides` preserving existing valid overrides and explicit `false`/`0`/`""` values.
+- **Normal-root 1.x → 2.0 migration and settings cutover (M8-L2):** Added the crash-recoverable offline migration engine (`crates/vosu-core/src/migration/`, `<config>/migration-v2-journal.json`) for release roots (prerelease roots remain isolated). Deleted Bridge B2 and core's M7 `STATIC_FOLDER_PATH` seeding: `vosu.osu`'s five settings (`CALCULATE_PP`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, `READ_MANIA_SCROLL_SPEED`) and `vosu.overlayhost`'s `static_folder_path` now live exclusively in `<config>/plugins/settings.json` (edited under **Tools → Plugins** via `GET`/`POST /api/plugins/<id>/settings`). Migration strips the 6 moved keys and 4 retired keys (`ENABLE_KEY_OVERLAY`, `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`, `V2_SUBSCRIPTION_DEBOUNCE`) from canonical `vosu.toml`, copies 1.x catalog sources verbatim with exact-official-only trust, disables 1.x `tool.toml`-only user tools (`needs-2.0-update`) while leaving durable data/settings and user overlays intact, and records offline official replacement `pending_intents` plus closed AF.2 copy-only data/settings transfers. Covered by the 27-test native `migration_compat` corpus.
+- **Fail-closed day-0 release gate (M8-L3 G0):** Added `scripts/check-day0.py` and `scripts/day0_evidence.py`, wired into `.github/workflows/release.yml` and `scripts/sign-release.py` for stable `>= 2.0.0` tags. Verifies unauthenticated latest releases for `18-lab-dev/vosu-tools`, `18-lab-dev/vosulay`, `18-lab-dev/vosu-overlays` (`catalog-v2.json`), and `18-lab-dev/vosu-overlay-quickstart` (SemVer major 2), strictly validates `tests/fixtures/upstream/DIVERGENCES.md` (rejecting any `temporary` or malformed row), and verifies the candidate-bound format-1 release evidence manifest.
+- **Standalone C ABI header asset and 2.0 release smoke (M8-L4 R0):** `scripts/package-release.py` and the release workflow now publish `vosu_plugin.h` (`include/vosu_plugin.h`) as a standalone signed release asset alongside the unchanged two-entry daemon ZIPs and Linux packages. Modernized `vosu-release-smoke` to validate vosu 2.0 production binaries (all 7 bundled plugins, absence of `test-harness` endpoints, `vosu plugin-host` argument rejection, `/api/ingame` 404 policy, and Windows job process cleanup).
+
 ## Unreleased — 2.0 M7
 
 - Catalog-installed process plugins now start in supervised plugin hosts
@@ -61,8 +70,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
   **Clear** removes it, and a failed save clears what was typed). A save is
   validated as a whole: an unknown setting or wrong type changes nothing,
   and a valid one reaches the plugin as one complete `SETTINGS_CHANGED`.
-  vosu stores them in `plugins/settings.json` in its config directory;
-  `vosu.osu`'s settings stay on the Settings page until M8.
+  vosu stores them in `plugins/settings.json` in its config directory.
 - The Tools page lists **Plugins** (native code vosu loads) apart from
   **Web tools** (pages it serves). Catalog plugins show their source trust,
   runtime, approval and load outcome, and a plugin whose trust was revoked
