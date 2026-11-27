@@ -191,7 +191,7 @@ class CandidateLayoutTests(GoldenTestCase):
         self.assertEqual((expected["status"], expected["body"]), (200, text(success)))
         rules = json.loads((candidate / "divergence-rules.json").read_text())["rules"]
         self.assertEqual({rule["part"]: rule["vosu_value"] for rule in rules},
-                         {"status": 400, "body": rejection, "headers.content-length": "75"})
+                         {"status": 400, "body": rejection})
         for rule in rules:
             self.assertEqual(rule["ledger_id"], "legacy-calculate-declared-roots")
             self.assertEqual(rule["platforms"], ["windows-lazer"])
@@ -404,7 +404,7 @@ class CaptureValidationTests(GoldenTestCase):
         self.rejects(capture([moved]), "differs in provider_generation")
         bytes_differ = state_case()
         bytes_differ["attempts"][0]["vosu"]["route"]["body"] = text('{"ok":false}')
-        self.rejects(capture([bytes_differ]), "differ from the dump's adapter bytes")
+        self.rejects(capture([bytes_differ]), "differs from the dump's adapter payload")
         request_differs = state_case()
         request_differs["attempts"][0]["vosu"]["route"]["request"] = text(request(target="/json/v2?x"))
         self.rejects(capture([request_differs]), "request bytes differ")
@@ -412,6 +412,33 @@ class CaptureValidationTests(GoldenTestCase):
         tampered["attempts"][0]["vosu"]["dump_before"]["envelope"]["bus_revision"] = 8
         tampered["attempts"][0]["vosu"]["dump_after"]["envelope"]["bus_revision"] = 8
         self.rejects(capture([tampered]), "digest")
+
+    def test_live_and_fixture_sandwiches_share_json_payload_equality(self) -> None:
+        from parity_golden_capture import _comparable
+
+        first = '{"b":5,"a":[1,2]}'
+        second = ' { "a":[1.0,2], "b":5.0000000000025 }'
+        value = state_case(first)
+        attempt = value["attempts"][0]
+        formatted = response(text(second), [["Date", DATE_B],
+                                            ["Content-Type", "application/json; charset=utf-8"],
+                                            ["Content-Length", str(len(second))]])
+        attempt["source"][1].update(formatted)
+        attempt["vosu"]["route"].update(formatted)
+        attempt["vosu"]["dump_after"]["envelope"] = envelope(second)
+        self.assertEqual(_comparable(attempt["source"][0]), _comparable(attempt["source"][1]))
+        for provenance in ("captured", "synthetic"):
+            receipt = io.StringIO()
+            fixture = self.run_golden(capture([value]), provenance=provenance, receipt=receipt)
+            self.assertEqual(self.case_file(fixture, value["id"])["expected"]["body"], text(first))
+            self.assertNotIn("volatile", json.loads(receipt.getvalue())["platforms"]["windows-lazer"])
+
+        changed = '{"a":[1,2],"b":5.00000000001}'
+        attempt["source"][1].update(response(
+            text(changed), [["Date", DATE_B], ["Content-Type", "application/json"],
+                            ["Content-Length", str(len(changed))]]))
+        self.assertNotEqual(_comparable(attempt["source"][0]), _comparable(attempt["source"][1]))
+        self.rejects(capture([value]), "sandwich responses differ")
 
     def test_sc_sandwich_exempts_only_generation_and_derived_revision(self) -> None:
         body = '{"sc":1}'
@@ -488,6 +515,28 @@ class CaptureValidationTests(GoldenTestCase):
         get = case("state-http.json-v2.get.no-client", request(), (up, up),
                    vosu=response(text(not_ready), [], status="HTTP/1.1 404 Not Found"), dump=dump)
         self.rejects(capture([get]), "route status differs")
+
+    def test_head_content_length_describes_each_sides_own_get(self) -> None:
+        first = '{"n":5}'
+        second = ' { "n":5.0 }'
+        get = state_case(first)
+        attempt = get["attempts"][0]
+        for record in (attempt["source"][1], attempt["vosu"]["route"]):
+            record["body"] = text(second)
+            record["headers"][2][1] = str(len(second))
+
+        def head_response(body: str) -> dict:
+            return response(text(""), [["Content-Type", "application/json"],
+                                       ["Content-Length", str(len(body))]])
+
+        head = case("state-http.head-json-v2", request("HEAD"),
+                    (head_response(first), head_response(second)), vosu=head_response(second))
+        self.run_golden(capture([get, head]))
+        head["attempts"][0]["vosu"]["route"]["headers"][1][1] = str(len(first))
+        self.rejects(capture([get, head]), "vosu route content-length differs")
+        head["attempts"][0]["vosu"]["route"]["headers"][1][1] = str(len(second))
+        head["attempts"][0]["source"][1]["headers"][1][1] = str(len(first))
+        self.rejects(capture([get, head]), "upstream content-length differs")
 
     def test_request_budget_ledger_decides_the_route_not_the_dump(self) -> None:
         # Pilot 2: an over-budget request never reaches the adapter, so vosu answers the

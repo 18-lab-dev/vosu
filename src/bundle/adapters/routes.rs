@@ -8,7 +8,7 @@ use vosu_core::{
     runtime::HostRoutes,
     server::{
         files,
-        routes::{CachedJson, Endpoint, StateJsonProvider, StateRoute, classify},
+        routes::{Endpoint, StateJsonProvider, StateRoute, classify},
         service::{JSON, surface_bytes, surface_not_ready},
         websocket::WebSocketHub,
     },
@@ -125,30 +125,28 @@ impl RouteProvider for RegisteredProvider {
                     surface_bytes(status.as_u16(), JSON, body)
                 }
                 Self::Calculate(provider) => {
-                    const PP_JSON: &str = "application/json";
                     let query = url::form_urlencoded::Serializer::new(String::new())
                         .extend_pairs(&request.query)
                         .finish();
                     match vosu_adapter_upstream::calculate::PpQuery::parse(Some(&query)) {
                         Err(error) => surface_bytes(
                             400,
-                            PP_JSON,
+                            JSON,
                             Bytes::from(
                                 serde_json::to_vec(&json!({"error":error})).expect("JSON string"),
                             ),
                         ),
                         Ok(query) => match provider.calculate(query).await {
                             vosu_adapter_upstream::calculate::ResultBody::Ready(body) => {
-                                surface_bytes(200, PP_JSON, body)
+                                surface_bytes(200, JSON, body)
                             }
                             vosu_adapter_upstream::calculate::ResultBody::NotReady => {
-                                let (status, body) = CachedJson::NotReady.status_body();
-                                surface_bytes(status.as_u16(), PP_JSON, body)
+                                surface_not_ready()
                             }
                             vosu_adapter_upstream::calculate::ResultBody::Failed {
                                 status,
                                 body,
-                            } => surface_bytes(status, PP_JSON, body),
+                            } => surface_bytes(status, JSON, body),
                         },
                     }
                 }

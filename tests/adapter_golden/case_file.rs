@@ -54,12 +54,10 @@ pub fn case(dir: &Path, platform: &str, id: &str, assets: &[Asset]) -> Result<Ca
             "{at}: negative and diagnostic route cases are never goldens"
         ));
     }
-    if !value["barrier"]
+    let barrier = value["barrier"]
         .as_str()
-        .is_some_and(|b| BARRIERS.contains(&b))
-    {
-        return Err(format!("{at}: unknown barrier"));
-    }
+        .filter(|b| BARRIERS.contains(b))
+        .ok_or_else(|| format!("{at}: unknown barrier"))?;
     let conditional = match &value["conditional"] {
         Value::Null => None,
         Value::String(kind)
@@ -105,6 +103,7 @@ pub fn case(dir: &Path, platform: &str, id: &str, assets: &[Asset]) -> Result<Ca
     Ok(Case {
         id: id.to_owned(),
         family,
+        barrier: barrier.to_owned(),
         conditional,
         normalized,
         request,

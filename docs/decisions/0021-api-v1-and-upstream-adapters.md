@@ -325,3 +325,12 @@ and whole-route subtraction without whole-route ledger scope fail. The
   removal (`adr0021-removed-ingame-page`): vosu cannot ship upstream's LGPL
   page, and 2.0 has no replacement. The four classes and the day-0 rule are
   unchanged. `/api/ingame` is still never captured or used as a golden.
+
+**2026-11-26 (owner decision):** Upstream compatibility is payload
+compatibility, not wire spelling. The adapters still reproduce fields,
+values, quirks, status codes and error bodies bug for bug. HTTP JSON and
+WebSocket JSON text frames are compared after parsing, including error
+bodies. Non-JSON payloads stay byte-exact. The
+[golden contract §7](../../tests/fixtures/upstream/GOLDEN_CONTRACT.md#7-normalization-inventory-a4b6)
+defines payload equality; its §6 defines the header exceptions for
+`Content-Type` charset and per-response `Content-Length`.

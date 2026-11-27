@@ -288,7 +288,7 @@ class HarnessDump:
 
     def fetch(self, schema: str) -> dict[str, Any]:
         status, headers, body = self._exchange(schema, self.capability)
-        if status != 200 or headers.get("content-type") != "application/json" \
+        if status != 200 or not volatile.is_json_media_type(headers.get("content-type", "")) \
                 or headers.get("cache-control") != "no-store":
             raise CaptureError(f"harness dump for {schema} answered {status}")
         try:
@@ -408,7 +408,7 @@ def _comparable(record: dict[str, Any]) -> tuple[Any, ...]:
         for f in record["frames"]]
     try:
         return volatile.record_view(path, record["status_line"].split(" ", 2)[1], headers,
-                                    _raw(record["body"]), frames)[0]
+                                    _raw(record["body"]), frames, head=request[0] == "HEAD")[0]
     except volatile.VolatileError as exc:
         return ("volatile rule broken", str(exc), id(record))
 
