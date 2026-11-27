@@ -1,7 +1,7 @@
 //! Unmounted upstream providers. The hub owns capture/encoding caches and leases.
 use bytes::Bytes;
-use std::sync::Arc;
-use vosu_adapter_support::filtered::selects_path;
+use std::sync::{Arc, OnceLock};
+use vosu_adapter_support::filtered::{SharedDocument, selects_path};
 use vosu_plugin_api::Selector;
 use vosu_surface::filter::Filter;
 use vosu_surface::{
@@ -11,6 +11,19 @@ use vosu_surface::{
 
 pub struct Regular;
 pub struct Precise;
+
+struct RegularSnapshot {
+    capture: CapturedSelection,
+    encoded: Bytes,
+    response: OnceLock<Result<crate::dto::Response, String>>,
+}
+
+struct PreciseSnapshot {
+    capture: CapturedSelection,
+    encoded: Bytes,
+    response: OnceLock<Result<crate::dto::PreciseResponse, String>>,
+}
+
 impl Projection<Filter, Bytes> for Regular {
     fn observes_field(&self, entry: &vosu_plugin_api::StateEntry, field: &str) -> bool {
         entry.ns != "vosu.osu"
@@ -30,9 +43,26 @@ impl Projection<Filter, Bytes> for Regular {
         &self,
         capture: CapturedSelection,
     ) -> Result<Arc<dyn ProjectionView<Filter, Bytes>>, ProjectionError> {
-        crate::regular::View::from_capture(&capture)
-            .map(|view| Arc::new(view) as Arc<dyn ProjectionView<Filter, Bytes>>)
-            .map_err(projection_error)
+        let encoded = crate::regular::encode_capture(&capture).map_err(projection_error)?;
+        Ok(Arc::new(RegularSnapshot {
+            capture,
+            encoded,
+            response: OnceLock::new(),
+        }))
+    }
+}
+impl ProjectionView<Filter, Bytes> for RegularSnapshot {
+    fn encode(&self, filters: &[Filter]) -> Result<Bytes, String> {
+        if filters.is_empty() {
+            Ok(self.encoded.clone())
+        } else {
+            let response = self.response.get_or_init(|| {
+                crate::regular::decode_response_only(&self.capture).map_err(|e| e.to_string())
+            });
+            SharedDocument::new(response.as_ref().map_err(Clone::clone)?)
+                .encode(filters)
+                .map_err(|e| e.to_string())
+        }
     }
 }
 impl ProjectionView<Filter, Bytes> for crate::regular::View {
@@ -84,9 +114,26 @@ impl Projection<Filter, Bytes> for Precise {
         &self,
         capture: CapturedSelection,
     ) -> Result<Arc<dyn ProjectionView<Filter, Bytes>>, ProjectionError> {
-        crate::precise::View::from_capture(&capture)
-            .map(|view| Arc::new(view) as Arc<dyn ProjectionView<Filter, Bytes>>)
-            .map_err(projection_error)
+        let encoded = crate::precise::encode_capture(&capture).map_err(projection_error)?;
+        Ok(Arc::new(PreciseSnapshot {
+            capture,
+            encoded,
+            response: OnceLock::new(),
+        }))
+    }
+}
+impl ProjectionView<Filter, Bytes> for PreciseSnapshot {
+    fn encode(&self, filters: &[Filter]) -> Result<Bytes, String> {
+        if filters.is_empty() {
+            Ok(self.encoded.clone())
+        } else {
+            let response = self.response.get_or_init(|| {
+                crate::precise::decode_response_only(&self.capture).map_err(|e| e.to_string())
+            });
+            SharedDocument::new(response.as_ref().map_err(Clone::clone)?)
+                .encode(filters)
+                .map_err(|e| e.to_string())
+        }
     }
 }
 impl ProjectionView<Filter, Bytes> for crate::precise::View {

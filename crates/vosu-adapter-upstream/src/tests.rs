@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::{Value, json};
 mod fixture;
+mod wire_parity;
 
 fn json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap()
