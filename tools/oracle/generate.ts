@@ -223,6 +223,11 @@ async function main(): Promise<void> {
             if (resolved.url.endsWith('/packages/tosu/src/instances/lazerInstance.ts')) {
                 return { url: 'oracle:lazer-instance', shortCircuit: true };
             }
+            // Global's base class imports this type at runtime through the
+            // pinned loader. Do not initialize the native process graph.
+            if (resolved.url.endsWith('/packages/tosu/src/instances/index.ts')) {
+                return { url: 'oracle:abstract-instance', shortCircuit: true };
+            }
             if (resolved.url.endsWith('/packages/tosu/src/instances/manager.ts')) {
                 return { url: 'oracle:instance-manager', shortCircuit: true };
             }
@@ -242,6 +247,9 @@ async function main(): Promise<void> {
                     source: 'export class LazerInstance {}'
                 };
             }
+            if (url === 'oracle:abstract-instance') {
+                return { format: 'module', shortCircuit: true, source: 'export class AbstractInstance {}' };
+            }
             if (url === 'oracle:instance-manager') {
                 return { format: 'module', shortCircuit: true, source: 'export class InstanceManager {}' };
             }
@@ -255,12 +263,13 @@ async function main(): Promise<void> {
         }
     });
 
-    const [{ buildResult: buildV1 }, { buildResult: buildV2 }, { buildResult: buildPrecise }, { buildResult: buildSc }, { LazerInstance }] = await Promise.all([
+    const [{ buildResult: buildV1 }, { buildResult: buildV2 }, { buildResult: buildPrecise }, { buildResult: buildSc }, { LazerInstance }, { Global }] = await Promise.all([
         import(pathToFileURL(join(options.source, 'packages/tosu/src/api/utils/buildResult.ts')).href),
         import(pathToFileURL(join(options.source, 'packages/tosu/src/api/utils/buildResultV2.ts')).href),
         import(pathToFileURL(join(options.source, 'packages/tosu/src/api/utils/buildResultV2Precise.ts')).href),
         import(pathToFileURL(join(options.source, 'packages/tosu/src/api/utils/buildResultSC.ts')).href),
-        import(pathToFileURL(join(options.source, 'packages/tosu/src/instances/lazerInstance.ts')).href)
+        import(pathToFileURL(join(options.source, 'packages/tosu/src/instances/lazerInstance.ts')).href),
+        import(pathToFileURL(join(options.source, 'packages/tosu/src/states/global.ts')).href)
     ]);
 
     rmSync(options.out, { recursive: true, force: true });
@@ -277,9 +286,29 @@ async function main(): Promise<void> {
             manager = { focusedClient: undefined, gameFocused: false, osuInstances: {}, getInstance() { return undefined; } };
         } else {
             const client = spec.source === 'lazer' ? 1 : 0;
-            const focused = instanceFrom(input, client, input.services);
+            // The saved input is the raw seed, not the legacy Global service.
+            // Keep Global's real initial previous clock and run its regular update.
+            const raw = input.services.global;
+            const global = new Global({
+                client,
+                memory: { global: () => ({ ...raw, memorySongsFolder: '' }) },
+                resetReportCount() {},
+                reportError() { throw new Error(`Global update failed for ${spec.id}`); }
+            });
+            global.playTime = raw.playTime;
+            global.updateState();
+            const services = {
+                ...input.services,
+                global: {
+                    ...raw,
+                    paused: global.paused,
+                    // Only lazer's empty memory folder is part of this contract.
+                    skinFolder: spec.source === 'lazer' ? global.skinFolder : raw.skinFolder
+                }
+            };
+            const focused = instanceFrom(input, client, services);
             if (client === 1) Object.setPrototypeOf(focused, LazerInstance.prototype);
-            const osuInstances = spec.tournament === 'stable' ? stableTournamentInstances(focused, input.services) : { '10': focused };
+            const osuInstances = spec.tournament === 'stable' ? stableTournamentInstances(focused, services) : { '10': focused };
             manager = { focusedClient: client, gameFocused: true, osuInstances, getInstance(requested) { return requested === client ? focused : undefined; } };
         }
         // The dynamic pinned-source imports accept the structural adapter, whose

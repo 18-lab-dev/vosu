@@ -16,6 +16,10 @@ id = "field:vosu.osu.internal.paths"
 version = "^1.3.0"
 
 [[requires]]
+id = "field:vosu.osu.internal.playClock"
+version = "^1.3.0"
+
+[[requires]]
 id = "field:vosu.skin.name"
 version = "^1.0.0"
 

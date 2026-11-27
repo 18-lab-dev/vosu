@@ -91,7 +91,7 @@ pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value, bus: &Value)
                     ("folders", "skin") | ("directPath", "skinFolder")
                 )
             {
-                assert_eq!(value, "", "pinned lazer skin echo remains empty");
+                assert_eq!(value, ".", "pinned lazer skin echo normalizes empty to dot");
                 assert!(
                     !input.services.global["skinFolder"]
                         .as_str()

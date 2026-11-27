@@ -1,6 +1,8 @@
 //! Direct writer: histories and strings stay borrowed from the immutable view.
 use crate::view;
-use crate::{Error, View, game_folder, helpers::joined_path, legacy_hits, songs_folder};
+use crate::{
+    Error, View, game_folder, helpers::joined_path, legacy_hits, skin_folder, songs_folder,
+};
 use std::io;
 use vosu_adapter_support::json::{Wire, With, wire_object};
 
@@ -42,7 +44,7 @@ fn document(out: &mut Vec<u8>, v: &View) -> io::Result<()> {
     wire_object!(@members out first {
         "client": v.client,
         "settings": { "showInterface": v.interface_visible, "folders": {
-            "game": game_folder(v), "skin": v.paths.skin_folder.as_deref().unwrap_or(""), "songs": songs_folder(v),
+            "game": game_folder(v), "skin": skin_folder(v), "songs": songs_folder(v),
         } },
         "menu": With(|out: &mut Vec<u8>| {
             wire_object!(@open out first);

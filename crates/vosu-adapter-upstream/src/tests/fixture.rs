@@ -160,7 +160,10 @@ pub(super) fn capture(snapshot: &StateBundleSnapshot, selectors: &[Selector]) ->
         .unwrap();
     let state = store.current(SessionKey(81)).unwrap();
     let registry = registry.read().unwrap();
-    let internal = InternalGrant::from_subtrees(vec![Pointer::parse("/internal/paths").unwrap()]);
+    let internal = InternalGrant::from_subtrees(vec![
+        Pointer::parse("/internal/paths").unwrap(),
+        Pointer::parse("/internal/playClock").unwrap(),
+    ]);
     let values: Vec<_> = selectors
         .iter()
         .map(|selector| StateEntry {

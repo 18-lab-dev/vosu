@@ -300,7 +300,7 @@ impl StateBundle {
             Ok(ReadStatus::Ready(raw_global)) => {
                 let play_time_changed = self.global.play_time != raw_global.play_time;
                 let previous_status = self.global.status;
-                let previous_play_time = self.global.previous_play_time;
+                let previous_play_time = self.global.play_clock[1];
                 self.global.paused = match raw_global.paused {
                     Some(paused) => paused,
                     None => self.derive_paused_from_play_time_stall(
@@ -311,7 +311,7 @@ impl StateBundle {
                         snapshot.context().api_cadence,
                     ),
                 };
-                self.global.previous_play_time = raw_global.play_time;
+                self.global.play_clock = [previous_play_time, raw_global.play_time];
                 self.global.game_time = raw_global.game_time;
                 self.global.is_watching_replay = raw_global.is_watching_replay;
                 self.global.is_replay_ui_hidden = raw_global.is_replay_ui_hidden;

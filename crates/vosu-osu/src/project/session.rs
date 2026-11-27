@@ -1,7 +1,7 @@
 //! Raw osu! session bookkeeping; foreground is deliberately per-session.
 use super::{
     OsuPointer as P, ProjectionSink, SessionFacts,
-    common::{number, number_name},
+    common::{map, number, number_name},
 };
 use vosu_osu_state::StateBundleSnapshot;
 use vosu_plugin_api::PublishValueRef as V;
@@ -17,6 +17,13 @@ pub(super) fn project(
     );
     sink.put(P::OsuSessionPlayCount, V::U64(0));
     sink.put(P::OsuSessionPaused, V::Bool(s.regular.global.paused));
+    sink.put_cbor(P::OsuInternalPlayClock, &mut |b| {
+        let [previous, current] = s.regular.global.play_clock;
+        map(
+            b,
+            &[("previous", V::F64(previous)), ("current", V::F64(current))],
+        );
+    });
     sink.put(
         P::OsuSessionWatchingReplay,
         V::Bool(s.regular.global.is_watching_replay),

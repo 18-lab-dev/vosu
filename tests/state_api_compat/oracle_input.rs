@@ -281,7 +281,7 @@ pub fn regular(input: &Input) -> RegularState {
             paused: boolean(global, "paused"),
             game_time: integer(global, "gameTime"),
             play_time: number(global, "playTime"),
-            previous_play_time: 0.0,
+            play_clock: [0.0, number(global, "playTime")],
             menu_mods,
             game_folder: string(global, "gameFolder"),
             skin_folder: string(global, "skinFolder"),

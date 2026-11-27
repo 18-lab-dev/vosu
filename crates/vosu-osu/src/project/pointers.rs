@@ -134,4 +134,5 @@ pointers! {
     OsuTourney => ("vosu.osu", "/tourney", Regular),
     OsuTourneyAvailability => ("vosu.osu", "/tourneyAvailability", Regular),
     OsuInternalPaths => ("vosu.osu", "/internal/paths", Regular),
+    OsuInternalPlayClock => ("vosu.osu", "/internal/playClock", Regular),
 }

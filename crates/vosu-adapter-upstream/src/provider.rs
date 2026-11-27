@@ -113,10 +113,12 @@ fn regular_demand(selector: &Selector, filters: &[Filter]) -> bool {
         return selects_path(filters, &["settings", "skin", "name"]);
     }
     match selector.pointer.as_str() {
-        "/session/paused" => selects_path(filters, &["game", "paused"]),
+        crate::regular::PLAY_CLOCK => selects_path(filters, &["game", "paused"]),
         "/session/playTime" => selects_path(filters, &["session", "playTime"]),
         "/session/server" => selects_path(filters, &["server"]),
-        "/session/state" => selects_path(filters, &["state"]),
+        "/session/state" => selects_path(filters, &["state"]) || selects_fc_pp(filters),
+        "/beatmap" => selects_path(filters, &["beatmap"]) || selects_fc_pp(filters),
+        "/performance" => selects_path(filters, &["performance"]) || selects_fc_pp(filters),
         "/internal/paths" => ["folders", "files", "directPath"]
             .iter()
             .any(|field| selects_path(filters, &[field])),
@@ -130,5 +132,34 @@ fn regular_demand(selector: &Selector, filters: &[Filter]) -> bool {
             Some(field) => selects_path(filters, &["play", field]),
             None => selects_path(filters, &[pointer.trim_start_matches('/')]),
         },
+    }
+}
+
+fn selects_fc_pp(filters: &[Filter]) -> bool {
+    selects_path(filters, &["play", "pp", "fc"])
+        || selects_path(filters, &["play", "pp", "detailed", "fc", "total"])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selecting_fc_retains_the_clock_accuracy_and_phase_inputs() {
+        let selectors = Regular.demand_selectors(&[Filter::Nested {
+            field: "play".into(),
+            keys: vec![Filter::Nested {
+                field: "pp".into(),
+                keys: vec![Filter::Field("fc".into())],
+            }],
+        }]);
+        for pointer in ["/play/pp", "/beatmap", "/performance", "/session/state"] {
+            assert!(selectors.iter().any(|s| s.pointer == pointer), "{pointer}");
+        }
+        assert!(
+            !selectors
+                .iter()
+                .any(|s| s.pointer == crate::regular::PLAY_CLOCK)
+        );
     }
 }

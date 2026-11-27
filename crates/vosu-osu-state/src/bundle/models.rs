@@ -220,7 +220,8 @@ pub struct GlobalState {
     pub paused: bool,
     pub game_time: i64,
     pub play_time: f64,
-    pub previous_play_time: f64,
+    /// Previous and current raw play clocks at the regular sampling cadence.
+    pub play_clock: [f64; 2],
     pub menu_mods: CalculateMods,
     pub game_folder: String,
     pub skin_folder: String,
@@ -242,7 +243,7 @@ impl Default for GlobalState {
             paused: false,
             game_time: 0,
             play_time: 0.0,
-            previous_play_time: 0.0,
+            play_clock: [0.0; 2],
             menu_mods: default_calculated_mods(),
             game_folder: String::new(),
             skin_folder: String::new(),

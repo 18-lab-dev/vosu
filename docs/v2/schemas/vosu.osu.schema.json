@@ -937,6 +937,17 @@
       "required": ["paths"],
       "additionalProperties": false,
       "properties": {
+        "playClock": {
+          "type": "object",
+          "description": "Adjacent regular samples of the raw play clock, in milliseconds. The initial previous sample is zero. Adapters may compare them for legacy wire behavior; the actual pause field is /session/paused.",
+          "required": ["previous","current"],
+          "additionalProperties": false,
+          "properties": {
+            "previous": {"type":"number"},
+            "current": {"type":"number"}
+          },
+          "x-sampling-lane": {"lane":"regular","activity":"always"}
+        },
         "paths": {
           "type": "object",
           "description": "Per-variant install paths (D8), the current chart's folder/file names, and the active skin's folder (R8); the variant not matching the session's own client is entirely null. A plugin importing a file uses the vosu.osu.beatmap.import action (M3), never a write through this path.",

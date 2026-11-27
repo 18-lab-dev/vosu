@@ -32,7 +32,8 @@ pub struct NumberName {
 pub struct Game {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focused: Option<bool>,
-    pub paused: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused: Option<bool>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
