@@ -211,3 +211,13 @@ fn a_bridged_id_is_refused_before_anything_is_stored() {
         SettingsError::ManagedElsewhere(ID.into())
     );
 }
+
+#[test]
+fn post_read_size_limit_rejects_oversized_payload_even_after_read() {
+    let payload = br#"{"version":1,"plugins":{}}"#;
+    assert_eq!(
+        super::parse_bytes_with_limit(payload, (payload.len() as u64) - 1),
+        Err(super::ReadFailure::Oversized)
+    );
+    assert!(super::parse_bytes_with_limit(payload, payload.len() as u64).is_ok());
+}
