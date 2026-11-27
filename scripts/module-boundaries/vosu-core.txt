@@ -57,3 +57,7 @@ report -> config
 updater -> desktop
 # catalog persistence uses the existing vosu-core -> vosu-sys crate edge
 # for platform::atomic_replace.
+# M8-L2: normal-root 1.x -> 2.0 migration journal and local conversion engine.
+migration -> catalog
+migration -> config
+migration -> plugin

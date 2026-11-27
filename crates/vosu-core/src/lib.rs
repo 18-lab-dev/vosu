@@ -22,6 +22,7 @@ pub mod config;
 pub mod desktop;
 pub mod identity;
 pub mod logging;
+pub mod migration;
 pub mod plugin;
 pub mod removed_routes;
 pub mod report;

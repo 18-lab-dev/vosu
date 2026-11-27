@@ -264,6 +264,34 @@ impl SourceStore {
         Ok(state.generation)
     }
 }
+/// Publishes verbatim migrated 1.x source records to `<root>/catalog-source-settings.json`
+/// with strict official-only trust (`trusted: identity.is_allowlisted()`, `private_network: false`).
+pub(crate) fn publish_migrated_records(
+    root: &Path,
+    inputs: &[SourceInput],
+) -> Result<Vec<SourceRecord>, SourceStoreError> {
+    validate_input(inputs)?;
+    let records: Vec<SourceRecord> = inputs
+        .iter()
+        .enumerate()
+        .map(|(order, input)| {
+            let identity = SourceIdentity::parse(input.source.clone())
+                .expect("validated input")
+                .identity;
+            SourceRecord {
+                trusted: identity.is_allowlisted(),
+                private_network: false,
+                identity,
+                enabled: input.enabled,
+                order,
+            }
+        })
+        .collect();
+    validate_records(&records)?;
+    publish(&root.join("catalog-source-settings.json"), &records)?;
+    Ok(records)
+}
+
 fn default_records() -> Vec<SourceRecord> {
     OFFICIAL_SOURCES
         .iter()
@@ -337,5 +365,10 @@ fn publish(path: &Path, records: &[SourceRecord]) -> Result<(), SourceStoreError
         .map_err(|_| SourceStoreError::Unavailable)?;
     // Close the replacement handle before Windows atomic replacement.
     let temp = file.into_temp_path();
-    vosu_sys::platform::atomic_replace(&temp, path).map_err(|_| SourceStoreError::Unavailable)
+    vosu_sys::platform::atomic_replace(&temp, path).map_err(|_| SourceStoreError::Unavailable)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|_| SourceStoreError::Unavailable)?;
+    Ok(())
 }
