@@ -58,6 +58,7 @@ impl PluginHost {
                     plugin_id: entry.plugin_id.clone(),
                 },
             );
+            self.bump_topology_generation();
             (entry.plugin_id, entry.instance)
         };
         let (plugin_id, instance) = taken;

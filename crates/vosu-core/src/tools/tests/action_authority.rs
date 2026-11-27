@@ -416,3 +416,98 @@ fn game_requirements_use_literal_star_and_presence_not_semver() {
         );
     }
 }
+
+#[tokio::test]
+async fn validation_context_cache_hits_on_unchanged_topology_and_invalidates_immediately() {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    struct VersionedRegistry {
+        inner: Registry,
+        generation: AtomicU64,
+        snapshot_calls: AtomicUsize,
+        conflict: AtomicBool,
+    }
+    impl ActionRegistry for VersionedRegistry {
+        fn get(&self, action: &str) -> Option<Arc<ActionDescriptor>> {
+            self.inner.get(action)
+        }
+    }
+    impl capabilities::InstalledCapabilities for VersionedRegistry {
+        fn version(&self, id: &str) -> Option<semver::Version> {
+            self.inner.version(id)
+        }
+        fn validation_generation(&self) -> Option<u64> {
+            Some(self.generation.load(Ordering::Acquire))
+        }
+        fn validation_snapshot(&self) -> crate::plugin::ValidationSnapshot {
+            self.snapshot_calls.fetch_add(1, Ordering::AcqRel);
+            let mut snapshot = self.inner.validation_snapshot();
+            if self.conflict.load(Ordering::Acquire) {
+                snapshot
+                    .providers
+                    .push(crate::plugin::ProviderRegistration {
+                        id: "action-web".into(),
+                        official: false,
+                        builtin: false,
+                        replaces: Vec::new(),
+                        revision: None,
+                    });
+            }
+            snapshot
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let path = put(root.path(), &fixture());
+    let host = bounded!(host(root.path(), vec![path]));
+    let registry = Arc::new(VersionedRegistry {
+        inner: Registry::default(),
+        generation: AtomicU64::new(1),
+        snapshot_calls: AtomicUsize::new(0),
+        conflict: AtomicBool::new(false),
+    });
+    registry.inner.insert(ACTION, "1.0.0");
+    host.set_action_providers(registry.clone(), registry.clone());
+    let token = bounded!(launch(&host, "action-web"));
+    let calls_before = registry.snapshot_calls.load(Ordering::Acquire);
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    assert_eq!(
+        registry.snapshot_calls.load(Ordering::Acquire),
+        calls_before,
+        "repeated authorizations on unchanged topology must hit the context cache"
+    );
+
+    // Provider topology mutation immediately invalidates and re-runs validation.
+    registry.conflict.store(true, Ordering::Release);
+    registry.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(
+        host.authorize_action_session(&token, ACTION).is_err(),
+        "bumped provider generation must immediately invalidate cached validation"
+    );
+    assert_eq!(
+        registry.snapshot_calls.load(Ordering::Acquire),
+        calls_before + 1
+    );
+
+    // Clearing the conflict and bumping generation restores authorization.
+    registry.conflict.store(false, Ordering::Release);
+    registry.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    let calls_after_restore = registry.snapshot_calls.load(Ordering::Acquire);
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    assert_eq!(
+        registry.snapshot_calls.load(Ordering::Acquire),
+        calls_after_restore
+    );
+
+    // Rescan bumps tool topology generation and forces revalidation once.
+    bounded!(host.rescan());
+    assert!(host.authorize_action_session(&token, ACTION).is_ok());
+    assert_eq!(
+        registry.snapshot_calls.load(Ordering::Acquire),
+        calls_after_restore + 1
+    );
+    bounded!(host.shutdown());
+}

@@ -149,6 +149,7 @@ impl PluginHost {
                                     plugin_id: entry.plugin_id,
                                 },
                             );
+                            self.bump_topology_generation();
                             (id, Some(entry.instance))
                         }
                         InstanceSlot::Destroying { .. } => (id, None),

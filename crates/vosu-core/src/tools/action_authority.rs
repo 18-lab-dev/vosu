@@ -58,10 +58,15 @@ impl ToolRegistry {
         actions: Arc<dyn ActionRegistry>,
         capabilities: Arc<dyn InstalledCapabilities>,
     ) {
-        *self.action_providers.lock() = Providers {
-            actions,
-            capabilities,
-        };
+        {
+            let mut providers = self.action_providers.lock();
+            *providers = Providers {
+                actions,
+                capabilities,
+            };
+            self.topology_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
         self.publish();
     }
 
@@ -109,12 +114,15 @@ impl ToolRegistry {
         if self.stopping.load(std::sync::atomic::Ordering::Acquire) {
             return Err(Forbidden);
         }
-        let current = self.entry(&entry.id).map_err(|_| Forbidden)?;
-        if !Arc::ptr_eq(entry, &current)
-            || !self.enabled(entry)
-            || !self.trusted(entry)
+        let is_current = self
+            .entries
+            .lock()
+            .get(&entry.id)
+            .is_some_and(|current| Arc::ptr_eq(entry, current));
+        if !is_current
             || entry.manifest.is_none()
             || entry.error.is_some()
+            || !self.enabled_and_trusted(entry)
         {
             return Err(Forbidden);
         }
@@ -125,7 +133,6 @@ impl ToolRegistry {
         &self,
         installed: &dyn InstalledCapabilities,
     ) -> crate::plugin::ValidationSnapshot {
-        // Build from actual current entries, never a second registry/cache.
         // Provider callbacks run before taking the tool entries lock.
         let mut snapshot = installed.validation_snapshot();
         snapshot
@@ -137,6 +144,38 @@ impl ToolRegistry {
                     .map(|manifest| manifest.registration(entry.source))
             }));
         snapshot
+    }
+
+    /// Validates `entry` against the current tool + provider topology, hitting
+    /// the entry's leaf `(tool_gen, provider_gen)` cache when both generations
+    /// are unchanged and the provider reports a monotonic generation.
+    fn validate_entry_context(
+        &self,
+        entry: &Entry,
+        manifest: &super::manifest::ToolPackage,
+        installed: &dyn InstalledCapabilities,
+    ) -> Result<(), String> {
+        let tool_gen = self
+            .topology_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        let provider_gen = installed.validation_generation();
+        if let Some(provider_gen) = provider_gen
+            && entry.context_validated_at(tool_gen, provider_gen)
+        {
+            return Ok(());
+        }
+        let snapshot = self.validation_snapshot(installed);
+        manifest.validate_context(&snapshot, &self.version, entry.source)?;
+        if let Some(provider_gen) = provider_gen
+            && self
+                .topology_generation
+                .load(std::sync::atomic::Ordering::Acquire)
+                == tool_gen
+            && installed.validation_generation() == Some(provider_gen)
+        {
+            entry.record_context_validated(tool_gen, provider_gen);
+        }
+        Ok(())
     }
 
     fn authorize_entry(
@@ -151,12 +190,7 @@ impl ToolRegistry {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
         };
-        manifest
-            .validate_context(
-                &self.validation_snapshot(installed.as_ref()),
-                &self.version,
-                entry.source,
-            )
+        self.validate_entry_context(entry, manifest, installed.as_ref())
             .map_err(|_| Forbidden)?;
         let descriptor = registry.get(action).ok_or(Forbidden)?;
         if descriptor.id != action
@@ -164,11 +198,13 @@ impl ToolRegistry {
         {
             return Err(Forbidden);
         }
-        if manifest
-            .requires
-            .iter()
-            .any(|r| !r.resolved(registry.as_ref(), installed.as_ref()))
-        {
+        if manifest.requires.iter().any(|r| {
+            if r.id.strip_prefix("action:") == Some(action) {
+                !r.satisfied_by_version(&r.id, &descriptor.version)
+            } else {
+                !r.resolved(registry.as_ref(), installed.as_ref())
+            }
+        }) {
             return Err(Forbidden);
         }
         if !manifest.requires.iter().chain(&manifest.optional).any(|r| {
@@ -193,11 +229,7 @@ impl ToolRegistry {
             let providers = self.action_providers.lock();
             (providers.actions.clone(), providers.capabilities.clone())
         };
-        if let Err(error) = manifest.validate_context(
-            &self.validation_snapshot(installed.as_ref()),
-            &self.version,
-            entry.source,
-        ) {
+        if let Err(error) = self.validate_entry_context(entry, manifest, installed.as_ref()) {
             return Some(error);
         }
         manifest
