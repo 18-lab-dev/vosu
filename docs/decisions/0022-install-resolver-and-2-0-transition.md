@@ -122,3 +122,32 @@ frozen and the SDK and web bridge exist, with one owner per repository.
 - **Day-0 gate (AF.5).** The official repositories and the quickstart are
   released publicly when F ships, so the unauthenticated latest-release
   check stays unchanged; prereleases never satisfy it.
+
+**2026-11-24** (A8, M8 migration and release gate freeze; full record in
+[`docs/v2/implementation-plan.md`](../v2/implementation-plan.md#a8-approved-contract-freeze-2026-11-24)
+and [`docs/v2/catalog-v2.md`](../v2/catalog-v2.md#first-start-migration-from-1x)):
+
+- **Offline local conversion and pending official intents (A8.2, A8.3).**
+  First-start migration finishes durable local conversion offline using one
+  normal-root versioned journal (`<config>/migration-v2-journal.json`),
+  publishing destination plugin settings before deleting moved keys and never
+  writing `local_conversion_complete` before local conversion is durable.
+  Official replacement lookups persist as independent pending intents resumed
+  explicitly through M6b plans; queueing never marks an item installed, zero
+  claims leave the 1.x install unmanaged, multiple same-kind/source claims
+  surface a visible conflict, catalog errors remain retryable without
+  cross-source fallback, and native adds still require explicit artifact and
+  runtime approval.
+- **Candidate-bound release gate (A8.4).** Stable `2.0.0` publication (not
+  ecosystem-bootstrapping alphas) requires both a fresh day-0 HTTP/ledger check
+  and a passing candidate-bound JSON evidence manifest, enforced in `release.yml`
+  and rechecked in local final publication (`scripts/sign-release.py`).
+- **Stable host ranges and SDK independence (A8.5).** Stable `2.0.0` bundled
+  and official packages default to `host = ">=2.0.0, <3.0.0"` unless the owner
+  explicitly requests an alpha-compatible range. `vosu-plugin-api` `1.0.0`
+  releases on its own independent version and publication gate.
+- **Supervisor CI split (A8.6).** `vosu.vosulay` satisfies the official
+  process-runtime smoke requirement via an own-CI `runtime = "process"` smoke
+  against a separately identified non-CEF child fixture plus a separate native
+  Linux/Windows `in-process` production CEF sandbox, Medium-token, and
+  parent-death smoke; neither substitutes for the other.

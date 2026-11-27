@@ -248,7 +248,15 @@ replaces = []                     # optional, default []; grammar matches `id`'s
 - `host` is matched against the daemon application version, not the independent
   SDK or ABI version. Alpha packages must explicitly include the prerelease,
   for example `host = ">=2.0.0-alpha.1, <3.0.0"` for this alpha. A stable-only
-  range such as `>=2.0.0` does not match `2.0.0-alpha.1`.
+  range such as `>=2.0.0` does not match `2.0.0-alpha.1`. **A8.5 (adopted
+  2026-11-24):** for stable `2.0.0` releases, bundled and official manifests
+  and catalogs default to `host = ">=2.0.0, <3.0.0"`, retaining
+  alpha-compatible ranges only where the owner explicitly requests them;
+  validate every range with the shared M6a `semver::VersionReq` predicates,
+  not blanket string replacement. SDK `vosu-plugin-api` `1.0.0` is versioned
+  and gated independently (major = ABI major 1) and does not bump with the
+  application version; `manifest_version`, `catalog_version`, schema versions,
+  and action/provides versions change only when their own contracts change.
 - `kind` selects which of the per-kind sections below apply; a field from a
   section that does not apply to the declared `kind` is a manifest
   validation error (for example `[ui]` on `kind = "plugin"`, or `runtime` on
@@ -1870,6 +1878,64 @@ management once `vosu.tools.lazer-library` is installed and its row is
 complete. Collisions, offline sources and restarts follow the rules there;
 1.x bytes are copied, never moved or deleted.
 
+**A8.2 and A8.3 migration contract (adopted 2026-11-24).** Normal-root 2.0
+migration is split into a **durable offline local conversion** and independent
+**pending official replacement intents**:
+
+- **Storage roots and journal (`A8.3`).** Migration runs only on normal release
+  roots; prerelease/alpha roots (`<root>/prerelease/`, D21) stay isolated and
+  read-only-import 1.x sources once, never writing the normal-root migration
+  journal, and stable `2.0.0` never silently imports alpha credentials or state.
+  Pure CLI invocations (`--help`, `--version`, `logs`, `plugin-host`) never run
+  daemon migration. Core records normal-root migration progress in one versioned
+  journal, `<config>/migration-v2-journal.json` (format 1, bounded size),
+  published via `vosu_sys::platform::atomic_replace` and read via
+  `read_published`, alongside the current stores (`<config>/vosu.toml`,
+  `<config>/plugins/settings.json`, `<config>/plugins/approvals.json`,
+  `<config>/catalog-source-settings.json`, `<config>/catalog-credentials.toml`,
+  `<data>/catalog/catalog-installed.json`,
+  `<data>/catalog/catalog-install-journal.json`, `<data>/plugins/<id>`, and
+  the 1.x `<config>/tools/*` and `<data>/tool-data/*` inputs). See the
+  [storage inventory](implementation-plan.md#current-storage-roots-and-migration-journal-a83).
+- **Destructive write ordering and recovery (`A8.3`).** Migration runs under
+  single-instance / shared operation authority (no core lock held across
+  network, filesystem opens, plugin callbacks, or awaits), and recovery runs
+  **before** plugin, tool, or catalog discovery or autostart (alongside
+  `SourceStore::recover`, `ToolRegistry::recover_replacement`, and
+  `InstalledStore::open`). All local inputs are parsed, validated, and
+  snapshotted (raw fingerprints and extracted values) into the journal before
+  any destructive write. Destination plugin settings
+  (`<config>/plugins/settings.json`) are durably published **before** deleting
+  moved keys from `<config>/vosu.toml` or deleting readable legacy env inputs;
+  canonical `vosu.toml` is durably published **before** deleting readable
+  legacy env inputs; and the final `local_conversion_complete` marker is
+  written **only after** `plugin_settings`, `core_config`, `catalog_sources`,
+  and `user_tools` are all durable. Replay resumes incomplete steps from the
+  journal snapshot, never rereads mutated legacy inputs into an already
+  committed destination, never reruns completed renames, and performs no broad
+  filesystem rollback that could overwrite post-migration user edits.
+- **Offline completion and official replacement intents (`A8.2`).** No network
+  access is required to finish local conversion and write
+  `local_conversion_complete`. Official installed 1.x tools and overlays (plus
+  applicable AF.2 cross-kind transfer rows) are persisted in the journal's
+  `pending_intents` list for explicit refresh and resume through M6b plans
+  (`CatalogRuntime`/`CatalogExecutor`), never through implicit fetch-on-read
+  and never by repeating destructive first-start conversion:
+  - queueing an intent **never** marks the replacement installed in
+    `catalog-installed.json`;
+  - **0** matching same-kind, same-official-source `replaces` claims leave the
+    1.x install in place, **unmanaged** (no guessed rename, deletion, or
+    fabricated replacement);
+  - **>1** matching same-kind, same-official-source `replaces` claims record a
+    visible **`conflict`** status, never an arbitrary first pick;
+  - catalog fetch or network errors keep the intent in a retryable pending
+    status without falling back to any other source;
+  - native plugin adds (including dependencies of a replaced web tool or AF.2
+    targets) still go through M6b plan confirmation and require exact
+    artifact/runtime approvals (and ADR 0025 Linux user-namespace approval when
+    declared); migration never grants author trust or auto-confirms native
+    execution.
+
 ## Day-0 release check
 
 The release workflow checks, for the exact fixed official identities
@@ -1880,23 +1946,41 @@ catalog repositories, a response whose asset list contains `catalog-v2.json`;
 for the quickstart repository (which is a template, not a catalog source and
 so carries no `catalog-v2.json`), pass requires only that its latest release
 tag parses as semver with major version `2`. The gate fails closed: a missing
-repository, a failed request, or any one of the four checks failing fails the
-whole gate, and 2.0 is not published (ADR 0022). The gate additionally fails
-closed if `tests/fixtures/upstream/DIVERGENCES.md` lists any `temporary`-class
-entry, or any entry whose class is missing or is none of the four defined
-classes (ADR 0021's "Upstream adapters" amendment, D6, which defines the
-file's four entry classes — `security`, `contract`, `licensing`,
-`temporary` — and reserves gate failure for `temporary` plus any
-unclassified entry): a temporary
-pre-release exception, such as the stable tournament-manager aggregate's
-deferral, must be resolved before day-0, not merely documented, and every
-entry must carry one of the four recognized classes; the file's
-permanent `security`/`contract`/`licensing` entries never fail the gate.
+repository, a failed request, timeout, rate limit, malformed response/tag, or
+any one of the four checks failing fails the whole gate, with no cached-success
+or offline bypass, and 2.0 is not published (ADR 0022).
+
+The gate additionally parses every entry of
+`tests/fixtures/upstream/DIVERGENCES.md` under its frozen 5-column table format
+(`id | class | scope | reason | closed by`) and fails closed on:
+
+- any `temporary`-class entry (such exceptions must be closed before day-0,
+  never merely deleted or reclassified to satisfy the parser);
+- any entry whose `class` is missing, ambiguous, or not one of the four defined
+  classes (`security`, `contract`, `licensing`, `temporary` — ADR 0021 D6);
+- any duplicate `id` or malformed/unparseable ledger row (the parser must never
+  silently skip malformed entries).
+
+Correctly scoped permanent `security`, `contract`, and `licensing` entries are
+permitted and never fail the gate.
 
 AF.5 (owner, 2026-11-24): vosu-tools, vosulay, vosu-overlays and the
 quickstart are released publicly when F ships, so the unauthenticated checks
 above stay exactly as written; no credential or private-source exception is
 added. Drafts and prereleases never satisfy `/releases/latest`.
+
+**A8.4 publication dependency and candidate evidence manifest (adopted
+2026-11-24).** The day-0 HTTP/ledger check stays unchanged and gates **stable
+`2.0.0`** publication (never ecosystem-bootstrapping prereleases/alphas). Both
+the release workflow (`.github/workflows/release.yml`) and the local final
+publication preflight (`scripts/sign-release.py`) must verify a fresh day-0
+pass **and** a valid **candidate-bound JSON evidence manifest**
+([schema and rejection rules](../testing/verification.md#candidate-bound-release-evidence-manifest-a84))
+binding the candidate tag, commit, artifact SHA-256s, latest-alpha own-CI
+process smoke receipts (with A8.6's supervisor split), M4b full three-pair
+capture pin/inventory, native/package receipts, and the cumulative D17 verdict.
+No allow-failure step, stale draft reuse without fresh verification, or manual
+bypass is permitted.
 
 ## Open questions
 
