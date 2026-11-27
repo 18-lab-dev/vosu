@@ -5,6 +5,7 @@
 use super::commit::{
     Usage, WriteIndex, budget, empty_object, removes_member, validate, write_path,
 };
+use super::document::NamespaceEntry;
 use super::{
     ClientFacts, CommitError, CommitOutcome, Pointer, PublisherGrant, SchemaRegistry, SessionKey,
     SessionState, StateObject, StateValue,
@@ -251,19 +252,28 @@ impl StateStore {
             .map(|registry| registry.prepare(&removals, additions))
             .transpose()?;
         let mut lookup = WriteIndex::default();
+        let next_revision = previous
+            .revision
+            .checked_add(1)
+            .expect("session revision exhausted");
         let mut namespaces = copy_namespaces(&previous);
         let mut touched = Vec::with_capacity(validated.len());
         for entry in validated {
             let index = namespaces
                 .iter()
-                .position(|(ns, _)| *ns == entry.ns)
+                .position(|item| item.name == entry.ns)
                 .unwrap_or_else(|| {
-                    namespaces.push((entry.ns.clone(), StateValue::Null));
+                    namespaces.push(NamespaceEntry {
+                        name: entry.ns.clone(),
+                        value: StateValue::Null,
+                        revision: next_revision,
+                    });
                     namespaces.len() - 1
                 });
+            namespaces[index].revision = next_revision;
             let remove = removes_member(&entry);
             write_path(
-                &mut namespaces[index].1,
+                &mut namespaces[index].value,
                 entry.pointer.tokens(),
                 entry.value,
                 remove,
@@ -280,7 +290,7 @@ impl StateStore {
             meta.bindings.extend(new_bindings);
         }
         meta.usage = usage;
-        let outcome = publish(&slot, previous, namespaces, touched);
+        let outcome = publish(&slot, previous, next_revision, namespaces, touched);
         drop(registry);
         drop(meta);
         notify(&slot, outcome.current.revision);
@@ -298,13 +308,18 @@ impl StateStore {
         if previous.get("vosu.client", &pointer) == Some(&StateValue::Bool(focused)) {
             return None;
         }
+        let next_revision = previous
+            .revision
+            .checked_add(1)
+            .expect("session revision exhausted");
         let mut namespaces = copy_namespaces(&previous);
-        let (_, client) = namespaces
+        let client = namespaces
             .iter_mut()
-            .find(|(ns, _)| ns.as_ref() == "vosu.client")
+            .find(|entry| entry.name.as_ref() == "vosu.client")
             .expect("client exists");
+        client.revision = next_revision;
         write_path(
-            client,
+            &mut client.value,
             pointer.tokens(),
             StateValue::Bool(focused),
             false,
@@ -318,6 +333,7 @@ impl StateStore {
         let outcome = publish(
             &slot,
             previous,
+            next_revision,
             namespaces,
             vec![(Arc::from("vosu.client"), pointer)],
         );
@@ -345,16 +361,21 @@ impl StateStore {
             if meta.closed || previous.namespace(ns).is_none() {
                 continue;
             }
+            let next_revision = previous
+                .revision
+                .checked_add(1)
+                .expect("session revision exhausted");
             let namespaces = previous
                 .namespace_entries()
                 .iter()
-                .filter(|(name, _)| name.as_ref() != ns)
+                .filter(|entry| entry.name.as_ref() != ns)
                 .cloned()
                 .collect();
             meta.usage.remove(ns);
             let outcome = publish(
                 &slot,
                 previous,
+                next_revision,
                 namespaces,
                 vec![(Arc::from(ns), Pointer::root())],
             );
@@ -366,26 +387,22 @@ impl StateStore {
     }
 }
 
-fn copy_namespaces(state: &SessionState) -> Vec<(Arc<str>, StateValue)> {
+fn copy_namespaces(state: &SessionState) -> Vec<NamespaceEntry> {
     state.namespace_entries().to_vec()
 }
 
 fn publish(
     slot: &SessionSlot,
     previous: Arc<SessionState>,
-    namespaces: Vec<(Arc<str>, StateValue)>,
+    revision: u64,
+    namespaces: Vec<NamespaceEntry>,
     touched: Vec<(Arc<str>, Pointer)>,
 ) -> CommitOutcome {
-    let mut current = SessionState::new(
+    let current = Arc::new(SessionState::from_entries(
         previous.key,
-        previous
-            .revision
-            .checked_add(1)
-            .expect("session revision exhausted"),
+        revision,
         namespaces,
-    );
-    current.retain_namespace_revisions(&previous, &touched);
-    let current = Arc::new(current);
+    ));
     slot.current.store(current.clone());
     CommitOutcome {
         previous,
@@ -595,5 +612,53 @@ families = ["image"]
                 assert_eq!(usage.keys, Usage::measure(value).keys);
             }
         }
+    }
+
+    #[test]
+    fn namespace_revisions_advance_only_for_touched_namespaces() {
+        let (store, grant) = fixture("test.store-revs", SessionKey(7502));
+        let initial = store.current(SessionKey(7502)).unwrap();
+        assert_eq!(initial.revision, 0);
+        assert_eq!(initial.namespace_revision("vosu.client"), Some(0));
+        assert_eq!(initial.namespace_revision("test.store-revs"), None);
+
+        let c1 = store
+            .commit(
+                &grant,
+                SessionKey(7502),
+                [PublishFieldRef {
+                    handle: 7502,
+                    ns: "test.store-revs",
+                    pointer: "/x",
+                    value: PublishValueRef::U64(1),
+                }]
+                .into_iter(),
+            )
+            .unwrap();
+        assert_eq!(c1.current.revision, 1);
+        assert_eq!(c1.current.namespace_revision("test.store-revs"), Some(1));
+        assert_eq!(c1.current.namespace_revision("vosu.client"), Some(0));
+
+        let c2 = store.set_focused(SessionKey(7502), true).unwrap();
+        assert_eq!(c2.current.revision, 2);
+        assert_eq!(c2.current.namespace_revision("vosu.client"), Some(2));
+        assert_eq!(c2.current.namespace_revision("test.store-revs"), Some(1));
+
+        let c3 = store
+            .commit(
+                &grant,
+                SessionKey(7502),
+                [PublishFieldRef {
+                    handle: 7502,
+                    ns: "test.store-revs",
+                    pointer: "/y",
+                    value: PublishValueRef::U64(2),
+                }]
+                .into_iter(),
+            )
+            .unwrap();
+        assert_eq!(c3.current.revision, 3);
+        assert_eq!(c3.current.namespace_revision("test.store-revs"), Some(3));
+        assert_eq!(c3.current.namespace_revision("vosu.client"), Some(2));
     }
 }

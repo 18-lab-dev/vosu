@@ -16,14 +16,20 @@ use super::value::{StateValue, write_document_json};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SessionKey(pub u64);
 
+#[derive(Clone)]
+pub(super) struct NamespaceEntry {
+    pub(super) name: Arc<str>,
+    pub(super) value: StateValue,
+    pub(super) revision: u64,
+}
+
 /// One session's committed namespace documents at a point in time: the
 /// `ArcSwap` payload `StateStore` publishes (MI). Immutable once built —
 /// a new commit produces a new `SessionState`, never mutates this one.
 pub struct SessionState {
     pub key: SessionKey,
     pub revision: u64,
-    namespaces: Vec<(Arc<str>, StateValue)>,
-    namespace_revisions: Vec<(Arc<str>, u64)>,
+    namespaces: Vec<NamespaceEntry>,
     api_encoding: ApiEncoding,
 }
 
@@ -39,7 +45,7 @@ impl fmt::Debug for SessionState {
             .field("revision", &self.revision)
             .field(
                 "namespaces",
-                &self.namespaces.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+                &self.namespaces.iter().map(|e| &e.name).collect::<Vec<_>>(),
             )
             .finish_non_exhaustive()
     }
@@ -49,42 +55,45 @@ impl SessionState {
     /// Builds a session document from its committed namespaces, in display
     /// order (`vosu.client` plus every covered core/plugin namespace).
     pub fn new(key: SessionKey, revision: u64, namespaces: Vec<(Arc<str>, StateValue)>) -> Self {
+        Self::from_entries(
+            key,
+            revision,
+            namespaces
+                .into_iter()
+                .map(|(name, value)| NamespaceEntry {
+                    name,
+                    value,
+                    revision,
+                })
+                .collect(),
+        )
+    }
+
+    pub(super) fn from_entries(
+        key: SessionKey,
+        revision: u64,
+        namespaces: Vec<NamespaceEntry>,
+    ) -> Self {
         Self {
             key,
             revision,
-            namespace_revisions: namespaces
-                .iter()
-                .map(|(ns, _)| (ns.clone(), revision))
-                .collect(),
             namespaces,
             api_encoding: ApiEncoding::default(),
         }
     }
 
     pub fn namespace_revision(&self, ns: &str) -> Option<u64> {
-        self.namespace_revisions
+        self.namespaces
             .iter()
-            .find(|(name, _)| name.as_ref() == ns)
-            .map(|(_, rev)| *rev)
-    }
-
-    pub(super) fn retain_namespace_revisions(
-        &mut self,
-        previous: &Self,
-        touched: &[(Arc<str>, Pointer)],
-    ) {
-        for (ns, revision) in &mut self.namespace_revisions {
-            if !touched.iter().any(|(changed, _)| changed == ns) {
-                *revision = previous.namespace_revision(ns).unwrap_or(*revision);
-            }
-        }
+            .find(|entry| entry.name.as_ref() == ns)
+            .map(|entry| entry.revision)
     }
 
     pub fn namespace(&self, ns: &str) -> Option<&StateValue> {
         self.namespaces
             .iter()
-            .find(|(n, _)| n.as_ref() == ns)
-            .map(|(_, v)| v)
+            .find(|entry| entry.name.as_ref() == ns)
+            .map(|entry| &entry.value)
     }
 
     /// Looks up `p` below `ns`'s root; `None` for an uncovered namespace, a
@@ -94,10 +103,12 @@ impl SessionState {
     }
 
     pub fn namespaces(&self) -> impl Iterator<Item = (&str, &StateValue)> {
-        self.namespaces.iter().map(|(n, v)| (n.as_ref(), v))
+        self.namespaces
+            .iter()
+            .map(|entry| (entry.name.as_ref(), &entry.value))
     }
 
-    pub(super) fn namespace_entries(&self) -> &[(Arc<str>, StateValue)] {
+    pub(super) fn namespace_entries(&self) -> &[NamespaceEntry] {
         &self.namespaces
     }
 
