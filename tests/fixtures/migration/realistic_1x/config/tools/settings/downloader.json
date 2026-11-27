@@ -1,0 +1,10 @@
+{
+  "concurrency": 6,
+  "max_file_mb": 250,
+  "no_video": true,
+  "client_id": "client-777",
+  "client_secret": "af2-secret-token-never-in-web-tool",
+  "hide_owned": true,
+  "follow_current_map": false,
+  "unlisted_legacy_key": "must-not-be-migrated"
+}

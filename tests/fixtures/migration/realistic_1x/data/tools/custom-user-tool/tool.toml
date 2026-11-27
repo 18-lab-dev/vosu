@@ -1,0 +1,13 @@
+id = "custom-user-tool"
+name = "Custom 1.x User Tool"
+version = "1.0.0"
+
+[service]
+command = "./custom-service"
+autostart = true
+
+[api]
+port = 29999
+
+[[requires]]
+capability = "filesystem"

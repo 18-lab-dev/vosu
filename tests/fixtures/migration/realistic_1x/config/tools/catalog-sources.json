@@ -1,0 +1,26 @@
+[
+  {
+    "source": "18-lab-dev/vosu-tools",
+    "enabled": true
+  },
+  {
+    "source": "https://github.com/18-lab-dev/vosu-tools",
+    "enabled": true
+  },
+  {
+    "source": "18-lab-dev/vosu-overlays",
+    "enabled": false
+  },
+  {
+    "source": "fork-dev/vosu-tools",
+    "enabled": true
+  },
+  {
+    "source": "18-lab-dev/vosulay",
+    "enabled": true
+  },
+  {
+    "source": "community-org/custom-tools",
+    "enabled": false
+  }
+]
