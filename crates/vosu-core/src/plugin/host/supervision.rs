@@ -349,6 +349,7 @@ impl PluginHost {
                 unreachable!("matched Live just above under the same lock");
             };
             instances.insert(id, InstanceSlot::Destroying { plugin_id });
+            self.bump_topology_generation();
             entry.instance
         };
         let result = self.retire_instance(

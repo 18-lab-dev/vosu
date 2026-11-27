@@ -31,7 +31,7 @@
 //! handle ([`PluginHost::session_memory`]).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -178,6 +178,7 @@ pub struct PluginHost {
     settings: Arc<PluginSettingsService>,
     state: Arc<StateRuntime>,
     state_delivery: Mutex<state_delivery::DeliveryState>,
+    state_watcher_count: AtomicUsize,
     state_runtime: Handle,
     state_serial: Mutex<()>,
     state_demand_serial: Mutex<()>,
@@ -190,6 +191,12 @@ pub struct PluginHost {
     resource_state: Mutex<resources::ResourceState>,
     action_state: Mutex<actions::ActionState>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
+    /// Monotonic generation bumped under `instances` on every `Live`
+    /// transition and under `state.registry` on every schema write.
+    topology_generation: Arc<AtomicU64>,
+    /// Leaf cache for [`Self::validation_snapshot_shared`]; never held across
+    /// `instances` or `state.registry`.
+    validation_cache: Mutex<Option<(u64, Arc<ValidationSnapshot>)>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
     /// failed/shutdown-raced `create`) — lets [`Self::destroy_all`]'s own
@@ -356,6 +363,7 @@ impl PluginHost {
             settings,
             state: Arc::new(state),
             state_delivery: Mutex::new(state_delivery::DeliveryState::default()),
+            state_watcher_count: AtomicUsize::new(0),
             state_runtime: runtime.clone(),
             state_serial: Mutex::new(()),
             state_demand_serial: Mutex::new(()),
@@ -365,6 +373,8 @@ impl PluginHost {
             resource_state: Mutex::new(resources::ResourceState::default()),
             action_state: Mutex::new(actions::ActionState::default()),
             instances: Mutex::new(HashMap::new()),
+            topology_generation: Arc::new(AtomicU64::new(1)),
+            validation_cache: Mutex::new(None),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
             matcher: Mutex::new(MatcherEngine::new(host_platform())),
@@ -396,6 +406,10 @@ impl PluginHost {
         // `Arc` to weaken.
         runtime.spawn(identification_sweep_loop(Arc::downgrade(&host)));
         host
+    }
+
+    pub(super) fn bump_topology_generation(&self) {
+        self.topology_generation.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn state(&self) -> &Arc<StateRuntime> {

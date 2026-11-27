@@ -3,7 +3,7 @@ pub(crate) mod tournament;
 use crate::project::{self, Caches, Projection, Projector, SessionFacts};
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
 };
 use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot, StateWorkerError};
 use vosu_plugin_api::PublishBatchWriter;
@@ -40,6 +40,7 @@ struct BusPublisherInner {
     caches: Caches,
     retry: bool,
     resource_revision: u64,
+    aggregate_revision: u64,
 }
 struct Shared {
     inner: Option<BusPublisherInner>,
@@ -57,6 +58,7 @@ impl Drop for RestoreInner<'_> {
         if let Some(mut inner) = self.inner.take() {
             inner.projector.invalidate();
             inner.caches = Caches::default();
+            inner.aggregate_revision = 0;
             inner.retry = true;
             let mut shared = self.shared.lock().unwrap_or_else(|e| e.into_inner());
             shared.inner = Some(inner);
@@ -69,6 +71,7 @@ pub struct BusPublisher<H: HostServices + Send + Sync + 'static = VtableHostServ
     identified: Arc<AtomicBool>,
     foreground: AtomicU8,
     pub(crate) tournament: std::sync::OnceLock<(Arc<tournament::Tournament>, u64)>,
+    aggregate_revision: AtomicU64,
     aggregate: Mutex<Option<crate::project::StableTourney>>,
     inner: Mutex<Shared>,
     projections: &'static [Projection],
@@ -82,6 +85,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             identified,
             foreground: AtomicU8::new(encode_foreground(facts.foreground)),
             tournament: std::sync::OnceLock::new(),
+            aggregate_revision: AtomicU64::new(0),
             aggregate: Mutex::new(None),
             resources: std::sync::OnceLock::new(),
             inner: Mutex::new(Shared {
@@ -94,6 +98,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                     caches: Caches::default(),
                     retry: false,
                     resource_revision: 0,
+                    aggregate_revision: 0,
                 }),
                 pending: None,
                 refresh: false,
@@ -147,6 +152,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             current.bytes != aggregate.bytes || current.availability != aggregate.availability
         });
         *current = Some(aggregate);
+        self.aggregate_revision.fetch_add(1, Ordering::AcqRel);
         drop(current);
         if changed {
             self.republish_session_fields();
@@ -192,6 +198,7 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                 if reset {
                     inner.projector.invalidate();
                     inner.caches = Caches::default();
+                    inner.aggregate_revision = 0;
                 }
                 let resource_reset = self.resources.get().is_some_and(|r| r.observe(&snapshot));
                 let resource_changed = self
@@ -208,11 +215,14 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
                         && Arc::ptr_eq(&last.precise, &snapshot.precise)
                 });
                 if force || reset || inner.retry || resource_changed || !unchanged {
-                    inner.caches.stable_tourney = self
-                        .aggregate
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .clone();
+                    if self.aggregate_revision.load(Ordering::Acquire) != inner.aggregate_revision {
+                        let guard = self
+                            .aggregate
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        inner.caches.stable_tourney = guard.clone();
+                        inner.aggregate_revision = self.aggregate_revision.load(Ordering::Acquire);
+                    }
                     inner.projector.prepare(&snapshot);
                     // Retain the attempted snapshot so a refresh after an unwind
                     // can retry even the first publication.
@@ -323,8 +333,8 @@ impl<H: HostServices + Send + Sync + 'static> SnapshotPublisher<Arc<StateBundleS
         snapshot: Arc<StateBundleSnapshot>,
         _: Delivery,
     ) -> Result<(), StateWorkerError> {
-        if self.identified.load(Ordering::Acquire)
-            && let Some((tournament, handle)) = self.tournament.get()
+        if let Some((tournament, handle)) = self.tournament.get()
+            && self.identified.load(Ordering::Acquire)
         {
             tournament.observe(*handle, &snapshot);
         }

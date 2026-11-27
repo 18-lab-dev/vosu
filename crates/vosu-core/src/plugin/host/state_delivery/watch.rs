@@ -31,6 +31,10 @@ impl PluginHost {
                 return vosu_status::VOSU_OK;
             }
             delivery.watchers.insert(who);
+            self.state_watcher_count.store(
+                delivery.watchers.len(),
+                std::sync::atomic::Ordering::Release,
+            );
             // Identification is recorded before `open_bus_session`. A
             // session not yet open would refuse the watcher's immediate
             // subscription; `state_session_identified` announces it to

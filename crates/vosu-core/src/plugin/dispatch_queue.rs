@@ -31,11 +31,13 @@ impl DispatchQueue {
         })
     }
     pub(crate) fn submit(&self, job: Job) -> Result<(), HostError> {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.closed || state.ordinary.len() - state.lifecycle >= self.capacity {
-            return Err(HostError::DispatchQueueFull);
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.closed || state.ordinary.len() - state.lifecycle >= self.capacity {
+                return Err(HostError::DispatchQueueFull);
+            }
+            state.ordinary.push_back((job, false));
         }
-        state.ordinary.push_back((job, false));
         self.ready.notify_one();
         Ok(())
     }
@@ -44,20 +46,29 @@ impl DispatchQueue {
     /// not by `capacity`. The job keeps its FIFO position among ordinary
     /// jobs, so a session's earlier deliveries still run before it.
     pub(crate) fn submit_lifecycle(&self, job: Job) -> Result<(), HostError> {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.closed {
-            return Err(HostError::DispatchQueueFull);
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.closed {
+                return Err(HostError::DispatchQueueFull);
+            }
+            state.ordinary.push_back((job, true));
+            state.lifecycle += 1;
         }
-        state.ordinary.push_back((job, true));
-        state.lifecycle += 1;
         self.ready.notify_one();
         Ok(())
     }
     // Only ReservedOutbox may submit here: one runner per bounded instance outbox.
     pub(crate) fn submit_reserved(&self, job: Job) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if !state.closed {
-            state.reserved.push_back(job);
+        let pushed = {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if !state.closed {
+                state.reserved.push_back(job);
+                true
+            } else {
+                false
+            }
+        };
+        if pushed {
             self.ready.notify_one();
         }
     }

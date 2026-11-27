@@ -12,6 +12,12 @@ pub trait InstalledCapabilities: Send + Sync {
     fn validation_snapshot(&self) -> crate::plugin::ValidationSnapshot {
         crate::plugin::ValidationSnapshot::default()
     }
+    /// Monotonic generation of `validation_snapshot()`, when the provider
+    /// tracks every mutation that can change it. `None` disables context-check
+    /// caching across calls (the safe default for unversioned test doubles).
+    fn validation_generation(&self) -> Option<u64> {
+        None
+    }
     /// The plugin id of the loaded provider that resolves `capability`, or
     /// `None` for core namespaces and unresolved capabilities.
     fn provider(&self, _capability: &str) -> Option<String> {

@@ -113,6 +113,10 @@ impl crate::tools::capabilities::InstalledCapabilities for InstalledProviders {
             .map_or_else(Default::default, |host| host.validation_snapshot())
     }
 
+    fn validation_generation(&self) -> Option<u64> {
+        self.0.upgrade().map(|host| host.validation_generation())
+    }
+
     fn provider(&self, capability: &str) -> Option<String> {
         self.0.upgrade()?.installed_capability_provider(capability)
     }

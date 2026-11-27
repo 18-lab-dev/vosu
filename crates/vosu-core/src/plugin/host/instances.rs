@@ -123,7 +123,8 @@ impl PluginHost {
         let plugin_id = plugin.manifest().id.clone();
         let publisher = crate::state::PublisherGrant::from_manifest(plugin.manifest())
             .map_err(|e| HostError::State(e.to_string()))?;
-        let registration = super::state::SchemaRegistration::new(&self.state, plugin)?;
+        let registration =
+            super::state::SchemaRegistration::new(&self.state, &self.topology_generation, plugin)?;
         let matcher_table = plugin.manifest().matcher.clone();
         let schema = plugin.settings_schema().cloned();
         self.instances
@@ -306,6 +307,7 @@ impl PluginHost {
                 }),
             }),
         );
+        self.bump_topology_generation();
         let (pending, watch_sessions) = match previous {
             Some(InstanceSlot::Creating {
                 pending,

@@ -221,12 +221,14 @@ pub(super) struct Publisher {
 /// Owns namespace registrations across every create/error/shutdown path.
 pub(super) struct SchemaRegistration {
     runtime: std::sync::Arc<crate::state::StateRuntime>,
+    topology_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     provider: String,
     registered: bool,
 }
 impl SchemaRegistration {
     pub(super) fn new(
         runtime: &std::sync::Arc<crate::state::StateRuntime>,
+        topology_generation: &std::sync::Arc<std::sync::atomic::AtomicU64>,
         plugin: &crate::plugin::registry::LoadedPlugin,
     ) -> Result<Self, crate::plugin::error::HostError> {
         use crate::plugin::error::HostError;
@@ -265,11 +267,16 @@ impl SchemaRegistration {
                 registry.register_versioned(&manifest.id, ns, &version, provenance, text)
             {
                 registry.unregister_provider(&manifest.id);
+                topology_generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 return Err(HostError::State(error.to_string()));
             }
         }
+        if !provided.is_empty() {
+            topology_generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
         Ok(Self {
             runtime: runtime.clone(),
+            topology_generation: topology_generation.clone(),
             provider: manifest.id.clone(),
             registered: !provided.is_empty(),
         })
@@ -280,10 +287,13 @@ impl Drop for SchemaRegistration {
         if !self.registered {
             return;
         }
-        self.runtime
+        let mut registry = self
+            .runtime
             .registry
             .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .unregister_provider(&self.provider);
+            .unwrap_or_else(|p| p.into_inner());
+        registry.unregister_provider(&self.provider);
+        self.topology_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     }
 }

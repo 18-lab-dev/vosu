@@ -30,7 +30,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -78,6 +78,19 @@ struct Entry {
     settings: Option<settings::Schema>,
     fingerprint: Vec<u8>,
     package: lease::PackageRoot,
+    /// Leaf cache of the `(tool_topology_gen, provider_topology_gen)` at which
+    /// `manifest.validate_context` last succeeded for this immutable entry.
+    validated_context: Mutex<Option<(u64, u64)>>,
+}
+
+impl Entry {
+    pub(super) fn context_validated_at(&self, tool_gen: u64, provider_gen: u64) -> bool {
+        *self.validated_context.lock() == Some((tool_gen, provider_gen))
+    }
+
+    pub(super) fn record_context_validated(&self, tool_gen: u64, provider_gen: u64) {
+        *self.validated_context.lock() = Some((tool_gen, provider_gen));
+    }
 }
 
 struct Code {
@@ -91,6 +104,9 @@ pub struct ToolRegistry {
     codes: Mutex<HashMap<String, Code>>,
     sessions: Mutex<HashMap<String, action_authority::LaunchSession>>,
     action_providers: Mutex<action_authority::Providers>,
+    /// Monotonic generation bumped under `entries` on rescan replacement and
+    /// under `action_providers` when providers are swapped.
+    topology_generation: AtomicU64,
     jobs: Mutex<Option<crate::actions::JobRegistry>>,
     config: PathBuf,
     data: PathBuf,
@@ -299,6 +315,7 @@ impl ToolRegistry {
             codes: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             action_providers: Mutex::new(action_authority::Providers::default()),
+            topology_generation: AtomicU64::new(1),
             jobs: Mutex::new(None),
             config,
             data,
@@ -366,6 +383,16 @@ impl ToolRegistry {
         !entry.inactive_fixture
             && (entry.source != "user"
                 || self.saved.lock().get(&entry.id).is_some_and(|s| s.trusted))
+    }
+    fn enabled_and_trusted(&self, entry: &Entry) -> bool {
+        if entry.legacy || entry.inactive_fixture {
+            return false;
+        }
+        let saved = self.saved.lock();
+        let state = saved.get(&entry.id);
+        let enabled = state.and_then(|s| s.enabled).unwrap_or(true);
+        let trusted = entry.source != "user" || state.is_some_and(|s| s.trusted);
+        enabled && trusted
     }
     fn entry(&self, id: &str) -> Result<Arc<Entry>, String> {
         self.entries
@@ -585,18 +612,22 @@ impl ToolRegistry {
                         error: candidate.error,
                         settings: candidate.settings,
                         fingerprint: candidate.fingerprint,
+                        validated_context: Mutex::new(None),
                     }),
                 );
             }
         }
-        let replaced: Vec<Arc<Entry>> = self
-            .entries
-            .lock()
-            .values()
-            .filter(|entry| !found.values().any(|e| Arc::ptr_eq(e, entry)))
-            .cloned()
-            .collect();
-        *self.entries.lock() = found;
+        let replaced: Vec<Arc<Entry>> = {
+            let mut entries = self.entries.lock();
+            let replaced = entries
+                .values()
+                .filter(|entry| !found.values().any(|e| Arc::ptr_eq(e, entry)))
+                .cloned()
+                .collect();
+            *entries = found;
+            self.topology_generation.fetch_add(1, Ordering::AcqRel);
+            replaced
+        };
         for entry in &replaced {
             // A replaced or removed package's sessions, codes and lease die
             // with it; a later launch never inherits them.
