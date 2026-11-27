@@ -337,6 +337,82 @@ class CandidateLayoutTests(GoldenTestCase):
         self.assertNotIn(WIN_ROOT.lower(), result.stdout.lower())
 
 
+class AssetCorrectionTests(GoldenTestCase):
+    def setup_capture(self, *, resource_type="application/octet-stream", route_type=None) -> dict:
+        def cbor_map(*items):
+            return bytes([0xA0 + len(items)]) + b"".join(cbor_text(k) + v for k, v in items)
+
+        relative = "a/ab/chart-hash"
+        chart = b"osu file format v14\n"
+        asset = {"id": "chart", "slot": "files", "relative": relative, "media_type": "text/plain",
+                 "generator": "test generator", "license": "CC0-1.0",
+                 "sha256": hashlib.sha256(chart).hexdigest(), "b64": base64.b64encode(chart).decode()}
+        entries = []
+        if resource_type:
+            for ns, pointer, cb in [
+                ("vosu.osu", "/internal/paths",
+                 cbor_map(("current", cbor_map(("beatmapFile", cbor_text(relative)))))),
+                ("vosu.chart", "/resources/file", cbor_map(("type", cbor_text(resource_type)))),
+            ]:
+                entries.append({"ns": ns, "pointer": pointer,
+                                "value_cbor_b64": base64.b64encode(cb).decode(), "error": None})
+        upstream = response(text(chart.decode()), [["Content-Type", "text/plain"]])
+        served = response(text(chart.decode()), [["Content-Type", route_type]]) if route_type else upstream
+        probe = case("files.songs.get", request("GET", "/Songs/" + relative), (upstream, upstream),
+                     dump=envelope(entries=entries), vosu=served if route_type else response(text(chart.decode())))
+        return capture([probe], assets=[asset])
+
+    def test_cli_corrects_only_declaration_and_records_review(self) -> None:
+        value = self.setup_capture(route_type="application/octet-stream")
+        baseline = self.run_golden(value)
+        path = self.root / "capture-to-correct.json"
+        original = json.dumps(value).encode()
+        path.write_bytes(original)
+        candidate = self.root / "corrected"
+        reason, review = "wrong MIME for extensionless chart", "review-media-1"
+        result = subprocess.run(
+            [sys.executable, str(HERE / "run.py"), "golden", "--capture", str(path),
+             "--candidate-dir", str(candidate), "--approved-rules", str(self.contract),
+             "--review-receipt", review,
+             "--correct-asset-media-type", "chart=application/octet-stream", reason],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(original, path.read_bytes())
+        old, new = baseline / "windows-lazer", candidate / "windows-lazer"
+        self.assertEqual((old / "assets/chart").read_bytes(), (new / "assets/chart").read_bytes())
+        self.assertEqual(self.case_file(baseline, "files.songs.get"),
+                         self.case_file(candidate, "files.songs.get"))
+        assets = json.loads((old / "assets.json").read_text())
+        assets["assets"][0]["media_type"] = "application/octet-stream"
+        self.assertEqual(assets, json.loads((new / "assets.json").read_text()))
+        manifest = json.loads((new / "manifest.json").read_text())
+        self.assertEqual([{"asset_id": "chart", "original": "text/plain",
+                           "corrected": "application/octet-stream", "reason": reason,
+                           "review_receipt": review}], manifest["asset_media_type_corrections"])
+        self.assertEqual("clean", json.loads((new / "inventory.json").read_text())["privacy_scan"]["result"])
+
+    def test_refuses_invalid_corrections(self) -> None:
+        for declaration, message in [
+            ("unknown=image/png", "unknown asset ID"),
+            ("chart=text/plain", "no-op"),
+            ("chart=image/png", "disagrees with recorded"),
+            ("chart.media_type=image/png", "asset ID, not a field"),
+            ("chart/slot=image/png", "asset ID, not a field"),
+            ("chart=image/png; charset=utf-8", "bare lowercase media type"),
+            ("chart=files", "bare lowercase media type"),
+        ]:
+            with self.subTest(declaration=declaration), self.assertRaisesRegex(GoldenError, message):
+                self.run_golden(self.setup_capture(), review_receipt="review-media-1",
+                                correct_asset_media_type=[(declaration, "reason")])
+        with self.assertRaisesRegex(GoldenError, "disagrees with recorded"):
+            self.run_golden(self.setup_capture(resource_type=None, route_type="image/png"),
+                            review_receipt="review-media-1",
+                            correct_asset_media_type=[("chart=application/octet-stream", "reason")])
+        with self.assertRaisesRegex(GoldenError, "requires --review-receipt"):
+            self.run_golden(self.setup_capture(),
+                            correct_asset_media_type=[("chart=application/octet-stream", "reason")])
+
+
 class CaptureValidationTests(GoldenTestCase):
     def test_rejects_wrong_pin_platform_and_unattested_builds(self) -> None:
         self.rejects(capture([state_case()], source_revision="c" * 40), "wrong pin")

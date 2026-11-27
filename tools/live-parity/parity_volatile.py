@@ -201,6 +201,29 @@ def _key(value: Any) -> str | None:
     return None
 
 
+def cbor_text_fields(data: bytes, *paths: str) -> tuple[str | None, ...]:
+    """Read selected text fields in a CBOR map by their slash-separated paths."""
+    try:
+        tree, end = _cbor(data)
+        if end != len(data):
+            raise VolatileError("trailing bytes in CBOR field lookup")
+    except (IndexError, RecursionError, UnicodeDecodeError, struct.error) as exc:
+        raise VolatileError("invalid CBOR in field lookup") from exc
+
+    def text_at(path: str) -> str | None:
+        node = tree
+        for key in path.split("/")[1:]:
+            if not isinstance(node, tuple) or node[0] != "{}":
+                return None
+            fields = [value for name, value in node[1] if _key(name) == key]
+            if len(fields) != 1:
+                return None
+            node = fields[0]
+        return node[1] if isinstance(node, tuple) and node[0] == "text" else None
+
+    return tuple(text_at(path) for path in paths)
+
+
 def _check(rule: str, value: Any, field_id: str) -> None:
     if rule == "string":
         ok = isinstance(value, str) or (isinstance(value, tuple) and value[0] == "text")

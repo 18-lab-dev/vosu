@@ -375,7 +375,7 @@ fn layout(name: &str, all: &BTreeSet<String>) -> Result<(), String> {
     Ok(())
 }
 
-const PLATFORM_KEYS: [&str; 14] = [
+const PLATFORM_KEYS: [&str; 15] = [
     "format",
     "normalization_version",
     "provenance",
@@ -390,6 +390,7 @@ const PLATFORM_KEYS: [&str; 14] = [
     "synthetic_roots",
     "case_counts",
     "cases",
+    "asset_media_type_corrections",
 ];
 
 fn platform(
@@ -408,7 +409,12 @@ fn platform(
     let at = |file: &str| format!("{name}/{file}");
     let manifest = json(&dir, "manifest.json")?;
     let where_ = at("manifest.json");
-    let manifest = object(&manifest, &where_, &PLATFORM_KEYS)?;
+    let keys = if manifest.get("asset_media_type_corrections").is_some() {
+        &PLATFORM_KEYS[..]
+    } else {
+        &PLATFORM_KEYS[..PLATFORM_KEYS.len() - 1]
+    };
+    let manifest = object(&manifest, &where_, keys)?;
     expect_str(manifest, "format", "vosu-golden-platform-v1", &where_)?;
     expect_header(manifest, pin, &where_)?;
     if label(manifest, &where_)? != provenance {
@@ -486,6 +492,9 @@ fn platform(
     check_inventory(&dir, &files, &inventory["files"], &where_inventory, &prefix)?;
 
     let assets = assets(&dir, name, &files, &synthetic_roots)?;
+    if let Some(corrections) = manifest.get("asset_media_type_corrections") {
+        check_asset_media_type_corrections(corrections, manifest, &assets, provenance, &where_)?;
+    }
     brand(&dir, name, pin, provenance, &files)?;
     let cases = cases(&dir, name, manifest, &files, &assets)?;
     for case in &cases {
@@ -498,6 +507,55 @@ fn platform(
         assets,
         cases,
     })
+}
+
+fn check_asset_media_type_corrections(
+    corrections: &Value,
+    manifest: &Map<String, Value>,
+    assets: &[Asset],
+    provenance: Provenance,
+    at: &str,
+) -> Result<(), String> {
+    let at = format!("{at}.asset_media_type_corrections");
+    let records = corrections
+        .as_array()
+        .filter(|records| !records.is_empty() && provenance == Provenance::Captured)
+        .ok_or_else(|| format!("{at}: expected a nonempty array on a captured platform"))?;
+    let mut ids = BTreeSet::new();
+    for record in records {
+        let row = object(
+            record,
+            &at,
+            &[
+                "asset_id",
+                "original",
+                "corrected",
+                "reason",
+                "review_receipt",
+            ],
+        )?;
+        let value = |key| row[key].as_str().filter(|s| !s.trim().is_empty());
+        let (Some(id), Some(original), Some(corrected), Some(_reason)) = (
+            value("asset_id"),
+            value("original"),
+            value("corrected"),
+            value("reason"),
+        ) else {
+            return Err(format!("{at}: missing nonempty correction fields"));
+        };
+        if original == corrected
+            || row["review_receipt"] != manifest["review_receipt"]
+            || !ids.insert(id)
+            || !assets
+                .iter()
+                .any(|asset| asset.id == id && asset.media_type == corrected)
+        {
+            return Err(format!(
+                "{at}: correction disagrees with the asset or its review"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A4b.13: at most 8 MiB of JSON/CBOR-envelope files and 4 MiB of assets

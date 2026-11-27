@@ -41,6 +41,7 @@ import json
 import os
 from pathlib import Path
 import re
+from parity_asset_corrections import Corrections
 import parity_golden_crash as crash
 import parity_golden_ledger as ledger
 import parity_golden_expected as no_response
@@ -715,8 +716,9 @@ def _dump(value: Any) -> bytes:
     return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def _platform_files(capture: Any, review_receipt: str | None,
-                    provenance: Provenance) -> tuple[str, dict[str, bytes], dict[str, Any]]:
+def _platform_files(
+    capture: Any, review_receipt: str | None, provenance: Provenance, corrections: Corrections | None = None,
+) -> tuple[str, dict[str, bytes], dict[str, Any]]:
     _obj(capture, "capture", ("format", "source_revision", "platform", "scenario_set",
                               "authorization", "attestation", "roots", "assets",
                               "expected_cases", "cases"))
@@ -741,6 +743,8 @@ def _platform_files(capture: Any, review_receipt: str | None,
         if case["family"] == "files":
             for record in case["source"]:
                 state.validators.observe(record["headers"])
+    corrected = (corrections.apply(state.assets, cases, lazer=identity["platform"].endswith("-lazer"))
+                 if corrections else [])
     get_lengths = ledger.get_response_sizes(cases, lambda case, data: state.body(
         case["id"], case["family"], data, set())[1])
 
@@ -789,6 +793,7 @@ def _platform_files(capture: Any, review_receipt: str | None,
             {root.slot for root in roots} | {asset["slot"] for asset in state.assets.values()})},
         "case_counts": {family: sum(case["family"] == family for case in cases) for family in FAMILIES},
         "cases": listing,
+        **({"asset_media_type_corrections": corrected} if corrected else {}),
     })
     scan = _scan(platform, files, state)
     files["brand-inventory.txt"] = _brand_inventory(platform, files)
@@ -941,6 +946,7 @@ def _publish(target: Path, files: dict[str, bytes]) -> None:
 
 
 def golden(captures: list[str], candidate_dir: str, approved_rules: str | None = None, *,
+           correct_asset_media_type: list[tuple[str, str]] | None = None,
            review_receipt: str | None = None, provenance: Provenance = "captured",
            repo_root: Path = REPO_ROOT) -> int:
     """Write one candidate. `provenance="synthetic"` labels a vosu-generated mechanics
@@ -957,17 +963,23 @@ def golden(captures: list[str], candidate_dir: str, approved_rules: str | None =
         raise GoldenError("Cargo source-commit differs from PINNED_SOURCE_REVISION")
     if review_receipt is not None:
         _str(review_receipt, "--review-receipt", re.compile(r"[A-Za-z0-9._:#-]{1,128}"))
+    if correct_asset_media_type and provenance != "captured":
+        raise GoldenError("asset media type corrections apply only to captured fixtures")
+    corrections = (Corrections(correct_asset_media_type, review_receipt)
+                   if correct_asset_media_type else None)
     target = _prepare_target(candidate_dir, repo_root)
     files: dict[str, bytes] = {}
     platforms: dict[str, Any] = {}
     for path in captures:
         platform, platform_files, summary = _platform_files(_load_capture(path), review_receipt,
-                                                            provenance)
+                                                            provenance, corrections)
         if platform in platforms:
             raise GoldenError(f"two captures for platform {platform}")
         platforms[platform] = summary
         files.update({f"{platform}/{rel}": data for rel, data in platform_files.items()})
         summary["inventory_sha256"] = hashlib.sha256(platform_files["inventory.json"]).hexdigest()
+    if corrections:
+        corrections.finish()
     files["manifest.json"] = _dump({
         "format": FIXTURE_FORMAT, "normalization_version": NORMALIZATION_VERSION,
         "provenance": provenance, "source_revision": PINNED_SOURCE_REVISION,

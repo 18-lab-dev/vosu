@@ -248,7 +248,7 @@ schema):
                      "calc_absolute_inside": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files\\m4b-calculate-probe.osu"},
   "sentinel_chart": "<generated vosu-owned .osu to copy outside the roots>",
   "assets": [{"id": "selected-chart", "relative": "lazer/files/<selected chart storage path>",
-              "media_type": "text/plain", "generator": "<generator>", "license": "<license>"},
+              "media_type": "application/octet-stream", "generator": "<generator>", "license": "<license>"},
              {"id": "calculate-probe-chart", "relative": "lazer/files/m4b-calculate-probe.osu",
               "media_type": "text/plain", "generator": "<generator>", "license": "<license>"}]
 }
@@ -266,7 +266,9 @@ ordinary `.osu` file in the retained `files` root (lazer) or `songs` root
 `fixture_values.songs_file` names the selected chart under that root; keep
 the selected chart's original storage file (the extensionless hash on lazer)
 and add the copy to `assets` as a separate ID with the same generator and
-license. Asset paths in the config are capture-root-relative; the inventory
+license. Declare the extensionless lazer storage chart as
+`application/octet-stream` and the ordinary `.osu` copy as `text/plain`.
+Asset paths in the config are capture-root-relative; the inventory
 records each asset's retained slot and slot-relative path for replay. Set
 `calc_relative` and `calc_absolute_inside` to the two spellings of the copy.
 Upstream calculates the selected chart regardless of the supplied path, so

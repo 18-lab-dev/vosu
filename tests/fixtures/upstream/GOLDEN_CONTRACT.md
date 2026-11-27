@@ -439,6 +439,18 @@ retain the first upstream record without volatility metadata or rewrites.
 Synthetic mechanics sandwiches also use §6–7 equality, but have no live
 fields to exempt. This receipt does not authorize any replay differences.
 
+**2026-11-26 (reviewed asset declaration corrections).** The owner workflow
+may correct a recipe's mistaken asset media-type declaration with
+`golden --review-receipt <id> --correct-asset-media-type <asset-id>=<media/type> "<reason>"`.
+The option is repeatable and changes only that declaration in the generated
+candidate. The asset ID must identify exactly one asset across the supplied
+captures, and no-op corrections and corrections disagreeing with a known
+vosu resource type or direct file response type are refused. The platform
+provenance manifest records the asset ID, original and corrected values,
+reason and review receipt in `asset_media_type_corrections`. No capture,
+asset bytes, expected response, or replay envelope is edited; the candidate
+still passes the privacy scan and receives new inventories.
+
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so
 `scripts/check-brand.py` and reviewers see upstream names. Text is never
