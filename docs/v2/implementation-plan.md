@@ -2027,22 +2027,23 @@ the pipe remains measurement-only. Four process `plan_memory` fixture
 cases, ten attached live stable/lazer profiles and a separate idle-host
 profile were recorded as measurements, not gates.
 
-**D17 Linux: measured on `ad724666`, FAIL / OPEN.** Official Linux D17 ran
+**D17 Linux: measured on `63f05a4e`, FAIL / OPEN.** Official Linux D17 ran
 in the owner-approved pinned `vosu-gaming` VM (isolated core `[6, 7]` /
-`0-7` for broker, receipts in `evidence/d17/linux-ad724666/`, details in
-[Linux official results](../testing/benchmarks.md#linux-official-results-2026-11-27-ad724666)):
+`0-7` for broker, receipts in `evidence/d17/linux-63f05a4e/`, details in
+[Linux official results](../testing/benchmarks.md#linux-official-results-2026-11-27-63f05a4e)):
 `performance_invariants` (20/20), `runtime_wakeups` (4/4),
 `memory_reader_bench`, all 11 bundled `plan_memory/*` cases, all 4
 `plan_memory/*_process` fixture cases, and all 10 live lazer `2026.1117.0`
 process/adapter/idle profiles completed cleanly. Two M5 Linux gates failed
 and remain **OPEN** pending fixes and re-measurement:
 
-- Broker ratio `production_sync / shm` in the pinned VM: **2.107× precise,
-  2.385× regular** against the 2.0 cap (**FAIL**; KVM 4-hop vs 2-hop wakeup
-  inflation vs bare-metal exploratory 1.46×/1.71× is recorded, not waived).
+- Broker ratio `production_sync / shm` in the pinned VM: **2.154× [1.838,
+  2.223] precise, 2.367× [2.165, 2.436] regular** against the 2.0 cap
+  (**FAIL**; KVM 4-hop vs 2-hop wakeup inflation vs bare-metal exploratory
+  1.46×/1.71× is recorded, not waived).
 - Bundled `end_to_end/{bus,bus_precise,api_frame}` vs M4a `49e95cf`:
-  **+17.11%, +16.84%, +18.21%** with non-overlapping 95% CIs (**FAIL**;
-  already present at pre-M7 `33f957de`).
+  **+17.63%, +14.63%, +16.82%** with non-overlapping 95% CIs (**FAIL**;
+  already carried by pre-M7 `33f957de`).
 
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
@@ -2378,7 +2379,7 @@ The full text is here and in:
 | A7.3 | Boolean `ENABLE_DASHBOARD`, default `true`. `VOSU_DASHBOARD=off` forces the dashboard off; any other value of that variable is a startup error. Off binds no dashboard listener, opens no browser and registers no dashboard route, but `vosu.dashboard` stays in the compiled and initialized bundled registry, inactive. No dashboard control or API changes the key. Tray **Show logs**, `vosu logs` and network-Apply recovery are preserved. |
 | A7.4 | N0's accessor and limits are reused unchanged: 128 known overlays with LRU eviction, 24-hour inactivity expiry, one unknown bucket per fixed feature, saturating counts. The dashboard renders elapsed age, feature, count, the escaped installed identity and a fixed migration-guide link. Unknown traffic is a generic advisory with no overlay action. The notice refreshes only with existing status reads; there is no notice timer, persistence or dismissal protocol. |
 | A7.5 (rewritten 2026-11-25) | `/api/ingame` is a D20 removed route: the ordinary exact 404 on every method, recorded by the unchanged A4.5 recorder under the fixed feature `ingame-page`. One WARN per process lifetime, on the first request. The recorder's 24-hour inactivity expiry replaces the separate last-use marker; nothing records a URL, IP or referrer. The dashboard shows the D20 notice for `ingame-page`, including its unknown bucket. Its install button starts the normal M6b plan flow for the `kind = "tool"` entry `vosulay-editor` from `18-lab-dev/vosulay` (AF.2; the plan adds `vosu.vosulay`), with every required approval before confirmation. Already installed shows launch and manage. A missing entry or offline catalog shows truthful retry guidance. |
-| A7.1-OR (2026-11-25) | `vosu.overlayhost` receives the overlay root as its `static_folder_path` ABI setting, seeded by core from `STATIC_FOLDER_PATH` until M8 migrates the key (not bridge B2). It writes only through `vosu-net`'s hardened ZIP and atomic publish primitives after SDK path validation, and serves only through a core-minted read-only `RootLease`. |
+| A7.1-OR (2026-11-25) | `vosu.overlayhost` receives the overlay root as its `static_folder_path` ABI setting from core's `PluginSettingsStore` (in M7 core seeded it from `STATIC_FOLDER_PATH` without bridge B2; M8-L2 at `63f05a4e` migrated `STATIC_FOLDER_PATH` into `vosu.overlayhost` settings and removed the seeding). It writes only through `vosu-net`'s hardened ZIP and atomic publish primitives after SDK path validation, and serves only through a core-minted read-only `RootLease`. |
 
 ##### Ownership and dependency direction (A7.1)
 
@@ -2447,7 +2448,7 @@ approval, and no field carries a secret, credential, absolute game path or
 | --- | --- | --- |
 | `DashboardStatus` | core, `GET /api/dashboard/status` | Existing `available`, `instances[{client,pid,version,state,pollIntervalMs,precisePollIntervalMs}]` and `connections`, unchanged; plus `removed_routes` (`RemovedRouteNotice[]`) and `update` (`null` or `{"version","major","release_url"}`, today's update notice). No `ingame` field: `/api/ingame` use is a `removed_routes` notice (A7.5). |
 | `RemovedRouteNotice` | core, inside `DashboardStatus` | `overlay`: `null` (unknown bucket) or `{"id","name"}` for a currently installed overlay revalidated at this read; `feature`: `"selected-v2-feed"`, `"legacy-skin-index"` or `"ingame-page"`; `attempts` (saturating); `first_seen_seconds_ago`, `last_seen_seconds_ago` (whole seconds from monotonic instants). At most 387 entries (128 overlays × 3 features + 3 unknown buckets). |
-| `SettingsView` | core, `GET /api/settings` (new) | `values` for exactly the 17 keys today's Settings page renders (`ENABLE_AUTOUPDATE`, `OPEN_DASHBOARD_ON_STARTUP`, `START_AT_LOGIN`, `DEBUG_LOG`, `CALCULATE_PP`, `READ_MANIA_SCROLL_SPEED`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `API_V1_SUBSCRIPTION_DEBOUNCE`, `SHOW_MP_COMMANDS`, `SERVER_IP`, `SERVER_PORT`, `DASHBOARD_IP`, `DASHBOARD_PORT`, `ALLOWED_IPS`, `MAX_PACKAGE_MIB`, `STATIC_FOLDER_PATH`) and `updates_externally_managed`. Never `ENABLE_DASHBOARD`. |
+| `SettingsView` | core, `GET /api/settings` (new) | `values` for the 11 core keys the Settings page renders since the M8-L2 D19/A7.1-OR cutover (`ENABLE_AUTOUPDATE`, `OPEN_DASHBOARD_ON_STARTUP`, `START_AT_LOGIN`, `DEBUG_LOG`, `API_V1_SUBSCRIPTION_DEBOUNCE`, `SERVER_IP`, `SERVER_PORT`, `DASHBOARD_IP`, `DASHBOARD_PORT`, `ALLOWED_IPS`, `MAX_PACKAGE_MIB`) and `updates_externally_managed` (M7 transiently included the 5 osu! keys and `STATIC_FOLDER_PATH`, now managed under `vosu.osu` and `vosu.overlayhost` in `PluginSettingsStore`). Never `ENABLE_DASHBOARD`. |
 | `ToolView` (2.0) | core, `GET /api/tools[/<id>]` | `id`, `name`, `version`, `description`, `author`, `homepage`, `icon_url`, `banner_url`, `source` (`dev`, `official`, `user`), `update_available`, `trusted`, `enabled`, `status` (`running`, `blocked`, `untrusted`, `disabled`, `invalid`), `status_detail` (`needs-2.0-update` for a legacy `tool.toml`-only package), `ui_url`, `requires` and `optional` as `[{"id","version","satisfied","provider"}]` (`provider` is the resolved plugin id or `null`), `has_settings`. Service-era fields (`kind`, `startup`, `service_role`, `interfaces`, `autostart`, `starts_with_vosu`, `cli`, `api`, `permissions`, `data`, `process`, `required_by`, `path`) are removed. D1 supplies `update_available` from the cached catalog view for the installed tool's own source, without a per-view fetch. |
 | `ToolSettings` | core, `GET`/`POST /api/tools/<id>/settings` | Unchanged 1.x shape: `{"settings","values","secrets"}` with every `password` value `""`; POST keeps the stored secret for `""` or an omitted field and clears it for `null`. |
 | `PluginSettings` | core, `GET`/`POST /api/plugins/<id>/settings` (new, M7 D1) | GET `{"schema","values","secrets"}` from the validated `settings_schema` with defaults applied and every `password` value `""`; POST takes `[{"uniqueID","value"}]` with the same password rule, validates the whole document before storing, and on success delivers the complete effective object as one `SETTINGS_CHANGED` (plugin-abi.md §6.9). An invalid POST changes nothing. |
@@ -2487,7 +2488,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | `/api/ingame`, every method | — (404) | — | Core, O only: an exact 404 tombstone recorded as `ingame-page` (A7.5); never registered by an adapter or host. On D it stays an unknown-route 404. |
 | `/api/v1/*` | O; D 404 | API-v1 router | Core, unchanged ([route inventory](../testing/verification.md#final-api-v1-route-inventory)); `X-Vosu-Tool-Session` authority moves to core's tool registry. |
 | `GET /api/plugins`, `POST`/`DELETE /api/plugins/<id>/approval`, `POST /api/plugins/<id>/{restart,stop}` | D | `runtime::plugin_management` | Core, unchanged (M5 U0). |
-| `GET`, `POST /api/plugins/<id>/settings` | — | — | Core D routes (`PluginSettings`), served by `runtime::plugin_management` over core's `PluginSettingsStore` (M7 D1); `<id>` is any listed or loaded plugin, a catalog-installed one included; `vosu.osu` and `vosu.overlayhost` POSTs are 409 `settings_managed_elsewhere` until M8. |
+| `GET`, `POST /api/plugins/<id>/settings` | — | — | Core D routes (`PluginSettings`), served by `runtime::plugin_management` over core's `PluginSettingsStore` (M7 D1); `<id>` is any listed or loaded plugin, a catalog-installed one included; since M8-L2 (`63f05a4e`), Bridge B2 and `STATIC_FOLDER_PATH` seeding are deleted and `vosu.osu` and `vosu.overlayhost` are managed directly here on `/plugins` (the M7-era `409 settings_managed_elsewhere` guard is removed). |
 | `/api/catalog/*` (H0's 20 method/path pairs) | D | `catalog_api` | Core, unchanged (M6b H0). |
 | `GET /api/tools`, `GET /api/tools/<id>` | D | `ToolHost::dashboard` | Core, `ToolView` 2.0. |
 | `POST /api/tools/<id>/{enable,disable,trust}` | D (management) | `ToolHost::dashboard` | Core; `enable` of a legacy package is 400 `needs-2.0-update`. |
@@ -2669,14 +2670,15 @@ gain a second plugin id. Frozen:
 
 1. **Setting.** `vosu.overlayhost` declares `static_folder_path` in its
    `settings_schema` and receives it through ABI §6.9 (`init.settings`, then
-   complete `SETTINGS_CHANGED` objects). Core's M7 per-plugin settings
-   storage holds it. Until M8 migrates the key, core seeds and keeps it from
-   the existing `STATIC_FOLDER_PATH`, resolved to an absolute path by the
-   unchanged rule (`./static` maps to the data root; another relative path
-   resolves from the launch directory). The Settings page still edits
-   `STATIC_FOLDER_PATH` through `/api/settingsSave`, and each effective change
-   reaches the host as one `SETTINGS_CHANGED`. It is **not** added to bridge
-   B2. M8's migration list gains this key.
+   complete `SETTINGS_CHANGED` objects). Core's per-plugin `PluginSettingsStore`
+   holds it. During M7, core seeded it from `STATIC_FOLDER_PATH` (resolved to an
+   absolute path by the unchanged rule: `./static` maps to the data root;
+   another relative path resolves from the launch directory) without adding it
+   to bridge B2. M8-L2 (`63f05a4e`) completed the cutover: `STATIC_FOLDER_PATH`
+   is migrated into `vosu.overlayhost` settings, removed from core config and
+   `SettingsView`, core's M7 seeding is deleted, and edits go through
+   `/api/plugins/vosu.overlayhost/settings` on `/plugins` (reaching the host as
+   one `SETTINGS_CHANGED`).
 2. **Writes.** The host performs every write under the root itself, using only
    `vosu-net`'s existing hardened primitives: `extract_zip_atomic` (path,
    symlink, entry-count and expanded-size checks) and the atomic
@@ -2740,19 +2742,25 @@ and quickstart counts on Linux and native Windows. The receipts have their
 own host pins; they are neither a rerun on `ad724666` nor published
 catalog-release evidence.
 
-**Performance (Linux D17 on `ad724666`): measured, FAIL / OPEN.** Official
-five-round comparisons against pre-M7 `33f957de` and pre-M0 `3a91ff95` ran
-in the pinned `vosu-gaming` VM on isolated core `[6, 7]`
-([M7 Linux official results](../testing/benchmarks.md#m7-linux-official-results-2026-11-27-ad724666)).
-Six of eight per-M7 `end_to_end/*` cases and five of eight `adapter/*` cases
-stayed within bar or inconclusive, and `serializers_cold/v2_precise`
-improved `-76.02%`. The remaining regressions failed the +10% non-overlapping
-95% CI bar and keep M7 D17 **OPEN** pending fixes and re-measurement:
-`end_to_end/adapter_precise` (`+11.42%`), `end_to_end/m7_tool_action_progress`
-(`+13.98%`), `adapter/http_then_ws_cache` (`+10.98%`),
-`adapter/plain_100_clients` (`+12.99%`), `adapter/slow_consumer`
-(`+10.55%`, spread > delta), and cumulative `serializers_cold/v2`
-(`+229.32%` vs `3a91ff95`).
+**Performance (Linux D17 on `63f05a4e`): per-M7 and cumulative cold serializers PASS; inherited adapter FAIL / OPEN.**
+Official five-round comparisons against pre-M7 `33f957de` and pre-M0 `3a91ff95`
+ran in the pinned `vosu-gaming` VM on isolated core `[6, 7]`
+([M7 Linux official results](../testing/benchmarks.md#m7-linux-official-results-2026-11-27-63f05a4e)):
+
+- **PASS / CLOSED:** all **8/8** per-M7 `end_to_end/*` cases ran together in
+  one clean 5-round invocation (`end_to_end/m7_tool_action_progress`
+  `-24.97%`, `end_to_end/m7_idle_hosts` `-11.04%`, `end_to_end/api_frame`
+  `-2.01%`, `end_to_end/adapter_precise` `+3.06%` inconclusive, 0/8 failures),
+  and both cumulative cold serializers against pre-M0 `3a91ff95` improved
+  (`serializers_cold/v2` `-13.10%` `2.51 → 2.18 µs`,
+  `serializers_cold/v2_precise` `-86.05%` `0.94 → 0.13 µs`).
+  `adapter/http_then_ws_cache` (`+5.32%`) and `adapter/slow_consumer`
+  (`+6.55%`) also returned within bar.
+- **FAIL / OPEN:** M7 Linux D17 remains **OPEN** pending fixes and
+  re-measurement for two inherited `adapter/*` regressions against pre-M7
+  `33f957de` exceeding the +10% non-overlapping 95% CI bar:
+  `adapter/filtered_clients` (`+11.43%`) and `adapter/plain_100_clients`
+  (`+17.09%`).
 
 ### M8: 1.x migration and day-0 release gate
 
@@ -2808,8 +2816,18 @@ Destructive write boundaries and recovery order:
 - **In-tree Linux packaging.** `packaging/linux/` (`nfpm.yaml`, `postinstall.sh`, `smoke-install.sh`, `vosu.desktop`) owns the Debian 12, Ubuntu 22.04/24.04, Fedora, and Arch distribution packages; `packaging/aur/` (`PKGBUILD`, `vosu.install`, `vosu-git.install`) owns the AUR `vosu-git` recipe (building current `main` after integration, not a rendered binary release).
 - **External Windows package managers.** Winget (`microsoft/winget-pkgs`) and Scoop manifests for `vosu` are externally owned repositories; no local winget or Scoop manifest files exist or are invented in-tree. R0 records the actual external repository/package IDs and maintainer ownership in the release runbook and candidate evidence manifest, and validates candidate manifests natively in a disposable Windows environment. `18-lab-dev/vosulay`'s winget, Scoop, AUR, and Linux packages stay separate and owned by `vosulay`.
 - **M5 A5.1 status: resolved.** A5.1 was decided by the owner on 2026-11-24 (option (b)) and amended on 2026-11-26 by [ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md) (recorded under [A5 approved contract freeze](#a5-approved-contract-freeze-2026-11-24)). No M8 unit reopens privilege policy or adds `CAP_SETPCAP`.
-- **Open release prerequisites before stable `2.0.0`.** M8 migration and tooling work may proceed against frozen interfaces, but stable `2.0.0` release remains blocked until: (1) M5 Linux D17 (`ad724666` broker ratio 2.107×/2.385× vs 2.0× cap and `end_to_end/{bus,bus_precise,api_frame}` +17.11%/+16.84%/+18.21%) and M7 Linux D17 (`ad724666` `end_to_end/adapter_precise`, `m7_tool_action_progress`, `adapter/{http_then_ws_cache,plain_100_clients,slow_consumer}`, and cumulative `serializers_cold/v2` +229.32% vs `3a91ff95`) are fixed and re-measured within D17's bar; and (2) M4b's full three-pair current-pin behavioral capture set (`windows-stable`, `windows-lazer`, `linux-lazer`, menu → play → paused → result) passes.
+- **Open release prerequisites before stable `2.0.0`.** M8 migration and tooling work has landed against frozen interfaces (below), but stable `2.0.0` release remains blocked until: (1) the remaining Linux D17 failures on `63f05a4e` — M5 KVM broker ratio (`2.154×`/`2.367×` vs `2.0×` cap), `end_to_end/{bus,bus_precise,api_frame}` (`+17.63%`/`+14.63%`/`+16.82%` vs M4a `49e95cf`), and inherited `adapter/{filtered_clients,plain_100_clients}` (`+11.43%`/`+17.09%` vs pre-M7 `33f957de`) — are resolved and re-measured within D17's bar (per-M7 `end_to_end/*` 8/8 and cumulative `serializers_cold/*` 2/2 are PASS on `63f05a4e`); and (2) M4b's full three-pair current-pin behavioral capture set (`windows-stable`, `windows-lazer`, `linux-lazer`, menu → play → paused → result) passes.
 - **`/api/ingame` dropped (owner decision, 2026-11-25).** Per [ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md)'s 2026-11-25 amendment and section 6 above, 2.0 has no `/api/ingame` page, clean-room attestation, or `ingame_compat` target, and no release check may require one.
+
+#### M8 implementation status (2026-11-27)
+
+**In-repo implementation landed through `63f05a4e`; M8 remains OPEN pending owner-gated release exits.**
+
+- **M8-L1 (`e5e14058`):** A8 normative migration, day-0, and evidence contracts (`109a508d`, merged at `39292fd9`), S0 hardened `PluginSettingsStore` with A8.1/A8.3 idempotent import (`e1499f67`, merged at `904085de`), and D17 core/adapter performance fixes (`2f897371`, `e5e14058`).
+- **M8-L2 (`63f05a4e`, merged at `7d30b8c2`):** normal-root `migration-v2-journal.json` coordinator and local conversion engine with per-step durable receipts and crash-safe AF.2 data/settings transfer (`35455a90`, `217e7d23`); complete deletion of Bridge B2 and `STATIC_FOLDER_PATH` seeding with D19/A7.1-OR cutover to `PluginSettingsStore` and the 11-key `SettingsView` (`3557563c`); and the 27-test native `tests/migration_compat.rs` adversarial migration and crash-recovery corpus (`3f025915`).
+- **M8-L3 G0 (`63f05a4e`, merged at `49c5fbc6`):** fail-closed `scripts/check-day0.py` and `scripts/day0_evidence.py` wired into `.github/workflows/release.yml` and `scripts/sign-release.py` (`144151e9`, `eb60d5be`), with `scripts/test_day0.py` and `scripts/test_gate_tooling.py` coverage.
+- **M8-L4 R0 (`63f05a4e`, merged at `49c5fbc6`):** standalone `vosu_plugin.h` C ABI header release asset in `scripts/package-release.py` and `.github/workflows/release.yml` (`5a2db068`) and modernized `vosu-release-smoke` (`0a320d21`, `10343007`).
+- **Remaining exits keeping M8 OPEN:** V0 stable `2.0.0` version and stable host-range cutover (owner-gated); M4b full three-pair capture authorization and golden closure; AF.11 live owner sessions (Windows stable, Windows lazer, Linux lazer with an official process-runtime tool, an overlay, and `vosulay`); external ecosystem (`vosu-tools`, `vosulay`, `vosu-overlays`, `vosu-overlay-quickstart`) and external package-manager (winget/Scoop) releases; and closing the remaining Linux D17 gates (KVM broker ratio `2.154×`/`2.367×`, `end_to_end/*` vs M4a, and inherited `adapter/{filtered_clients,plain_100_clients}`).
 
 Exit: new `tests/migration_compat.rs` over 1.x config/data fixtures for Linux and Windows native path layouts, run twice to prove idempotence, once after an injected crash at each durable mutation boundary, and once after post-migration edits; `cargo test --locked --test config_compat`; `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` extended to start `vosu plugin-host` from the packaged binary via an approved package/runtime seam (no release test backdoor), read `/api/v1/sessions`, confirm the bundled set, verify console-less Windows startup and lifecycle shutdown (not CTRL_BREAK), verify no orphan children, and assert that `/api/ingame` (`GET`, `HEAD`, `POST`, and an upgrade request) on the packaged binary's overlay listener gets the ordinary removed-route 404 with no upgrade, redirect, `Deprecation`, or `Link` header; native updater tests including actual shipped 1.2.4 → candidate consent decline/accept/recovery; `python scripts/check-day0.py` and candidate-bound evidence manifest verification passing against the four repositories and candidate receipts; M4b's full three-pair set green; cumulative D17 and build-budget decision passing; and an owner-run live session on Windows stable, Windows lazer, and Linux lazer through menu → play → paused → result with one official tool (its plugin under `runtime = "process"`), one overlay, and vosulay installed through the resolver.
 
@@ -2916,7 +2934,7 @@ each newer alpha deliberately.
 | vosulay | A small external official plugin, `vosu.vosulay` (never bundled), supervises vosulay's separately installed host executable as a child process (D16, validated by S1; AF.7): a job object on Windows, with the host launched at Medium integrity even from an elevated daemon; `PR_SET_PDEATHSIG` on Linux, without the generic plugin-host `no_new_privs` or user-namespace denial; bounded private lifecycle, configuration and editor-intent IPC; start/stop/restart/status actions. Per AF.8, the attached child reads session and focus from API v1 itself; the supervisor does not forward them over stdin. The host keeps its CEF sandbox (`vosulay/docs/security.md:58-60`, `:265`) and its standalone mode against upstream-compatible backends. The editor becomes the `kind = "tool"` UI `vosulay-editor`; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1 when attached to vosu. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its winget/Scoop/AUR packaging is unchanged. |
 | vosu-overlays | `metadata.txt` becomes `manifest.toml` `kind = "overlay"` with `requires`/`optional` field ids (common-layer fields where possible so overlays work across games); `overlays/*/overlay.js` move from `/websocket/v2/subscribe` to `WS /api/v1/sessions/active/subscribe`; `scripts/package.py` publishes both catalogs. |
 | vosu-overlay-quickstart | `app.js` (its `/websocket/v2/subscribe` at `app.js:449`) uses API v1 (api-v1.md "Worked examples"), ships a `manifest.toml` template, `TUTORIAL.md` rewritten with a section on porting overlays built from the 1.x template (D20); a release tagged `v2.x` (required by the day-0 check). |
-| packaging (`packaging/` here) | `nfpm.yaml` and AUR install hooks keep running `vosu --setup`; the plugin host is the same executable, so no new file capabilities; the `vosux` symlink stays; the release adds `include/vosu_plugin.h` as an asset for C plugin authors; `scripts/package-release.py` notes describe 2.0. Starts after M5 (plugin host exists). |
+| packaging (`packaging/` here) | `nfpm.yaml` and AUR install hooks keep running `vosu --setup`; the plugin host is the same executable, so no new file capabilities; the `vosux` symlink stays; the release adds standalone `vosu_plugin.h` (`include/vosu_plugin.h`) as an asset for C plugin authors; `scripts/package-release.py` notes describe 2.0. Standalone `vosu_plugin.h` packaging and modernized `vosu-release-smoke` landed in M8-L4 R0 (`63f05a4e`, in `scripts/package-release.py` and `.github/workflows/release.yml`); final stable `2.0.0` publication remains owner-gated. |
 | docs | README routes, configuration, and CLI; quickstart; a plugin author guide (SDK, manifest, trust, runtime); an overlay author guide (API v1, resources, common layer); the 2.0 tool protocol; a 1.x→2.0 migration guide including overlays that used removed APIs (D20) and the alpha data location (D21); each ecosystem repository's README. Public docs name only osu! as a supported game. Runs continuously from the trigger; final at M8. |
 
 The day-0 gate (M8) passes only when vosu-tools, vosulay, and vosu-overlays
