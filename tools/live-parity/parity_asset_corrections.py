@@ -98,7 +98,7 @@ def _recorded_types(asset: dict[str, Any], cases: list[dict[str, Any]],
             continue
         path = target.partition("?")[0]
         for prefix, slot in (("/Songs/", game_slot), ("/files/beatmap/", game_slot),
-                             ("/files/skin/", "skin")):
+                             ("/files/skin/", "skins")):
             if slot != asset["slot"] or not path.startswith(prefix):
                 continue
             child = unquote(path[len(prefix):])

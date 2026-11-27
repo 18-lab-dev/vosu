@@ -338,13 +338,15 @@ class CandidateLayoutTests(GoldenTestCase):
 
 
 class AssetCorrectionTests(GoldenTestCase):
-    def setup_capture(self, *, resource_type="application/octet-stream", route_type=None) -> dict:
+    def setup_capture(self, *, resource_type="application/octet-stream", route_type=None,
+                      skin=False) -> dict:
         def cbor_map(*items):
             return bytes([0xA0 + len(items)]) + b"".join(cbor_text(k) + v for k, v in items)
 
         relative = "a/ab/chart-hash"
         chart = b"osu file format v14\n"
-        asset = {"id": "chart", "slot": "files", "relative": relative, "media_type": "text/plain",
+        asset = {"id": "chart", "slot": "skins" if skin else "files", "relative": relative,
+                 "media_type": "text/plain",
                  "generator": "test generator", "license": "CC0-1.0",
                  "sha256": hashlib.sha256(chart).hexdigest(), "b64": base64.b64encode(chart).decode()}
         entries = []
@@ -358,9 +360,18 @@ class AssetCorrectionTests(GoldenTestCase):
                                 "value_cbor_b64": base64.b64encode(cb).decode(), "error": None})
         upstream = response(text(chart.decode()), [["Content-Type", "text/plain"]])
         served = response(text(chart.decode()), [["Content-Type", route_type]]) if route_type else upstream
-        probe = case("files.songs.get", request("GET", "/Songs/" + relative), (upstream, upstream),
-                     dump=envelope(entries=entries), vosu=served if route_type else response(text(chart.decode())))
-        return capture([probe], assets=[asset])
+        route = "/files/skin/" if skin else "/Songs/"
+        dump = envelope(entries=entries)
+        if skin:
+            dump["session"]["variant"] = dump["roster"]["sessions"][0]["variant"] = "stable"
+            dump["digest"] = golden_mod.envelope_digest(dump)
+        probe = case("files.asset.get", request("GET", route + relative), (upstream, upstream),
+                     dump=dump, vosu=served if route_type else response(text(chart.decode())))
+        value = capture([probe], assets=[asset])
+        if skin:
+            value["platform"] = value["authorization"]["platform"] = "windows-stable"
+            value["attestation"]["client"]["variant"] = "stable"
+        return value
 
     def test_cli_corrects_only_declaration_and_records_review(self) -> None:
         value = self.setup_capture(route_type="application/octet-stream")
@@ -380,8 +391,8 @@ class AssetCorrectionTests(GoldenTestCase):
         self.assertEqual(original, path.read_bytes())
         old, new = baseline / "windows-lazer", candidate / "windows-lazer"
         self.assertEqual((old / "assets/chart").read_bytes(), (new / "assets/chart").read_bytes())
-        self.assertEqual(self.case_file(baseline, "files.songs.get"),
-                         self.case_file(candidate, "files.songs.get"))
+        self.assertEqual(self.case_file(baseline, "files.asset.get"),
+                         self.case_file(candidate, "files.asset.get"))
         assets = json.loads((old / "assets.json").read_text())
         assets["assets"][0]["media_type"] = "application/octet-stream"
         self.assertEqual(assets, json.loads((new / "assets.json").read_text()))
@@ -406,6 +417,10 @@ class AssetCorrectionTests(GoldenTestCase):
                                 correct_asset_media_type=[(declaration, "reason")])
         with self.assertRaisesRegex(GoldenError, "disagrees with recorded"):
             self.run_golden(self.setup_capture(resource_type=None, route_type="image/png"),
+                            review_receipt="review-media-1",
+                            correct_asset_media_type=[("chart=application/octet-stream", "reason")])
+        with self.assertRaisesRegex(GoldenError, "disagrees with recorded"):
+            self.run_golden(self.setup_capture(resource_type=None, route_type="image/png", skin=True),
                             review_receipt="review-media-1",
                             correct_asset_media_type=[("chart=application/octet-stream", "reason")])
         with self.assertRaisesRegex(GoldenError, "requires --review-receipt"):
