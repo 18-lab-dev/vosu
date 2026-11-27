@@ -30,6 +30,9 @@ use vosu_osu::fixtures::FixtureOrProducer;
 compile_error!("the test-harness feature is forbidden in release builds");
 
 pub mod actions;
+#[cfg(feature = "bench-harness")]
+#[doc(hidden)]
+pub mod bench_capture;
 pub mod capture;
 pub mod classify;
 pub mod demand;

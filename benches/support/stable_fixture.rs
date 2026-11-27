@@ -7,29 +7,34 @@ pub const PLAY_TIME: f64 = 1234.0;
 pub const FIRST_OBJECT_TIME: Option<i64> = Some(0);
 
 pub fn patterns() -> StablePatterns {
+    patterns_at(0)
+}
+
+pub fn patterns_at(base: usize) -> StablePatterns {
     StablePatterns {
-        base_addr: 0x200,
-        play_time_addr: 0x500,
-        chat_checker_ptr: 0x380,
-        skin_data_addr: 0x600,
-        settings_class_addr: 0x580,
-        configuration_addr: 0x780,
-        bindings_addr: 0x800,
-        rulesets_addr: 0x700,
-        can_run_slowly_addr: 0x400,
-        status_ptr: 0x300,
-        menu_mods_ptr: 0x340,
-        get_audio_length_ptr: 0x880,
-        user_profile_ptr: 0x900,
-        raw_login_status_ptr: 0x980,
-        spectating_user_ptr: 0xa00,
-        game_time_ptr: 0x480,
+        base_addr: base + 0x200,
+        play_time_addr: base + 0x500,
+        chat_checker_ptr: base + 0x380,
+        skin_data_addr: base + 0x600,
+        settings_class_addr: base + 0x580,
+        configuration_addr: base + 0x780,
+        bindings_addr: base + 0x800,
+        rulesets_addr: base + 0x700,
+        can_run_slowly_addr: base + 0x400,
+        status_ptr: base + 0x300,
+        menu_mods_ptr: base + 0x340,
+        get_audio_length_ptr: base + 0x880,
+        user_profile_ptr: base + 0x900,
+        raw_login_status_ptr: base + 0x980,
+        spectating_user_ptr: base + 0xa00,
+        game_time_ptr: base + 0x480,
     }
 }
 
 struct Graph {
     bytes: Vec<u8>,
     next: usize,
+    base: usize,
 }
 impl Graph {
     fn node(&mut self) -> usize {
@@ -45,7 +50,7 @@ impl Graph {
     }
     fn child(&mut self, address: usize) -> usize {
         let node = self.node();
-        self.word(address, node);
+        self.word(address, self.base + node);
         node
     }
     fn value(&mut self, address: usize, value: usize) {
@@ -66,10 +71,15 @@ impl Graph {
 }
 
 pub fn bytes() -> Vec<u8> {
+    bytes_at(0)
+}
+
+pub fn bytes_at(base: usize) -> Vec<u8> {
     let p = patterns();
     let mut g = Graph {
         bytes: vec![0; 0x10000],
         next: 0x2000,
+        base,
     };
     g.value(p.menu_mods_ptr, 72);
     g.value(p.chat_checker_ptr, 2);
@@ -90,7 +100,7 @@ pub fn bytes() -> Vec<u8> {
     g.word(ruleset + 0x1d8, 1);
     g.word(ruleset + 0xf8, 7654321);
     let beat = g.node();
-    g.value(p.base_addr - 0xc, beat);
+    g.value(p.base_addr - 0xc, base + beat);
     for (offset, text) in [
         (0x6c, "0123456789abcdef0123456789abcdef"),
         (0x90, "Artist - Title (Mapper) [Expert].osu"),

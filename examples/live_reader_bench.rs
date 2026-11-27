@@ -8,6 +8,8 @@ mod adapter;
 mod bus;
 #[path = "live_reader_bench/plan.rs"]
 mod plan;
+#[path = "live_reader_bench/process.rs"]
+mod process;
 use serde::Serialize;
 use std::{
     error::Error,
@@ -79,19 +81,23 @@ struct Args {
     bus: bool,
     adapter: bool,
     submissions: Option<Arc<std::sync::atomic::AtomicU64>>,
+    process_profile: process::Profile,
+    process_fixture: bool,
 }
 impl Args {
     fn parse(mut values: impl Iterator<Item = String>) -> Result<Self> {
-        let (mut pid, mut client, mut warmup, mut cycles) = (None, None, 100, 1000);
+        let (mut pid, mut client, mut warmup, mut cycles) = (None, None, None, None);
         let mut memory = "native".to_owned();
         let (mut bus, mut adapter) = (false, false);
+        let (mut profile, mut fixture) = (None, false);
         while let Some(flag) = values.next() {
             match flag.as_str() {
                 "--bus" => bus = true,
                 "--adapter" => adapter = true,
+                "--process-fixture" => fixture = true,
                 _ => {}
             }
-            if matches!(flag.as_str(), "--bus" | "--adapter") {
+            if matches!(flag.as_str(), "--bus" | "--adapter" | "--process-fixture") {
                 continue;
             }
             let value = values
@@ -106,9 +112,12 @@ impl Args {
                         _ => return Err(fail("client must be lazer or stable")),
                     })
                 }
-                "--warmup" => warmup = value.parse()?,
-                "--cycles" => cycles = value.parse()?,
-                "--memory" if matches!(value.as_str(), "native" | "plan") => memory = value,
+                "--warmup" => warmup = Some(value.parse()?),
+                "--cycles" => cycles = Some(value.parse()?),
+                "--memory" if matches!(value.as_str(), "native" | "plan" | "process") => {
+                    memory = value;
+                }
+                "--profile" => profile = Some(process::Profile::parse(&value)?),
                 "--samples" if value == "9" => {}
                 _ => {
                     return Err(fail(format!(
@@ -117,6 +126,27 @@ impl Args {
                 }
             }
         }
+        let process = memory == "process";
+        let idle = profile == Some(process::Profile::IdleHost);
+        if process && (bus || adapter) {
+            return Err(fail(
+                "--memory process already runs the production osu! publisher",
+            ));
+        }
+        if !process && (profile.is_some() || fixture) {
+            return Err(fail(
+                "--profile and --process-fixture require --memory process",
+            ));
+        }
+        if idle && (pid.is_some() || client.is_some() || fixture) {
+            return Err(fail("idle_host starts without a target or client type"));
+        }
+        if fixture && (pid.is_some() || client.is_some()) {
+            return Err(fail(
+                "--process-fixture supplies its own synthetic stable target",
+            ));
+        }
+        let cycles = cycles.unwrap_or(if process { 20 } else { 1000 });
         if cycles == 0 {
             return Err(fail("cycles must be positive"));
         }
@@ -124,16 +154,25 @@ impl Args {
             return Err(fail("choose one of --bus or --adapter"));
         }
         Ok(Self {
-            pid: pid
-                .filter(|pid| *pid != 0)
-                .ok_or_else(|| fail("--pid must be positive"))?,
-            client: client.ok_or_else(|| fail("--client is required"))?,
-            warmup,
+            pid: if idle || fixture {
+                0
+            } else {
+                pid.filter(|pid| *pid != 0)
+                    .ok_or_else(|| fail("--pid must be positive"))?
+            },
+            client: if idle || fixture {
+                ClientType::Stable
+            } else {
+                client.ok_or_else(|| fail("--client is required"))?
+            },
+            warmup: warmup.unwrap_or(if process { 2 } else { 100 }),
             cycles,
             memory,
             bus,
             adapter,
             submissions: None,
+            process_profile: profile.unwrap_or_default(),
+            process_fixture: fixture,
         })
     }
 }
@@ -390,7 +429,19 @@ fn main() {
     }
 }
 fn execute() -> Result<()> {
-    let mut args = Args::parse(std::env::args().skip(1))?;
+    let mut values = std::env::args().skip(1).peekable();
+    match values.peek().map(String::as_str) {
+        Some("--process-fixture-target") => return process::target(),
+        Some("--list-process-cases") => {
+            process::list();
+            return Ok(());
+        }
+        _ => {}
+    }
+    let mut args = Args::parse(values)?;
+    if args.memory == "process" {
+        return process::run(&args);
+    }
     let start = Instant::now();
     let attachment = if args.adapter {
         let variant = if args.client == ClientType::Lazer {
@@ -525,6 +576,14 @@ mod tests {
         assert!(args(&["--adapter"]).unwrap().adapter);
         assert!(!args(&["--adapter"]).unwrap().bus);
         assert!(args(&["--bus", "--adapter"]).is_err());
+        assert!(args(&["--memory", "process"]).is_ok());
+        assert!(args(&["--memory", "process", "--bus"]).is_err());
+        assert!(args(&["--profile", "no_client"]).is_err());
+        assert!(args(&["--memory", "process", "--profile", "idle_host"]).is_err());
+        let parse = |values: &[&str]| Args::parse(values.iter().map(|s| (*s).to_owned()));
+        assert!(parse(&["--memory", "process", "--profile", "idle_host"]).is_ok());
+        assert!(parse(&["--memory", "process", "--process-fixture"]).is_ok());
+        assert!(args(&["--memory", "process", "--process-fixture"]).is_err());
     }
     #[test]
     fn retains_failed_cycles() {

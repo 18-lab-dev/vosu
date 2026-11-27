@@ -99,13 +99,20 @@ pub async fn create_state_worker(
         move || -> Result<Option<PreparedReaders>, StateWorkerError> {
             match client {
                 ClientType::Stable => {
-                    let patterns =
+                    #[cfg(feature = "bench-harness")]
+                    let fixture = crate::bench_capture::fixture_patterns();
+                    #[cfg(not(feature = "bench-harness"))]
+                    let fixture: Option<StablePatterns> = None;
+                    let patterns = if let Some(patterns) = fixture {
+                        patterns
+                    } else {
                         match StablePatterns::resolve(&process).map_err(StateWorkerError::from)? {
                             ReadStatus::Ready(patterns) => patterns,
                             ReadStatus::NotReady
                             | ReadStatus::Unchanged
                             | ReadStatus::Unsupported(_) => return Ok(None),
-                        };
+                        }
+                    };
                     Ok(Some(PreparedReaders::Stable(Box::new((
                         StableMemory::new(process.clone(), patterns),
                         StableMemory::new(process, patterns),
@@ -222,6 +229,8 @@ where
     let regular =
         SourceRegularReader::new(entry.client, regular_memory, Arc::clone(&synchronization));
     let precise = SourcePreciseReader::new(precise_memory, reader_settings.clone());
+    #[cfg(feature = "bench-harness")]
+    let (regular, precise) = crate::bench_capture::readers(regular, precise);
     Ok(spawn_state_worker(
         regular,
         precise,
