@@ -455,5 +455,76 @@ class PrepushChangedPathsTest(unittest.TestCase):
         self.assertEqual(paths, ["CHANGED.md"])
 
 
+class Day0ReleaseGateTest(unittest.TestCase):
+    """Verify M8-G01/G02/G03 invariants across release.yml, sign-release.py and check-day0.py."""
+
+    def test_release_workflow_wires_day0_gate_without_continue_on_error(self):
+        workflow_path = ROOT / ".github" / "workflows" / "release.yml"
+        text = workflow_path.read_text(encoding="utf-8")
+        blocks = _job_blocks(text)
+        self.assertIn("day0-gate", blocks)
+        self.assertIn("publish", blocks)
+
+        day0_block = "\n".join(blocks["day0-gate"])
+        publish_block = "\n".join(blocks["publish"])
+
+        self.assertIn("python scripts/check-day0.py", day0_block)
+        self.assertIn("--require-evidence", day0_block)
+        self.assertNotIn("continue-on-error: true", day0_block)
+
+        # publish must depend on day0-gate AND run a fresh check-day0.py before draft creation.
+        self.assertRegex(publish_block, r"(?m)^\s*-\s*day0-gate\s*$")
+        self.assertIn("python scripts/check-day0.py", publish_block)
+        self.assertIn("--require-evidence", publish_block)
+        self.assertNotIn("continue-on-error: true", publish_block)
+        self.assertLess(
+            publish_block.index("python scripts/check-day0.py"),
+            publish_block.index("Create draft GitHub release"),
+        )
+
+    def test_day0_script_ledger_partial_repo_failure_and_prerelease_gating(self):
+        day0 = _load_module("check_day0_gate_tooling_test", ROOT / "scripts" / "check-day0.py")
+        # Committed permanent ledger passes (M8-G02).
+        ledger = day0.validate_ledger_file(day0.DEFAULT_LEDGER)
+        self.assertTrue(ledger.passed, ledger.errors)
+        self.assertGreater(len(ledger.rows), 0)
+        self.assertEqual(ledger.counts["temporary"], 0)
+
+        # One failing repository among four fails closed (M8-G01).
+        def three_ok_one_404(url, *, headers, timeout, max_bytes):
+            if "vosulay" in url:
+                return day0.HttpResponse(status=404, body=b'{"message":"Not Found"}')
+            if "quickstart" in url:
+                payload = {"id": 4, "tag_name": "v2.0.0", "draft": False, "prerelease": False, "assets": []}
+            else:
+                payload = {
+                    "id": 1,
+                    "tag_name": "v1.0.0",
+                    "draft": False,
+                    "prerelease": False,
+                    "assets": [{"name": "catalog-v2.json"}],
+                }
+            return day0.HttpResponse(status=200, body=json.dumps(payload).encode("utf-8"))
+
+        failed = day0.run_day0_gate(fetcher=three_ok_one_404)
+        self.assertFalse(failed.passed)
+
+        # Prerelease bootstrap tags skip the day-0 gate without touching the network (M8-G03).
+        skipped = day0.run_day0_gate(
+            tag="v2.0.0-alpha.2",
+            require_evidence=True,
+            fetcher=lambda *a, **kw: (_ for _ in ()).throw(AssertionError("unexpected fetch")),
+        )
+        self.assertTrue(skipped.passed)
+        self.assertTrue(skipped.skipped)
+
+    def test_sign_release_refuses_stable_v2_publish_without_evidence(self):
+        sign_release = _load_module("sign_release_gate_tooling_test", ROOT / "scripts" / "sign-release.py")
+        with unittest.mock.patch.object(sign_release, "find_release", side_effect=AssertionError("must refuse first")), \
+             unittest.mock.patch.object(sign_release, "run", side_effect=AssertionError("must refuse first")), \
+             self.assertRaisesRegex(SystemExit, "--evidence"):
+            sign_release.main(["--tag", "v2.0.0", "--publish"])
+
+
 if __name__ == "__main__":
     unittest.main()

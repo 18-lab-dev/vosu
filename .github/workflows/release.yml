@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  day0-gate:
+    name: Verify day-0 release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_EVIDENCE_PATH: ${{ vars.VOSU_RELEASE_EVIDENCE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check day-0 ecosystem readiness and candidate evidence
+        run: >-
+          python scripts/check-day0.py
+          --tag "$RELEASE_TAG"
+          --commit "$GITHUB_SHA"
+          --require-evidence
+          --evidence "${RELEASE_EVIDENCE_PATH:-docs/testing/release-evidence-${RELEASE_TAG}.json}"
+
   linux:
     name: Validate and package Linux release
     runs-on: ubuntu-22.04
@@ -260,6 +278,7 @@ jobs:
   publish:
     name: Publish exact release assets
     needs:
+      - day0-gate
       - linux
       - windows
       - install-linux
@@ -270,6 +289,7 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_EVIDENCE_PATH: ${{ vars.VOSU_RELEASE_EVIDENCE }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -286,6 +306,14 @@ jobs:
           python scripts/package-release.py verify-set
           --tag "$RELEASE_TAG"
           --directory dist
+
+      - name: Verify day-0 ecosystem readiness and candidate evidence
+        run: >-
+          python scripts/check-day0.py
+          --tag "$RELEASE_TAG"
+          --commit "$GITHUB_SHA"
+          --require-evidence
+          --evidence "${RELEASE_EVIDENCE_PATH:-docs/testing/release-evidence-${RELEASE_TAG}.json}"
 
       - name: Write release notes
         run: >-

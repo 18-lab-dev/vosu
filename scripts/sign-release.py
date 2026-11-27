@@ -28,6 +28,10 @@ SPEC = importlib.util.spec_from_file_location("package_release", Path(__file__).
 release_version = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release_version)
 
+DAY0_SPEC = importlib.util.spec_from_file_location("check_day0", Path(__file__).with_name("check-day0.py"))
+day0_gate = importlib.util.module_from_spec(DAY0_SPEC)
+DAY0_SPEC.loader.exec_module(day0_gate)
+
 RELEASE_KEY = "6F0F0D30C09D3A036246A8102CB6524BB54B2CDA"
 
 
@@ -97,21 +101,73 @@ def find_release(repo, tag):
     return matches[0]
 
 
-def main(argv=None):
+def verify_publish_day0(
+    tag,
+    evidence,
+    *,
+    commit=None,
+    release_assets=None,
+    fetcher=None,
+    ledger_path=None,
+    source_pin=None,
+):
+    """Run a fresh day-0 gate + candidate-bound evidence verification before stable publication."""
+    kwargs = {
+        "tag": tag,
+        "commit": commit,
+        "evidence_path": evidence,
+        "require_evidence": True,
+        "expected_release_assets": release_assets,
+        "source_pin": source_pin,
+    }
+    if fetcher is not None:
+        kwargs["fetcher"] = fetcher
+    if ledger_path is not None:
+        kwargs["ledger_path"] = ledger_path
+    result = day0_gate.run_day0_gate(**kwargs)
+    if not result.passed:
+        details = "\n".join(f"  - {error}" for error in result.errors)
+        raise SystemExit(f"refusing to publish {tag}: day-0 gate failed:\n{details}")
+    return result
+
+
+def main(argv=None, *, fetcher=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tag", required=True)
     parser.add_argument("--repo", default="18-lab-dev/vosu")
     parser.add_argument("--key", default=RELEASE_KEY)
     parser.add_argument("--publish", action="store_true", help="publish the draft release after signing")
+    parser.add_argument(
+        "--evidence",
+        type=Path,
+        default=None,
+        help="candidate-bound release evidence manifest JSON (required for --publish on stable >= 2.0.0 releases)",
+    )
+    parser.add_argument(
+        "--commit",
+        default=None,
+        help="expected 40-hex candidate commit SHA (defaults to release target_commitish when 40-hex)",
+    )
     args = parser.parse_args(argv)
 
     # Before any download, signature upload or publication.
     try:
         prerelease = is_prerelease_tag(args.tag)
+        needs_day0 = day0_gate.requires_day0_gate(args.tag)
     except ValueError as error:
         raise SystemExit(f"error: {error}") from None
+
+    if args.publish and needs_day0:
+        if args.evidence is None:
+            raise SystemExit(
+                f"error: --evidence <path> is required when publishing stable release {args.tag}"
+            )
+        if args.commit is not None and not day0_gate._is_hex40(args.commit):
+            raise SystemExit(f"error: --commit must be a 40-hex SHA, got {args.commit!r}")
+
     release = find_release(args.repo, args.tag)
     names = {asset["name"] for asset in release["assets"]}
+    asset_digests = {}
     with tempfile.TemporaryDirectory(prefix="release-sign-") as directory:
         root = Path(directory)
         signatures = []
@@ -123,9 +179,11 @@ def main(argv=None):
             digest = asset.get("digest") or ""
             if not digest.startswith("sha256:"):
                 raise SystemExit(f"{asset['name']}: GitHub recorded no SHA-256 digest")
+            expected_sha = digest.removeprefix("sha256:")
             path = download(args.tag, args.repo, asset["name"], root)
-            if sha256(path) != digest.removeprefix("sha256:"):
+            if sha256(path) != expected_sha:
                 raise SystemExit(f"{asset['name']}: download does not match GitHub's digest")
+            asset_digests[asset["name"]] = expected_sha
             if path.name + ".sig" in names:
                 existing = download(args.tag, args.repo, path.name + ".sig", root)
                 require_signed_by(path, existing, args.key)
@@ -139,6 +197,22 @@ def main(argv=None):
         for name in verified:
             print(f"verified existing signature for {name}")
     if args.publish and release["draft"]:
+        if needs_day0:
+            # Re-verify day-0 readiness and the candidate-bound evidence manifest
+            # immediately before publication so a stale CI draft can never bypass
+            # the gate after creation.
+            target_commit = args.commit
+            if target_commit is None:
+                candidate_commitish = release.get("target_commitish")
+                if isinstance(candidate_commitish, str) and day0_gate._is_hex40(candidate_commitish):
+                    target_commit = candidate_commitish
+            verify_publish_day0(
+                args.tag,
+                args.evidence,
+                commit=target_commit,
+                release_assets=asset_digests or None,
+                fetcher=fetcher,
+            )
         fields = ["-F", "draft=false"]
         if prerelease:
             # A prerelease tag must not become the repo's "Latest release" or
