@@ -15,9 +15,9 @@ filesystem access or a game client belongs in a [plugin](../plugins/authoring.md
 that declares an action; a tool reaches native work only through that action
 ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)).
 
-Responsibilities are split exactly as the
-[A7 freeze](../v2/implementation-plan.md#a7-approved-contract-freeze-2026-11-24)
-fixes them:
+The 2.0 host cutover follows the
+[A7 inventory](../v2/implementation-plan.md#route-method-listener-and-provider-inventory).
+For the native/browser fixture receipts see [M7 X0](../testing/verification.md#m7-x0-functional-evidence).
 
 - **Core** (the tool registry) discovers packages, keeps each tool's enabled,
   trust and settings state, resolves its `requires`/`optional` against the
@@ -27,6 +27,8 @@ fixes them:
   UI, art and public settings, the bridge, the theme and the design reference.
   It never mints or checks a session.
 - **The dashboard** lists, enables, trusts, configures and opens tools.
+  It reads only public API v1 summaries on the overlay origin; it never
+  serves or proxies API v1. A settings write goes to core, not the web host.
 
 The decision records are [ADR 0017](../decisions/0017-tool-host.md) (with its
 2026-11-24 amendment) and ADR 0019. The maintained example is
@@ -136,6 +138,11 @@ and no static fallthrough.
 upgrades, even when the package contains an `api` directory. Unknown tool ids
 are 404. The `tools` overlay folder name is reserved.
 
+These static, bridge and read routes remain available with the dashboard
+off, subject to tool eligibility. No new tab can obtain a launch code
+through dashboard management while off. The `/tools/_host/v1/session`
+spelling is the retained exchange, not a v1 browser bridge or a service API.
+
 ### Dashboard listener (core)
 
 Every `POST` requires dashboard provenance and `X-Vosu-CSRF`.
@@ -191,6 +198,12 @@ A tool has no replacement for the overlay list. A plugin that needs it calls
 the sessionless `vosu.overlayhost.overlays.query` action, which refuses tool
 and command-line callers
 ([catalog v2 "Overlay query action"](../v2/catalog-v2.md#overlay-query-action)).
+
+The removed `/websocket/v2/subscribe`, `/files/skin/` index and
+`/api/ingame` are ordinary 404s, not tool context or state routes. Use
+overlay-origin API v1 for public state and resources. The dashboard notice
+for `/api/ingame` offers the normal vosulay install plan. See the
+[removed-route guide](../v2/migration-from-1x.md#overlays-that-used-removed-apis).
 
 ## Launch and session exchange
 

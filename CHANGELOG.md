@@ -21,6 +21,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
   after approval, including after vosu restarts. Manage their approval and
   lifecycle from the Plugins section. Updates and uninstalls stop the old
   host before moving its files; changed bytes require new approval.
+  Development approvals and catalog-installed approvals are kept
+  separately. On Linux, process hosts require kernel 5.4 or later and
+  seccomp, but do not require `--setup`; they never inherit its file
+  capabilities. The fifth unexpected loss in five minutes latches that
+  host as failed until a manual restart.
 - Plugins can subscribe to session events from `create`; vosu replays existing
   sessions once the plugin is ready. Demand-driven providers such as Map
   analysis can now see sessions without waiting for a direct action.
@@ -128,6 +133,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
   listener's dashboard redirects return 404, while overlays, API v1 and tool
   hosting keep running. `/api/settingsSave` rejects `ENABLE_DASHBOARD`, and
   a live edit of the key takes effect only after a restart.
+- The dashboard uses overlay-origin API v1 session summaries without a
+  live state subscription. API v1 is not served or proxied on the
+  dashboard listener. **Show logs** and `vosu logs` still read local
+  logs with the dashboard off; there is no network log endpoint.
 - Overlays are hosted by the bundled `vosu.overlayhost` plugin: discovery,
   the community catalog and its cards, download, update and delete, names
   and aliases, settings and profiles, `/websocket/commands` and overlay

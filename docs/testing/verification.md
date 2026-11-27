@@ -675,7 +675,8 @@ capability 403, invalid arguments 400. DELETE requests cancellation rather than
 inventing a terminal state. Dashboard launch/exchange remains
 `POST /api/tools/{tool}/launch` (dashboard CSRF) and
 `POST /tools/_host/v1/session` (single-use code); the v2 client is
-`GET /tools/_host/v2/bridge.js`, and v1 remains available unchanged.
+`GET /tools/_host/v2/bridge.js`. M7 removed the v1 bridge; see the
+[2.0 tool route inventory](../tools/protocol.md#20-transition-inventory-a72).
 
 #### Pending native/live runbook (do not use personal game libraries)
 
@@ -2109,10 +2110,20 @@ residual with this receipt. A transient-scope design would need its own
 [spec] decision covering core's own unit placement and the launch
 handshake.
 
-**Packaged Linux run (pending owner-authorized setup).** Build and package
-the release binary exactly as the release workflow does, outside `/tmp`.
-File capabilities need a filesystem with xattrs that is not mounted
-`nosuid`.
+**Packaged Linux run (2026-11-25).** The owner authorized `--setup` for
+packaged `2.0.0-alpha.1` at `f37ca414`. The `n0-packaged-linux-SUMMARY.md`
+and `n0-packaged-linux.log` receipts record all three cases passing, all
+four setup capabilities effective in core and all four plugin-host sets
+zero before the constructor and after plugin threads started. `CapBnd`
+was recorded only. The host was gone in 2 ms live / 1 ms during bootstrap
+after core-only death. The refused child was reaped and the capable copy
+was removed. Binary SHA-256:
+`4cebe4cd025221ff0680f404b951b7f23897a3651d444c1b57382fe69bddb0f2`;
+loaded testkit library SHA-256:
+`397808a6d625ce78b66f6ec467f131cb488becbf79887faadaad1a6a91504572`.
+This is the packaged default-filter evidence, not a packaged opt-in or
+performance run. The command sequence is below; file capabilities require
+a filesystem with xattrs that is not mounted `nosuid`.
 
 ```sh
 source scripts/dev-env.sh
@@ -2300,18 +2311,21 @@ with their module path so each filter matches a nonzero set. Main lists
 
 **Targets.** New children of the existing roots:
 
-- `tests/server_compat/m7_routes.rs`: the route inventory corpus;
-- `tests/server_compat/m7_management.rs`: the management operation matrix;
-- `tests/config_compat.rs` cases named `dashboard_off_*`;
-- `tests/daemon_smoke/dashboard_off.rs`;
-- `tests/api_v1_compat` cases named `tool_session_*`;
+- `tests/server_compat/` and core `server/routes/` tests: route, listener
+  and method inventory; `tests/server_compat/m7_management.rs`: management
+  operation matrix.
+- `tests/daemon_smoke/dashboard_off.rs`, `tests/server_compat/dashboard_off.rs`
+  and the core dashboard/config unit tests.
+- `tests/api_v1/{actions,jobs,cli}.rs` and `crates/vosu-core/src/tools/tests.rs`:
+  action, job and launch-session authority.
 - the host crates' own `cargo nextest run -p vosu-{dashboard,overlay-host,tool-host}` suites;
 - the rewritten `tests/{dashboard_smoke,tool_host_smoke,tool_catalog_smoke,catalog_art_smoke}.py`
   with `tests/{dashboard_browser,tool_host_v2_browser}.mjs` (X0).
 
 No `tests/ingame_compat.rs` exists: `/api/ingame` is a D20 removed route
-(ADR 0021's 2026-11-25 amendment). The M7-G scenarios live in
-`tests/server_compat/m7_routes.rs` and the dashboard smoke.
+(ADR 0021's 2026-11-25 amendment). M7-G01/G02 live in
+`tests/server_compat/removed_notices.rs`; the browser scenarios, including
+G03's notice action, live in `tests/dashboard_notices_browser.mjs`.
 
 **Fixtures.**
 
@@ -2440,6 +2454,95 @@ does not start or stop the guest:
   --env 'VOSU_PLAYWRIGHT_MODULE=V:\path\to\playwright\index.mjs' \
   --env 'PLAYWRIGHT_BROWSERS_PATH=V:\path\to\chromium'
 ```
+
+### M7 X0 functional evidence
+
+X0's scoped runs are recorded in the historical [X0 handoff at `23e860f1`](https://github.com/18-lab-dev/vosu/blob/23e860f1/HANDOFF.md).
+The implementation batch starts at `633f1db4`; the final Windows browser
+run staged `31c2ad7c` with the X0 worktree, recorded in that handoff. The
+catalog/drawer follow-through is `9debf226`, `685ac083`, `57c06126`.
+These are native debug `test-harness` fixture runs, not a release-binary
+or browser rerun on `ad724666`.
+
+| Observed test target | Linux | Native Windows |
+| --- | ---: | ---: |
+| Dashboard/overlay/tool hosts and core library suites | 1,342 passed, 1 skipped (aggregate) | 4 / 88 / 4 passed for the three hosts |
+| `server_compat` / `config_compat` / `api_v1_compat` | 41 / 10 / 44 | 44 / 10 / 44 |
+| `daemon_smoke` | 10 | 6 |
+| `plugin_host` / `state_bus` / `catalog_v2_compat` | 11 / 6 / 37 | Not counted in the scoped X0 record |
+| `tool_host_v2_browser.mjs` (T01/T02/T03/T05, R02) | 8 | 8 |
+| `dashboard_browser.mjs` (presentation, settings, state, network Apply) | 9 | 9 |
+| `dashboard_notices_browser.mjs` (N01/N02, G01–G03) | 5 | 5 |
+| `tool_catalog_browser.mjs` (plans, trust, credentials, drawer/offer) | 6 | 6 |
+| `catalog_art_browser.mjs` (before and after install) | 7 + 6 | 7 + 6 |
+| Browser total / separate Node unit cases | 41 / 22 | 41 / 22 |
+
+Fixture SHA-256s printed by the accepted browser runs:
+
+| Artifact | Linux | Native Windows |
+| --- | --- | --- |
+| `VOSU_M7_API_LIBRARY` | `06190698a565f28581348cd66f927f18d04368ca37e653fb4958ec950c069072` | `f693ff72980c50202eeaeb6e66e40bf9301765f00c1e9183e953ec6bb6c13ed1` |
+| `VOSU_M7_TARGET` | `35a4effd5a74bd72b6941ec8023b593e6f699e3246022119ad864d8e90c9246a` | `3e4fcdff60c9b8ee69a2999b24f557440ebb0eb8b5812aaa4754c9a9d81a29c0` |
+| `VOSU_PLUGIN_HOST_TESTKIT_LIBRARY` | `e1e9537f64cdc2fbc1b2faa8b47747931bd0eb3076a67c5a4b1ebc437080f5e6` | `d77357e070dd0756d76e1f1c4f2b767b16a86c8ccc27a20f07aa6dd70a6790be` |
+
+The O01–O04 daemon cases verify default-on, config/env off, invalid env
+before bind, an occupied dashboard port, the `dashboard_disabled`
+startup log, surviving API/overlays and rejection of self-disable.
+`bundled_registry_refuses_extra_duplicate_unexpected_and_invalid_entries`
+and `dashboard_off_lists_the_dashboard_inactive_and_never_creates_or_mounts_it`
+pin the identity comparison and the inactive slot. Windows graphical
+startup, terminal behavior, tray **Show logs** and local `vosu logs`
+remain [ADR 0024](../decisions/0024-background-daemon-console.md) behavior;
+the X0 HTTP/browser runs did not inspect a desktop tray or allocate a
+graphical console.
+
+**D20.** Native `m7_g01_api_ingame_is_the_ordinary_404_and_only_the_exact_path_is_recorded`
+compares status, headers and body with an unknown route across seven
+HTTP methods and a refused WebSocket upgrade. It records neither near
+misses nor dashboard traffic. `m7_g02_one_warning_unknown_bucket_attribution_privacy_and_expiry`
+checks one warning, known and unknown attribution, expiry and the absence
+of the query sentinel. In the browser, the real overlay's selected-field
+upgrade gets 404 and `/api/ingame` gets plain 404. The notice comes through
+the production status fetch, shows an escaped installed name, count,
+age and fixed guide, excludes preview requests and leaves the overlay
+enabled. Removing the overlay removes its actionable link. G03 uses
+fixture catalog responses to check Retry, exact `vosulay-editor` plan
+selection, approval-gated confirmation controls and Launch/Manage
+when installed. It does not confirm an install; the separate F X0
+vosulay lane tests the ordinary catalog install and real editor launch.
+
+#### F X0 ecosystem fixtures
+
+Citations: the **vosu-tools F X0 handoff** (runner `0fa88a2c`, fixture host
+`726137bb`, later tools tip `70c4cf84`) and the **F X0 ecosystem acceptance
+handoff** (`landed-4b19cbf8.json`, [host CI](https://github.com/18-lab-dev/vosu/actions/runs/45885673721)).
+The latter cites the passing overlay, vosulay and quickstart receipts at
+`f2ce1c519e`, `05d3484218` and `f208a6a6bd` in their own repositories.
+Both handoffs use the published `vosu-plugin-api` `1.0.0-alpha.3`
+SHA-256 `91428fcc52988c3293875017cf8b64dceb1b5ace3dfeb67342ec49b2c530a498`.
+
+| Lane (receipt suite) | Linux | Native Windows | Observed positive controls |
+| --- | ---: | ---: | --- |
+| vosu-tools (`vosu-tools-native-process`) | 7/7 | 7/7 | `vosu.tools.{downloader,lazer-library,map-analysis,practice,replay-renderer,server-pp,skin-studio}`; 28/28 lifecycle observations per OS, surviving synthetic game and sentinel |
+| vosu-overlays (`overlay map analysis runtime`) | 7/7 | 7/7 | 19 installs, 19 API v1 consumers and 3 sidecars, real timeline/map provider fields, detach and recovery |
+| vosulay editor (`process-fixture`, full) | 5/5 | 5/5 | Catalog plan and native dependency, dashboard editor and real bridge, child/grandchild restart, join and host-only teardown |
+| vosulay independent supervisor diagnostic (`process-fixture`) | Not counted in landed-host handoff | 3/3 | Medium unelevated child in the native Windows job under an elevated test parent; outside sentinel survived |
+| vosu-overlay-quickstart (host lanes A, B and D, setup and cleanup) | 18/18 | 18/18 | Packaged install, SDK game, public API v1 state/resources, detach and process lifecycle; scripted 5/5 per OS are separate, not host checks |
+
+| Fixture host source | Linux binary SHA-256 | Native Windows binary SHA-256 |
+| --- | --- | --- |
+| `726137bb7bfa17633adf25ec7f80ce5b67a04a52` (tools) | `9583bd5eccf67f9afb8a140c5a6a97c9224d05c409129db414a5561481da4762` | `5a9c3f31d6008f9f243485de7fc19caf51281313828163b39088037168bf04c6` |
+| `4b19cbf8768fbe3e390cdc15288c4241ef303214` (ecosystem) | `a7c00af70519bb3148cc1a35a228873a1063c90d511a5956e9f8edc5689febcd` | `f34b86c43bb1720e774bb86836901990041067addafa45a7eb0c34ba32505b29` |
+
+The tools replay receipts checked 35 H.264 frames and the protected MP4
+SHA-256 (`ad06f1e501d03bf76402ad2acc1d2800e6c27014fc4681f8e18ea7cddb8f9eab`
+Linux; `5d0922af0572269c71c86ddb4bc084a8dda41f9cd0819bfa05cd2e220554153e`
+Windows). Linux recorded distinct Chromium renderer namespaces and an
+additional seccomp filter without sandbox-disabling flags. The temporary
+Windows HTTPS fixture root was verified absent afterward. These receipts
+retain **fixture-official** plugin or **official-fixture** catalog labels.
+They do not attest public catalog installation, production vosulay CEF,
+owner-authorized live-game visuals or D17 performance.
 
 ### A7 documentation acceptance
 

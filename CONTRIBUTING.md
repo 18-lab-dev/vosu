@@ -69,14 +69,31 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
    cargo run --locked
    ```
 
-   The dashboard is at <http://127.0.0.1:24050/>. Configuration, counters, and
-   caches use the platform locations listed in the
+   Open the dashboard at <http://127.0.0.1:24051/>; the overlay listener
+   at <http://127.0.0.1:24050/> redirects there when it is enabled.
+   Configuration, counters and caches use the platform locations in the
    [README](README.md#files-and-migration).
 
 To read a running osu! client on Linux, the executable needs `CAP_SYS_PTRACE`.
 Run `target/debug/vosu --setup` as your normal user; it asks for authentication
 through polkit. Every rebuild replaces the binary and drops the capability, so
 repeat it before testing against a live client. Never run the daemon as root.
+
+For a native development package, run `cargo run --locked -- --plugin <dir>`.
+Debug builds allow an explicit in-process development load; a debug process
+plugin still needs approval. A non-debug prerelease accepts `--plugin`
+only for a process package under user trust and refuses an in-process
+request. A stable release refuses `--plugin`. In **Tools → Plugins**,
+approve the exact manifest and target library before the child starts.
+For a catalog package, use the ordinary install plan; approval is recorded
+with its installed provenance. There is no noninteractive approval.
+
+Linux process hosts need kernel 5.4 or newer and a working seccomp filter,
+including in containers. `--setup` is for core's live memory access, not
+process-host startup. Review any requested `[runtime.linux]` user-namespace
+creation during approval; the rest of the Linux security checks stay
+mandatory. See [native plugin execution](docs/security.md#native-plugin-execution)
+and the [native fixture conventions](docs/testing/verification.md#m5-test-and-fixture-conventions-a5).
 
 A debug binary has no embedded offset-generator bundle. It works normally until
 a lazer version needs local offset generation, which then reports a

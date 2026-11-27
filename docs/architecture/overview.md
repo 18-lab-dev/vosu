@@ -37,7 +37,7 @@ flowchart LR
     Parity -. compares against pinned upstream daemon .-> Reference[upstream tosu parity reference]
 ```
 
-The daemon boundary is the `vosu` process; hosted tools are supervised out-of-process applications behind its HTTP contract. osu! is an observed external process; consumers, including independent overlay software, release services, and the local filesystem are external dependencies. [ADR 0008](../decisions/0008-external-in-game-overlays.md) keeps in-game overlay UI and state outside this boundary. `tools/live-parity/run.py` is not a production container: it orchestrates deterministic upstream-tosu-versus-vosu captures for the supported Windows/stable, Windows/lazer, and Linux/lazer matrix declared in `tools/live-parity/live_parity.py`.
+One executable runs the daemon and, in a separate invocation, one child host per process plugin. Hosted tools are browser pages, not processes. osu! is an observed external process; overlays, browsers, release services and the filesystem are external dependencies. [ADR 0008](../decisions/0008-external-in-game-overlays.md) keeps in-game rendering outside the daemon. `tools/live-parity/run.py` orchestrates deterministic upstream-tosu-versus-vosu captures for the supported Windows/stable, Windows/lazer and Linux/lazer matrix; it is not a production service.
 
 ## Containers and ownership
 
@@ -47,7 +47,7 @@ flowchart TB
     Runtime --> Config[crates/vosu-core/src/config<br/>ConfigStore]
     Runtime --> Discovery[crates/vosu-core/src/plugin/discovery.rs<br/>DiscoveryService]
     Discovery --> Plugin[crates/vosu-osu<br/>classification and session lifecycle]
-    Plugin --> Process[vosu-plugin-api PlanMemory<br/>core executor over vosu-sys]
+    Plugin --> Process[vosu-plugin-internal PlanMemory<br/>core executor over vosu-sys]
     Process --> Readers[crates/vosu-osu-reader<br/>stable and lazer readers]
     Runtime --> Adapters[Bundled upstream, gosuMemory and streamCompanion adapters]
     Readers --> Workers[crates/vosu-osu-state/src/worker.rs<br/>regular and precise capture]
@@ -57,13 +57,16 @@ flowchart TB
     Bus --> Surface[vosu-surface coherent capture]
     Surface --> Adapters
     Adapters --> Server[crates/vosu-core/src/server HTTP and WebSocket transport]
+    Runtime --> Hosts[Bundled dashboard, overlay and tool hosts]
+    Hosts --> Server
+    Runtime --> Children[Approval-gated native plugin hosts]
     Reducer --> Calc[crates/vosu-osu-calc and<br/>crates/vosu-pp]
     Config --> Runtime
     Runtime --> Update[crates/vosu-core/src/updater/*]
     Runtime --> Desktop[crates/vosu-core/src/desktop/*<br/>tray and login service]
 ```
 
-`src/main.rs` injects `BUNDLE` into core's `run_cli`. The bundle specifies executable identity and concrete provider registration, while core composes required game/adapter plugins, configuration, listeners and operational services. Missing required registration or discovery fails startup. Shutdown stops discovery and foreground delivery, seals subscriptions and closes sockets, joins listeners, subscription workers and adapter chart workers, destroys plugin instances, then joins the overlay, configuration and logging. No root snapshot or control fallback remains.
+The root library exports only `BUNDLE` and `BUNDLED`. `src/main.rs` dispatches `plugin-host` first and `vosux`/`vosu x` second, before building Tokio and calling `vosu_core::runtime::run_cli`. Private root composition binds concrete adapter and host providers, including the overlay command relay; it owns no daemon service or business model. Core validates the complete ordered registry before creation: `vosu.osu`, `vosu.adapter.upstream`, `vosu.adapter.gosumemory`, `vosu.adapter.streamcompanion`, `vosu.dashboard`, `vosu.overlayhost`, `vosu.toolhost`. Only test-harness builds add `vosu.testkit.echo`. Core stops discovery, seals subscriptions and closes sockets, joins listeners, subscriptions and adapter workers, then destroys plugin instances before joining the remaining services. No root snapshot or control fallback remains.
 
 `crates/vosu-core/src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
@@ -98,6 +101,35 @@ canonicalizes the entry assembly path, and a symlink would select the original
 bundle's runtime. Linux links the remaining runtime files; Windows hard-links
 or copies them. Staging is generation-local and removed afterward; the
 checksum-verified payload and game installation remain untouched.
+
+### Process plugin boundary
+
+The SDK validates packages for core; core selects one execution backend.
+Linked bundled instances and permitted in-process loads use local vtables.
+For a process grant, `ApprovalGate` checks the manifest and library
+digests and development or installed provenance, then passes the verified
+digest into `CREATE`. Only the child loads the verified library object.
+Core retains native target handles, generation checks, read-plan
+execution, state, resources and actions.
+
+Two 2 MiB rings use event wakeups (Linux memfd/eventfd; Windows unnamed
+section/events). Each dedicated ring reader routes frames without
+dispatching plugin callbacks. A synchronous read result goes to the
+blocked submitter, which dispatches it before `send` returns; ordinary
+ingress and broker work stay bounded in core. Idle children are not
+polled. A lost generation is retired once; its sessions detach with
+`lost` and the supervisor backs off until the five-in-five-minutes
+`failed` latch. Startup refusals are not retried, and manual restart
+rechecks approval.
+
+Linux sets `no_new_privs` before exec, then verifies the capability drop,
+seccomp policy and parent-death signal before any library code. Only the
+artifact-bound opt-in allows namespace creation; joining stays denied.
+Linux pidfds track the child, not its descendants. Windows assigns a
+suspended host to a kill-on-close job before resuming it, so core-only
+death ends the job's descendants too. See the
+[security disclosure](../security.md#native-plugin-execution) and
+[M5 evidence](../v2/implementation-plan.md#m5-x2-outcome).
 
 ### Ownership map
 
@@ -239,17 +271,57 @@ The bundled adapter crates own wire construction: `vosu-adapter-gosumemory` (`/j
 
 `crates/vosu-core/src/server/origins.rs` separates trusted dashboard pages/management from the unchanged overlay origin ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)). Each listener has an explicit origin role and shares effective address metadata. Dashboard mutations require exact dashboard provenance plus a per-start CSRF token; dashboard HTML is not CORS-readable, and overlay static files never run on that listener. Overlay command-socket settings and scoped key grants retain their compatibility contracts. This browser-origin boundary does not authenticate against malicious native same-account clients.
 
-Core's `ToolRegistry` discovers SDK-validated web packages, manages their trust and settings, and issues bounded launch codes and sessions. API v1 checks the action grant against the live launch session. The bundled tool host serves only the static UI and redacted settings of servable tools, through a view supplied by core. Legacy `tool.toml`-only packages remain disabled and are never parsed or run. There is no service process or proxy.
+### Dashboard, overlay and tool listeners
 
-Package document validation lives in `vosu-plugin-api`: core plugin loading,
-v2 tool discovery and manifest-first overlay discovery all consume its unified
-model with explicit application-version and registration context. Legacy tool
-presentation conversion is not a second v2 parser; `tool.toml` remains only
-through M7. The SDK's catalog parser and asset-backed comparison do not switch
-the legacy network installer to catalog v2. Sources, trust, graph selection and
-installation remain M6b/M7-owned. Offline packaging schemas check structure
-only; their limits and the exact [consumer inventory](../testing/verification.md#consumer-migration-ledger)
-are recorded separately from native-platform evidence.
+Core owns exact routing, peer/origin/CSRF checks and privileged
+management handlers. The three hosts depend on `vosu-surface`,
+`vosu-plugin-api` and `vosu-plugin-internal`; only the overlay host also
+uses `vosu-net`. They depend neither on core nor on one another. The
+[A7 method and path inventory](../v2/implementation-plan.md#route-method-listener-and-provider-inventory)
+lists the adapter, counter, plugin, tool and catalog routes.
+
+- `vosu-dashboard` (`vosu.dashboard`) registers dashboard `GET` shells
+  `/`, `/settings`, `/available` and `/tools` and its assets. Core injects
+  page context and serves `GET /api/settings` and
+  `GET /api/dashboard/status`; the host receives no settings values or
+  credentials. Browser status also reads public session summaries from
+  overlay-origin `GET /api/v1/sessions`, without a subscription or
+  precise demand. The dashboard listener neither serves nor proxies API v1.
+- `vosu-overlay-host` (`vosu.overlayhost`) owns overlay discovery,
+  catalog cards, settings/profiles, `/websocket/commands` processing and
+  static files. Core authorizes writes and feed admission, seeds
+  `static_folder_path` through ABI settings and mints the read-only
+  `RootLease` for serving. Overlay writes use hardened ZIP and atomic
+  publishing from `vosu-net`, not the lease.
+- `vosu-tool-host` (`vosu.toolhost`) serves static UI, artwork,
+  password-filtered `_settings`, `GET /tools/_host/v2/bridge.js`, theme
+  and design assets. Core discovers SDK-validated v2 tool manifests, owns
+  enabled/trust/settings state and pushes a redacted `ToolHostView`. Core
+  owns `POST /tools/_host/v1/session` and checks live action/job authority;
+  the host never receives the session. The service, readiness protocol,
+  proxy, path context, tool CLI and v1 bridge are gone. A `tool.toml`-only
+  package is reported `needs-2.0-update` and never parsed, run or served.
+
+Core serves plugin schemas and effective settings at
+`GET /api/plugins/<id>/settings`. A valid dashboard settings write is
+atomic and delivers one complete `SETTINGS_CHANGED`; it never echoes
+passwords. Catalog sources, trust, credentials and reviewed install plans
+remain core services. Core and the package checker share the SDK's
+manifest/catalog validators, not a parser in each host.
+
+Dashboard off (`ENABLE_DASHBOARD = false` or `VOSU_DASHBOARD=off`) suppresses
+its listener and instance, not its compiled registry entry. Startup, tray
+and second launch open no dashboard. Overlay, adapter, tool and API v1
+routes remain available; so do **Show logs** and `vosu logs`. Windows
+graphical launches have no persistent console; terminal launches retain
+normal CLI behavior. Logs are local, not a network endpoint.
+
+The overlay listener records exact `/websocket/v2/subscribe`,
+`/files/skin/` and `/api/ingame` attempts and returns the ordinary 404
+without upgrade or redirect. The bounded D20 recorder feeds the dashboard
+notice, never disables an overlay, and logs only the first exact
+`/api/ingame` request per daemon run. See the
+[observed X0 results](../testing/verification.md#m7-x0-functional-evidence).
 
 
 Compatibility WebSocket connections belong to `crates/vosu-core/src/server/websocket.rs::WebSocketHub`; publication tasks belong to `WebSocketHubs`. Each client has one pending state frame. Shutdown seals registration and sends protocol close 1001 before cancelling publication loops. The API v1 subscription service seals new worker admission and joins existing workers before plugin destruction. The selected-field `/websocket/v2/subscribe` feed is removed. The bundled overlay host's `CommandProcessor` parses commands; `src/bundle/overlay/relay.rs` delivers browser relays and joins its worker.

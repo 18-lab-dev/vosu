@@ -30,6 +30,65 @@ With those capabilities, vosu watches process starts and exits to notice osu! qu
 
 vosu needs no elevation, installs no driver or service, and writes no registry keys.
 
+## Native plugin execution
+
+A process plugin runs native code with the desktop user's filesystem and
+network access. A separate `vosu plugin-host` limits the effect of a crash;
+**it is not a general-purpose sandbox**. ABI game-memory reads are brokered
+by core against the plugin's authorized session. In-process code has the
+daemon's access; only bundled plugins, official or explicitly trusted
+sources, and explicit debug development loads are eligible.
+
+- **Linux:** process plugins need kernel 5.4 or later, accessible procfs and
+  permission to install the seccomp filter. `--setup` configures the
+  daemon's game access, not plugin-host startup. Core sets `no_new_privs`
+  before exec so the child gains none of the executable's file capabilities.
+  Before opening the library, the child verifies that it is single-threaded,
+  has no root UID, has zero inheritable, permitted, effective and ambient
+  capabilities, and has `NoNewPrivs: 1` and the selected filter active.
+  The bounding set is recorded, not emptied. A failed check refuses the
+  load without an automatic retry or in-process fallback.
+- **Linux user namespaces:** the default filter prevents creation and
+  entry. `user_namespaces = true` in `[runtime.linux]` allows creation on
+  Linux only after explicit approval, even for official and trusted
+  sources. `setns` stays denied; neither the capability drop nor
+  `no_new_privs` is relaxed. The OS may still forbid creation. A helper
+  such as Chromium can use its own sandbox; this does not sandbox the
+  plugin. Helpers inherit the drop and filter. Core death kills the
+  plugin host, not plugin-spawned descendants unless the plugin arranges it.
+- **Windows:** core starts the host suspended, assigns it to a dedicated
+  non-breakaway `KILL_ON_JOB_CLOSE` job, then resumes it. The child
+  inherits no job handle, game handles or credentials. Even abrupt core
+  exit closes the job and kills its members, including descendants. A
+  job confines lifetime, not the Windows token's privileges.
+
+See the [plugin ABI](v2/plugin-abi.md#7-execution-and-trust) and
+[ADR 0025](decisions/0025-linux-plugin-user-namespaces.md). These are
+plugin-host policies, not the separately supervised vosulay runtime's policy.
+
+**Approval and restart.** Explicit process approval is available through
+**Tools → Plugins** or the reviewed catalog plan, never via CLI or
+noninteractive startup. It binds the ID, process runtime, SHA-256 of the
+exact manifest and target library, and provenance: a canonical development
+package directory, or catalog source, installed version and archive SHA-256.
+Development records live in `<config>/plugins/approvals.json`. Installed
+records live only in `<data>/catalog/catalog-installed.json`, alongside
+the installed graph. These are channel-specific roots; neither record
+authorizes the other provenance. Trusted catalog packages that do not need
+explicit approval still must match both verified executable digests. An
+old archive-only approval needs re-review. Core rechecks before each load
+or restart, and the child rehashes the opened library before loading it.
+
+Approval, revocation, stop and manual restart require dashboard-origin
+provenance plus `X-Vosu-CSRF`. Revocation stops the process host. An
+unexpected exit (even exit zero), sustained ring pressure or other
+transport loss counts once per generation. The automatic retry schedule
+backs off by 1/2/4/8/16 seconds, but the fifth loss in a rolling five
+minutes instead latches `failed`. Manual restart clears the latch, not the
+approval gate. Idle silence and controlled stops are not losses. Revoking
+trust from running in-process code takes effect at the next daemon restart;
+vosu reports it as pending and does not restart the daemon automatically.
+
 ## Installation, files, and removal
 
 | Form | What is installed or created |
@@ -57,8 +116,8 @@ with the per-start `broker.json` bearer token ([integration contract](../README.
 Any same-account process able to read that file can write counter settings and
 invoke the other same-origin command-socket writes. This makes the existing
 native-Origin-forgery limitation explicit. On HTTP it grants value saves,
-profile actions, and broker-authenticated tool CLI listing, launch, open,
-and session revocation; never schema saves or other management.
+profile actions and eligible API v1 CLI actions/jobs, never schema saves,
+native plugin approval or other management.
 Brokers must keep it out of page JavaScript/logs and authorize their own inbound counter frames.
 Linux uses a 0700 directory and atomically created 0600 files.
 Windows files inherit their parent directory's ACL, as documented by

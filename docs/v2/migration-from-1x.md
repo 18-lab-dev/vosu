@@ -25,6 +25,12 @@ release. If you wrote it, replace the removed request as below.
 | Skin folder listing | `GET /files/skin/` (the index, not individual files) | Skin trees and resource references in API v1 ([resources and trees](api-v1.md#resources-and-trees)). Individual stable skin files at `/files/skin/<name>` remain in the upstream-compatible adapter; use API v1 for lazer skin files. |
 | In-game overlay page | `/api/ingame` (every method) | vosulay, the in-game overlay. The notice offers the official `vosulay-editor` install plan, including the `vosu.vosulay` plugin and normal approvals. [Install the matching native runtime separately](../migration/2.0.md#overlays-and-vosulay), or use vosulay standalone. |
 
+For `/api/ingame`, the exact overlay-listener path gets a plain 404, with
+no upgrade, redirect, `Deprecation` or `Link` header. It produces one WARN
+per daemon run. Requests to the dashboard listener or near-miss paths do
+not create a notice. The install action reviews the normal catalog plan;
+if the editor is already installed, the notice offers Launch and Manage.
+
 The upstream-compatible state routes (`/json/v2`, `/websocket/v2`,
 `/websocket/v2/precise`, gosuMemory and streamCompanion) are not removed and
 need no change for upstream fields. vosu-only fields removed from those

@@ -211,17 +211,14 @@ file in the default application.
 
 Use repeatable `--tool <directory>` arguments to serve trusted development
 web tools from their package directories. Manifest, settings and UI edits do
-not require a daemon restart. Use `--plugin <directory>` to register a
-development native plugin in debug or prerelease builds. A prerelease release
-build accepts only `runtime = "process"` for a development plugin, and it
-does not load until you approve the exact manifest and library in **Tools →
-Plugins**. Changed bytes need a new approval. A process host is **not a
-sandbox**. See the [tool protocol](docs/tools/protocol.md) and [plugin
-authoring guide](docs/plugins/authoring.md).
-
-On Linux, a process plugin can ask to create user namespaces for a
-Chromium-style sandbox. The dashboard shows this opt-in before approval.
-It does not sandbox the plugin itself or change Windows behavior.
+not require a daemon restart. In a debug build, `--plugin <directory>` can
+load a development plugin in-process; a debug process plugin still needs
+approval. Non-debug prereleases accept `--plugin` for user-trust process
+plugins only and refuse in-process requests. Stable releases refuse
+`--plugin`. In **Tools → Plugins**, approve the exact manifest and library
+before the child starts. Changed bytes need fresh approval. A process host
+is **not a sandbox**. See the [tool protocol](docs/tools/protocol.md) and
+[plugin authoring guide](docs/plugins/authoring.md).
 
 Production startup requires the bundled `vosu.osu` plugin and its discovery
 service. A missing plugin, load/create failure, or absent discovery service
@@ -297,12 +294,15 @@ dependencies go with the package and refuses while another package needs
 it. Removing an in-process plugin or untrusting its source requires a
 vosu restart to take effect.
 
-Catalog process plugins start in their own supervised hosts after install,
-and again when vosu restarts. A plugin from an untrusted source needs
-approval for the exact package in its install plan; changing the installed
-manifest or library needs fresh review before those bytes can run. Use the
-Tools page's **Plugins** section to review, revoke, stop, or restart one.
-Updating or uninstalling a process plugin stops the old host first.
+Catalog process plugins run in supervised hosts. A plugin from an untrusted
+source needs explicit approval in its install plan; on Linux so does any
+plugin opting into user namespaces. vosu keeps that approval with the
+installed package, separate from development `--plugin` approvals.
+Eligible process plugins start after install and again on daemon restart.
+Use **Tools → Plugins** to review or revoke approval, stop a host, or restart
+it after a failure. Repeated losses latch it as failed until a manual
+restart, which does not waive approval. Updating or uninstalling a process
+plugin stops the old host first. See [native plugin execution](docs/security.md#native-plugin-execution).
 
 For in-game overlays, install the [native vosulay runtime](https://github.com/18-lab-dev/vosulay)
 separately. When its 2.0 catalog is published, install `vosulay-editor` from
@@ -417,6 +417,13 @@ On Linux, vosu can also read the osu! path from `${XDG_DATA_HOME:-$HOME/.local/s
 
 Official Linux archives statically include libbpf and dynamically use the system `libelf.so.1` and `libz.so.1` libraries.
 
+Linux **process plugins** need kernel 5.4 or later and a working seccomp
+filter. They do not need `--setup`: the host must drop capabilities before
+loading the library regardless. A process plugin can request user-namespace
+creation for a helper such as Chromium. The approval flow discloses it;
+opting in does not turn off the capability drop, permit joining other
+namespaces, or change Windows behavior.
+
 On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. Configure the exact executable with:
 
 ```sh
@@ -529,6 +536,18 @@ vosu keeps a tray icon whenever the Linux desktop's StatusNotifier host or Windo
 Launching vosu again checks the configured listener for vosu's identity, opens that instance's dashboard, and exits successfully. A different service on the same port is not treated as vosu and retains the normal bind-error behavior. Updater helper/candidate/rollback processes never perform this handoff or start a tray.
 
 **Dashboard off.** Set `ENABLE_DASHBOARD = false` in `vosu.toml`, or start vosu with `VOSU_DASHBOARD=off`, to run without the dashboard. `VOSU_DASHBOARD` accepts only `off`; any other value, including an empty one, stops startup with an error naming the variable. With the dashboard off, vosu binds no dashboard listener, opens no browser at startup, skips the second-launch dashboard check (a second launch then fails on the busy port as usual), and its tray offers only **Show logs** and **Quit**. On the overlay listener, `GET /api/dashboard` and the `/`, `/settings`, `/available` and `/tools` redirects return 404. Overlays, the legacy state APIs, API v1 and tool hosting keep working, and `vosu logs` still follows the log. The `vosu.dashboard` plugin stays registered but inactive (`dashboard_disabled`), as the startup log says. Nothing in the dashboard can turn it off: `/api/settingsSave` rejects `ENABLE_DASHBOARD` with 400. To turn the dashboard back on, set the key to `true`, leave `VOSU_DASHBOARD` unset and restart vosu; a live edit of the key is only logged as needing a restart.
+
+The dashboard reads host status and settings from its own origin. Live
+session summaries come from overlay-origin `GET /api/v1/sessions`, without
+opening a state subscription. The dashboard listener does not serve or
+proxy API v1. See the [route and ownership map](docs/architecture/overview.md#dashboard-overlay-and-tool-listeners).
+
+`/api/ingame` returns the ordinary `404 Not Found` on every method. A
+request to that exact path on the overlay listener triggers a dashboard
+notice and one warning per daemon run; the notice offers the ordinary
+`vosulay-editor` catalog plan, not an automatic install. Notices for the
+removed selected-field feed and skin index also leave overlays enabled.
+See the [removed-route migration guide](docs/v2/migration-from-1x.md#overlays-that-used-removed-apis).
 
 The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can set `Name`, `Author`, `AuthorLinks` (comma-separated), `Version`, and `Resolution` (`WxH`); other keys are ignored. An immediate `ignore.txt` excludes its directory from discovery, and directories named `node_modules` are never traversed. Mutation APIs accept counter names containing one normal path component.
 

@@ -1812,14 +1812,14 @@ no implementation or measurement is claimed by them. The full text is in:
 
 | ID | Decision |
 | --- | --- |
-| A5.1 | Before any plugin code runs, a Linux plugin host reaches `CapPrm = CapEff = CapInh = CapAmb = 0` and `NoNewPrivs = 1`, with seccomp denying creation or entry of a user namespace. It reads this back and fails closed. `CapBnd = 0` is not required. Setup and the daemon gain no privilege, and `CAP_SETPCAP` is not granted. Without setup, process plugins run under the same postcondition. An environment that cannot install the filter fails with `security_unavailable` and is not retried. |
+| A5.1 | Before plugin code runs, a Linux process host verifies `CapPrm = CapEff = CapInh = CapAmb = 0`, `NoNewPrivs = 1`, and the selected seccomp filter. The default denies user-namespace creation and entry; the [ADR 0025](../decisions/0025-linux-plugin-user-namespaces.md) amendment permits creation only with explicit artifact approval and still denies entry. `CapBnd = 0` is not required, setup gains no new privilege and does not grant `CAP_SETPCAP`, and failure to install the filter is `security_unavailable` without retry. |
 | A5.2 | Transport-private frames are those whose opcode has the high bit set; ABI v1 gains no opcode. Every send whose status only core can decide is acknowledged. Plugins see the in-process statuses: there is no fabricated success and no phantom later result. Each instance has 64 shared status and `SYNC` waiters, and overflow returns `VOSU_ERR_INVALID_ARGUMENT`. Backstops are 2 s, or the `SYNC` budget plus 2 s, and reaching one is a transport loss. Rings are 2 MiB per direction. |
 | A5.3 | Every unexpected exit (including code 0) and every pressure or transport loss counts once. The fifth event in a rolling 300 s window latches `failed`. Backoff is 1/2/4/8/16 s, saturating, and resets only when the window is empty. Controlled stop, shutdown, revocation and deterministic startup refusals are never crashes. A manual restart resets the latch and starts a new generation. |
 | A5.4 | `DELETE` stays advisory. The 30 s deadline makes a job `timed_out`, then core cancels and allows 5 s of grace per invocation. Core kills at the earliest unanswered grace, and that kill counts as one loss. Collateral jobs fail `plugin_crashed`, and terminal or timed-out jobs are unchanged. Destroy has a 5 s grace. There is no manifest timeout. |
-| A5.5 | Approval binds the id, the runtime, the manifest and library SHA-256 and the provenance. It is stored in `plugins/approvals.json`, and dashboard routes handle it under `/api/plugins` with CSRF. Debug builds keep only the in-process `--plugin` exception. Prerelease release builds load `--plugin` as `user`/`process` after approval. There is no noninteractive or CLI approval. Stable release builds still refuse `--plugin`. |
+| A5.5 | Approval binds ID, process runtime, manifest and library SHA-256 and provenance. Development approvals live in `plugins/approvals.json`; catalog approvals live with the installed record (2026-11-26 amendment). Dashboard `/api/plugins` actions require CSRF. Debug builds allow an explicit in-process development load; a debug process load still needs approval. Non-debug prereleases accept `--plugin` only for user-trust process plugins; stable releases refuse it. There is no CLI or noninteractive approval. |
 | A5.6 | Unnamed section and events remain the Windows production transport. The pipe is measurement-only unless it wins under the frozen tie rule and a separate secure-handoff amendment is approved. Linux `production_sync` p50 must be at most 2× the same-run prototype `shm` p50. The Windows bar uses the same form against the selected transport. |
 | A5.7 | D16 stands with the Medium-host requirement. S1 is recorded (above). Session and focus use the child's API v1 (AF.8). The production vosulay launch belongs to the ecosystem owner. |
-| A5.8 | The child re-arms `PR_SET_PDEATHSIG` after exec, checks its parent PID, and is spawned only from a long-lived launcher thread. Startup and destroy deadlines are 5 s. Failed security, bootstrap or configuration is a load refusal, not a crash loop. |
+| A5.8 | The child re-arms `PR_SET_PDEATHSIG` after exec, checks its parent PID, and is spawned only from a long-lived launcher thread. Startup and destroy deadlines are 5 s, with C0's 30 s startup budget for a library digest that has not reached `READY` in this daemon run. Failed security, bootstrap or configuration is a load refusal, not a crash loop. |
 
 **Execution backend and load metadata (H0).** Core keeps exactly one
 authoritative validation path: the M6a SDK `PackageManifest` plus validation
@@ -1980,6 +1980,61 @@ the plugin host each hash a process library before loading it, the child
 inside the 5-second startup deadline. Unoptimized, hashing the 241 MB debug
 osu! fixture library took 4.9 s; optimized, it took 0.11 s. Release builds
 were already optimized, so production behavior is unchanged.
+
+#### M5 X2 outcome
+
+**Implementation and native functional evidence complete at `ad724666`.**
+The seven obligations above closed in `62abd38f`. The results below
+distinguish native fixture parity, platform security and performance.
+
+- The M5 obligation audit's native `plugin_host_native` pass counts are
+  **84 on Linux and 80 on Windows** (Windows serialized, not cross-built).
+  `process_memory` passed **8/8 on each OS**. The process osu! oracle and
+  API v1 frame tests (`parity_osu_oracle_encodings_match_across_runtimes`,
+  `parity_osu_api_v1_frames_match_across_runtimes`) and the testkit services
+  parity test cover the process and in-process paths. The `sync` and `relay`
+  suites pin submitter-thread completion, budget expiry, wrong-session
+  denial and bounded transport; `crash_a_ring_stall_that_fills_the_ring_is_one_pressure_timeout`
+  and `restart_a_real_abort_chain_backs_off_then_latches_failed`
+  distinguish loss from idle silence. See the
+  [native fixture evidence](../testing/verification.md#m5-test-and-fixture-conventions-a5).
+- The [N0 security receipt](../testing/verification.md#m5-n0-unit-evidence-2026-11-25)
+  includes **3/3** owner-authorized checks against the packaged Linux
+  `f37ca414` alpha: capability readback before the constructor and after
+  thread creation, filter refusal before library execution, and core-only
+  death during bootstrap and after `READY`. The Windows native
+  `windows_core_death_kills_job_tree` checks the exact job, no breakaway
+  or inherited job handle, and death of the whole tree. Linux pidfd
+  tests confirm death of the host **only**: neither evaluated cgroup
+  option met N0's criteria, so plugin-spawned descendants surviving
+  core-only death is the accepted residual, not an outstanding obligation.
+- `52665a65` adds the [ADR 0025 opt-in](../decisions/0025-linux-plugin-user-namespaces.md);
+  `approval_linux_user_namespaces_needs_new_manifest_approval_for_the_same_library`
+  and `approval_catalog_process_user_namespaces_uses_relaxed_filter`
+  cover the new manifest digest and selected filter. `d0e93f83` uses the
+  same supervisor for catalog installs. The installed record is the
+  sole approval for installed provenance, separate from development
+  `plugins/approvals.json`; the native
+  `approval_catalog_process_runs_actions_restarts_reapproves_and_uninstalls`
+  case checks execution, restart, reapproval and removal.
+
+**D17 Windows: measured, broker bar passed.** The Windows D17 receipt
+(`2ee5e1f1`, `windows-ad724666` receipt set, measured source `ad724666`)
+records five paired rounds: median `production_sync / section`
+**1.738× precise, 1.817× regular**
+against the 2.0 cap. The unnamed section/events remain production;
+the pipe remains measurement-only. Four process `plan_memory` fixture
+cases, ten attached live stable/lazer profiles and a separate idle-host
+profile were recorded as measurements, not gates.
+
+**Only outstanding M5 exit evidence: official Linux D17.** No official
+Linux result is recorded here; exploratory timings do not decide the gate.
+Use the [pinned broker and bundled comparison commands](../testing/benchmarks.md#official-command-sequence-main-exclusive-host-and-vm)
+and [live process-runtime commands](../testing/benchmarks.md#official-live-process-runtime-commands-main)
+on the exclusive host. The five-round `sudo python3 scripts/bench-compare.py
+--cpu 7 --rounds 5` comparisons require the owner's sudo. The five native
+broker rounds and process reader profiles use the release artifacts and
+filters in those command blocks.
 
 ### M6a: `manifest.toml` and `catalog-v2.json` validation
 
@@ -2239,18 +2294,16 @@ Scope:
 - Tools are web-only: delete service supervision, the `/tools/<id>/api/*`
   proxy, readiness, per-launch service tokens, the host API
   (`/tools/_host/v1/{self,settings,context,overlays}`), and the tool CLI
-  ([tool protocol](../tools/protocol.md) "Process contract", "Host API",
-  "Command-line tools"); tool sessions scope to the resolved
-  `requires`/`optional` (api-v1.md "Authorization"); remove the 1.x `vosux`
-  tool form. Replace [tool protocol](../tools/protocol.md) with the 2.0 tool
-  protocol.
+  ([2.0 tool protocol](../tools/protocol.md#deleted-404)). Tool sessions
+  scope to the resolved `requires`/`optional` (api-v1.md "Authorization");
+  the 1.x `vosux` tool form is removed.
 - Dashboard: plugin management (installed, approvals, settings from
   `settings_schema`, the verbatim trust warning in catalog-v2.md "Trust"),
   "Add support for `<name>`" from game detection, install plans with the D8
   disclosure, the D20 notice for overlays that use removed 1.x APIs, the
   D20 notice for the removed `/api/ingame` route with its vosulay install
   action (A7.5), `VOSU_DASHBOARD=off` and its configuration key (ADR 0019).
-- `/api/ingame` is not served in 2.0 (section 6); it is a D20 removed route.
+- `/api/ingame` is not served in 2.0 ([§6](#6-apiingame-withdrawn)); it is a D20 removed route.
 - Core lifecycle absorbs the rest of `src/runtime/` under `vosu-core`. The
   root exports one `Bundle` descriptor and the explicit D13 `BUNDLED`
   array. Its private composition implements the concrete adapter and host
@@ -2275,9 +2328,9 @@ Main adopted A7.1–A7.5 on 2026-11-24, exactly as recommended and with the
 proposed values, under the owner's delegated spec authority. The A7.5
 install target is the AF.2 identity, which AF.2 (approved the same day) made
 the agreement A7.5 waited for. These decisions are normative. They freeze
-M7's inputs and outputs. They do not claim that any route, crate, test,
-native run, browser run or measurement exists or passes; every inventory below
-states the baseline (`v2/main` `33f957de`) and the required destination.
+M7's inputs and outputs. They are not test or measurement evidence.
+The route inventory retains the baseline (`v2/main` `33f957de`) alongside
+the landed disposition. The [X1 outcome](#m7-x1-outcome) cites verified runs.
 
 On 2026-11-25 the owner dropped `/api/ingame` from 2.0
 ([ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md)'s
@@ -2387,7 +2440,7 @@ approval, and no field carries a secret, credential, absolute game path or
 | `DashboardStatus` | core, `GET /api/dashboard/status` | Existing `available`, `instances[{client,pid,version,state,pollIntervalMs,precisePollIntervalMs}]` and `connections`, unchanged; plus `removed_routes` (`RemovedRouteNotice[]`) and `update` (`null` or `{"version","major","release_url"}`, today's update notice). No `ingame` field: `/api/ingame` use is a `removed_routes` notice (A7.5). |
 | `RemovedRouteNotice` | core, inside `DashboardStatus` | `overlay`: `null` (unknown bucket) or `{"id","name"}` for a currently installed overlay revalidated at this read; `feature`: `"selected-v2-feed"`, `"legacy-skin-index"` or `"ingame-page"`; `attempts` (saturating); `first_seen_seconds_ago`, `last_seen_seconds_ago` (whole seconds from monotonic instants). At most 387 entries (128 overlays × 3 features + 3 unknown buckets). |
 | `SettingsView` | core, `GET /api/settings` (new) | `values` for exactly the 17 keys today's Settings page renders (`ENABLE_AUTOUPDATE`, `OPEN_DASHBOARD_ON_STARTUP`, `START_AT_LOGIN`, `DEBUG_LOG`, `CALCULATE_PP`, `READ_MANIA_SCROLL_SPEED`, `POLL_RATE`, `PRECISE_DATA_POLL_RATE`, `API_V1_SUBSCRIPTION_DEBOUNCE`, `SHOW_MP_COMMANDS`, `SERVER_IP`, `SERVER_PORT`, `DASHBOARD_IP`, `DASHBOARD_PORT`, `ALLOWED_IPS`, `MAX_PACKAGE_MIB`, `STATIC_FOLDER_PATH`) and `updates_externally_managed`. Never `ENABLE_DASHBOARD`. |
-| `ToolView` (2.0) | core, `GET /api/tools[/<id>]` | `id`, `name`, `version`, `description`, `author`, `homepage`, `icon_url`, `banner_url`, `source` (`dev`, `official`, `user`), `update_available`, `trusted`, `enabled`, `status` (`running`, `blocked`, `untrusted`, `disabled`, `invalid`), `status_detail` (`needs-2.0-update` for a legacy `tool.toml`-only package), `ui_url`, `requires` and `optional` as `[{"id","version","satisfied","provider"}]` (`provider` is the resolved plugin id or `null`), `has_settings`. The service-era fields `kind`, `startup`, `service_role`, `interfaces`, `autostart`, `starts_with_vosu`, `cli`, `api`, `permissions`, `data`, `process`, `required_by` and `path` are removed. T0 serializes `update_available` as `false`: core has no installed-package update source (the catalog UI compares a listing's version with the installed one in the browser), and T0 adds no per-view network fetch. M7 D1 owns feeding it from catalog v2 read-only update information. |
+| `ToolView` (2.0) | core, `GET /api/tools[/<id>]` | `id`, `name`, `version`, `description`, `author`, `homepage`, `icon_url`, `banner_url`, `source` (`dev`, `official`, `user`), `update_available`, `trusted`, `enabled`, `status` (`running`, `blocked`, `untrusted`, `disabled`, `invalid`), `status_detail` (`needs-2.0-update` for a legacy `tool.toml`-only package), `ui_url`, `requires` and `optional` as `[{"id","version","satisfied","provider"}]` (`provider` is the resolved plugin id or `null`), `has_settings`. Service-era fields (`kind`, `startup`, `service_role`, `interfaces`, `autostart`, `starts_with_vosu`, `cli`, `api`, `permissions`, `data`, `process`, `required_by`, `path`) are removed. D1 supplies `update_available` from the cached catalog view for the installed tool's own source, without a per-view fetch. |
 | `ToolSettings` | core, `GET`/`POST /api/tools/<id>/settings` | Unchanged 1.x shape: `{"settings","values","secrets"}` with every `password` value `""`; POST keeps the stored secret for `""` or an omitted field and clears it for `null`. |
 | `PluginSettings` | core, `GET`/`POST /api/plugins/<id>/settings` (new, M7 D1) | GET `{"schema","values","secrets"}` from the validated `settings_schema` with defaults applied and every `password` value `""`; POST takes `[{"uniqueID","value"}]` with the same password rule, validates the whole document before storing, and on success delivers the complete effective object as one `SETTINGS_CHANGED` (plugin-abi.md §6.9). An invalid POST changes nothing. |
 | `PluginView`, catalog views | core, `/api/plugins`, `/api/catalog/*` | M5 U0 and M6b H0 shapes, unchanged. |
@@ -2407,7 +2460,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | --- | --- | --- | --- |
 | `GET /`, `/settings`, `/available`, `/tools` | D page; O 302 to D (path and query kept) | `RuntimePages` (`PageDataProvider::render`) | Dashboard host page shells on D; core keeps the O→D 302 for exactly these four paths. Both are absent when the dashboard is off (O 404). |
 | `GET /favicon.ico` | O, D | embedded `ServerAssets` | Tool host, both roles (design-system set). |
-| `GET /assets/<name>` | O, D, every file in `assets/server/` | embedded `ServerAssets` | Exact per-name registrations. Design-system set (tool host, both roles): `tokens.css`, `system.css`, `theme-init.js`, the eight `.woff2` fonts, `fonts-OFL.txt`. Dashboard set (dashboard host, D only): `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog.css`, `dashboard-catalog.js`, `dashboard-catalog-browse.js`, `dashboard-catalog-flow.js`, `dashboard-catalog-sources.js`, `dashboard-notices.css`, `dashboard-notices.js`, `dashboard-plugins.css`, `dashboard-plugins.js`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css`. Removed (404): `homepage.html`, `report.html`, `design.html`, `tool-bridge.js`, `tool-bridge-v1.js` under `/assets/`, and every dashboard-set name on O. |
+| `GET /assets/<name>` | O, D, every file in `assets/server/` | embedded `ServerAssets` | Exact per-name registrations. Tool host, both roles: `tokens.css`, `system.css`, `theme-init.js`, eight `.woff2` fonts, `fonts-OFL.txt`. Dashboard host, D only: `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog.css`, `dashboard-catalog.js`, `dashboard-catalog-browse.js`, `dashboard-catalog-flow.js`, `dashboard-catalog-sources.js`, `dashboard-notices.css`, `dashboard-notices.js`, `dashboard-pages.js`, `dashboard-plugins.css`, `dashboard-plugins.js`, `dashboard-status.js`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css`. Not served here: `homepage.html`, `report.html`, `design.html`, either tool bridge, or any dashboard-set name on O. |
 | `GET /api/dashboard` | O, D | core transport | Core, unchanged `{"origin"}`. 404 when the dashboard is off. |
 | `GET /api/dashboard/status` | D | `ReportInputProvider::dashboard_status` + connections | Core, `DashboardStatus`. |
 | `GET /api/settings` | — | — | New core D route, `SettingsView`. |
@@ -2422,7 +2475,7 @@ owner's existing contract says so, otherwise 404. Every route not listed is
 | `GET /websocket/commands` (upgrade) | O; key/broker scope `settings:write` | `CommandProcessor` | Overlay host feed, O only. Core keeps admission, key grants and revocation close. |
 | `GET`, `HEAD` overlay static `/<folder>/…`, alias redirects | O | `CounterStatic` + `alias_redirect` | Overlay host, O only, through `OverlayRootView`'s `RootLease`; preview requests stay excluded from connection counts. |
 | `GET /json`, `/json/sc`, `/json/v2`, `/json/v2/precise`, `/api/calculate/pp`, `GET /backgroundImage`, `GET /Songs/…`, `GET`/`HEAD /files/beatmap/…`, `GET`/`HEAD /files/skin/…`, WS `/ws`, `/tokens`, `/websocket/v2`, `/websocket/v2/precise` | O (A4 adapter registrations) | adapters through `adapter_routes` | Unchanged A4 owners, O only. |
-| `/websocket/v2/subscribe`, `GET /files/skin/` | O (removed, recorded) | core `vosu_core::removed_routes::RemovedRoutes` | Unchanged exact 404 tombstones; core keeps the recorder, one per process. On D they are unknown-route 404s and unrecorded. |
+| `/websocket/v2/subscribe`, `/files/skin/` (exact paths, any method) | O (removed, recorded) | core `vosu_core::removed_routes::RemovedRoutes` | Ordinary 404 tombstones; core keeps one recorder per process. On D they are unknown-route 404s and unrecorded. |
 | `/api/ingame`, every method | — (404) | — | Core, O only: an exact 404 tombstone recorded as `ingame-page` (A7.5); never registered by an adapter or host. On D it stays an unknown-route 404. |
 | `/api/v1/*` | O; D 404 | API-v1 router | Core, unchanged ([route inventory](../testing/verification.md#final-api-v1-route-inventory)); `X-Vosu-Tool-Session` authority moves to core's tool registry. |
 | `GET /api/plugins`, `POST`/`DELETE /api/plugins/<id>/approval`, `POST /api/plugins/<id>/{restart,stop}` | D | `runtime::plugin_management` | Core, unchanged (M5 U0). |
@@ -2477,7 +2530,7 @@ them). The first-party state consumers and their M7 destinations are:
 
 | Consumer (baseline) | Reads today | M7 destination |
 | --- | --- | --- |
-| Dashboard status card (`homepage.js` every 2 s) | `GET /api/dashboard/status` host diagnostics | Unchanged core diagnostics, plus the browser's `GET /api/v1/sessions` from the overlay origin (session summaries, which create no demand) for game-agnostic labels. No API-v1 subscription and no new precise demand. Poll intervals are shown only for sessions whose `vosu.client.game` is `osu`. |
+| Dashboard status (`assets/server/dashboard-status.js`, every 2 s) | `GET /api/dashboard/status` host diagnostics | Core diagnostics plus one-shot overlay `GET /api/v1/sessions` for game-agnostic labels; no subscription or precise demand. Only osu! sessions show vosu's osu!-specific polling intervals. |
 | Tool context (`src/runtime/tool_context.rs`, `crates/vosu-adapter-upstream/src/files/tool_context.rs`, `PluginHost::display_path` for it) | selected session's absolute songs, game, skin and beatmap paths | **Deleted** with `/tools/_host/v1/context`. Tools read `/vosu.client`, `/vosu.chart`, `/vosu.skin` and granted `vosu.osu` fields and resources through API v1. |
 | Tool overlay listing (`/tools/_host/v1/overlays`) | absolute overlay folders | **Deleted**. Since 2026-11-26 a plugin lists installed overlays, with no path or `password` value, through `vosu.overlayhost.overlays.query` ([catalog v2](catalog-v2.md#overlay-query-action)); tools have no replacement. |
 | v1 bridge `subscribe` (`tool-bridge-v1.js`) | the removed `/websocket/v2/subscribe` | **Deleted** with the v1 bridge. |
@@ -2490,14 +2543,14 @@ game path in HTML, bootstrap context, JSON, a cache or a browser log.
 
 ##### Asset inventory
 
-All 32 files of `assets/server/` keep their paths, bytes and
-`assets/SHA256SUMS` entries unless a unit changes them through the reviewed
-digest workflow. Each is embedded exactly once:
+On `ad724666`, 35 files in `assets/server/` have one embedding owner
+each. `assets/SHA256SUMS` covers the files; no duplicate embedded bridge
+or design payload is needed.
 
 | Owner | Files |
 | --- | --- |
 | Tool host (design-system set and bridge) | `tokens.css`, `system.css`, `design.html`, `theme-init.js`, `favicon.ico`, eight `.woff2` fonts, `fonts-OFL.txt`, `tool-bridge.js` |
-| Dashboard host | `homepage.html`, `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog*.{js,css}` (five files), `dashboard-notices.{js,css}`, `dashboard-plugins.{js,css}`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css` |
+| Dashboard host | `homepage.html`, `homepage.css`, `homepage-controls.css`, `homepage.js`, `homepage-settings.js`, `dashboard-catalog*.{js,css}` (five files), `dashboard-notices.{js,css}`, `dashboard-pages.js`, `dashboard-plugins.{js,css}`, `dashboard-status.js`, `dashboard-tools.js`, `dashboard-update.js`, `update-notice.css` |
 | Core | `report.html` (report generation) |
 | Deleted | `tool-bridge-v1.js` |
 
@@ -2633,6 +2686,60 @@ gain a second plugin id. Frozen:
 
 Core's `open-root` and `open/<folder>` handlers read the same effective
 value from the storage core owns.
+
+#### M7 X1 outcome
+
+**Functional closeout on `ad724666`.** D0/S0 (`bff8c4bd`, `f45be833`),
+O0 (`9720d7f0`), T0/T1 (`540db5e7`, `5be48176`, `c55ee003`),
+D1 (`f3b6ee12`, `e135edbc`), N1 (`15448f36`) and C0/I0 (`93e5baf1`)
+landed the three hosts and the root cutover:
+
+- The ordered production registry in `src/plugins.rs` is exactly
+  `vosu.osu`, `vosu.adapter.upstream`, `vosu.adapter.gosumemory`,
+  `vosu.adapter.streamcompanion`, `vosu.dashboard`, `vosu.overlayhost`,
+  `vosu.toolhost`. Only `test-harness` adds `vosu.testkit.echo`. The root
+  library exports only `BUNDLE` and `BUNDLED`; private executable wiring
+  binds the concrete providers and overlay relay. Core owns lifecycle,
+  including listener/socket/task joins before plugin destruction.
+- The [route inventory](#route-method-listener-and-provider-inventory)
+  and [tool protocol](../tools/protocol.md#20-transition-inventory-a72)
+  separate dashboard management from overlay data, feeds and static files.
+  Core retains provenance/CSRF, settings, catalog plans and launch/action
+  checks. The dashboard status strip uses one-shot public API v1 summaries
+  on the overlay origin; the dashboard listener never proxies API v1.
+  Plugin settings go through effective ABI settings and one
+  `SETTINGS_CHANGED`, not an authority-bearing surface object. Tool pages
+  are static, with one v2 bridge; service supervision, readiness, ports,
+  tokens, proxies, tool CLI, the v1 bridge and private path context are gone.
+  Neither the old root runtime/router nor a snapshot bridge remains.
+- [A7.3 off-mode](#dashboard-off-a73) leaves the dashboard ID inactive
+  (`dashboard_disabled`), without a dashboard listener or browser open.
+  Independent overlay/API/tool service and file-based `vosu logs` remain.
+  The Windows console and tray behavior follows [ADR 0024](../decisions/0024-background-daemon-console.md).
+  D20 has exact overlay-listener tombstones, not live routes. The plain
+  `/api/ingame` 404 does not upgrade or redirect and adds no deprecation
+  headers; only an exact overlay-listener request is recorded and the
+  first logs one WARN. The notice uses the ordinary `vosulay-editor`
+  install-plan UI, not a replacement page.
+
+The [M7 X0 functional evidence](../testing/verification.md#m7-x0-functional-evidence)
+records the native and browser scenarios, source revisions and SHA-256s:
+**41 browser scenarios per OS**, plus 22 separate Node checks per OS,
+with real D20 traffic and the M7-G01–G03 coverage split between native
+route and browser tests. Separate [F X0 ecosystem receipts](../testing/verification.md#f-x0-ecosystem-fixtures)
+record all seven vosu-tools process cases and the overlays, vosulay editor
+and quickstart counts on Linux and native Windows. The receipts have their
+own host pins; they are neither a rerun on `ad724666` nor published
+catalog-release evidence.
+
+**Performance is separate.** `3d8151ad` freezes and exercises the three
+M7 workloads, but official Linux D17 has no result in this closeout. The
+[exclusive comparison commands](../testing/benchmarks.md#official-comparison-main-exclusive-linux-window)
+run `sudo python3 "$M7/scripts/bench-compare.py" --cpu 7 --rounds 5`
+for the eight equivalent `end_to_end` cases against `33f957de` and two
+shared cold serializer outputs against `3a91ff95`. Both commands, filters,
+disjoint build/evidence directories and smoke prerequisites are specified
+there. No M7 D17 performance pass is claimed.
 
 ### M8: 1.x migration and day-0 release gate
 
