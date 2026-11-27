@@ -29,6 +29,28 @@ impl Formatter for JsFormatter {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn write_js_number_slow(output: &mut Vec<u8>, value: f64) {
+    vosu_osu_model::write_js_json_number(output, value).expect("writing to a Vec cannot fail");
+}
+
+/// Writes `value` as `JSON.stringify` does into a `Vec<u8>` without `io::Result` overhead.
+#[inline]
+pub fn push_js_number(output: &mut Vec<u8>, value: f64) {
+    const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
+    if value == 0.0 {
+        output.push(b'0');
+        return;
+    }
+    let integer = value as i64;
+    if integer as f64 == value && value.abs() < EXACT_INTEGER_LIMIT {
+        write_i64(output, integer);
+    } else {
+        write_js_number_slow(output, value);
+    }
+}
+
 /// Writes `value` as `JSON.stringify` does, for hand-written wire writers.
 ///
 /// Integral magnitudes below 2^53 are exact, so their shortest round-trip
@@ -38,15 +60,18 @@ impl Formatter for JsFormatter {
 /// binary value. NaN and infinities fail the round-trip test. The test uses a
 /// conversion round trip rather than `f64::fract`, which is a libm call on the
 /// baseline x86-64 target.
+#[inline]
 pub fn write_js_number(output: &mut Vec<u8>, value: f64) -> io::Result<()> {
-    const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
-    let integer = value as i64;
-    if integer as f64 == value && value.abs() < EXACT_INTEGER_LIMIT {
-        write_i64(output, integer);
-        Ok(())
-    } else {
-        vosu_osu_model::write_js_json_number(output, value)
-    }
+    push_js_number(output, value);
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn write_i64_slow(output: &mut Vec<u8>, value: i64) {
+    CompactFormatter
+        .write_i64(output, value)
+        .expect("writing to a Vec cannot fail");
 }
 
 /// Writes `value` in decimal, as serde_json's `CompactFormatter` does.
@@ -59,18 +84,41 @@ pub fn write_i64(output: &mut Vec<u8>, value: i64) {
     if (0..10).contains(&value) {
         output.push(b'0' + value as u8);
     } else {
-        CompactFormatter
-            .write_i64(output, value)
-            .expect("writing to a Vec cannot fail");
+        write_i64_slow(output, value);
     }
 }
 
+/// Writes a JSON boolean literal into a `Vec<u8>`.
+#[inline]
+pub fn push_bool(output: &mut Vec<u8>, value: bool) {
+    output.extend_from_slice(if value { b"true" } else { b"false" });
+}
+
+/// Writes a JSON string with serde_json's exact escape spelling into a `Vec<u8>`.
+#[inline]
+pub fn push_str(output: &mut Vec<u8>, value: &str) {
+    if value.is_empty() {
+        output.extend_from_slice(b"\"\"");
+        return;
+    }
+    let bytes = value.as_bytes();
+    output.reserve(bytes.len() + 2);
+    output.push(b'"');
+    if bytes
+        .iter()
+        .all(|&byte| byte >= 0x20 && byte != b'"' && byte != b'\\')
+    {
+        output.extend_from_slice(bytes);
+    } else {
+        write_str_content_escaped(output, bytes);
+    }
+    output.push(b'"');
+}
+
 /// Writes a JSON string with serde_json's exact escape spelling.
+#[inline]
 pub fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
-    output.reserve(value.len() + 2);
-    output.push(b'"');
-    write_str_content(output, value);
-    output.push(b'"');
+    push_str(output, value);
     Ok(())
 }
 
@@ -79,6 +127,7 @@ pub fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
 /// for `"`, `\`, backspace, form feed, newline, carriage return and tab;
 /// lowercase `\u00xx` for other control characters; everything else verbatim.
 /// Escaping is per character, so concatenated parts escape like their join.
+#[inline]
 pub fn write_str_content(output: &mut Vec<u8>, value: &str) {
     let bytes = value.as_bytes();
     if bytes
@@ -86,8 +135,14 @@ pub fn write_str_content(output: &mut Vec<u8>, value: &str) {
         .all(|&byte| byte >= 0x20 && byte != b'"' && byte != b'\\')
     {
         output.extend_from_slice(bytes);
-        return;
+    } else {
+        write_str_content_escaped(output, bytes);
     }
+}
+
+#[cold]
+#[inline(never)]
+fn write_str_content_escaped(output: &mut Vec<u8>, bytes: &[u8]) {
     let mut start = 0;
     for (index, &byte) in bytes.iter().enumerate() {
         let escape: &[u8] = match byte {

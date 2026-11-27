@@ -1,10 +1,7 @@
 //! Adapter-owned typed source records; these are not a second state channel.
 use crate::dto::*;
 use serde::Deserialize;
-use vosu_osu_model::{
-    source::{Judgements, OverlaySlots},
-    states::CalculateMods,
-};
+use vosu_osu_model::{source::Judgements, states::CalculateMods};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +84,7 @@ impl SourcePlay {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SourceClient {
@@ -97,6 +95,7 @@ pub(crate) struct SourceClient {
     pub beatmap: TourneyBeatmap,
     pub play: SourcePlay,
 }
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 pub(crate) struct SourceChat {
     pub team: String,
@@ -104,6 +103,7 @@ pub(crate) struct SourceChat {
     pub name: String,
     pub message: String,
 }
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SourceTourney {
@@ -117,6 +117,7 @@ pub(crate) struct SourceTourney {
     pub total_score: Sides<f64>,
     pub clients: Vec<SourceClient>,
 }
+#[cfg(test)]
 impl SourceTourney {
     pub fn into_wire(self, lazer: bool) -> Tourney {
         Tourney {
@@ -162,48 +163,4 @@ impl SourceTourney {
                 .collect(),
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PreciseClient {
-    pub ipc_id: f64,
-    pub keys_overlay: Option<OverlaySlots>,
-    pub play: PrecisePlay,
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PrecisePlay {
-    pub hit_errors: HitErrors,
-}
-#[derive(Debug, Deserialize)]
-pub(crate) struct PreciseTourneySource {
-    pub clients: Vec<PreciseClient>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Paths {
-    pub stable: Option<StablePaths>,
-    pub lazer: Option<LazerPaths>,
-    pub current: Option<CurrentPaths>,
-    pub skin_folder: Option<String>,
-}
-#[derive(Debug, Deserialize)]
-pub(crate) struct StablePaths {
-    pub game: Option<String>,
-    pub songs: Option<String>,
-}
-#[derive(Debug, Deserialize)]
-pub(crate) struct LazerPaths {
-    pub data: Option<String>,
-    pub files: Option<String>,
-}
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CurrentPaths {
-    pub beatmap_folder: Option<String>,
-    pub beatmap_file: Option<String>,
-    pub background: Option<String>,
-    pub audio: Option<String>,
 }
