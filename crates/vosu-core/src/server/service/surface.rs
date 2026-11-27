@@ -311,6 +311,11 @@ fn surface_http_response(response: SurfaceResponse) -> Response {
     };
     let mut builder = Response::builder().status(response.status);
     for (name, value) in response.headers {
+        // The sandboxed game-file surface serves untrusted client files.
+        // Keep this browser policy host-owned, not a provider header grant.
+        if name == "content-security-policy" && value == "sandbox" {
+            builder = builder.header(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+        }
         builder = builder.header(name, value);
     }
     builder.body(body).expect("core-validated surface response")
