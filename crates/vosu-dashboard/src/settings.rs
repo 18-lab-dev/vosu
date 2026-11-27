@@ -88,39 +88,6 @@ pub(crate) fn form(version: &str) -> String {
             ),
         ],
     );
-    let data = group(
-        "Game data",
-        &[
-            switch(
-                "CALCULATE_PP",
-                "Calculate performance points",
-                "Compute live performance points. Disable this when overlays do not need PP data.",
-            ),
-            switch(
-                "READ_MANIA_SCROLL_SPEED",
-                "Read mania scroll speed",
-                "Expose the current mania scroll speed from game memory.",
-            ),
-            interval(
-                "POLL_RATE",
-                "Common poll interval",
-                "Milliseconds between reads of general game data.",
-                100,
-            ),
-            interval(
-                "PRECISE_DATA_POLL_RATE",
-                "Precise poll interval",
-                "Milliseconds between reads of precise key and hit-error data.",
-                1,
-            ),
-            interval(
-                "API_V1_SUBSCRIPTION_DEBOUNCE",
-                "API v1 subscription debounce",
-                "Wait at least this long between API v1 subscription updates.",
-                1,
-            ),
-        ],
-    );
     let server = group(
         "Server",
         &[
@@ -159,6 +126,12 @@ pub(crate) fn form(version: &str) -> String {
     let advanced = group(
         "Advanced",
         &[
+            interval(
+                "API_V1_SUBSCRIPTION_DEBOUNCE",
+                "API v1 subscription debounce",
+                "Wait at least this long between API v1 subscription updates.",
+                1,
+            ),
             item(
                 "MAX_PACKAGE_MIB",
                 "Maximum package size",
@@ -169,17 +142,6 @@ pub(crate) fn form(version: &str) -> String {
                 "DEBUG_LOG",
                 "Debug logging",
                 "Write verbose diagnostics. Enable this only while troubleshooting.",
-            ),
-            switch(
-                "SHOW_MP_COMMANDS",
-                "Show multiplayer commands",
-                "Expose Bancho multiplayer commands in tournament chat data.",
-            ),
-            item(
-                "STATIC_FOLDER_PATH",
-                "Overlays directory",
-                "Directory vosu scans for local overlays. Changes need Apply.",
-                &text_control("STATIC_FOLDER_PATH"),
             ),
         ],
     );
@@ -196,6 +158,6 @@ pub(crate) fn form(version: &str) -> String {
         version = version,
     );
     format!(
-        r#"<form class="settings" id="runtime-settings" aria-busy="true" inert>{general}{data}{server}{advanced}{about}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
+        r#"<form class="settings" id="runtime-settings" aria-busy="true" inert>{general}{server}{advanced}{about}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
     )
 }

@@ -18,7 +18,7 @@ use vosu_surface::{
 
 use crate::{
     app::StartupFlags,
-    plugin::{BundledPlugin, PluginHost, PluginInstanceId, settings::PluginSettingsService},
+    plugin::{BundledPlugin, PluginHost, PluginInstanceId},
     server::{
         routes::{ProviderFuture, StateJsonProvider},
         service::OverlayComposition,
@@ -40,12 +40,12 @@ pub struct Bundle {
     pub dashboard: &'static str,
     /// The bundled web tool host's id.
     pub tool_host: &'static str,
-    /// The overlay host's core-seeded root setting (A7.1-OR).
+    /// The overlay host's `static_folder_path` setting identity (A7.1-OR).
     pub overlay_root: OverlayRootSetting,
     pub hosts: &'static dyn BundledHosts,
 }
 
-/// `plugin`'s one core-held setting `key`, seeded from `STATIC_FOLDER_PATH`.
+/// `plugin`'s overlay-root setting `key` (`static_folder_path`, A7.1-OR).
 #[derive(Clone, Copy, Debug)]
 pub struct OverlayRootSetting {
     pub plugin: &'static str,
@@ -111,8 +111,7 @@ pub struct OverlayInputs {
     pub instance: PluginInstanceId,
     /// The `data_dir` core gave the instance's `create`.
     pub data_dir: PathBuf,
-    pub storage: Arc<super::RuntimeSettingsStorage>,
-    pub settings: Arc<PluginSettingsService>,
+    pub overlay_root: OverlayRootSetting,
     pub static_root: PathBuf,
     pub settings_root: PathBuf,
     pub cache_root: PathBuf,

@@ -16,12 +16,6 @@ const EXPECTED_DEFAULT: &str = concat!(
     "OPEN_DASHBOARD_ON_STARTUP = true\n",
     "START_AT_LOGIN = false\n",
     "\n",
-    "SHOW_MP_COMMANDS = false\n",
-    "CALCULATE_PP = true\n",
-    "READ_MANIA_SCROLL_SPEED = true\n",
-    "\n",
-    "POLL_RATE = 150.0\n",
-    "PRECISE_DATA_POLL_RATE = 10.0\n",
     "API_V1_SUBSCRIPTION_DEBOUNCE = 1.0\n",
     "\n",
     "SERVER_IP = \"127.0.0.1\"\n",
@@ -30,7 +24,6 @@ const EXPECTED_DEFAULT: &str = concat!(
     "DASHBOARD_PORT = 24051.0\n",
     "ALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n",
     "\n",
-    "STATIC_FOLDER_PATH = \"./static\"\n",
     "MAX_PACKAGE_MIB = 512\n",
 );
 
@@ -53,13 +46,13 @@ fn formatting_order_defaults_and_group_boundaries_are_stable() {
 #[test]
 fn parsing_fallbacks_clamps_and_refresh_retention_match_source() {
     let mut document = ConfigDocument::parse(
-        "POLL_RATE = 99.9\nPRECISE_DATA_POLL_RATE = 0.0\nV2_SUBSCRIPTION_DEBOUNCE = 1.125\nSERVER_PORT = \"not-a-number\"\nDEBUG_LOG = \"true\"\nSERVER_IP = \"localhost\"\nUNKNOWN = \"value\"\n",
+        "API_V1_SUBSCRIPTION_DEBOUNCE = 0.0\nPOLL_RATE = 99.9\nV2_SUBSCRIPTION_DEBOUNCE = 1.125\nSERVER_PORT = \"not-a-number\"\nDEBUG_LOG = \"true\"\nSERVER_IP = \"localhost\"\nUNKNOWN = \"value\"\n",
     )
     .expect("parse typed TOML");
     let config = document.config();
-    assert_eq!(config.poll_rate, 100.0);
-    assert_eq!(config.precise_data_poll_rate, 1.0);
+    assert_eq!(config.api_v1_subscription_debounce, 1.0);
     assert!(!document.serialize().contains("V2_SUBSCRIPTION_DEBOUNCE"));
+    assert!(!document.serialize().contains("POLL_RATE"));
     assert_eq!(
         config.server_port, 24_050.0,
         "wrong TOML type falls back per binding"
@@ -76,11 +69,11 @@ fn parsing_fallbacks_clamps_and_refresh_retention_match_source() {
     );
 
     let warnings = document
-        .refresh("CALCULATE_PP = false\nPOLL_RATE = nan\nV2_SUBSCRIPTION_DEBOUNCE = 0.25\n")
+        .refresh("ENABLE_AUTOUPDATE = false\nAPI_V1_SUBSCRIPTION_DEBOUNCE = nan\nV2_SUBSCRIPTION_DEBOUNCE = 0.25\n")
         .expect("refresh valid typed TOML");
     assert!(warnings.is_empty());
-    assert!(!document.config().calculate_pp);
-    assert_eq!(document.config().poll_rate, 150.0);
+    assert!(!document.config().enable_auto_update);
+    assert_eq!(document.config().api_v1_subscription_debounce, 1.0);
     assert!(!document.serialize().contains("V2_SUBSCRIPTION_DEBOUNCE"));
     assert_eq!(
         document.config().server_ip,
@@ -97,12 +90,12 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
     let older_legacy = root.path().join("tosu.env");
     fs::write(
         &newer_legacy,
-        "SERVER_PORT=24051\nSERVER_PORT=24052 # duplicate-last-wins\nPOLL_RATE=70\nSTATIC_FOLDER_PATH=\"./from-vosu-env\"\n",
+        "SERVER_PORT=24051\nSERVER_PORT=24052 # duplicate-last-wins\nAPI_V1_SUBSCRIPTION_DEBOUNCE=0.5\nALLOWED_IPS=\"127.0.0.1,from-vosu-env\"\n",
     )
     .unwrap();
     fs::write(
         &older_legacy,
-        "SERVER_PORT=24053\nPRECISE_DATA_POLL_RATE=5\nV2_SUBSCRIPTION_DEBOUNCE=1.125\nDEPRECATED_BINDING=drop-me\n",
+        "SERVER_PORT=24053\nDASHBOARD_PORT=24055\nV2_SUBSCRIPTION_DEBOUNCE=1.125\nDEPRECATED_BINDING=drop-me\n",
     )
     .unwrap();
 
@@ -111,14 +104,14 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
     assert!(!newer_legacy.exists());
     assert!(!older_legacy.exists());
     assert_eq!(store.current().server_port, 24_052.0);
-    assert_eq!(store.current().poll_rate, 100.0);
-    assert_eq!(store.current().precise_data_poll_rate, 5.0);
+    assert_eq!(store.current().api_v1_subscription_debounce, 1.0);
+    assert_eq!(store.current().dashboard_port, 24_055.0);
     assert!(
         !fs::read_to_string(&current)
             .unwrap()
             .contains("V2_SUBSCRIPTION_DEBOUNCE")
     );
-    assert_eq!(store.current().static_folder_path, "./from-vosu-env");
+    assert_eq!(store.current().allowed_ips, "127.0.0.1,from-vosu-env");
 
     let persisted = fs::read_to_string(&current).unwrap();
     assert!(persisted.ends_with('\n'));
@@ -133,10 +126,8 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
         Some(24_052.0)
     );
     assert_eq!(
-        persisted
-            .get("STATIC_FOLDER_PATH")
-            .and_then(toml::Value::as_str),
-        Some("./from-vosu-env")
+        persisted.get("ALLOWED_IPS").and_then(toml::Value::as_str),
+        Some("127.0.0.1,from-vosu-env")
     );
     bounded!(store.shutdown()).unwrap();
 }
@@ -149,17 +140,17 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
     let older_legacy = root.path().join("tosu.env");
     fs::write(
         &current,
-        "SERVER_PORT = 24061.0\nPOLL_RATE = \"wrong-type\"\nSTATIC_FOLDER_PATH = \"./from-toml\"\n",
+        "SERVER_PORT = 24061.0\nAPI_V1_SUBSCRIPTION_DEBOUNCE = \"wrong-type\"\nALLOWED_IPS = \"from-toml\"\n",
     )
     .unwrap();
     fs::write(
         &newer_legacy,
-        "SERVER_PORT=24062\nPOLL_RATE=175\nPRECISE_DATA_POLL_RATE=5\nSTATIC_FOLDER_PATH=./from-vosu-env\n",
+        "SERVER_PORT=24062\nAPI_V1_SUBSCRIPTION_DEBOUNCE=175\nDASHBOARD_PORT=24065\nALLOWED_IPS=from-vosu-env\n",
     )
     .unwrap();
     fs::write(
         &older_legacy,
-        "SERVER_PORT=24063\nPOLL_RATE=180\nPRECISE_DATA_POLL_RATE=6\nV2_SUBSCRIPTION_DEBOUNCE=1.5\n",
+        "SERVER_PORT=24063\nAPI_V1_SUBSCRIPTION_DEBOUNCE=180\nDASHBOARD_PORT=24066\nV2_SUBSCRIPTION_DEBOUNCE=1.5\n",
     )
     .unwrap();
 
@@ -168,13 +159,12 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
     assert!(!older_legacy.exists());
     assert_eq!(store.current().server_port, 24_061.0);
     assert_eq!(
-        store.current().poll_rate,
-        150.0,
+        store.current().api_v1_subscription_debounce,
+        1.0,
         "present wrong TOML type shadows both legacy sources"
     );
-    assert_eq!(store.current().precise_data_poll_rate, 5.0);
-    assert_eq!(store.current().api_v1_subscription_debounce, 1.0);
-    assert_eq!(store.current().static_folder_path, "./from-toml");
+    assert_eq!(store.current().dashboard_port, 24_065.0);
+    assert_eq!(store.current().allowed_ips, "from-toml");
 
     let mut changes = store.subscribe();
     fs::write(&current, "SERVER_PORT = 24064.0\nBROKEN = [\n").unwrap();
@@ -188,7 +178,7 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
 
     fs::write(
         &current,
-        "SERVER_PORT = 24064.0\nV2_SUBSCRIPTION_DEBOUNCE = 1.75\nSTATIC_FOLDER_PATH = \"./changed\"\n",
+        "SERVER_PORT = 24064.0\nV2_SUBSCRIPTION_DEBOUNCE = 1.75\nALLOWED_IPS = \"changed\"\n",
     )
     .unwrap();
     let changed = tokio::time::timeout(Duration::from_secs(5), changes.recv())
@@ -197,10 +187,10 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
         .expect("config change event");
     assert_eq!(changed.old.server_port, 24_061.0);
     assert_eq!(changed.new.server_port, 24_064.0);
-    assert_eq!(changed.new.static_folder_path, "./changed");
+    assert_eq!(changed.new.allowed_ips, "changed");
     assert_eq!(changed.new.api_v1_subscription_debounce, 1.0);
     assert_eq!(
-        changed.new.precise_data_poll_rate, 5.0,
+        changed.new.dashboard_port, 24_065.0,
         "missing reload bindings retain the last-good value"
     );
 

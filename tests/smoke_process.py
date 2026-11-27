@@ -142,15 +142,22 @@ class Daemon:
 OPEN_DASHBOARD_ON_STARTUP = false
 START_AT_LOGIN = false
 DEBUG_LOG = false
-POLL_RATE = 150
-PRECISE_DATA_POLL_RATE = 10
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = {OVERLAY_PORT}
 DASHBOARD_IP = "127.0.0.1"
 DASHBOARD_PORT = {DASHBOARD_PORT}
 ALLOWED_IPS = {json.dumps(allowed)}
-STATIC_FOLDER_PATH = {json.dumps(str(static or root / 'static'), ensure_ascii=False)}
 ''', encoding='utf-8')
+        plugins_dir = self.config / 'plugins'
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+        (plugins_dir / 'settings.json').write_text(json.dumps({
+            'version': 1,
+            'plugins': {
+                'vosu.overlayhost': {
+                    'static_folder_path': str(static or root / 'static'),
+                },
+            },
+        }), encoding='utf-8')
         self.stop = root / 'stop'
         self.environment['VOSU_TEST_STOP_FILE'] = str(self.stop)
         self.environment['VOSU_TEST_ISOLATED_DISCOVERY'] = '1'

@@ -67,8 +67,7 @@ impl Overlay {
             inputs.host,
             inputs.instance,
             &inputs.data_dir,
-            inputs.storage,
-            inputs.settings,
+            inputs.overlay_root,
             counters.clone(),
             inputs.origins,
         );

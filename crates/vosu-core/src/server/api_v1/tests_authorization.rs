@@ -59,18 +59,15 @@ async fn broker_credentials_never_bypass_peer_or_origin_and_keys_are_not_actions
                 .principal,
             Principal::Broker
         ));
-        let config = Arc::new(
-            crate::config::ConfigStore::initialize(root.path().join("vosu.toml"))
-                .await
-                .unwrap(),
-        );
         let logger = crate::logging::Logger::new(
             root.path(),
             crate::logging::LoggerOptions::default(),
             Arc::new(crate::logging::StdoutConsole),
         )
         .unwrap();
-        let settings = Arc::new(crate::plugin::settings::ConfigSettingsBridgeB2::new(config));
+        let settings = Arc::new(crate::plugin::settings::PluginSettingsStore::open(
+            root.path(),
+        ));
         let host = crate::plugin::PluginHost::new(
             logger,
             Arc::new(crate::plugin::settings::PluginSettingsService::new(

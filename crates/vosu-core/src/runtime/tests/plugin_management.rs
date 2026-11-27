@@ -87,7 +87,7 @@ async fn fixture() -> Fixture {
     let host = PluginHost::new(
         logger.clone(),
         Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
-            plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&settings)),
+            plugin::settings::PluginSettingsStore::open(root.path()),
         ))),
         tokio::runtime::Handle::current(),
     );
@@ -578,6 +578,12 @@ async fn plugin_settings_are_write_only_validated_and_delivered_once() {
             .with_settings_delivery(recorded.clone()),
         );
         let path = format!("/api/plugins/{SETTINGS_ID}/settings");
+
+        let (status, list_body) = send(&management, Method::GET, "/api/plugins", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "{list_body}");
+        let listed: Value = serde_json::from_str(&list_body).unwrap();
+        assert_eq!(listed["plugins"][0]["id"], SETTINGS_ID);
+        assert_eq!(listed["plugins"][0]["has_settings"], json!(true));
 
         let (status, body) = send(&management, Method::GET, &path, Value::Null).await;
         assert_eq!(status, StatusCode::OK, "{body}");

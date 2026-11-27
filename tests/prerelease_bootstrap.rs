@@ -118,8 +118,22 @@ async fn prerelease_daemon_startup_restart_preserves_normal_settings() {
     bounded!(reachable(port));
     let alpha = normal.join("prerelease/vosu.toml");
     let imported = fs::read_to_string(&alpha).unwrap();
-    assert!(imported.contains("POLL_RATE = 842.0"));
-    assert!(imported.contains("STATIC_FOLDER_PATH = \"./static\""));
+    assert!(!imported.contains("POLL_RATE"));
+    assert!(!imported.contains("STATIC_FOLDER_PATH"));
+    assert!(imported.contains("UNKNOWN_SENTINEL = \"retain bytes\""));
+    let alpha_plugin_settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(normal.join("prerelease/plugins/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        alpha_plugin_settings["plugins"]["vosu.osu"]["POLL_RATE"],
+        serde_json::json!(842.0)
+    );
+    assert!(
+        alpha_plugin_settings["plugins"]
+            .get("vosu.overlayhost")
+            .is_none()
+    );
     assert_eq!(
         fs::read_to_string(normal.join("vosu.toml")).unwrap(),
         source

@@ -9,6 +9,21 @@ impl Drop for ChildGuard {
 }
 
 #[cfg(any(target_os = "linux", feature = "test-harness"))]
+async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match bounded!(client.get(url).send()) {
+            Ok(response) => return response,
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => panic!("daemon did not become reachable at {url}: {error}"),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", feature = "test-harness"))]
 fn available_port() -> u16 {
     TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
         .unwrap()
@@ -26,11 +41,29 @@ fn legacy_config(port: u16, static_root: &Path) -> String {
 }
 
 #[cfg(any(target_os = "linux", feature = "test-harness"))]
-fn toml_config(port: u16, static_root: &Path) -> String {
-    let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
+fn toml_config(port: u16, _static_root: &Path) -> String {
     format!(
-        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_IP = \"127.0.0.1\"\nDASHBOARD_PORT = 0\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
+        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_IP = \"127.0.0.1\"\nDASHBOARD_PORT = 0\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
+}
+
+#[cfg(target_os = "linux")]
+fn write_overlay_root_plugin_setting(config_dir: &Path, static_root: &Path) {
+    let plugins_dir = config_dir.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    fs::write(
+        plugins_dir.join("settings.json"),
+        serde_json::json!({
+            "version": 1,
+            "plugins": {
+                "vosu.overlayhost": {
+                    "static_folder_path": static_root.to_string_lossy()
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
 }
 
 #[cfg(any(target_os = "linux", feature = "test-harness"))]

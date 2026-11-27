@@ -80,10 +80,6 @@ fn settings_shell_has_every_control_and_bound_but_no_value() {
         "OPEN_DASHBOARD_ON_STARTUP",
         #[cfg(target_os = "linux")]
         "START_AT_LOGIN",
-        "CALCULATE_PP",
-        "READ_MANIA_SCROLL_SPEED",
-        "POLL_RATE",
-        "PRECISE_DATA_POLL_RATE",
         "API_V1_SUBSCRIPTION_DEBOUNCE",
         "SERVER_IP",
         "SERVER_PORT",
@@ -91,8 +87,6 @@ fn settings_shell_has_every_control_and_bound_but_no_value() {
         "DASHBOARD_PORT",
         "ALLOWED_IPS",
         "DEBUG_LOG",
-        "SHOW_MP_COMMANDS",
-        "STATIC_FOLDER_PATH",
         "MAX_PACKAGE_MIB",
     ] {
         assert!(
@@ -109,14 +103,20 @@ fn settings_shell_has_every_control_and_bound_but_no_value() {
     }
     #[cfg(windows)]
     assert!(!settings.contains("START_AT_LOGIN"));
-    // The dashboard never offers to disable itself (A7.3), and retired keys
-    // stay gone.
+    // The dashboard never offers to disable itself (A7.3); retired keys and
+    // keys moved to plugin settings (D19, A7.1-OR) stay off this page.
     for key in [
         "ENABLE_DASHBOARD",
         "ENABLE_KEY_OVERLAY",
         "ENABLE_MANIA_KEY_HIT_ERRORS",
         "ENABLE_HIT_OFFSETS",
         "V2_SUBSCRIPTION_DEBOUNCE",
+        "CALCULATE_PP",
+        "READ_MANIA_SCROLL_SPEED",
+        "POLL_RATE",
+        "PRECISE_DATA_POLL_RATE",
+        "SHOW_MP_COMMANDS",
+        "STATIC_FOLDER_PATH",
     ] {
         assert!(!settings.contains(key), "{key}");
     }
@@ -126,12 +126,6 @@ fn settings_shell_has_every_control_and_bound_but_no_value() {
     );
     assert!(settings.contains(
         r#"data-id="API_V1_SUBSCRIPTION_DEBOUNCE" type="number" value="" min="1" max="60000" step="any" required"#
-    ));
-    assert!(settings.contains(
-        r#"data-id="PRECISE_DATA_POLL_RATE" type="number" value="" min="1" max="60000" step="any" required"#
-    ));
-    assert!(settings.contains(
-        r#"data-id="POLL_RATE" type="number" value="" min="100" max="60000" step="any" required"#
     ));
     assert!(settings.contains(
         r#"data-id="MAX_PACKAGE_MIB" type="number" value="" min="1" max="4096" step="1" required"#

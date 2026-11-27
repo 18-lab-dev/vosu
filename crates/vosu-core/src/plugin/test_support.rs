@@ -52,49 +52,22 @@ pub fn clear_session_memory(pid: u32) {
     read_plans::clear_session_memory_hook_for_tests(pid);
 }
 
-/// Explicit teardown for synchronous tests owning a runtime, config, and host.
+/// Explicit teardown guard for synchronous tests owning a [`PluginHost`].
 ///
-/// A live instance retains its host handler, whose settings can retain the
-/// config store. Runtime drop cannot cancel that store's `spawn_blocking`
-/// worker, so dropping these owners without shutdown can wait forever.
-/// Declare this guard before creating instances; it also runs on assertion
-/// failures. It must be dropped outside an async runtime context.
-pub struct ConfigHostShutdown<'a> {
-    runtime: &'a tokio::runtime::Runtime,
-    config: &'a crate::config::ConfigStore,
+/// Declare this guard before creating instances so `destroy_all` runs even
+/// when an assertion fails. Must be dropped outside an async runtime context.
+pub struct HostShutdown<'a> {
     host: &'a super::PluginHost,
-    watcher: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl<'a> ConfigHostShutdown<'a> {
-    /// Retains the services until they have been explicitly shut down.
-    pub fn new(
-        runtime: &'a tokio::runtime::Runtime,
-        config: &'a crate::config::ConfigStore,
-        host: &'a super::PluginHost,
-    ) -> Self {
-        Self {
-            runtime,
-            config,
-            host,
-            watcher: None,
-        }
-    }
-
-    /// Registers this fixture's B2 watcher for cancellation before destruction.
-    pub fn set_watcher(&mut self, watcher: tokio::task::JoinHandle<()>) {
-        self.watcher = Some(watcher);
+impl<'a> HostShutdown<'a> {
+    pub fn new(host: &'a super::PluginHost) -> Self {
+        Self { host }
     }
 }
 
-impl Drop for ConfigHostShutdown<'_> {
+impl Drop for HostShutdown<'_> {
     fn drop(&mut self) {
-        if let Some(watcher) = self.watcher.take() {
-            watcher.abort();
-            let _ = self.runtime.block_on(watcher);
-        }
         self.host.destroy_all(std::time::Duration::from_secs(5));
-        // Await even on assertion failure: abort cannot cancel blocking work.
-        let _ = self.runtime.block_on(self.config.shutdown());
     }
 }

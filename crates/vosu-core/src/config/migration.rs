@@ -181,7 +181,7 @@ pub(super) fn legacy_table(values: &HashMap<String, String>) -> toml::Table {
         table.insert(item.binding.to_owned(), value);
     }
     for (binding, value) in values {
-        if !is_known(binding) && !super::document::RETIRED_BINDINGS.contains(&binding.as_str()) {
+        if !is_known(binding) && !super::document::is_stripped_binding(binding) {
             table.insert(binding.clone(), toml::Value::String(value.clone()));
         }
     }

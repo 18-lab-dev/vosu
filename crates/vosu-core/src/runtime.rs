@@ -66,7 +66,9 @@ use crate::{
     logging::{Logger, LoggerOptions, StdoutConsole},
     plugin::{
         PluginHost,
-        settings::{ConfigSettingsBridgeB2, PluginSettingsService, SettingsStorage},
+        settings::{
+            PluginSettingsService, PluginSettingsStore, SettingsDeliveryTransform, SettingsStorage,
+        },
     },
     report::{ReportInput, ReportInstance},
     updater::{
@@ -95,7 +97,6 @@ mod dashboard;
 mod dev_plugins;
 mod discovery;
 mod lifecycle;
-mod overlay_root;
 mod plugin_management;
 mod projection;
 mod service;
@@ -118,7 +119,6 @@ pub use config::test_updater_handoff;
 pub use lifecycle::{ProductionRuntime, run_cli};
 #[cfg(feature = "bench-harness")]
 pub use lifecycle::{TestAdapters, TestDaemon};
-pub use overlay_root::RuntimeSettingsStorage;
 pub use projection::ReloadableAuthorizer;
 pub use startup::is_startup_owner_conflict;
 #[cfg(feature = "test-harness")]

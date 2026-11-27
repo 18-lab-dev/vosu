@@ -15,8 +15,6 @@ plugin -> resources
 state -> resources
 resource_io -> plugin
 resource_io -> resources
-# B2, deleted in M8
-plugin -> config
 # M7 C0: the generic HTTP/WebSocket mechanics moved from the root crate. The
 # listeners, routes, API v1 and catalog routes serve core's own services.
 server -> actions
@@ -39,6 +37,7 @@ runtime -> catalog
 runtime -> config
 runtime -> desktop
 runtime -> logging
+runtime -> migration
 runtime -> plugin
 runtime -> removed_routes
 runtime -> report

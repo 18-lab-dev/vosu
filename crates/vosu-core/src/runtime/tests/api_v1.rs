@@ -23,9 +23,7 @@ async fn resource_route_uses_production_provider_composition() {
             Arc::new(crate::logging::StdoutConsole),
         )
         .unwrap();
-        let settings = Arc::new(plugin::settings::ConfigSettingsBridgeB2::new(
-            config.clone(),
-        ));
+        let settings = Arc::new(plugin::settings::PluginSettingsStore::open(root.path()));
         let host = PluginHost::new(
             logger.clone(),
             Arc::new(plugin::settings::PluginSettingsService::new(settings)),

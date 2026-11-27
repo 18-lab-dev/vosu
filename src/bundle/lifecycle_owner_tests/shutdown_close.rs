@@ -16,7 +16,7 @@ async fn slow_plugin_destruction_preserves_legacy_websocket_going_away() {
                 .count(),
             4
         );
-        assert!(probes.iter().any(|(kind, _)| *kind == "settings bridge"));
+        assert!(!probes.iter().any(|(kind, _)| *kind == "settings bridge"));
         let subscriptions = owner.subscriptions();
         let (mut api, response) = tokio_tungstenite::connect_async(format!(
             "ws://127.0.0.1:{overlay_port}/api/v1/sessions/subscribe"
@@ -131,20 +131,54 @@ async fn static_root_reload_creates_target_and_retains_previous_root_on_failure(
     vosu_proptest::bounded!(async {
         let root = tempfile::tempdir().unwrap();
         let mut owner = TestDaemon::new(root.path(), &BUNDLE).await;
-        isolated_ports(&mut owner).await;
+        let (_, dashboard_port) = isolated_ports(&mut owner).await;
+        let dashboard = format!("http://127.0.0.1:{dashboard_port}");
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let page = client
+            .get(format!("{dashboard}/"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let csrf = page
+            .split("\"csrf\":\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+
         let active = root.path().join("next/counters");
-        owner
-            .config()
-            .update(|config| config.static_folder_path = active.to_str().unwrap().into());
+        std::fs::create_dir_all(&active).unwrap();
+        let ok = client
+            .post(format!("{dashboard}/api/plugins/vosu.overlayhost/settings"))
+            .header(reqwest::header::ORIGIN, &dashboard)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!([{"uniqueID": "static_folder_path", "value": active.to_str().unwrap()}]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), 200);
         assert_eq!(owner.current_overlay_root().await.as_ref(), Some(&active));
         assert!(active.is_dir());
+
         let blocked = root.path().join("blocked");
         std::fs::write(&blocked, "not a directory").unwrap();
-        owner.config().update(|config| {
-            config.static_folder_path = blocked.join("counters").to_str().unwrap().into()
-        });
-        owner.logger().flush().await.unwrap();
-        assert!(owner.output().contains("retaining previous counter root"));
+        let rejected = client
+            .post(format!("{dashboard}/api/plugins/vosu.overlayhost/settings"))
+            .header(reqwest::header::ORIGIN, &dashboard)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!([{"uniqueID": "static_folder_path", "value": blocked.join("counters").to_str().unwrap()}]))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), 400);
         assert_eq!(owner.current_overlay_root().await.as_ref(), Some(&active));
         owner.shutdown().await.unwrap();
     });

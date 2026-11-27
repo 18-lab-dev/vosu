@@ -15,13 +15,12 @@ use std::time::Duration;
 
 use vosu_plugin_api::{CborValue, Message};
 
-use crate::config::ConfigStore;
 use crate::logging::{Logger, LoggerOptions};
 use crate::plugin::focus;
 use crate::plugin::host::*;
 use crate::plugin::registry;
 use crate::plugin::settings::{
-    BRIDGE_B2_PLUGIN_ID, ConfigSettingsBridgeB2, PluginSettingsService, SettingsSchemaSource,
+    PluginSettingsService, PluginSettingsStore, SettingsChangeDelivery, SettingsSchemaSource,
 };
 
 use super::helpers::{SilentConsole, test_host};
@@ -348,13 +347,8 @@ fn schema_for_resolves_a_schema_while_the_instance_is_still_creating() {
     });
 }
 
-/// Every `settings.schema.json` entry bridge B2's five `vosu.toml` keys
-/// had (mirroring `config/schema.rs`'s own defaults, the same shape
-/// `ConfigSettingsBridgeB2::load` always returns regardless of what
-/// schema asked for it): needed here because the test below drives a
-/// real [`ConfigSettingsBridgeB2`], whose `load` is not parameterized by
-/// schema.
-const B2_SHAPED_SCHEMA_TEXT: &str = r#"[
+/// The five `vosu.osu` settings entries matching `crates/vosu-osu/settings.schema.json`.
+const OSU_SHAPED_SCHEMA_TEXT: &str = r#"[
     {"uniqueID":"CALCULATE_PP","type":"checkbox","title":"Calculate pp","value":true},
     {"uniqueID":"POLL_RATE","type":"number","title":"Poll rate","value":150.0},
     {"uniqueID":"PRECISE_DATA_POLL_RATE","type":"number","title":"Precise data poll rate","value":10.0},
@@ -417,32 +411,21 @@ mod gated_replay_plugin {
     vosu_plugin_internal::export_plugin!(bundled GatedReplayPlugin);
 }
 
-/// P0 review finding 1, regression test: before the fix, `schema_for`
-/// resolved only `Live` instances, so a B2 key change arriving while
-/// `vosu.osu` was still `Creating` resolved no schema, built the empty
-/// `CborValue::Map([])` `effective_settings` falls back to, and queued
-/// *that* for replay — the plugin would have gone `Live` and immediately
-/// received an empty, spec-violating effective settings object instead
-/// of the real one. This drives a real [`ConfigSettingsBridgeB2`] (not a
-/// `FixedSchemaSource` test double) through [`PluginHost::watch_bridge_b2`]
-/// while the instance is provably still `Creating`, and asserts the
-/// replayed message — the one the plugin actually receives once `Live`
-/// — carries the complete, up-to-date five-key map.
+/// Regression test for `Creating` -> `Live` `SETTINGS_CHANGED` ordering:
+/// when a settings submission via [`PluginSettingsStore`] and
+/// [`PluginSettingsService::submit`] arrives while an instance is still
+/// `Creating`, `PluginHost::schema_for` resolves the `Creating` instance's
+/// real schema and `PluginHost::settings_changed` queues the complete
+/// five-key `SETTINGS_CHANGED` payload for replay as soon as it goes `Live`.
 #[test]
-fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
+fn a_settings_submit_during_a_blocked_create_delivers_the_full_map_once_live() {
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
     let _enter = runtime.enter();
 
+    let plugin_id = "vosu.osu";
     let config_dir = tempfile::tempdir().unwrap();
-    let config = runtime.block_on(async {
-        std::sync::Arc::new(
-            ConfigStore::initialize(&config_dir.path().join("vosu.toml"))
-                .await
-                .unwrap(),
-        )
-    });
-    let bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
-    let settings = Arc::new(PluginSettingsService::new(bridge.clone()));
+    let store = Arc::new(PluginSettingsStore::open(config_dir.path()));
+    let settings = Arc::new(PluginSettingsService::new(store));
 
     let log_dir = tempfile::tempdir().unwrap();
     let logger = Logger::new(
@@ -457,32 +440,31 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
     .unwrap();
     let host = PluginHost::new_for_tests(
         logger,
-        settings,
+        Arc::clone(&settings),
         runtime.handle().clone(),
         Arc::new(focus::SyntheticForegroundSource::new(None)),
         crate::plugin::session::IDENTIFICATION_TIMEOUT,
     );
-    let mut shutdown =
-        crate::plugin::test_support::ConfigHostShutdown::new(&runtime, &config, &host);
+    let _shutdown = crate::plugin::test_support::HostShutdown::new(&host);
 
     let gate = CreateGate::new();
     create_gate_registry()
         .lock()
         .unwrap()
-        .insert(BRIDGE_B2_PLUGIN_ID.to_owned(), Arc::clone(&gate));
+        .insert(plugin_id.to_owned(), Arc::clone(&gate));
     let (tx, rx) = std::sync::mpsc::channel();
     captured_settings_changed()
         .lock()
         .unwrap()
-        .insert(BRIDGE_B2_PLUGIN_ID.to_owned(), tx);
+        .insert(plugin_id.to_owned(), tx);
 
-    let manifest = schema_manifest(BRIDGE_B2_PLUGIN_ID);
+    let manifest = schema_manifest(plugin_id);
     let loaded = registry::load_bundled(
         &semver::Version::parse("2.0.0-alpha.1").unwrap(),
         &crate::plugin::ValidationSnapshot::default(),
         &[registry::BundledPlugin {
             manifest: &manifest,
-            settings_schema: Some(B2_SHAPED_SCHEMA_TEXT),
+            settings_schema: Some(OSU_SHAPED_SCHEMA_TEXT),
             namespace_schemas: &[],
             action_schemas: &[],
             vtable: gated_replay_plugin::vosu_plugin_vtable,
@@ -500,22 +482,6 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
         let create_thread =
             scope.spawn(move || host_ref.create_instance(id, loaded_ref, data_dir_path, None));
 
-        // Bug found by a 1-in-6 hang (Main's report): without this
-        // wait, the config change below can race ahead of
-        // `create_instance` even registering `id`'s `Creating`
-        // placeholder at all (it is registered inline, but on another
-        // thread, with no happens-before edge to this one). `dispatch_to`
-        // never retries a message that found no matching instance, so
-        // the delivery below is then silently and permanently lost, the
-        // "queued" wait times out, its `assert!` panics, and — because
-        // that panic unwinds out of this `scope` closure while
-        // `create_thread` is still parked in `CreateGate::wait_for_release`
-        // — `std::thread::Scope`'s forced join of that thread (required
-        // before the panic may propagate) hung forever pre-fix. Waiting
-        // here for the placeholder to exist first removes the race
-        // outright; `CreateGate::wait_for_release`'s own bound (above)
-        // is the fallback that turns any future instance of this into a
-        // fast, readable failure instead of a second hang.
         let registered_deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let registered = matches!(
@@ -535,48 +501,35 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
             std::thread::sleep(Duration::from_millis(1));
         }
 
-        shutdown.set_watcher(host.watch_bridge_b2(&bridge, &runtime.handle().clone()));
+        let schema = host
+            .schema_for(plugin_id)
+            .expect("schema_for must resolve the still-Creating instance's schema");
+        let message = settings
+            .submit(
+                plugin_id,
+                &schema,
+                vec![("POLL_RATE".into(), serde_json::json!(275.0))],
+            )
+            .expect("persisting POLL_RATE override in PluginSettingsStore");
+        host.settings_changed(plugin_id, message);
 
-        // A plain `ConfigStore::update`, exactly the shape a dashboard
-        // write or a `vosu.toml` hot reload uses.
-        config.update(|c| {
-            c.poll_rate = 275.0;
-        });
-
-        // Wait until the watcher's delivery has actually been queued
-        // against the still-`Creating` placeholder — proof the change
-        // reached it before `create` returns, not scheduling luck.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let queued = {
-                let guard = host.instances.lock().unwrap_or_else(|p| p.into_inner());
-                matches!(
-                    guard.get(&id),
-                    Some(InstanceSlot::Creating { pending, .. }) if !pending.is_empty()
-                )
-            };
-            if queued {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "expected the B2 change to queue against the Creating placeholder within 5s"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        let queued = {
+            let guard = host.instances.lock().unwrap_or_else(|p| p.into_inner());
+            matches!(
+                guard.get(&id),
+                Some(InstanceSlot::Creating { pending, .. }) if !pending.is_empty()
+            )
+        };
+        assert!(
+            queued,
+            "expected the submitted SETTINGS_CHANGED to queue against the Creating placeholder"
+        );
 
         gate.release();
         vosu_proptest::wait::JoinBounded::join_bounded(create_thread)
             .unwrap()
             .expect("creating the gated replay instance");
     });
-
-    // Settle persistence before teardown. Without explicit shutdown, this
-    // leaves the blocking store worker idle on commands (no debounce timer
-    // to panic during runtime shutdown), deterministically exposing the hang.
-    runtime
-        .block_on(config.flush())
-        .expect("flushing B2 config");
 
     let message = rx
         .recv_timeout(Duration::from_secs(5))

@@ -75,12 +75,6 @@ ENABLE_DASHBOARD = true
 OPEN_DASHBOARD_ON_STARTUP = true
 START_AT_LOGIN = false
 
-SHOW_MP_COMMANDS = false
-CALCULATE_PP = true
-READ_MANIA_SCROLL_SPEED = true
-
-POLL_RATE = 150.0
-PRECISE_DATA_POLL_RATE = 10.0
 API_V1_SUBSCRIPTION_DEBOUNCE = 1.0
 
 SERVER_IP = \"127.0.0.1\"
@@ -89,7 +83,6 @@ DASHBOARD_IP = \"127.0.0.1\"
 DASHBOARD_PORT = 24051.0
 ALLOWED_IPS = \"127.0.0.1,localhost,absolute\"
 
-STATIC_FOLDER_PATH = \"./static\"
 MAX_PACKAGE_MIB = 512
 ";
 
@@ -110,17 +103,11 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "OPEN_DASHBOARD_ON_STARTUP",
             "START_AT_LOGIN",
             "DEBUG_LOG",
-            "CALCULATE_PP",
-            "POLL_RATE",
-            "PRECISE_DATA_POLL_RATE",
             "API_V1_SUBSCRIPTION_DEBOUNCE",
-            "SHOW_MP_COMMANDS",
-            "READ_MANIA_SCROLL_SPEED",
             "SERVER_IP",
             "SERVER_PORT",
             "DASHBOARD_IP",
             "DASHBOARD_PORT",
-            "STATIC_FOLDER_PATH",
             "ALLOWED_IPS",
             "MAX_PACKAGE_MIB",
         ]
@@ -144,12 +131,18 @@ fn enable_dashboard_is_a_validated_boolean_defaulting_to_true() {
 }
 
 #[test]
-fn retired_keys_have_no_schema_or_runtime_storage() {
+fn retired_and_moved_keys_have_no_schema_or_runtime_storage() {
     for key in [
         "ENABLE_KEY_OVERLAY",
         "ENABLE_MANIA_KEY_HIT_ERRORS",
         "ENABLE_HIT_OFFSETS",
         "V2_SUBSCRIPTION_DEBOUNCE",
+        "CALCULATE_PP",
+        "POLL_RATE",
+        "PRECISE_DATA_POLL_RATE",
+        "SHOW_MP_COMMANDS",
+        "READ_MANIA_SCROLL_SPEED",
+        "STATIC_FOLDER_PATH",
     ] {
         let mut document = ConfigDocument::parse(&format!("{key} = true\n")).unwrap();
         assert_eq!(document.config(), &Config::default());
@@ -200,9 +193,9 @@ fn start_at_login_defaults_parses_refreshes_and_round_trips() {
 fn serialization_preserves_toml_types_escaping_and_fractional_values() {
     let config = Config {
         debug_log: true,
-        poll_rate: 150.25,
+        api_v1_subscription_debounce: 150.25,
         server_port: 24_050.5,
-        static_folder_path: "folder \"quoted\"\\line\nnext".to_owned(),
+        dashboard_ip: "host \"quoted\"\\line\nnext".to_owned(),
         allowed_ips: "host-a,host-b,absolute".to_owned(),
         ..Config::default()
     };
@@ -211,11 +204,14 @@ fn serialization_preserves_toml_types_escaping_and_fractional_values() {
     let values = toml::from_str::<toml::Table>(&serialized).expect("parse serialized TOML");
 
     assert_eq!(values["DEBUG_LOG"].as_bool(), Some(true));
-    assert_eq!(values["POLL_RATE"].as_float(), Some(150.25));
+    assert_eq!(
+        values["API_V1_SUBSCRIPTION_DEBOUNCE"].as_float(),
+        Some(150.25)
+    );
     assert_eq!(values["SERVER_PORT"].as_float(), Some(24_050.5));
     assert_eq!(
-        values["STATIC_FOLDER_PATH"].as_str(),
-        Some("folder \"quoted\"\\line\nnext")
+        values["DASHBOARD_IP"].as_str(),
+        Some("host \"quoted\"\\line\nnext")
     );
     assert_eq!(
         values["ALLOWED_IPS"].as_str(),
@@ -254,10 +250,10 @@ fn known_bindings_with_invalid_toml_types_use_schema_defaults() {
         "\
 ENABLE_AUTOUPDATE = false
 DEBUG_LOG = true
-POLL_RATE = 250.0
+API_V1_SUBSCRIPTION_DEBOUNCE = 250.0
 SERVER_IP = \"custom\"
 SERVER_PORT = 1234.0
-STATIC_FOLDER_PATH = \"custom\"
+DASHBOARD_IP = \"custom\"
 ALLOWED_IPS = \"custom\"
 ",
     )
@@ -268,10 +264,10 @@ ALLOWED_IPS = \"custom\"
             "\
 ENABLE_AUTOUPDATE = \"true\"
 DEBUG_LOG = 1
-POLL_RATE = inf
+API_V1_SUBSCRIPTION_DEBOUNCE = inf
 SERVER_IP = 123
 SERVER_PORT = \"25000\"
-STATIC_FOLDER_PATH = false
+DASHBOARD_IP = false
 ALLOWED_IPS = [\"host-a\", \"host-b\"]
 ",
         )
@@ -279,10 +275,10 @@ ALLOWED_IPS = [\"host-a\", \"host-b\"]
 
     assert!(document.config().enable_auto_update);
     assert!(!document.config().debug_log);
-    assert_eq!(document.config().poll_rate, 150.0);
+    assert_eq!(document.config().api_v1_subscription_debounce, 1.0);
     assert_eq!(document.config().server_ip, "127.0.0.1");
     assert_eq!(document.config().server_port, 24_050.0);
-    assert_eq!(document.config().static_folder_path, "./static");
+    assert_eq!(document.config().dashboard_ip, "127.0.0.1");
     assert_eq!(
         document.config().allowed_ips,
         "127.0.0.1,localhost,absolute"
@@ -309,31 +305,19 @@ fn schema_minima_are_clamped() {
     document
         .refresh(
             "\
-POLL_RATE = -5.0
-PRECISE_DATA_POLL_RATE = 0.0
 API_V1_SUBSCRIPTION_DEBOUNCE = -0.25
 SERVER_PORT = -1.5
 ",
         )
         .expect("parse clamped TOML");
 
-    assert_eq!(document.config().poll_rate, 100.0);
-    assert_eq!(document.config().precise_data_poll_rate, 1.0);
     assert_eq!(document.config().api_v1_subscription_debounce, 1.0);
     assert_eq!(document.config().server_port, -1.5);
 }
 
 #[test]
 fn oversized_disk_intervals_are_bounded_before_publication() {
-    let document = ConfigDocument::parse(
-        "POLL_RATE = 1e100\nPRECISE_DATA_POLL_RATE = 1e300\nAPI_V1_SUBSCRIPTION_DEBOUNCE = 1e200\n",
-    )
-    .unwrap();
-    assert_eq!(document.config().poll_rate, ConfigDocument::MAX_INTERVAL_MS);
-    assert_eq!(
-        document.config().precise_data_poll_rate,
-        ConfigDocument::MAX_INTERVAL_MS
-    );
+    let document = ConfigDocument::parse("API_V1_SUBSCRIPTION_DEBOUNCE = 1e200\n").unwrap();
     assert_eq!(
         document.config().api_v1_subscription_debounce,
         ConfigDocument::MAX_INTERVAL_MS
@@ -354,10 +338,10 @@ fn initialization_uses_toml_then_vosu_env_then_tosu_env_then_defaults() {
         "\
 DEBUG_LOG=true
 SERVER_PORT=22000
-POLL_RATE=0x96
+API_V1_SUBSCRIPTION_DEBOUNCE=0x96
 ENABLE_AUTOUPDATE=1
-STATIC_FOLDER_PATH=first
-STATIC_FOLDER_PATH=\"folder # retained\" # ignored comment
+DASHBOARD_IP=first
+DASHBOARD_IP=\"host # retained\" # ignored comment
 ",
     )
     .expect("write vosu.env");
@@ -385,13 +369,16 @@ UNKNOWN_BINDING = true
         "legacy bool syntax is retained"
     );
     assert_eq!(initial.config.server_port, 33_000.5, "TOML wins");
-    assert_eq!(initial.config.poll_rate, 150.0, "vosu.env fills a gap");
+    assert_eq!(
+        initial.config.api_v1_subscription_debounce, 150.0,
+        "vosu.env fills a gap"
+    );
     assert_eq!(
         initial.config.server_ip, "tosu-host",
         "tosu.env fills a gap"
     );
     assert_eq!(
-        initial.config.static_folder_path, "folder # retained",
+        initial.config.dashboard_ip, "host # retained",
         "legacy duplicates are last-wins and quoted comments are retained"
     );
     assert_eq!(
@@ -575,8 +562,8 @@ async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
             resource
                 .lock()
                 .expect("resource mutex")
-                .push(next.static_folder_path.clone());
-            if next.static_folder_path == "static-b" {
+                .push(next.allowed_ips.clone());
+            if next.allowed_ips == "static-b" {
                 entered_send.send(()).expect("announce blocked publication");
                 release_receive
                     .lock()
@@ -589,20 +576,23 @@ async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
 
     let first = std::thread::spawn({
         let store = Arc::clone(&store);
-        move || store.update(|config| config.static_folder_path = "static-b".into())
+        move || store.update(|config| config.allowed_ips = "static-b".into())
     });
     entered_receive
         .recv_timeout(Duration::from_secs(1))
         .expect("first publication entered hook");
     let second = std::thread::spawn({
         let store = Arc::clone(&store);
-        move || store.update(|config| config.static_folder_path = "static-c".into())
+        move || store.update(|config| config.allowed_ips = "static-c".into())
     });
     std::thread::sleep(Duration::from_millis(20));
-    assert_eq!(store.current().static_folder_path, "./static");
+    assert_eq!(store.current().allowed_ips, "127.0.0.1,localhost,absolute");
     assert_eq!(
         resource.lock().expect("resource mutex").as_slice(),
-        &["./static".to_owned(), "static-b".to_owned()]
+        &[
+            "127.0.0.1,localhost,absolute".to_owned(),
+            "static-b".to_owned(),
+        ]
     );
 
     release_send.send(()).expect("release first publication");
@@ -611,12 +601,12 @@ async fn before_publish_transactions_serialize_concurrent_resource_swaps() {
     assert_eq!(
         resource.lock().expect("resource mutex").as_slice(),
         &[
-            "./static".to_owned(),
+            "127.0.0.1,localhost,absolute".to_owned(),
             "static-b".to_owned(),
             "static-c".to_owned(),
         ]
     );
-    assert_eq!(store.current().static_folder_path, "static-c");
+    assert_eq!(store.current().allowed_ips, "static-c");
     bounded!(store.shutdown()).expect("shutdown config");
 }
 
@@ -726,25 +716,31 @@ async fn before_publish_barrier_runs_before_snapshot_becomes_observable() {
     let hook_observed = Arc::clone(&observed);
     store.register_before_publish(move |next| {
         let visible = weak_store.upgrade().expect("store remains alive").current();
-        hook_observed.lock().expect("observations mutex").push((
-            visible.static_folder_path.clone(),
-            next.static_folder_path.clone(),
-        ));
+        hook_observed
+            .lock()
+            .expect("observations mutex")
+            .push((visible.allowed_ips.clone(), next.allowed_ips.clone()));
     });
     let mut snapshots = store.subscribe_current();
 
-    assert!(store.update(|config| config.static_folder_path = "new-root".to_owned()));
+    assert!(store.update(|config| config.allowed_ips = "new-root".to_owned()));
     bounded!(snapshots.changed()).expect("published snapshot");
 
     assert_eq!(
         observed.lock().expect("observations mutex").as_slice(),
         &[
-            ("./static".to_owned(), "./static".to_owned()),
-            ("./static".to_owned(), "new-root".to_owned()),
+            (
+                "127.0.0.1,localhost,absolute".to_owned(),
+                "127.0.0.1,localhost,absolute".to_owned(),
+            ),
+            (
+                "127.0.0.1,localhost,absolute".to_owned(),
+                "new-root".to_owned(),
+            ),
         ],
         "the hook must see the old public snapshot while installing the new generation"
     );
-    assert_eq!(snapshots.borrow().static_folder_path, "new-root");
+    assert_eq!(snapshots.borrow().allowed_ips, "new-root");
     bounded!(store.shutdown()).expect("shutdown config");
 }
 
@@ -762,8 +758,8 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
         hook_roots
             .lock()
             .expect("root observations mutex")
-            .push(next.static_folder_path.clone());
-        if next.static_folder_path == "root-b" {
+            .push(next.allowed_ips.clone());
+        if next.allowed_ips == "root-b" {
             entered_b_send
                 .send(())
                 .expect("announce blocked root-b hook");
@@ -777,9 +773,7 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
 
     let update_b = {
         let store = Arc::clone(&store);
-        std::thread::spawn(move || {
-            store.update(|config| config.static_folder_path = "root-b".to_owned())
-        })
+        std::thread::spawn(move || store.update(|config| config.allowed_ips = "root-b".to_owned()))
     };
     entered_b_receive
         .recv_timeout(Duration::from_secs(10))
@@ -789,7 +783,7 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
         let store = Arc::clone(&store);
         std::thread::spawn(move || {
             started_c_send.send(()).expect("announce root-c update");
-            store.update(|config| config.static_folder_path = "root-c".to_owned())
+            store.update(|config| config.allowed_ips = "root-c".to_owned())
         })
     };
     started_c_receive
@@ -802,12 +796,12 @@ async fn concurrent_publications_keep_root_hook_and_snapshot_in_order() {
     assert_eq!(
         roots.lock().expect("root observations mutex").as_slice(),
         &[
-            "./static".to_owned(),
+            "127.0.0.1,localhost,absolute".to_owned(),
             "root-b".to_owned(),
             "root-c".to_owned(),
         ]
     );
-    assert_eq!(store.current().static_folder_path, "root-c");
+    assert_eq!(store.current().allowed_ips, "root-c");
     bounded!(store.shutdown()).expect("shutdown config");
 }
 

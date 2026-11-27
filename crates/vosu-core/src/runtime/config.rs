@@ -1,19 +1,365 @@
 use super::*;
 
-pub(super) async fn initialize_startup_config(
+pub(super) const DEFAULT_OSU_POLL_RATE_MS: f64 = 150.0;
+pub(super) const DEFAULT_OSU_PRECISE_POLL_RATE_MS: f64 = 10.0;
+const MIN_OSU_POLL_RATE_MS: f64 = 100.0;
+const MIN_OSU_PRECISE_POLL_RATE_MS: f64 = 1.0;
+
+pub(super) fn migration_schemas(bundle: &Bundle) -> io::Result<crate::migration::MigrationSchemas> {
+    let parse_schema =
+        |plugin_id: &str| -> io::Result<vosu_plugin_api::manifest::settings::SettingsSchema> {
+            let index = bundle
+                .plugin_ids
+                .iter()
+                .position(|id| *id == plugin_id)
+                .ok_or_else(|| {
+                    io::Error::other(format!("required bundled plugin {plugin_id} missing"))
+                })?;
+            let text = bundle
+                .plugins
+                .get(index)
+                .and_then(|entry| entry.settings_schema)
+                .ok_or_else(|| {
+                    io::Error::other(format!(
+                        "bundled plugin {plugin_id} declares no settings schema"
+                    ))
+                })?;
+            vosu_plugin_api::manifest::settings::SettingsSchema::parse(text).map_err(|error| {
+                io::Error::other(format!(
+                    "bundled plugin {plugin_id} has invalid settings schema: {error}"
+                ))
+            })
+        };
+    Ok(crate::migration::MigrationSchemas {
+        osu: parse_schema(crate::migration::OSU_PLUGIN_ID)?,
+        overlay_host: parse_schema(crate::migration::OVERLAY_HOST_PLUGIN_ID)?,
+    })
+}
+
+pub(super) async fn initialize_startup_storage(
+    bundle: &Bundle,
     paths: &Paths,
     channel: vosu_sys::platform::BuildChannel,
-) -> io::Result<ConfigStore> {
+) -> io::Result<(ConfigStore, Arc<PluginSettingsStore>)> {
+    let settings_store = Arc::new(PluginSettingsStore::open(paths.config()));
     let target = paths.config().join("vosu.toml");
     match channel {
-        vosu_sys::platform::BuildChannel::Release => ConfigStore::initialize(target).await,
+        vosu_sys::platform::BuildChannel::Release => {
+            let schemas = migration_schemas(bundle)?;
+            let config_root = paths.config().to_path_buf();
+            let data_root = paths.data().to_path_buf();
+            let store = Arc::clone(&settings_store);
+            tokio::task::spawn_blocking(move || {
+                crate::migration::run_local_migration(
+                    &config_root,
+                    &data_root,
+                    channel,
+                    &schemas,
+                    &store,
+                )
+            })
+            .await
+            .map_err(|error| io::Error::other(format!("migration task failed: {error}")))?
+            .map_err(|error| io::Error::other(error.to_string()))?;
+            let config = ConfigStore::initialize(target).await?;
+            Ok((config, settings_store))
+        }
         vosu_sys::platform::BuildChannel::Prerelease => {
-            let normal = paths.config().parent().ok_or_else(|| {
-                io::Error::other("prerelease configuration root has no normal parent")
-            })?;
-            ConfigStore::initialize_prerelease(target, normal.join("vosu.toml")).await
+            let normal = paths
+                .config()
+                .parent()
+                .ok_or_else(|| {
+                    io::Error::other("prerelease configuration root has no normal parent")
+                })?
+                .to_path_buf();
+            let target_check = target.clone();
+            let first_run =
+                tokio::task::spawn_blocking(move || is_prerelease_first_run(&target_check))
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("prerelease probe task failed: {error}"))
+                    })??;
+            let config =
+                ConfigStore::initialize_prerelease(target, normal.join("vosu.toml")).await?;
+            if first_run {
+                let osu_schema = migration_schemas(bundle)?.osu;
+                let store = Arc::clone(&settings_store);
+                tokio::task::spawn_blocking(move || {
+                    import_prerelease_osu_settings(&normal, &osu_schema, &store);
+                })
+                .await
+                .map_err(|error| {
+                    io::Error::other(format!("prerelease osu settings import failed: {error}"))
+                })?;
+            }
+            Ok((config, settings_store))
         }
     }
+}
+
+fn is_prerelease_first_run(target: &std::path::Path) -> io::Result<bool> {
+    match vosu_sys::platform::read_published(target) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
+    for local in [
+        parent.join("vosu.env"),
+        parent.join(crate::config::PRE_RENAME_ENV_FILENAME),
+    ] {
+        match std::fs::symlink_metadata(local) {
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(true)
+}
+
+/// Read-only import of the 5 `vosu.osu` keys from the normal root into
+/// prerelease `plugins/settings.json` on first-run prerelease bootstrap.
+/// Never touches the normal root and leaves `vosu.overlayhost`'s
+/// `static_folder_path` defaulted.
+fn import_prerelease_osu_settings(
+    normal_config: &std::path::Path,
+    osu_schema: &vosu_plugin_api::manifest::settings::SettingsSchema,
+    prerelease_store: &PluginSettingsStore,
+) {
+    let mut overrides = serde_json::Map::new();
+    for env_name in [crate::config::PRE_RENAME_ENV_FILENAME, "vosu.env"] {
+        if let Ok(content) = std::fs::read_to_string(normal_config.join(env_name)) {
+            extract_prerelease_env_osu(&content, &mut overrides);
+        }
+    }
+    if let Ok(bytes) = vosu_sys::platform::read_published(&normal_config.join("vosu.toml"))
+        && let Ok(text) = String::from_utf8(bytes)
+        && let Ok(table) = toml::from_str::<toml::Table>(&text)
+    {
+        extract_prerelease_toml_osu(&table, &mut overrides);
+    }
+    if let Ok(existing_normal) =
+        PluginSettingsStore::open(normal_config).load(crate::migration::OSU_PLUGIN_ID)
+    {
+        for key in crate::migration::OSU_MOVED_KEYS {
+            if let Some(value) = existing_normal.get(key) {
+                let candidate = serde_json::Map::from_iter([(key.to_owned(), value.clone())]);
+                if osu_schema.merge(&candidate).is_ok() {
+                    overrides.insert(key.to_owned(), value.clone());
+                }
+            }
+        }
+    }
+    if !overrides.is_empty()
+        && let Err(error) = prerelease_store.import_missing_overrides(
+            crate::migration::OSU_PLUGIN_ID,
+            osu_schema,
+            &overrides,
+        )
+    {
+        tracing::warn!(%error, "prerelease osu! settings import skipped");
+    }
+}
+
+fn extract_prerelease_env_osu(
+    content: &str,
+    overrides: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for line in content.lines() {
+        let mut trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("export")
+            && rest.starts_with(char::is_whitespace)
+        {
+            trimmed = rest.trim_start();
+        }
+        let Some((key, raw_value)) = trimmed.split_once('=').or_else(|| {
+            let (key, value) = trimmed.split_once(':')?;
+            value
+                .starts_with(char::is_whitespace)
+                .then_some((key, value.trim_start()))
+        }) else {
+            continue;
+        };
+        let key = key.trim();
+        let value = raw_value
+            .trim()
+            .split_once('#')
+            .map_or(raw_value.trim(), |(before, _)| before)
+            .trim_end()
+            .trim_matches(['"', '\'', '`']);
+        match key {
+            "CALCULATE_PP" | "SHOW_MP_COMMANDS" | "READ_MANIA_SCROLL_SPEED" => {
+                overrides.insert(key.to_owned(), serde_json::Value::Bool(value == "true"));
+            }
+            "POLL_RATE" => {
+                if let Some(number) = crate::config::parse_real_number(value)
+                    && let Some(json) = serde_json::Number::from_f64(
+                        number.clamp(MIN_OSU_POLL_RATE_MS, ConfigDocument::MAX_INTERVAL_MS),
+                    )
+                {
+                    overrides.insert(key.to_owned(), serde_json::Value::Number(json));
+                }
+            }
+            "PRECISE_DATA_POLL_RATE" => {
+                if let Some(number) = crate::config::parse_real_number(value)
+                    && let Some(json) = serde_json::Number::from_f64(number.clamp(
+                        MIN_OSU_PRECISE_POLL_RATE_MS,
+                        ConfigDocument::MAX_INTERVAL_MS,
+                    ))
+                {
+                    overrides.insert(key.to_owned(), serde_json::Value::Number(json));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_prerelease_toml_osu(
+    table: &toml::Table,
+    overrides: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for key in [
+        "CALCULATE_PP",
+        "SHOW_MP_COMMANDS",
+        "READ_MANIA_SCROLL_SPEED",
+    ] {
+        if let Some(value) = table.get(key).and_then(toml::Value::as_bool) {
+            overrides.insert(key.to_owned(), serde_json::Value::Bool(value));
+        }
+    }
+    for (key, min) in [
+        ("POLL_RATE", MIN_OSU_POLL_RATE_MS),
+        ("PRECISE_DATA_POLL_RATE", MIN_OSU_PRECISE_POLL_RATE_MS),
+    ] {
+        let number = match table.get(key) {
+            Some(toml::Value::Integer(value)) => Some(*value as f64),
+            Some(toml::Value::Float(value)) if value.is_finite() => Some(*value),
+            _ => None,
+        };
+        if let Some(number) = number
+            && let Some(json) =
+                serde_json::Number::from_f64(number.clamp(min, ConfigDocument::MAX_INTERVAL_MS))
+        {
+            overrides.insert(key.to_owned(), serde_json::Value::Number(json));
+        }
+    }
+}
+
+/// Effective `(POLL_RATE, PRECISE_DATA_POLL_RATE)` read from `vosu.osu`'s
+/// plugin settings store, defaulting to `150.0` / `10.0` when unset or
+/// unreadable and clamped to the supported interval bounds.
+pub(super) fn effective_osu_poll_rates(settings: &PluginSettingsService) -> (f64, f64) {
+    let Ok(overrides) = settings.stored_overrides(crate::migration::OSU_PLUGIN_ID) else {
+        return (DEFAULT_OSU_POLL_RATE_MS, DEFAULT_OSU_PRECISE_POLL_RATE_MS);
+    };
+    let read_rate = |key: &str, min: f64, default: f64| {
+        overrides
+            .get(key)
+            .and_then(serde_json::Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map_or(default, |value| {
+                value.clamp(min, ConfigDocument::MAX_INTERVAL_MS)
+            })
+    };
+    (
+        read_rate("POLL_RATE", MIN_OSU_POLL_RATE_MS, DEFAULT_OSU_POLL_RATE_MS),
+        read_rate(
+            "PRECISE_DATA_POLL_RATE",
+            MIN_OSU_PRECISE_POLL_RATE_MS,
+            DEFAULT_OSU_PRECISE_POLL_RATE_MS,
+        ),
+    )
+}
+
+/// Resolves `vosu.overlayhost`'s stored `static_folder_path` override through
+/// `Paths::static_path` before delivering `init.settings` or
+/// `SETTINGS_CHANGED` to the overlay host plugin.
+pub(super) fn overlay_root_delivery_transform(
+    paths: Paths,
+    setting: OverlayRootSetting,
+) -> SettingsDeliveryTransform {
+    Arc::new(move |plugin_id, mut effective| {
+        if plugin_id != setting.plugin {
+            return effective;
+        }
+        let configured = effective
+            .get(setting.key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let resolved = match paths.static_path(&configured) {
+            Ok(root) => root.to_string_lossy().into_owned(),
+            Err(error) => {
+                tracing::warn!(%error, "could not resolve overlay static_folder_path; delivering empty root");
+                String::new()
+            }
+        };
+        effective.insert(setting.key.to_owned(), serde_json::Value::String(resolved));
+        effective
+    })
+}
+
+/// Validates and resolves `vosu.overlayhost`'s `static_folder_path` setting
+/// on `POST /api/plugins/vosu.overlayhost/settings` before persisting it.
+pub(super) struct OverlayRootHandler {
+    pub(super) setting: OverlayRootSetting,
+    pub(super) paths: Paths,
+    pub(super) overlay: Arc<dyn OverlayComposition>,
+}
+
+impl OverlayRootHandler {
+    pub(super) fn resolve_submission(
+        &self,
+        plugin_id: &str,
+        inputs: &[(String, serde_json::Value)],
+    ) -> Result<Option<PathBuf>, String> {
+        if plugin_id != self.setting.plugin {
+            return Ok(None);
+        }
+        let Some((_, value)) = inputs.iter().rfind(|(key, _)| key == self.setting.key) else {
+            return Ok(None);
+        };
+        let Some(raw) = value.as_str() else {
+            return Ok(None);
+        };
+        self.validate_and_resolve(raw).map(Some)
+    }
+
+    pub(super) fn validate_and_resolve(&self, raw: &str) -> Result<PathBuf, String> {
+        let trimmed = raw.trim();
+        // A typo in an absolute path must not silently create an empty folder.
+        // Empty or relative paths follow `Paths::static_path` semantics.
+        if std::path::Path::new(trimmed).is_absolute() && !std::path::Path::new(trimmed).is_dir() {
+            return Err(format!("Overlays folder not found: {trimmed}"));
+        }
+        self.paths
+            .static_path(trimmed)
+            .map_err(|error| format!("Overlays folder could not be opened: {error}"))
+    }
+}
+
+/// Resolves the effective overlay root from `vosu.overlayhost`'s stored
+/// `static_folder_path` setting (empty/unset -> `<data>/static`).
+pub(super) fn resolved_overlay_root(
+    paths: &Paths,
+    settings: &PluginSettingsService,
+    setting: OverlayRootSetting,
+) -> io::Result<PathBuf> {
+    let configured = settings
+        .stored_overrides(setting.plugin)
+        .ok()
+        .and_then(|map| {
+            map.get(setting.key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default();
+    paths.static_path(configured.trim())
 }
 
 pub(super) struct NetworkChange {
@@ -154,17 +500,6 @@ impl ConfigUpdateService for RuntimeConfig {
             // Reject instead of silently ignoring or clamping, so the dashboard
             // never reports a save that did not persist the submitted value.
             for (key, minimum, maximum) in [
-                ("POLL_RATE", 100.0, ConfigDocument::MAX_INTERVAL_MS),
-                (
-                    "PRECISE_DATA_POLL_RATE",
-                    1.0,
-                    ConfigDocument::MAX_INTERVAL_MS,
-                ),
-                (
-                    "V2_SUBSCRIPTION_DEBOUNCE",
-                    1.0,
-                    ConfigDocument::MAX_INTERVAL_MS,
-                ),
                 (
                     "API_V1_SUBSCRIPTION_DEBOUNCE",
                     1.0,
@@ -188,18 +523,6 @@ impl ConfigUpdateService for RuntimeConfig {
                 if matches!(key, "SERVER_PORT" | "DASHBOARD_PORT") && value.fract() != 0.0 {
                     return Err(format!("{key} must be a whole number"));
                 }
-            }
-            // A typo would otherwise create an empty folder and the Overlays
-            // page would look like every overlay was gone. Relative paths keep
-            // their legacy meaning (next to the executable) and are created.
-            if let Some(path) = object
-                .get("STATIC_FOLDER_PATH")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|path| std::path::Path::new(path).is_absolute())
-                && !std::path::Path::new(path).is_dir()
-            {
-                return Err(format!("Overlays folder not found: {path}"));
             }
             // Serialize service reconciliation with watcher delivery, so an older
             // notification cannot re-enable a service after a newer settings save.
@@ -305,9 +628,9 @@ impl ConfigUpdateService for RuntimeConfig {
     }
 }
 
-/// `SettingsView` (A7.1): exactly the 17 keys the Settings page renders, by
-/// their configuration names. `ENABLE_DASHBOARD` is never included: nothing
-/// in the dashboard reads or changes it (A7.3).
+/// `SettingsView` (A7.1 / M8): exactly the 11 core keys the Settings page
+/// renders, by their configuration names. `ENABLE_DASHBOARD` is never
+/// included (A7.3); osu! and overlay-root keys live in plugin settings.
 pub(super) fn settings_view(
     config: &Config,
     updates_externally_managed: bool,
@@ -318,19 +641,13 @@ pub(super) fn settings_view(
             "OPEN_DASHBOARD_ON_STARTUP": config.open_dashboard_on_startup,
             "START_AT_LOGIN": config.start_at_login,
             "DEBUG_LOG": config.debug_log,
-            "CALCULATE_PP": config.calculate_pp,
-            "READ_MANIA_SCROLL_SPEED": config.read_mania_scroll_speed,
-            "POLL_RATE": config.poll_rate,
-            "PRECISE_DATA_POLL_RATE": config.precise_data_poll_rate,
             "API_V1_SUBSCRIPTION_DEBOUNCE": config.api_v1_subscription_debounce,
-            "SHOW_MP_COMMANDS": config.show_mp_commands,
             "SERVER_IP": config.server_ip,
             "SERVER_PORT": config.server_port,
             "DASHBOARD_IP": config.dashboard_ip,
             "DASHBOARD_PORT": config.dashboard_port,
             "ALLOWED_IPS": config.allowed_ips,
             "MAX_PACKAGE_MIB": config.max_package_mib,
-            "STATIC_FOLDER_PATH": config.static_folder_path,
         },
         "updates_externally_managed": updates_externally_managed,
     })
@@ -377,18 +694,12 @@ pub(super) fn apply_config_values(
     boolean!("OPEN_DASHBOARD_ON_STARTUP", open_dashboard_on_startup);
     boolean!("START_AT_LOGIN", start_at_login);
     boolean!("DEBUG_LOG", debug_log);
-    boolean!("CALCULATE_PP", calculate_pp);
-    boolean!("SHOW_MP_COMMANDS", show_mp_commands);
-    boolean!("READ_MANIA_SCROLL_SPEED", read_mania_scroll_speed);
-    number!("POLL_RATE", poll_rate);
-    number!("PRECISE_DATA_POLL_RATE", precise_data_poll_rate);
     number!("API_V1_SUBSCRIPTION_DEBOUNCE", api_v1_subscription_debounce);
     number!("SERVER_PORT", server_port);
     number!("DASHBOARD_PORT", dashboard_port);
     number!("MAX_PACKAGE_MIB", max_package_mib);
     string!("DASHBOARD_IP", dashboard_ip);
     string!("SERVER_IP", server_ip);
-    string!("STATIC_FOLDER_PATH", static_folder_path);
     string!("ALLOWED_IPS", allowed_ips);
 }
 
@@ -420,6 +731,7 @@ impl UpdateNotice {
 #[derive(Clone)]
 pub(super) struct RuntimeReportInput {
     pub(super) config: Arc<ConfigStore>,
+    pub(super) plugin_settings: Arc<PluginSettingsService>,
     pub(super) plugins: Arc<PluginHost>,
     pub(super) adapters: Arc<super::adapters::Adapters>,
     pub(super) overlay: Arc<dyn OverlayComposition>,
@@ -429,7 +741,7 @@ pub(super) struct RuntimeReportInput {
 
 impl ReportInputProvider for RuntimeReportInput {
     fn dashboard_status(&self) -> serde_json::Value {
-        let config = self.config.current();
+        let (poll_rate, precise_data_poll_rate) = effective_osu_poll_rates(&self.plugin_settings);
         let instances: Vec<_> = self
             .plugins
             .diagnostic_sessions()
@@ -440,8 +752,8 @@ impl ReportInputProvider for RuntimeReportInput {
                     "client": entry.client.to_ascii_lowercase(),
                     "version": self.adapters.services.client_version(&entry.session).unwrap_or(entry.version),
                     "state": entry.state,
-                    "pollIntervalMs": config.poll_rate,
-                    "precisePollIntervalMs": config.precise_data_poll_rate,
+                    "pollIntervalMs": poll_rate,
+                    "precisePollIntervalMs": precise_data_poll_rate,
                 })
             })
             .collect();
@@ -616,19 +928,4 @@ pub(super) fn dashboard_listen_target(config: &Config) -> io::Result<ListenTarge
     dashboard.server_ip = config.dashboard_ip.clone();
     dashboard.server_port = config.dashboard_port;
     listen_target(&dashboard)
-}
-
-pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> io::Result<PathBuf> {
-    paths.static_path(&config.static_folder_path)
-}
-
-/// Resolves `config`'s overlay root and switches the overlay host to it; an
-/// unresolvable root keeps the previous one.
-pub(super) fn reload_overlay_root(
-    paths: &Paths,
-    config: &Config,
-    overlay: &dyn OverlayComposition,
-) -> io::Result<()> {
-    overlay.reload_root(resolved_static_root(paths, config)?);
-    Ok(())
 }

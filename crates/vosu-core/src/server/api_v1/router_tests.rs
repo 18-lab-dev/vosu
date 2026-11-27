@@ -18,8 +18,8 @@ async fn api_v1_http_and_session_events_use_real_transport() {
             Arc::new(crate::logging::StdoutConsole),
         )
         .unwrap();
-        let settings = Arc::new(crate::plugin::settings::ConfigSettingsBridgeB2::new(
-            config.clone(),
+        let settings = Arc::new(crate::plugin::settings::PluginSettingsStore::open(
+            root.path(),
         ));
         let host = crate::plugin::PluginHost::new(
             logger.clone(),

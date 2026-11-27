@@ -12,17 +12,11 @@ pub struct Config {
     pub open_dashboard_on_startup: bool,
     pub start_at_login: bool,
     pub debug_log: bool,
-    pub calculate_pp: bool,
-    pub poll_rate: f64,
-    pub precise_data_poll_rate: f64,
     pub api_v1_subscription_debounce: f64,
-    pub show_mp_commands: bool,
-    pub read_mania_scroll_speed: bool,
     pub server_ip: String,
     pub server_port: f64,
     pub dashboard_ip: String,
     pub dashboard_port: f64,
-    pub static_folder_path: String,
     pub allowed_ips: String,
     pub max_package_mib: f64,
 }
@@ -35,17 +29,11 @@ impl Default for Config {
             open_dashboard_on_startup: true,
             start_at_login: false,
             debug_log: false,
-            calculate_pp: true,
-            poll_rate: 150.0,
-            precise_data_poll_rate: 10.0,
             api_v1_subscription_debounce: 1.0,
-            show_mp_commands: false,
-            read_mania_scroll_speed: true,
             server_ip: "127.0.0.1".to_owned(),
             server_port: 24_050.0,
             dashboard_ip: "127.0.0.1".to_owned(),
             dashboard_port: 24_051.0,
-            static_folder_path: "./static".to_owned(),
             allowed_ips: "127.0.0.1,localhost,absolute".to_owned(),
             max_package_mib: 512.0,
         }
@@ -78,17 +66,11 @@ pub enum ConfigKey {
     OpenDashboardOnStartup,
     StartAtLogin,
     DebugLog,
-    CalculatePp,
-    PollRate,
-    PreciseDataPollRate,
     ApiV1SubscriptionDebounce,
-    ShowMpCommands,
-    ReadManiaScrollSpeed,
     ServerIp,
     ServerPort,
     DashboardIp,
     DashboardPort,
-    StaticFolderPath,
     AllowedIps,
     MaxPackageMib,
 }
@@ -127,7 +109,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 18] = [
+const SCHEMA_ITEMS: [ConfigItem; 12] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -159,40 +141,10 @@ const SCHEMA_ITEMS: [ConfigItem; 18] = [
         None,
     ),
     item(
-        ConfigKey::CalculatePp,
-        "CALCULATE_PP",
-        ConfigDefault::Boolean(true),
-        None,
-    ),
-    item(
-        ConfigKey::PollRate,
-        "POLL_RATE",
-        ConfigDefault::Number(150.0),
-        Some(100.0),
-    ),
-    item(
-        ConfigKey::PreciseDataPollRate,
-        "PRECISE_DATA_POLL_RATE",
-        ConfigDefault::Number(10.0),
-        Some(1.0),
-    ),
-    item(
         ConfigKey::ApiV1SubscriptionDebounce,
         "API_V1_SUBSCRIPTION_DEBOUNCE",
         ConfigDefault::Number(1.0),
         Some(1.0),
-    ),
-    item(
-        ConfigKey::ShowMpCommands,
-        "SHOW_MP_COMMANDS",
-        ConfigDefault::Boolean(false),
-        None,
-    ),
-    item(
-        ConfigKey::ReadManiaScrollSpeed,
-        "READ_MANIA_SCROLL_SPEED",
-        ConfigDefault::Boolean(true),
-        None,
     ),
     item(
         ConfigKey::ServerIp,
@@ -216,12 +168,6 @@ const SCHEMA_ITEMS: [ConfigItem; 18] = [
         ConfigKey::DashboardPort,
         "DASHBOARD_PORT",
         ConfigDefault::Number(24_051.0),
-        None,
-    ),
-    item(
-        ConfigKey::StaticFolderPath,
-        "STATIC_FOLDER_PATH",
-        ConfigDefault::String("./static"),
         None,
     ),
     item(
@@ -256,33 +202,25 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
     items: &SCHEMA_ITEMS,
 };
 
-/// The source's serialization order, which intentionally differs from schema
-/// declaration order.
-pub const BINDING_ORDER: [&str; 18] = [
+/// Canonical serialization order for core `vosu.toml` bindings.
+pub const BINDING_ORDER: [&str; 12] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "ENABLE_DASHBOARD",
     "OPEN_DASHBOARD_ON_STARTUP",
     "START_AT_LOGIN",
-    "SHOW_MP_COMMANDS",
-    "CALCULATE_PP",
-    "READ_MANIA_SCROLL_SPEED",
-    "POLL_RATE",
-    "PRECISE_DATA_POLL_RATE",
     "API_V1_SUBSCRIPTION_DEBOUNCE",
     "SERVER_IP",
     "SERVER_PORT",
     "DASHBOARD_IP",
     "DASHBOARD_PORT",
     "ALLOWED_IPS",
-    "STATIC_FOLDER_PATH",
     "MAX_PACKAGE_MIB",
 ];
 
 /// A blank line is inserted after each of these bindings.
-pub const NEWLINE_INSERTIONS: [&str; 4] = [
+pub const NEWLINE_INSERTIONS: [&str; 3] = [
     "START_AT_LOGIN",
-    "READ_MANIA_SCROLL_SPEED",
     "API_V1_SUBSCRIPTION_DEBOUNCE",
     "ALLOWED_IPS",
 ];

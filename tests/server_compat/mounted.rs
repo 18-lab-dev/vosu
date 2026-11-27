@@ -30,11 +30,7 @@ use vosu_core::server::{
     websocket::StateDemand,
 };
 use vosu_core::{
-    config::ConfigStore,
-    plugin::settings::{ConfigSettingsBridgeB2, PluginSettingsService, PluginSettingsStore},
-    runtime::{
-        ListenerOwner, OverlayCatalog, OverlayInputs, RuntimeSettingsStorage, WebSocketHubs,
-    },
+    runtime::{ListenerOwner, OverlayCatalog, OverlayInputs, WebSocketHubs},
     server::service::{
         ConfigUpdateService, OverlayComposition, ProductionRouteDelegate, ProductionServices,
         ReportInputProvider, SurfaceRouter, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
@@ -228,22 +224,11 @@ impl Mounted {
                 .unwrap();
                 host.create_instance(instance, &loaded[0], data_dir.clone(), None)
                     .unwrap();
-                let config = Arc::new(
-                    ConfigStore::initialize(roots.path().join("vosu.toml"))
-                        .await
-                        .unwrap(),
-                );
-                let storage = Arc::new(RuntimeSettingsStorage::new(
-                    Arc::new(ConfigSettingsBridgeB2::new(config.clone())),
-                    Arc::new(PluginSettingsStore::open(roots.path())),
-                    bundle.overlay_root,
-                ));
                 let overlay = bundle.hosts.overlay(OverlayInputs {
                     host: host.clone(),
                     instance,
                     data_dir,
-                    settings: Arc::new(PluginSettingsService::new(storage.clone())),
-                    storage,
+                    overlay_root: bundle.overlay_root,
                     static_root: roots.path().join("static"),
                     settings_root: roots.path().join("settings"),
                     cache_root: roots.path().join("cache"),
@@ -252,7 +237,6 @@ impl Mounted {
                     shutdown: CancellationToken::new(),
                     origins: Arc::new(Origins::new(String::new(), String::new()).unwrap()),
                 });
-                config.shutdown().await.unwrap();
                 let unused = Arc::new(Unused);
                 let services = ProductionServices::with_native_report_probe(
                     overlay.clone(),

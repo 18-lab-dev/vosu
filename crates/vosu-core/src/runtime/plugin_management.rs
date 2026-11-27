@@ -235,6 +235,7 @@ pub(super) struct PluginManagement {
     store: Arc<ApprovalStore>,
     roster: Roster,
     catalog: Option<(Arc<CatalogRuntime>, Arc<RootHandoff>)>,
+    overlay_root: Option<super::config::OverlayRootHandler>,
     /// One management action at a time.
     actions: Arc<tokio::sync::Mutex<()>>,
     /// Where a saved plugin setting goes: every live instance of the id
@@ -339,11 +340,6 @@ fn settings_refusal(plugin: &str, error: &SettingsError) -> Response {
             "invalid_settings",
             error.to_string(),
         ),
-        SettingsError::ManagedElsewhere(_) | SettingsError::NotBridged(_) => refusal(
-            StatusCode::CONFLICT,
-            "settings_managed_elsewhere",
-            "these settings are changed on the Settings page",
-        ),
         SettingsError::Storage(detail) => {
             tracing::warn!(%plugin, %detail, "plugin settings storage failed");
             refusal(
@@ -387,6 +383,7 @@ impl PluginManagement {
             store,
             roster,
             catalog: None,
+            overlay_root: None,
             actions: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
@@ -401,6 +398,10 @@ impl PluginManagement {
         handoff: Arc<RootHandoff>,
     ) {
         self.catalog = Some((runtime, handoff));
+    }
+
+    pub(super) fn attach_overlay_root(&mut self, handler: super::config::OverlayRootHandler) {
+        self.overlay_root = Some(handler);
     }
 
     /// Tests observe settings deliveries instead of a live instance.
@@ -504,6 +505,7 @@ impl PluginManagement {
             "restart_delay_ms": null,
             "approved": false,
             "approval": null,
+            "has_settings": false,
         });
         let Some(package) = reviewed.as_ref().or(plugin.package.as_ref()) else {
             view["reason"] = json!("load");
@@ -513,6 +515,7 @@ impl PluginManagement {
         view["id"] = json!(package.id);
         view["name"] = json!(package.name);
         view["version"] = json!(package.version);
+        view["has_settings"] = json!(package.settings_schema.is_some());
         view["runtime"] = json!(match package.runtime {
             Runtime::InProcess => "in-process",
             Runtime::Process => "process",
@@ -927,15 +930,28 @@ impl PluginManagement {
                 "expected [{\"uniqueID\", \"value\"}]",
             );
         };
-        let inputs = inputs
+        let inputs: Vec<(String, Value)> = inputs
             .into_iter()
             .map(|input| (input.unique_id, input.value))
             .collect();
+        let next_overlay_root = match self
+            .overlay_root
+            .as_ref()
+            .map(|handler| handler.resolve_submission(id, &inputs))
+            .transpose()
+        {
+            Ok(resolved) => resolved.flatten(),
+            Err(message) => return refusal(StatusCode::BAD_REQUEST, "invalid_settings", message),
+        };
         let message = match service.submit(id, &schema, inputs) {
             Ok(message) => message,
             Err(error) => return settings_refusal(id, &error),
         };
-        self.delivery.settings_changed(id, message);
+        if let (Some(handler), Some(resolved)) = (&self.overlay_root, next_overlay_root) {
+            handler.overlay.reload_root(resolved);
+        } else {
+            self.delivery.settings_changed(id, message);
+        }
         match service.dashboard_view(id, Some(&schema)) {
             Ok(view) => respond(StatusCode::OK, view),
             Err(error) => settings_refusal(id, &error),

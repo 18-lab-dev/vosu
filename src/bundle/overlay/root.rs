@@ -1,25 +1,23 @@
-//! The overlay host's core side. A7.1-OR: core seeds `vosu.overlayhost`'s
-//! `static_folder_path` setting from the resolved `STATIC_FOLDER_PATH` until
-//! M8 migrates the key, delivers every effective change as one
-//! `SETTINGS_CHANGED`, and mints the read-only `OverlayRootView` lease the
-//! host serves through, retiring the previous generation's lease. A7 route
-//! inventory: the host's counter API and command feed registrations.
+//! The overlay host's core side (A7.1-OR / M8): delivers every effective
+//! `static_folder_path` root change as one `SETTINGS_CHANGED` and mints the
+//! read-only `OverlayRootView` lease the host serves through, retiring the
+//! previous generation's lease. A7 route inventory: the host's counter API
+//! and command feed registrations.
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use vosu_core::{
     plugin::{
-        OverlayRootRetirement, PluginHost, PluginInstanceId,
-        settings::{PluginSettingsService, SettingsChangeDelivery, SettingsSchemaSource},
+        OverlayRootRetirement, PluginHost, PluginInstanceId, settings::SettingsChangeDelivery,
     },
-    runtime::RuntimeSettingsStorage,
+    runtime::OverlayRootSetting,
     server::{origins::Origins, websocket::WebSocketHub},
 };
 use vosu_overlay_host::{
     OverlayOrigin, OverlayQueryBinding, OverlayRootView, OverlayRoutes, OverlayStatic,
     ReloadableCounterService, commands::CommandProcessor, presentation::OverlayPresenter,
 };
-use vosu_plugin_api::{Message, SettingsChanged};
+use vosu_plugin_api::{CborValue, Message, SettingsChanged};
 use vosu_surface::routes::RegistrationLease;
 
 /// Owns the overlay root's generations, the overlay host's route
@@ -27,8 +25,7 @@ use vosu_surface::routes::RegistrationLease;
 pub struct OverlayRootComposition {
     host: Arc<PluginHost>,
     instance: PluginInstanceId,
-    storage: Arc<RuntimeSettingsStorage>,
-    settings: Arc<PluginSettingsService>,
+    overlay_root: OverlayRootSetting,
     pub(super) counters: Arc<ReloadableCounterService>,
     pub(super) serving: OverlayStatic,
     generation: Mutex<Option<(u64, Option<OverlayRootRetirement>)>>,
@@ -44,8 +41,7 @@ impl OverlayRootComposition {
         host: Arc<PluginHost>,
         instance: PluginInstanceId,
         data_dir: &Path,
-        storage: Arc<RuntimeSettingsStorage>,
-        settings: Arc<PluginSettingsService>,
+        overlay_root: OverlayRootSetting,
         counters: Arc<ReloadableCounterService>,
         origins: Arc<Origins>,
     ) -> Self {
@@ -54,8 +50,7 @@ impl OverlayRootComposition {
         Self {
             host,
             instance,
-            storage,
-            settings,
+            overlay_root,
             query: Mutex::new(Some(vosu_overlay_host::bind_overlay_query(
                 data_dir, &counters, origin,
             ))),
@@ -99,21 +94,22 @@ impl OverlayRootComposition {
         Ok(())
     }
 
-    /// Applies one resolved overlay root: seeds and delivers the complete
-    /// effective settings object, points the host's storage at it, then
-    /// mints the next read-only lease and retires the previous one. A root
-    /// that cannot be opened serves nothing until the next change.
+    /// Applies one resolved overlay root: delivers the complete effective
+    /// settings object, points the host's storage at it, then mints the next
+    /// read-only lease and retires the previous one. A root that cannot be
+    /// opened serves nothing until the next change.
     pub fn apply(&self, root: &Path) {
-        self.storage.seed_overlay_root(root);
-        let id = self.storage.overlay_setting().plugin;
-        let schema = self.host.schema_for(id);
-        if let Ok(values) = self.settings.effective_settings(id, schema.as_ref()) {
-            if let Err(error) = self.counters.apply_settings(&values) {
-                tracing::warn!(%error, "overlay root setting was not applied");
-            }
-            self.host
-                .settings_changed(id, Message::SettingsChanged(SettingsChanged { values }));
+        let values = CborValue::Map(vec![(
+            CborValue::Text(self.overlay_root.key.to_owned()),
+            CborValue::Text(root.to_string_lossy().into_owned()),
+        )]);
+        if let Err(error) = self.counters.apply_settings(&values) {
+            tracing::warn!(%error, "overlay root setting was not applied");
         }
+        self.host.settings_changed(
+            self.overlay_root.plugin,
+            Message::SettingsChanged(SettingsChanged { values }),
+        );
         let lease = self.host.overlay_root_lease(self.instance, root);
         let mut generation = self.generation.lock().unwrap_or_else(|p| p.into_inner());
         let Some((sequence, current)) = generation.as_mut() else {

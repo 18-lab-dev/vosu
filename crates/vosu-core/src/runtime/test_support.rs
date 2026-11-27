@@ -169,16 +169,38 @@ pub async fn start_test_production_composition(
         LoggerOptions::default(),
         Arc::new(StdoutConsole),
     )?;
-    let storage = Arc::new(super::overlay_root::RuntimeSettingsStorage::new(
-        Arc::new(ConfigSettingsBridgeB2::new(options.config.clone())),
-        Arc::new(crate::plugin::settings::PluginSettingsStore::open(
-            &plugin_settings_root,
-        )),
-        bundle.overlay_root,
-    ));
-    storage.seed_overlay_root(&static_root);
-    let settings = Arc::new(PluginSettingsService::new(
-        storage.clone() as Arc<dyn SettingsStorage>
+    let settings_store = Arc::new(PluginSettingsStore::open(&plugin_settings_root));
+    let overlay_root = bundle.overlay_root;
+    let initial_static_root = static_root.clone();
+    let settings = Arc::new(PluginSettingsService::with_delivery_transform(
+        settings_store as Arc<dyn SettingsStorage>,
+        Arc::new(move |plugin_id, mut effective| {
+            if plugin_id == overlay_root.plugin {
+                let raw = effective
+                    .get(overlay_root.key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .trim();
+                let resolved = if raw.is_empty() {
+                    initial_static_root.clone()
+                } else {
+                    let path = std::path::Path::new(raw);
+                    if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        initial_static_root
+                            .parent()
+                            .unwrap_or(&initial_static_root)
+                            .join(path)
+                    }
+                };
+                effective.insert(
+                    overlay_root.key.to_owned(),
+                    serde_json::Value::String(resolved.to_string_lossy().into_owned()),
+                );
+            }
+            effective
+        }),
     ));
     let plugins = match &options.game {
         Some(game) => {
@@ -233,8 +255,7 @@ pub async fn start_test_production_composition(
             host: Arc::clone(plugins),
             instance: overlay_instance,
             data_dir: plugin_data.join(bundle.overlay_root.plugin),
-            storage,
-            settings,
+            overlay_root: bundle.overlay_root,
             static_root,
             settings_root: options.settings_root,
             cache_root: options.cache_root,
@@ -245,7 +266,7 @@ pub async fn start_test_production_composition(
         });
         owner.overlay = Some(overlay.clone());
         let (adapters, hubs) =
-            adapters::Adapters::start(bundle, plugins, options.config.clone(), true).await?;
+            adapters::Adapters::start(bundle, plugins, Arc::clone(&settings), true).await?;
         owner.adapters = Some(adapters.clone());
         let websocket = WebSocketEndpoints {
             v1: hubs.v1.clone(),
@@ -261,6 +282,7 @@ pub async fn start_test_production_composition(
             Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
             Arc::new(RuntimeReportInput {
                 config: Arc::clone(&options.config),
+                plugin_settings: Arc::clone(&settings),
                 plugins: Arc::clone(plugins),
                 adapters: Arc::clone(&adapters),
                 overlay,

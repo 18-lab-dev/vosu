@@ -40,21 +40,6 @@ mod broker;
 mod dashboard_off;
 
 #[cfg(any(target_os = "linux", feature = "test-harness"))]
-async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        match bounded!(client.get(url).send()) {
-            Ok(response) => return response,
-            Err(error) if Instant::now() < deadline => {
-                let _ = error;
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(error) => panic!("daemon did not become reachable at {url}: {error}"),
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", feature = "test-harness"))]
 include!("daemon_smoke/websocket.rs");
 #[cfg(target_os = "linux")]
 include!("daemon_smoke/design_system.rs");
@@ -138,6 +123,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             legacy_config(port, &static_root),
         )
         .unwrap();
+        write_overlay_root_plugin_setting(&selected_config, &static_root);
         selected_config.join("settings")
     };
     fs::create_dir_all(&old_settings_dir).unwrap();
@@ -193,6 +179,10 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .collect();
     assert_eq!(ids, vosu::BUNDLE.plugin_ids);
     assert!(plugins.iter().all(|plugin| plugin["state"] == "running"));
+    assert!(plugins.iter().all(|plugin| {
+        let id = plugin["id"].as_str().unwrap();
+        plugin["has_settings"].as_bool() == Some(matches!(id, "vosu.osu" | "vosu.overlayhost"))
+    }));
     let dashboard = bounded!(dashboard.text()).unwrap();
     let csrf = dashboard
         .split("\"csrf\":\"")
@@ -268,10 +258,14 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         migrated.get("SERVER_PORT").and_then(toml::Value::as_float),
         Some(f64::from(port))
     );
+    assert!(migrated.get("STATIC_FOLDER_PATH").is_none());
+    let plugin_settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(selected_config.join("plugins/settings.json"))
+            .expect("read plugin settings store"),
+    )
+    .expect("valid plugin settings json");
     assert_eq!(
-        migrated
-            .get("STATIC_FOLDER_PATH")
-            .and_then(toml::Value::as_str),
+        plugin_settings["plugins"]["vosu.overlayhost"]["static_folder_path"].as_str(),
         Some(static_root.to_string_lossy().as_ref())
     );
     assert!(!config_home.join("vosu/vosu.env").exists());
@@ -893,7 +887,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             .header(reqwest::header::ORIGIN, &management)
             .header("X-Vosu-CSRF", csrf)
             .json(&serde_json::json!({
-                "SHOW_MP_COMMANDS": true,
+                "DEBUG_LOG": true,
                 "API_V1_SUBSCRIPTION_DEBOUNCE": 1.125
             }))
             .send()
@@ -908,9 +902,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         toml::from_str(&fs::read_to_string(&current_config).expect("read settingsSave TOML"))
             .expect("settingsSave persists valid typed TOML");
     assert_eq!(
-        persisted
-            .get("SHOW_MP_COMMANDS")
-            .and_then(toml::Value::as_bool),
+        persisted.get("DEBUG_LOG").and_then(toml::Value::as_bool),
         Some(true)
     );
     assert_eq!(
@@ -918,6 +910,21 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             .get("API_V1_SUBSCRIPTION_DEBOUNCE")
             .and_then(toml::Value::as_float),
         Some(1.125)
+    );
+    let osu_saved = bounded!(
+        client
+            .post(format!("{management}/api/plugins/vosu.osu/settings"))
+            .header(reqwest::header::ORIGIN, &management)
+            .header("X-Vosu-CSRF", csrf)
+            .json(&serde_json::json!([{"uniqueID": "SHOW_MP_COMMANDS", "value": true}]))
+            .send()
+    )
+    .expect("save vosu.osu plugin settings");
+    assert_eq!(osu_saved.status(), 200);
+    let osu_view: serde_json::Value = bounded!(osu_saved.json()).unwrap();
+    assert_eq!(
+        osu_view["values"]["SHOW_MP_COMMANDS"],
+        serde_json::json!(true)
     );
 
     let deleted = bounded!(
