@@ -56,6 +56,8 @@ pub fn clear_session_memory(pid: u32) {
 ///
 /// Declare this guard before creating instances so `destroy_all` runs even
 /// when an assertion fails. Must be dropped outside an async runtime context.
+///
+/// [`PluginHost`]: super::PluginHost
 pub struct HostShutdown<'a> {
     host: &'a super::PluginHost,
 }

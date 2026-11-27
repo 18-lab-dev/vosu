@@ -112,9 +112,17 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
         harness.pids[..16].iter().map(|pid| handles[pid]).collect()
     };
     let focus_before = FOCUS_GAINS.lock().unwrap().clone();
+    // Pre-build the four SettingsChanged payloads through real PluginSettingsStore
+    // persistence once; keeping 4,000 synchronous fsync+atomic_replace writes out
+    // of the tight loop avoids serializing the eight producer threads on NTFS
+    // FlushFileBuffers instead of stressing concurrent plugin dispatch.
+    let settings_messages = Arc::new(std::array::from_fn::<_, 4, _>(|i| {
+        harness.apply(100.0 + i as f64)
+    }));
     let (finished, completions) = mpsc::sync_channel(8);
     for worker in 0..8 {
         let harness = harness.clone();
+        let settings_messages = settings_messages.clone();
         let finished = finished.clone();
         std::thread::spawn(move || {
             for iteration in 0..500 {
@@ -129,7 +137,7 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
                     .foreground
                     .set(Some(harness.pids[(iteration + worker) % 16]));
                 harness.host.foreground_changed();
-                harness.dispatch(&harness.apply(100.0 + (iteration % 4) as f64));
+                harness.dispatch(&settings_messages[iteration % 4]);
                 if iteration % 3 != 0 {
                     harness.host.process_exited(pid);
                 }
