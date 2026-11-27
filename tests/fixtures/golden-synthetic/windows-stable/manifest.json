@@ -1,6 +1,6 @@
 {
   "format": "vosu-golden-platform-v1",
-  "normalization_version": 2,
+  "normalization_version": 3,
   "provenance": "synthetic",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
   "platform": "windows-stable",
@@ -14,7 +14,7 @@
     "sha256": "6ba575b5dd369e931e2c76ebff449a4a3f12b829da6959e931f0d267e5588e45"
   },
   "vosu": {
-    "commit": "7a4ee24b91ec15815063df2dae5a24d34b7f56be",
+    "commit": "585ea15a6bf3c0a7ddae454725bde78847d96ee9",
     "version": "2.0.0-alpha.2",
     "profile": "debug",
     "features": [

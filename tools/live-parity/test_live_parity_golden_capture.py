@@ -256,7 +256,7 @@ class FakeTraversalTests(CaptureTestCase):
         scenario = gc.ScenarioSet("test-traversal", gc.TRAVERSAL, TRAVERSAL_CASES)
         client = FakeClient(self.state)
         capture = self.capture(scenario, client, self.config(scenario))
-        self.assertEqual(client.requests, list(gc.TRAVERSAL))
+        self.assertEqual(client.requests, ["main-menu", *gc.TRAVERSAL])
         self.assertEqual(capture["expected_cases"], [c.id for c in rm.MATRIX if c.id in TRAVERSAL_CASES])
         self.assertEqual([case["id"] for case in capture["cases"]], capture["expected_cases"])
         for case in capture["cases"]:
@@ -273,6 +273,8 @@ class FakeTraversalTests(CaptureTestCase):
                 self.assertEqual(before, after)
         self.assertEqual(oct(self.out.stat().st_mode & 0o777), "0o600")
         transcript = self.transcript()
+        self.assertEqual({k: transcript["main_menu_fft"][k] for k in ("state", "source", "vosu")},
+                         {"state": 0, "source": True, "vosu": True})
         self.assertEqual([b["barrier"] for b in transcript["barriers"]], list(gc.TRAVERSAL))
         self.assertEqual(transcript["cleanup"]["errors"], [])
         candidate = self.golden(self.out)

@@ -13,12 +13,11 @@ use super::{
     divergence::{self, Part, Rule},
     envelope::{Envelope, reference_position, tokens, tree_position},
     fixture::{Asset, Body, Case, LAST_MODIFIED, Platform, compared},
-    payload_clock::Clocks,
+    payload_clock::Scope,
     replay::Replay,
     routes::{self, RawResponse},
     websocket::{self, Frame, Step},
 };
-use serde_json::Value;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -598,13 +597,14 @@ pub(super) fn same_body(got: &[u8], want: &[u8], json: bool) -> bool {
 }
 
 pub(super) fn same_body_on(got: &[u8], want: &[u8], json: bool, route: &str) -> bool {
+    body_matches(got, want, json, Scope::strict(route))
+}
+
+fn body_matches(got: &[u8], want: &[u8], json: bool, scope: Scope<'_>) -> bool {
     if !json || (got.is_empty() && want.is_empty()) {
         return got == want;
     }
-    match (serde_json::from_slice(got), serde_json::from_slice(want)) {
-        (Ok(got), Ok(want)) => same_json(&got, &want, &Clocks::for_route(route, &want)),
-        _ => false,
-    }
+    scope.same_json(got, want) == Some(true)
 }
 
 pub(super) fn same_text_frame(got: &[u8], want: &[u8]) -> bool {
@@ -612,36 +612,9 @@ pub(super) fn same_text_frame(got: &[u8], want: &[u8]) -> bool {
 }
 
 pub(super) fn same_text_frame_on(got: &[u8], want: &[u8], route: &str) -> bool {
-    match (serde_json::from_slice(got), serde_json::from_slice(want)) {
-        (Ok(got), Ok(want)) => same_json(&got, &want, &Clocks::for_route(route, &want)),
-        _ => got == want,
-    }
-}
-
-fn same_json(got: &Value, want: &Value, clocks: &Clocks<'_>) -> bool {
-    if let Some(matches) = clocks.compare(got, want) {
-        return matches;
-    }
-    match (got, want) {
-        (Value::Number(a), Value::Number(b)) => {
-            // GOLDEN_CONTRACT.md §7; mirrored in tools/live-parity/parity_volatile.py.
-            const RELATIVE_TOLERANCE: f64 = 1e-12;
-            let a = a.as_f64().expect("JSON number fits in binary64");
-            let b = b.as_f64().expect("JSON number fits in binary64");
-            (a - b).abs() <= RELATIVE_TOLERANCE * a.abs().max(b.abs())
-        }
-        (Value::Object(got), Value::Object(want)) => {
-            got.len() == want.len()
-                && got.iter().all(|(key, got)| {
-                    want.get(key)
-                        .is_some_and(|want| same_json(got, want, clocks))
-                })
-        }
-        (Value::Array(got), Value::Array(want)) => {
-            got.len() == want.len() && got.iter().zip(want).all(|(a, b)| same_json(a, b, clocks))
-        }
-        _ => got == want,
-    }
+    Scope::strict(route)
+        .same_json(got, want)
+        .unwrap_or(got == want)
 }
 
 fn body_len(body: &Body) -> usize {
@@ -829,16 +802,13 @@ pub fn compare(
                 })
             },
         ) && (!matches!(case.expected.body, Body::Asset { .. }) || body_rule.is_some());
-        let route = divergence::route(case);
+        let scope = Scope::for_case(divergence::route(case), platform);
         match want {
-            Ok(want) if same_body_on(&observed.body, &want, json, &route) => {}
-            Ok(want) if json && want == observed.body => {
-                push(
-                    "body",
-                    "both sides sent the same invalid JSON payload".into(),
-                );
-            }
-            Ok(want) => push("body", difference(&observed.body, &want)),
+            Ok(want) if body_matches(&observed.body, &want, json, scope) => {}
+            Ok(want) => push(
+                "body",
+                payload_difference(&observed.body, &want, json, scope),
+            ),
             Err(error) => push("body", error),
         }
         let sequence = sequence_rule(rules, platform, case);
@@ -849,7 +819,7 @@ pub fn compare(
             frames(
                 expected,
                 &observed.frames,
-                &route,
+                scope,
                 rule(&Part::WsFrame),
                 &mut report.used,
                 &mut push,
@@ -887,7 +857,7 @@ pub(super) fn payload_frames(
 fn frames(
     expected: &[super::fixture::ExpectedFrame],
     observed: &[Frame],
-    route: &str,
+    scope: Scope<'_>,
     rule: Option<&Rule>,
     used: &mut BTreeSet<usize>,
     push: &mut impl FnMut(&str, String),
@@ -919,6 +889,12 @@ fn frames(
         }
         let want_flags = (want.from_server, want.fin, want.opcode, want.masked);
         let got_flags = (got.from_server, got.fin, got.opcode, got.masked);
+        let text = want.fin && want.opcode == 1;
+        let scope = if want.from_server {
+            scope
+        } else {
+            Scope::strict("")
+        };
         if want_flags != got_flags {
             push(
                 "ws.frame",
@@ -926,20 +902,29 @@ fn frames(
                     "frame {index}: (server, fin, opcode, masked) {got_flags:?}, expected {want_flags:?}"
                 ),
             );
-        } else if !(if want.fin && want.opcode == 1 {
-            same_text_frame_on(
-                &got.payload,
-                &payload,
-                if want.from_server { route } else { "" },
-            )
+        } else if !(if text {
+            scope
+                .same_json(&got.payload, &payload)
+                .unwrap_or(got.payload.as_slice() == payload.as_ref())
         } else {
             payload == got.payload
         }) {
             push(
                 "ws.frame",
-                format!("frame {index}: {}", difference(&got.payload, &payload)),
+                format!(
+                    "frame {index}: {}",
+                    payload_difference(&got.payload, &payload, text, scope)
+                ),
             );
         }
+    }
+}
+
+fn payload_difference(got: &[u8], want: &[u8], json: bool, scope: Scope<'_>) -> String {
+    if json && let Some(paths) = scope.describe_json(got, want) {
+        paths
+    } else {
+        difference(got, want)
     }
 }
 

@@ -481,8 +481,10 @@ fn golden_comparator_reports_exactly_the_part_that_differs() {
     check(
         &|p| {
             let case = case_mut(p, V2);
-            let text = text_mut(case).replacen("\"paused\":false", "\"paused\":null", 1);
-            set_text(case, text);
+            let mut payload: Value = serde_json::from_str(text_mut(case)).unwrap();
+            assert!(payload["game"]["paused"].is_boolean());
+            payload["game"]["paused"] = Value::Null;
+            set_text(case, serde_json::to_string(&payload).unwrap());
         },
         &[(V2, "body")],
     );

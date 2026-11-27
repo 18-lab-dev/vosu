@@ -307,7 +307,7 @@ fn rule(
     };
     let mut whole = rule.whole();
     for (platform, _) in &targets {
-        let mut routes: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+        let mut routes: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
         for case in &platform.cases {
             routes.entry(route(case)).or_default().insert(&case.id);
         }
@@ -316,7 +316,7 @@ fn rule(
             .any(|ids| ids.iter().all(|id| rule.cases.iter().any(|c| c == id)));
     }
     for (_, case) in &targets {
-        if whole && !(scope_names(&row.scope, &route(case)) || scope_names(&row.scope, &case.id)) {
+        if whole && !(scope_names(&row.scope, route(case)) || scope_names(&row.scope, &case.id)) {
             return Err(format!(
                 "{}: a whole-route subtraction on {} needs a ledger scope naming {} verbatim or the exact case ID",
                 rule.label(),
@@ -577,10 +577,10 @@ pub fn scope_names(scope: &str, route: &str) -> bool {
 }
 
 /// A case's route: its request target without the query.
-pub fn route(case: &Case) -> String {
+pub fn route(case: &Case) -> &str {
     let line = case.request.split("\r\n").next().unwrap_or_default();
     let target = line.split(' ').nth(1).unwrap_or_default();
-    target.split('?').next().unwrap_or_default().to_owned()
+    target.split('?').next().unwrap_or_default()
 }
 
 /// The byte span of the JSON value at `path`, or `None` when absent.

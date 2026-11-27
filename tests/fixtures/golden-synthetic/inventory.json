@@ -1,7 +1,7 @@
 {
   "format": "vosu-golden-inventory-v1",
   "source_revision": "2359305a63f2aaebb201bc8d2eee58177f52590e",
-  "normalization_version": 2,
+  "normalization_version": 3,
   "files": [
     {
       "path": "linux-lazer/assets.json",
@@ -25,93 +25,93 @@
     },
     {
       "path": "linux-lazer/cases/calculation.no-query.json",
-      "bytes": 16714,
-      "sha256": "93d7e38eb6fbd7442917343eec0f7d334e610fa6d67add454353e13505cb6ab2"
+      "bytes": 16253,
+      "sha256": "2ad7dc7a9767e4f56a02a9a3dc680415b6fb7c02628972b9097931b177df645f"
     },
     {
       "path": "linux-lazer/cases/files.get-beatmap-file.json",
-      "bytes": 17277,
-      "sha256": "ca849713d104395ebc6b9a70516a36d1a1005c783a6a32f7b66381854bf04f33"
+      "bytes": 16543,
+      "sha256": "eff164bd1eb024d157cfd882ef01a3c790010578cade19e44d39da2717e29ed0"
     },
     {
       "path": "linux-lazer/cases/files.head-beatmap-file.json",
-      "bytes": 16985,
-      "sha256": "4f764da1594f7b34f2006852a13479053a18c18636ccda7e638e1ba951808088"
+      "bytes": 16251,
+      "sha256": "8d82b969925f83d47a1c202dd1d41aea7e1cb57205d4a4dbe5ca1bcfa9bdff04"
     },
     {
       "path": "linux-lazer/cases/files.if-modified-since-beatmap-file.json",
-      "bytes": 16919,
-      "sha256": "160ff45a9e2c41462beaedb12bcf6919ddb7bd9dfe0f2e8e734a723a87748902"
+      "bytes": 16168,
+      "sha256": "016e78d30fb8ab1b833013db88ce0f51e5d10eb004b3e04665fd8cbc6da1824f"
     },
     {
       "path": "linux-lazer/cases/files.if-none-match-beatmap-file.json",
-      "bytes": 16899,
-      "sha256": "16987c2df39ff73e4f80a8ed4cc07177dceed9e3371ecc082c1b59b43bf8373d"
+      "bytes": 16139,
+      "sha256": "5ad801ba69dbb356a21b48095bc43e4417812bb65ecd1241a277b9e9ec97ab16"
     },
     {
       "path": "linux-lazer/cases/origin-peer.foreign-origin-json-v2.json",
-      "bytes": 5658,
-      "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
+      "bytes": 5168,
+      "sha256": "3ad6b9d07f526ee26c3a2f44849cf39426ad073c50763d7f1aa0020cf2736b0a"
     },
     {
       "path": "linux-lazer/cases/path-security.encoded-parent-files-beatmap.json",
-      "bytes": 5848,
-      "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
+      "bytes": 5288,
+      "sha256": "37dc3b75f8a559a414f59817954347bcc993476cb1321b7e893dabecc2fb21d2"
     },
     {
       "path": "linux-lazer/cases/state-http.get-json-sc-second-chart.json",
-      "bytes": 16251,
-      "sha256": "ef9216e8f1c64d0923e103bb65180c134f59729952181174d0a65fff4baedca4"
+      "bytes": 15761,
+      "sha256": "efc3fa05b14bf7f95524ebfd99d26be7118ccd64894d66f02973f56abc4607f8"
     },
     {
       "path": "linux-lazer/cases/state-http.get-json-sc.json",
-      "bytes": 16266,
-      "sha256": "c4ed85027dd366d552b04ad08566bca07dc329f94ecea2ef01e0c236c2ec86b9"
+      "bytes": 15776,
+      "sha256": "4834ab6a3bcfd19386b8c58b15acaaeb07ed12a108107b16ade75b798c4a1b20"
     },
     {
       "path": "linux-lazer/cases/state-http.get-json-v2-no-client.json",
-      "bytes": 5736,
-      "sha256": "e08b31a148d45644f720697a6f2565b6d7267dd87e82ffc79c6d892f17fd266d"
+      "bytes": 5246,
+      "sha256": "e5ad6dc9a68b98e4cadd5b64f9d91a17339815433d345523e6e1f77aa66efde6"
     },
     {
       "path": "linux-lazer/cases/state-http.get-json-v2.json",
-      "bytes": 22471,
-      "sha256": "643c94abc9f61255efdf48eee7760aa41aad88dbecef804480cec8e8eddc5e70"
+      "bytes": 22011,
+      "sha256": "9db25cb80a8ddc72ddaceb6ee04d0e235be6aaee005f732509e599a79374dc3e"
     },
     {
       "path": "linux-lazer/cases/state-http.post-json-v2.json",
-      "bytes": 5711,
-      "sha256": "732563a3b180fca62c4e88e66c1659b8a3e66b365b3b51f96551cc7fe3f5c4ea"
+      "bytes": 5221,
+      "sha256": "95e4d8cad315a022ab09cc6046c5401ac35f1bc2e1f71c33b80ec5cac9f6f05c"
     },
     {
       "path": "linux-lazer/cases/state-http.trailing-slash-json-v2.json",
-      "bytes": 5700,
-      "sha256": "0be939718e861c631e6ccfadbcbc92bcadd738a27fbf1c85c46bfa36e4e4b801"
+      "bytes": 5210,
+      "sha256": "3e7867fe707bc536c3b09e3be7a9cb2862b45d024356d0363be2697d653895cf"
     },
     {
       "path": "linux-lazer/cases/ws.get-without-upgrade-websocket-v2.json",
-      "bytes": 5751,
-      "sha256": "4ed6f4bce07c0cb76bf9116b0b35047117581442dd2c88ca4b0a7be0de7afc2c"
+      "bytes": 5261,
+      "sha256": "1cfa454c42d53be00ac06423c627315e91c4324d5568d2e085ea4bd2346cfd16"
     },
     {
       "path": "linux-lazer/cases/ws.upgrade-websocket-v2.json",
-      "bytes": 22782,
-      "sha256": "0847e19ce3c53667858a660263812caab5c5544e15b8ed759228dec73aebf8bd"
+      "bytes": 22172,
+      "sha256": "9fc3427f27e9c72ea4f05b36708a9e6ce96546cd5fe6861ed383224dfc28f196"
     },
     {
       "path": "linux-lazer/inventory.json",
       "bytes": 4223,
-      "sha256": "128b19585eec5bed299106c4312dbb43716507db4a3760905093006f1ea4f444"
+      "sha256": "db628230819dda43e7f35849f1840b0a34323355fdba4c4b3fb4642418b9b2e5"
     },
     {
       "path": "linux-lazer/manifest.json",
       "bytes": 3982,
-      "sha256": "b8354dc661c868314c90c84e786d02a0d0951967fa0c976a5f0f820a1bf6f828"
+      "sha256": "4b8dcf572820aff6691214b692849c044f495b9908298a775427dceae14dd5d2"
     },
     {
       "path": "manifest.json",
       "bytes": 227,
-      "sha256": "ebcb904973be1ab3aff574e0e6c80cb205b2b835b6ad6020aab9eb9703ed88d5"
+      "sha256": "177fe4f67e1b1f62bf73e2619c262c5fda13749b806eb56884325b8a35c23d2d"
     },
     {
       "path": "windows-stable/assets.json",
@@ -135,88 +135,88 @@
     },
     {
       "path": "windows-stable/cases/calculation.no-query.json",
-      "bytes": 17323,
-      "sha256": "28e7f83c9aef82edb27ddbcba2008ce560434aea6446cb6d9829676cf5b3b7c5"
+      "bytes": 16860,
+      "sha256": "46e5e99464fec8545da5bdf5e4b8e34ae69dbaca6e9d2aceb4cc622eea374695"
     },
     {
       "path": "windows-stable/cases/files.get-beatmap-file.json",
-      "bytes": 17886,
-      "sha256": "2a508d7cdef5ee14aac421c8d3e3fbde58e7036c9b05c1ec0ebfb9adac51fb19"
+      "bytes": 17150,
+      "sha256": "86c1140d28dccc33b13f5ec77f1a3ce4e721e2bffff391e719e291fe94d7dcdb"
     },
     {
       "path": "windows-stable/cases/files.head-beatmap-file.json",
-      "bytes": 17594,
-      "sha256": "90b9d55094c36336811ce22146b6defd76ab05e3188f5414b82f637b2688bcc1"
+      "bytes": 16858,
+      "sha256": "e15e10289430e35b7861dd9a21bde2d72ddcf2ca2a8938542d50a79f5485a64d"
     },
     {
       "path": "windows-stable/cases/files.if-modified-since-beatmap-file.json",
-      "bytes": 17528,
-      "sha256": "8f902ea2a4900626813128a2409568ec1ffa7149a12cec265e75343edd25fff6"
+      "bytes": 16775,
+      "sha256": "bae7d8820f717678157f4d6f3d6264aeefa281f0f2626826abef5fa6199700f8"
     },
     {
       "path": "windows-stable/cases/files.if-none-match-beatmap-file.json",
-      "bytes": 17508,
-      "sha256": "1b825c7b6b8b1a1749ffebb95a8e7cbf276b9371116f9f2641acfef95a0748c0"
+      "bytes": 16746,
+      "sha256": "201fae0bb9dbc656e5683389d2d4fffeb91a8e4ae4f50026fc0a5fd9340f4062"
     },
     {
       "path": "windows-stable/cases/origin-peer.foreign-origin-json-v2.json",
-      "bytes": 5658,
-      "sha256": "e1760f8299e8cb98e422cca9c8c81abd29b13a2a425dd860b15d3ac7b0e8cd99"
+      "bytes": 5168,
+      "sha256": "3ad6b9d07f526ee26c3a2f44849cf39426ad073c50763d7f1aa0020cf2736b0a"
     },
     {
       "path": "windows-stable/cases/path-security.encoded-parent-files-beatmap.json",
-      "bytes": 5848,
-      "sha256": "08321de638ca3935710231ca53b893fe4b3ee6437a7826dfc7473f849129a904"
+      "bytes": 5288,
+      "sha256": "37dc3b75f8a559a414f59817954347bcc993476cb1321b7e893dabecc2fb21d2"
     },
     {
       "path": "windows-stable/cases/state-http.get-json-sc-second-chart.json",
-      "bytes": 16811,
-      "sha256": "fa80aa79614e790ed0df92a749fc6c0e58df7113b2669dcbca0e71d2aee6d1da"
+      "bytes": 16317,
+      "sha256": "e09aaa5ac31efbf2df7e3717c724d6c9365bcc37eae17680ecfc1133e7258bc6"
     },
     {
       "path": "windows-stable/cases/state-http.get-json-sc.json",
-      "bytes": 16852,
-      "sha256": "4875081fa65e80e708e555903e27d2ea78dade3c197d94e92a741ce3d7574347"
+      "bytes": 16358,
+      "sha256": "0ef77543f75150951011588e3efa58b8cd3c3cb7c5af8b5ea167c67fea9dc6da"
     },
     {
       "path": "windows-stable/cases/state-http.get-json-v2-no-client.json",
-      "bytes": 5736,
-      "sha256": "e08b31a148d45644f720697a6f2565b6d7267dd87e82ffc79c6d892f17fd266d"
+      "bytes": 5246,
+      "sha256": "e5ad6dc9a68b98e4cadd5b64f9d91a17339815433d345523e6e1f77aa66efde6"
     },
     {
       "path": "windows-stable/cases/state-http.get-json-v2.json",
-      "bytes": 23355,
-      "sha256": "8729a58d1c373ddb523f66511b2fccec516819fe0aa6636c8b51794e8ff93c1c"
+      "bytes": 22891,
+      "sha256": "511f303bc2b03d04ad5e1b51706d87cbb6a2e31f161c2b862eef7a0b40f540c1"
     },
     {
       "path": "windows-stable/cases/state-http.post-json-v2.json",
-      "bytes": 5711,
-      "sha256": "732563a3b180fca62c4e88e66c1659b8a3e66b365b3b51f96551cc7fe3f5c4ea"
+      "bytes": 5221,
+      "sha256": "95e4d8cad315a022ab09cc6046c5401ac35f1bc2e1f71c33b80ec5cac9f6f05c"
     },
     {
       "path": "windows-stable/cases/state-http.trailing-slash-json-v2.json",
-      "bytes": 5700,
-      "sha256": "0be939718e861c631e6ccfadbcbc92bcadd738a27fbf1c85c46bfa36e4e4b801"
+      "bytes": 5210,
+      "sha256": "3e7867fe707bc536c3b09e3be7a9cb2862b45d024356d0363be2697d653895cf"
     },
     {
       "path": "windows-stable/cases/ws.get-without-upgrade-websocket-v2.json",
-      "bytes": 5751,
-      "sha256": "4ed6f4bce07c0cb76bf9116b0b35047117581442dd2c88ca4b0a7be0de7afc2c"
+      "bytes": 5261,
+      "sha256": "1cfa454c42d53be00ac06423c627315e91c4324d5568d2e085ea4bd2346cfd16"
     },
     {
       "path": "windows-stable/cases/ws.upgrade-websocket-v2.json",
-      "bytes": 23666,
-      "sha256": "944c88b2b41d2b03d125c624260de9ea086cfce64d773ca648e43dc159abe53f"
+      "bytes": 23052,
+      "sha256": "55dea0bda87349f5c387f2be5c0f41b3692dd53ccf6185f74d336353e1a08c69"
     },
     {
       "path": "windows-stable/inventory.json",
       "bytes": 4226,
-      "sha256": "df72423675e5fd85a6bc7837fc5bdfa66f35c16e0ab03d6e38264b8e5a4639cd"
+      "sha256": "a6fc35cbbea22a4ef5701f4c6e1fcc3ef4ed7b0b4f46e73547d604f0ea5b395b"
     },
     {
       "path": "windows-stable/manifest.json",
       "bytes": 3991,
-      "sha256": "a5eff3ecd243ef5ab91825c20353033b56e8b39781428159f664e9dab0eff942"
+      "sha256": "3b6a393a920f300b865773192ba364f397d648ed494eb68e90540e11d5272909"
     }
   ]
 }

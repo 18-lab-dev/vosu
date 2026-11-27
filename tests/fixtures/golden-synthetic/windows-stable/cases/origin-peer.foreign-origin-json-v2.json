@@ -5,9 +5,7 @@
   "barrier": "no-client",
   "conditional": null,
   "attempts": 1,
-  "normalized": [
-    "header-date"
-  ],
+  "normalized": [],
   "request": {
     "text": "GET /json/v2 HTTP/1.1\r\nHost: 127.0.0.1:24050\r\nOrigin: http://example.invalid\r\nConnection: close\r\n\r\n"
   },
@@ -15,32 +13,8 @@
     "status": 403,
     "headers": [
       [
-        "access-control-allow-headers",
-        "Origin, X-Requested-With, Content-Type, Accept"
-      ],
-      [
-        "access-control-allow-methods",
-        "POST, GET, PUT, DELETE, OPTIONS"
-      ],
-      [
-        "access-control-allow-origin",
-        "*"
-      ],
-      [
-        "access-control-allow-private-network",
-        "true"
-      ],
-      [
-        "connection",
-        "close"
-      ],
-      [
         "content-length",
         "9"
-      ],
-      [
-        "date",
-        "<golden:date>"
       ]
     ],
     "body": {
@@ -71,7 +45,7 @@
     "entries": [
       {
         "ns": "vosu.osu",
-        "pointer": "/session/paused",
+        "pointer": "/internal/playClock",
         "value_cbor_b64": null,
         "error": null
       },
@@ -259,6 +233,6 @@
       "status": 500,
       "body_utf8": "{\"error\":\"osu is not ready/running\"}"
     },
-    "digest": "sha256:1aeab90f7489ac2b1ae2af38803164bc17406488713e4ebd03423a41da557df2"
+    "digest": "sha256:c5029793543e0e3cb7f485cacfbf8dca4c3e26493a8f634756d390318b6a404b"
   }
 }

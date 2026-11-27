@@ -39,6 +39,31 @@ class BarrierTests(unittest.TestCase):
         session._observe = next_observation
         return session, calls
 
+    def test_startup_requires_both_state_zero_spectra_and_bounds_the_wait(self) -> None:
+        from dataclasses import replace
+        data = {"state": {"number": 0}, "settings": {"bassDensity": 0.6}}
+        self.assertTrue(pgb.main_menu_fft(data))
+        self.assertTrue(pgb.main_menu_fft({**data, "settings": {"bassDensity": 1}}))
+        for bad in (0, -0.1, True, "0.6", float("inf")):
+            self.assertFalse(pgb.main_menu_fft({**data, "settings": {"bassDensity": bad}}))
+        self.assertFalse(pgb.main_menu_fft({**data, "state": {"number": 5}}))
+        view = observe({"source": "menu", "vosu": "menu"}, "same", None)
+        source_ready = replace(view, main_menu_fft=(True, False))
+        vosu_ready = replace(view, main_menu_fft=(False, True))
+        both = replace(view, main_menu_fft=(True, True))
+        session, calls = self.session([source_ready, vosu_ready, both])
+        with mock.patch.object(pgb, "POLL_S", 0):
+            session._wait_main_menu_fft(None, None)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(session.transcript["main_menu_fft"]["source"])
+        self.assertTrue(session.transcript["main_menu_fft"]["vosu"])
+
+        session, _ = self.session([source_ready])
+        with mock.patch.object(pgb.time, "monotonic", side_effect=[0.0, 0.0, 30.0]), \
+                self.assertRaisesRegex(pgb.CaptureError, "main_menu_fft_not_observed"):
+            session._wait_main_menu_fft(None, None)
+        self.assertNotIn("main_menu_fft", session.transcript)
+
     def test_barrier_needs_consecutive_identical_views(self) -> None:
         views = ["a", "b", "b", None, "c", "c", "c", "d"]
         session, calls = self.session([({"source": "menu", "vosu": "menu"}, v, None) for v in views])

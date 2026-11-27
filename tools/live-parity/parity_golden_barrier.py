@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,7 @@ STABLE_OBSERVATIONS = 3
 POLL_S = 0.1
 # The pinned upstream waits up to 15 s for lazer startup after discovering it.
 UPSTREAM_READY_TIMEOUT_S = 30.0
+MAIN_MENU_FFT_TIMEOUT_S = 30.0
 OPERATOR_STEPS = {
     "menu": "open song select on the approved map (menu)",
     "play": "resume the song-select track, then start the approved map (active play)",
@@ -77,6 +79,19 @@ class BarrierObservation:
     clock: float | None
     source: ClientFields
     vosu: ClientFields
+    main_menu_fft: tuple[bool, bool] = (False, False)
+
+
+def main_menu_fft(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    state, settings = payload.get("state"), payload.get("settings")
+    if not isinstance(state, dict) or type(state.get("number")) is not int or state["number"] != 0:
+        return False
+    density = settings.get("bassDensity") if isinstance(settings, dict) else None
+    if type(density) is int:
+        return density > 0
+    return type(density) is float and 0 < density and math.isfinite(density)
 
 
 class BarrierMixin:
@@ -106,7 +121,8 @@ class BarrierMixin:
         except volatile.VolatileError:
             view = None  # never stable: a volatile field broke its rule
         return BarrierObservation({"source": rename.get(upstream, upstream), "vosu": rename.get(vosu, vosu)},
-                                  view, clock, ClientFields.read(sample.payload), ClientFields.read(payload))
+                                  view, clock, ClientFields.read(sample.payload), ClientFields.read(payload),
+                                  (main_menu_fft(sample.payload), main_menu_fft(payload)))
 
     def _holds(self, barrier: str, observation: BarrierObservation) -> bool:
         """An attested live client with two matching reads, or an observed client exit."""
@@ -115,6 +131,25 @@ class BarrierMixin:
                 and all(value == barrier for value in observation.seen.values())
                 and (no_client or (not observation.source.missing() and not observation.vosu.missing()
                                    and observation.source.same_beatmap(observation.vosu))))
+
+    def _wait_main_menu_fft(self, source: Daemon, dump: HarnessDump) -> None:
+        self.operator("main-menu", "waiting for main-menu FFT: stay on the main menu with music playing "
+                                   "until both daemons have sampled it")
+        deadline = min(self.deadline, time.monotonic() + MAIN_MENU_FFT_TIMEOUT_S)
+        ready = (False, False)
+        while time.monotonic() < deadline and not self.client.exited():
+            ready = self._observe(source, dump).main_menu_fft
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if all(ready):
+                self.transcript["main_menu_fft"] = {"state": 0, "source": True, "vosu": True,
+                                                    "monotonic_ns": time.monotonic_ns()}
+                return
+            time.sleep(min(POLL_S, remaining))
+        raise CaptureError("main_menu_fft_not_observed: both daemons must report positive "
+                           f"bassDensity at state 0 within {MAIN_MENU_FFT_TIMEOUT_S:g} s "
+                           f"(source={ready[0]}, vosu={ready[1]})")
 
     def _wait_barrier(self, barrier: str, source: Daemon, dump: HarnessDump,
                       reached: list[str], *, identical_views: bool = True) -> None:

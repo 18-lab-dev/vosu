@@ -69,7 +69,17 @@ pub fn capture(sessions: usize) -> Source {
                 assert_eq!(*name, schema_name(*schema));
                 let sample = fixture.providers[index].capture_for_harness().unwrap();
                 assert_eq!(sample.schema, *schema);
-                sample.envelope().unwrap()
+                let bytes = sample.envelope().unwrap();
+                if sessions > 0 && *name == "v2" {
+                    let captured = Envelope::parse(&bytes).unwrap();
+                    assert!(captured.entries.iter().any(|entry| {
+                        entry.ns == "vosu.osu"
+                            && entry.pointer == "/internal/playClock"
+                            && entry.value.is_some()
+                            && entry.error.is_none()
+                    }));
+                }
+                bytes
             })
             .collect()
     };

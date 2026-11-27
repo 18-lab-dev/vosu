@@ -644,6 +644,8 @@ class Session(BarrierMixin):
         self.transcript["harness_endpoint"] = dump.verify_mounted()
         self.transcript["client"] = self.client.start()
         self.client_started = True
+        if "menu" in self.scenario.barriers:
+            self._wait_main_menu_fft(source, dump)
         cases: list[dict[str, Any]] = []
         reached: list[str] = []
         crashing = [item for item in golden if rm.upstream_crash_ledger(item.case)]

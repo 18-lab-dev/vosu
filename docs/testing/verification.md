@@ -206,6 +206,13 @@ launches and owns both daemons, each on its own loopback port with isolated
 roots, and passes the vosu daemon a fresh `VOSU_TEST_ADAPTER_CAPTURE`
 capability. It checks that the endpoint answers only with that capability. It
 then prepares the run-owned path-security layout and launches the client.
+For a run with a menu barrier, stay on the main menu with music playing
+until the capture prompts you to open song select. The startup gate requires
+both daemons to report `state.number == 0` and a positive
+`settings.bassDensity` within 30 seconds; otherwise capture fails with
+`main_menu_fft_not_observed`. Do not enter song select first: independent
+main-menu FFT history survives later barriers. Run 5 lacked that common
+observation and its bass differences remain pending recapture.
 Operator prompts go to stderr, one per barrier, in the order menu → play →
 paused → result → no-client (close the client). At each barrier every
 golden-role route-matrix case runs as two sandwiches: upstream twice, then

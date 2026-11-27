@@ -187,6 +187,11 @@ contributes only diagnostic cadence/framing and coarse lifecycle evidence,
 never a payload fixture. Each platform scenario traverses
 menu → play → paused → result → client exit.
 
+Before selecting a song, the live capture gate requires both v2 feeds to
+report main-menu state `0` and a finite, positive `settings.bassDensity`
+within 30 seconds, or aborts with `main_menu_fft_not_observed`. This records
+that both clients sampled main-menu audio; it does not relax payload equality.
+
 For client barriers both v2 views must have a non-empty `folders.game` and
 identify the same beatmap in each observation: compare `beatmap.checksum` when
 both are present, otherwise compare non-default `directPath.beatmapFile`.
@@ -393,6 +398,13 @@ ledger still checks whether a capture was stable; it grants no replay
 exceptions. Non-JSON bodies and frame payloads compare byte for byte after
 approved rewrites; coherent-sample identity, array order and bus revision
 relationships stay strict.
+
+`/game/focused` is a Windows-only upstream fact. In Windows evidence replayed
+on Linux, only the recorded boolean at that exact pointer on `/json/v2` or
+server `/websocket/v2` frames is projected out of the comparator's view.
+Unexpected Linux presence still fails. Native Windows replay compares its
+presence and value strictly; the native CI `--all-features --tests` job
+includes `adapter_golden`. Other platform facts and fields stay strict.
 
 Adding or widening a rule (including a `client-timestamp-pointer` instance)
 requires a reviewed amendment to this file, a counterexample test in
@@ -633,6 +645,13 @@ Replay inputs follow what the platform's production host records:
   initial frame. These do not use an old vosu state response as an oracle:
   the sole settings substitutions are the two exact S3 song-select fields.
   Replay still compares all other fields, headers, status and frame flags.
+- **Retired v2 pause selector.** The run-five v2 dumps record
+  `vosu.osu` `/session/paused`, not the raw `/internal/playClock` pair
+  required by the current provider. Replay leaves the new input absent:
+  it does not infer previous time from the old boolean, the current
+  timestamp, or a captured payload. Only the retired selection and the
+  newly selected absent entry are allowed to differ; other selected
+  entries, and the `/game/paused` output comparison, remain strict.
 - **Explicit calculation paths.** Capture inventories the selected chart and
   the byte-identical ordinary `.osu` copy separately, with the actual `files`
   or `songs` slot and its slot-relative path. A synthetic prefix on

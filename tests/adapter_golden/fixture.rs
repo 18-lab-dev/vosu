@@ -72,6 +72,7 @@ pub struct Platform {
     pub synthetic_roots: BTreeMap<String, String>,
     pub assets: Vec<Asset>,
     pub cases: Vec<Case>,
+    pub run5: bool,
 }
 impl Platform {
     pub fn asset(&self, id: &str) -> Option<&Asset> {
@@ -492,6 +493,7 @@ fn platform(
         synthetic_roots,
         assets,
         cases,
+        run5: manifest.get("calculation_chart_migration").is_some(),
     })
 }
 

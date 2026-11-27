@@ -53,7 +53,7 @@ def barrier() -> str:
 
 def envelope(schema: str, advance: bool) -> dict:
     current = barrier()
-    reads = ENVELOPES[current][schema]
+    reads = ENVELOPES["menu" if current == "main-menu" else current][schema]
     with LOCK:
         index = READS.get((current, schema), 0)
         if advance:
@@ -62,6 +62,8 @@ def envelope(schema: str, advance: bool) -> dict:
     if schema == "v2" and current != "no-client":
         http = value["http"]
         body = {**json.loads(http["body_utf8"]), **ATTACHED}
+        if current == "main-menu":
+            body.update(state={"number": 0, "name": "menu"}, settings={"bassDensity": 0.6})
         value["http"] = dict(http, body_utf8=json.dumps(body, separators=(",", ":")))
     if reads[0]["provider_generation"] != reads[-1]["provider_generation"]:
         # An advancing provider (sc) keeps advancing past the exported reads: only the
@@ -100,10 +102,12 @@ def state_body(schema: str) -> tuple[int, bytes]:
 
 ENVELOPES_UPSTREAM = {
     (schema, name): json.dumps({"state": {"number": number, "name": label}, "game": {"paused": paused},
+                                **({"settings": {"bassDensity": 0.6}} if name == "main-menu" else {}),
                                 **(ATTACHED if schema == "v2" else {})},
                                separators=(",", ":")).encode()
     for schema in STATE_ROUTES.values()
-    for name, number, label, paused in (("menu", 0, "menu", False), ("play", 2, "play", False),
+    for name, number, label, paused in (("main-menu", 0, "menu", False),
+                                        ("menu", 0, "menu", False), ("play", 2, "play", False),
                                         ("paused", 2, "play", True),
                                         ("result", 7, "resultScreen", False))}
 

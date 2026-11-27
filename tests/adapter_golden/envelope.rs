@@ -248,14 +248,48 @@ impl Envelope {
                 replayed.namespace_revisions, self.namespace_revisions
             ));
         }
-        if self.entries.len() != replayed.entries.len() {
+        let obsolete_pause =
+            |entry: &RecordedEntry| entry.ns == "vosu.osu" && entry.pointer == "/session/paused";
+        let play_clock = |entry: &RecordedEntry| {
+            entry.ns == "vosu.osu" && entry.pointer == "/internal/playClock"
+        };
+        // Older v2 captures record a boolean, never the raw clock pair.
+        // Accept only the exact selector replacement with no replayed value.
+        let retired = self.schema == Schema::V2
+            && self
+                .entries
+                .iter()
+                .filter(|entry| obsolete_pause(entry))
+                .count()
+                == 1
+            && !self.entries.iter().any(play_clock)
+            && replayed
+                .entries
+                .iter()
+                .filter(|entry| play_clock(entry))
+                .count()
+                == 1
+            && replayed
+                .entries
+                .iter()
+                .any(|entry| play_clock(entry) && entry.value.is_none() && entry.error.is_none())
+            && !replayed.entries.iter().any(obsolete_pause);
+        let recorded_entries = self
+            .entries
+            .iter()
+            .filter(|entry| !retired || !obsolete_pause(entry));
+        let replayed_entries = replayed
+            .entries
+            .iter()
+            .filter(|entry| !retired || !play_clock(entry));
+        if recorded_entries.clone().count() != replayed_entries.clone().count() {
             return Err(format!(
                 "{schema}: {} selected entries, recorded {}",
                 replayed.entries.len(),
                 self.entries.len()
             ));
         }
-        for (recorded, entry) in self.entries.iter().zip(&replayed.entries) {
+        for (recorded, entry) in recorded_entries.zip(replayed_entries) {
             let at = format!("{schema} {}{}", recorded.ns, recorded.pointer);
             if (&recorded.ns, &recorded.pointer) != (&entry.ns, &entry.pointer) {
                 return Err(format!("{at}: replayed {}{}", entry.ns, entry.pointer));
